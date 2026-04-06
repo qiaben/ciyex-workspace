@@ -14,6 +14,9 @@ import { localize2 } from '../../../../nls.js';
 
 export const ICiyexMenuService = createDecorator<ICiyexMenuService>('ciyexMenuService');
 
+/**
+ * Menu item as returned by the API: { items: [{ item: {...}, children: [{ item: {...}, children: [...] }] }] }
+ */
 export interface ICiyexMenuItem {
 	id: string;
 	itemKey: string;
@@ -22,29 +25,20 @@ export interface ICiyexMenuItem {
 	screenSlug: string | null;
 	position: number;
 	requiredPermission: string | null;
-	children?: ICiyexMenuItem[];
+	children?: ICiyexMenuItemEntry[];
+}
+
+export interface ICiyexMenuItemEntry {
+	item: ICiyexMenuItem;
+	children: ICiyexMenuItemEntry[];
 }
 
 export interface ICiyexMenuService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeMenus: Event<void>;
-	readonly menuItems: ICiyexMenuItem[];
+	readonly menuItems: ICiyexMenuItemEntry[];
 	loadMenus(): Promise<void>;
 }
-
-// Define new MenuIds for EHR top-level menus
-const MenubarClinicalMenu = new MenuId('MenubarClinicalMenu');
-const MenubarSchedulingMenu = new MenuId('MenubarSchedulingMenu');
-const MenubarBillingMenu = new MenuId('MenubarBillingMenu');
-
-// Clinical menu categories for grouping sidebar items into top menus
-const CLINICAL_SLUGS = new Set([
-	'/patients', '/all-encounters', '/prescriptions', '/labs',
-	'/immunizations', '/care-plans', '/referrals', '/cds',
-	'/consents', '/authorizations', '/document-scanning',
-]);
-const SCHEDULING_SLUGS = new Set(['/calendar', '/appointments', '/recall']);
-const BILLING_SLUGS = new Set(['/payments', '/patients/claim-management']);
 
 export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 	declare readonly _serviceBrand: undefined;
@@ -52,19 +46,17 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 	private readonly _onDidChangeMenus = this._register(new Emitter<void>());
 	readonly onDidChangeMenus: Event<void> = this._onDidChangeMenus.event;
 
-	private _menuItems: ICiyexMenuItem[] = [];
+	private _menuItems: ICiyexMenuItemEntry[] = [];
 	private readonly _menuDisposables = this._register(new DisposableStore());
+	private readonly _dynamicMenuIds = new Map<string, MenuId>();
 
-	get menuItems(): ICiyexMenuItem[] { return this._menuItems; }
+	get menuItems(): ICiyexMenuItemEntry[] { return this._menuItems; }
 
 	constructor(
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
-
-		// Register the top-level EHR menus in the menu bar (always present, items populated dynamically)
-		this._registerTopLevelMenus();
 	}
 
 	async loadMenus(): Promise<void> {
@@ -74,102 +66,85 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 				this.logService.warn('[CiyexMenu] Failed to load menus:', response.status);
 				return;
 			}
-			this._menuItems = await response.json();
-			this._registerMenuItems();
+			const data = await response.json();
+			// API returns { items: [{ item: {...}, children: [...] }] }
+			this._menuItems = data?.items || data || [];
+			this._registerAllMenus();
 			this._onDidChangeMenus.fire();
-			this.logService.info(`[CiyexMenu] Loaded ${this._menuItems.length} menu items`);
+			this.logService.info(`[CiyexMenu] Loaded ${this._menuItems.length} menu items from API`);
 		} catch (err) {
 			this.logService.warn('[CiyexMenu] Menu load error:', err);
 		}
 	}
 
-	private _registerTopLevelMenus(): void {
-		// Clinical menu
-		MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
-			submenu: MenubarClinicalMenu,
-			title: {
-				...localize2('clinicalMenu', "Clinical"),
-				mnemonicTitle: localize2('mClinical', "&&Clinical").value,
-			},
-			when: ContextKeyExpr.has('ciyex.authenticated'),
-			order: 3, // After Edit
-		});
-
-		// Scheduling menu
-		MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
-			submenu: MenubarSchedulingMenu,
-			title: {
-				...localize2('schedulingMenu', "Scheduling"),
-				mnemonicTitle: localize2('mScheduling', "&&Scheduling").value,
-			},
-			when: ContextKeyExpr.has('ciyex.perm.scheduling'),
-			order: 2.5, // Before Clinical
-		});
-
-		// Billing menu
-		MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
-			submenu: MenubarBillingMenu,
-			title: {
-				...localize2('billingMenu', "Billing"),
-				mnemonicTitle: localize2('mBilling', "&&Billing").value,
-			},
-			when: ContextKeyExpr.has('ciyex.perm.billing'),
-			order: 5.5, // After Go
-		});
-	}
-
-	private _registerMenuItems(): void {
-		// Clear previous dynamic registrations
+	private _registerAllMenus(): void {
 		this._menuDisposables.clear();
 
-		const flatItems = this._flattenMenuItems(this._menuItems);
+		// For each top-level menu item that has children, create a menu bar submenu
+		// For leaf items, register as commands in a "Ciyex" menu
+		let order = 2.5; // Start after Edit (2) and before View (4)
 
-		for (const item of flatItems) {
-			if (!item.screenSlug) {
-				continue;
+		for (const entry of this._menuItems) {
+			const item = entry.item;
+			const children = entry.children || [];
+
+			if (children.length > 0) {
+				// Parent with children -> create a submenu in the menu bar
+				const menuId = this._getOrCreateMenuId(item.itemKey);
+
+				// Register submenu in main menu bar
+				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+					submenu: menuId,
+					title: {
+						...localize2(`ciyexMenu.${item.itemKey}`, item.label),
+						mnemonicTitle: localize2(`ciyexMenuMn.${item.itemKey}`, `&&${item.label}`).value,
+					},
+					when: item.requiredPermission
+						? ContextKeyExpr.and(ContextKeyExpr.has('ciyex.authenticated'), ContextKeyExpr.has(`ciyex.perm.${item.requiredPermission}`))
+						: ContextKeyExpr.has('ciyex.authenticated'),
+					order: order,
+				}));
+
+				// Register children as menu items in the submenu
+				let childOrder = 1;
+				for (const childEntry of children) {
+					const child = childEntry.item;
+					const commandId = `ciyex.nav.${child.itemKey}`;
+
+					this._menuDisposables.add(MenuRegistry.addCommand({
+						id: commandId,
+						title: { value: child.label, original: child.label },
+					}));
+
+					const when = child.requiredPermission
+						? ContextKeyExpr.has(`ciyex.perm.${child.requiredPermission}`)
+						: undefined;
+
+					this._menuDisposables.add(MenuRegistry.appendMenuItem(menuId, {
+						command: { id: commandId, title: child.label },
+						when,
+						order: childOrder++,
+					}));
+				}
+
+				order += 0.5;
+			} else if (item.screenSlug) {
+				// Leaf item without children -> register as a command
+				const commandId = `ciyex.nav.${item.itemKey}`;
+				this._menuDisposables.add(MenuRegistry.addCommand({
+					id: commandId,
+					title: { value: item.label, original: item.label },
+				}));
 			}
-
-			const commandId = `ciyex.nav.${item.itemKey}`;
-
-			// Register the command
-			this._menuDisposables.add(MenuRegistry.addCommand({
-				id: commandId,
-				title: { value: item.label, original: item.label },
-			}));
-
-			// Determine which top-level menu this item belongs to
-			let targetMenu: MenuId;
-			if (SCHEDULING_SLUGS.has(item.screenSlug)) {
-				targetMenu = MenubarSchedulingMenu;
-			} else if (BILLING_SLUGS.has(item.screenSlug)) {
-				targetMenu = MenubarBillingMenu;
-			} else if (CLINICAL_SLUGS.has(item.screenSlug)) {
-				targetMenu = MenubarClinicalMenu;
-			} else {
-				continue; // Skip items that don't fit in our menus (Settings, Hub, etc.)
-			}
-
-			// Register menu item with permission gate
-			const when = item.requiredPermission
-				? ContextKeyExpr.has(`ciyex.perm.${item.requiredPermission}`)
-				: undefined;
-
-			this._menuDisposables.add(MenuRegistry.appendMenuItem(targetMenu, {
-				command: { id: commandId, title: item.label },
-				when,
-				order: item.position,
-			}));
 		}
 	}
 
-	private _flattenMenuItems(items: ICiyexMenuItem[]): ICiyexMenuItem[] {
-		const result: ICiyexMenuItem[] = [];
-		for (const item of items) {
-			result.push(item);
-			if (item.children?.length) {
-				result.push(...this._flattenMenuItems(item.children));
-			}
+	private _getOrCreateMenuId(key: string): MenuId {
+		let menuId = this._dynamicMenuIds.get(key);
+		if (!menuId) {
+			menuId = new MenuId(`MenubarCiyex_${key}`);
+			this._dynamicMenuIds.set(key, menuId);
 		}
-		return result;
+		return menuId;
 	}
 }

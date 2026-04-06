@@ -102,5 +102,9 @@
 	"ciyexMarketplace": {
 		"enabled": true,
 		"proxyThroughApi": true
+	},
+	"configurationDefaults": {
+		"window.titleBarStyle": "custom",
+		"window.menuBarVisibility": "visible"
 	}
 }
