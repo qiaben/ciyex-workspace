@@ -49,48 +49,39 @@ const MenubarSystemMenu = new MenuId('MenubarSystemMenu');
 const MenubarPortalMenu = new MenuId('MenubarPortalMenu');
 const MenubarEhrSettingsMenu = new MenuId('MenubarEhrSettingsMenu');
 
-// Register the single "Ciyex" menu FIRST in the menu bar (order 0.5 = before File/Window)
+// "Ciyex" menu for leaf items (Calendar, Appointments, Patients, etc.)
 MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	submenu: MenubarCiyexMenu,
 	title: { ...localize2('ciyexMenu', "Ciyex"), mnemonicTitle: localize2('mCiyex', "&&Ciyex").value },
 	order: 0.5,
 });
 
-// Register sub-sections within the Ciyex menu as nested submenus
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+// Parent items with children become TOP-LEVEL menus (not nested inside Ciyex)
+MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	submenu: MenubarClinicalMenu,
-	title: { ...localize2('clinicalSub', "Clinical"), mnemonicTitle: localize2('mClinicalSub', "&&Clinical").value },
-	group: '2_clinical',
+	title: { ...localize2('clinicalMenu', "Clinical"), mnemonicTitle: localize2('mClinical', "&&Clinical").value },
 	order: 1,
 });
 
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	submenu: MenubarOperationsMenu,
-	title: { ...localize2('operationsSub', "Operations"), mnemonicTitle: localize2('mOperationsSub', "&&Operations").value },
-	group: '3_operations',
+	title: { ...localize2('operationsMenu', "Operations"), mnemonicTitle: localize2('mOperations', "&&Operations").value },
+	order: 1.5,
+});
+
+MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+	submenu: MenubarSystemMenu,
+	title: { ...localize2('systemMenu', "System"), mnemonicTitle: localize2('mSystem', "S&&ystem").value },
 	order: 2,
 });
 
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
-	submenu: MenubarSystemMenu,
-	title: { ...localize2('systemSub', "System"), mnemonicTitle: localize2('mSystemSub', "&&System").value },
-	group: '4_system',
-	order: 3,
-});
-
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	submenu: MenubarPortalMenu,
-	title: { ...localize2('portalSub', "Portal"), mnemonicTitle: localize2('mPortalSub', "&&Portal").value },
-	group: '4_system',
-	order: 4,
+	title: { ...localize2('portalMenu', "Portal"), mnemonicTitle: localize2('mPortal', "&&Portal").value },
+	order: 2.5,
 });
 
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
-	submenu: MenubarEhrSettingsMenu,
-	title: { ...localize2('ehrSettingsSub', "Settings"), mnemonicTitle: localize2('mEhrSettingsSub', "Se&&ttings").value },
-	group: '5_settings',
-	order: 5,
-});
+// Settings stays in gear menu only (not top-level)
 
 // Placeholder commands so menus aren't empty at startup (disposable - cleared when real items load)
 CommandsRegistry.registerCommand('ciyex.nav._placeholder', () => { });
