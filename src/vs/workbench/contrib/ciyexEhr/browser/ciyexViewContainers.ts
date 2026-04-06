@@ -12,6 +12,7 @@ import { codiconsLibrary as Codicon } from '../../../../base/common/codiconsLibr
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { TreeViewPane } from '../../../browser/parts/views/treeView.js';
+import { PatientListPane } from './patientListPane.js';
 
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
@@ -32,7 +33,7 @@ const settingsIcon = registerIcon('ciyex-settings-icon', Codicon.settingsGear, l
 export const CALENDAR_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.calendar',
 	title: localize2('ciyexCalendar', "Calendar"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.calendar']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.calendar', {}]),
 	icon: calendarIcon,
 	order: 1,
 	openCommandActionDescriptor: {
@@ -45,7 +46,7 @@ export const CALENDAR_CONTAINER: ViewContainer = viewContainerRegistry.registerV
 export const PATIENTS_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.patients',
 	title: localize2('ciyexPatients', "Patients"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.patients']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.patients', {}]),
 	icon: patientsIcon,
 	order: 2,
 	openCommandActionDescriptor: {
@@ -58,7 +59,7 @@ export const PATIENTS_CONTAINER: ViewContainer = viewContainerRegistry.registerV
 export const CLINICAL_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.clinical',
 	title: localize2('ciyexClinical', "Clinical"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.clinical']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.clinical', {}]),
 	icon: clinicalIcon,
 	order: 3,
 }, ViewContainerLocation.Sidebar);
@@ -67,7 +68,7 @@ export const CLINICAL_CONTAINER: ViewContainer = viewContainerRegistry.registerV
 export const MESSAGING_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.messaging',
 	title: localize2('ciyexMessaging', "Messaging"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.messaging']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.messaging', {}]),
 	icon: messagingIcon,
 	order: 4,
 }, ViewContainerLocation.Sidebar);
@@ -76,7 +77,7 @@ export const MESSAGING_CONTAINER: ViewContainer = viewContainerRegistry.register
 export const BILLING_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.billing',
 	title: localize2('ciyexBilling', "Billing"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.billing']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.billing', {}]),
 	icon: billingIcon,
 	order: 5,
 }, ViewContainerLocation.Sidebar);
@@ -85,7 +86,7 @@ export const BILLING_CONTAINER: ViewContainer = viewContainerRegistry.registerVi
 export const REPORTS_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.reports',
 	title: localize2('ciyexReports', "Reports"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.reports']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.reports', {}]),
 	icon: reportsIcon,
 	order: 6,
 }, ViewContainerLocation.Sidebar);
@@ -94,7 +95,7 @@ export const REPORTS_CONTAINER: ViewContainer = viewContainerRegistry.registerVi
 export const SETTINGS_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
 	id: 'ciyex.settings',
 	title: localize2('ciyexSettings', "Settings"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.settings']),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.settings', {}]),
 	icon: settingsIcon,
 	order: 7,
 }, ViewContainerLocation.Sidebar);
@@ -114,17 +115,9 @@ viewsRegistry.registerViews([
 // Patient views
 viewsRegistry.registerViews([
 	{
-		id: 'ciyex.patients.list',
+		id: PatientListPane.ID,
 		name: localize2('patientList', "Patient List"),
-		ctorDescriptor: new SyncDescriptor(TreeViewPane),
-		when: ContextKeyExpr.has('ciyex.perm.demographics'),
-	},
-	{
-		id: 'ciyex.patients.recent',
-		name: localize2('recentPatients', "Recent Patients"),
-		ctorDescriptor: new SyncDescriptor(TreeViewPane),
-		when: ContextKeyExpr.has('ciyex.perm.demographics'),
-		hideByDefault: true,
+		ctorDescriptor: new SyncDescriptor(PatientListPane),
 	},
 ], PATIENTS_CONTAINER);
 
