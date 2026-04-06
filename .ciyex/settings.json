@@ -1,0 +1,36 @@
+{
+  "ciyex.practice.name": "",
+  "ciyex.practice.npi": "",
+  "ciyex.practice.address": "",
+  "ciyex.practice.city": "",
+  "ciyex.practice.state": "",
+  "ciyex.practice.zip": "",
+  "ciyex.practice.phone": "",
+  "ciyex.practice.fax": "",
+  "ciyex.practice.email": "",
+  "ciyex.practice.timezone": "America/New_York",
+  "ciyex.practice.taxId": "",
+
+  "ciyex.display.fontSize": 13,
+  "ciyex.display.compactMode": false,
+  "ciyex.display.showAvatars": true,
+  "ciyex.display.dateFormat": "MM/DD/YYYY",
+  "ciyex.display.timeFormat": "12h",
+
+  "ciyex.calendar.defaultView": "week",
+  "ciyex.calendar.startHour": 8,
+  "ciyex.calendar.endHour": 18,
+  "ciyex.calendar.slotDuration": 15,
+  "ciyex.calendar.colorBy": "visitType",
+
+  "ciyex.session.idleTimeoutMinutes": 30,
+  "ciyex.session.warningMinutes": 5,
+  "ciyex.session.autoRefreshToken": true,
+  "ciyex.session.loginRequired": true,
+
+  "ciyex.features.cdsHooksEnabled": true,
+  "ciyex.features.smartLaunchEnabled": true,
+  "ciyex.features.patientPortalEnabled": true,
+  "ciyex.features.telehealthEnabled": false,
+  "ciyex.features.kioskEnabled": false
+}

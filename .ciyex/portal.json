@@ -1,0 +1,27 @@
+{
+  "general": {
+    "name": "Patient Portal",
+    "url": "",
+    "language": "en",
+    "timezone": "America/New_York"
+  },
+  "features": {
+    "onlineBooking": true,
+    "messaging": true,
+    "labResults": true,
+    "prescriptionRefills": true,
+    "billPay": false,
+    "formSubmission": true,
+    "telehealth": false,
+    "educationalContent": true
+  },
+  "forms": [],
+  "navigation": [
+    { "key": "dashboard", "label": "Dashboard", "route": "/", "icon": "Home", "visible": true },
+    { "key": "appointments", "label": "Appointments", "route": "/appointments", "icon": "Calendar", "visible": true },
+    { "key": "messages", "label": "Messages", "route": "/messages", "icon": "Mail", "visible": true },
+    { "key": "records", "label": "Health Records", "route": "/records", "icon": "FileText", "visible": true },
+    { "key": "billing", "label": "Billing", "route": "/billing", "icon": "DollarSign", "visible": true },
+    { "key": "forms", "label": "Forms", "route": "/forms", "icon": "ClipboardList", "visible": true }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "tabKey": "encounter-form",
+  "source": "UNIVERSAL_DEFAULT",
+  "sections": [
+    {
+      "key": "chief-complaint",
+      "title": "Chief Complaint",
+      "columns": 1,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        {
+          "key": "chiefComplaint",
+          "label": "Chief Complaint",
+          "type": "textarea",
+          "required": true,
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Encounter", "path": "reasonCode[0].text", "type": "string" }
+        }
+      ]
+    },
+    {
+      "key": "vitals",
+      "title": "Vitals",
+      "columns": 4,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": false,
+      "fields": [
+        {
+          "key": "temperature",
+          "label": "Temperature (F)",
+          "type": "temperature",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org" },
+          "validation": { "min": 90, "max": 110 }
+        },
+        {
+          "key": "bloodPressure",
+          "label": "Blood Pressure",
+          "type": "bloodPressure",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "component", "type": "bp", "code": "85354-9", "system": "http://loinc.org" }
+        },
+        {
+          "key": "heartRate",
+          "label": "Heart Rate",
+          "type": "number",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org" },
+          "validation": { "min": 30, "max": 250 }
+        },
+        {
+          "key": "weight",
+          "label": "Weight (lbs)",
+          "type": "weight",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org" }
+        }
+      ]
+    },
+    {
+      "key": "hpi",
+      "title": "History of Present Illness",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        {
+          "key": "hpiNarrative",
+          "label": "HPI",
+          "type": "textarea",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Encounter", "path": "extension[?url=hpi].valueString", "type": "string" }
+        }
+      ]
+    },
+    {
+      "key": "ros",
+      "title": "Review of Systems",
+      "columns": 3,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "rosConstitutional", "label": "Constitutional", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosEyes", "label": "Eyes", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosENT", "label": "ENT", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosCardiovascular", "label": "Cardiovascular", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosRespiratory", "label": "Respiratory", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosGI", "label": "Gastrointestinal", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosMusculoskeletal", "label": "Musculoskeletal", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosNeurological", "label": "Neurological", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
+        { "key": "rosPsychiatric", "label": "Psychiatric", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] }
+      ]
+    },
+    {
+      "key": "exam",
+      "title": "Physical Exam",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        {
+          "key": "examFindings",
+          "label": "Examination Findings",
+          "type": "textarea",
+          "colSpan": 1
+        }
+      ]
+    },
+    {
+      "key": "assessment",
+      "title": "Assessment & Plan",
+      "columns": 1,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        {
+          "key": "assessment",
+          "label": "Assessment",
+          "type": "textarea",
+          "colSpan": 1
+        },
+        {
+          "key": "plan",
+          "label": "Plan",
+          "type": "textarea",
+          "colSpan": 1
+        },
+        {
+          "key": "diagnoses",
+          "label": "Diagnosis Codes",
+          "type": "icd10",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Condition", "path": "code.coding", "type": "CodeableConcept" }
+        },
+        {
+          "key": "cptCodes",
+          "label": "Procedure Codes",
+          "type": "cpt",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Procedure", "path": "code.coding", "type": "CodeableConcept" }
+        }
+      ]
+    }
+  ]
+}

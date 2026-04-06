@@ -1,0 +1,123 @@
+{
+  "items": [
+    {
+      "itemKey": "calendar",
+      "label": "Calendar",
+      "icon": "Calendar",
+      "screenSlug": "/calendar",
+      "position": 0,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "appointments",
+      "label": "Appointments",
+      "icon": "Clock",
+      "screenSlug": "/appointments",
+      "position": 1,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "patients",
+      "label": "Patients",
+      "icon": "Users",
+      "screenSlug": "/patients",
+      "position": 2,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "encounters",
+      "label": "Encounters",
+      "icon": "ClipboardList",
+      "screenSlug": "/encounters",
+      "position": 3,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "tasks",
+      "label": "Tasks",
+      "icon": "CheckSquare",
+      "screenSlug": "/tasks",
+      "position": 4,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "messaging",
+      "label": "Messaging",
+      "icon": "MessageSquare",
+      "screenSlug": "/messaging",
+      "position": 5,
+      "visible": true,
+      "children": []
+    },
+    {
+      "itemKey": "clinical",
+      "label": "Clinical",
+      "icon": "Stethoscope",
+      "position": 6,
+      "visible": true,
+      "children": [
+        { "itemKey": "prescriptions", "label": "Prescriptions", "icon": "Pill", "screenSlug": "/prescriptions", "position": 0, "visible": true, "requiredPermission": "rx.read", "fhirResources": ["MedicationRequest"] },
+        { "itemKey": "labs", "label": "Labs", "icon": "TestTube", "screenSlug": "/labs", "position": 1, "visible": true, "requiredPermission": "orders.read", "fhirResources": ["DiagnosticReport", "Observation"] },
+        { "itemKey": "immunizations", "label": "Immunizations", "icon": "Syringe", "screenSlug": "/immunizations", "position": 2, "visible": true, "fhirResources": ["Immunization"] },
+        { "itemKey": "referrals", "label": "Referrals", "icon": "ExternalLink", "screenSlug": "/referrals", "position": 3, "visible": true, "fhirResources": ["ServiceRequest"] },
+        { "itemKey": "authorizations", "label": "Authorizations", "icon": "ShieldCheck", "screenSlug": "/authorizations", "position": 4, "visible": true },
+        { "itemKey": "care-plans", "label": "Care Plans", "icon": "Heart", "screenSlug": "/care-plans", "position": 5, "visible": true, "fhirResources": ["CarePlan"] },
+        { "itemKey": "education", "label": "Patient Education", "icon": "BookOpen", "screenSlug": "/education", "position": 6, "visible": true }
+      ]
+    },
+    {
+      "itemKey": "operations",
+      "label": "Operations",
+      "icon": "Settings",
+      "position": 7,
+      "visible": true,
+      "children": [
+        { "itemKey": "recall", "label": "Recall", "icon": "PhoneCall", "screenSlug": "/recall", "position": 0, "visible": true },
+        { "itemKey": "codes", "label": "Codes", "icon": "Hash", "screenSlug": "/codes", "position": 1, "visible": true },
+        { "itemKey": "inventory-management", "label": "Inventory", "icon": "Package", "screenSlug": "/inventory", "position": 2, "visible": true },
+        { "itemKey": "payments", "label": "Payments", "icon": "DollarSign", "screenSlug": "/payments", "position": 3, "visible": true, "requiredPermission": "billing.read" },
+        { "itemKey": "claim-management", "label": "Claims", "icon": "FileCheck", "screenSlug": "/claims", "position": 4, "visible": true, "requiredPermission": "billing.read" }
+      ]
+    },
+    {
+      "itemKey": "system",
+      "label": "System",
+      "icon": "Monitor",
+      "position": 8,
+      "visible": true,
+      "children": [
+        { "itemKey": "clinical-alerts", "label": "Clinical Alerts", "icon": "Bell", "screenSlug": "/alerts", "position": 0, "visible": true },
+        { "itemKey": "consents", "label": "Consents", "icon": "FileSignature", "screenSlug": "/consents", "position": 1, "visible": true },
+        { "itemKey": "notifications", "label": "Notifications", "icon": "BellRing", "screenSlug": "/notifications", "position": 2, "visible": true },
+        { "itemKey": "fax", "label": "Fax", "icon": "Printer", "screenSlug": "/fax", "position": 3, "visible": true },
+        { "itemKey": "document-scanning", "label": "Document Scanning", "icon": "Scan", "screenSlug": "/doc-scanning", "position": 4, "visible": true },
+        { "itemKey": "kiosk", "label": "Check-in Kiosk", "icon": "Tablet", "screenSlug": "/kiosk", "position": 5, "visible": true },
+        { "itemKey": "audit-log", "label": "Audit Log", "icon": "ScrollText", "screenSlug": "/audit-log", "position": 6, "visible": true, "requiredPermission": "admin.view" }
+      ]
+    },
+    {
+      "itemKey": "portal-management",
+      "label": "Portal",
+      "icon": "Globe",
+      "position": 9,
+      "visible": true,
+      "children": [
+        { "itemKey": "document-reviews", "label": "Document Reviews", "icon": "FileSearch", "screenSlug": "/doc-reviews", "position": 0, "visible": true }
+      ]
+    },
+    {
+      "itemKey": "reports",
+      "label": "Reports",
+      "icon": "BarChart",
+      "screenSlug": "/reports",
+      "position": 10,
+      "visible": true,
+      "children": []
+    }
+  ]
+}

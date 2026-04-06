@@ -1,0 +1,98 @@
+{
+  "tabKey": "vitals",
+  "fhirResources": ["Observation"],
+  "sections": [
+    {
+      "key": "vital-signs",
+      "title": "Vital Signs",
+      "columns": 4,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        {
+          "key": "temperature",
+          "label": "Temperature (F)",
+          "type": "temperature",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org" },
+          "validation": { "min": 90, "max": 110 }
+        },
+        {
+          "key": "heartRate",
+          "label": "Heart Rate (bpm)",
+          "type": "number",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org" },
+          "validation": { "min": 30, "max": 250 }
+        },
+        {
+          "key": "respiratoryRate",
+          "label": "Respiratory Rate",
+          "type": "number",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "9279-1", "system": "http://loinc.org" },
+          "validation": { "min": 5, "max": 60 }
+        },
+        {
+          "key": "oxygenSaturation",
+          "label": "SpO2 (%)",
+          "type": "percentage",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "2708-6", "system": "http://loinc.org" },
+          "validation": { "min": 50, "max": 100 }
+        },
+        {
+          "key": "bloodPressure",
+          "label": "Blood Pressure",
+          "type": "bloodPressure",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "component", "type": "bp", "code": "85354-9", "system": "http://loinc.org" }
+        },
+        {
+          "key": "weight",
+          "label": "Weight (lbs)",
+          "type": "weight",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org" }
+        },
+        {
+          "key": "height",
+          "label": "Height (in)",
+          "type": "height",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8302-2", "system": "http://loinc.org" }
+        },
+        {
+          "key": "bmi",
+          "label": "BMI",
+          "type": "bmi",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "39156-5", "system": "http://loinc.org" }
+        }
+      ]
+    },
+    {
+      "key": "pain",
+      "title": "Pain Assessment",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        {
+          "key": "painLevel",
+          "label": "Pain Level (0-10)",
+          "type": "number",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "72514-3", "system": "http://loinc.org" },
+          "validation": { "min": 0, "max": 10 }
+        },
+        {
+          "key": "painLocation",
+          "label": "Pain Location",
+          "type": "text",
+          "colSpan": 1
+        }
+      ]
+    }
+  ]
+}

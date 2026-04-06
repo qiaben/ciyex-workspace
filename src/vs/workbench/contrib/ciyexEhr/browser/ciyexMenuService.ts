@@ -70,7 +70,7 @@ export interface ICiyexMenuService {
 	loadMenus(): Promise<void>;
 }
 
-// ─── Static MenuIds for EHR menus (registered at module load) ──────────
+// --- Static MenuIds for EHR menus (registered at module load) ----------
 // These MUST be registered statically so the native macOS menu bar
 // includes them when it's first built. Items are populated dynamically.
 
@@ -116,7 +116,96 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	order: 2.5,
 });
 
-// Settings stays in gear menu only (not top-level)
+// Settings as submenu inside Ciyex menu (and also available via gear menu)
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+	submenu: MenubarEhrSettingsMenu,
+	title: { ...localize2('settingsSubmenu', "Settings"), mnemonicTitle: localize2('mSettings', "&&Settings").value },
+	group: '2_settings',
+	order: 1,
+});
+
+// Static admin settings items in the Settings submenu
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openUserManagement', title: localize2('menuUserMgmt', "User Management").value },
+	when: ContextKeyExpr.has('ciyex.role.admin'),
+	group: '1_users',
+	order: 1,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openRolesConfig', title: localize2('menuRoles', "Roles & Permissions").value },
+	when: ContextKeyExpr.has('ciyex.role.admin'),
+	group: '1_users',
+	order: 2,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openMenuConfig', title: localize2('menuConfig', "Menu Configuration").value },
+	when: ContextKeyExpr.has('ciyex.role.admin'),
+	group: '2_layout',
+	order: 3,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openChartLayout', title: localize2('menuChartLayout', "Chart Layout").value },
+	group: '2_layout',
+	order: 4,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openEncounterConfig', title: localize2('menuEncounter', "Encounter Form").value },
+	group: '2_layout',
+	order: 5,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openCalendarColors', title: localize2('menuCalColors', "Calendar Colors").value },
+	group: '3_settings',
+	order: 6,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openPortalConfig', title: localize2('menuPortal', "Patient Portal").value },
+	group: '3_settings',
+	order: 7,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openSettings', title: localize2('menuSettings', "Settings").value },
+	group: '4_settings',
+	order: 8,
+});
+
+// Static gear menu items (all settings accessible from gear menu)
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openSettings', title: localize2('gearSettings', "Ciyex Settings").value },
+	group: '3_ciyex_settings',
+	order: 1,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openChartLayout', title: localize2('gearChartLayout', "Chart Layout").value },
+	group: '3_ciyex_settings',
+	order: 2,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openEncounterConfig', title: localize2('gearEncounter', "Encounter Form").value },
+	group: '3_ciyex_settings',
+	order: 3,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openMenuConfig', title: localize2('gearMenuConfig', "Menu Config").value },
+	group: '3_ciyex_settings',
+	order: 4,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openCalendarColors', title: localize2('gearCalColors', "Calendar Colors").value },
+	group: '3_ciyex_settings',
+	order: 5,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openPortalConfig', title: localize2('gearPortal', "Patient Portal").value },
+	group: '3_ciyex_settings',
+	order: 6,
+});
+MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+	command: { id: 'ciyex.openRolesConfig', title: localize2('gearRoles', "Roles & Permissions").value },
+	when: ContextKeyExpr.has('ciyex.role.admin'),
+	group: '3_ciyex_settings',
+	order: 7,
+});
 
 // Placeholder commands so menus aren't empty at startup (disposable - cleared when real items load)
 CommandsRegistry.registerCommand('ciyex.nav._placeholder', () => { });
@@ -124,7 +213,6 @@ CommandsRegistry.registerCommand('ciyex.nav._placeholder_clinical', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_operations', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_system', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_portal', () => { });
-CommandsRegistry.registerCommand('ciyex.nav._placeholder_settings', () => { });
 
 // Store placeholder menu items so they can be removed when real items load
 const _placeholderDisposables: IDisposable[] = [];
@@ -133,7 +221,6 @@ _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarClinicalMenu, { 
 _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarOperationsMenu, { command: { id: 'ciyex.nav._placeholder_operations', title: 'Loading...' }, order: 0 }));
 _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarSystemMenu, { command: { id: 'ciyex.nav._placeholder_system', title: 'Loading...' }, order: 0 }));
 _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarPortalMenu, { command: { id: 'ciyex.nav._placeholder_portal', title: 'Loading...' }, order: 0 }));
-_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, { command: { id: 'ciyex.nav._placeholder_settings', title: 'Loading...' }, order: 0 }));
 
 // Static items in Ciyex menu (always visible, not from API)
 MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
@@ -154,7 +241,7 @@ MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	order: 99,
 });
 
-// ─── Map API parent keys to static MenuIds ──────────────────────────
+// --- Map API parent keys to static MenuIds --------------------------
 const MENU_MAP: Record<string, MenuId> = {
 	'clinical': MenubarClinicalMenu,
 	'operations': MenubarOperationsMenu,
@@ -163,7 +250,7 @@ const MENU_MAP: Record<string, MenuId> = {
 	'settings': MenubarEhrSettingsMenu,
 };
 
-// ─── Service Implementation ─────────────────────────────────────────
+// --- Service Implementation -----------------------------------------
 
 export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 	declare readonly _serviceBrand: undefined;

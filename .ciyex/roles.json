@@ -1,0 +1,132 @@
+{
+  "roles": [
+    {
+      "id": "admin",
+      "name": "admin",
+      "label": "Administrator",
+      "description": "Full system access",
+      "isSystem": true,
+      "smartScopes": [
+        "Patient.read", "Patient.write",
+        "Encounter.read", "Encounter.write",
+        "Observation.read", "Observation.write",
+        "Condition.read", "Condition.write",
+        "Procedure.read", "Procedure.write",
+        "MedicationRequest.read", "MedicationRequest.write",
+        "AllergyIntolerance.read", "AllergyIntolerance.write",
+        "Immunization.read", "Immunization.write",
+        "DiagnosticReport.read", "DiagnosticReport.write",
+        "CarePlan.read", "CarePlan.write",
+        "DocumentReference.read", "DocumentReference.write",
+        "Appointment.read", "Appointment.write",
+        "Schedule.read", "Schedule.write",
+        "Practitioner.read", "Practitioner.write",
+        "Organization.read", "Organization.write",
+        "Location.read", "Location.write",
+        "Claim.read", "Claim.write",
+        "Coverage.read", "Coverage.write"
+      ],
+      "permissions": [
+        "patients.view", "patients.create", "patients.edit", "patients.delete",
+        "encounters.view", "encounters.create", "encounters.edit", "encounters.delete",
+        "clinical.view", "clinical.create", "clinical.edit", "clinical.delete",
+        "prescriptions.view", "prescriptions.create", "prescriptions.edit", "prescriptions.delete",
+        "labs.view", "labs.create", "labs.edit", "labs.delete",
+        "scheduling.view", "scheduling.create", "scheduling.edit", "scheduling.delete",
+        "billing.view", "billing.create", "billing.edit", "billing.delete",
+        "reports.view", "reports.create", "reports.edit", "reports.delete",
+        "admin.view", "admin.create", "admin.edit", "admin.delete",
+        "portal.view", "portal.create", "portal.edit", "portal.delete"
+      ]
+    },
+    {
+      "id": "physician",
+      "name": "physician",
+      "label": "Physician",
+      "description": "Clinical provider with full chart access",
+      "isSystem": false,
+      "smartScopes": [
+        "Patient.read", "Patient.write",
+        "Encounter.read", "Encounter.write",
+        "Observation.read", "Observation.write",
+        "Condition.read", "Condition.write",
+        "Procedure.read", "Procedure.write",
+        "MedicationRequest.read", "MedicationRequest.write",
+        "AllergyIntolerance.read", "AllergyIntolerance.write",
+        "Immunization.read", "Immunization.write",
+        "DiagnosticReport.read", "DiagnosticReport.write",
+        "CarePlan.read", "CarePlan.write",
+        "DocumentReference.read", "DocumentReference.write",
+        "Appointment.read", "Appointment.write"
+      ],
+      "permissions": [
+        "patients.view", "patients.create", "patients.edit",
+        "encounters.view", "encounters.create", "encounters.edit",
+        "clinical.view", "clinical.create", "clinical.edit",
+        "prescriptions.view", "prescriptions.create", "prescriptions.edit",
+        "labs.view", "labs.create",
+        "scheduling.view",
+        "reports.view"
+      ]
+    },
+    {
+      "id": "nurse",
+      "name": "nurse",
+      "label": "Nurse",
+      "description": "Clinical staff with vitals and documentation access",
+      "isSystem": false,
+      "smartScopes": [
+        "Patient.read",
+        "Encounter.read", "Encounter.write",
+        "Observation.read", "Observation.write",
+        "Condition.read",
+        "MedicationRequest.read",
+        "AllergyIntolerance.read",
+        "Immunization.read", "Immunization.write",
+        "DocumentReference.read", "DocumentReference.write",
+        "Appointment.read"
+      ],
+      "permissions": [
+        "patients.view",
+        "encounters.view", "encounters.create", "encounters.edit",
+        "clinical.view",
+        "scheduling.view"
+      ]
+    },
+    {
+      "id": "receptionist",
+      "name": "receptionist",
+      "label": "Receptionist",
+      "description": "Front desk staff with scheduling and demographics access",
+      "isSystem": false,
+      "smartScopes": [
+        "Patient.read", "Patient.write",
+        "Appointment.read", "Appointment.write",
+        "Schedule.read",
+        "Coverage.read", "Coverage.write"
+      ],
+      "permissions": [
+        "patients.view", "patients.create", "patients.edit",
+        "scheduling.view", "scheduling.create", "scheduling.edit", "scheduling.delete"
+      ]
+    },
+    {
+      "id": "billing",
+      "name": "billing",
+      "label": "Billing Specialist",
+      "description": "Billing and claims management",
+      "isSystem": false,
+      "smartScopes": [
+        "Patient.read",
+        "Encounter.read",
+        "Claim.read", "Claim.write",
+        "Coverage.read", "Coverage.write"
+      ],
+      "permissions": [
+        "patients.view",
+        "encounters.view",
+        "billing.view", "billing.create", "billing.edit"
+      ]
+    }
+  ]
+}

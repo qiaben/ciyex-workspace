@@ -1,0 +1,145 @@
+{
+  "source": "UNIVERSAL_DEFAULT",
+  "categories": [
+    {
+      "key": "patient-info",
+      "label": "Patient Information",
+      "position": 0,
+      "tabs": [
+        {
+          "key": "demographics",
+          "label": "Demographics",
+          "icon": "User",
+          "position": 0,
+          "visible": true,
+          "fhirResources": ["Patient"]
+        },
+        {
+          "key": "insurance",
+          "label": "Insurance",
+          "icon": "Shield",
+          "position": 1,
+          "visible": true,
+          "fhirResources": ["Coverage", "Organization"]
+        },
+        {
+          "key": "contacts",
+          "label": "Contacts & Emergency",
+          "icon": "Phone",
+          "position": 2,
+          "visible": true,
+          "fhirResources": ["Patient", "RelatedPerson"]
+        }
+      ]
+    },
+    {
+      "key": "clinical",
+      "label": "Clinical",
+      "position": 1,
+      "tabs": [
+        {
+          "key": "vitals",
+          "label": "Vitals",
+          "icon": "Activity",
+          "position": 0,
+          "visible": true,
+          "fhirResources": ["Observation"]
+        },
+        {
+          "key": "conditions",
+          "label": "Problems / Conditions",
+          "icon": "AlertCircle",
+          "position": 1,
+          "visible": true,
+          "fhirResources": ["Condition"]
+        },
+        {
+          "key": "medications",
+          "label": "Medications",
+          "icon": "Pill",
+          "position": 2,
+          "visible": true,
+          "fhirResources": ["MedicationRequest"]
+        },
+        {
+          "key": "allergies",
+          "label": "Allergies",
+          "icon": "AlertTriangle",
+          "position": 3,
+          "visible": true,
+          "fhirResources": ["AllergyIntolerance"]
+        },
+        {
+          "key": "immunizations",
+          "label": "Immunizations",
+          "icon": "Syringe",
+          "position": 4,
+          "visible": true,
+          "fhirResources": ["Immunization"]
+        },
+        {
+          "key": "labs",
+          "label": "Lab Results",
+          "icon": "TestTube",
+          "position": 5,
+          "visible": true,
+          "fhirResources": ["DiagnosticReport", "Observation"]
+        },
+        {
+          "key": "procedures",
+          "label": "Procedures",
+          "icon": "Stethoscope",
+          "position": 6,
+          "visible": true,
+          "fhirResources": ["Procedure"]
+        }
+      ]
+    },
+    {
+      "key": "documents",
+      "label": "Documents & Plans",
+      "position": 2,
+      "tabs": [
+        {
+          "key": "documents",
+          "label": "Documents",
+          "icon": "FileText",
+          "position": 0,
+          "visible": true,
+          "fhirResources": ["DocumentReference"]
+        },
+        {
+          "key": "care-plans",
+          "label": "Care Plans",
+          "icon": "ClipboardList",
+          "position": 1,
+          "visible": true,
+          "fhirResources": ["CarePlan"]
+        }
+      ]
+    },
+    {
+      "key": "billing",
+      "label": "Billing & Claims",
+      "position": 3,
+      "tabs": [
+        {
+          "key": "claims",
+          "label": "Claims",
+          "icon": "DollarSign",
+          "position": 0,
+          "visible": true,
+          "fhirResources": ["Claim"]
+        },
+        {
+          "key": "payments",
+          "label": "Payments",
+          "icon": "CreditCard",
+          "position": 1,
+          "visible": true,
+          "fhirResources": ["PaymentReconciliation"]
+        }
+      ]
+    }
+  ]
+}
