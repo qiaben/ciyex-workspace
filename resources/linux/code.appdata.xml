@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+	<id>@@NAME@@.desktop</id>
+	<metadata_license>@@LICENSE@@</metadata_license>
+	<project_license>@@LICENSE@@</project_license>
+	<name>@@NAME_LONG@@</name>
+	<url type="homepage">https://github.com/qiaben/ciyex-workspace</url>
+	<summary>Ciyex Workspace. Healthcare development. Simplified.</summary>
+	<description>
+		<p>Ciyex Workspace is a purpose-built development environment for healthcare applications, powered by the Ciyex platform by Ciyex Inc.</p>
+	</description>
+</component>
