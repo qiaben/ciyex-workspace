@@ -12,7 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { CiyexConfigEditorInput } from './ciyexEditorInput.js';
+import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -114,7 +114,7 @@ export class LayoutEditor extends EditorPane {
 		this.settingsBody.style.cssText = 'max-width:1000px;width:100%;margin:0 auto;padding:0 24px 24px;';
 	}
 
-	override async setInput(input: CiyexConfigEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		await this._loadConfig();
 		if (!token.isCancellationRequested) {
@@ -123,7 +123,7 @@ export class LayoutEditor extends EditorPane {
 	}
 
 	private async _loadConfig(): Promise<void> {
-		const input = this.input as CiyexConfigEditorInput;
+		const input = this.input as BaseCiyexInput;
 		if (!input) { return; }
 		try {
 			const content = await this.fileService.readFile(input.fileUri);
@@ -387,7 +387,7 @@ export class LayoutEditor extends EditorPane {
 	// ---- Save / JSON toggle ----
 
 	private async _save(): Promise<void> {
-		const input = this.input as CiyexConfigEditorInput;
+		const input = this.input as BaseCiyexInput;
 		if (!input) { return; }
 		try {
 			await this.fileService.writeFile(input.fileUri, VSBuffer.fromString(JSON.stringify(this.config, null, 2)));
@@ -399,7 +399,7 @@ export class LayoutEditor extends EditorPane {
 	}
 
 	private _openJson(): void {
-		const input = this.input as CiyexConfigEditorInput;
+		const input = this.input as BaseCiyexInput;
 		if (!input) { return; }
 		this.editorService.openEditor({ resource: input.fileUri, options: { pinned: true } });
 	}

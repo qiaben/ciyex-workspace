@@ -8,7 +8,7 @@ import { EditorExtensions } from '../../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { localize } from '../../../../../nls.js';
-import { CiyexConfigEditorInput } from './ciyexEditorInput.js';
+import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
 import { FieldConfigEditor } from './fieldConfigEditor.js';
@@ -17,11 +17,10 @@ import { ColorsEditor } from './colorsEditor.js';
 import { RolesEditor } from './rolesEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
-const sd = new SyncDescriptor(CiyexConfigEditorInput);
 
-reg.registerEditorPane(EditorPaneDescriptor.create(LayoutEditor, LayoutEditor.ID, localize('layoutEditor', "Chart Layout")), [sd]);
-reg.registerEditorPane(EditorPaneDescriptor.create(EncounterEditor, EncounterEditor.ID, localize('encounterEditor', "Encounter Form")), [sd]);
-reg.registerEditorPane(EditorPaneDescriptor.create(FieldConfigEditor, FieldConfigEditor.ID, localize('fieldConfigEditor', "Field Configuration")), [sd]);
-reg.registerEditorPane(EditorPaneDescriptor.create(MenuEditor, MenuEditor.ID, localize('menuEditor', "Menu Configuration")), [sd]);
-reg.registerEditorPane(EditorPaneDescriptor.create(ColorsEditor, ColorsEditor.ID, localize('colorsEditor', "Calendar Colors")), [sd]);
-reg.registerEditorPane(EditorPaneDescriptor.create(RolesEditor, RolesEditor.ID, localize('rolesEditor', "Roles & Permissions")), [sd]);
+reg.registerEditorPane(EditorPaneDescriptor.create(LayoutEditor, LayoutEditor.ID, localize('layout', "Chart Layout")), [new SyncDescriptor(LayoutEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(EncounterEditor, EncounterEditor.ID, localize('encounter', "Encounter Form")), [new SyncDescriptor(EncounterEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(FieldConfigEditor, FieldConfigEditor.ID, localize('fieldConfig', "Field Configuration")), [new SyncDescriptor(FieldConfigEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(MenuEditor, MenuEditor.ID, localize('menu', "Menu Configuration")), [new SyncDescriptor(MenuEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(ColorsEditor, ColorsEditor.ID, localize('colors', "Calendar Colors")), [new SyncDescriptor(ColorsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(RolesEditor, RolesEditor.ID, localize('roles', "Roles & Permissions")), [new SyncDescriptor(RolesEditorInput)]);
