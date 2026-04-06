@@ -101,7 +101,13 @@ export class CiyexAuthGate extends Disposable {
 		this._register(this._authService.onDidChangeAuthState(state => this._onAuthStateChanged(state)));
 		this._register(this._authService.onSessionWarning(countdown => this._onSessionWarning(countdown)));
 
-		if (this._authService.state !== CiyexAuthState.Authenticated) {
+		// Show overlay based on initial auth state
+		if (this._authService.state === CiyexAuthState.Locked) {
+			// Password-only: email is saved from previous session
+			this._step = 'locked';
+			this._email = this._authService.userEmail || '';
+			this._show();
+		} else if (this._authService.state !== CiyexAuthState.Authenticated) {
 			this._show();
 		}
 	}
@@ -350,7 +356,7 @@ export class CiyexAuthGate extends Disposable {
 		// Server Settings link (opens popup)
 		const settingsLink = document.createElement('button');
 		settingsLink.id = 'ciyex-settings-toggle';
-		settingsLink.textContent = '\u2699 Server Settings';
+		settingsLink.textContent = 'Server Settings';
 		Object.assign(settingsLink.style, {
 			background: 'none', border: 'none', color: c.textSecondary,
 			fontSize: '12px', padding: '8px 4px', cursor: 'pointer',
