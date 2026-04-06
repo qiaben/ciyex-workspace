@@ -4,119 +4,99 @@
 - [x] Two-step login gate (email discover -> password)
 - [x] Session management & lock screen (30 min idle, JWT refresh)
 - [x] Server settings popup (API URL, Keycloak URL/Realm/ClientID)
-- [x] Ciyex branding (no-text logo, dark theme, VS Code blue buttons)
+- [x] Ciyex branding (no-text 3D knot logo, dark theme, VS Code blue buttons)
 - [x] CORS fix (webSecurity: false for Electron)
 - [x] product.json defaultChatAgent fix
 
 ## Phase 2: Navigation Framework (DONE)
 - [x] CiyexApiService - authenticated fetch wrapper with tenant headers
 - [x] CiyexPermissionService - loads from /api/user/permissions, sets 40+ ContextKeys
-  - [x] Permission categories: ciyex.perm.scheduling, ciyex.perm.demographics, etc.
-  - [x] FHIR scopes: ciyex.fhir.read.Patient, ciyex.fhir.write.Appointment, etc.
-  - [x] Role keys: ciyex.role.admin, ciyex.role.provider, etc.
 - [x] CiyexMenuService - fetches menu tree from /api/menus/ehr-sidebar
-  - [x] Registers Clinical, Scheduling, Billing top-level menus
-  - [x] Dynamically populates from API response
-  - [x] Permission-gated menu items via ContextKeys
-- [x] Hide unwanted menus (Selection, Terminal, Run/Debug) via ciyex.showDevMenus
-- [x] Status bar items: user name, practice/tenant, role
+- [x] Registers Clinical, Scheduling, Billing top-level menus dynamically
+- [x] Hide Selection, Terminal, Run/Debug menus (ciyex.showDevMenus gate)
+- [x] Status bar: user name, practice/tenant, role
 - [x] Welcome page: "Get Started with Ciyex Workspace"
 - [x] Extensions sidebar renamed to "Ciyex Hub"
 - [x] No-text logo in titlebar, welcome page, update tooltip, banner
+- [x] 7 EHR ViewContainers in Activity Bar with RBAC gates
 
-### Phase 2 Known Issues
-- [ ] Clinical/Scheduling/Billing menus not appearing on macOS native menu bar
-      (empty submenus are hidden; need commands to be functional first)
-- [ ] EHR ViewContainers not yet registered in Activity Bar
-      (Calendar, Patients, Clinical, etc. need ViewPaneContainer implementations)
+## Phase 3: Core Screens (DONE)
+- [x] Patient List ViewPane with live API data from /api/patients
+- [x] Colored avatar circles with initials (name-hash unique colors)
+- [x] DOB, age, gender displayed per patient row
+- [x] Calendar WebviewPanel - opens as editor tab with appointments table
+- [x] Patient Chart WebviewPanel - demographics card from /api/patients/{id}
+- [x] New Patient / New Appointment placeholder webviews
+- [x] Commands in Command Palette: Open Calendar, New Patient, New Appointment
+- [x] Patient click triggers ciyex.openPatientChart command
+- [x] Fixed service accessor timing (get services before await)
 
-## Phase 3: Core Screens (TODO)
+## Phase 4: Clinical Features (IN PROGRESS)
+- [ ] Encounter list in Clinical sidebar (from /api/encounters or /api/fhir/Encounter)
+- [ ] Encounter editor WebviewPanel (dynamic form from /api/tab-field-config/encounter-form)
+- [ ] Lab Orders list in Clinical sidebar
+- [ ] Lab Order detail WebviewPanel
+- [ ] Prescriptions list
+- [ ] Immunizations list
+- [ ] Care Plans list
+- [ ] Referrals list
+- [ ] Document scanning/upload
 
-### 3.1 EHR ViewContainers in Activity Bar
-- [ ] Calendar ViewContainer (scheduling icon)
-- [ ] Patients ViewContainer (users icon)
-- [ ] Clinical ViewContainer (stethoscope) - Labs, Rx, Immunizations
-- [ ] Messaging ViewContainer (message-square) - Messages, Fax
-- [ ] Billing ViewContainer (dollar-sign) - Payments, Claims
-- [ ] Reports ViewContainer (bar-chart)
-- [ ] Settings ViewContainer (gear) - admin only
+## Phase 5: Communication & Billing
+- [ ] Messaging inbox TreeView/ViewPane
+- [ ] Message compose WebviewPanel
+- [ ] Fax list
+- [ ] Notifications panel
+- [ ] Payments list in Billing sidebar
+- [ ] Claims list
+- [ ] Payment detail WebviewPanel
 
-### 3.2 Patient List
-- [ ] TreeView in Patients ViewContainer
-- [ ] Patient search (Cmd+K shortcut)
-- [ ] Click patient -> opens Patient Chart editor
+## Phase 6: Admin & Settings
+- [ ] User Management TreeView + detail WebviewPanel
+- [ ] Roles & Permissions editor
+- [ ] Menu Configuration editor (drag-drop)
+- [ ] Layout Settings editor (tab/field config)
+- [ ] Encounter Settings editor
+- [ ] Calendar Colors settings
+- [ ] Portal Settings
 
-### 3.3 Calendar
-- [ ] WebviewPanel with embedded calendar
-- [ ] Opens as editor tab
-
-### 3.4 Patient Chart
-- [ ] WebviewPanel with tabbed layout
-- [ ] Tabs from /api/tab-field-config/layout
-- [ ] Dynamic form rendering (DynamicFormRenderer equivalent)
-
-### 3.5 Encounter Editor
-- [ ] WebviewPanel with dynamic form
-- [ ] Sections from /api/tab-field-config/encounter-form
-
-### 3.6 Appointments
-- [ ] TreeView with today's appointments
-- [ ] Create appointment command
-
-## Phase 4: Clinical Features (TODO)
-- [ ] Labs (TreeView + detail panel)
-- [ ] Prescriptions
-- [ ] Immunizations, Care Plans, Referrals
-- [ ] Messaging (Panel view)
-- [ ] Document Scanning
-
-## Phase 5: Admin & Settings (TODO)
-- [ ] Settings (native VS Code settings pattern)
-- [ ] User Management
-- [ ] Role/Permission Management
-- [ ] Menu Configuration
-- [ ] Layout Settings (tab/field config editor)
-
-## Phase 6: Native Optimization (TODO)
-- [ ] Replace WebviewPanels with native editors
+## Phase 7: Advanced Features
+- [ ] Patient search (Cmd+K global shortcut)
 - [ ] Keyboard shortcuts for common EHR actions
-- [ ] Command Palette integration
+- [ ] Command Palette integration for all EHR commands
+- [ ] Notification badges on activity bar icons
+- [ ] Multi-tab patient charts (open multiple patients)
 - [ ] Offline mode with local data sync
+- [ ] Replace WebviewPanels with native editors where possible
+- [ ] SMART on FHIR app launcher integration
+- [ ] CDS Hooks integration
+
+## Phase 8: Hub/Marketplace
+- [ ] Gallery service bridge (Ciyex marketplace API -> VS Code gallery format)
+- [ ] App installation/uninstallation via /api/app-installations
+- [ ] App reviews and ratings display
+- [ ] Usage tracking and analytics
+- [ ] Featured apps section
 
 ## Files Created
 
 ```
 src/vs/workbench/contrib/
 ├── ciyexAuth/browser/
-│   ├── ciyexAuth.contribution.ts        # Auth gate registration
-│   ├── ciyexAuthGate.ts                 # Login overlay UI (DOM-based, CSP-safe)
-│   ├── ciyexAuthGateContribution.ts     # Workbench contribution
-│   └── ciyexAuthService.ts             # Auth state, token mgmt, session expiry
+│   ├── ciyexAuth.contribution.ts
+│   ├── ciyexAuthGate.ts              # Login overlay (DOM-based, CSP-safe)
+│   ├── ciyexAuthGateContribution.ts
+│   └── ciyexAuthService.ts           # Auth state, tokens, session
 ├── ciyexEhr/browser/
-│   ├── ciyexEhr.contribution.ts         # EHR service registration
-│   ├── ciyexEhrContribution.ts          # Loads permissions/menus, status bar
-│   ├── ciyexApiService.ts               # Auth-wrapped fetch with tenant headers
-│   ├── ciyexPermissionService.ts        # RBAC ContextKeys from /api/user/permissions
-│   └── ciyexMenuService.ts             # API-driven menu registration
+│   ├── ciyexEhr.contribution.ts      # Service + view registration
+│   ├── ciyexEhrContribution.ts       # Permissions, menus, status bar
+│   ├── ciyexApiService.ts            # Auth-wrapped fetch
+│   ├── ciyexPermissionService.ts     # RBAC ContextKeys
+│   ├── ciyexMenuService.ts           # API-driven menu registration
+│   ├── ciyexViewContainers.ts        # 7 EHR ViewContainers + views
+│   ├── ciyexCommands.ts              # Calendar, Patient Chart, New Patient/Appointment
+│   ├── patientListPane.ts            # Patient list ViewPane with API data
+│   └── patientListDataProvider.ts    # TreeView data provider (unused, replaced by ViewPane)
 └── ciyexHub/browser/
-    └── ciyexHub.contribution.ts         # Marketplace stub (WIP)
-```
-
-## Modified Files
-
-```
-product.json                            # Ciyex branding, gallery config
-package.json                            # Ciyex Workspace name
-workbench.html                          # Trusted types whitelist
-workbench.desktop.main.ts               # Import EHR contributions
-menubarControl.ts                       # Hide Selection/Terminal menus
-debug.contribution.ts                   # Hide Run menu
-extensions.contribution.ts              # Rename to "Ciyex Hub"
-gettingStartedContent.ts                # Welcome page title
-windows.ts                             # webSecurity: false
-titlebarpart.css                        # Ciyex logo
-gettingStarted.css                      # Ciyex logo
-updateTooltip.css                       # Ciyex logo
-bannerpart.css                          # Ciyex logo
-code-icon.svg                           # Ciyex brand icon
+    └── ciyexHub.contribution.ts      # Marketplace stub (WIP)
 ```

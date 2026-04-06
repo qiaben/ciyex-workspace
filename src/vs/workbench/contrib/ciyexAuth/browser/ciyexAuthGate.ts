@@ -292,7 +292,7 @@ export class CiyexAuthGate extends Disposable {
 		btn.textContent = label;
 		Object.assign(btn.style, {
 			width: '100%', padding: '10px', borderRadius: '8px',
-			fontSize: '14px', fontWeight: '600',
+			fontSize: '14px', fontWeight: '700',
 			display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
 			border: primary ? 'none' : `1px solid ${c.border}`,
 			background: primary ? c.brand : 'none',
