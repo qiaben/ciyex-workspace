@@ -184,16 +184,16 @@ export class CiyexAuthGate extends Disposable {
 	private _colors() {
 		const dark = this._isDark();
 		return {
-			bg: dark ? '#1e1e2e' : '#f0f2f5',
-			cardBg: dark ? '#2d2d3f' : '#ffffff',
-			textPrimary: dark ? '#e0e0e0' : '#1a1a2e',
-			textSecondary: dark ? '#a0a0b0' : '#6b7280',
-			border: dark ? '#3d3d4f' : '#e5e7eb',
-			inputBg: dark ? '#1e1e2e' : '#f9fafb',
+			bg: dark ? '#1e1e1e' : '#f0f2f5',
+			cardBg: dark ? '#252526' : '#ffffff',
+			textPrimary: dark ? '#cccccc' : '#1a1a2e',
+			textSecondary: dark ? '#858585' : '#6b7280',
+			border: dark ? '#3c3c3c' : '#e5e7eb',
+			inputBg: dark ? '#3c3c3c' : '#f9fafb',
 			brand: '#465FFF',
-			errorBg: dark ? 'rgba(239,68,68,0.1)' : '#fef2f2',
-			errorText: dark ? '#fca5a5' : '#dc2626',
-			errorBorder: dark ? '#7f1d1d' : '#fecaca',
+			errorBg: dark ? 'rgba(239,68,68,0.15)' : '#fef2f2',
+			errorText: dark ? '#f48771' : '#dc2626',
+			errorBorder: dark ? '#5a1d1d' : '#fecaca',
 			warning: '#f59e0b',
 		};
 	}

@@ -148,6 +148,7 @@ export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowSt
 			...webPreferences,
 			enableWebSQL: false,
 			spellcheck: false,
+			webSecurity: false, // Allow cross-origin requests for Ciyex auth API calls
 			zoomFactor: zoomLevelToZoomFactor(windowState.zoomLevel ?? windowSettings?.zoomLevel),
 			autoplayPolicy: 'user-gesture-required',
 			// Enable experimental css highlight api https://chromestatus.com/feature/5436441440026624
