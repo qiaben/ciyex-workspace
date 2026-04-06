@@ -6,40 +6,9 @@
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { localize2 } from '../../../../nls.js';
-// import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js'; // TODO: re-enable with preconditions
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
-
-/**
- * Helper: open a webview editor tab with HTML content.
- */
-function openCiyexWebview(
-	accessor: ServicesAccessor,
-	viewType: string,
-	title: string,
-	html: string,
-): void {
-	const webviewService = accessor.get(IWebviewWorkbenchService);
-	const webview = webviewService.openWebview(
-		{
-			providedViewType: viewType,
-			title,
-			options: {},
-			contentOptions: {
-				allowScripts: true,
-				localResourceRoots: [],
-			},
-			extension: undefined,
-			origin: `ciyex.${viewType}`,
-		},
-		viewType,
-		title,
-		undefined,
-		{ group: ACTIVE_GROUP },
-	);
-	webview.webview.setHtml(html);
-}
 
 /**
  * Build dark-themed HTML wrapper for webview content.
@@ -73,7 +42,6 @@ function wrapHtml(body: string): string {
 		th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--vscode-editorWidget-border, #3c3c3c); }
 		th { color: var(--vscode-descriptionForeground, #858585); font-weight: 500; font-size: 11px; text-transform: uppercase; }
 		.status-active { color: #4ec9b0; }
-		.status-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; }
 	</style>
 </head>
 <body>${body}</body>
@@ -82,6 +50,9 @@ function wrapHtml(body: string): string {
 
 /**
  * Command: Open Patient Chart
+ *
+ * IMPORTANT: accessor.get() must be called BEFORE any await.
+ * VS Code invalidates the accessor after the synchronous run() returns.
  */
 registerAction2(class extends Action2 {
 	constructor() {
@@ -97,10 +68,12 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
+		// Get ALL services BEFORE any await
 		const apiService = accessor.get(ICiyexApiService);
+		const webviewService = accessor.get(IWebviewWorkbenchService);
 		const label = patientName || `Patient ${patientId}`;
 
-		let body = '<p>Loading patient data...</p>';
+		let body: string;
 		try {
 			const response = await apiService.fetch(`/api/patients/${patientId}`);
 			if (response.ok) {
@@ -129,8 +102,7 @@ registerAction2(class extends Action2 {
 							<span class="label">State</span><span>${p.state || 'N/A'}</span>
 							<span class="label">ZIP</span><span>${p.postalCode || 'N/A'}</span>
 						</div>
-					</div>
-				`;
+					</div>`;
 			} else {
 				body = `<p style="color:#f48771;">Failed to load patient: ${response.status}</p>`;
 			}
@@ -138,7 +110,14 @@ registerAction2(class extends Action2 {
 			body = '<p style="color:#f48771;">Error loading patient data</p>';
 		}
 
-		openCiyexWebview(accessor, 'ciyex.patientChart', label, wrapHtml(body));
+		const input = webviewService.openWebview(
+			{ title: label, options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.patientChart',
+			label,
+			undefined,
+			{ group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
 	}
 });
 
@@ -151,14 +130,15 @@ registerAction2(class extends Action2 {
 			id: 'ciyex.openCalendar',
 			title: localize2('openCalendar', "Open Calendar"),
 			f1: true,
-			// precondition: ContextKeyExpr.has('ciyex.perm.scheduling'), // TODO: re-enable after permission timing is fixed
 		});
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
+		// Get ALL services BEFORE any await
 		const apiService = accessor.get(ICiyexApiService);
+		const webviewService = accessor.get(IWebviewWorkbenchService);
 
-		let body = '<h1>Calendar</h1><p>Loading appointments...</p>';
+		let body: string;
 		try {
 			const today = new Date().toISOString().split('T')[0];
 			const response = await apiService.fetch(`/api/appointments?date=${today}&page=0&size=50`);
@@ -166,40 +146,36 @@ registerAction2(class extends Action2 {
 				const data = await response.json();
 				const appointments = data?.data?.content || data?.content || [];
 				if (appointments.length === 0) {
-					body = `<h1>Calendar</h1><p>No appointments for today (${today})</p>`;
+					body = `<h1>Calendar</h1><div class="card"><p>No appointments for today (${today})</p></div>`;
 				} else {
 					let rows = '';
 					for (const apt of appointments) {
 						const time = apt.startTime ? new Date(apt.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 						const name = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
-						const status = apt.status || '';
-						const type = apt.appointmentType || apt.type || '';
-						rows += `<tr>
-							<td>${time}</td>
-							<td>${name}</td>
-							<td>${type}</td>
-							<td><span class="status-badge">${status}</span></td>
-						</tr>`;
+						rows += `<tr><td>${time}</td><td>${name}</td><td>${apt.appointmentType || apt.type || ''}</td><td>${apt.status || ''}</td></tr>`;
 					}
-					body = `
-						<h1>Today's Appointments</h1>
-						<p style="color: var(--vscode-descriptionForeground);">${today} &mdash; ${appointments.length} appointments</p>
-						<div class="card">
-							<table>
-								<thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Status</th></tr></thead>
-								<tbody>${rows}</tbody>
-							</table>
-						</div>
-					`;
+					body = `<h1>Today's Appointments</h1>
+						<p style="color:var(--vscode-descriptionForeground);">${today} &mdash; ${appointments.length} appointments</p>
+						<div class="card"><table>
+							<thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Status</th></tr></thead>
+							<tbody>${rows}</tbody>
+						</table></div>`;
 				}
 			} else {
-				body = `<h1>Calendar</h1><p style="color:#f48771;">Failed to load appointments: ${response.status}</p>`;
+				body = `<h1>Calendar</h1><p style="color:#f48771;">Failed to load: ${response.status}</p>`;
 			}
 		} catch {
 			body = '<h1>Calendar</h1><p style="color:#f48771;">Error loading appointments</p>';
 		}
 
-		openCiyexWebview(accessor, 'ciyex.calendar', 'Calendar', wrapHtml(body));
+		const input = webviewService.openWebview(
+			{ title: 'Calendar', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.calendar',
+			'Calendar',
+			undefined,
+			{ group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
 	}
 });
 
@@ -212,19 +188,17 @@ registerAction2(class extends Action2 {
 			id: 'ciyex.newPatient',
 			title: localize2('newPatient', "New Patient"),
 			f1: true,
-			// precondition: ContextKeyExpr.has('ciyex.fhir.write.Patient'), // TODO: re-enable
 		});
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const body = `
-			<h1>New Patient</h1>
-			<div class="card">
-				<p>Patient creation form will be implemented in a future update.</p>
-				<p>For now, use the web EHR at <a href="https://app-dev.ciyex.org/patients/new">app-dev.ciyex.org</a></p>
-			</div>
-		`;
-		openCiyexWebview(accessor, 'ciyex.newPatient', 'New Patient', wrapHtml(body));
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+		const body = `<h1>New Patient</h1><div class="card"><p>Patient creation form coming soon.</p></div>`;
+		const input = webviewService.openWebview(
+			{ title: 'New Patient', options: {}, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.newPatient', 'New Patient', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
 	}
 });
 
@@ -237,18 +211,16 @@ registerAction2(class extends Action2 {
 			id: 'ciyex.newAppointment',
 			title: localize2('newAppointment', "New Appointment"),
 			f1: true,
-			// precondition: ContextKeyExpr.has('ciyex.fhir.write.Appointment'), // TODO: re-enable
 		});
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const body = `
-			<h1>New Appointment</h1>
-			<div class="card">
-				<p>Appointment creation form will be implemented in a future update.</p>
-				<p>For now, use the web EHR at <a href="https://app-dev.ciyex.org/appointments">app-dev.ciyex.org</a></p>
-			</div>
-		`;
-		openCiyexWebview(accessor, 'ciyex.newAppointment', 'New Appointment', wrapHtml(body));
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+		const body = `<h1>New Appointment</h1><div class="card"><p>Appointment creation form coming soon.</p></div>`;
+		const input = webviewService.openWebview(
+			{ title: 'New Appointment', options: {}, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.newAppointment', 'New Appointment', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
 	}
 });
