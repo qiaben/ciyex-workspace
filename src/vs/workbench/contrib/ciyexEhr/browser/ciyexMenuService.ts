@@ -12,6 +12,41 @@ import { CommandsRegistry } from '../../../../platform/commands/common/commands.
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize2 } from '../../../../nls.js';
+import { IViewsService } from '../../../services/views/common/viewsService.js';
+
+// Map API item keys to sidebar view IDs
+const ITEM_KEY_TO_VIEW: Record<string, string> = {
+	'calendar': 'ciyex.calendar.view',
+	'appointments': 'ciyex.appointments.view',
+	'patients': 'ciyex.patients.list',
+	'encounters': 'ciyex.encounters.view',
+	'tasks': 'ciyex.tasks.view',
+	'messaging': 'ciyex.messaging.view',
+	'reports': 'ciyex.reports.view',
+	'hub': 'ciyex.hub.view',
+	'developer-portal': 'ciyex.developer.view',
+	// Children map to their parent container's views
+	'prescriptions': 'ciyex.clinical.prescriptions',
+	'labs': 'ciyex.clinical.labs',
+	'immunizations': 'ciyex.clinical.immunizations',
+	'referrals': 'ciyex.clinical.referrals',
+	'authorizations': 'ciyex.clinical.authorizations',
+	'care-plans': 'ciyex.clinical.careplans',
+	'education': 'ciyex.clinical.education',
+	'recall': 'ciyex.operations.recall',
+	'codes': 'ciyex.operations.codes',
+	'inventory-management': 'ciyex.operations.inventory',
+	'payments': 'ciyex.operations.payments',
+	'claim-management': 'ciyex.operations.claims',
+	'clinical-alerts': 'ciyex.system.alerts',
+	'consents': 'ciyex.system.consents',
+	'notifications': 'ciyex.system.notifications',
+	'fax': 'ciyex.system.fax',
+	'document-scanning': 'ciyex.system.docscanning',
+	'kiosk': 'ciyex.system.kiosk',
+	'audit-log': 'ciyex.system.auditlog',
+	'document-reviews': 'ciyex.portal.docreviews',
+};
 
 export const ICiyexMenuService = createDecorator<ICiyexMenuService>('ciyexMenuService');
 
@@ -192,8 +227,13 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 					const child = childEntry.item;
 					const cmdId = `ciyex.gear.${child.itemKey}`;
 					this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: child.label, original: child.label } }));
-					this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, () => {
-						this.logService.info(`[CiyexMenu] Settings: ${child.label} -> ${child.screenSlug}`);
+					this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, (accessor) => {
+						const viewsService = accessor.get(IViewsService);
+						const viewId = ITEM_KEY_TO_VIEW[child.itemKey];
+						if (viewId) {
+							viewsService.openView(viewId, true);
+						}
+						this.logService.info(`[CiyexMenu] Settings: ${child.label} -> ${viewId || child.screenSlug}`);
 					}));
 					this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
 						command: { id: cmdId, title: child.label },
@@ -213,8 +253,13 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 			if (children.length === 0 && item.screenSlug) {
 				const commandId = `ciyex.nav.${item.itemKey}`;
 				this._menuDisposables.add(MenuRegistry.addCommand({ id: commandId, title: { value: item.label, original: item.label } }));
-				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, () => {
-					this.logService.info(`[CiyexMenu] Navigate: ${item.label} -> ${item.screenSlug}`);
+				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
+					const viewsService = accessor.get(IViewsService);
+					const viewId = ITEM_KEY_TO_VIEW[item.itemKey];
+					if (viewId) {
+						viewsService.openView(viewId, true);
+					}
+					this.logService.info(`[CiyexMenu] Navigate: ${item.label} -> ${viewId || item.screenSlug}`);
 				}));
 				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 					command: { id: commandId, title: item.label },
@@ -253,8 +298,13 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 					title: { value: child.label, original: child.label },
 				}));
 
-				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, () => {
-					this.logService.info(`[CiyexMenu] Navigate: ${child.label} -> ${slug}`);
+				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
+					const viewsService = accessor.get(IViewsService);
+					const viewId = ITEM_KEY_TO_VIEW[child.itemKey];
+					if (viewId) {
+						viewsService.openView(viewId, true);
+					}
+					this.logService.info(`[CiyexMenu] Navigate: ${child.label} -> ${viewId || slug}`);
 				}));
 
 				// Register menu item
