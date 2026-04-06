@@ -39,17 +39,37 @@
       "columns": 2,
       "visible": true,
       "collapsible": true,
-      "sectionComponent": "system-access-editor",
-      "fields": []
+      "fields": [
+        { "key": "hasAccount", "label": "Has Account", "type": "boolean", "colSpan": 1, "readonly": true, "helpText": "Whether this provider has a login account" },
+        { "key": "accountEmail", "label": "Account Email", "type": "email", "colSpan": 1, "readonly": true },
+        { "key": "accountEnabled", "label": "Account Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Blocked", "value": "blocked" }], "helpText": "Block/unblock provider login access" },
+        { "key": "keycloakUserId", "label": "Keycloak User ID", "type": "text", "colSpan": 1, "readonly": true, "helpText": "Linked identity provider user ID" },
+        { "key": "resetPassword", "label": "Reset Password", "type": "button", "colSpan": 1, "helpText": "Generate a temporary password for the provider" },
+        { "key": "sendResetEmail", "label": "Send Reset Email", "type": "button", "colSpan": 1, "helpText": "Send a password reset link to the provider's email" }
+      ]
     },
     {
       "key": "availability",
-      "title": "Availability",
-      "columns": 1,
+      "title": "Availability / Schedule Blocks",
+      "columns": 2,
       "visible": true,
       "collapsible": true,
-      "sectionComponent": "provider-availability-editor",
-      "fields": []
+      "fields": [
+        { "key": "locationId", "label": "Location", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/locations", "displayField": "name", "valueField": "id", "searchable": true }, "helpText": "All Locations or specific location" },
+        { "key": "serviceType", "label": "Service Type", "type": "select", "colSpan": 1, "options": [{ "label": "Office Visit", "value": "Office Visit" }, { "label": "Telehealth", "value": "Telehealth" }, { "label": "Follow-up", "value": "Follow-up" }, { "label": "Consultation", "value": "Consultation" }, { "label": "Procedure", "value": "Procedure" }] },
+        { "key": "status", "label": "Block Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }] },
+        { "key": "recurrencePattern", "label": "Recurrence Pattern", "type": "select", "colSpan": 1, "options": [{ "label": "Weekly", "value": "weekly" }, { "label": "Every 2 Weeks", "value": "biweekly" }, { "label": "Custom Interval (weeks)", "value": "custom-weekly" }, { "label": "Monthly (day of month)", "value": "monthly-day" }, { "label": "Monthly (nth weekday)", "value": "monthly-weekday" }] },
+        { "key": "daysOfWeek", "label": "Days of Week", "type": "multiselect", "colSpan": 2, "options": [{ "label": "Mon", "value": "MO" }, { "label": "Tue", "value": "TU" }, { "label": "Wed", "value": "WE" }, { "label": "Thu", "value": "TH" }, { "label": "Fri", "value": "FR" }, { "label": "Sat", "value": "SA" }, { "label": "Sun", "value": "SU" }], "showWhen": { "field": "recurrencePattern", "equals": ["weekly", "biweekly", "custom-weekly"] } },
+        { "key": "weekInterval", "label": "Repeat Every N Weeks", "type": "number", "colSpan": 1, "validation": { "min": 1, "max": 52 }, "showWhen": { "field": "recurrencePattern", "equals": ["custom-weekly"] } },
+        { "key": "dayOfMonth", "label": "Day of Month", "type": "number", "colSpan": 1, "validation": { "min": 1, "max": 31 }, "showWhen": { "field": "recurrencePattern", "equals": ["monthly-day"] } },
+        { "key": "nthWeek", "label": "Week", "type": "select", "colSpan": 1, "options": [{ "label": "First", "value": "1" }, { "label": "Second", "value": "2" }, { "label": "Third", "value": "3" }, { "label": "Fourth", "value": "4" }, { "label": "Last", "value": "-1" }], "showWhen": { "field": "recurrencePattern", "equals": ["monthly-weekday"] } },
+        { "key": "nthWeekday", "label": "Weekday", "type": "select", "colSpan": 1, "options": [{ "label": "Monday", "value": "MO" }, { "label": "Tuesday", "value": "TU" }, { "label": "Wednesday", "value": "WE" }, { "label": "Thursday", "value": "TH" }, { "label": "Friday", "value": "FR" }], "showWhen": { "field": "recurrencePattern", "equals": ["monthly-weekday"] } },
+        { "key": "monthInterval", "label": "Every N Months", "type": "number", "colSpan": 1, "validation": { "min": 1, "max": 12 }, "showWhen": { "field": "recurrencePattern", "equals": ["monthly-day", "monthly-weekday"] } },
+        { "key": "startTime", "label": "Start Time", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "7:00 AM", "value": "07:00" }, { "label": "7:30 AM", "value": "07:30" }, { "label": "8:00 AM", "value": "08:00" }, { "label": "8:30 AM", "value": "08:30" }, { "label": "9:00 AM", "value": "09:00" }, { "label": "9:30 AM", "value": "09:30" }, { "label": "10:00 AM", "value": "10:00" }, { "label": "10:30 AM", "value": "10:30" }, { "label": "11:00 AM", "value": "11:00" }, { "label": "11:30 AM", "value": "11:30" }, { "label": "12:00 PM", "value": "12:00" }, { "label": "12:30 PM", "value": "12:30" }, { "label": "1:00 PM", "value": "13:00" }, { "label": "1:30 PM", "value": "13:30" }, { "label": "2:00 PM", "value": "14:00" }, { "label": "2:30 PM", "value": "14:30" }, { "label": "3:00 PM", "value": "15:00" }, { "label": "3:30 PM", "value": "15:30" }, { "label": "4:00 PM", "value": "16:00" }, { "label": "4:30 PM", "value": "16:30" }, { "label": "5:00 PM", "value": "17:00" }, { "label": "5:30 PM", "value": "17:30" }, { "label": "6:00 PM", "value": "18:00" }] },
+        { "key": "endTime", "label": "End Time", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "7:00 AM", "value": "07:00" }, { "label": "7:30 AM", "value": "07:30" }, { "label": "8:00 AM", "value": "08:00" }, { "label": "8:30 AM", "value": "08:30" }, { "label": "9:00 AM", "value": "09:00" }, { "label": "9:30 AM", "value": "09:30" }, { "label": "10:00 AM", "value": "10:00" }, { "label": "10:30 AM", "value": "10:30" }, { "label": "11:00 AM", "value": "11:00" }, { "label": "11:30 AM", "value": "11:30" }, { "label": "12:00 PM", "value": "12:00" }, { "label": "12:30 PM", "value": "12:30" }, { "label": "1:00 PM", "value": "13:00" }, { "label": "1:30 PM", "value": "13:30" }, { "label": "2:00 PM", "value": "14:00" }, { "label": "2:30 PM", "value": "14:30" }, { "label": "3:00 PM", "value": "15:00" }, { "label": "3:30 PM", "value": "15:30" }, { "label": "4:00 PM", "value": "16:00" }, { "label": "4:30 PM", "value": "16:30" }, { "label": "5:00 PM", "value": "17:00" }, { "label": "5:30 PM", "value": "17:30" }, { "label": "6:00 PM", "value": "18:00" }, { "label": "6:30 PM", "value": "18:30" }, { "label": "7:00 PM", "value": "19:00" }] },
+        { "key": "effectiveFrom", "label": "Effective From", "type": "date", "required": true, "colSpan": 1 },
+        { "key": "effectiveTo", "label": "Effective To", "type": "date", "colSpan": 1, "helpText": "Leave blank for ongoing" }
+      ]
     }
   ]
 }
