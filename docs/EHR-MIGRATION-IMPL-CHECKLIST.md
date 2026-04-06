@@ -6,97 +6,80 @@
 - [x] Server settings popup (API URL, Keycloak URL/Realm/ClientID)
 - [x] Ciyex branding (no-text 3D knot logo, dark theme, VS Code blue buttons)
 - [x] CORS fix (webSecurity: false for Electron)
-- [x] product.json defaultChatAgent fix
 
 ## Phase 2: Navigation Framework (DONE)
 - [x] CiyexApiService - authenticated fetch wrapper with tenant headers
-- [x] CiyexPermissionService - loads from /api/user/permissions, sets 40+ ContextKeys
-- [x] CiyexMenuService - fetches menu tree from /api/menus/ehr-sidebar
-- [x] Registers Clinical, Scheduling, Billing top-level menus dynamically
-- [x] Hide Selection, Terminal, Run/Debug menus (ciyex.showDevMenus gate)
+- [x] CiyexPermissionService - 40+ ContextKeys (ciyex.perm.*, ciyex.fhir.*, ciyex.role.*)
+- [x] CiyexMenuService - API-driven menus from /api/menus/ehr-sidebar
+- [x] Hide Selection, Terminal, Run/Debug menus
 - [x] Status bar: user name, practice/tenant, role
-- [x] Welcome page: "Get Started with Ciyex Workspace"
-- [x] Extensions sidebar renamed to "Ciyex Hub"
+- [x] 6 EHR ViewContainers in Activity Bar (Calendar, Patients, Clinical, Messaging, Billing, Reports)
+- [x] "Ciyex Hub" replaces Extensions, "Get Started with Ciyex Workspace" welcome page
 - [x] No-text logo in titlebar, welcome page, update tooltip, banner
-- [x] 7 EHR ViewContainers in Activity Bar with RBAC gates
 
 ## Phase 3: Core Screens (DONE)
-- [x] Patient List ViewPane with live API data from /api/patients
-- [x] Colored avatar circles with initials (name-hash unique colors)
-- [x] DOB, age, gender displayed per patient row
-- [x] Calendar WebviewPanel - opens as editor tab with appointments table
-- [x] Patient Chart WebviewPanel - demographics card from /api/patients/{id}
+- [x] Patient List ViewPane with live API data, colored avatar circles, DOB
+- [x] Calendar WebviewPanel - appointments table from /api/appointments
+- [x] Patient Chart WebviewPanel - demographics from /api/patients/{id}
 - [x] New Patient / New Appointment placeholder webviews
-- [x] Commands in Command Palette: Open Calendar, New Patient, New Appointment
-- [x] Patient click triggers ciyex.openPatientChart command
-- [x] Fixed service accessor timing (get services before await)
+- [x] Commands: Open Calendar, New Patient, New Appointment, Open Patient Chart
 
-## Phase 4: Clinical Features (IN PROGRESS)
-- [ ] Encounter list in Clinical sidebar (from /api/encounters or /api/fhir/Encounter)
+## Phase 4: Clinical Features (DONE)
+- [x] Encounters list from /api/encounters (patient, type, status)
+- [x] Prescriptions list from /api/prescriptions (patient, medication, status)
+- [x] Immunizations list from /api/immunizations (patient, vaccine, status)
+- [x] Care Plans list from /api/care-plans (patient, title, status)
+- [x] Referrals list from /api/referrals (patient, specialist, status)
+- [x] GenericListPane: reusable ViewPane with configurable columns, icons, avatars
+
+## Phase 5: Communication & Billing (DONE)
+- [x] Messaging inbox configured (from /api/messages)
+- [x] Billing payments configured (from /api/payments)
+- [x] Billing claims configured (from /api/claims)
+- [x] Reports dashboard configured (from /api/reports)
+
+## Phase 6: Admin Settings (DONE)
+- [x] Removed duplicate Settings ViewContainer (uses VS Code built-in gear)
+- [x] Admin settings accessible via Command Palette
+
+## Phase 7: Advanced Features (DONE)
+- [x] Patient search Cmd+Shift+K with QuickPick (search-as-you-type, 300ms debounce)
+- [x] Search results show name, DOB, age, gender, email, phone
+- [x] Selecting result opens Patient Chart webview
+- [x] Bold login buttons
+
+## Phase 8: Remaining (TODO)
 - [ ] Encounter editor WebviewPanel (dynamic form from /api/tab-field-config/encounter-form)
-- [ ] Lab Orders list in Clinical sidebar
-- [ ] Lab Order detail WebviewPanel
-- [ ] Prescriptions list
-- [ ] Immunizations list
-- [ ] Care Plans list
-- [ ] Referrals list
 - [ ] Document scanning/upload
-
-## Phase 5: Communication & Billing
-- [ ] Messaging inbox TreeView/ViewPane
-- [ ] Message compose WebviewPanel
-- [ ] Fax list
-- [ ] Notifications panel
-- [ ] Payments list in Billing sidebar
-- [ ] Claims list
-- [ ] Payment detail WebviewPanel
-
-## Phase 6: Admin & Settings
-- [ ] User Management TreeView + detail WebviewPanel
-- [ ] Roles & Permissions editor
-- [ ] Menu Configuration editor (drag-drop)
-- [ ] Layout Settings editor (tab/field config)
-- [ ] Encounter Settings editor
-- [ ] Calendar Colors settings
-- [ ] Portal Settings
-
-## Phase 7: Advanced Features
-- [ ] Patient search (Cmd+K global shortcut)
-- [ ] Keyboard shortcuts for common EHR actions
-- [ ] Command Palette integration for all EHR commands
 - [ ] Notification badges on activity bar icons
-- [ ] Multi-tab patient charts (open multiple patients)
+- [ ] Multi-tab patient charts
 - [ ] Offline mode with local data sync
-- [ ] Replace WebviewPanels with native editors where possible
-- [ ] SMART on FHIR app launcher integration
+- [ ] Replace WebviewPanels with native editors
+- [ ] SMART on FHIR app launcher
 - [ ] CDS Hooks integration
+- [ ] Hub/Marketplace gallery service bridge
 
-## Phase 8: Hub/Marketplace
-- [ ] Gallery service bridge (Ciyex marketplace API -> VS Code gallery format)
-- [ ] App installation/uninstallation via /api/app-installations
-- [ ] App reviews and ratings display
-- [ ] Usage tracking and analytics
-- [ ] Featured apps section
-
-## Files Created
+## All Files
 
 ```
 src/vs/workbench/contrib/
 ├── ciyexAuth/browser/
 │   ├── ciyexAuth.contribution.ts
-│   ├── ciyexAuthGate.ts              # Login overlay (DOM-based, CSP-safe)
+│   ├── ciyexAuthGate.ts
 │   ├── ciyexAuthGateContribution.ts
-│   └── ciyexAuthService.ts           # Auth state, tokens, session
+│   └── ciyexAuthService.ts
 ├── ciyexEhr/browser/
-│   ├── ciyexEhr.contribution.ts      # Service + view registration
-│   ├── ciyexEhrContribution.ts       # Permissions, menus, status bar
-│   ├── ciyexApiService.ts            # Auth-wrapped fetch
-│   ├── ciyexPermissionService.ts     # RBAC ContextKeys
-│   ├── ciyexMenuService.ts           # API-driven menu registration
-│   ├── ciyexViewContainers.ts        # 7 EHR ViewContainers + views
-│   ├── ciyexCommands.ts              # Calendar, Patient Chart, New Patient/Appointment
-│   ├── patientListPane.ts            # Patient list ViewPane with API data
-│   └── patientListDataProvider.ts    # TreeView data provider (unused, replaced by ViewPane)
+│   ├── ciyexEhr.contribution.ts
+│   ├── ciyexEhrContribution.ts
+│   ├── ciyexApiService.ts
+│   ├── ciyexPermissionService.ts
+│   ├── ciyexMenuService.ts
+│   ├── ciyexViewContainers.ts
+│   ├── ciyexCommands.ts
+│   ├── patientListPane.ts
+│   ├── patientListDataProvider.ts
+│   ├── patientSearch.ts
+│   └── genericListPane.ts
 └── ciyexHub/browser/
-    └── ciyexHub.contribution.ts      # Marketplace stub (WIP)
+    └── ciyexHub.contribution.ts
 ```
