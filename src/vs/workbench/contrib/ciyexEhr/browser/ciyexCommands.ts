@@ -470,3 +470,23 @@ registerAction2(class extends Action2 {
 		input.webview.setHtml(wrapHtml(body));
 	}
 });
+
+/**
+ * Command: Sign Out
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.signOut',
+			title: localize2('signOut', "Sign Out"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		// Import auth service dynamically to avoid circular dependency
+		const { ICiyexAuthService } = await import('../../ciyexAuth/browser/ciyexAuthService.js');
+		const authService = accessor.get(ICiyexAuthService);
+		authService.signOut();
+	}
+});

@@ -180,7 +180,7 @@ configRegistry.registerConfiguration({
 		'ciyex.session.loginRequired': {
 			type: 'boolean',
 			default: true,
-			description: localize('ciyexLoginRequired', "Require login every time the workspace starts. Disable to skip login."),
+			description: localize('ciyexLoginRequired', "Always require login when the workspace starts. When enabled (default), the login screen shows every time. When disabled, a valid cached token is reused and login is skipped. Users can still sign out manually via the status bar."),
 			scope: ConfigurationScope.APPLICATION,
 			order: 4,
 		},

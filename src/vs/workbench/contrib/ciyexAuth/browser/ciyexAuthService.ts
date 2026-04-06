@@ -6,6 +6,7 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 
 export const ICiyexAuthService = createDecorator<ICiyexAuthService>('ciyexAuthService');
 
@@ -100,8 +101,7 @@ const REFRESH_BEFORE_EXPIRY_SEC = 60;
 // Default idle timeout (30 minutes)
 const DEFAULT_IDLE_MINUTES = 30;
 
-// Warning shown 2 minutes before idle timeout fires
-const WARNING_BEFORE_MS = 2 * 60 * 1000;
+// Default warning shown 2 minutes before idle timeout (now configurable via settings)
 
 function decodeJwt(token: string | null): { exp?: number; organization?: string | string[] } | null {
 	if (!token) {
@@ -184,13 +184,36 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		return 'ciyex-app';
 	}
 
-	constructor() {
+	constructor(
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+	) {
 		super();
 
-		this._idleMs = DEFAULT_IDLE_MINUTES * 60 * 1000;
+		// Read idle timeout from VS Code settings (Cmd+, -> ciyex.session.idleTimeoutMinutes)
+		const idleMinutes = this.configurationService.getValue<number>('ciyex.session.idleTimeoutMinutes') || DEFAULT_IDLE_MINUTES;
+		this._idleMs = idleMinutes * 60 * 1000;
 
-		// Check for existing valid token on startup
-		this._checkExistingAuth();
+		// Listen for settings changes
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('ciyex.session.idleTimeoutMinutes')) {
+				const newMinutes = this.configurationService.getValue<number>('ciyex.session.idleTimeoutMinutes') || DEFAULT_IDLE_MINUTES;
+				this._idleMs = newMinutes * 60 * 1000;
+				if (this._state === CiyexAuthState.Authenticated) {
+					this._resetIdleTimer();
+				}
+			}
+		}));
+
+		// Check if login is required on every startup
+		const loginRequired = this.configurationService.getValue<boolean>('ciyex.session.loginRequired');
+		if (loginRequired === false) {
+			// Skip login - check for existing valid token
+			this._checkExistingAuth();
+		} else {
+			// Always require login on startup (default behavior)
+			this._clearStoredAuth();
+			this._setState(CiyexAuthState.NotAuthenticated);
+		}
 
 		// Listen for activity events
 		this._setupActivityListeners();
@@ -529,11 +552,13 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 
 		this._lastActivity = Date.now();
 
-		// Warning before idle timeout
-		const warningMs = Math.max(this._idleMs - WARNING_BEFORE_MS, 0);
+		// Warning before idle timeout (configurable via ciyex.session.warningMinutes)
+		const warningMinutes = this.configurationService.getValue<number>('ciyex.session.warningMinutes') || 2;
+		const warningBeforeMs = warningMinutes * 60 * 1000;
+		const warningMs = Math.max(this._idleMs - warningBeforeMs, 0);
 		if (warningMs > 0) {
 			this._warningTimerId = setTimeout(() => {
-				const countdown = Math.floor(WARNING_BEFORE_MS / 1000);
+				const countdown = Math.floor(warningBeforeMs / 1000);
 				this._setState(CiyexAuthState.Warning);
 				this._onSessionWarning.fire(countdown);
 			}, warningMs);
