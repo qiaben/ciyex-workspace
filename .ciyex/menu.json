@@ -77,11 +77,15 @@
       "position": 7,
       "visible": true,
       "children": [
-        { "itemKey": "recall", "label": "Recall", "icon": "PhoneCall", "screenSlug": "/recall", "position": 0, "visible": true },
-        { "itemKey": "codes", "label": "Codes", "icon": "Hash", "screenSlug": "/codes", "position": 1, "visible": true },
-        { "itemKey": "inventory-management", "label": "Inventory", "icon": "Package", "screenSlug": "/inventory", "position": 2, "visible": true },
-        { "itemKey": "payments", "label": "Payments", "icon": "DollarSign", "screenSlug": "/payments", "position": 3, "visible": true, "requiredPermission": "billing.read" },
-        { "itemKey": "claim-management", "label": "Claims", "icon": "FileCheck", "screenSlug": "/claims", "position": 4, "visible": true, "requiredPermission": "billing.read" }
+        { "itemKey": "providers", "label": "Providers", "icon": "UserCog", "screenSlug": "/settings/p/providers", "position": 0, "visible": true, "fhirResources": ["Practitioner", "PractitionerRole"] },
+        { "itemKey": "insurance", "label": "Insurance Payers", "icon": "Shield", "screenSlug": "/settings/p/insurance", "position": 1, "visible": true, "fhirResources": ["Coverage", "Organization"] },
+        { "itemKey": "referral-providers", "label": "Referral Providers", "icon": "UserPlus", "screenSlug": "/settings/p/referral-providers", "position": 2, "visible": true, "fhirResources": ["Practitioner"] },
+        { "itemKey": "referral-practices", "label": "Referral Practices", "icon": "Building2", "screenSlug": "/settings/p/referral-practices", "position": 3, "visible": true, "fhirResources": ["Organization"] },
+        { "itemKey": "recall", "label": "Recall", "icon": "PhoneCall", "screenSlug": "/recall", "position": 4, "visible": true },
+        { "itemKey": "codes", "label": "Codes", "icon": "Hash", "screenSlug": "/codes", "position": 5, "visible": true },
+        { "itemKey": "inventory-management", "label": "Inventory", "icon": "Package", "screenSlug": "/inventory", "position": 6, "visible": true },
+        { "itemKey": "payments", "label": "Payments", "icon": "DollarSign", "screenSlug": "/payments", "position": 7, "visible": true, "requiredPermission": "billing.read" },
+        { "itemKey": "claim-management", "label": "Claims", "icon": "FileCheck", "screenSlug": "/claims", "position": 8, "visible": true, "requiredPermission": "billing.read" }
       ]
     },
     {
