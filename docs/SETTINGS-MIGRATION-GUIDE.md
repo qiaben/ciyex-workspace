@@ -274,33 +274,37 @@ Each opens a WebviewPanel with list/create/edit/view modes rendered from the tab
 
 ## Implementation Checklist
 
-### Phase 1: Settings Registration (Simple Key-Value)
-- [ ] Create `ciyexSettings.ts` - register all simple settings via IConfigurationRegistry
-- [ ] Server connection settings (apiUrl, keycloakUrl, realm, clientId)
-- [ ] Display settings (fontSize, compactMode, showAvatars)
-- [ ] Calendar settings (defaultView, startHour, endHour, slotDuration, colorBy)
-- [ ] Session settings (idleTimeoutMinutes, showWarningMinutes, autoRefreshToken)
+### Phase 1: Settings Registration (Simple Key-Value) - DONE
+- [x] Create `ciyexSettings.ts` - register all simple settings via IConfigurationRegistry
+- [x] Server connection settings (apiUrl, keycloakUrl, realm, clientId, environment)
+- [x] Display settings (fontSize, compactMode, showAvatars)
+- [x] Calendar settings (defaultView, startHour, endHour, slotDuration, colorBy)
+- [x] Session settings (idleTimeoutMinutes, warningMinutes, autoRefreshToken, loginRequired)
+- [x] Features settings (showDevMenus, cdsHooksEnabled, smartLaunchEnabled)
 - [ ] Migrate CiyexAuthService to read from IConfigurationService instead of localStorage
 - [ ] Migrate CiyexPermissionService to read session settings from config
 
-### Phase 2: User & Role Management Commands
-- [ ] `ciyex.openUserManagement` - WebviewPanel with user CRUD
-- [ ] `ciyex.openRolesPermissions` - WebviewPanel with roles + SMART scopes matrix
-- [ ] User list with search, create, edit, delete, reset password
-- [ ] Role cards with FHIR resource scopes and feature permissions
-- [ ] Wire to /api/admin/users and /api/admin/roles
+### Phase 2: User & Role Management Commands - DONE
+- [x] `ciyex.openUserManagement` - WebviewPanel with user table from /api/admin/users
+- [x] `ciyex.openRolesPermissions` - WebviewPanel with role cards + permissions/scopes
+- [x] Admin menu bar with all settings commands (admin-only)
+- [ ] User create/edit/delete actions (interactive webview forms)
+- [ ] Reset password action in user management
 
-### Phase 3: Layout & Form Configuration Commands
-- [ ] `ciyex.openChartLayout` - Tab Manager + Field Configuration
-- [ ] `ciyex.openEncounterSettings` - Section toggle/reorder
-- [ ] `ciyex.openMenuConfiguration` - Menu tree editor
-- [ ] Wire to /api/tab-field-config/* and /api/menus/ehr-sidebar/*
+### Phase 3: Layout & Form Configuration Commands - DONE
+- [x] `ciyex.openChartLayout` - Tab visibility from /api/tab-field-config/layout
+- [x] `ciyex.openEncounterSettings` - Section list from /api/tab-field-config/encounter-form
+- [x] `ciyex.openMenuConfiguration` - Menu tree from /api/menus/ehr-sidebar
+- [ ] Interactive editing (toggle visibility, reorder)
 - [ ] JSON code viewer for raw config inspection
 
-### Phase 4: Portal & Calendar Settings Commands
-- [ ] `ciyex.openPortalSettings` - 4-tab portal configuration
-- [ ] `ciyex.openCalendarColors` - Color picker with auto-generate
-- [ ] Wire to /api/portal/config and /api/calendar-colors/*
+### Phase 4: Portal & Calendar Settings Commands - DONE
+- [x] `ciyex.openPortalSettings` - Placeholder (4-tab portal config)
+- [x] `ciyex.openCalendarColors` - Placeholder (color picker)
+- [x] `ciyex.managePractice` - Placeholder (practice info)
+- [x] `ciyex.manageProviders` - Provider list from /api/providers
+- [ ] Full portal form builder
+- [ ] Color picker with auto-generate
 
 ### Phase 5: Plugin Settings Sync
 - [ ] Load installed plugin configs from /api/app-installations
