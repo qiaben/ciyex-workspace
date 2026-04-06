@@ -28,8 +28,8 @@ import './ciyexSettingsCommands.js';
 // Register Ciyex settings in VS Code Settings Editor (Cmd+,)
 import './ciyexSettings.js';
 
-// Register .ciyex Config Explorer sidebar (admin only)
-import './ciyexConfigExplorer.js';
+// .ciyex config files are opened from Settings UI or file explorer
+// (ciyexConfigExplorer.ts removed — configs accessible via Cmd+, settings)
 
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);

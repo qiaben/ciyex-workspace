@@ -215,5 +215,160 @@ configRegistry.registerConfiguration({
 			scope: ConfigurationScope.WINDOW,
 			order: 3,
 		},
+		'ciyex.features.patientPortalEnabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ciyexPortal', "Enable patient portal integration."),
+			scope: ConfigurationScope.WINDOW,
+			order: 4,
+		},
+		'ciyex.features.telehealthEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('ciyexTelehealth', "Enable telehealth video visits."),
+			scope: ConfigurationScope.WINDOW,
+			order: 5,
+		},
+		'ciyex.features.kioskEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('ciyexKiosk', "Enable patient check-in kiosk mode."),
+			scope: ConfigurationScope.WINDOW,
+			order: 6,
+		},
+		'ciyex.features.inventoryEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('ciyexInventory', "Enable inventory management module."),
+			scope: ConfigurationScope.WINDOW,
+			order: 7,
+		},
+		'ciyex.features.faxEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('ciyexFax', "Enable fax sending and receiving."),
+			scope: ConfigurationScope.WINDOW,
+			order: 8,
+		},
+	},
+});
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.practice',
+	order: 6,
+	title: localize('ciyexPractice', "Ciyex: Practice"),
+	properties: {
+		'ciyex.practice.name': {
+			type: 'string',
+			default: '',
+			description: localize('practiceName', "Practice name displayed throughout the application."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.practice.npi': {
+			type: 'string',
+			default: '',
+			description: localize('practiceNpi', "Practice NPI (10-digit National Provider Identifier)."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.practice.timezone': {
+			type: 'string',
+			enum: ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu'],
+			default: 'America/New_York',
+			description: localize('practiceTz', "Practice timezone for scheduling and display."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.practice.sessionTimeoutMinutes': {
+			type: 'number',
+			default: 30,
+			minimum: 5,
+			maximum: 480,
+			description: localize('practiceTimeout', "Practice-wide session timeout in minutes."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+	},
+});
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.ai',
+	order: 7,
+	title: localize('ciyexAi', "Ciyex: AI"),
+	properties: {
+		'ciyex.ai.enabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('aiEnabled', "Enable AI-powered features (clinical notes, coding suggestions, summaries)."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.ai.provider': {
+			type: 'string',
+			enum: ['openai', 'anthropic', 'azure-openai', 'local'],
+			default: 'openai',
+			description: localize('aiProvider', "AI service provider."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.ai.features.clinicalNotes': {
+			type: 'boolean',
+			default: false,
+			description: localize('aiNotes', "AI-generated clinical note drafts from encounter data."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.ai.features.codingSuggestions': {
+			type: 'boolean',
+			default: false,
+			description: localize('aiCoding', "AI-suggested ICD-10 and CPT codes from notes."),
+			scope: ConfigurationScope.WINDOW,
+		},
+	},
+});
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.billing',
+	order: 8,
+	title: localize('ciyexBilling', "Ciyex: Billing"),
+	properties: {
+		'ciyex.billing.requireDiagnosis': {
+			type: 'boolean',
+			default: true,
+			description: localize('billingDx', "Require at least one diagnosis code before closing an encounter."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.billing.autoPostCharges': {
+			type: 'boolean',
+			default: false,
+			description: localize('billingAutoPost', "Auto-post charges when encounter is signed off."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.billing.defaultPlaceOfService': {
+			type: 'string',
+			default: '11',
+			description: localize('billingPos', "Default Place of Service code (e.g., 11 = Office)."),
+			scope: ConfigurationScope.WINDOW,
+		},
+	},
+});
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.prescriptions',
+	order: 9,
+	title: localize('ciyexRx', "Ciyex: Prescriptions"),
+	properties: {
+		'ciyex.prescriptions.eRxEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('rxErx', "Enable electronic prescribing (e-Rx)."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.prescriptions.controlledSubstanceCheck': {
+			type: 'boolean',
+			default: true,
+			description: localize('rxControlled', "Check PDMP for controlled substance prescriptions."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.prescriptions.drugInteractionCheck': {
+			type: 'boolean',
+			default: true,
+			description: localize('rxInteraction', "Check drug-drug interactions when prescribing."),
+			scope: ConfigurationScope.WINDOW,
+		},
 	},
 });

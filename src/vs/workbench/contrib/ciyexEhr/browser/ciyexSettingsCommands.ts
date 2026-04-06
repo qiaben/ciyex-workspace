@@ -10,8 +10,6 @@ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextke
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { IFileService } from '../../../../platform/files/common/files.js';
-import { VSBuffer } from '../../../../base/common/buffer.js';
 
 // --- Admin Menu (top-level menu bar) ---------------------------------
 
@@ -83,19 +81,11 @@ MenuRegistry.appendMenuItem(MenubarAdminMenu, {
 async function openCiyexConfig(accessor: ServicesAccessor, relativePath: string): Promise<void> {
 	const editorService = accessor.get(IEditorService);
 	const workspaceService = accessor.get(IWorkspaceContextService);
-	const fileService = accessor.get(IFileService);
 
 	const workspace = workspaceService.getWorkspace();
 	const workspaceFolder = workspace.folders[0]?.uri;
 	const root = workspaceFolder || URI.file(workspace.configuration?.fsPath || '.');
 	const fileUri = URI.joinPath(root, '.ciyex', relativePath);
-
-	// Ensure file exists — if not, the editor will show a create prompt
-	const exists = await fileService.exists(fileUri);
-	if (!exists) {
-		// Create parent directories and write empty default
-		await fileService.writeFile(fileUri, VSBuffer.fromString('{}'));
-	}
 
 	await editorService.openEditor({
 		resource: fileUri,
