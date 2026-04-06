@@ -81,5 +81,12 @@
 				"publisherDisplayName": "Microsoft"
 			}
 		}
-	]
+	],
+	"defaultChatAgent": {
+		"extensionId": "",
+		"chatExtensionId": "",
+		"provider": {
+			"default": { "id": "", "name": "" }
+		}
+	}
 }

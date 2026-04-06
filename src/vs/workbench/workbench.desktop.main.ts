@@ -166,6 +166,9 @@ import './contrib/browserView/electron-browser/browserView.contribution.js';
 // Splash
 import './contrib/splash/electron-browser/splash.contribution.js';
 
+// Ciyex Auth Gate
+import './contrib/ciyexAuth/browser/ciyexAuth.contribution.js';
+
 // Local History
 import './contrib/localHistory/electron-browser/localHistory.contribution.js';
 
