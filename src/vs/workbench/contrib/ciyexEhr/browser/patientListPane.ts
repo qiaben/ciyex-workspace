@@ -14,6 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 interface IPatientRow {
 	id: string;
@@ -44,6 +45,7 @@ export class PatientListPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -125,11 +127,18 @@ export class PatientListPane extends ViewPane {
 				row.style.background = '';
 			});
 
-			// Icon
-			const icon = document.createElement('span');
-			icon.className = 'codicon codicon-person';
-			icon.style.opacity = '0.6';
-			row.appendChild(icon);
+			// Avatar circle with initials
+			const avatar = document.createElement('span');
+			const initials = `${(patient.firstName || '')[0] || ''}${(patient.lastName || '')[0] || ''}`.toUpperCase();
+			const hue = (patient.firstName.charCodeAt(0) * 7 + patient.lastName.charCodeAt(0) * 13) % 360;
+			Object.assign(avatar.style, {
+				width: '24px', height: '24px', borderRadius: '50%',
+				display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+				fontSize: '10px', fontWeight: '600', color: '#fff', flexShrink: '0',
+				background: `hsl(${hue}, 50%, 40%)`,
+			});
+			avatar.textContent = initials;
+			row.appendChild(avatar);
 
 			// Name
 			const nameEl = document.createElement('span');
@@ -138,17 +147,19 @@ export class PatientListPane extends ViewPane {
 			nameEl.textContent = `${patient.lastName}, ${patient.firstName}`;
 			row.appendChild(nameEl);
 
-			// Details
+			// DOB + Age + Gender
 			const detailEl = document.createElement('span');
 			detailEl.style.color = 'var(--vscode-descriptionForeground)';
 			detailEl.style.fontSize = '11px';
+			detailEl.style.whiteSpace = 'nowrap';
 			const age = this._calcAge(patient.dateOfBirth);
 			const g = patient.gender === 'male' ? 'M' : patient.gender === 'female' ? 'F' : '';
-			detailEl.textContent = `${g} ${age}y`;
+			const dob = patient.dateOfBirth || '';
+			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
 			row.addEventListener('click', () => {
-				console.log(`[CiyexEHR] Open patient: ${patient.firstName} ${patient.lastName} (${patient.id})`);
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, `${patient.firstName} ${patient.lastName}`);
 			});
 
 			this._listEl.appendChild(row);
