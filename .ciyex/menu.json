@@ -78,7 +78,7 @@
       "visible": true,
       "children": [
         { "itemKey": "providers", "label": "Providers", "icon": "UserCog", "screenSlug": "/settings/p/providers", "position": 0, "visible": true, "fhirResources": ["Practitioner", "PractitionerRole"] },
-        { "itemKey": "insurance", "label": "Insurance Companies", "icon": "Shield", "screenSlug": "/settings/p/insurance", "position": 1, "visible": true, "fhirResources": ["Coverage", "Organization"] },
+        { "itemKey": "insurance", "label": "Insurance Payers", "icon": "Shield", "screenSlug": "/settings/p/insurance", "position": 1, "visible": true, "fhirResources": ["Coverage", "Organization"] },
         { "itemKey": "referral-providers", "label": "Referral Providers", "icon": "UserPlus", "screenSlug": "/settings/p/referral-providers", "position": 2, "visible": true, "fhirResources": ["Practitioner"] },
         { "itemKey": "referral-practices", "label": "Referral Practices", "icon": "Building2", "screenSlug": "/settings/p/referral-practices", "position": 3, "visible": true, "fhirResources": ["Organization"] },
         { "itemKey": "recall", "label": "Recall", "icon": "PhoneCall", "screenSlug": "/recall", "position": 4, "visible": true },
