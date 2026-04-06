@@ -28,8 +28,8 @@ import './ciyexSettingsCommands.js';
 // Register Ciyex settings in VS Code Settings Editor (Cmd+,)
 import './ciyexSettings.js';
 
-// Layout settings editors replaced by .ciyex/ JSON config files
-// (opened in Monaco via commands in ciyexSettingsCommands.ts)
+// Register .ciyex Config Explorer sidebar (admin only)
+import './ciyexConfigExplorer.js';
 
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
