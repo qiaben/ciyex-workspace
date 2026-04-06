@@ -18,6 +18,9 @@ import './ciyexViewContainers.js';
 // Register EHR commands (openPatientChart, newPatient, newAppointment, openCalendar)
 import './ciyexCommands.js';
 
+// Register patient search (Cmd+K)
+import './patientSearch.js';
+
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);

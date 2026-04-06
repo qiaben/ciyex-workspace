@@ -10,7 +10,8 @@ import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContaine
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { codiconsLibrary as Codicon } from '../../../../base/common/codiconsLibrary.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
-import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+// ContextKeyExpr used for RBAC gating when preconditions are re-enabled
+// import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { PatientListPane } from './patientListPane.js';
 import { GenericListPane } from './genericListPane.js';
 
@@ -25,7 +26,7 @@ const clinicalIcon = registerIcon('ciyex-clinical-icon', Codicon.beaker, localiz
 const messagingIcon = registerIcon('ciyex-messaging-icon', Codicon.mail, localize('ciyexMessagingIcon', 'Ciyex Messaging view icon'));
 const billingIcon = registerIcon('ciyex-billing-icon', Codicon.creditCard, localize('ciyexBillingIcon', 'Ciyex Billing view icon'));
 const reportsIcon = registerIcon('ciyex-reports-icon', Codicon.graph, localize('ciyexReportsIcon', 'Ciyex Reports view icon'));
-const settingsIcon = registerIcon('ciyex-settings-icon', Codicon.settingsGear, localize('ciyexSettingsIcon', 'Ciyex Settings view icon'));
+// Settings uses VS Code's built-in gear at bottom of activity bar - no separate container needed
 
 // ─── View Containers (Activity Bar) ─────────────────────────────────────
 
@@ -91,14 +92,8 @@ export const REPORTS_CONTAINER: ViewContainer = viewContainerRegistry.registerVi
 	order: 6,
 }, ViewContainerLocation.Sidebar);
 
-// Settings (admin only)
-export const SETTINGS_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer({
-	id: 'ciyex.settings',
-	title: localize2('ciyexSettings', "Settings"),
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, ['ciyex.settings', {}]),
-	icon: settingsIcon,
-	order: 7,
-}, ViewContainerLocation.Sidebar);
+// Settings uses VS Code's built-in gear (bottom of activity bar)
+// No separate ViewContainer needed - admin settings accessed via Command Palette
 
 // ─── GenericListPane Configs ─────────────────────────────────────────────
 
@@ -214,8 +209,5 @@ viewsRegistry.registerViews([
 	{ id: 'ciyex.reports.dashboard', name: localize2('dashboard', "Dashboard"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
 ], REPORTS_CONTAINER);
 
-// Settings views (admin only) - placeholder TreeViewPanes
-viewsRegistry.registerViews([
-	{ id: 'ciyex.settings.users', name: localize2('userManagement', "User Management"), ctorDescriptor: new SyncDescriptor(GenericListPane), when: ContextKeyExpr.has('ciyex.role.admin') },
-	{ id: 'ciyex.settings.roles', name: localize2('rolesPermissions', "Roles & Permissions"), ctorDescriptor: new SyncDescriptor(GenericListPane), when: ContextKeyExpr.has('ciyex.role.admin') },
-], SETTINGS_CONTAINER);
+// Settings: admin-only commands registered in ciyexCommands.ts
+// Accessed via VS Code's built-in settings gear or Command Palette
