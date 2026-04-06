@@ -265,6 +265,7 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 		...nls.localize2('runMenu', "Run"),
 		mnemonicTitle: nls.localize({ key: 'mRun', comment: ['&& denotes a mnemonic'] }, "&&Run")
 	},
+	when: ContextKeyExpr.has('ciyex.showDevMenus'),
 	order: 6
 });
 

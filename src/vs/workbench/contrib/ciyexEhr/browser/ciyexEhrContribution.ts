@@ -7,6 +7,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { ICiyexPermissionService } from './ciyexPermissionService.js';
+import { ICiyexMenuService } from './ciyexMenuService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 
 /**
@@ -20,6 +21,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	constructor(
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
 		@ICiyexPermissionService private readonly permissionService: ICiyexPermissionService,
+		@ICiyexMenuService private readonly menuService: ICiyexMenuService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super();
@@ -39,6 +41,9 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	private async _onAuthenticated(): Promise<void> {
 		// Load permissions and set context keys
 		await this.permissionService.loadPermissions();
+
+		// Load API-driven menus
+		await this.menuService.loadMenus();
 
 		// Register status bar items
 		this._registerStatusBarItems();
