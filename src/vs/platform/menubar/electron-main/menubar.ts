@@ -349,19 +349,7 @@ export class Menubar extends Disposable {
 			menubar.append(terminalMenuItem);
 		}
 
-		// Mac: Window
-		let macWindowMenuItem: MenuItem | undefined;
-		if (this.shouldDrawMenu('Window')) {
-			const windowMenu = new Menu();
-			macWindowMenuItem = new MenuItem({ label: this.mnemonicLabel(nls.localize('mWindow', "Window")), submenu: windowMenu, role: 'window' });
-			this.setMacWindowMenu(windowMenu);
-		}
-
-		if (macWindowMenuItem) {
-			menubar.append(macWindowMenuItem);
-		}
-
-		// Dynamic EHR menus (Clinical, Operations, System, Portal, EHR Settings, etc.)
+		// Dynamic EHR menus (Clinical, Operations, System, Portal, etc.)
 		const knownMenus = new Set(['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Window', 'Help', 'Preferences']);
 		if (this.menubarMenus) {
 			for (const menuName of Object.keys(this.menubarMenus)) {
@@ -372,6 +360,18 @@ export class Menubar extends Disposable {
 					menubar.append(dynamicMenuItem);
 				}
 			}
+		}
+
+		// Mac: Window (after dynamic menus, before Help)
+		let macWindowMenuItem: MenuItem | undefined;
+		if (this.shouldDrawMenu('Window')) {
+			const windowMenu = new Menu();
+			macWindowMenuItem = new MenuItem({ label: this.mnemonicLabel(nls.localize('mWindow', "Window")), submenu: windowMenu, role: 'window' });
+			this.setMacWindowMenu(windowMenu);
+		}
+
+		if (macWindowMenuItem) {
+			menubar.append(macWindowMenuItem);
 		}
 
 		// Help

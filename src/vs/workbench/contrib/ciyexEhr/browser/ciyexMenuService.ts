@@ -100,6 +100,25 @@ _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarSystemMenu, { co
 _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarPortalMenu, { command: { id: 'ciyex.nav._placeholder_portal', title: 'Loading...' }, order: 0 }));
 _placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, { command: { id: 'ciyex.nav._placeholder_settings', title: 'Loading...' }, order: 0 }));
 
+// Static items in Ciyex menu (always visible, not from API)
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+	command: { id: 'workbench.action.newWindow', title: localize2('newWindow', "New Window").value },
+	group: '0_window',
+	order: 1,
+});
+
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+	command: { id: 'workbench.action.closeWindow', title: localize2('closeWindow', "Close Window").value },
+	group: '0_window',
+	order: 2,
+});
+
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+	command: { id: 'ciyex.signOut', title: localize2('signOutMenu', "Sign Out").value },
+	group: '9_account',
+	order: 99,
+});
+
 // ─── Map API parent keys to static MenuIds ──────────────────────────
 const MENU_MAP: Record<string, MenuId> = {
 	'clinical': MenubarClinicalMenu,
