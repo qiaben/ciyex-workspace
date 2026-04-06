@@ -543,3 +543,368 @@ class CiyexApiService {
     }
 }
 ```
+
+---
+
+## 11. Dynamic Layout & Configurability System
+
+The EHR UI uses a **3-layer configurability architecture** where menus, screens, forms, and charts are fully configurable per organization. This must be preserved in the VS Code migration.
+
+### Configurability Layers
+
+```
+Layer 1: UNIVERSAL_DEFAULT     (shipped with app, fallback)
+Layer 2: PRACTICE_TYPE_DEFAULT (per practice type: primary care, dental, etc.)
+Layer 3: ORG_CUSTOM            (per-org overrides set by admin)
+```
+
+### 11.1 API-Driven Menu Configuration
+
+Menus are NOT hardcoded - they're fetched from the backend and customizable per org.
+
+**API Endpoints:**
+```
+GET    /api/menus/ehr-sidebar              - Resolved menu tree (after RBAC filtering)
+GET    /api/menus/ehr-sidebar/overrides    - Org-level customizations
+GET    /api/menus/ehr-sidebar/has-custom   - Check if org has custom menu
+POST   /api/menus/ehr-sidebar/items/{id}/hide    - Hide an item
+DELETE /api/menus/ehr-sidebar/items/{id}/hide    - Restore an item
+PUT    /api/menus/ehr-sidebar/items/{id}/modify  - Edit label/icon/route
+POST   /api/menus/ehr-sidebar/custom-items       - Add custom item
+PUT    /api/menus/ehr-sidebar/reorder            - Reorder items
+POST   /api/menus/ehr-sidebar/reset              - Reset to defaults
+```
+
+**VS Code Implementation:**
+```typescript
+// CiyexMenuService - fetches menu tree from API and registers VS Code menus dynamically
+class CiyexMenuService {
+    async loadMenus(): Promise<void> {
+        const menuTree = await this.api.fetch('/api/menus/ehr-sidebar');
+        
+        // Clear existing dynamic registrations
+        this._disposables.forEach(d => d.dispose());
+        
+        // Register each menu item as VS Code ViewContainer or MenuRegistry entry
+        for (const item of menuTree) {
+            if (item.children?.length) {
+                // Parent with children -> ViewContainer in activity bar
+                this._registerViewContainer(item);
+            } else {
+                // Leaf item -> command + menu entry
+                this._registerMenuCommand(item);
+            }
+        }
+    }
+    
+    private _registerViewContainer(item: MenuItem): void {
+        // Dynamic ViewContainer registration based on API menu data
+        const container = viewContainerRegistry.registerViewContainer({
+            id: `ciyex.menu.${item.itemKey}`,
+            title: { value: item.label, original: item.label },
+            icon: this._resolveIcon(item.icon),
+            order: item.position,
+        }, ViewContainerLocation.Sidebar);
+        
+        // Apply RBAC visibility via when clause
+        if (item.requiredPermission) {
+            // Container visible only when user has the permission
+            container.when = ContextKeyExpr.has(`ciyex.perm.${item.requiredPermission}`);
+        }
+    }
+}
+```
+
+### 11.2 Dynamic Form/Screen Rendering (Tab-Field Config)
+
+Screens are defined by metadata, not code. Each screen has a **FieldConfig** that defines sections, fields, types, and FHIR mappings.
+
+**API Endpoints:**
+```
+GET    /api/tab-field-config/layout          - Global layout (tabs)
+GET    /api/tab-field-config/{pageKey}        - Page-specific config
+GET    /api/tab-field-config/all              - All configurations
+GET    /api/tab-field-config/tabs             - Available tabs
+PUT    /api/tab-field-config/{pageKey}        - Save page config
+DELETE /api/tab-field-config/{pageKey}        - Reset page config
+GET    /api/tab-field-config/encounter-form   - Encounter form config
+```
+
+**FieldConfig Structure:**
+```typescript
+interface FieldConfig {
+    sections: SectionDef[];
+    features?: { fileUpload?: boolean };
+}
+
+interface SectionDef {
+    key: string;
+    title: string;
+    columns: number;           // 1, 2, 3, or 4 column layout
+    collapsible: boolean;
+    collapsed: boolean;        // default collapsed state
+    visible: boolean;
+    fields: FieldDef[];
+    showWhen?: { field: string; value: any }; // conditional visibility
+}
+
+interface FieldDef {
+    key: string;
+    label: string;
+    type: 'text' | 'select' | 'multiselect' | 'date' | 'checkbox' |
+          'radio' | 'textarea' | 'number' | 'file' | 'lookup' |
+          'coded' | 'ros-grid' | 'exam-grid' | 'diagnosis-list' |
+          'computed' | 'group' | 'family-history-list';
+    required: boolean;
+    colSpan: number;
+    placeholder?: string;
+    helpText?: string;
+    options?: Array<{ label: string; value: string }>;
+    fhirMapping?: {
+        resource: string;      // e.g., "Patient", "Observation"
+        path: string;          // e.g., "name[0].given[0]"
+        type: string;          // e.g., "string", "CodeableConcept"
+        loincCode?: string;
+        unit?: string;
+    };
+    validation?: {
+        min?: number; max?: number;
+        minLength?: number; maxLength?: number;
+        pattern?: string;
+    };
+    showWhenCondition?: { field: string; operator: string; value: any };
+}
+```
+
+**VS Code Implementation - Dynamic Form Renderer:**
+```typescript
+// Each dynamic screen is a WebviewPanel that loads its config from the API
+class DynamicScreenEditor extends EditorPane {
+    async setInput(input: DynamicScreenInput): Promise<void> {
+        // Fetch the field config for this screen
+        const config = await this.api.fetch(`/api/tab-field-config/${input.pageKey}`);
+        
+        // Render the form in a webview using the config
+        this.webview.postMessage({
+            type: 'loadConfig',
+            config: config,
+            data: await this.loadResourceData(input),
+        });
+    }
+}
+```
+
+### 11.3 Plugin Slot Architecture
+
+The EHR uses a **named slot system** for extensibility. Plugins contribute components to named slots.
+
+**Key Slots:**
+```
+patient-chart:tab           - Custom tabs in patient chart
+patient-chart:action        - Action buttons on patient chart
+encounter:section           - Custom sections in encounter form
+settings:nav-item           - Custom settings pages
+global:nav-item             - Custom sidebar items
+global:header-action        - Custom header buttons
+dashboard:widget            - Dashboard widgets/charts
+```
+
+**VS Code Mapping:**
+```typescript
+// Plugin slots map to VS Code extension contribution points:
+// patient-chart:tab     -> Custom EditorTab in patient chart editor
+// encounter:section     -> Custom ViewPane in encounter container
+// settings:nav-item     -> Custom settings section
+// global:nav-item       -> Custom ViewContainer in activity bar
+// dashboard:widget      -> Custom webview widget
+```
+
+### 11.4 Settings Editors (Admin)
+
+These admin pages allow non-developer customization:
+
+| Settings Page | What It Configures | VS Code Equivalent |
+|---|---|---|
+| `/settings/layout-settings` | Patient chart tabs, field order, visibility | Custom EditorPane with drag-drop |
+| `/settings/layout-settings/config/[pageKey]` | Per-page field config | Custom EditorPane |
+| `/settings/menu-configuration` | Sidebar menu items, order, visibility | Custom TreeView with drag-drop |
+| `/settings/encounter-settings` | Encounter form sections, fields | Custom EditorPane |
+| `/settings/user-management` | Users, roles, passwords | Custom TreeView + detail panel |
+| `/settings/roles-permissions` | RBAC permissions | Custom EditorPane |
+| `/settings/calendar-colors` | Appointment type colors | Native VS Code color picker |
+| `/settings/portal-settings` | Patient portal config | Custom EditorPane |
+
+---
+
+## 12. Role-Based Access Control (RBAC) & FHIR Scopes
+
+### 12.1 Permission Architecture
+
+The EHR uses a **category-based permission system** that maps to FHIR resource scopes.
+
+**Permission Format:** `{category}.{action}`
+```
+scheduling.read         - View calendar/appointments
+scheduling.write        - Create/edit appointments
+demographics.read       - View patient data
+demographics.write      - Create/edit patients
+chart.read              - View encounters, care plans
+chart.write             - Create/edit encounters
+rx.read                 - View prescriptions
+rx.write                - Create prescriptions
+orders.read             - View lab orders/results
+orders.write            - Create lab orders
+documents.read          - View documents
+documents.write         - Upload documents
+messaging.read          - View messages
+messaging.write         - Send messages
+billing.read            - View payments/claims
+billing.write           - Create payments/claims
+reports.read            - View reports
+admin.read              - View settings
+admin.write             - Modify settings
+```
+
+**FHIR Resource Scopes (from Keycloak token):**
+```
+patient/Patient.read     -> demographics.read
+patient/Patient.write    -> demographics.write
+patient/Appointment.read -> scheduling.read
+patient/Encounter.read   -> chart.read
+patient/Observation.read -> chart.read
+patient/MedicationRequest.write -> rx.write
+// etc.
+```
+
+### 12.2 VS Code Implementation
+
+```typescript
+// CiyexPermissionService - loaded after login, sets ContextKeys
+class CiyexPermissionService {
+    private _contextKeys = new Map<string, IContextKey<boolean>>();
+    
+    async loadPermissions(): Promise<void> {
+        // Fetch from API
+        const response = await this.api.fetch('/api/user/permissions');
+        const { permissions, writableResources, readableResources, role } = response;
+        
+        // Set permission category context keys
+        const categories = [
+            'scheduling', 'demographics', 'chart', 'rx', 'orders',
+            'documents', 'messaging', 'billing', 'reports', 'admin'
+        ];
+        
+        for (const cat of categories) {
+            const hasRead = permissions.some(p => p.startsWith(`${cat}.`));
+            const hasWrite = permissions.some(p => p === `${cat}.write`);
+            this._setKey(`ciyex.perm.${cat}`, hasRead);
+            this._setKey(`ciyex.perm.${cat}.write`, hasWrite);
+        }
+        
+        // Set FHIR resource scope context keys
+        for (const resource of readableResources) {
+            this._setKey(`ciyex.fhir.read.${resource}`, true);
+        }
+        for (const resource of writableResources) {
+            this._setKey(`ciyex.fhir.write.${resource}`, true);
+        }
+        
+        // Set role context keys
+        this._setKey(`ciyex.role.admin`, role === 'ADMIN' || role === 'SUPER_ADMIN');
+        this._setKey(`ciyex.role.provider`, role === 'PROVIDER');
+        this._setKey(`ciyex.role.nurse`, role === 'NURSE');
+        this._setKey(`ciyex.role.billing`, role === 'BILLING');
+        this._setKey(`ciyex.role.frontDesk`, role === 'FRONT_DESK');
+    }
+    
+    private _setKey(key: string, value: boolean): void {
+        let ctxKey = this._contextKeys.get(key);
+        if (!ctxKey) {
+            ctxKey = this.contextKeyService.createKey(key, false);
+            this._contextKeys.set(key, ctxKey);
+        }
+        ctxKey.set(value);
+    }
+}
+```
+
+### 12.3 Using Permissions in Menus & Views
+
+```typescript
+// Activity bar item only visible if user has scheduling permission
+viewContainerRegistry.registerViewContainer({
+    id: 'ciyex.calendar',
+    title: 'Calendar',
+    icon: Codicon.calendar,
+    when: ContextKeyExpr.has('ciyex.perm.scheduling'),  // RBAC gate
+}, ViewContainerLocation.Sidebar);
+
+// "New Patient" button only if user can write Patient resources
+MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+    command: { id: 'ciyex.newPatient', title: 'New Patient' },
+    when: ContextKeyExpr.has('ciyex.fhir.write.Patient'),  // FHIR scope gate
+    group: 'ciyex_create',
+    order: 1,
+});
+
+// Admin settings only for admin role
+MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+    submenu: MenubarAdminMenu,
+    title: 'Admin',
+    when: ContextKeyExpr.has('ciyex.role.admin'),  // Role gate
+    order: 8,
+});
+
+// Prescriptions view only if rx permission AND MedicationRequest scope
+viewsRegistry.registerViews([{
+    id: 'ciyex.prescriptions',
+    name: 'Prescriptions',
+    when: ContextKeyExpr.and(
+        ContextKeyExpr.has('ciyex.perm.rx'),
+        ContextKeyExpr.has('ciyex.fhir.read.MedicationRequest'),
+    ),
+}], CLINICAL_CONTAINER);
+```
+
+### 12.4 Dynamic Menu Filtering Flow
+
+```
+User logs in
+    |
+    v
+POST /api/auth/login -> JWT token (contains groups, org, FHIR scopes)
+    |
+    v
+GET /api/user/permissions -> { permissions[], writableResources[], readableResources[], role }
+    |
+    v
+CiyexPermissionService.loadPermissions()
+    -> Sets 40+ ContextKeys (ciyex.perm.*, ciyex.fhir.*, ciyex.role.*)
+    |
+    v
+GET /api/menus/ehr-sidebar -> Menu tree (already server-filtered by role)
+    |
+    v
+CiyexMenuService.loadMenus()
+    -> Registers ViewContainers with 'when' clauses from menu.requiredPermission
+    -> Each menu item's when = ContextKeyExpr.has('ciyex.perm.' + requiredPermission)
+    |
+    v
+VS Code evaluates ContextKeys -> shows/hides menus, views, commands automatically
+```
+
+### 12.5 Role-to-Menu Visibility Matrix
+
+| Menu Item | ADMIN | PROVIDER | NURSE | FRONT_DESK | BILLING |
+|---|---|---|---|---|---|
+| Calendar | Yes | Yes | Yes | Yes | No |
+| Patients | Yes | Yes | Yes | Yes | No |
+| Encounters | Yes | Yes | Yes | No | No |
+| Prescriptions | Yes | Yes | No | No | No |
+| Labs | Yes | Yes | Yes | No | No |
+| Payments | Yes | No | No | No | Yes |
+| Claims | Yes | No | No | No | Yes |
+| Reports | Yes | Yes | No | No | Yes |
+| Settings | Yes | No | No | No | No |
+| User Mgmt | Yes | No | No | No | No |
+```
