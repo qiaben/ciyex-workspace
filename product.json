@@ -105,6 +105,7 @@
 	},
 	"configurationDefaults": {
 		"window.titleBarStyle": "custom",
-		"window.menuBarVisibility": "visible"
+		"window.menuBarVisibility": "visible",
+		"security.workspace.trust.enabled": false
 	}
 }
