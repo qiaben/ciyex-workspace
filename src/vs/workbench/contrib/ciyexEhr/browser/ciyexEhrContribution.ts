@@ -8,7 +8,11 @@ import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { ICiyexPermissionService } from './ciyexPermissionService.js';
 import { ICiyexMenuService } from './ciyexMenuService.js';
+import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
+import { PatientListDataProvider } from './patientListDataProvider.js';
+import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions } from '../../../common/views.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
 
 /**
  * Main EHR workbench contribution.
@@ -22,6 +26,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
 		@ICiyexPermissionService private readonly permissionService: ICiyexPermissionService,
 		@ICiyexMenuService private readonly menuService: ICiyexMenuService,
+		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super();
@@ -45,8 +50,27 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Load API-driven menus
 		await this.menuService.loadMenus();
 
+		// Wire patient list TreeView with API data
+		this._wirePatientList();
+
 		// Register status bar items
 		this._registerStatusBarItems();
+	}
+
+	private _wirePatientList(): void {
+		try {
+			const viewsRegistry = Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry);
+			const viewDescriptor = viewsRegistry.getView('ciyex.patients.list');
+			if (viewDescriptor) {
+				const treeViewDescriptor = viewDescriptor as ITreeViewDescriptor;
+				if (treeViewDescriptor.treeView) {
+					const dataProvider = this._register(new PatientListDataProvider(this.apiService));
+					treeViewDescriptor.treeView.dataProvider = dataProvider;
+				}
+			}
+		} catch {
+			// TreeView not ready yet, skip
+		}
 	}
 
 	private _registerStatusBarItems(): void {

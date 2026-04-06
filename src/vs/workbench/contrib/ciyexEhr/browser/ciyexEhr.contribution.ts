@@ -15,6 +15,9 @@ import { CiyexEhrContribution } from './ciyexEhrContribution.js';
 // Register EHR ViewContainers in Activity Bar (Calendar, Patients, Clinical, etc.)
 import './ciyexViewContainers.js';
 
+// Register EHR commands (openPatientChart, newPatient, newAppointment, openCalendar)
+import './ciyexCommands.js';
+
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);
