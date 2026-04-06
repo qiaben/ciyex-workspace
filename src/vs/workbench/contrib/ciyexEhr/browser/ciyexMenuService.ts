@@ -39,53 +39,69 @@ export interface ICiyexMenuService {
 // These MUST be registered statically so the native macOS menu bar
 // includes them when it's first built. Items are populated dynamically.
 
+// Single "Ciyex" top-level menu with ALL items organized by section
+const MenubarCiyexMenu = new MenuId('MenubarCiyexMenu');
+
+// Also keep individual submenus for nested menus within Ciyex
 const MenubarClinicalMenu = new MenuId('MenubarClinicalMenu');
 const MenubarOperationsMenu = new MenuId('MenubarOperationsMenu');
 const MenubarSystemMenu = new MenuId('MenubarSystemMenu');
 const MenubarPortalMenu = new MenuId('MenubarPortalMenu');
 const MenubarEhrSettingsMenu = new MenuId('MenubarEhrSettingsMenu');
 
-// Register top-level EHR menus in the menu bar (STATIC - at module load)
-// These show after login via 'ciyex.authenticated' context key
-
+// Register the single "Ciyex" menu in the menu bar
 MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+	submenu: MenubarCiyexMenu,
+	title: { ...localize2('ciyexMenu', "Ciyex"), mnemonicTitle: localize2('mCiyex', "Ciye&&x").value },
+	order: 1.5, // Right after the app name
+});
+
+// Register sub-sections within the Ciyex menu as nested submenus
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	submenu: MenubarClinicalMenu,
-	title: { ...localize2('clinicalMenu', "Clinical"), mnemonicTitle: localize2('mClinical', "&&Clinical").value },
-	order: 2.5,
+	title: { ...localize2('clinicalSub', "Clinical"), mnemonicTitle: localize2('mClinicalSub', "&&Clinical").value },
+	group: '2_clinical',
+	order: 1,
 });
 
-MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	submenu: MenubarOperationsMenu,
-	title: { ...localize2('operationsMenu', "Operations"), mnemonicTitle: localize2('mOperations', "&&Operations").value },
-	order: 3.5,
+	title: { ...localize2('operationsSub', "Operations"), mnemonicTitle: localize2('mOperationsSub', "&&Operations").value },
+	group: '3_operations',
+	order: 2,
 });
 
-MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	submenu: MenubarSystemMenu,
-	title: { ...localize2('systemMenu', "System"), mnemonicTitle: localize2('mSystem', "&&System").value },
-	order: 5.5,
+	title: { ...localize2('systemSub', "System"), mnemonicTitle: localize2('mSystemSub', "&&System").value },
+	group: '4_system',
+	order: 3,
 });
 
-MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	submenu: MenubarPortalMenu,
-	title: { ...localize2('portalMenu', "Portal"), mnemonicTitle: localize2('mPortal', "&&Portal").value },
-	order: 6,
+	title: { ...localize2('portalSub', "Portal"), mnemonicTitle: localize2('mPortalSub', "&&Portal").value },
+	group: '4_system',
+	order: 4,
 });
 
-MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	submenu: MenubarEhrSettingsMenu,
-	title: { ...localize2('ehrSettingsMenu', "EHR Settings"), mnemonicTitle: localize2('mEhrSettings', "EHR &&Settings").value },
-	when: ContextKeyExpr.has('ciyex.role.admin'),
-	order: 6.5,
+	title: { ...localize2('ehrSettingsSub', "Settings"), mnemonicTitle: localize2('mEhrSettingsSub', "Se&&ttings").value },
+	group: '5_settings',
+	order: 5,
 });
 
-// Placeholder commands so menus aren't empty at startup (empty = hidden by native menu bar)
+// Placeholder commands so menus aren't empty at startup
+CommandsRegistry.registerCommand('ciyex.nav._placeholder', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_clinical', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_operations', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_system', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_portal', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_settings', () => { });
 
+// Placeholders in each submenu
+MenuRegistry.appendMenuItem(MenubarCiyexMenu, { command: { id: 'ciyex.nav._placeholder', title: 'Loading...' }, group: '1_nav', order: 0 });
 MenuRegistry.appendMenuItem(MenubarClinicalMenu, { command: { id: 'ciyex.nav._placeholder_clinical', title: 'Loading...' }, order: 0 });
 MenuRegistry.appendMenuItem(MenubarOperationsMenu, { command: { id: 'ciyex.nav._placeholder_operations', title: 'Loading...' }, order: 0 });
 MenuRegistry.appendMenuItem(MenubarSystemMenu, { command: { id: 'ciyex.nav._placeholder_system', title: 'Loading...' }, order: 0 });
@@ -171,13 +187,33 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 			}
 		}
 
-		// Now register in top-level menu bar submenus
+		// Register leaf items directly in the Ciyex menu (top group)
+		let leafOrder = 1;
+		for (const entry of this._menuItems) {
+			const item = entry.item;
+			const children = entry.children || [];
+
+			if (children.length === 0 && item.screenSlug) {
+				const commandId = `ciyex.nav.${item.itemKey}`;
+				this._menuDisposables.add(MenuRegistry.addCommand({ id: commandId, title: { value: item.label, original: item.label } }));
+				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, () => {
+					this.logService.info(`[CiyexMenu] Navigate: ${item.label} -> ${item.screenSlug}`);
+				}));
+				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
+					command: { id: commandId, title: item.label },
+					group: '1_nav',
+					order: leafOrder++,
+				}));
+			}
+		}
+
+		// Register parent menus in their submenus (Clinical, Operations, System, etc.)
 		for (const entry of this._menuItems) {
 			const item = entry.item;
 			const children = entry.children || [];
 
 			if (children.length === 0) {
-				continue; // Leaf items handled above and by sidebar ViewContainers
+				continue;
 			}
 
 			// Find the static MenuId for this parent
