@@ -222,39 +222,7 @@ registerAction2(class extends Action2 {
 
 // ciyex.openChartLayout is registered in layoutSettingsEditor.ts (interactive Tab Manager)
 
-registerAction2(class extends Action2 {
-	constructor() {
-		super({ id: 'ciyex.openEncounterSettings', title: localize2('encounterSettings', "Configure Encounter Form"), f1: true });
-	}
-	async run(accessor: ServicesAccessor): Promise<void> {
-		const api = accessor.get(ICiyexApiService);
-		const ws = accessor.get(IWebviewWorkbenchService);
-		let body: string;
-		try {
-			const res = await api.fetch('/api/tab-field-config/encounter-form');
-			if (res.ok) {
-				const data = await res.json();
-				const sections = (data?.data || data)?.sections || [];
-				let rows = '';
-				for (const s of sections) {
-					const vis = s.visible !== false ? '&#x2705;' : '&#x274C;';
-					const cols = s.columns || 1;
-					const fieldCount = (s.fields || []).length;
-					rows += `<tr><td>${s.title || s.key || ''}</td><td>${fieldCount}</td><td>${cols}</td><td>${vis}</td></tr>`;
-				}
-				body = `<h1>Encounter Form Configuration</h1>
-					<div class="card"><table>
-						<thead><tr><th>Section</th><th>Fields</th><th>Columns</th><th>Visible</th></tr></thead>
-						<tbody>${rows || '<tr><td colspan="4">No encounter config (using defaults)</td></tr>'}</tbody>
-					</table></div>`;
-			} else {
-				body = `<h1>Encounter Form</h1><div class="card"><p>No custom encounter config</p></div>`;
-			}
-		} catch { body = '<h1>Encounter Form</h1><div class="card"><p>Error loading config</p></div>'; }
-		const input = ws.openWebview({ title: 'Encounter Form', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined }, 'ciyex.encounterSettings', 'Encounter Form', undefined, { group: ACTIVE_GROUP, preserveFocus: false });
-		input.webview.setHtml(wrapSettingsHtml(body));
-	}
-});
+// ciyex.openEncounterSettings and ciyex.openFieldConfig are in layoutSettingsEditor.ts
 
 registerAction2(class extends Action2 {
 	constructor() {

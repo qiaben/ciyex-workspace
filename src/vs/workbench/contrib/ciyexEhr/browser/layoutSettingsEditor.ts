@@ -232,3 +232,204 @@ function buildTabManagerHtml(tabConfig: Array<Record<string, unknown>>, configSo
 </body>
 </html>`;
 }
+
+/**
+ * Field Config Editor - View/edit fields for a specific tab
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openFieldConfig',
+			title: localize2('fieldConfig', "Configure Fields"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, tabKey?: string): Promise<void> {
+		const api = accessor.get(ICiyexApiService);
+		const ws = accessor.get(IWebviewWorkbenchService);
+
+		// If no tabKey, show picker
+		if (!tabKey) {
+			tabKey = 'demographics'; // default
+		}
+
+		let fieldConfig: Record<string, unknown> = {};
+		let fhirResources: string[] = [];
+		try {
+			const res = await api.fetch(`/api/tab-field-config/${tabKey}`);
+			if (res.ok) {
+				const data = await res.json();
+				const cfg = data?.data || data || {};
+				const fc = cfg.fieldConfig || cfg;
+				if (typeof fc === 'string') {
+					fieldConfig = JSON.parse(fc);
+				} else {
+					fieldConfig = fc as Record<string, unknown>;
+				}
+				const fr = cfg.fhirResources || [];
+				fhirResources = Array.isArray(fr) ? fr.map((r: Record<string, string>) => typeof r === 'string' ? r : r.type) : [];
+			}
+		} catch { /* empty config */ }
+
+		const sections = (fieldConfig as Record<string, unknown[]>).sections || [];
+		const label = `Fields: ${tabKey}`;
+
+		let sectionsHtml = '';
+		for (const section of sections as Array<Record<string, unknown>>) {
+			const fields = (section.fields as Array<Record<string, unknown>>) || [];
+			const vis = section.visible !== false;
+
+			let fieldsHtml = '';
+			for (const field of fields) {
+				const req = field.required ? '<span style="color:#f48771;">*</span>' : '';
+				const fhir = field.fhirMapping ? `<span class="fhir-badge">${(field.fhirMapping as Record<string, string>).resource}.${(field.fhirMapping as Record<string, string>).path}</span>` : '';
+				fieldsHtml += `
+					<div class="field-row">
+						<span class="field-label">${field.label || field.key}${req}</span>
+						<span class="field-type">${field.type || 'text'}</span>
+						<span class="field-key">${field.key}</span>
+						${fhir}
+					</div>`;
+			}
+
+			sectionsHtml += `
+				<div class="section" style="opacity:${vis ? '1' : '0.5'}">
+					<div class="section-header">
+						<span class="section-title">${section.title || section.key}</span>
+						<span class="section-info">${fields.length} fields | ${section.columns || 1} cols</span>
+						<span class="section-vis">${vis ? '✓ Visible' : '✗ Hidden'}</span>
+					</div>
+					<div class="section-fields">${fieldsHtml}</div>
+				</div>`;
+		}
+
+		const fhirHtml = fhirResources.length > 0
+			? fhirResources.map(r => `<span class="fhir-badge">${r}</span>`).join(' ')
+			: '<span style="color:#858585;">No FHIR resources</span>';
+
+		const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+			body { font-family:-apple-system,sans-serif; background:var(--vscode-editor-background,#1e1e1e); color:var(--vscode-editor-foreground,#ccc); padding:20px; margin:0; font-size:13px; }
+			h1 { margin:0 0 4px; font-size:18px; }
+			.subtitle { color:#858585; margin-bottom:16px; font-size:12px; }
+			.fhir-bar { margin-bottom:16px; }
+			.fhir-badge { background:#1e3a5f; color:#6bb3f0; padding:2px 8px; border-radius:3px; font-size:11px; }
+			.section { background:#252526; border:1px solid #3c3c3c; border-radius:6px; margin-bottom:12px; }
+			.section-header { display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid #3c3c3c; }
+			.section-title { font-weight:600; flex:1; }
+			.section-info { color:#858585; font-size:11px; }
+			.section-vis { font-size:11px; }
+			.section-fields { padding:4px 0; }
+			.field-row { display:flex; align-items:center; gap:8px; padding:5px 14px; border-bottom:1px solid rgba(255,255,255,0.04); }
+			.field-row:hover { background:rgba(255,255,255,0.03); }
+			.field-label { flex:1; font-weight:500; }
+			.field-type { background:#3c3c3c; color:#858585; padding:1px 6px; border-radius:3px; font-size:10px; }
+			.field-key { color:#858585; font-size:11px; font-family:monospace; }
+		</style></head><body>
+			<h1>Field Configuration: ${tabKey}</h1>
+			<div class="subtitle">View and edit fields, sections, types, and FHIR mappings for this tab</div>
+			<div class="fhir-bar">FHIR Resources: ${fhirHtml}</div>
+			${sectionsHtml || '<p style="color:#858585;">No field configuration for this tab</p>'}
+		</body></html>`;
+
+		const input = ws.openWebview(
+			{ title: label, options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.fieldConfig', label, undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(html);
+	}
+});
+
+/**
+ * Encounter Settings Editor - Interactive encounter form section manager
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openEncounterSettings',
+			title: localize2('encounterSettings', "Configure Encounter Form"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const api = accessor.get(ICiyexApiService);
+		const ws = accessor.get(IWebviewWorkbenchService);
+
+		let sections: Array<Record<string, unknown>> = [];
+		let configSource = 'UNIVERSAL_DEFAULT';
+		try {
+			const res = await api.fetch('/api/tab-field-config/encounter-form');
+			if (res.ok) {
+				const data = await res.json();
+				const cfg = data?.data || data || {};
+				const fc = cfg.fieldConfig || cfg;
+				const parsed = typeof fc === 'string' ? JSON.parse(fc) : fc;
+				sections = ((parsed as Record<string, unknown>).sections || []) as Array<Record<string, unknown>>;
+				configSource = cfg.source || (cfg.orgId && cfg.orgId !== '*' ? 'ORG_CUSTOM' : 'UNIVERSAL_DEFAULT');
+			}
+		} catch { /* empty */ }
+
+		const sourceBadge = configSource === 'ORG_CUSTOM'
+			? '<span style="background:#0e639c;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">Custom</span>'
+			: '<span style="background:#3c3c3c;color:#858585;padding:2px 8px;border-radius:4px;font-size:11px;">Default</span>';
+
+		let rowsHtml = '';
+		for (const section of sections) {
+			const fields = (section.fields as Array<Record<string, string>>) || [];
+			const vis = section.visible !== false;
+			const cols = section.columns || 1;
+			const collapsible = section.collapsible ? 'Yes' : 'No';
+			const collapsed = section.collapsed ? 'Collapsed' : 'Expanded';
+
+			const fieldBadges = fields.slice(0, 8).map(f =>
+				`<span style="background:#3c3c3c;color:#858585;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:4px;">${f.label || f.key}</span>`
+			).join('') + (fields.length > 8 ? `<span style="color:#858585;font-size:10px;">+${fields.length - 8} more</span>` : '');
+
+			rowsHtml += `
+				<div class="enc-row" style="opacity:${vis ? '1' : '0.5'}">
+					<div class="enc-header">
+						<span class="enc-title">${section.title || section.key}</span>
+						<span class="enc-info">${fields.length} fields</span>
+						<span class="enc-cols">${cols} col${Number(cols) > 1 ? 's' : ''}</span>
+						<span class="enc-vis">${vis ? '✓' : '✗'}</span>
+						<span class="enc-collapse">${collapsible} | ${collapsed}</span>
+					</div>
+					<div class="enc-fields">${fieldBadges}</div>
+				</div>`;
+		}
+
+		const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+			body { font-family:-apple-system,sans-serif; background:var(--vscode-editor-background,#1e1e1e); color:var(--vscode-editor-foreground,#ccc); padding:20px; margin:0; font-size:13px; }
+			h1 { margin:0 0 4px; font-size:18px; }
+			.subtitle { color:#858585; margin-bottom:16px; font-size:12px; }
+			.toolbar { display:flex; gap:8px; margin-bottom:16px; }
+			.btn { padding:6px 14px; border-radius:4px; border:none; cursor:pointer; font-size:12px; font-weight:600; }
+			.btn-primary { background:#0e639c; color:#fff; }
+			.btn-danger { background:#a1260d; color:#fff; }
+			.enc-row { background:#252526; border:1px solid #3c3c3c; border-radius:6px; margin-bottom:8px; }
+			.enc-header { display:flex; align-items:center; gap:12px; padding:10px 14px; }
+			.enc-title { font-weight:600; flex:1; }
+			.enc-info { color:#858585; font-size:11px; }
+			.enc-cols { color:#858585; font-size:11px; }
+			.enc-vis { font-size:14px; }
+			.enc-collapse { color:#858585; font-size:11px; }
+			.enc-fields { padding:6px 14px 10px; display:flex; flex-wrap:wrap; gap:4px; }
+		</style></head><body>
+			<h1>Encounter Form ${sourceBadge}</h1>
+			<div class="subtitle">Configure encounter form sections — enable/disable, reorder, and adjust display settings</div>
+			<div class="toolbar">
+				<button class="btn btn-primary">Save Changes</button>
+				<button class="btn btn-danger">Reset to Defaults</button>
+				<span style="color:#858585;font-size:12px;margin-left:8px;">${sections.length} sections</span>
+			</div>
+			${rowsHtml || '<p style="color:#858585;">No encounter form configuration (using defaults)</p>'}
+		</body></html>`;
+
+		const input = ws.openWebview(
+			{ title: 'Encounter Form', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.encounterSettings', 'Encounter Form', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(html);
+	}
+});
