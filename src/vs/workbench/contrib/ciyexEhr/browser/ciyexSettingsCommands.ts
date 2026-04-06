@@ -220,40 +220,7 @@ registerAction2(class extends Action2 {
 	}
 });
 
-registerAction2(class extends Action2 {
-	constructor() {
-		super({ id: 'ciyex.openChartLayout', title: localize2('chartLayout', "Configure Chart Layout"), f1: true });
-	}
-	async run(accessor: ServicesAccessor): Promise<void> {
-		const api = accessor.get(ICiyexApiService);
-		const ws = accessor.get(IWebviewWorkbenchService);
-		let body: string;
-		try {
-			const res = await api.fetch('/api/tab-field-config/layout');
-			if (res.ok) {
-				const data = await res.json();
-				const tabConfig = (data?.data || data)?.tabConfig || [];
-				let rows = '';
-				for (const group of tabConfig) {
-					rows += `<tr><td colspan="3" style="font-weight:600;padding-top:12px;">${group.label || ''}</td></tr>`;
-					for (const tab of (group.tabs || [])) {
-						const vis = tab.visible ? '&#x2705;' : '&#x274C;';
-						rows += `<tr><td>&nbsp;&nbsp;${tab.label || ''}</td><td>${tab.key || ''}</td><td>${vis}</td></tr>`;
-					}
-				}
-				body = `<h1>Chart Layout</h1>
-					<div class="card"><table>
-						<thead><tr><th>Tab</th><th>Key</th><th>Visible</th></tr></thead>
-						<tbody>${rows || '<tr><td colspan="3">No layout config</td></tr>'}</tbody>
-					</table></div>`;
-			} else {
-				body = `<h1>Chart Layout</h1><div class="card"><p>Failed to load layout (${res.status})</p></div>`;
-			}
-		} catch { body = '<h1>Chart Layout</h1><div class="card"><p>Error loading layout</p></div>'; }
-		const input = ws.openWebview({ title: 'Chart Layout', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined }, 'ciyex.chartLayout', 'Chart Layout', undefined, { group: ACTIVE_GROUP, preserveFocus: false });
-		input.webview.setHtml(wrapSettingsHtml(body));
-	}
-});
+// ciyex.openChartLayout is registered in layoutSettingsEditor.ts (interactive Tab Manager)
 
 registerAction2(class extends Action2 {
 	constructor() {

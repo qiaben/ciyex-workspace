@@ -28,6 +28,9 @@ import './ciyexSettingsCommands.js';
 // Register Ciyex settings in VS Code Settings Editor (Cmd+,)
 import './ciyexSettings.js';
 
+// Register Layout Settings editors (Tab Manager, Field Config, Encounter)
+import './layoutSettingsEditor.js';
+
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);
