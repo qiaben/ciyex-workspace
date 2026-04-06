@@ -173,59 +173,92 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	 * Files are written only if missing — existing user configs are preserved.
 	 */
 	private async _ensureDefaultConfigs(): Promise<void> {
-		const defaults: Record<string, string> = {
-			'settings.json': JSON.stringify({
-				'ciyex.practice.name': '',
-				'ciyex.practice.timezone': 'America/New_York',
-				'ciyex.display.fontSize': 'default',
-				'ciyex.calendar.defaultView': 'week',
-				'ciyex.calendar.slotDuration': 15,
-				'ciyex.session.idleTimeoutMinutes': 30,
-				'ciyex.features.cdsHooksEnabled': true,
-			}, null, 2),
-			'layout.json': JSON.stringify({
-				source: 'UNIVERSAL_DEFAULT',
-				categories: [
-					{ key: 'overview', label: 'Overview', position: 0, tabs: [{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', position: 0, visible: true, fhirResources: ['Patient'] }] },
-					{ key: 'clinical', label: 'Clinical', position: 1, tabs: [
-						{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', position: 0, visible: true, fhirResources: ['Encounter'] },
-						{ key: 'problems', label: 'Problems', icon: 'AlertCircle', position: 1, visible: true, fhirResources: ['Condition'] },
-						{ key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', position: 2, visible: true, fhirResources: ['AllergyIntolerance'] },
-						{ key: 'medications', label: 'Medications', icon: 'Pill', position: 3, visible: true, fhirResources: ['MedicationRequest'] },
-						{ key: 'vitals', label: 'Vitals', icon: 'Activity', position: 4, visible: true, fhirResources: ['Observation'] },
-						{ key: 'labs', label: 'Lab Results', icon: 'TestTube', position: 5, visible: true, fhirResources: ['DiagnosticReport'] },
-						{ key: 'immunizations', label: 'Immunizations', icon: 'Syringe', position: 6, visible: true, fhirResources: ['Immunization'] },
-					] },
-					{ key: 'general', label: 'General', position: 2, tabs: [
-						{ key: 'demographics', label: 'Demographics', icon: 'User', position: 0, visible: true, fhirResources: ['Patient'] },
-						{ key: 'appointments', label: 'Appointments', icon: 'Calendar', position: 1, visible: true, fhirResources: ['Appointment'] },
-						{ key: 'documents', label: 'Documents', icon: 'FileText', position: 2, visible: true, fhirResources: ['DocumentReference'] },
-					] },
-					{ key: 'financial', label: 'Financial', position: 3, tabs: [
-						{ key: 'billing', label: 'Billing', icon: 'Receipt', position: 0, visible: true, fhirResources: ['Claim'] },
-						{ key: 'insurance', label: 'Insurance', icon: 'Shield', position: 1, visible: true, fhirResources: ['Coverage'] },
-					] },
-				]
-			}, null, 2),
-			'menu.json': JSON.stringify({ items: [] }, null, 2),
-			'encounter.json': JSON.stringify({ tabKey: 'encounter-form', source: 'UNIVERSAL_DEFAULT', sections: [] }, null, 2),
-			'colors.json': JSON.stringify({ categories: [] }, null, 2),
-			'portal.json': JSON.stringify({ general: {}, features: {}, forms: [], navigation: [] }, null, 2),
-			'roles.json': JSON.stringify({ roles: [] }, null, 2),
-		};
+		// Try to copy from workspace .ciyex/ folder first (has full configs from repo)
+		// Fall back to minimal defaults if workspace not available
+		const configFiles = [
+			'settings.json', 'layout.json', 'encounter.json', 'menu.json',
+			'colors.json', 'portal.json', 'roles.json',
+		];
 
 		try {
-			for (const [filename, content] of Object.entries(defaults)) {
-				const fileUri = URI.joinPath(this._ciyexConfigHome, filename);
-				const exists = await this.fileService.exists(fileUri);
-				if (!exists) {
-					await this.fileService.writeFile(fileUri, VSBuffer.fromString(content));
-					this.logService.info(`[CiyexConfig] Created default: ${filename}`);
+			// Check if workspace has .ciyex/ folder with configs
+			const workspaceService = this.contextKeyService; // We'll use fileService to check
+			let workspaceCiyexRoot: URI | undefined;
+
+			// Try common workspace paths for .ciyex/ folder
+			const possibleRoots = [
+				URI.file('/Users/siva/ciyex-workspace/ciyex-workspace/.ciyex'),
+				// Could also be process.cwd()/.ciyex but we're in browser context
+			];
+
+			for (const root of possibleRoots) {
+				if (await this.fileService.exists(root)) {
+					workspaceCiyexRoot = root;
+					break;
 				}
 			}
+
+			for (const filename of configFiles) {
+				const targetUri = URI.joinPath(this._ciyexConfigHome, filename);
+				if (await this.fileService.exists(targetUri)) {
+					continue; // Don't overwrite existing configs
+				}
+
+				// Try to copy from workspace
+				if (workspaceCiyexRoot) {
+					const sourceUri = URI.joinPath(workspaceCiyexRoot, filename);
+					if (await this.fileService.exists(sourceUri)) {
+						const content = await this.fileService.readFile(sourceUri);
+						await this.fileService.writeFile(targetUri, content.value);
+						this.logService.info(`[CiyexConfig] Copied from workspace: ${filename}`);
+						continue;
+					}
+				}
+
+				// Fall back to minimal default
+				const defaultContent = this._getMinimalDefault(filename);
+				await this.fileService.writeFile(targetUri, VSBuffer.fromString(defaultContent));
+				this.logService.info(`[CiyexConfig] Created minimal default: ${filename}`);
+			}
+
+			// Also copy fields/ directory if workspace has it
+			if (workspaceCiyexRoot) {
+				const fieldsSource = URI.joinPath(workspaceCiyexRoot, 'fields');
+				if (await this.fileService.exists(fieldsSource)) {
+					try {
+						const fieldsDir = await this.fileService.resolve(fieldsSource);
+						if (fieldsDir.children) {
+							for (const child of fieldsDir.children) {
+								if (child.name.endsWith('.json')) {
+									const targetField = URI.joinPath(this._ciyexConfigHome, 'fields', child.name);
+									if (!await this.fileService.exists(targetField)) {
+										const content = await this.fileService.readFile(child.resource);
+										await this.fileService.writeFile(targetField, content.value);
+										this.logService.info(`[CiyexConfig] Copied field config: ${child.name}`);
+									}
+								}
+							}
+						}
+					} catch { /* fields dir not accessible */ }
+				}
+			}
+
 			this.logService.info(`[CiyexConfig] Config home: ${this._ciyexConfigHome.toString()}`);
 		} catch (err) {
 			this.logService.warn('[CiyexConfig] Failed to create default configs:', err);
+		}
+	}
+
+	private _getMinimalDefault(filename: string): string {
+		switch (filename) {
+			case 'settings.json': return JSON.stringify({ 'ciyex.practice.name': '', 'ciyex.practice.timezone': 'America/New_York', 'ciyex.display.fontSize': 'default', 'ciyex.calendar.defaultView': 'week', 'ciyex.session.idleTimeoutMinutes': 30, 'ciyex.features.cdsHooksEnabled': true }, null, 2);
+			case 'layout.json': return JSON.stringify({ source: 'UNIVERSAL_DEFAULT', categories: [{ key: 'clinical', label: 'Clinical', position: 0, tabs: [{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', position: 0, visible: true, fhirResources: ['Encounter'] }, { key: 'demographics', label: 'Demographics', icon: 'User', position: 1, visible: true, fhirResources: ['Patient'] }] }] }, null, 2);
+			case 'encounter.json': return JSON.stringify({ tabKey: 'encounter-form', source: 'UNIVERSAL_DEFAULT', sections: [{ key: 'cc', title: 'Chief Complaint', columns: 1, visible: true, fields: [{ key: 'chiefComplaint', label: 'Chief Complaint', type: 'textarea', required: true }] }] }, null, 2);
+			case 'menu.json': return JSON.stringify({ items: [{ itemKey: 'calendar', label: 'Calendar', icon: 'Calendar', screenSlug: '/calendar', position: 0, visible: true, children: [] }, { itemKey: 'patients', label: 'Patients', icon: 'Users', screenSlug: '/patients', position: 1, visible: true, children: [] }] }, null, 2);
+			case 'colors.json': return JSON.stringify({ categories: [{ key: 'visit-type', label: 'Visit Types', colors: [{ entityKey: 'new-patient', entityLabel: 'New Patient', bgColor: '#4CAF50', borderColor: '#4CAF50', textColor: '#ffffff' }] }] }, null, 2);
+			case 'portal.json': return JSON.stringify({ general: { name: 'Patient Portal' }, features: { onlineBooking: true, messaging: true, labResults: true }, forms: [], navigation: [{ key: 'dashboard', label: 'Dashboard', route: '/', icon: 'Home', visible: true }] }, null, 2);
+			case 'roles.json': return JSON.stringify({ roles: [{ id: 'admin', name: 'admin', label: 'Administrator', description: 'Full system access', isSystem: true, smartScopes: ['Patient.read', 'Patient.write', 'Encounter.read', 'Encounter.write'], permissions: ['patients.view', 'patients.create', 'patients.edit', 'admin.view', 'admin.edit'] }] }, null, 2);
+			default: return '{}';
 		}
 	}
 

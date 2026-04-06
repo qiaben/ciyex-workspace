@@ -164,6 +164,11 @@ MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
 	order: 7,
 });
 MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
+	command: { id: 'ciyex.openFieldConfig', title: localize2('menuFieldConfig', "Field Configuration").value },
+	group: '2_layout',
+	order: 6,
+});
+MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
 	command: { id: 'ciyex.openSettings', title: localize2('menuSettings', "Settings").value },
 	group: '4_settings',
 	order: 8,
