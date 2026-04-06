@@ -12,6 +12,9 @@ import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } fr
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { CiyexEhrContribution } from './ciyexEhrContribution.js';
 
+// Register EHR ViewContainers in Activity Bar (Calendar, Patients, Clinical, etc.)
+import './ciyexViewContainers.js';
+
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);
