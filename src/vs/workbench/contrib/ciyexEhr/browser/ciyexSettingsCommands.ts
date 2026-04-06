@@ -9,7 +9,7 @@ import { localize2 } from '../../../../nls.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { URI } from '../../../../base/common/uri.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 
 // --- Admin Menu (top-level menu bar) ---------------------------------
 
@@ -80,12 +80,10 @@ MenuRegistry.appendMenuItem(MenubarAdminMenu, {
 
 async function openCiyexConfig(accessor: ServicesAccessor, relativePath: string): Promise<void> {
 	const editorService = accessor.get(IEditorService);
-	const workspaceService = accessor.get(IWorkspaceContextService);
+	const environmentService = accessor.get(IEnvironmentService);
 
-	const workspace = workspaceService.getWorkspace();
-	const workspaceFolder = workspace.folders[0]?.uri;
-	const root = workspaceFolder || URI.file(workspace.configuration?.fsPath || '.');
-	const fileUri = URI.joinPath(root, '.ciyex', relativePath);
+	// Open from user data home: ~/.ciyex-workspace/.ciyex/{file}
+	const fileUri = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex', relativePath);
 
 	await editorService.openEditor({
 		resource: fileUri,

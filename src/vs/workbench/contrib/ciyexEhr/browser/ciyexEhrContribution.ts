@@ -15,6 +15,11 @@ import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, View
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { URI } from '../../../../base/common/uri.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 
 /**
  * Main EHR workbench contribution.
@@ -24,6 +29,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 	static readonly ID = 'workbench.contrib.ciyexEhr';
 
+	private readonly _ciyexConfigHome: URI;
+
 	constructor(
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
 		@ICiyexPermissionService private readonly permissionService: ICiyexPermissionService,
@@ -32,8 +39,17 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+		@IFileService private readonly fileService: IFileService,
+		@IEnvironmentService private readonly environmentService: IEnvironmentService,
+		@ILogService private readonly logService: ILogService,
 	) {
 		super();
+
+		// .ciyex config folder in user data home (~/.ciyex-workspace/.ciyex/)
+		this._ciyexConfigHome = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex');
+
+		// Copy default configs on startup (before auth)
+		this._ensureDefaultConfigs();
 
 		// Load permissions when authenticated
 		if (this.authService.state === CiyexAuthState.Authenticated) {
@@ -150,6 +166,72 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		} catch {
 			return '';
 		}
+	}
+
+	/**
+	 * Copy default .ciyex config files to user data home if they don't exist.
+	 * Files are written only if missing — existing user configs are preserved.
+	 */
+	private async _ensureDefaultConfigs(): Promise<void> {
+		const defaults: Record<string, string> = {
+			'settings.json': JSON.stringify({
+				'ciyex.practice.name': '',
+				'ciyex.practice.timezone': 'America/New_York',
+				'ciyex.display.fontSize': 'default',
+				'ciyex.calendar.defaultView': 'week',
+				'ciyex.calendar.slotDuration': 15,
+				'ciyex.session.idleTimeoutMinutes': 30,
+				'ciyex.features.cdsHooksEnabled': true,
+			}, null, 2),
+			'layout.json': JSON.stringify({
+				source: 'UNIVERSAL_DEFAULT',
+				categories: [
+					{ key: 'overview', label: 'Overview', position: 0, tabs: [{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', position: 0, visible: true, fhirResources: ['Patient'] }] },
+					{ key: 'clinical', label: 'Clinical', position: 1, tabs: [
+						{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', position: 0, visible: true, fhirResources: ['Encounter'] },
+						{ key: 'problems', label: 'Problems', icon: 'AlertCircle', position: 1, visible: true, fhirResources: ['Condition'] },
+						{ key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', position: 2, visible: true, fhirResources: ['AllergyIntolerance'] },
+						{ key: 'medications', label: 'Medications', icon: 'Pill', position: 3, visible: true, fhirResources: ['MedicationRequest'] },
+						{ key: 'vitals', label: 'Vitals', icon: 'Activity', position: 4, visible: true, fhirResources: ['Observation'] },
+						{ key: 'labs', label: 'Lab Results', icon: 'TestTube', position: 5, visible: true, fhirResources: ['DiagnosticReport'] },
+						{ key: 'immunizations', label: 'Immunizations', icon: 'Syringe', position: 6, visible: true, fhirResources: ['Immunization'] },
+					] },
+					{ key: 'general', label: 'General', position: 2, tabs: [
+						{ key: 'demographics', label: 'Demographics', icon: 'User', position: 0, visible: true, fhirResources: ['Patient'] },
+						{ key: 'appointments', label: 'Appointments', icon: 'Calendar', position: 1, visible: true, fhirResources: ['Appointment'] },
+						{ key: 'documents', label: 'Documents', icon: 'FileText', position: 2, visible: true, fhirResources: ['DocumentReference'] },
+					] },
+					{ key: 'financial', label: 'Financial', position: 3, tabs: [
+						{ key: 'billing', label: 'Billing', icon: 'Receipt', position: 0, visible: true, fhirResources: ['Claim'] },
+						{ key: 'insurance', label: 'Insurance', icon: 'Shield', position: 1, visible: true, fhirResources: ['Coverage'] },
+					] },
+				]
+			}, null, 2),
+			'menu.json': JSON.stringify({ items: [] }, null, 2),
+			'encounter.json': JSON.stringify({ tabKey: 'encounter-form', source: 'UNIVERSAL_DEFAULT', sections: [] }, null, 2),
+			'colors.json': JSON.stringify({ categories: [] }, null, 2),
+			'portal.json': JSON.stringify({ general: {}, features: {}, forms: [], navigation: [] }, null, 2),
+			'roles.json': JSON.stringify({ roles: [] }, null, 2),
+		};
+
+		try {
+			for (const [filename, content] of Object.entries(defaults)) {
+				const fileUri = URI.joinPath(this._ciyexConfigHome, filename);
+				const exists = await this.fileService.exists(fileUri);
+				if (!exists) {
+					await this.fileService.writeFile(fileUri, VSBuffer.fromString(content));
+					this.logService.info(`[CiyexConfig] Created default: ${filename}`);
+				}
+			}
+			this.logService.info(`[CiyexConfig] Config home: ${this._ciyexConfigHome.toString()}`);
+		} catch (err) {
+			this.logService.warn('[CiyexConfig] Failed to create default configs:', err);
+		}
+	}
+
+	/** Get the .ciyex config home URI for opening files */
+	get ciyexConfigHome(): URI {
+		return this._ciyexConfigHome;
 	}
 
 	private _getTenant(): string {
