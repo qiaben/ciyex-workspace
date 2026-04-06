@@ -91,5 +91,16 @@
 			"google": { "id": "", "name": "" },
 			"apple": { "id": "", "name": "" }
 		}
+	},
+	"extensionsGallery": {
+		"serviceUrl": "{ciyexApiUrl}/api/marketplace",
+		"itemUrl": "{ciyexApiUrl}/api/marketplace/apps/{name}",
+		"controlUrl": "",
+		"nlsBaseUrl": "",
+		"publisherUrl": ""
+	},
+	"ciyexMarketplace": {
+		"enabled": true,
+		"proxyThroughApi": true
 	}
 }
