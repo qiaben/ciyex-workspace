@@ -146,39 +146,28 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 	private _populateMenus(): void {
 		this._menuDisposables.clear();
 
-		// Also register ALL menu items in the GlobalActivity (gear) menu
+		// Only "Settings" menu items go in the gear menu (GlobalActivity)
+		// Everything else goes in the top menu bar and sidebar only
 		let gearOrder = 10;
 		for (const entry of this._menuItems) {
 			const item = entry.item;
 			const children = entry.children || [];
 
-			if (children.length > 0) {
-				// Parent with children: register each child in gear menu under 'ciyex_' group
+			// Only the "settings" parent goes into the gear menu
+			if (item.itemKey === 'settings' && children.length > 0) {
 				for (const childEntry of children) {
 					const child = childEntry.item;
 					const cmdId = `ciyex.gear.${child.itemKey}`;
-					this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: `${item.label}: ${child.label}`, original: `${item.label}: ${child.label}` } }));
+					this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: child.label, original: child.label } }));
 					this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, () => {
-						this.logService.info(`[CiyexMenu] Gear: ${child.label} -> ${child.screenSlug}`);
+						this.logService.info(`[CiyexMenu] Settings: ${child.label} -> ${child.screenSlug}`);
 					}));
 					this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-						command: { id: cmdId, title: `${item.label}: ${child.label}` },
-						group: `5_ciyex_${item.itemKey}`,
+						command: { id: cmdId, title: child.label },
+						group: '3_ciyex_settings',
 						order: gearOrder++,
 					}));
 				}
-			} else if (item.screenSlug) {
-				// Leaf item: register directly in gear menu
-				const cmdId = `ciyex.gear.${item.itemKey}`;
-				this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: item.label, original: item.label } }));
-				this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, () => {
-					this.logService.info(`[CiyexMenu] Gear: ${item.label} -> ${item.screenSlug}`);
-				}));
-				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-					command: { id: cmdId, title: item.label },
-					group: '5_ciyex_nav',
-					order: gearOrder++,
-				}));
 			}
 		}
 
