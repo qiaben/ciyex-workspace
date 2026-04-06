@@ -220,6 +220,7 @@ export abstract class MenubarControl extends Disposable {
 				this.topLevelTitles[mainMenuAction.item.title.original] = mainMenuAction.item.title.mnemonicTitle ?? mainMenuAction.item.title.value;
 			}
 		}
+		
 	}
 
 	protected updateMenubar(): void {

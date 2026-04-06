@@ -361,6 +361,19 @@ export class Menubar extends Disposable {
 			menubar.append(macWindowMenuItem);
 		}
 
+		// Dynamic EHR menus (Clinical, Operations, System, Portal, EHR Settings, etc.)
+		const knownMenus = new Set(['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Window', 'Help', 'Preferences']);
+		if (this.menubarMenus) {
+			for (const menuName of Object.keys(this.menubarMenus)) {
+				if (!knownMenus.has(menuName) && this.shouldDrawMenu(menuName)) {
+					const dynamicMenu = new Menu();
+					const dynamicMenuItem = new MenuItem({ label: this.mnemonicLabel(`&&${menuName}`), submenu: dynamicMenu });
+					this.setMenuById(dynamicMenu, menuName);
+					menubar.append(dynamicMenuItem);
+				}
+			}
+		}
+
 		// Help
 		if (this.shouldDrawMenu('Help')) {
 			const helpMenu = new Menu();

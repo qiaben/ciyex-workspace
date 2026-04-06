@@ -178,6 +178,15 @@ export type MenuBarVisibility = 'classic' | 'visible' | 'toggle' | 'hidden' | 'c
 export function getMenuBarVisibility(configurationService: IConfigurationService): MenuBarVisibility {
 	const menuBarVisibility = configurationService.getValue<MenuBarVisibility | 'default'>(MenuSettings.MenuBarVisibility);
 
+	// When custom title bar is set, respect the menuBarVisibility setting even on macOS
+	const titleBarStyle = configurationService.getValue<string>('window.titleBarStyle');
+	if (titleBarStyle === 'custom') {
+		if (menuBarVisibility === 'default') {
+			return 'visible'; // Show inline menu bar in custom title bar mode
+		}
+		return menuBarVisibility;
+	}
+
 	if (menuBarVisibility === 'default' || (menuBarVisibility === 'compact' && hasNativeMenu(configurationService)) || (isMacintosh && isNative)) {
 		return 'classic';
 	} else {

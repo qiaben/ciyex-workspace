@@ -80,6 +80,7 @@ export class NativeMenubarControl extends MenubarControl {
 		const menubarData = { menus: {}, keybindings: {} };
 		if (this.getMenubarMenus(menubarData)) {
 			this.menubarService.updateMenubar(this.nativeHostService.windowId, menubarData);
+		} else {
 		}
 	}
 
@@ -96,7 +97,7 @@ export class NativeMenubarControl extends MenubarControl {
 				const menuActions = getFlatContextMenuActions(menu.getActions({ shouldForwardArgs: true }));
 				this.populateMenuItems(menuActions, menubarMenu, menubarData.keybindings);
 				if (menubarMenu.items.length === 0) {
-					return false; // Menus are incomplete
+					continue; // Skip empty menus (e.g., dynamic EHR menus loading)
 				}
 				menubarData.menus[topLevelMenuName] = menubarMenu;
 			}
