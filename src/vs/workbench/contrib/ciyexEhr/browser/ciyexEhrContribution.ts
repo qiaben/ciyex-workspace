@@ -11,8 +11,10 @@ import { ICiyexMenuService } from './ciyexMenuService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { PatientListDataProvider } from './patientListDataProvider.js';
-import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions } from '../../../common/views.js';
+import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation } from '../../../common/views.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IViewDescriptorService } from '../../../common/views.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 
 /**
  * Main EHR workbench contribution.
@@ -28,6 +30,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@ICiyexMenuService private readonly menuService: ICiyexMenuService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
+		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
+		@IContextKeyService private readonly contextKeyService: IContextKeyService,
 	) {
 		super();
 
@@ -50,11 +54,41 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Load API-driven menus
 		await this.menuService.loadMenus();
 
+		// Hide developer sidebar containers (Explorer, Search, SCM, Debug)
+		this._hideDevSidebarContainers();
+
 		// Wire patient list TreeView with API data
 		this._wirePatientList();
 
 		// Register status bar items
 		this._registerStatusBarItems();
+	}
+
+	private _hideDevSidebarContainers(): void {
+		// Only hide if showDevMenus is not enabled
+		const showDev = this.contextKeyService.getContextKeyValue<boolean>('ciyex.showDevMenus');
+		if (showDev) {
+			return;
+		}
+
+		// Move default VS Code containers to auxiliary bar (right sidebar) so they don't clutter the main sidebar
+		const devContainerIds = [
+			'workbench.view.explorer',    // File Explorer
+			'workbench.view.search',      // Search
+			'workbench.view.scm',         // Source Control (Git)
+			'workbench.view.debug',       // Run/Debug
+		];
+
+		for (const containerId of devContainerIds) {
+			try {
+				const container = this.viewDescriptorService.getViewContainerById(containerId);
+				if (container) {
+					this.viewDescriptorService.moveViewContainerToLocation(container, ViewContainerLocation.AuxiliaryBar, undefined, 'Ciyex EHR hides developer containers');
+				}
+			} catch {
+				// Container might not exist or already moved
+			}
+		}
 	}
 
 	private _wirePatientList(): void {
