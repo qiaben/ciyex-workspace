@@ -75,37 +75,86 @@ registerAction2(class extends Action2 {
 
 		let body: string;
 		try {
-			const response = await apiService.fetch(`/api/patients/${patientId}`);
-			if (response.ok) {
-				const data = await response.json();
-				const p = data?.data || data;
-				body = `
-					<h1>${p.firstName || ''} ${p.lastName || ''}</h1>
-					<div class="card">
-						<h3>Demographics</h3>
+			// Fetch patient + tab layout + encounters in parallel
+			const [patientRes, layoutRes, encRes] = await Promise.all([
+				apiService.fetch(`/api/patients/${patientId}`),
+				apiService.fetch('/api/tab-field-config/layout'),
+				apiService.fetch(`/api/encounters?patientId=${patientId}&page=0&size=20`),
+			]);
+
+			const p = patientRes.ok ? ((await patientRes.json())?.data || {}) : {} as Record<string, string>;
+			const layout = layoutRes.ok ? ((await layoutRes.json())?.data || {}) : {} as Record<string, unknown>;
+			const encounters = encRes.ok ? ((await encRes.json())?.data?.content || []) : [] as Record<string, string>[];
+
+			// Tab buttons from layout API
+			const tabGroups = (layout as Record<string, unknown>).tabConfig as Array<Record<string, unknown>> || [];
+			let tabBtns = '';
+			for (const group of tabGroups) {
+				for (const tab of (group.tabs as Array<Record<string, unknown>> || [])) {
+					if (!(tab as Record<string, boolean>).visible) { continue; }
+					const key = tab.key as string;
+					const lbl = tab.label as string;
+					const cls = key === 'demographics' ? 'tab-active' : '';
+					tabBtns += `<button class="tab-btn ${cls}" onclick="showTab('${key}')">${lbl}</button>`;
+				}
+			}
+			if (!tabBtns) {
+				tabBtns = '<button class="tab-btn tab-active" onclick="showTab(\'demographics\')">Demographics</button><button class="tab-btn" onclick="showTab(\'encounters\')">Encounters</button>';
+			}
+
+			// Encounter rows
+			let encRows = '';
+			for (const e of encounters) {
+				encRows += `<tr><td>${(e as Record<string, string>).encounterDate || (e as Record<string, string>).startDate || ''}</td><td>${(e as Record<string, string>).encounterProvider || ''}</td><td>${(e as Record<string, string>).type || ''}</td><td>${(e as Record<string, string>).status || ''}</td></tr>`;
+			}
+
+			const hue = ((p.firstName || '').charCodeAt(0) * 7 + (p.lastName || '').charCodeAt(0) * 13) % 360;
+			body = `
+				<style>
+					.tab-bar { display:flex; gap:0; border-bottom:2px solid var(--vscode-editorWidget-border,#3c3c3c); overflow-x:auto; }
+					.tab-btn { background:none; border:none; color:var(--vscode-descriptionForeground); padding:8px 16px; font-size:12px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; }
+					.tab-btn:hover { color:var(--vscode-foreground); }
+					.tab-btn.tab-active { color:var(--vscode-foreground); border-bottom-color:#0e639c; font-weight:600; }
+					.tab-panel { display:none; }
+				</style>
+				<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+					<div style="width:48px;height:48px;border-radius:50%;background:hsl(${hue},50%,40%);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;">
+						${(p.firstName || '')[0] || ''}${(p.lastName || '')[0] || ''}
+					</div>
+					<div>
+						<h1 style="margin:0;">${p.firstName || ''} ${p.lastName || ''}</h1>
+						<span style="color:var(--vscode-descriptionForeground);">${p.dateOfBirth || ''} | ${p.gender || ''} | ${p.status || ''}</span>
+					</div>
+				</div>
+				<div class="tab-bar">${tabBtns}</div>
+				<div class="card" style="margin-top:0;border-radius:0 0 6px 6px;">
+					<div class="tab-panel" id="panel-demographics" style="display:block;">
 						<div class="grid">
 							<span class="label">Date of Birth</span><span>${p.dateOfBirth || 'N/A'}</span>
 							<span class="label">Gender</span><span>${p.gender || 'N/A'}</span>
 							<span class="label">Phone</span><span>${p.phoneNumber || 'N/A'}</span>
 							<span class="label">Email</span><span>${p.email || 'N/A'}</span>
 							<span class="label">Status</span><span class="status-active">${p.status || 'N/A'}</span>
-							<span class="label">FHIR ID</span><span>${p.fhirId || p.id || 'N/A'}</span>
-							<span class="label">SSN</span><span>${p.ssn || 'N/A'}</span>
 							<span class="label">MRN</span><span>${p.mrn || 'N/A'}</span>
+							<span class="label">SSN</span><span>${p.ssn || 'N/A'}</span>
+							<span class="label">Address</span><span>${[p.addressLine1, p.city, p.state, p.postalCode].filter(Boolean).join(', ') || 'N/A'}</span>
 						</div>
 					</div>
-					<div class="card">
-						<h3>Address</h3>
-						<div class="grid">
-							<span class="label">Street</span><span>${p.addressLine1 || ''} ${p.addressLine2 || ''}</span>
-							<span class="label">City</span><span>${p.city || 'N/A'}</span>
-							<span class="label">State</span><span>${p.state || 'N/A'}</span>
-							<span class="label">ZIP</span><span>${p.postalCode || 'N/A'}</span>
-						</div>
-					</div>`;
-			} else {
-				body = `<p style="color:#f48771;">Failed to load patient: ${response.status}</p>`;
-			}
+					<div class="tab-panel" id="panel-encounters">
+						${encounters.length > 0 ? `<table><thead><tr><th>Date</th><th>Provider</th><th>Type</th><th>Status</th></tr></thead><tbody>${encRows}</tbody></table>` : '<p>No encounters found</p>'}
+					</div>
+					<div class="tab-panel" id="panel-other"><p style="color:var(--vscode-descriptionForeground);">Select a tab to view content. Data loads from the Ciyex API.</p></div>
+				</div>
+				<script>
+					function showTab(key) {
+						document.querySelectorAll('.tab-panel').forEach(function(p) { p.style.display = 'none'; });
+						document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('tab-active'); });
+						var panel = document.getElementById('panel-' + key);
+						if (panel) { panel.style.display = 'block'; }
+						else { document.getElementById('panel-other').style.display = 'block'; }
+						event.target.classList.add('tab-active');
+					}
+				</script>`;
 		} catch {
 			body = '<p style="color:#f48771;">Error loading patient data</p>';
 		}
