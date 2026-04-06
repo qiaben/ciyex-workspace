@@ -46,34 +46,6 @@ registerAction2(class extends Action2 {
 		);
 
 		input.webview.setHtml(buildTabManagerHtml(tabConfig, configSource, api.apiUrl));
-
-		// Listen for messages from webview
-		(input.webview as unknown as { onDidReceiveMessage: (listener: (msg: unknown) => void) => void }).onDidReceiveMessage(async (rawMsg: unknown) => {
-			const msg = rawMsg as { type: string; data?: unknown };
-			if (msg.type === 'save') {
-				try {
-					const res = await api.fetch('/api/tab-field-config/layout', {
-						method: 'PUT',
-						body: JSON.stringify({ tabConfig: msg.data }),
-					});
-					input.webview.postMessage({ type: 'saveResult', success: res.ok });
-				} catch {
-					input.webview.postMessage({ type: 'saveResult', success: false });
-				}
-			} else if (msg.type === 'reset') {
-				try {
-					await api.fetch('/api/tab-field-config/layout', { method: 'DELETE' });
-					// Reload
-					const res = await api.fetch('/api/tab-field-config/layout');
-					if (res.ok) {
-						const data = await res.json();
-						input.webview.postMessage({ type: 'reload', data: data?.data || data });
-					}
-				} catch {
-					input.webview.postMessage({ type: 'saveResult', success: false });
-				}
-			}
-		});
 	}
 });
 
