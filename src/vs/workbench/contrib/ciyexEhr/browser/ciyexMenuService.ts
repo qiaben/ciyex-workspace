@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -49,11 +49,11 @@ const MenubarSystemMenu = new MenuId('MenubarSystemMenu');
 const MenubarPortalMenu = new MenuId('MenubarPortalMenu');
 const MenubarEhrSettingsMenu = new MenuId('MenubarEhrSettingsMenu');
 
-// Register the single "Ciyex" menu in the menu bar
+// Register the single "Ciyex" menu FIRST in the menu bar (order 0.5 = before File/Window)
 MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	submenu: MenubarCiyexMenu,
-	title: { ...localize2('ciyexMenu', "Ciyex"), mnemonicTitle: localize2('mCiyex', "Ciye&&x").value },
-	order: 1.5, // Right after the app name
+	title: { ...localize2('ciyexMenu', "Ciyex"), mnemonicTitle: localize2('mCiyex', "&&Ciyex").value },
+	order: 0.5,
 });
 
 // Register sub-sections within the Ciyex menu as nested submenus
@@ -92,7 +92,7 @@ MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 	order: 5,
 });
 
-// Placeholder commands so menus aren't empty at startup
+// Placeholder commands so menus aren't empty at startup (disposable - cleared when real items load)
 CommandsRegistry.registerCommand('ciyex.nav._placeholder', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_clinical', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_operations', () => { });
@@ -100,13 +100,14 @@ CommandsRegistry.registerCommand('ciyex.nav._placeholder_system', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_portal', () => { });
 CommandsRegistry.registerCommand('ciyex.nav._placeholder_settings', () => { });
 
-// Placeholders in each submenu
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, { command: { id: 'ciyex.nav._placeholder', title: 'Loading...' }, group: '1_nav', order: 0 });
-MenuRegistry.appendMenuItem(MenubarClinicalMenu, { command: { id: 'ciyex.nav._placeholder_clinical', title: 'Loading...' }, order: 0 });
-MenuRegistry.appendMenuItem(MenubarOperationsMenu, { command: { id: 'ciyex.nav._placeholder_operations', title: 'Loading...' }, order: 0 });
-MenuRegistry.appendMenuItem(MenubarSystemMenu, { command: { id: 'ciyex.nav._placeholder_system', title: 'Loading...' }, order: 0 });
-MenuRegistry.appendMenuItem(MenubarPortalMenu, { command: { id: 'ciyex.nav._placeholder_portal', title: 'Loading...' }, order: 0 });
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, { command: { id: 'ciyex.nav._placeholder_settings', title: 'Loading...' }, order: 0 });
+// Store placeholder menu items so they can be removed when real items load
+const _placeholderDisposables: IDisposable[] = [];
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarCiyexMenu, { command: { id: 'ciyex.nav._placeholder', title: 'Loading...' }, group: '1_nav', order: 0 }));
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarClinicalMenu, { command: { id: 'ciyex.nav._placeholder_clinical', title: 'Loading...' }, order: 0 }));
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarOperationsMenu, { command: { id: 'ciyex.nav._placeholder_operations', title: 'Loading...' }, order: 0 }));
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarSystemMenu, { command: { id: 'ciyex.nav._placeholder_system', title: 'Loading...' }, order: 0 }));
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarPortalMenu, { command: { id: 'ciyex.nav._placeholder_portal', title: 'Loading...' }, order: 0 }));
+_placeholderDisposables.push(MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, { command: { id: 'ciyex.nav._placeholder_settings', title: 'Loading...' }, order: 0 }));
 
 // ─── Map API parent keys to static MenuIds ──────────────────────────
 const MENU_MAP: Record<string, MenuId> = {
@@ -161,6 +162,12 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 
 	private _populateMenus(): void {
 		this._menuDisposables.clear();
+
+		// Remove "Loading..." placeholders
+		for (const d of _placeholderDisposables) {
+			d.dispose();
+		}
+		_placeholderDisposables.length = 0;
 
 		// Only "Settings" menu items go in the gear menu (GlobalActivity)
 		// Everything else goes in the top menu bar and sidebar only
