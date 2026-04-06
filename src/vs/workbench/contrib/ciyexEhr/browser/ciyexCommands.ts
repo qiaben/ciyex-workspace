@@ -355,3 +355,69 @@ registerAction2(class extends Action2 {
 		input.webview.setHtml(wrapHtml(body));
 	}
 });
+
+/**
+ * Command: Browse Ciyex Hub
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.browseHub',
+			title: localize2('browseHub', "Browse Ciyex Hub"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const apiService = accessor.get(ICiyexApiService);
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+
+		let body: string;
+		try {
+			// Fetch installed apps
+			const installedRes = await apiService.fetch('/api/app-installations');
+			const installed = installedRes.ok ? (await installedRes.json())?.data || [] : [];
+			const installedApps = Array.isArray(installed) ? installed : [];
+
+			let installedHtml = '';
+			if (installedApps.length > 0) {
+				let rows = '';
+				for (const app of installedApps) {
+					rows += `<tr>
+						<td><strong>${app.appName || app.appSlug || ''}</strong></td>
+						<td>${app.appCategory || ''}</td>
+						<td><span class="status-active">${app.status || ''}</span></td>
+					</tr>`;
+				}
+				installedHtml = `
+					<div class="card">
+						<h3>Installed Apps (${installedApps.length})</h3>
+						<table>
+							<thead><tr><th>App</th><th>Category</th><th>Status</th></tr></thead>
+							<tbody>${rows}</tbody>
+						</table>
+					</div>`;
+			} else {
+				installedHtml = '<div class="card"><p>No apps installed yet.</p></div>';
+			}
+
+			body = `
+				<h1>Ciyex Hub</h1>
+				<p style="color:var(--vscode-descriptionForeground);">Healthcare App Marketplace</p>
+				${installedHtml}
+				<div class="card">
+					<h3>Browse Marketplace</h3>
+					<p>Visit <a href="https://hub.ciyex.org">hub.ciyex.org</a> to browse and install healthcare apps.</p>
+					<p>Apps integrate into Ciyex Workspace via SMART on FHIR, CDS Hooks, and Plugin Slots.</p>
+				</div>`;
+		} catch {
+			body = '<h1>Ciyex Hub</h1><div class="card"><p>Unable to load marketplace data.</p></div>';
+		}
+
+		const input = webviewService.openWebview(
+			{ title: 'Ciyex Hub', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.hub', 'Ciyex Hub', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
+	}
+});
