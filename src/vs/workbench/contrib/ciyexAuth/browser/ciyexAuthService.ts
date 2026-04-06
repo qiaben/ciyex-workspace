@@ -18,6 +18,9 @@ export interface ICiyexAuthService {
 	readonly state: CiyexAuthState;
 	readonly userEmail: string | undefined;
 	readonly apiUrl: string;
+	readonly keycloakUrl: string;
+	readonly keycloakRealm: string;
+	readonly keycloakClientId: string;
 
 	/**
 	 * Step 1: Discover account by email
@@ -137,15 +140,43 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 	}
 
 	get apiUrl(): string {
-		// Read from product.json custom property or env variable or default
 		try {
 			const stored = localStorage.getItem('ciyex_api_url');
 			if (stored) {
 				return stored;
 			}
 		} catch { }
-		// Default to the Ciyex API dev server
 		return 'https://api-dev.ciyex.org';
+	}
+
+	get keycloakUrl(): string {
+		try {
+			const stored = localStorage.getItem('ciyex_keycloak_url');
+			if (stored) {
+				return stored;
+			}
+		} catch { }
+		return 'https://dev.aran.me';
+	}
+
+	get keycloakRealm(): string {
+		try {
+			const stored = localStorage.getItem('ciyex_keycloak_realm');
+			if (stored) {
+				return stored;
+			}
+		} catch { }
+		return 'ciyex';
+	}
+
+	get keycloakClientId(): string {
+		try {
+			const stored = localStorage.getItem('ciyex_keycloak_client_id');
+			if (stored) {
+				return stored;
+			}
+		} catch { }
+		return 'ciyex-app';
 	}
 
 	constructor() {

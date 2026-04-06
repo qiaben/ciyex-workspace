@@ -84,6 +84,7 @@ export class CiyexAuthGate extends Disposable {
 	private _step: AuthStep = 'email';
 	private _email = '';
 	private _password = '';
+	private _showSettings = false;
 	private _showPassword = false;
 	private _loading = false;
 	private _error = '';
@@ -190,7 +191,7 @@ export class CiyexAuthGate extends Disposable {
 			textSecondary: dark ? '#858585' : '#6b7280',
 			border: dark ? '#3c3c3c' : '#e5e7eb',
 			inputBg: dark ? '#3c3c3c' : '#f9fafb',
-			brand: '#465FFF',
+			brand: '#0e639c',
 			errorBg: dark ? 'rgba(239,68,68,0.15)' : '#fef2f2',
 			errorText: dark ? '#f48771' : '#dc2626',
 			errorBorder: dark ? '#5a1d1d' : '#fecaca',
@@ -344,28 +345,64 @@ export class CiyexAuthGate extends Disposable {
 		// Continue button
 		const btn = this._buildButton('ciyex-discover-btn', this._loading ? 'Checking...' : 'Continue', true, c, this._loading || !this._email.trim());
 		card.appendChild(btn);
-
-		// Server URL field (inline, inside card)
-		const serverDiv = h('div', { marginTop: '20px', paddingTop: '16px', borderTop: `1px solid ${c.border}` });
-		serverDiv.appendChild(text(h('label', { display: 'block', fontSize: '11px', fontWeight: '500', color: c.textSecondary, marginBottom: '4px' }), 'Server'));
-		const serverInput = this._buildInput('ciyex-server-url', 'url', 'https://api-dev.ciyex.org', this._authService.apiUrl, c);
-		serverInput.style.fontSize = '12px';
-		serverInput.style.padding = '7px 10px';
-		serverDiv.appendChild(serverInput);
-		card.appendChild(serverDiv);
-
 		wrapper.appendChild(card);
+
+		// Collapsible Server Settings section (below card)
+		const settingsToggle = document.createElement('button');
+		settingsToggle.id = 'ciyex-settings-toggle';
+		settingsToggle.textContent = this._showSettings ? '\u25B4 Server Settings' : '\u25BE Server Settings';
+		Object.assign(settingsToggle.style, {
+			background: 'none', border: 'none', color: c.textSecondary,
+			fontSize: '12px', padding: '8px 4px', cursor: 'pointer',
+			display: 'block', margin: '12px auto 0', textAlign: 'center',
+		});
+		wrapper.appendChild(settingsToggle);
+
+		if (this._showSettings) {
+			const settingsCard = h('div', {
+				background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '10px',
+				padding: '16px', marginTop: '8px', fontSize: '12px',
+			});
+
+			const fields: Array<{ label: string; key: string; value: string; placeholder: string }> = [
+				{ label: 'API Server', key: 'ciyex_api_url', value: this._authService.apiUrl, placeholder: 'https://api-dev.ciyex.org' },
+				{ label: 'Keycloak URL', key: 'ciyex_keycloak_url', value: this._authService.keycloakUrl, placeholder: 'https://dev.aran.me' },
+				{ label: 'Keycloak Realm', key: 'ciyex_keycloak_realm', value: this._authService.keycloakRealm, placeholder: 'ciyex' },
+				{ label: 'Keycloak Client ID', key: 'ciyex_keycloak_client_id', value: this._authService.keycloakClientId, placeholder: 'ciyex-app' },
+			];
+
+			const settingsInputs: HTMLInputElement[] = [];
+			for (const f of fields) {
+				const row = h('div', { marginBottom: '10px' });
+				row.appendChild(text(h('label', { display: 'block', fontSize: '11px', fontWeight: '500', color: c.textSecondary, marginBottom: '3px' }), f.label));
+				const inp = this._buildInput(`ciyex-cfg-${f.key}`, 'text', f.placeholder, f.value, c);
+				inp.style.fontSize = '12px';
+				inp.style.padding = '6px 8px';
+				row.appendChild(inp);
+				settingsCard.appendChild(row);
+				settingsInputs.push(inp);
+
+				inp.addEventListener('change', () => {
+					const val = inp.value.trim();
+					if (val) {
+						localStorage.setItem(f.key, f.key === 'ciyex_api_url' ? val.replace(/\/$/, '') : val);
+					}
+				});
+			}
+
+			// Remove last margin
+			if (settingsInputs.length > 0) {
+				settingsInputs[settingsInputs.length - 1].parentElement!.style.marginBottom = '0';
+			}
+
+			wrapper.appendChild(settingsCard);
+		}
 
 		// Listeners
 		emailInput.addEventListener('input', () => { this._email = emailInput.value; });
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
-		serverInput.addEventListener('change', () => {
-			const val = serverInput.value.trim().replace(/\/$/, '');
-			if (val) {
-				localStorage.setItem('ciyex_api_url', val);
-			}
-		});
+		settingsToggle.addEventListener('click', () => { this._showSettings = !this._showSettings; this._render(); });
 		setTimeout(() => emailInput.focus(), 50);
 
 		return wrapper;
