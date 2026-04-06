@@ -28,7 +28,10 @@ import './ciyexSettingsCommands.js';
 // Register Ciyex settings in VS Code Settings Editor (Cmd+,)
 import './ciyexSettings.js';
 
-// .ciyex config files are opened from Settings UI or file explorer
+// Register visual editors for .ciyex config files (Layout, Encounter, Fields, etc.)
+import './editors/ciyexEditors.contribution.js';
+
+// .ciyex config files also openable from Settings UI or file explorer
 // (ciyexConfigExplorer.ts removed — configs accessible via Cmd+, settings)
 
 // Register services

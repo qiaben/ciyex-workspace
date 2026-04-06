@@ -10,6 +10,9 @@ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextke
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { CiyexConfigEditorInput } from './editors/ciyexEditorInput.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 
 // --- Admin Menu (top-level menu bar) ---------------------------------
 
@@ -115,7 +118,12 @@ registerAction2(class extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		await openCiyexConfig(accessor, 'layout.json');
+		const editorService = accessor.get(IEditorService);
+		const environmentService = accessor.get(IEnvironmentService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const fileUri = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex', 'layout.json');
+		const input = instantiationService.createInstance(CiyexConfigEditorInput, 'layout', fileUri, 'Chart Layout', ThemeIcon.fromId('layout'));
+		await editorService.openEditor(input);
 	}
 });
 
