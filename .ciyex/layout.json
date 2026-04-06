@@ -2,33 +2,17 @@
   "source": "UNIVERSAL_DEFAULT",
   "categories": [
     {
-      "key": "patient-info",
-      "label": "Patient Information",
+      "key": "overview",
+      "label": "Overview",
       "position": 0,
       "tabs": [
         {
-          "key": "demographics",
-          "label": "Demographics",
-          "icon": "User",
+          "key": "dashboard",
+          "label": "Dashboard",
+          "icon": "LayoutDashboard",
           "position": 0,
           "visible": true,
           "fhirResources": ["Patient"]
-        },
-        {
-          "key": "insurance",
-          "label": "Insurance",
-          "icon": "Shield",
-          "position": 1,
-          "visible": true,
-          "fhirResources": ["Coverage", "Organization"]
-        },
-        {
-          "key": "contacts",
-          "label": "Contacts & Emergency",
-          "icon": "Phone",
-          "position": 2,
-          "visible": true,
-          "fhirResources": ["Patient", "RelatedPerson"]
         }
       ]
     },
@@ -38,44 +22,44 @@
       "position": 1,
       "tabs": [
         {
-          "key": "vitals",
-          "label": "Vitals",
-          "icon": "Activity",
+          "key": "encounters",
+          "label": "Encounters",
+          "icon": "ClipboardList",
           "position": 0,
           "visible": true,
-          "fhirResources": ["Observation"]
+          "fhirResources": ["Encounter"]
         },
         {
-          "key": "conditions",
-          "label": "Problems / Conditions",
+          "key": "problems",
+          "label": "Problems",
           "icon": "AlertCircle",
           "position": 1,
           "visible": true,
           "fhirResources": ["Condition"]
         },
         {
-          "key": "medications",
-          "label": "Medications",
-          "icon": "Pill",
-          "position": 2,
-          "visible": true,
-          "fhirResources": ["MedicationRequest"]
-        },
-        {
           "key": "allergies",
           "label": "Allergies",
           "icon": "AlertTriangle",
-          "position": 3,
+          "position": 2,
           "visible": true,
           "fhirResources": ["AllergyIntolerance"]
         },
         {
-          "key": "immunizations",
-          "label": "Immunizations",
-          "icon": "Syringe",
+          "key": "medications",
+          "label": "Medications",
+          "icon": "Pill",
+          "position": 3,
+          "visible": true,
+          "fhirResources": ["MedicationRequest"]
+        },
+        {
+          "key": "vitals",
+          "label": "Vitals",
+          "icon": "Activity",
           "position": 4,
           "visible": true,
-          "fhirResources": ["Immunization"]
+          "fhirResources": ["Observation"]
         },
         {
           "key": "labs",
@@ -86,58 +70,114 @@
           "fhirResources": ["DiagnosticReport", "Observation"]
         },
         {
-          "key": "procedures",
-          "label": "Procedures",
-          "icon": "Stethoscope",
+          "key": "immunizations",
+          "label": "Immunizations",
+          "icon": "Syringe",
           "position": 6,
           "visible": true,
-          "fhirResources": ["Procedure"]
+          "fhirResources": ["Immunization"]
+        },
+        {
+          "key": "history",
+          "label": "History",
+          "icon": "History",
+          "position": 7,
+          "visible": true,
+          "fhirResources": ["FamilyMemberHistory", "Observation"]
         }
       ]
     },
     {
-      "key": "documents",
-      "label": "Documents & Plans",
+      "key": "general",
+      "label": "General",
       "position": 2,
       "tabs": [
+        {
+          "key": "demographics",
+          "label": "Demographics",
+          "icon": "User",
+          "position": 0,
+          "visible": true,
+          "fhirResources": ["Patient"]
+        },
+        {
+          "key": "appointments",
+          "label": "Appointments",
+          "icon": "Calendar",
+          "position": 1,
+          "visible": true,
+          "fhirResources": ["Appointment"]
+        },
         {
           "key": "documents",
           "label": "Documents",
           "icon": "FileText",
-          "position": 0,
+          "position": 2,
           "visible": true,
           "fhirResources": ["DocumentReference"]
         },
         {
-          "key": "care-plans",
-          "label": "Care Plans",
-          "icon": "ClipboardList",
-          "position": 1,
+          "key": "messages",
+          "label": "Messages",
+          "icon": "MessageSquare",
+          "position": 3,
           "visible": true,
-          "fhirResources": ["CarePlan"]
+          "fhirResources": []
+        },
+        {
+          "key": "relationships",
+          "label": "Relationships",
+          "icon": "Users",
+          "position": 4,
+          "visible": true,
+          "fhirResources": ["RelatedPerson"]
+        },
+        {
+          "key": "services",
+          "label": "Services",
+          "icon": "Stethoscope",
+          "position": 5,
+          "visible": true,
+          "fhirResources": ["ServiceRequest"]
         }
       ]
     },
     {
-      "key": "billing",
-      "label": "Billing & Claims",
+      "key": "financial",
+      "label": "Financial",
       "position": 3,
       "tabs": [
         {
-          "key": "claims",
-          "label": "Claims",
-          "icon": "DollarSign",
+          "key": "billing",
+          "label": "Billing",
+          "icon": "Receipt",
           "position": 0,
           "visible": true,
           "fhirResources": ["Claim"]
         },
         {
-          "key": "payments",
-          "label": "Payments",
-          "icon": "CreditCard",
+          "key": "insurance",
+          "label": "Insurance",
+          "icon": "Shield",
           "position": 1,
           "visible": true,
+          "fhirResources": ["Coverage", "Organization"]
+        },
+        {
+          "key": "transactions",
+          "label": "Transactions",
+          "icon": "ArrowLeftRight",
+          "position": 2,
+          "visible": true,
           "fhirResources": ["PaymentReconciliation"]
+        },
+        {
+          "key": "payment",
+          "label": "Payment",
+          "icon": "CreditCard",
+          "position": 3,
+          "visible": true,
+          "fhirResources": ["PaymentNotice"]
         }
       ]
     }

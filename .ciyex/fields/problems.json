@@ -1,0 +1,21 @@
+{
+  "tabKey": "problems",
+  "fhirResources": ["Condition"],
+  "sections": [
+    {
+      "key": "problem-list",
+      "title": "Problem List",
+      "columns": 1,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "diagnosisCode", "label": "Diagnosis Code", "type": "code-lookup", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Condition", "path": "code.coding", "type": "CodeableConcept" }, "codeLookupConfig": { "codeSystem": "ICD10", "allowMultiple": false, "showFee": false, "placeholder": "Search ICD-10 codes..." } },
+        { "key": "diagnosisName", "label": "Diagnosis Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Condition", "path": "code.text", "type": "string" } },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Resolved", "value": "resolved" }, { "label": "Rule Out", "value": "rule-out" }, { "label": "Differential", "value": "differential" }, { "label": "Chronic", "value": "chronic" }], "fhirMapping": { "resource": "Condition", "path": "clinicalStatus.coding[0].code", "type": "code" } },
+        { "key": "priority", "label": "Priority", "type": "select", "colSpan": 1, "options": [{ "label": "Primary", "value": "primary" }, { "label": "Secondary", "value": "secondary" }, { "label": "Tertiary", "value": "tertiary" }] },
+        { "key": "onsetDate", "label": "Onset Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "Condition", "path": "onsetDateTime", "type": "datetime" } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 1, "fhirMapping": { "resource": "Condition", "path": "note[0].text", "type": "string" } }
+      ]
+    }
+  ]
+}

@@ -9,66 +9,18 @@
       "visible": true,
       "collapsible": false,
       "fields": [
-        {
-          "key": "temperature",
-          "label": "Temperature (F)",
-          "type": "temperature",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org" },
-          "validation": { "min": 90, "max": 110 }
-        },
-        {
-          "key": "heartRate",
-          "label": "Heart Rate (bpm)",
-          "type": "number",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org" },
-          "validation": { "min": 30, "max": 250 }
-        },
-        {
-          "key": "respiratoryRate",
-          "label": "Respiratory Rate",
-          "type": "number",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "9279-1", "system": "http://loinc.org" },
-          "validation": { "min": 5, "max": 60 }
-        },
-        {
-          "key": "oxygenSaturation",
-          "label": "SpO2 (%)",
-          "type": "percentage",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "2708-6", "system": "http://loinc.org" },
-          "validation": { "min": 50, "max": 100 }
-        },
-        {
-          "key": "bloodPressure",
-          "label": "Blood Pressure",
-          "type": "bloodPressure",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "component", "type": "bp", "code": "85354-9", "system": "http://loinc.org" }
-        },
-        {
-          "key": "weight",
-          "label": "Weight (lbs)",
-          "type": "weight",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org" }
-        },
-        {
-          "key": "height",
-          "label": "Height (in)",
-          "type": "height",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8302-2", "system": "http://loinc.org" }
-        },
-        {
-          "key": "bmi",
-          "label": "BMI",
-          "type": "bmi",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "39156-5", "system": "http://loinc.org" }
-        }
+        { "key": "weightLbs", "label": "Weight (lbs)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='29463-7').valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org", "unit": "[lb_av]" } },
+        { "key": "weightKg", "label": "Weight (kg)", "type": "computed", "colSpan": 1, "helpText": "Auto-converted from lbs" },
+        { "key": "heightIn", "label": "Height (in)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8302-2').valueQuantity.value", "type": "decimal", "code": "8302-2", "system": "http://loinc.org", "unit": "[in_i]" } },
+        { "key": "heightCm", "label": "Height (cm)", "type": "computed", "colSpan": 1, "helpText": "Auto-converted from inches" },
+        { "key": "bpSystolic", "label": "BP Systolic (mmHg)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8480-6').valueQuantity.value", "type": "integer", "code": "8480-6", "system": "http://loinc.org", "unit": "mm[Hg]" }, "validation": { "min": 50, "max": 300 } },
+        { "key": "bpDiastolic", "label": "BP Diastolic (mmHg)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8462-4').valueQuantity.value", "type": "integer", "code": "8462-4", "system": "http://loinc.org", "unit": "mm[Hg]" }, "validation": { "min": 20, "max": 200 } },
+        { "key": "pulse", "label": "Heart Rate (bpm)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8867-4').valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org", "unit": "/min" }, "validation": { "min": 30, "max": 250 } },
+        { "key": "respiration", "label": "Resp Rate (breaths/min)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='9279-1').valueQuantity.value", "type": "integer", "code": "9279-1", "system": "http://loinc.org", "unit": "/min" }, "validation": { "min": 5, "max": 60 } },
+        { "key": "temperatureF", "label": "Temperature (F)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8310-5').valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org", "unit": "[degF]" }, "validation": { "min": 90, "max": 110 } },
+        { "key": "temperatureC", "label": "Temperature (C)", "type": "computed", "colSpan": 1, "helpText": "Auto-converted from F" },
+        { "key": "oxygenSaturation", "label": "SpO2 (%)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='2708-6').valueQuantity.value", "type": "decimal", "code": "2708-6", "system": "http://loinc.org", "unit": "%" }, "validation": { "min": 50, "max": 100 } },
+        { "key": "bmi", "label": "BMI", "type": "computed", "colSpan": 1, "helpText": "Auto-calculated: weight(kg) / height(m)^2", "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='39156-5').valueQuantity.value", "type": "decimal", "code": "39156-5", "system": "http://loinc.org", "unit": "kg/m2" }, "badgeColors": { "Underweight": "#3b82f6", "Normal": "#22c55e", "Overweight": "#f59e0b", "Obese": "#ef4444" } }
       ]
     },
     {
@@ -78,20 +30,19 @@
       "visible": true,
       "collapsible": true,
       "fields": [
-        {
-          "key": "painLevel",
-          "label": "Pain Level (0-10)",
-          "type": "number",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "72514-3", "system": "http://loinc.org" },
-          "validation": { "min": 0, "max": 10 }
-        },
-        {
-          "key": "painLocation",
-          "label": "Pain Location",
-          "type": "text",
-          "colSpan": 1
-        }
+        { "key": "painLevel", "label": "Pain Level (0-10)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "72514-3", "system": "http://loinc.org" }, "validation": { "min": 0, "max": 10 } },
+        { "key": "painLocation", "label": "Pain Location", "type": "text", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "notes",
+      "title": "Notes",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "vitalNotes", "label": "Notes", "type": "textarea", "colSpan": 1 }
       ]
     }
   ]

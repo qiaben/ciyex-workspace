@@ -3,8 +3,8 @@
   "source": "UNIVERSAL_DEFAULT",
   "sections": [
     {
-      "key": "chief-complaint",
-      "title": "Chief Complaint",
+      "key": "cc",
+      "title": "Chief Complaint (CC)",
       "columns": 1,
       "visible": true,
       "collapsible": false,
@@ -20,6 +20,179 @@
       ]
     },
     {
+      "key": "hpi",
+      "title": "History of Present Illness (HPI)",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": false,
+      "fields": [
+        {
+          "key": "hpiNarrative",
+          "label": "HPI",
+          "type": "textarea",
+          "colSpan": 1,
+          "placeholder": "Describe onset, location, duration, character, aggravating/relieving factors, timing, severity..."
+        }
+      ]
+    },
+    {
+      "key": "ros",
+      "title": "Review of Systems (ROS)",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "sectionComponent": "ros-grid",
+      "fields": [
+        {
+          "key": "ros",
+          "label": "Review of Systems",
+          "type": "ros-grid",
+          "colSpan": 1,
+          "rosConfig": {
+            "systems": [
+              {
+                "key": "constitutional",
+                "label": "Constitutional",
+                "findings": ["fever", "chills", "nightSweats", "lossOfAppetite", "weightLoss", "weightGain", "fatigue", "weakness", "tiredness", "troubleSleeping"]
+              },
+              {
+                "key": "eyes",
+                "label": "Eyes",
+                "findings": ["visionLoss", "doubleVision", "blurredVision", "eyeIrritation", "eyePain", "eyeDischarge", "lightSensitivity", "eyeRedness"]
+              },
+              {
+                "key": "ent",
+                "label": "ENT",
+                "findings": ["earache", "earDischarge", "ringingInEars", "decreasedHearing", "frequentColds", "nasalCongestion", "nosebleeds", "bleedingGums", "difficultySwallowing", "hoarseness", "soreThroat", "sinusitis"]
+              },
+              {
+                "key": "cardiovascular",
+                "label": "Cardiovascular",
+                "findings": ["chestPain", "irregularHeartbeats", "shortnessOfBreathOnExertion", "palpitations", "rapidHeartbeat", "slowHeartbeat", "lossOfConsciousness", "chestTightness", "legSwelling", "legCramps"]
+              },
+              {
+                "key": "respiratory",
+                "label": "Respiratory",
+                "findings": ["shortnessOfBreath", "wheezing", "cough", "chestDiscomfort", "snoring", "excessiveSputum", "coughingUpBlood", "painfulBreathing"]
+              },
+              {
+                "key": "gastrointestinal",
+                "label": "Gastrointestinal",
+                "findings": ["changeInAppetite", "indigestion", "heartburn", "nausea", "vomiting", "excessiveGas", "abdominalPain", "abdominalBloating", "hemorrhoids", "diarrhea", "changeInBowelHabits", "constipation", "blackOrTarryStools", "bloodyStools"]
+              },
+              {
+                "key": "genitourinary",
+                "label": "Genitourinary",
+                "findings": ["painfulUrination", "frequentUrination", "bloodInUrine", "incontinence", "urgency", "hesitancy", "nocturia"]
+              },
+              {
+                "key": "musculoskeletal",
+                "label": "Musculoskeletal",
+                "findings": ["jointPain", "jointStiffness", "backPain", "muscleCramps", "muscleWeakness", "muscleAches", "lossOfStrength", "neckPain", "swellingHandsFeet"]
+              },
+              {
+                "key": "skin",
+                "label": "Skin",
+                "findings": ["suspiciousLesions", "excessivePerspiration", "poorWoundHealing", "dryness", "itching", "rash", "flushing", "cyanosis", "hairLoss", "skinColorChanges"]
+              },
+              {
+                "key": "neurologic",
+                "label": "Neurologic",
+                "findings": ["headaches", "poorBalance", "difficultySpeaking", "difficultyConcentrating", "coordinationProblems", "weakness", "numbness", "tingling", "visualDisturbances", "seizures", "tremors", "dizziness", "memoryLoss"]
+              },
+              {
+                "key": "psychiatric",
+                "label": "Psychiatric",
+                "findings": ["anxiety", "nervousness", "depression", "hallucinations", "suicidalIdeation", "homicidalIdeation", "impendingSenseOfDoom", "disturbingThoughts", "memoryLoss"]
+              },
+              {
+                "key": "endocrine",
+                "label": "Endocrine",
+                "findings": ["heatColdIntolerance", "weightChange", "excessiveThirstOrHunger", "excessiveSweating", "frequentUrination"]
+              },
+              {
+                "key": "hematologicLymphatic",
+                "label": "Hematologic/Lymphatic",
+                "findings": ["skinDiscoloration", "easyBleeding", "enlargedLymphNodes", "easyBruising", "anemia", "bloodClots"]
+              },
+              {
+                "key": "allergicImmunologic",
+                "label": "Allergic/Immunologic",
+                "findings": ["seasonalAllergies", "hivesOrRash", "persistentInfections", "hivExposure", "immuneDeficiencies"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "pmh",
+      "title": "Past Medical History (PMH)",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        {
+          "key": "pastMedicalHistory",
+          "label": "Past Medical History",
+          "type": "textarea",
+          "colSpan": 1
+        },
+        {
+          "key": "pastSurgicalHistory",
+          "label": "Past Surgical History",
+          "type": "textarea",
+          "colSpan": 1
+        }
+      ]
+    },
+    {
+      "key": "fh",
+      "title": "Family History (FH)",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        {
+          "key": "familyHistory",
+          "label": "Family History",
+          "type": "family-history-list",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "FamilyMemberHistory", "path": "", "type": "resource" },
+          "familyHistoryConfig": {
+            "relationships": [
+              { "value": "FATHER", "label": "Father" },
+              { "value": "MOTHER", "label": "Mother" },
+              { "value": "SIBLING", "label": "Sibling" },
+              { "value": "SPOUSE", "label": "Spouse" },
+              { "value": "OFFSPRING", "label": "Child" },
+              { "value": "GRANDPARENT", "label": "Grandparent" }
+            ],
+            "fields": { "ageOfOnset": true, "deceased": true, "notes": true }
+          }
+        }
+      ]
+    },
+    {
+      "key": "sh",
+      "title": "Social History (SH)",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "smokingStatus", "label": "Smoking Status", "type": "select", "colSpan": 1, "options": [{ "label": "Never Smoker", "value": "never" }, { "label": "Former Smoker", "value": "former" }, { "label": "Current Smoker", "value": "current" }], "fhirMapping": { "resource": "Observation", "path": "valueCodeableConcept.coding[0].code", "type": "code", "code": "72166-2", "system": "http://loinc.org" } },
+        { "key": "alcoholUse", "label": "Alcohol Use", "type": "select", "colSpan": 1, "options": [{ "label": "None", "value": "none" }, { "label": "Occasional", "value": "occasional" }, { "label": "Moderate", "value": "moderate" }, { "label": "Heavy", "value": "heavy" }] },
+        { "key": "drugUse", "label": "Drug Use", "type": "text", "colSpan": 1 },
+        { "key": "occupation", "label": "Occupation", "type": "text", "colSpan": 1 },
+        { "key": "socialHistoryNotes", "label": "Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    },
+    {
       "key": "vitals",
       "title": "Vitals",
       "columns": 4,
@@ -27,121 +200,192 @@
       "collapsible": true,
       "collapsed": false,
       "fields": [
-        {
-          "key": "temperature",
-          "label": "Temperature (F)",
-          "type": "temperature",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org" },
-          "validation": { "min": 90, "max": 110 }
-        },
-        {
-          "key": "bloodPressure",
-          "label": "Blood Pressure",
-          "type": "bloodPressure",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "component", "type": "bp", "code": "85354-9", "system": "http://loinc.org" }
-        },
-        {
-          "key": "heartRate",
-          "label": "Heart Rate",
-          "type": "number",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org" },
-          "validation": { "min": 30, "max": 250 }
-        },
-        {
-          "key": "weight",
-          "label": "Weight (lbs)",
-          "type": "weight",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org" }
-        }
+        { "key": "temperatureF", "label": "Temperature (F)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8310-5", "system": "http://loinc.org" }, "validation": { "min": 90, "max": 110 } },
+        { "key": "bpSystolic", "label": "BP Systolic", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8480-6').valueQuantity.value", "type": "integer", "code": "8480-6", "system": "http://loinc.org" }, "validation": { "min": 50, "max": 300 } },
+        { "key": "bpDiastolic", "label": "BP Diastolic", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "component.where(code.coding.code='8462-4').valueQuantity.value", "type": "integer", "code": "8462-4", "system": "http://loinc.org" }, "validation": { "min": 20, "max": 200 } },
+        { "key": "pulse", "label": "Heart Rate (bpm)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "8867-4", "system": "http://loinc.org" }, "validation": { "min": 30, "max": 250 } },
+        { "key": "respiration", "label": "Resp Rate", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "integer", "code": "9279-1", "system": "http://loinc.org" }, "validation": { "min": 5, "max": 60 } },
+        { "key": "oxygenSaturation", "label": "SpO2 (%)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "2708-6", "system": "http://loinc.org" }, "validation": { "min": 50, "max": 100 } },
+        { "key": "weightLbs", "label": "Weight (lbs)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "29463-7", "system": "http://loinc.org" } },
+        { "key": "heightIn", "label": "Height (in)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "8302-2", "system": "http://loinc.org" } },
+        { "key": "bmi", "label": "BMI", "type": "computed", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "decimal", "code": "39156-5", "system": "http://loinc.org" } },
+        { "key": "vitalNotes", "label": "Notes", "type": "text", "colSpan": 3 }
       ]
     },
     {
-      "key": "hpi",
-      "title": "History of Present Illness",
+      "key": "pe",
+      "title": "Physical Examination",
       "columns": 1,
-      "visible": true,
-      "collapsible": true,
-      "fields": [
-        {
-          "key": "hpiNarrative",
-          "label": "HPI",
-          "type": "textarea",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Encounter", "path": "extension[?url=hpi].valueString", "type": "string" }
-        }
-      ]
-    },
-    {
-      "key": "ros",
-      "title": "Review of Systems",
-      "columns": 3,
       "visible": true,
       "collapsible": true,
       "collapsed": true,
-      "fields": [
-        { "key": "rosConstitutional", "label": "Constitutional", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosEyes", "label": "Eyes", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosENT", "label": "ENT", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosCardiovascular", "label": "Cardiovascular", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosRespiratory", "label": "Respiratory", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosGI", "label": "Gastrointestinal", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosMusculoskeletal", "label": "Musculoskeletal", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosNeurological", "label": "Neurological", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] },
-        { "key": "rosPsychiatric", "label": "Psychiatric", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "normal" }, { "label": "Abnormal", "value": "abnormal" }] }
-      ]
-    },
-    {
-      "key": "exam",
-      "title": "Physical Exam",
-      "columns": 1,
-      "visible": true,
-      "collapsible": true,
+      "sectionComponent": "exam-grid",
       "fields": [
         {
-          "key": "examFindings",
-          "label": "Examination Findings",
-          "type": "textarea",
-          "colSpan": 1
+          "key": "physicalExam",
+          "label": "Physical Exam",
+          "type": "exam-grid",
+          "colSpan": 1,
+          "examConfig": {
+            "systems": [
+              { "key": "GENERAL", "label": "General", "normalText": "Well-developed, well-nourished, in no acute distress" },
+              { "key": "HEENT", "label": "HEENT", "normalText": "Normocephalic, atraumatic. PERRLA. TMs clear. Oropharynx clear" },
+              { "key": "NECK", "label": "Neck", "normalText": "Supple, no lymphadenopathy, no thyromegaly" },
+              { "key": "CARDIOVASCULAR", "label": "Cardiovascular", "normalText": "Regular rate and rhythm, no murmurs, gallops, or rubs" },
+              { "key": "RESPIRATORY", "label": "Respiratory", "normalText": "Clear to auscultation bilaterally, no wheezing, rales, or rhonchi" },
+              { "key": "ABDOMEN", "label": "Abdomen", "normalText": "Soft, non-tender, non-distended, normoactive bowel sounds" },
+              { "key": "GENITOURINARY", "label": "Genitourinary", "normalText": "Deferred" },
+              { "key": "MUSCULOSKELETAL", "label": "Musculoskeletal", "normalText": "Full ROM all extremities, no tenderness, no edema" },
+              { "key": "NEUROLOGICAL", "label": "Neurological", "normalText": "Alert and oriented x3, cranial nerves II-XII intact, normal gait" },
+              { "key": "SKIN", "label": "Skin", "normalText": "Warm, dry, intact, no rashes or lesions" },
+              { "key": "PSYCHIATRIC", "label": "Psychiatric", "normalText": "Pleasant, cooperative, appropriate affect, normal judgment" },
+              { "key": "OTHER", "label": "Other", "normalText": "" }
+            ]
+          }
         }
       ]
     },
     {
       "key": "assessment",
-      "title": "Assessment & Plan",
+      "title": "Assessment",
       "columns": 1,
       "visible": true,
       "collapsible": false,
       "fields": [
         {
-          "key": "assessment",
-          "label": "Assessment",
-          "type": "textarea",
-          "colSpan": 1
-        },
-        {
-          "key": "plan",
-          "label": "Plan",
-          "type": "textarea",
-          "colSpan": 1
-        },
-        {
           "key": "diagnoses",
           "label": "Diagnosis Codes",
-          "type": "icd10",
+          "type": "diagnosis-list",
           "colSpan": 1,
-          "fhirMapping": { "resource": "Condition", "path": "code.coding", "type": "CodeableConcept" }
+          "required": true,
+          "fhirMapping": { "resource": "Condition", "path": "code.coding", "type": "CodeableConcept" },
+          "diagnosisConfig": {
+            "codeSystem": "ICD-10",
+            "searchEndpoint": "/api/codes/icd10/search",
+            "allowMultiple": true,
+            "statusOptions": ["Active", "Resolved", "RuleOut", "Differential", "Chronic"],
+            "priorityOptions": ["Primary", "Secondary", "Tertiary"]
+          }
         },
         {
-          "key": "cptCodes",
-          "label": "Procedure Codes",
-          "type": "cpt",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Procedure", "path": "code.coding", "type": "CodeableConcept" }
+          "key": "assessmentText",
+          "label": "Assessment Notes",
+          "type": "textarea",
+          "colSpan": 1
         }
+      ]
+    },
+    {
+      "key": "plan",
+      "title": "Plan",
+      "columns": 1,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        {
+          "key": "planItems",
+          "label": "Plan",
+          "type": "plan-items",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "CarePlan", "path": "activity", "type": "BackboneElement" }
+        },
+        { "key": "diagnosticPlan", "label": "Diagnostic Plan", "type": "textarea", "colSpan": 1 },
+        { "key": "followUpVisit", "label": "Follow-up Visit", "type": "text", "colSpan": 1 },
+        { "key": "returnWorkSchool", "label": "Return to Work/School", "type": "text", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "providerNote",
+      "title": "Provider Note",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "noteTitle", "label": "Note Title", "type": "text", "colSpan": 1, "required": true, "placeholder": "SOAP Note" },
+        { "key": "noteTypeCode", "label": "Note Type (LOINC)", "type": "coded", "colSpan": 1, "fhirMapping": { "resource": "DocumentReference", "path": "type.coding[0].code", "type": "code" } },
+        { "key": "noteStatus", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Draft", "value": "draft" }, { "label": "Final", "value": "final" }, { "label": "Amended", "value": "amended" }] },
+        { "key": "subjective", "label": "Subjective", "type": "textarea", "colSpan": 1 },
+        { "key": "objective", "label": "Objective", "type": "textarea", "colSpan": 1 },
+        { "key": "assessmentNote", "label": "Assessment", "type": "textarea", "colSpan": 1 },
+        { "key": "planNote", "label": "Plan", "type": "textarea", "colSpan": 1 },
+        { "key": "narrative", "label": "Narrative (alternative to SOAP)", "type": "textarea", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "procedure",
+      "title": "Procedure / Orders",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "cptCodes", "label": "CPT/HCPCS Codes", "type": "code-lookup", "colSpan": 2, "fhirMapping": { "resource": "Procedure", "path": "code.coding", "type": "CodeableConcept" }, "codeLookupConfig": { "codeSystem": "CPT4", "allowMultiple": true, "showFee": true, "placeholder": "Search CPT codes..." } },
+        { "key": "procedureDescription", "label": "Description", "type": "text", "colSpan": 2 },
+        { "key": "modifier1", "label": "Modifier 1", "type": "text", "colSpan": 1 },
+        { "key": "modifier2", "label": "Modifier 2", "type": "text", "colSpan": 1 },
+        { "key": "units", "label": "Units", "type": "number", "colSpan": 1, "validation": { "min": 1 } },
+        { "key": "datePerformed", "label": "Date Performed", "type": "date", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "billing",
+      "title": "Billing & Coding",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "relatedIcds", "label": "Related ICD Codes", "type": "code-lookup", "colSpan": 2, "codeLookupConfig": { "codeSystem": "ICD10", "allowMultiple": true, "showFee": false } },
+        { "key": "hospitalBillingStart", "label": "Hospital Billing Start", "type": "date", "colSpan": 1 },
+        { "key": "hospitalBillingEnd", "label": "Hospital Billing End", "type": "date", "colSpan": 1 },
+        { "key": "billingNote", "label": "Billing Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    },
+    {
+      "key": "feeSchedule",
+      "title": "Fee Schedule",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "feeScheduleItems", "label": "Fee Schedule", "type": "code-lookup", "colSpan": 1, "codeLookupConfig": { "codeSystem": "CPT4", "allowMultiple": true, "showFee": true } }
+      ]
+    },
+    {
+      "key": "assignedProviders",
+      "title": "Assigned Provider(s)",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "primaryProvider", "label": "Primary Provider", "type": "lookup", "colSpan": 1, "required": true, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Encounter", "path": "participant[0].individual.reference", "type": "Reference" } },
+        { "key": "providerRole", "label": "Role", "type": "select", "colSpan": 1, "options": [{ "label": "Primary", "value": "Primary" }, { "label": "Attending", "value": "Attending" }, { "label": "Consultant", "value": "Consultant" }, { "label": "Nurse", "value": "Nurse" }, { "label": "Scribe", "value": "Scribe" }] },
+        { "key": "providerNotes", "label": "Notes", "type": "text", "colSpan": 2 }
+      ]
+    },
+    {
+      "key": "signoff",
+      "title": "Sign-off / Finalization",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "encounterStatus", "label": "Status", "type": "select", "colSpan": 1, "required": true, "options": [{ "label": "Draft", "value": "Draft" }, { "label": "Ready for Signature", "value": "ReadyForSignature" }, { "label": "Signed", "value": "Signed" }, { "label": "Cosign Requested", "value": "CosignRequested" }, { "label": "Cosigned", "value": "Cosigned" }, { "label": "Locked", "value": "Locked" }, { "label": "Finalized", "value": "finalized" }] },
+        { "key": "acknowledgeBillingComplete", "label": "Billing Complete", "type": "boolean", "colSpan": 1 },
+        { "key": "lockEncounter", "label": "Lock Encounter", "type": "boolean", "colSpan": 1 },
+        { "key": "cosignerName", "label": "Cosigner", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true } }
+      ]
+    },
+    {
+      "key": "signature",
+      "title": "Provider Signature",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "signatureType", "label": "Signature Type", "type": "select", "colSpan": 1, "options": [{ "label": "Electronic", "value": "ELECTRONIC" }, { "label": "Wet Signature", "value": "WET" }] },
+        { "key": "signatureData", "label": "Signature", "type": "file", "colSpan": 1, "fileConfig": { "allowedTypes": ["image/png", "image/jpeg"], "maxSizeMB": 2, "preview": true } },
+        { "key": "finalizedAt", "label": "Date/Time Finalized", "type": "datetime", "colSpan": 1 }
       ]
     }
   ]

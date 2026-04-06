@@ -1,0 +1,24 @@
+{
+  "tabKey": "labs",
+  "fhirResources": ["DiagnosticReport", "Observation"],
+  "sections": [
+    {
+      "key": "lab-results",
+      "title": "Lab Results",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "testName", "label": "Test Name", "type": "coded", "required": true, "colSpan": 2, "fhirMapping": { "resource": "DiagnosticReport", "path": "code.coding", "type": "CodeableConcept" }, "codeLookupConfig": { "codeSystem": "LOINC", "placeholder": "Search lab tests..." } },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Registered", "value": "registered" }, { "label": "Partial", "value": "partial" }, { "label": "Preliminary", "value": "preliminary" }, { "label": "Final", "value": "final" }, { "label": "Amended", "value": "amended" }, { "label": "Cancelled", "value": "cancelled" }], "fhirMapping": { "resource": "DiagnosticReport", "path": "status", "type": "code" } },
+        { "key": "effectiveDate", "label": "Collection Date", "type": "datetime", "colSpan": 1, "fhirMapping": { "resource": "DiagnosticReport", "path": "effectiveDateTime", "type": "datetime" } },
+        { "key": "value", "label": "Result Value", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.value", "type": "string" } },
+        { "key": "unit", "label": "Unit", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "valueQuantity.unit", "type": "string" } },
+        { "key": "referenceRange", "label": "Reference Range", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Observation", "path": "referenceRange[0].text", "type": "string" } },
+        { "key": "interpretation", "label": "Interpretation", "type": "select", "colSpan": 1, "options": [{ "label": "Normal", "value": "N" }, { "label": "High", "value": "H" }, { "label": "Low", "value": "L" }, { "label": "Critical High", "value": "HH" }, { "label": "Critical Low", "value": "LL" }, { "label": "Abnormal", "value": "A" }], "fhirMapping": { "resource": "Observation", "path": "interpretation[0].coding[0].code", "type": "code" } },
+        { "key": "orderedBy", "label": "Ordered By", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "DiagnosticReport", "path": "resultsInterpreter[0].reference", "type": "Reference" } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "DiagnosticReport", "path": "conclusion", "type": "string" } }
+      ]
+    }
+  ]
+}

@@ -1,16 +1,27 @@
 {
-  "visitTypes": {
-    "New Patient": "#4CAF50",
-    "Follow-Up": "#2196F3",
-    "Sick Visit": "#FF9800",
-    "Annual Physical": "#9C27B0",
-    "Well Child": "#00BCD4",
-    "Telehealth": "#3F51B5",
-    "Urgent": "#F44336",
-    "Procedure": "#795548",
-    "Lab Only": "#607D8B",
-    "Injection": "#E91E63"
-  },
-  "providers": {},
-  "locations": {}
+  "categories": [
+    {
+      "key": "visit-type",
+      "label": "Visit Types",
+      "colors": []
+    },
+    {
+      "key": "provider",
+      "label": "Providers",
+      "colors": []
+    },
+    {
+      "key": "location",
+      "label": "Locations",
+      "colors": []
+    },
+    {
+      "key": "calendar",
+      "label": "Calendar System",
+      "colors": [
+        { "entityKey": "working-hours-bg", "entityLabel": "Working Hours Background", "bgColor": "#ffffff", "borderColor": "#e2e8f0", "textColor": "#1e293b" },
+        { "entityKey": "non-working-hours-bg", "entityLabel": "Non-Working Hours Background", "bgColor": "#f1f5f9", "borderColor": "#cbd5e1", "textColor": "#64748b" }
+      ]
+    }
+  ]
 }

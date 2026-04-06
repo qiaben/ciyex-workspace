@@ -1,0 +1,27 @@
+{
+  "tabKey": "medications",
+  "fhirResources": ["MedicationRequest"],
+  "sections": [
+    {
+      "key": "medication-list",
+      "title": "Medications",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "medication", "label": "Medication", "type": "coded", "required": true, "colSpan": 2, "fhirMapping": { "resource": "MedicationRequest", "path": "medicationCodeableConcept.coding", "type": "CodeableConcept" }, "codeLookupConfig": { "codeSystem": "NDC", "placeholder": "Search medications..." } },
+        { "key": "dosage", "label": "Dosage", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "MedicationRequest", "path": "dosageInstruction[0].doseAndRate[0].doseQuantity.value", "type": "string" } },
+        { "key": "frequency", "label": "Frequency", "type": "select", "colSpan": 1, "options": [{ "label": "Once daily", "value": "QD" }, { "label": "Twice daily", "value": "BID" }, { "label": "Three times daily", "value": "TID" }, { "label": "Four times daily", "value": "QID" }, { "label": "Every 4 hours", "value": "Q4H" }, { "label": "Every 6 hours", "value": "Q6H" }, { "label": "Every 8 hours", "value": "Q8H" }, { "label": "Every 12 hours", "value": "Q12H" }, { "label": "As needed", "value": "PRN" }, { "label": "At bedtime", "value": "QHS" }], "fhirMapping": { "resource": "MedicationRequest", "path": "dosageInstruction[0].timing.code.coding[0].code", "type": "code" } },
+        { "key": "route", "label": "Route", "type": "select", "colSpan": 1, "options": [{ "label": "Oral", "value": "PO" }, { "label": "Intravenous", "value": "IV" }, { "label": "Intramuscular", "value": "IM" }, { "label": "Subcutaneous", "value": "SC" }, { "label": "Topical", "value": "TOP" }, { "label": "Inhalation", "value": "INH" }, { "label": "Rectal", "value": "PR" }, { "label": "Sublingual", "value": "SL" }], "fhirMapping": { "resource": "MedicationRequest", "path": "dosageInstruction[0].route.coding[0].code", "type": "code" } },
+        { "key": "quantity", "label": "Quantity", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "MedicationRequest", "path": "dispenseRequest.quantity.value", "type": "decimal" } },
+        { "key": "refills", "label": "Refills", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "MedicationRequest", "path": "dispenseRequest.numberOfRepeatsAllowed", "type": "integer" }, "validation": { "min": 0, "max": 99 } },
+        { "key": "daysSupply", "label": "Days Supply", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "MedicationRequest", "path": "dispenseRequest.expectedSupplyDuration.value", "type": "integer" } },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "On Hold", "value": "on-hold" }, { "label": "Cancelled", "value": "cancelled" }, { "label": "Completed", "value": "completed" }, { "label": "Stopped", "value": "stopped" }], "fhirMapping": { "resource": "MedicationRequest", "path": "status", "type": "code" } },
+        { "key": "startDate", "label": "Start Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "MedicationRequest", "path": "authoredOn", "type": "datetime" } },
+        { "key": "pharmacy", "label": "Pharmacy", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/pharmacies", "displayField": "name", "valueField": "id", "searchable": true } },
+        { "key": "instructions", "label": "Patient Instructions", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "MedicationRequest", "path": "dosageInstruction[0].patientInstruction", "type": "string" } },
+        { "key": "notes", "label": "Internal Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "MedicationRequest", "path": "note[0].text", "type": "string" } }
+      ]
+    }
+  ]
+}

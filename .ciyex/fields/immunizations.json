@@ -1,0 +1,25 @@
+{
+  "tabKey": "immunizations",
+  "fhirResources": ["Immunization"],
+  "sections": [
+    {
+      "key": "immunization-list",
+      "title": "Immunizations",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "vaccine", "label": "Vaccine", "type": "coded", "required": true, "colSpan": 2, "fhirMapping": { "resource": "Immunization", "path": "vaccineCode.coding", "type": "CodeableConcept" }, "codeLookupConfig": { "codeSystem": "CVX", "placeholder": "Search vaccines..." } },
+        { "key": "administeredDate", "label": "Date Administered", "type": "date", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Immunization", "path": "occurrenceDateTime", "type": "datetime" } },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Completed", "value": "completed" }, { "label": "Not Done", "value": "not-done" }, { "label": "Entered in Error", "value": "entered-in-error" }], "fhirMapping": { "resource": "Immunization", "path": "status", "type": "code" } },
+        { "key": "site", "label": "Site", "type": "select", "colSpan": 1, "options": [{ "label": "Left Arm", "value": "LA" }, { "label": "Right Arm", "value": "RA" }, { "label": "Left Thigh", "value": "LT" }, { "label": "Right Thigh", "value": "RT" }], "fhirMapping": { "resource": "Immunization", "path": "site.coding[0].code", "type": "code" } },
+        { "key": "route", "label": "Route", "type": "select", "colSpan": 1, "options": [{ "label": "Intramuscular", "value": "IM" }, { "label": "Subcutaneous", "value": "SC" }, { "label": "Oral", "value": "PO" }, { "label": "Intranasal", "value": "IN" }], "fhirMapping": { "resource": "Immunization", "path": "route.coding[0].code", "type": "code" } },
+        { "key": "lotNumber", "label": "Lot Number", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Immunization", "path": "lotNumber", "type": "string" } },
+        { "key": "expirationDate", "label": "Expiration Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "Immunization", "path": "expirationDate", "type": "date" } },
+        { "key": "manufacturer", "label": "Manufacturer", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Immunization", "path": "manufacturer.display", "type": "string" } },
+        { "key": "administeredBy", "label": "Administered By", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Immunization", "path": "performer[0].actor.reference", "type": "Reference" } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "Immunization", "path": "note[0].text", "type": "string" } }
+      ]
+    }
+  ]
+}

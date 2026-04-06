@@ -1,0 +1,24 @@
+{
+  "tabKey": "allergies",
+  "fhirResources": ["AllergyIntolerance"],
+  "sections": [
+    {
+      "key": "allergy-list",
+      "title": "Allergy List",
+      "columns": 2,
+      "visible": true,
+      "collapsible": false,
+      "fields": [
+        { "key": "substance", "label": "Substance/Allergen", "type": "coded", "required": true, "colSpan": 1, "fhirMapping": { "resource": "AllergyIntolerance", "path": "code.coding", "type": "CodeableConcept" } },
+        { "key": "type", "label": "Type", "type": "select", "colSpan": 1, "options": [{ "label": "Allergy", "value": "allergy" }, { "label": "Intolerance", "value": "intolerance" }], "fhirMapping": { "resource": "AllergyIntolerance", "path": "type", "type": "code" } },
+        { "key": "category", "label": "Category", "type": "select", "colSpan": 1, "options": [{ "label": "Food", "value": "food" }, { "label": "Medication", "value": "medication" }, { "label": "Environment", "value": "environment" }, { "label": "Biologic", "value": "biologic" }], "fhirMapping": { "resource": "AllergyIntolerance", "path": "category[0]", "type": "code" } },
+        { "key": "criticality", "label": "Criticality", "type": "select", "colSpan": 1, "options": [{ "label": "Low", "value": "low" }, { "label": "High", "value": "high" }, { "label": "Unable to Assess", "value": "unable-to-assess" }], "fhirMapping": { "resource": "AllergyIntolerance", "path": "criticality", "type": "code" } },
+        { "key": "reaction", "label": "Reaction", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "AllergyIntolerance", "path": "reaction[0].manifestation[0].coding[0].display", "type": "string" } },
+        { "key": "severity", "label": "Severity", "type": "select", "colSpan": 1, "options": [{ "label": "Mild", "value": "mild" }, { "label": "Moderate", "value": "moderate" }, { "label": "Severe", "value": "severe" }], "fhirMapping": { "resource": "AllergyIntolerance", "path": "reaction[0].severity", "type": "code" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }, { "label": "Resolved", "value": "resolved" }], "fhirMapping": { "resource": "AllergyIntolerance", "path": "clinicalStatus.coding[0].code", "type": "code" } },
+        { "key": "onsetDate", "label": "Onset Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "AllergyIntolerance", "path": "onsetDateTime", "type": "datetime" } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "AllergyIntolerance", "path": "note[0].text", "type": "string" } }
+      ]
+    }
+  ]
+}

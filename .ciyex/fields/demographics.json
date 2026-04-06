@@ -5,178 +5,46 @@
     {
       "key": "name",
       "title": "Patient Name",
-      "columns": 2,
+      "columns": 4,
       "visible": true,
       "collapsible": false,
       "fields": [
-        {
-          "key": "firstName",
-          "label": "First Name",
-          "type": "text",
-          "required": true,
-          "colSpan": 1,
-          "placeholder": "First name",
-          "fhirMapping": { "resource": "Patient", "path": "name[0].given[0]", "type": "string" }
-        },
-        {
-          "key": "lastName",
-          "label": "Last Name",
-          "type": "text",
-          "required": true,
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "name[0].family", "type": "string" }
-        },
-        {
-          "key": "middleName",
-          "label": "Middle Name",
-          "type": "text",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "name[0].given[1]", "type": "string" }
-        },
-        {
-          "key": "suffix",
-          "label": "Suffix",
-          "type": "select",
-          "colSpan": 1,
-          "options": [
-            { "label": "Jr.", "value": "Jr." },
-            { "label": "Sr.", "value": "Sr." },
-            { "label": "II", "value": "II" },
-            { "label": "III", "value": "III" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "name[0].suffix[0]", "type": "string" }
-        }
+        { "key": "firstName", "label": "First Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "name[0].given[0]", "type": "string" }, "validation": { "pattern": "^[A-Za-z\\s\\-'.]+$" } },
+        { "key": "middleName", "label": "Middle Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "name[0].given[1]", "type": "string" } },
+        { "key": "lastName", "label": "Last Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "name[0].family", "type": "string" }, "validation": { "pattern": "^[A-Za-z\\s\\-'.]+$" } },
+        { "key": "suffix", "label": "Suffix", "type": "select", "colSpan": 1, "options": [{ "label": "Jr.", "value": "Jr." }, { "label": "Sr.", "value": "Sr." }, { "label": "II", "value": "II" }, { "label": "III", "value": "III" }, { "label": "IV", "value": "IV" }], "fhirMapping": { "resource": "Patient", "path": "name[0].suffix[0]", "type": "string" } }
       ]
     },
     {
       "key": "demographics",
       "title": "Demographics",
-      "columns": 3,
+      "columns": 4,
       "visible": true,
       "collapsible": true,
       "collapsed": false,
       "fields": [
-        {
-          "key": "dateOfBirth",
-          "label": "Date of Birth",
-          "type": "date",
-          "required": true,
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "birthDate", "type": "date" }
-        },
-        {
-          "key": "gender",
-          "label": "Gender",
-          "type": "select",
-          "required": true,
-          "colSpan": 1,
-          "options": [
-            { "label": "Male", "value": "male" },
-            { "label": "Female", "value": "female" },
-            { "label": "Other", "value": "other" },
-            { "label": "Unknown", "value": "unknown" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "gender", "type": "code" }
-        },
-        {
-          "key": "ssn",
-          "label": "SSN",
-          "type": "ssn",
-          "colSpan": 1,
-          "placeholder": "XXX-XX-XXXX",
-          "fhirMapping": { "resource": "Patient", "path": "identifier[?system=http://hl7.org/fhir/sid/us-ssn].value", "type": "string" },
-          "validation": { "pattern": "^\\d{3}-\\d{2}-\\d{4}$" }
-        },
-        {
-          "key": "mrn",
-          "label": "Medical Record Number",
-          "type": "text",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "identifier[?system=http://hospital.org/mrn].value", "type": "string" }
-        },
-        {
-          "key": "race",
-          "label": "Race",
-          "type": "select",
-          "colSpan": 1,
-          "options": [
-            { "label": "White", "value": "2106-3" },
-            { "label": "Black or African American", "value": "2054-5" },
-            { "label": "Asian", "value": "2028-9" },
-            { "label": "American Indian or Alaska Native", "value": "1002-5" },
-            { "label": "Native Hawaiian or Other Pacific Islander", "value": "2076-8" },
-            { "label": "Other", "value": "2131-1" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "extension[?url=http://hl7.org/fhir/us/core/StructureDefinition/us-core-race].extension[?url=ombCategory].valueCoding.code", "type": "code" }
-        },
-        {
-          "key": "ethnicity",
-          "label": "Ethnicity",
-          "type": "select",
-          "colSpan": 1,
-          "options": [
-            { "label": "Hispanic or Latino", "value": "2135-2" },
-            { "label": "Not Hispanic or Latino", "value": "2186-5" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "extension[?url=http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity].extension[?url=ombCategory].valueCoding.code", "type": "code" }
-        },
-        {
-          "key": "language",
-          "label": "Preferred Language",
-          "type": "select",
-          "colSpan": 1,
-          "options": [
-            { "label": "English", "value": "en" },
-            { "label": "Spanish", "value": "es" },
-            { "label": "French", "value": "fr" },
-            { "label": "Chinese", "value": "zh" },
-            { "label": "Vietnamese", "value": "vi" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "communication[0].language.coding[0].code", "type": "code" }
-        },
-        {
-          "key": "maritalStatus",
-          "label": "Marital Status",
-          "type": "select",
-          "colSpan": 1,
-          "options": [
-            { "label": "Single", "value": "S" },
-            { "label": "Married", "value": "M" },
-            { "label": "Divorced", "value": "D" },
-            { "label": "Widowed", "value": "W" }
-          ],
-          "fhirMapping": { "resource": "Patient", "path": "maritalStatus.coding[0].code", "type": "code" }
-        }
+        { "key": "dateOfBirth", "label": "Date of Birth", "type": "date", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "birthDate", "type": "date" } },
+        { "key": "gender", "label": "Gender", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Male", "value": "male" }, { "label": "Female", "value": "female" }, { "label": "Other", "value": "other" }, { "label": "Unknown", "value": "unknown" }], "fhirMapping": { "resource": "Patient", "path": "gender", "type": "code" } },
+        { "key": "ssn", "label": "SSN", "type": "text", "colSpan": 1, "placeholder": "XXX-XX-XXXX", "fhirMapping": { "resource": "Patient", "path": "identifier[?system=http://hl7.org/fhir/sid/us-ssn].value", "type": "string" }, "validation": { "pattern": "^\\d{9}$", "maxLength": 9 } },
+        { "key": "mrn", "label": "Medical Record Number", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "identifier[?system=http://hospital.org/mrn].value", "type": "string" } },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Active", "value": "Active" }, { "label": "Pending", "value": "Pending" }, { "label": "Inactive", "value": "Inactive" }], "fhirMapping": { "resource": "Patient", "path": "active", "type": "boolean" } },
+        { "key": "race", "label": "Race", "type": "select", "colSpan": 1, "options": [{ "label": "White", "value": "2106-3" }, { "label": "Black or African American", "value": "2054-5" }, { "label": "Asian", "value": "2028-9" }, { "label": "American Indian or Alaska Native", "value": "1002-5" }, { "label": "Native Hawaiian or Other Pacific Islander", "value": "2076-8" }, { "label": "Other", "value": "2131-1" }], "fhirMapping": { "resource": "Patient", "path": "extension[?url=http://hl7.org/fhir/us/core/StructureDefinition/us-core-race].extension[?url=ombCategory].valueCoding.code", "type": "code" } },
+        { "key": "ethnicity", "label": "Ethnicity", "type": "select", "colSpan": 1, "options": [{ "label": "Hispanic or Latino", "value": "2135-2" }, { "label": "Not Hispanic or Latino", "value": "2186-5" }], "fhirMapping": { "resource": "Patient", "path": "extension[?url=http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity].extension[?url=ombCategory].valueCoding.code", "type": "code" } },
+        { "key": "language", "label": "Preferred Language", "type": "select", "colSpan": 1, "options": [{ "label": "English", "value": "en" }, { "label": "Spanish", "value": "es" }, { "label": "French", "value": "fr" }, { "label": "Chinese", "value": "zh" }, { "label": "Vietnamese", "value": "vi" }, { "label": "Korean", "value": "ko" }, { "label": "Arabic", "value": "ar" }], "fhirMapping": { "resource": "Patient", "path": "communication[0].language.coding[0].code", "type": "code" } },
+        { "key": "maritalStatus", "label": "Marital Status", "type": "select", "colSpan": 1, "options": [{ "label": "Single", "value": "S" }, { "label": "Married", "value": "M" }, { "label": "Divorced", "value": "D" }, { "label": "Widowed", "value": "W" }, { "label": "Separated", "value": "L" }], "fhirMapping": { "resource": "Patient", "path": "maritalStatus.coding[0].code", "type": "code" } },
+        { "key": "primaryProvider", "label": "Primary Provider", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Patient", "path": "generalPractitioner[0].reference", "type": "Reference" } }
       ]
     },
     {
       "key": "contact",
       "title": "Contact Information",
-      "columns": 2,
+      "columns": 3,
       "visible": true,
       "collapsible": true,
       "fields": [
-        {
-          "key": "phone",
-          "label": "Home Phone",
-          "type": "phone",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=home].value", "type": "string" }
-        },
-        {
-          "key": "mobilePhone",
-          "label": "Mobile Phone",
-          "type": "phone",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" }
-        },
-        {
-          "key": "email",
-          "label": "Email",
-          "type": "email",
-          "colSpan": 2,
-          "fhirMapping": { "resource": "Patient", "path": "telecom[?system=email].value", "type": "string" }
-        }
+        { "key": "phoneNumber", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[0].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
+        { "key": "mobilePhone", "label": "Mobile Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[2].value", "type": "string" } }
       ]
     },
     {
@@ -186,42 +54,24 @@
       "visible": true,
       "collapsible": true,
       "fields": [
-        {
-          "key": "addressLine1",
-          "label": "Street Address",
-          "type": "text",
-          "colSpan": 3,
-          "fhirMapping": { "resource": "Patient", "path": "address[0].line[0]", "type": "string" }
-        },
-        {
-          "key": "addressLine2",
-          "label": "Apt / Suite",
-          "type": "text",
-          "colSpan": 3,
-          "fhirMapping": { "resource": "Patient", "path": "address[0].line[1]", "type": "string" }
-        },
-        {
-          "key": "city",
-          "label": "City",
-          "type": "text",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "address[0].city", "type": "string" }
-        },
-        {
-          "key": "state",
-          "label": "State",
-          "type": "text",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "address[0].state", "type": "string" }
-        },
-        {
-          "key": "zip",
-          "label": "ZIP Code",
-          "type": "zipcode",
-          "colSpan": 1,
-          "fhirMapping": { "resource": "Patient", "path": "address[0].postalCode", "type": "string" },
-          "validation": { "pattern": "^\\d{5}(-\\d{4})?$" }
-        }
+        { "key": "addressLine1", "label": "Street Address", "type": "text", "colSpan": 3, "fhirMapping": { "resource": "Patient", "path": "address[0].line[0]", "type": "string" } },
+        { "key": "addressLine2", "label": "Apt / Suite", "type": "text", "colSpan": 3, "fhirMapping": { "resource": "Patient", "path": "address[0].line[1]", "type": "string" } },
+        { "key": "city", "label": "City", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "address[0].city", "type": "string" } },
+        { "key": "state", "label": "State", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "address[0].state", "type": "string" } },
+        { "key": "postalCode", "label": "ZIP Code", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "address[0].postalCode", "type": "string" }, "validation": { "pattern": "^\\d{5}(-\\d{4})?$" } }
+      ]
+    },
+    {
+      "key": "emergency",
+      "title": "Emergency Contact",
+      "columns": 3,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "emergencyContactName", "label": "Contact Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "contact[0].name.text", "type": "string" } },
+        { "key": "emergencyContactPhone", "label": "Contact Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "contact[0].telecom[0].value", "type": "string" } },
+        { "key": "emergencyContactRelation", "label": "Relationship", "type": "select", "colSpan": 1, "options": [{ "label": "Spouse", "value": "spouse" }, { "label": "Parent", "value": "parent" }, { "label": "Sibling", "value": "sibling" }, { "label": "Child", "value": "child" }, { "label": "Friend", "value": "friend" }, { "label": "Other", "value": "other" }], "fhirMapping": { "resource": "Patient", "path": "contact[0].relationship[0].coding[0].code", "type": "code" } }
       ]
     }
   ]
