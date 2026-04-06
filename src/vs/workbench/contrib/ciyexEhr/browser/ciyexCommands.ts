@@ -224,3 +224,134 @@ registerAction2(class extends Action2 {
 		input.webview.setHtml(wrapHtml(body));
 	}
 });
+
+/**
+ * Command: Open Encounter
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openEncounter',
+			title: localize2('openEncounter', "Open Encounter"),
+			f1: false,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, encounterId?: string, encounterLabel?: string): Promise<void> {
+		if (!encounterId) {
+			return;
+		}
+		const apiService = accessor.get(ICiyexApiService);
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+		const label = encounterLabel || `Encounter ${encounterId}`;
+
+		let body: string;
+		try {
+			const response = await apiService.fetch(`/api/encounters/${encounterId}`);
+			if (response.ok) {
+				const data = await response.json();
+				const e = data?.data || data;
+				body = `
+					<h1>Encounter: ${e.patientName || e.patientRefDisplay || ''}</h1>
+					<div class="card">
+						<h3>Details</h3>
+						<div class="grid">
+							<span class="label">Date</span><span>${e.encounterDate || e.startDate || 'N/A'}</span>
+							<span class="label">Type</span><span>${e.visitCategory || e.type || 'N/A'}</span>
+							<span class="label">Provider</span><span>${e.encounterProvider || e.providerDisplay || 'N/A'}</span>
+							<span class="label">Status</span><span class="status-active">${e.status || 'N/A'}</span>
+							<span class="label">Reason</span><span>${e.reason || 'N/A'}</span>
+							<span class="label">FHIR ID</span><span>${e.fhirId || e.id || 'N/A'}</span>
+						</div>
+					</div>`;
+			} else {
+				body = `<p style="color:#f48771;">Failed to load encounter: ${response.status}</p>`;
+			}
+		} catch {
+			body = '<p style="color:#f48771;">Error loading encounter</p>';
+		}
+
+		const input = webviewService.openWebview(
+			{ title: label, options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.encounter', label, undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
+	}
+});
+
+/**
+ * Command: Upload Document
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.uploadDocument',
+			title: localize2('uploadDocument', "Upload Document"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+		const body = `
+			<h1>Document Upload</h1>
+			<div class="card">
+				<p>Document scanning and upload will be available in a future update.</p>
+				<p>Supported formats: PDF, JPEG, PNG, TIFF</p>
+			</div>`;
+		const input = webviewService.openWebview(
+			{ title: 'Upload Document', options: {}, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.documentUpload', 'Upload Document', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
+	}
+});
+
+/**
+ * Command: SMART on FHIR Launcher
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.smartLaunch',
+			title: localize2('smartLaunch', "Launch SMART App"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const apiService = accessor.get(ICiyexApiService);
+		const webviewService = accessor.get(IWebviewWorkbenchService);
+
+		let body: string;
+		try {
+			const response = await apiService.fetch('/api/app-installations');
+			if (response.ok) {
+				const data = await response.json();
+				const apps = data?.data || data || [];
+				const smartApps = (Array.isArray(apps) ? apps : []).filter((a: Record<string, unknown>) => a.smartLaunchUrl);
+				if (smartApps.length === 0) {
+					body = '<h1>SMART Apps</h1><div class="card"><p>No SMART on FHIR apps installed. Visit the Ciyex Hub to install apps.</p></div>';
+				} else {
+					let rows = '';
+					for (const app of smartApps) {
+						rows += `<tr><td>${app.appName || app.appSlug}</td><td>${app.status}</td><td><a href="${app.smartLaunchUrl}">Launch</a></td></tr>`;
+					}
+					body = `<h1>SMART Apps</h1><div class="card"><table>
+						<thead><tr><th>App</th><th>Status</th><th>Action</th></tr></thead>
+						<tbody>${rows}</tbody></table></div>`;
+				}
+			} else {
+				body = '<h1>SMART Apps</h1><div class="card"><p>Failed to load installed apps.</p></div>';
+			}
+		} catch {
+			body = '<h1>SMART Apps</h1><div class="card"><p>Error loading apps.</p></div>';
+		}
+
+		const input = webviewService.openWebview(
+			{ title: 'SMART Apps', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
+			'ciyex.smartLaunch', 'SMART Apps', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
+		);
+		input.webview.setHtml(wrapHtml(body));
+	}
+});

@@ -110,6 +110,9 @@ GenericListPane.configs.set('ciyex.clinical.encounters', {
 	columns: [{ key: 'patientName' }, { key: 'type' }, { key: 'status' }],
 	avatarFields: ['patientName', 'patientName'],
 	emptyMessage: 'No encounters',
+	onClickCommand: 'ciyex.openEncounter',
+	onClickIdField: 'fhirId',
+	onClickLabelField: 'patientName',
 });
 
 GenericListPane.configs.set('ciyex.clinical.prescriptions', {

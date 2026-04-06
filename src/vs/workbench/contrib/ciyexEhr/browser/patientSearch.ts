@@ -76,9 +76,8 @@ registerAction2(class extends Action2 {
 						picker.items = patients.map((p: Record<string, string>): IPatientQuickPick => {
 							const age = calcAge(p.dateOfBirth);
 							const g = p.gender === 'male' ? 'M' : p.gender === 'female' ? 'F' : '';
-							const initials = `${(p.firstName || '')[0] || ''}${(p.lastName || '')[0] || ''}`.toUpperCase();
 							return {
-								label: `[${initials}]  ${p.lastName}, ${p.firstName}`,
+								label: `$(account) ${p.lastName}, ${p.firstName}`,
 								description: `${p.dateOfBirth || ''} ${g} ${age}y`,
 								detail: `${p.email || ''} ${p.phoneNumber || ''}`.trim() || undefined,
 								patientId: p.fhirId || p.id,
