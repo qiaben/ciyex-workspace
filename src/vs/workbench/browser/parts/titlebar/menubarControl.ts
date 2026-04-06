@@ -53,6 +53,7 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 		original: 'File',
 		mnemonicTitle: localize({ key: 'mFile', comment: ['&& denotes a mnemonic'] }, "&&File"),
 	},
+	when: ContextKeyExpr.has('ciyex.showDevMenus'),
 	order: 1
 });
 
@@ -63,6 +64,7 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 		original: 'Edit',
 		mnemonicTitle: localize({ key: 'mEdit', comment: ['&& denotes a mnemonic'] }, "&&Edit")
 	},
+	when: ContextKeyExpr.has('ciyex.showDevMenus'),
 	order: 2
 });
 
@@ -84,6 +86,7 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 		original: 'View',
 		mnemonicTitle: localize({ key: 'mView', comment: ['&& denotes a mnemonic'] }, "&&View")
 	},
+	when: ContextKeyExpr.has('ciyex.showDevMenus'),
 	order: 4
 });
 
@@ -94,6 +97,7 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 		original: 'Go',
 		mnemonicTitle: localize({ key: 'mGoto', comment: ['&& denotes a mnemonic'] }, "&&Go")
 	},
+	when: ContextKeyExpr.has('ciyex.showDevMenus'),
 	order: 5
 });
 

@@ -204,15 +204,22 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			}
 		}));
 
-		// Check if login is required on every startup
+		// Check for existing valid session
 		const loginRequired = this.configurationService.getValue<boolean>('ciyex.session.loginRequired');
 		if (loginRequired === false) {
-			// Skip login - check for existing valid token
+			// Skip login if token is still valid
 			this._checkExistingAuth();
 		} else {
-			// Always require login on startup (default behavior)
-			this._clearStoredAuth();
-			this._setState(CiyexAuthState.NotAuthenticated);
+			// Require password on startup - keep email, clear only tokens
+			const savedEmail = localStorage.getItem('ciyex_email');
+			this._clearTokensOnly();
+			if (savedEmail) {
+				this._userEmail = savedEmail;
+				// Go to locked state (shows password-only screen, not email step)
+				this._setState(CiyexAuthState.Locked);
+			} else {
+				this._setState(CiyexAuthState.NotAuthenticated);
+			}
 		}
 
 		// Listen for activity events
@@ -489,6 +496,13 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		localStorage.removeItem('ciyex_user_name');
 		localStorage.removeItem('ciyex_user_id');
 		localStorage.removeItem('ciyex_groups');
+	}
+
+	/** Clear tokens only - keep email and user name for password-only re-login */
+	private _clearTokensOnly(): void {
+		localStorage.removeItem('ciyex_token');
+		localStorage.removeItem('ciyex_refresh_token');
+		// Keep: ciyex_email, ciyex_user_name, ciyex_user_id, ciyex_groups
 	}
 
 	private _scheduleTokenRefresh(): void {
