@@ -1,0 +1,55 @@
+{
+  "tabKey": "providers",
+  "fhirResources": ["Practitioner", "PractitionerRole"],
+  "sections": [
+    {
+      "key": "personal",
+      "title": "Personal Information",
+      "columns": 3,
+      "visible": true,
+      "fields": [
+        { "key": "firstName", "label": "First Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "name[0].given[0]", "type": "string" } },
+        { "key": "middleName", "label": "Middle Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "name[0].given[1]", "type": "string" } },
+        { "key": "lastName", "label": "Last Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "name[0].family", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "telecom[?system=email].value", "type": "string" } },
+        { "key": "phone", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "telecom[?system=phone].value", "type": "string" } },
+        { "key": "photo", "label": "Photo", "type": "file", "colSpan": 1, "fileConfig": { "allowedTypes": ["image/png", "image/jpeg"], "maxSizeMB": 2, "preview": true } }
+      ]
+    },
+    {
+      "key": "professional",
+      "title": "Professional Information",
+      "columns": 3,
+      "visible": true,
+      "fields": [
+        { "key": "npi", "label": "NPI", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "identifier[?system=http://hl7.org/fhir/sid/us-npi].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
+        { "key": "specialty", "label": "Specialty", "type": "select", "colSpan": 1, "fhirMapping": { "resource": "PractitionerRole", "path": "specialty[0].coding[0].display", "type": "string" }, "optionsSource": { "endpoint": "/api/specialties", "labelField": "name", "valueField": "code" } },
+        { "key": "providerType", "label": "Provider Type", "type": "select", "colSpan": 1, "options": [{ "label": "MD", "value": "MD" }, { "label": "DO", "value": "DO" }, { "label": "NP", "value": "NP" }, { "label": "PA", "value": "PA" }, { "label": "RN", "value": "RN" }, { "label": "LPN", "value": "LPN" }, { "label": "MA", "value": "MA" }, { "label": "Other", "value": "Other" }] },
+        { "key": "licenseNumber", "label": "License Number", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "qualification[0].identifier[0].value", "type": "string" } },
+        { "key": "licenseState", "label": "License State", "type": "text", "colSpan": 1 },
+        { "key": "deaNumber", "label": "DEA Number", "type": "text", "colSpan": 1 },
+        { "key": "taxonomyCode", "label": "Taxonomy Code", "type": "text", "colSpan": 1 },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }], "fhirMapping": { "resource": "Practitioner", "path": "active", "type": "boolean" } },
+        { "key": "color", "label": "Calendar Color", "type": "text", "colSpan": 1, "placeholder": "#3F51B5" }
+      ]
+    },
+    {
+      "key": "system-access",
+      "title": "System Access",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "sectionComponent": "system-access-editor",
+      "fields": []
+    },
+    {
+      "key": "availability",
+      "title": "Availability",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "sectionComponent": "provider-availability-editor",
+      "fields": []
+    }
+  ]
+}

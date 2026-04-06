@@ -1,0 +1,25 @@
+{
+  "tabKey": "insurance",
+  "fhirResources": ["Coverage", "Organization"],
+  "sections": [
+    {
+      "key": "payer-info",
+      "title": "Insurance Payer",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "name", "label": "Payer Name", "type": "text", "required": true, "colSpan": 2, "fhirMapping": { "resource": "Organization", "path": "name", "type": "string" }, "validation": { "pattern": "^[A-Za-z\\s\\-'.&]+$" } },
+        { "key": "payerId", "label": "Payer ID", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "identifier[0].value", "type": "string" } },
+        { "key": "type", "label": "Plan Type", "type": "select", "colSpan": 1, "options": [{ "label": "Commercial", "value": "commercial" }, { "label": "Medicare", "value": "medicare" }, { "label": "Medicaid", "value": "medicaid" }, { "label": "Workers Comp", "value": "workers-comp" }, { "label": "Tricare", "value": "tricare" }, { "label": "Self-Pay", "value": "self-pay" }, { "label": "Other", "value": "other" }] },
+        { "key": "phone", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "telecom[?system=phone].value", "type": "string" } },
+        { "key": "fax", "label": "Fax", "type": "phone", "colSpan": 1 },
+        { "key": "claimsAddress", "label": "Claims Address", "type": "text", "colSpan": 2 },
+        { "key": "city", "label": "City", "type": "text", "colSpan": 1 },
+        { "key": "state", "label": "State", "type": "text", "colSpan": 1 },
+        { "key": "postalCode", "label": "ZIP", "type": "text", "colSpan": 1 },
+        { "key": "electronicPayerId", "label": "Electronic Payer ID", "type": "text", "colSpan": 1 },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }] }
+      ]
+    }
+  ]
+}

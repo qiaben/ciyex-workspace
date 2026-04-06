@@ -1,0 +1,56 @@
+{
+  "tabKey": "practice",
+  "fhirResources": ["Organization"],
+  "singleton": true,
+  "sections": [
+    {
+      "key": "practice-info",
+      "title": "Practice Information",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "name", "label": "Practice Name", "type": "text", "required": true, "colSpan": 2, "fhirMapping": { "resource": "Organization", "path": "name", "type": "string" }, "validation": { "pattern": "^[A-Za-z\\s\\-'.&]+$" } },
+        { "key": "npi", "label": "NPI", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "identifier[?system=http://hl7.org/fhir/sid/us-npi].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
+        { "key": "taxId", "label": "Tax ID", "type": "text", "colSpan": 1, "placeholder": "XX-XXXXXXX" },
+        { "key": "phone", "label": "Phone", "type": "phone", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "telecom[?system=phone].value", "type": "string" } },
+        { "key": "fax", "label": "Fax", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "telecom[?system=fax].value", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "telecom[?system=email].value", "type": "string" } },
+        { "key": "website", "label": "Website", "type": "text", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "address",
+      "title": "Address",
+      "columns": 3,
+      "visible": true,
+      "fields": [
+        { "key": "addressLine1", "label": "Street Address", "type": "text", "colSpan": 3, "fhirMapping": { "resource": "Organization", "path": "address[0].line[0]", "type": "string" } },
+        { "key": "addressLine2", "label": "Suite / Unit", "type": "text", "colSpan": 3, "fhirMapping": { "resource": "Organization", "path": "address[0].line[1]", "type": "string" } },
+        { "key": "city", "label": "City", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "address[0].city", "type": "string" } },
+        { "key": "state", "label": "State", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "address[0].state", "type": "string" } },
+        { "key": "postalCode", "label": "ZIP Code", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "address[0].postalCode", "type": "string" } }
+      ]
+    },
+    {
+      "key": "branding",
+      "title": "Branding",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "logo", "label": "Practice Logo", "type": "file", "colSpan": 2, "fileConfig": { "uploadEndpoint": "/api/practice-logo", "downloadEndpoint": "/api/practice-logo", "allowedTypes": ["image/png", "image/jpeg", "image/svg+xml"], "maxSizeMB": 2, "preview": true, "dragDrop": true } }
+      ]
+    },
+    {
+      "key": "regional",
+      "title": "Regional Settings",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "timezone", "label": "Timezone", "type": "select", "colSpan": 1, "options": [{ "label": "Eastern (ET)", "value": "America/New_York" }, { "label": "Central (CT)", "value": "America/Chicago" }, { "label": "Mountain (MT)", "value": "America/Denver" }, { "label": "Pacific (PT)", "value": "America/Los_Angeles" }, { "label": "Alaska (AKT)", "value": "America/Anchorage" }, { "label": "Hawaii (HST)", "value": "Pacific/Honolulu" }] },
+        { "key": "locale", "label": "Locale", "type": "select", "colSpan": 1, "options": [{ "label": "English (US)", "value": "en-US" }, { "label": "Spanish", "value": "es" }, { "label": "French", "value": "fr" }] }
+      ]
+    }
+  ]
+}

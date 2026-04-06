@@ -1,0 +1,33 @@
+{
+  "tabKey": "facilities",
+  "fhirResources": ["Location"],
+  "sections": [
+    {
+      "key": "facility-info",
+      "title": "Facility Information",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "name", "label": "Facility Name", "type": "text", "required": true, "colSpan": 2, "fhirMapping": { "resource": "Location", "path": "name", "type": "string" } },
+        { "key": "type", "label": "Type", "type": "select", "colSpan": 1, "options": [{ "label": "Office", "value": "office" }, { "label": "Hospital", "value": "hospital" }, { "label": "Clinic", "value": "clinic" }, { "label": "Urgent Care", "value": "urgent-care" }, { "label": "Lab", "value": "lab" }, { "label": "Imaging Center", "value": "imaging" }], "fhirMapping": { "resource": "Location", "path": "type[0].coding[0].code", "type": "code" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }, { "label": "Suspended", "value": "suspended" }], "fhirMapping": { "resource": "Location", "path": "status", "type": "code" } },
+        { "key": "phone", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "telecom[?system=phone].value", "type": "string" } },
+        { "key": "fax", "label": "Fax", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "telecom[?system=fax].value", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "telecom[?system=email].value", "type": "string" } },
+        { "key": "placeOfServiceCode", "label": "Place of Service Code", "type": "text", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "address",
+      "title": "Address",
+      "columns": 3,
+      "visible": true,
+      "fields": [
+        { "key": "addressLine1", "label": "Street Address", "type": "text", "colSpan": 3, "fhirMapping": { "resource": "Location", "path": "address.line[0]", "type": "string" } },
+        { "key": "city", "label": "City", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "address.city", "type": "string" } },
+        { "key": "state", "label": "State", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "address.state", "type": "string" } },
+        { "key": "postalCode", "label": "ZIP Code", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Location", "path": "address.postalCode", "type": "string" } }
+      ]
+    }
+  ]
+}

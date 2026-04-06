@@ -1,0 +1,23 @@
+{
+  "tabKey": "referral-providers",
+  "fhirResources": ["Practitioner"],
+  "sections": [
+    {
+      "key": "referral-provider",
+      "title": "Referral Provider",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "firstName", "label": "First Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "name[0].given[0]", "type": "string" } },
+        { "key": "lastName", "label": "Last Name", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "name[0].family", "type": "string" } },
+        { "key": "npi", "label": "NPI", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "identifier[?system=http://hl7.org/fhir/sid/us-npi].value", "type": "string" } },
+        { "key": "specialty", "label": "Specialty", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "qualification[0].code.text", "type": "string" } },
+        { "key": "phone", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "telecom[?system=phone].value", "type": "string" } },
+        { "key": "fax", "label": "Fax", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "telecom[?system=fax].value", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Practitioner", "path": "telecom[?system=email].value", "type": "string" } },
+        { "key": "affiliatedPractice", "label": "Affiliated Practice", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/fhir-resource/referral-practices", "displayField": "name", "valueField": "id", "searchable": true } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    }
+  ]
+}

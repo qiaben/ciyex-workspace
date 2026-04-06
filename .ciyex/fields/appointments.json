@@ -1,0 +1,24 @@
+{
+  "tabKey": "appointments",
+  "fhirResources": ["Appointment", "Schedule", "Slot"],
+  "sections": [
+    {
+      "key": "appointment-form",
+      "title": "Appointment",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "patient", "label": "Patient", "type": "lookup", "required": true, "colSpan": 2, "lookupConfig": { "endpoint": "/api/patients", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Appointment", "path": "participant[?type=patient].actor.reference", "type": "Reference" } },
+        { "key": "appointmentType", "label": "Appointment Type", "type": "select", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Appointment", "path": "appointmentType.coding[0].code", "type": "code" }, "options": [{ "label": "New Patient", "value": "new-patient" }, { "label": "Follow-Up", "value": "follow-up" }, { "label": "Sick Visit", "value": "sick-visit" }, { "label": "Annual Physical", "value": "annual-physical" }, { "label": "Well Child", "value": "well-child" }, { "label": "Telehealth", "value": "telehealth" }, { "label": "Urgent", "value": "urgent" }, { "label": "Procedure", "value": "procedure" }, { "label": "Lab Only", "value": "lab-only" }, { "label": "Injection", "value": "injection" }] },
+        { "key": "status", "label": "Status", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Proposed", "value": "proposed" }, { "label": "Pending", "value": "pending" }, { "label": "Booked", "value": "booked" }, { "label": "Arrived", "value": "arrived" }, { "label": "Checked In", "value": "checked-in" }, { "label": "In Room", "value": "in-room" }, { "label": "With Provider", "value": "with-provider" }, { "label": "Fulfilled", "value": "fulfilled" }, { "label": "Cancelled", "value": "cancelled" }, { "label": "No Show", "value": "noshow" }], "fhirMapping": { "resource": "Appointment", "path": "status", "type": "code" }, "badgeColors": { "booked": "#3b82f6", "arrived": "#f59e0b", "checked-in": "#8b5cf6", "in-room": "#06b6d4", "with-provider": "#22c55e", "fulfilled": "#6b7280", "cancelled": "#ef4444", "noshow": "#dc2626" } },
+        { "key": "provider", "label": "Provider", "type": "lookup", "required": true, "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Appointment", "path": "participant[?type=practitioner].actor.reference", "type": "Reference" } },
+        { "key": "location", "label": "Location", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/fhir-resource/facilities", "displayField": "name", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Appointment", "path": "participant[?type=location].actor.reference", "type": "Reference" } },
+        { "key": "startDate", "label": "Date", "type": "date", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Appointment", "path": "start", "type": "datetime" } },
+        { "key": "startTime", "label": "Start Time", "type": "text", "required": true, "colSpan": 1, "placeholder": "HH:MM" },
+        { "key": "duration", "label": "Duration (min)", "type": "number", "colSpan": 1, "fhirMapping": { "resource": "Appointment", "path": "minutesDuration", "type": "integer" }, "validation": { "min": 5, "max": 480 } },
+        { "key": "reason", "label": "Reason", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Appointment", "path": "reasonCode[0].text", "type": "string" } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "Appointment", "path": "comment", "type": "string" } }
+      ]
+    }
+  ]
+}
