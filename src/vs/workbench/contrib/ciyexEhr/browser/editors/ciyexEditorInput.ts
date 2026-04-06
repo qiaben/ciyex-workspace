@@ -22,12 +22,17 @@ export class CiyexConfigEditorInput extends EditorInput {
 		readonly fileUri: URI,
 		readonly configLabel: string,
 		private readonly _icon: ThemeIcon,
+		readonly preferredEditorId?: string,
 	) {
 		super();
 	}
 
 	override get typeId(): string {
 		return CiyexConfigEditorInput.ID;
+	}
+
+	override get editorId(): string | undefined {
+		return this.preferredEditorId;
 	}
 
 	override getName(): string {
