@@ -347,22 +347,40 @@ export class CiyexAuthGate extends Disposable {
 		card.appendChild(btn);
 		wrapper.appendChild(card);
 
-		// Collapsible Server Settings section (below card)
-		const settingsToggle = document.createElement('button');
-		settingsToggle.id = 'ciyex-settings-toggle';
-		settingsToggle.textContent = this._showSettings ? '\u25B4 Server Settings' : '\u25BE Server Settings';
-		Object.assign(settingsToggle.style, {
+		// Server Settings link (opens popup)
+		const settingsLink = document.createElement('button');
+		settingsLink.id = 'ciyex-settings-toggle';
+		settingsLink.textContent = '\u2699 Server Settings';
+		Object.assign(settingsLink.style, {
 			background: 'none', border: 'none', color: c.textSecondary,
 			fontSize: '12px', padding: '8px 4px', cursor: 'pointer',
 			display: 'block', margin: '12px auto 0', textAlign: 'center',
+			textDecoration: 'underline',
 		});
-		wrapper.appendChild(settingsToggle);
+		wrapper.appendChild(settingsLink);
 
+		// Settings popup overlay (modal on top of login)
 		if (this._showSettings) {
-			const settingsCard = h('div', {
-				background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '10px',
-				padding: '16px', marginTop: '8px', fontSize: '12px',
+			const backdrop = h('div', {
+				position: 'fixed', inset: '0', zIndex: '100000',
+				display: 'flex', alignItems: 'center', justifyContent: 'center',
+				background: 'rgba(0,0,0,0.5)',
 			});
+
+			const popup = h('div', {
+				background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px',
+				padding: '24px', width: '380px', maxWidth: '90vw',
+				boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+			});
+
+			// Popup header
+			const headerRow = h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' });
+			headerRow.appendChild(text(h('h3', { fontSize: '15px', fontWeight: '600', color: c.textPrimary, margin: '0' }), 'Server Settings'));
+			const closeBtn = document.createElement('button');
+			closeBtn.textContent = '\u2715';
+			Object.assign(closeBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '16px', cursor: 'pointer', padding: '0 4px' });
+			headerRow.appendChild(closeBtn);
+			popup.appendChild(headerRow);
 
 			const fields: Array<{ label: string; key: string; value: string; placeholder: string }> = [
 				{ label: 'API Server', key: 'ciyex_api_url', value: this._authService.apiUrl, placeholder: 'https://api-dev.ciyex.org' },
@@ -371,38 +389,46 @@ export class CiyexAuthGate extends Disposable {
 				{ label: 'Keycloak Client ID', key: 'ciyex_keycloak_client_id', value: this._authService.keycloakClientId, placeholder: 'ciyex-app' },
 			];
 
-			const settingsInputs: HTMLInputElement[] = [];
+			const inputs: HTMLInputElement[] = [];
 			for (const f of fields) {
-				const row = h('div', { marginBottom: '10px' });
-				row.appendChild(text(h('label', { display: 'block', fontSize: '11px', fontWeight: '500', color: c.textSecondary, marginBottom: '3px' }), f.label));
+				const row = h('div', { marginBottom: '12px' });
+				row.appendChild(text(h('label', { display: 'block', fontSize: '12px', fontWeight: '500', color: c.textSecondary, marginBottom: '4px' }), f.label));
 				const inp = this._buildInput(`ciyex-cfg-${f.key}`, 'text', f.placeholder, f.value, c);
-				inp.style.fontSize = '12px';
-				inp.style.padding = '6px 8px';
+				inp.style.fontSize = '13px';
+				inp.style.padding = '8px 10px';
 				row.appendChild(inp);
-				settingsCard.appendChild(row);
-				settingsInputs.push(inp);
+				popup.appendChild(row);
+				inputs.push(inp);
+			}
 
-				inp.addEventListener('change', () => {
-					const val = inp.value.trim();
+			// Save button
+			const saveBtn = this._buildButton('ciyex-settings-save', 'Save', true, c);
+			saveBtn.style.marginTop = '4px';
+			popup.appendChild(saveBtn);
+
+			backdrop.appendChild(popup);
+			this._overlay!.appendChild(backdrop);
+
+			// Popup listeners
+			const closePopup = () => { this._showSettings = false; this._render(); };
+			closeBtn.addEventListener('click', closePopup);
+			backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { closePopup(); } });
+			saveBtn.addEventListener('click', () => {
+				for (let i = 0; i < fields.length; i++) {
+					const val = inputs[i].value.trim();
 					if (val) {
-						localStorage.setItem(f.key, f.key === 'ciyex_api_url' ? val.replace(/\/$/, '') : val);
+						localStorage.setItem(fields[i].key, fields[i].key === 'ciyex_api_url' ? val.replace(/\/$/, '') : val);
 					}
-				});
-			}
-
-			// Remove last margin
-			if (settingsInputs.length > 0) {
-				settingsInputs[settingsInputs.length - 1].parentElement!.style.marginBottom = '0';
-			}
-
-			wrapper.appendChild(settingsCard);
+				}
+				closePopup();
+			});
 		}
 
 		// Listeners
 		emailInput.addEventListener('input', () => { this._email = emailInput.value; });
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
-		settingsToggle.addEventListener('click', () => { this._showSettings = !this._showSettings; this._render(); });
+		settingsLink.addEventListener('click', () => { this._showSettings = true; this._render(); });
 		setTimeout(() => emailInput.focus(), 50);
 
 		return wrapper;
