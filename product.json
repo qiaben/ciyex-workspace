@@ -86,7 +86,10 @@
 		"extensionId": "",
 		"chatExtensionId": "",
 		"provider": {
-			"default": { "id": "", "name": "" }
+			"default": { "id": "", "name": "" },
+			"enterprise": { "id": "", "name": "" },
+			"google": { "id": "", "name": "" },
+			"apple": { "id": "", "name": "" }
 		}
 	}
 }

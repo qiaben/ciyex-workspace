@@ -9,12 +9,78 @@ import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
 type AuthStep = 'email' | 'authenticate' | 'locked' | 'warning';
 
 /**
+ * Helper to create a styled element via DOM APIs (no innerHTML, CSP-safe).
+ */
+function h(tag: string, style?: Partial<CSSStyleDeclaration>, attrs?: Record<string, string>): HTMLElement {
+	const el = document.createElement(tag);
+	if (style) {
+		Object.assign(el.style, style);
+	}
+	if (attrs) {
+		for (const [k, v] of Object.entries(attrs)) {
+			el.setAttribute(k, v);
+		}
+	}
+	return el;
+}
+
+function text(parent: HTMLElement, str: string): HTMLElement {
+	parent.textContent = str;
+	return parent;
+}
+
+/**
+ * Create an SVG element using namespace-aware DOM APIs (CSP/TrustedTypes safe).
+ */
+function createSvg(size: number, viewBox: string, children: (parent: SVGElement) => void): HTMLElement {
+	const NS = 'http://www.w3.org/2000/svg';
+	const container = h('div', { display: 'block', margin: '0 auto', width: `${size}px`, height: `${size}px` });
+	const svg = document.createElementNS(NS, 'svg');
+	svg.setAttribute('width', String(size));
+	svg.setAttribute('height', String(size));
+	svg.setAttribute('viewBox', viewBox);
+	svg.setAttribute('fill', 'none');
+	children(svg);
+	container.appendChild(svg);
+	return container;
+}
+
+function svgPath(parent: SVGElement, d: string, attrs: Record<string, string> = {}): void {
+	const NS = 'http://www.w3.org/2000/svg';
+	const path = document.createElementNS(NS, 'path');
+	path.setAttribute('d', d);
+	for (const [k, v] of Object.entries(attrs)) {
+		path.setAttribute(k, v);
+	}
+	parent.appendChild(path);
+}
+
+function svgRect(parent: SVGElement, attrs: Record<string, string>): void {
+	const NS = 'http://www.w3.org/2000/svg';
+	const rect = document.createElementNS(NS, 'rect');
+	for (const [k, v] of Object.entries(attrs)) {
+		rect.setAttribute(k, v);
+	}
+	parent.appendChild(rect);
+}
+
+function svgCircle(parent: SVGElement, attrs: Record<string, string>): void {
+	const NS = 'http://www.w3.org/2000/svg';
+	const circle = document.createElementNS(NS, 'circle');
+	for (const [k, v] of Object.entries(attrs)) {
+		circle.setAttribute(k, v);
+	}
+	parent.appendChild(circle);
+}
+
+/**
  * Full-screen auth overlay that blocks the entire workbench until authenticated.
- * Implements the same two-step login flow as Ciyex EHR UI.
+ * Uses DOM APIs exclusively (no innerHTML) to comply with VS Code Trusted Types CSP.
  */
 export class CiyexAuthGate extends Disposable {
 
 	private _overlay: HTMLDivElement | undefined;
+	private _styleEl: HTMLStyleElement | undefined;
 	private _step: AuthStep = 'email';
 	private _email = '';
 	private _password = '';
@@ -34,7 +100,6 @@ export class CiyexAuthGate extends Disposable {
 		this._register(this._authService.onDidChangeAuthState(state => this._onAuthStateChanged(state)));
 		this._register(this._authService.onSessionWarning(countdown => this._onSessionWarning(countdown)));
 
-		// Show overlay if not authenticated
 		if (this._authService.state !== CiyexAuthState.Authenticated) {
 			this._show();
 		}
@@ -61,7 +126,6 @@ export class CiyexAuthGate extends Disposable {
 				this._show();
 				break;
 			case CiyexAuthState.Warning:
-				// Warning is handled by onSessionWarning
 				break;
 		}
 	}
@@ -110,341 +174,368 @@ export class CiyexAuthGate extends Disposable {
 		}
 	}
 
+	// --- theme helpers ---
+	private _isDark(): boolean {
+		return document.body.classList.contains('vs-dark') ||
+			document.body.classList.contains('hc-black') ||
+			window.matchMedia('(prefers-color-scheme: dark)').matches;
+	}
+
+	private _colors() {
+		const dark = this._isDark();
+		return {
+			bg: dark ? '#1e1e2e' : '#f0f2f5',
+			cardBg: dark ? '#2d2d3f' : '#ffffff',
+			textPrimary: dark ? '#e0e0e0' : '#1a1a2e',
+			textSecondary: dark ? '#a0a0b0' : '#6b7280',
+			border: dark ? '#3d3d4f' : '#e5e7eb',
+			inputBg: dark ? '#1e1e2e' : '#f9fafb',
+			brand: '#465FFF',
+			errorBg: dark ? 'rgba(239,68,68,0.1)' : '#fef2f2',
+			errorText: dark ? '#fca5a5' : '#dc2626',
+			errorBorder: dark ? '#7f1d1d' : '#fecaca',
+			warning: '#f59e0b',
+		};
+	}
+
+	// --- main render (DOM-based, no innerHTML) ---
 	private _render(): void {
 		if (!this._overlay) {
 			return;
 		}
+		const c = this._colors();
 
-		const isDark = document.body.classList.contains('vs-dark') || document.body.classList.contains('hc-black') ||
-			window.matchMedia('(prefers-color-scheme: dark)').matches;
+		// Apply overlay styles directly
+		Object.assign(this._overlay.style, {
+			position: 'fixed',
+			inset: '0',
+			zIndex: '99999',
+			display: 'flex',
+			alignItems: 'center',
+			justifyContent: 'center',
+			background: c.bg,
+			fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+		});
 
-		const bg = isDark ? '#1e1e2e' : '#f0f2f5';
-		const cardBg = isDark ? '#2d2d3f' : '#ffffff';
-		const textPrimary = isDark ? '#e0e0e0' : '#1a1a2e';
-		const textSecondary = isDark ? '#a0a0b0' : '#6b7280';
-		const borderColor = isDark ? '#3d3d4f' : '#e5e7eb';
-		const inputBg = isDark ? '#1e1e2e' : '#f9fafb';
-		const brandColor = '#465FFF';
-		const brandHover = '#3449e3';
-		const errorBg = isDark ? 'rgba(239,68,68,0.1)' : '#fef2f2';
-		const errorText = isDark ? '#fca5a5' : '#dc2626';
-		const errorBorder = isDark ? '#7f1d1d' : '#fecaca';
-		const warningColor = '#f59e0b';
-
-		let content = '';
-
-		if (this._step === 'warning') {
-			content = this._renderWarning(cardBg, textPrimary, textSecondary, borderColor, brandColor, brandHover, warningColor);
-		} else if (this._step === 'locked') {
-			content = this._renderLocked(cardBg, textPrimary, textSecondary, borderColor, brandColor, brandHover, inputBg, errorBg, errorText, errorBorder);
-		} else if (this._step === 'authenticate') {
-			content = this._renderAuthenticate(cardBg, textPrimary, textSecondary, borderColor, brandColor, brandHover, inputBg, errorBg, errorText, errorBorder);
-		} else {
-			content = this._renderEmailStep(cardBg, textPrimary, textSecondary, borderColor, brandColor, brandHover, inputBg, errorBg, errorText, errorBorder);
+		// Clear previous children
+		while (this._overlay.firstChild) {
+			this._overlay.removeChild(this._overlay.firstChild);
 		}
 
-		this._overlay.innerHTML = `
-			<style>
-				#ciyex-auth-gate {
-					position: fixed;
-					inset: 0;
-					z-index: 99999;
-					display: flex;
-					align-items: center;
-					justify-content: center;
-					background: ${bg};
-					font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-					-webkit-app-region: drag;
-				}
-				#ciyex-auth-gate * {
-					-webkit-app-region: no-drag;
-				}
-				#ciyex-auth-gate input {
-					outline: none;
-					transition: border-color 0.15s, box-shadow 0.15s;
-				}
-				#ciyex-auth-gate input:focus {
-					border-color: ${brandColor};
-					box-shadow: 0 0 0 3px rgba(70, 95, 255, 0.15);
-				}
-				#ciyex-auth-gate button {
-					cursor: pointer;
-					transition: background-color 0.15s, opacity 0.15s;
-				}
-				#ciyex-auth-gate button:disabled {
-					opacity: 0.5;
-					cursor: not-allowed;
-				}
-				@keyframes ciyex-spin {
-					to { transform: rotate(360deg); }
-				}
-				.ciyex-spinner {
-					animation: ciyex-spin 1s linear infinite;
-				}
-			</style>
-			${content}
-		`;
-
-		this._attachListeners();
-	}
-
-	private _renderEmailStep(cardBg: string, textPrimary: string, textSecondary: string, borderColor: string, brandColor: string, brandHover: string, inputBg: string, errorBg: string, errorText: string, errorBorder: string): string {
-		return `
-			<div style="width: 100%; max-width: 400px; padding: 16px;">
-				<div style="text-align: center; margin-bottom: 32px;">
-					${this._logoSvg(48)}
-					<h1 style="font-size: 22px; font-weight: 700; color: ${textPrimary}; margin: 12px 0 4px;">Ciyex Workspace</h1>
-					<p style="font-size: 13px; color: ${textSecondary}; margin: 0;">Sign in to continue</p>
-				</div>
-				<div style="background: ${cardBg}; border: 1px solid ${borderColor}; border-radius: 12px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-					<div style="margin-bottom: 20px;">
-						<label style="display: block; font-size: 13px; font-weight: 500; color: ${textPrimary}; margin-bottom: 6px;">Email</label>
-						<input id="ciyex-email" type="email" placeholder="you@example.com" value="${this._escapeHtml(this._email)}"
-							style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid ${borderColor}; background: ${inputBg}; color: ${textPrimary}; font-size: 14px; box-sizing: border-box;"
-							${this._loading ? 'disabled' : ''} autocomplete="email" autofocus />
-					</div>
-					${this._error ? `
-						<div style="background: ${errorBg}; border: 1px solid ${errorBorder}; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: ${errorText};">
-							${this._escapeHtml(this._error)}
-						</div>
-					` : ''}
-					<button id="ciyex-discover-btn" style="width: 100%; padding: 10px; border-radius: 8px; border: none; background: ${brandColor}; color: white; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;"
-						${this._loading || !this._email.trim() ? 'disabled' : ''}>
-						${this._loading ? `<svg class="ciyex-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none"><circle opacity="0.25" cx="12" cy="12" r="10" stroke="white" stroke-width="4"/><path opacity="0.75" fill="white" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Checking...` : 'Continue'}
-					</button>
-				</div>
-				<div style="text-align: center; margin-top: 20px;">
-					<button id="ciyex-settings-btn" style="background: none; border: none; color: ${textSecondary}; font-size: 12px; text-decoration: underline; padding: 4px;">
-						Server Settings
-					</button>
-				</div>
-			</div>
-		`;
-	}
-
-	private _renderAuthenticate(cardBg: string, textPrimary: string, textSecondary: string, borderColor: string, brandColor: string, brandHover: string, inputBg: string, errorBg: string, errorText: string, errorBorder: string): string {
-		return `
-			<div style="width: 100%; max-width: 400px; padding: 16px;">
-				<div style="text-align: center; margin-bottom: 32px;">
-					${this._logoSvg(48)}
-					<h1 style="font-size: 22px; font-weight: 700; color: ${textPrimary}; margin: 12px 0 4px;">Welcome back</h1>
-					<p style="font-size: 13px; color: ${textSecondary}; margin: 0;">${this._escapeHtml(this._email)}</p>
-					${this._discoverResult?.orgName ? `<p style="font-size: 12px; color: ${textSecondary}; margin: 2px 0 0;">${this._escapeHtml(this._discoverResult.orgName)}</p>` : ''}
-				</div>
-				<div style="background: ${cardBg}; border: 1px solid ${borderColor}; border-radius: 12px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-					<button id="ciyex-back-btn" style="display: flex; align-items: center; gap: 4px; background: none; border: none; color: ${textSecondary}; font-size: 13px; padding: 0; margin-bottom: 16px;">
-						<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-						Back
-					</button>
-					<div style="margin-bottom: 20px;">
-						<label style="display: block; font-size: 13px; font-weight: 500; color: ${textPrimary}; margin-bottom: 6px;">Password</label>
-						<div style="position: relative;">
-							<input id="ciyex-password" type="${this._showPassword ? 'text' : 'password'}" placeholder="Enter your password" value="${this._escapeHtml(this._password)}"
-								style="width: 100%; padding: 10px 40px 10px 12px; border-radius: 8px; border: 1px solid ${borderColor}; background: ${inputBg}; color: ${textPrimary}; font-size: 14px; box-sizing: border-box;"
-								${this._loading ? 'disabled' : ''} autocomplete="current-password" autofocus />
-							<button id="ciyex-toggle-pw" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: ${textSecondary}; padding: 2px;">
-								${this._showPassword
-				? '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>'
-				: '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>'}
-							</button>
-						</div>
-					</div>
-					${this._error ? `
-						<div style="background: ${errorBg}; border: 1px solid ${errorBorder}; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: ${errorText};">
-							${this._escapeHtml(this._error)}
-						</div>
-					` : ''}
-					<button id="ciyex-login-btn" style="width: 100%; padding: 10px; border-radius: 8px; border: none; background: ${brandColor}; color: white; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;"
-						${this._loading || !this._password ? 'disabled' : ''}>
-						${this._loading ? `<svg class="ciyex-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none"><circle opacity="0.25" cx="12" cy="12" r="10" stroke="white" stroke-width="4"/><path opacity="0.75" fill="white" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Signing in...` : 'Sign In'}
-					</button>
-					${this._renderIdpButtons(borderColor, textPrimary)}
-				</div>
-			</div>
-		`;
-	}
-
-	private _renderLocked(cardBg: string, textPrimary: string, textSecondary: string, borderColor: string, brandColor: string, brandHover: string, inputBg: string, errorBg: string, errorText: string, errorBorder: string): string {
-		return `
-			<div style="width: 100%; max-width: 400px; padding: 16px;">
-				<div style="text-align: center; margin-bottom: 32px;">
-					${this._lockIconSvg(48)}
-					<h1 style="font-size: 22px; font-weight: 700; color: ${textPrimary}; margin: 12px 0 4px;">Session Locked</h1>
-					<p style="font-size: 13px; color: ${textSecondary}; margin: 0;">Your session has expired. Sign in again to continue.</p>
-					${this._email ? `<p style="font-size: 13px; color: ${textPrimary}; margin: 8px 0 0; font-weight: 500;">${this._escapeHtml(this._email)}</p>` : ''}
-				</div>
-				<div style="background: ${cardBg}; border: 1px solid ${borderColor}; border-radius: 12px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-					<div style="margin-bottom: 20px;">
-						<label style="display: block; font-size: 13px; font-weight: 500; color: ${textPrimary}; margin-bottom: 6px;">Password</label>
-						<div style="position: relative;">
-							<input id="ciyex-password" type="${this._showPassword ? 'text' : 'password'}" placeholder="Enter your password" value="${this._escapeHtml(this._password)}"
-								style="width: 100%; padding: 10px 40px 10px 12px; border-radius: 8px; border: 1px solid ${borderColor}; background: ${inputBg}; color: ${textPrimary}; font-size: 14px; box-sizing: border-box;"
-								${this._loading ? 'disabled' : ''} autocomplete="current-password" autofocus />
-							<button id="ciyex-toggle-pw" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: ${textSecondary}; padding: 2px;">
-								${this._showPassword
-				? '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>'
-				: '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>'}
-							</button>
-						</div>
-					</div>
-					${this._error ? `
-						<div style="background: ${errorBg}; border: 1px solid ${errorBorder}; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: ${errorText};">
-							${this._escapeHtml(this._error)}
-						</div>
-					` : ''}
-					<button id="ciyex-login-btn" style="width: 100%; padding: 10px; border-radius: 8px; border: none; background: ${brandColor}; color: white; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px;"
-						${this._loading || !this._password ? 'disabled' : ''}>
-						${this._loading ? `<svg class="ciyex-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none"><circle opacity="0.25" cx="12" cy="12" r="10" stroke="white" stroke-width="4"/><path opacity="0.75" fill="white" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Signing in...` : 'Unlock'}
-					</button>
-					<button id="ciyex-switch-account-btn" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid ${borderColor}; background: none; color: ${textSecondary}; font-size: 13px;">
-						Sign in with a different account
-					</button>
-				</div>
-			</div>
-		`;
-	}
-
-	private _renderWarning(cardBg: string, textPrimary: string, textSecondary: string, borderColor: string, brandColor: string, brandHover: string, warningColor: string): string {
-		const mins = Math.floor(this._countdown / 60);
-		const secs = this._countdown % 60;
-		const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-
-		return `
-			<div style="width: 100%; max-width: 400px; padding: 16px;">
-				<div style="background: ${cardBg}; border: 1px solid ${borderColor}; border-radius: 12px; padding: 28px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-					<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-						<div style="width: 40px; height: 40px; border-radius: 50%; background: rgba(245, 158, 11, 0.15); display: flex; align-items: center; justify-content: center;">
-							<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="${warningColor}">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
-							</svg>
-						</div>
-						<h3 style="font-size: 18px; font-weight: 600; color: ${textPrimary}; margin: 0;">Session Expiring</h3>
-					</div>
-					<p style="font-size: 14px; color: ${textSecondary}; margin: 0 0 4px;">
-						Your session will expire in <span style="font-weight: 700; color: ${warningColor};">${timeStr}</span>
-					</p>
-					<p style="font-size: 13px; color: ${textSecondary}; margin: 0 0 20px;">
-						Click below to stay logged in, or you will be signed out automatically.
-					</p>
-					<div style="display: flex; gap: 10px;">
-						<button id="ciyex-stay-btn" style="flex: 1; padding: 10px; border-radius: 8px; border: none; background: ${brandColor}; color: white; font-size: 14px; font-weight: 500;">
-							Stay Logged In
-						</button>
-						<button id="ciyex-signout-btn" style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid ${borderColor}; background: none; color: ${textPrimary}; font-size: 14px; font-weight: 500;">
-							Sign Out
-						</button>
-					</div>
-				</div>
-			</div>
-		`;
-	}
-
-	private _renderIdpButtons(borderColor: string, textPrimary: string): string {
-		if (!this._discoverResult?.idps?.length) {
-			return '';
-		}
-
-		const buttons = this._discoverResult.idps.map((idp, i) => {
-			let icon = '';
-			if (idp.alias.toLowerCase().includes('google')) {
-				icon = '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>';
-			} else if (idp.alias.toLowerCase().includes('microsoft')) {
-				icon = '<svg width="18" height="18" viewBox="0 0 24 24"><rect fill="#F25022" x="1" y="1" width="10" height="10"/><rect fill="#7FBA00" x="13" y="1" width="10" height="10"/><rect fill="#00A4EF" x="1" y="13" width="10" height="10"/><rect fill="#FFB900" x="13" y="13" width="10" height="10"/></svg>';
-			}
-
-			return `
-				<button class="ciyex-idp-btn" data-idp-index="${i}" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid ${borderColor}; background: none; color: ${textPrimary}; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px;">
-					${icon} Continue with ${this._escapeHtml(idp.displayName || idp.alias)}
-				</button>
+		// Add global style element for pseudo-classes (only once)
+		if (!this._styleEl) {
+			this._styleEl = document.createElement('style');
+			this._styleEl.textContent = `
+				#ciyex-auth-gate input:focus { border-color: #465FFF !important; box-shadow: 0 0 0 3px rgba(70,95,255,0.15) !important; }
+				#ciyex-auth-gate button { cursor: pointer; }
+				#ciyex-auth-gate button:disabled { opacity: 0.5; cursor: not-allowed; }
+				@keyframes ciyex-spin { to { transform: rotate(360deg); } }
 			`;
-		}).join('');
+			document.head.appendChild(this._styleEl);
+		}
 
-		return `
-			<div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid ${borderColor};">
-				<p style="text-align: center; font-size: 12px; color: ${textPrimary}; margin: 0 0 12px; opacity: 0.5;">or</p>
-				<div style="display: flex; flex-direction: column; gap: 8px;">
-					${buttons}
-				</div>
-			</div>
-		`;
+		let content: HTMLElement;
+		if (this._step === 'warning') {
+			content = this._buildWarning(c);
+		} else if (this._step === 'locked') {
+			content = this._buildLocked(c);
+		} else if (this._step === 'authenticate') {
+			content = this._buildAuthenticate(c);
+		} else {
+			content = this._buildEmailStep(c);
+		}
+
+		this._overlay.appendChild(content);
 	}
 
-	private _attachListeners(): void {
-		// Email input
-		const emailInput = this._overlay?.querySelector('#ciyex-email') as HTMLInputElement | null;
-		if (emailInput) {
-			emailInput.addEventListener('input', () => { this._email = emailInput.value; });
-			emailInput.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') {
-					this._handleDiscover();
-				}
-			});
-			setTimeout(() => emailInput.focus(), 50);
+	// --- Ciyex no-text logo (3D knot PNG) ---
+	private _logo(size: number): HTMLElement {
+		const container = h('div', { display: 'block', margin: '0 auto', width: `${size}px`, height: `${size}px` });
+		const img = document.createElement('img');
+		// Resolve from the workbench HTML location (out/vs/code/electron-browser/workbench/)
+		// up to the app root, then into resources/
+		img.src = '../../../../../resources/ciyex-logo-no-text.png';
+		img.alt = 'Ciyex';
+		Object.assign(img.style, { width: `${size}px`, height: `${size}px`, objectFit: 'contain' });
+		container.appendChild(img);
+		return container;
+	}
+
+	// --- Build helpers ---
+	private _buildCard(c: ReturnType<typeof this._colors>): HTMLElement {
+		return h('div', { background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' });
+	}
+
+	private _buildInput(id: string, type: string, placeholder: string, value: string, c: ReturnType<typeof this._colors>): HTMLInputElement {
+		const input = document.createElement('input');
+		input.id = id;
+		input.type = type;
+		input.placeholder = placeholder;
+		input.value = value;
+		if (this._loading) {
+			input.disabled = true;
+		}
+		Object.assign(input.style, {
+			width: '100%', padding: '10px 12px', borderRadius: '8px',
+			border: `1px solid ${c.border}`, background: c.inputBg,
+			color: c.textPrimary, fontSize: '14px', boxSizing: 'border-box',
+			outline: 'none',
+		});
+		return input;
+	}
+
+	private _buildButton(id: string, label: string, primary: boolean, c: ReturnType<typeof this._colors>, disabled?: boolean): HTMLButtonElement {
+		const btn = document.createElement('button');
+		btn.id = id;
+		btn.disabled = !!disabled;
+		btn.textContent = label;
+		Object.assign(btn.style, {
+			width: '100%', padding: '10px', borderRadius: '8px',
+			fontSize: '14px', fontWeight: '600',
+			display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+			border: primary ? 'none' : `1px solid ${c.border}`,
+			background: primary ? c.brand : 'none',
+			color: primary ? 'white' : c.textSecondary,
+		});
+		return btn;
+	}
+
+	private _buildError(c: ReturnType<typeof this._colors>): HTMLElement | null {
+		if (!this._error) {
+			return null;
+		}
+		const div = h('div', {
+			background: c.errorBg, border: `1px solid ${c.errorBorder}`,
+			borderRadius: '8px', padding: '10px 14px', marginBottom: '16px',
+			fontSize: '13px', color: c.errorText,
+		});
+		div.textContent = this._error;
+		return div;
+	}
+
+	// --- Step builders ---
+	private _buildEmailStep(c: ReturnType<typeof this._colors>): HTMLElement {
+		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+
+		// Header
+		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
+		header.appendChild(this._logo(48));
+		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Ciyex Workspace'));
+		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Sign in to continue'));
+		wrapper.appendChild(header);
+
+		// Card
+		const card = this._buildCard(c);
+
+		// Email label + input
+		const labelDiv = h('div', { marginBottom: '20px' });
+		labelDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Email'));
+		const emailInput = this._buildInput('ciyex-email', 'email', 'you@example.com', this._email, c);
+		emailInput.autocomplete = 'email';
+		labelDiv.appendChild(emailInput);
+		card.appendChild(labelDiv);
+
+		// Error
+		const err = this._buildError(c);
+		if (err) {
+			card.appendChild(err);
 		}
 
-		// Password input
-		const passwordInput = this._overlay?.querySelector('#ciyex-password') as HTMLInputElement | null;
-		if (passwordInput) {
-			passwordInput.addEventListener('input', () => { this._password = passwordInput.value; });
-			passwordInput.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') {
-					this._handleLogin();
-				}
-			});
-			setTimeout(() => passwordInput.focus(), 50);
-		}
+		// Continue button
+		const btn = this._buildButton('ciyex-discover-btn', this._loading ? 'Checking...' : 'Continue', true, c, this._loading || !this._email.trim());
+		card.appendChild(btn);
+		wrapper.appendChild(card);
 
-		// Toggle password visibility
-		this._overlay?.querySelector('#ciyex-toggle-pw')?.addEventListener('click', () => {
-			this._showPassword = !this._showPassword;
-			this._render();
-		});
+		// Server settings
+		const settingsDiv = h('div', { textAlign: 'center', marginTop: '20px' });
+		const settingsBtn = document.createElement('button');
+		settingsBtn.id = 'ciyex-settings-btn';
+		settingsBtn.textContent = 'Server Settings';
+		Object.assign(settingsBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '12px', textDecoration: 'underline', padding: '4px', cursor: 'pointer' });
+		settingsDiv.appendChild(settingsBtn);
+		wrapper.appendChild(settingsDiv);
 
-		// Discover button
-		this._overlay?.querySelector('#ciyex-discover-btn')?.addEventListener('click', () => this._handleDiscover());
-
-		// Login button
-		this._overlay?.querySelector('#ciyex-login-btn')?.addEventListener('click', () => this._handleLogin());
-
-		// Back button
-		this._overlay?.querySelector('#ciyex-back-btn')?.addEventListener('click', () => {
-			this._step = 'email';
-			this._password = '';
-			this._error = '';
-			this._discoverResult = null;
-			this._render();
-		});
-
-		// Switch account button (from locked screen)
-		this._overlay?.querySelector('#ciyex-switch-account-btn')?.addEventListener('click', () => {
-			this._authService.signOut();
-		});
-
-		// Warning buttons
-		this._overlay?.querySelector('#ciyex-stay-btn')?.addEventListener('click', () => {
-			this._clearCountdown();
-			this._authService.dismissWarning();
-		});
-		this._overlay?.querySelector('#ciyex-signout-btn')?.addEventListener('click', () => {
-			this._clearCountdown();
-			this._authService.signOut();
-		});
-
-		// Server settings button
-		this._overlay?.querySelector('#ciyex-settings-btn')?.addEventListener('click', () => {
-			const current = this._authService.apiUrl;
-			const newUrl = prompt('Enter Ciyex API Server URL:', current);
-			if (newUrl && newUrl.trim()) {
+		// Listeners
+		emailInput.addEventListener('input', () => { this._email = emailInput.value; });
+		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
+		btn.addEventListener('click', () => this._handleDiscover());
+		settingsBtn.addEventListener('click', () => {
+			const newUrl = prompt('Enter Ciyex API Server URL:', this._authService.apiUrl);
+			if (newUrl?.trim()) {
 				localStorage.setItem('ciyex_api_url', newUrl.trim().replace(/\/$/, ''));
 			}
 		});
+		setTimeout(() => emailInput.focus(), 50);
+
+		return wrapper;
 	}
 
+	private _buildAuthenticate(c: ReturnType<typeof this._colors>): HTMLElement {
+		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+
+		// Header
+		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
+		header.appendChild(this._logo(48));
+		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Welcome back'));
+		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), this._email));
+		if (this._discoverResult?.orgName) {
+			header.appendChild(text(h('p', { fontSize: '12px', color: c.textSecondary, margin: '2px 0 0' }), this._discoverResult.orgName));
+		}
+		wrapper.appendChild(header);
+
+		// Card
+		const card = this._buildCard(c);
+
+		// Back button
+		const backBtn = document.createElement('button');
+		backBtn.id = 'ciyex-back-btn';
+		backBtn.textContent = '\u2190 Back';
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '13px', padding: '0', marginBottom: '16px', cursor: 'pointer' });
+		card.appendChild(backBtn);
+
+		// Password field
+		const pwDiv = h('div', { marginBottom: '20px' });
+		pwDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Password'));
+		const pwInput = this._buildInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password, c);
+		pwInput.style.paddingRight = '40px';
+		pwInput.autocomplete = 'current-password';
+		const pwWrap = h('div', { position: 'relative' });
+		pwWrap.appendChild(pwInput);
+
+		const toggleBtn = document.createElement('button');
+		toggleBtn.id = 'ciyex-toggle-pw';
+		toggleBtn.textContent = this._showPassword ? '\u25C9' : '\u25CE';
+		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: c.textSecondary, padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		pwWrap.appendChild(toggleBtn);
+		pwDiv.appendChild(pwWrap);
+		card.appendChild(pwDiv);
+
+		// Error
+		const err = this._buildError(c);
+		if (err) {
+			card.appendChild(err);
+		}
+
+		// Sign In button
+		const loginBtn = this._buildButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Sign In', true, c, this._loading || !this._password);
+		card.appendChild(loginBtn);
+		wrapper.appendChild(card);
+
+		// Listeners
+		backBtn.addEventListener('click', () => { this._step = 'email'; this._password = ''; this._error = ''; this._discoverResult = null; this._render(); });
+		pwInput.addEventListener('input', () => { this._password = pwInput.value; });
+		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
+		toggleBtn.addEventListener('click', () => { this._showPassword = !this._showPassword; this._render(); });
+		loginBtn.addEventListener('click', () => this._handleLogin());
+		setTimeout(() => pwInput.focus(), 50);
+
+		return wrapper;
+	}
+
+	private _buildLocked(c: ReturnType<typeof this._colors>): HTMLElement {
+		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+
+		// Header with lock icon
+		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
+		header.appendChild(createSvg(48, '0 0 24 24', (svg) => {
+			svg.setAttribute('stroke', '#465FFF');
+			svg.setAttribute('stroke-width', '1.5');
+			svgRect(svg, { x: '3', y: '11', width: '18', height: '11', rx: '2', ry: '2', fill: 'none' });
+			svgPath(svg, 'M7 11V7a5 5 0 0110 0v4', { fill: 'none' });
+			svgCircle(svg, { cx: '12', cy: '16', r: '1', fill: 'none' });
+		}));
+		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Session Locked'));
+		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Your session has expired. Sign in again.'));
+		if (this._email) {
+			header.appendChild(text(h('p', { fontSize: '13px', color: c.textPrimary, margin: '8px 0 0', fontWeight: '500' }), this._email));
+		}
+		wrapper.appendChild(header);
+
+		// Card
+		const card = this._buildCard(c);
+		const pwDiv = h('div', { marginBottom: '20px' });
+		pwDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Password'));
+		const pwInput = this._buildInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password, c);
+		pwInput.autocomplete = 'current-password';
+		pwDiv.appendChild(pwInput);
+		card.appendChild(pwDiv);
+
+		const err = this._buildError(c);
+		if (err) {
+			card.appendChild(err);
+		}
+
+		const unlockBtn = this._buildButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Unlock', true, c, this._loading || !this._password);
+		unlockBtn.style.marginBottom = '12px';
+		card.appendChild(unlockBtn);
+
+		const switchBtn = this._buildButton('ciyex-switch-account-btn', 'Sign in with a different account', false, c);
+		card.appendChild(switchBtn);
+		wrapper.appendChild(card);
+
+		// Listeners
+		pwInput.addEventListener('input', () => { this._password = pwInput.value; });
+		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
+		unlockBtn.addEventListener('click', () => this._handleLogin());
+		switchBtn.addEventListener('click', () => this._authService.signOut());
+		setTimeout(() => pwInput.focus(), 50);
+
+		return wrapper;
+	}
+
+	private _buildWarning(c: ReturnType<typeof this._colors>): HTMLElement {
+		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+		const card = this._buildCard(c);
+		card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+
+		// Header row
+		const headerRow = h('div', { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' });
+		const iconCircle = h('div', { width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' });
+		iconCircle.appendChild(createSvg(20, '0 0 24 24', (svg) => {
+			svg.setAttribute('stroke', c.warning);
+			svg.setAttribute('stroke-width', '2');
+			svgPath(svg, 'M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', fill: 'none' });
+		}));
+		headerRow.appendChild(iconCircle);
+		headerRow.appendChild(text(h('h3', { fontSize: '18px', fontWeight: '600', color: c.textPrimary, margin: '0' }), 'Session Expiring'));
+		card.appendChild(headerRow);
+
+		// Countdown text
+		const mins = Math.floor(this._countdown / 60);
+		const secs = this._countdown % 60;
+		const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+		const countdownP = h('p', { fontSize: '14px', color: c.textSecondary, margin: '0 0 4px' });
+		countdownP.appendChild(document.createTextNode('Your session will expire in '));
+		const timeSpan = h('span', { fontWeight: '700', color: c.warning });
+		timeSpan.textContent = timeStr;
+		countdownP.appendChild(timeSpan);
+		card.appendChild(countdownP);
+
+		card.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0 0 20px' }), 'Click below to stay logged in, or you will be signed out automatically.'));
+
+		// Buttons
+		const btnRow = h('div', { display: 'flex', gap: '10px' });
+		const stayBtn = this._buildButton('ciyex-stay-btn', 'Stay Logged In', true, c);
+		stayBtn.style.flex = '1';
+		const signOutBtn = this._buildButton('ciyex-signout-btn', 'Sign Out', false, c);
+		signOutBtn.style.flex = '1';
+		btnRow.appendChild(stayBtn);
+		btnRow.appendChild(signOutBtn);
+		card.appendChild(btnRow);
+		wrapper.appendChild(card);
+
+		// Listeners
+		stayBtn.addEventListener('click', () => { this._clearCountdown(); this._authService.dismissWarning(); });
+		signOutBtn.addEventListener('click', () => { this._clearCountdown(); this._authService.signOut(); });
+
+		return wrapper;
+	}
+
+	// --- API handlers ---
 	private async _handleDiscover(): Promise<void> {
 		if (!this._email.trim() || this._loading) {
 			return;
 		}
-
 		this._loading = true;
 		this._error = '';
 		this._render();
@@ -457,7 +548,6 @@ export class CiyexAuthGate extends Disposable {
 			this._render();
 			return;
 		}
-
 		if (!result.exists) {
 			this._error = 'No account found with this email. Contact your administrator.';
 			this._render();
@@ -473,7 +563,6 @@ export class CiyexAuthGate extends Disposable {
 		if (!this._email.trim() || !this._password || this._loading) {
 			return;
 		}
-
 		this._loading = true;
 		this._error = '';
 		this._render();
@@ -485,34 +574,6 @@ export class CiyexAuthGate extends Disposable {
 			this._error = result.error || 'Login failed';
 			this._render();
 		}
-		// On success, the auth state change listener will hide the overlay
-	}
-
-	private _logoSvg(size: number): string {
-		return `
-			<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin: 0 auto; display: block;">
-				<path d="M0 8.42105C0 3.77023 3.77023 0 8.42105 0H23.5789C28.2298 0 32 3.77023 32 8.42105V23.5789C32 28.2298 28.2298 32 23.5789 32H8.42105C3.77023 32 0 28.2298 0 23.5789V8.42105Z" fill="#465FFF"/>
-				<path d="M8.42383 8.42152C8.42383 7.49135 9.17787 6.7373 10.108 6.7373C11.0382 6.7373 11.7922 7.49135 11.7922 8.42152V23.5794C11.7922 24.5096 11.0382 25.2636 10.108 25.2636C9.17787 25.2636 8.42383 24.5096 8.42383 23.5794V8.42152Z" fill="white"/>
-				<path d="M14.7422 15.1569C14.7422 14.2267 15.4962 13.4727 16.4264 13.4727C17.3566 13.4727 18.1106 14.2267 18.1106 15.1569V23.5779C18.1106 24.5081 17.3566 25.2621 16.4264 25.2621C15.4962 25.2621 14.7422 24.5081 14.7422 23.5779V15.1569Z" fill="white" fill-opacity="0.9"/>
-				<path d="M21.0547 10.9459C21.0547 10.0158 21.8087 9.26172 22.7389 9.26172C23.6691 9.26172 24.4231 10.0158 24.4231 10.9459V23.5775C24.4231 24.5077 23.6691 25.2617 22.7389 25.2617C21.8087 25.2617 21.0547 24.5077 21.0547 23.5775V10.9459Z" fill="white" fill-opacity="0.7"/>
-			</svg>
-		`;
-	}
-
-	private _lockIconSvg(size: number): string {
-		return `
-			<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="#465FFF" stroke-width="1.5" style="margin: 0 auto; display: block;">
-				<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-				<path d="M7 11V7a5 5 0 0110 0v4"/>
-				<circle cx="12" cy="16" r="1"/>
-			</svg>
-		`;
-	}
-
-	private _escapeHtml(str: string): string {
-		const div = document.createElement('div');
-		div.textContent = str;
-		return div.innerHTML;
 	}
 
 	override dispose(): void {
@@ -520,6 +581,10 @@ export class CiyexAuthGate extends Disposable {
 		if (this._overlay) {
 			this._overlay.remove();
 			this._overlay = undefined;
+		}
+		if (this._styleEl) {
+			this._styleEl.remove();
+			this._styleEl = undefined;
 		}
 		super.dispose();
 	}
