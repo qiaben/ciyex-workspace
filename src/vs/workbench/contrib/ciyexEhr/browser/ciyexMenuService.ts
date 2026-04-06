@@ -146,12 +146,49 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 	private _populateMenus(): void {
 		this._menuDisposables.clear();
 
+		// Also register ALL menu items in the GlobalActivity (gear) menu
+		let gearOrder = 10;
+		for (const entry of this._menuItems) {
+			const item = entry.item;
+			const children = entry.children || [];
+
+			if (children.length > 0) {
+				// Parent with children: register each child in gear menu under 'ciyex_' group
+				for (const childEntry of children) {
+					const child = childEntry.item;
+					const cmdId = `ciyex.gear.${child.itemKey}`;
+					this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: `${item.label}: ${child.label}`, original: `${item.label}: ${child.label}` } }));
+					this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, () => {
+						this.logService.info(`[CiyexMenu] Gear: ${child.label} -> ${child.screenSlug}`);
+					}));
+					this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+						command: { id: cmdId, title: `${item.label}: ${child.label}` },
+						group: `5_ciyex_${item.itemKey}`,
+						order: gearOrder++,
+					}));
+				}
+			} else if (item.screenSlug) {
+				// Leaf item: register directly in gear menu
+				const cmdId = `ciyex.gear.${item.itemKey}`;
+				this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: item.label, original: item.label } }));
+				this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, () => {
+					this.logService.info(`[CiyexMenu] Gear: ${item.label} -> ${item.screenSlug}`);
+				}));
+				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+					command: { id: cmdId, title: item.label },
+					group: '5_ciyex_nav',
+					order: gearOrder++,
+				}));
+			}
+		}
+
+		// Now register in top-level menu bar submenus
 		for (const entry of this._menuItems) {
 			const item = entry.item;
 			const children = entry.children || [];
 
 			if (children.length === 0) {
-				continue; // Leaf items handled by sidebar ViewContainers
+				continue; // Leaf items handled above and by sidebar ViewContainers
 			}
 
 			// Find the static MenuId for this parent

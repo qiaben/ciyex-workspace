@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isValidBasename } from '../../../../../base/common/extpath.js';
+import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { extname } from '../../../../../base/common/path.js';
 import { basename, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -254,7 +255,7 @@ export class ConfigureSnippetsAction extends SnippetsAction {
 			f1: true,
 			menu: [
 				{ id: MenuId.MenubarPreferencesMenu, group: '2_configuration', order: 5 },
-				{ id: MenuId.GlobalActivity, group: '2_configuration', order: 5 },
+				{ id: MenuId.GlobalActivity, group: '2_configuration', order: 5, when: ContextKeyExpr.has('ciyex.showDevMenus') },
 			]
 		});
 	}

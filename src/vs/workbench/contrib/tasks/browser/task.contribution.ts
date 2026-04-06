@@ -365,7 +365,7 @@ class UserTasksGlobalActionContribution extends Disposable implements IWorkbench
 				id,
 				title
 			},
-			when: TaskExecutionSupportedContext,
+			when: ContextKeyExpr.and(TaskExecutionSupportedContext, ContextKeyExpr.has('ciyex.showDevMenus')),
 			group: '2_configuration',
 			order: 6
 		}));
