@@ -7,6 +7,7 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { ICiyexApiService, CiyexApiService } from './ciyexApiService.js';
 import { ICiyexPermissionService, CiyexPermissionService } from './ciyexPermissionService.js';
 import { ICiyexMenuService, CiyexMenuService } from './ciyexMenuService.js';
+import { ICdsHooksService, CdsHooksService } from './cdsHooksService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } from '../../../common/contributions.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
@@ -25,6 +26,7 @@ import './patientSearch.js';
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);
 registerSingleton(ICiyexMenuService, CiyexMenuService, InstantiationType.Delayed);
+registerSingleton(ICdsHooksService, CdsHooksService, InstantiationType.Delayed);
 
 // Register the EHR workbench contribution (loads permissions, sets up menus)
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
