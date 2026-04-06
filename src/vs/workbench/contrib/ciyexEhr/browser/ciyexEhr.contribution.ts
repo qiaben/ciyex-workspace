@@ -22,6 +22,9 @@ import './ciyexCommands.js';
 // Register patient search (Cmd+K)
 import './patientSearch.js';
 
+// Register settings commands and Admin menu
+import './ciyexSettingsCommands.js';
+
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);
 registerSingleton(ICiyexPermissionService, CiyexPermissionService, InstantiationType.Delayed);
