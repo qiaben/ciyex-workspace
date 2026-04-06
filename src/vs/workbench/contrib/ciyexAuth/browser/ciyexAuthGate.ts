@@ -344,25 +344,26 @@ export class CiyexAuthGate extends Disposable {
 		// Continue button
 		const btn = this._buildButton('ciyex-discover-btn', this._loading ? 'Checking...' : 'Continue', true, c, this._loading || !this._email.trim());
 		card.appendChild(btn);
-		wrapper.appendChild(card);
 
-		// Server settings
-		const settingsDiv = h('div', { textAlign: 'center', marginTop: '20px' });
-		const settingsBtn = document.createElement('button');
-		settingsBtn.id = 'ciyex-settings-btn';
-		settingsBtn.textContent = 'Server Settings';
-		Object.assign(settingsBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '12px', textDecoration: 'underline', padding: '4px', cursor: 'pointer' });
-		settingsDiv.appendChild(settingsBtn);
-		wrapper.appendChild(settingsDiv);
+		// Server URL field (inline, inside card)
+		const serverDiv = h('div', { marginTop: '20px', paddingTop: '16px', borderTop: `1px solid ${c.border}` });
+		serverDiv.appendChild(text(h('label', { display: 'block', fontSize: '11px', fontWeight: '500', color: c.textSecondary, marginBottom: '4px' }), 'Server'));
+		const serverInput = this._buildInput('ciyex-server-url', 'url', 'https://api-dev.ciyex.org', this._authService.apiUrl, c);
+		serverInput.style.fontSize = '12px';
+		serverInput.style.padding = '7px 10px';
+		serverDiv.appendChild(serverInput);
+		card.appendChild(serverDiv);
+
+		wrapper.appendChild(card);
 
 		// Listeners
 		emailInput.addEventListener('input', () => { this._email = emailInput.value; });
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
-		settingsBtn.addEventListener('click', () => {
-			const newUrl = prompt('Enter Ciyex API Server URL:', this._authService.apiUrl);
-			if (newUrl?.trim()) {
-				localStorage.setItem('ciyex_api_url', newUrl.trim().replace(/\/$/, ''));
+		serverInput.addEventListener('change', () => {
+			const val = serverInput.value.trim().replace(/\/$/, '');
+			if (val) {
+				localStorage.setItem('ciyex_api_url', val);
 			}
 		});
 		setTimeout(() => emailInput.focus(), 50);
