@@ -6,14 +6,7 @@
       "label": "Overview",
       "position": 0,
       "tabs": [
-        {
-          "key": "dashboard",
-          "label": "Dashboard",
-          "icon": "LayoutDashboard",
-          "position": 0,
-          "visible": true,
-          "fhirResources": ["Patient"]
-        }
+        { "key": "dashboard", "label": "Dashboard", "icon": "LayoutDashboard", "position": 0, "visible": true, "fhirResources": ["Patient"] }
       ]
     },
     {
@@ -21,70 +14,20 @@
       "label": "Clinical",
       "position": 1,
       "tabs": [
-        {
-          "key": "encounters",
-          "label": "Encounters",
-          "icon": "ClipboardList",
-          "position": 0,
-          "visible": true,
-          "fhirResources": ["Encounter"]
-        },
-        {
-          "key": "problems",
-          "label": "Problems",
-          "icon": "AlertCircle",
-          "position": 1,
-          "visible": true,
-          "fhirResources": ["Condition"]
-        },
-        {
-          "key": "allergies",
-          "label": "Allergies",
-          "icon": "AlertTriangle",
-          "position": 2,
-          "visible": true,
-          "fhirResources": ["AllergyIntolerance"]
-        },
-        {
-          "key": "medications",
-          "label": "Medications",
-          "icon": "Pill",
-          "position": 3,
-          "visible": true,
-          "fhirResources": ["MedicationRequest"]
-        },
-        {
-          "key": "vitals",
-          "label": "Vitals",
-          "icon": "Activity",
-          "position": 4,
-          "visible": true,
-          "fhirResources": ["Observation"]
-        },
-        {
-          "key": "labs",
-          "label": "Lab Results",
-          "icon": "TestTube",
-          "position": 5,
-          "visible": true,
-          "fhirResources": ["DiagnosticReport", "Observation"]
-        },
-        {
-          "key": "immunizations",
-          "label": "Immunizations",
-          "icon": "Syringe",
-          "position": 6,
-          "visible": true,
-          "fhirResources": ["Immunization"]
-        },
-        {
-          "key": "history",
-          "label": "History",
-          "icon": "History",
-          "position": 7,
-          "visible": true,
-          "fhirResources": ["FamilyMemberHistory", "Observation"]
-        }
+        { "key": "encounters", "label": "Encounters", "icon": "ClipboardList", "position": 0, "visible": true, "fhirResources": ["Encounter"] },
+        { "key": "problems", "label": "Problems", "icon": "AlertCircle", "position": 1, "visible": true, "fhirResources": ["Condition"] },
+        { "key": "allergies", "label": "Allergies", "icon": "AlertTriangle", "position": 2, "visible": true, "fhirResources": ["AllergyIntolerance"] },
+        { "key": "medications", "label": "Medications", "icon": "Pill", "position": 3, "visible": true, "fhirResources": ["MedicationRequest"] },
+        { "key": "vitals", "label": "Vitals", "icon": "Activity", "position": 4, "visible": true, "fhirResources": ["Observation"] },
+        { "key": "labs", "label": "Lab Results", "icon": "TestTube", "position": 5, "visible": true, "fhirResources": ["DiagnosticReport", "Observation"] },
+        { "key": "immunizations", "label": "Immunizations", "icon": "Syringe", "position": 6, "visible": true, "fhirResources": ["Immunization"] },
+        { "key": "procedures", "label": "Procedures", "icon": "Scissors", "position": 7, "visible": true, "fhirResources": ["Procedure"] },
+        { "key": "history", "label": "History", "icon": "History", "position": 8, "visible": true, "fhirResources": ["FamilyMemberHistory", "Observation"] },
+        { "key": "visit-notes", "label": "Visit Notes", "icon": "FileEdit", "position": 9, "visible": true, "fhirResources": ["DocumentReference"] },
+        { "key": "care-plans", "label": "Care Plans", "icon": "Heart", "position": 10, "visible": true, "fhirResources": ["CarePlan", "Goal"] },
+        { "key": "referrals", "label": "Referrals", "icon": "ExternalLink", "position": 11, "visible": true, "fhirResources": ["ServiceRequest"] },
+        { "key": "clinical-alerts", "label": "Clinical Alerts", "icon": "Bell", "position": 12, "visible": true, "fhirResources": [] },
+        { "key": "imaging", "label": "Imaging", "icon": "Image", "position": 13, "visible": true, "fhirResources": ["ImagingStudy"] }
       ]
     },
     {
@@ -92,54 +35,13 @@
       "label": "General",
       "position": 2,
       "tabs": [
-        {
-          "key": "demographics",
-          "label": "Demographics",
-          "icon": "User",
-          "position": 0,
-          "visible": true,
-          "fhirResources": ["Patient"]
-        },
-        {
-          "key": "appointments",
-          "label": "Appointments",
-          "icon": "Calendar",
-          "position": 1,
-          "visible": true,
-          "fhirResources": ["Appointment"]
-        },
-        {
-          "key": "documents",
-          "label": "Documents",
-          "icon": "FileText",
-          "position": 2,
-          "visible": true,
-          "fhirResources": ["DocumentReference"]
-        },
-        {
-          "key": "messages",
-          "label": "Messages",
-          "icon": "MessageSquare",
-          "position": 3,
-          "visible": true,
-          "fhirResources": []
-        },
-        {
-          "key": "relationships",
-          "label": "Relationships",
-          "icon": "Users",
-          "position": 4,
-          "visible": true,
-          "fhirResources": ["RelatedPerson"]
-        },
-        {
-          "key": "services",
-          "label": "Services",
-          "icon": "Stethoscope",
-          "position": 5,
-          "visible": true,
-          "fhirResources": ["ServiceRequest"]
-        }
+        { "key": "demographics", "label": "Demographics", "icon": "User", "position": 0, "visible": true, "fhirResources": ["Patient"] },
+        { "key": "appointments", "label": "Appointments", "icon": "Calendar", "position": 1, "visible": true, "fhirResources": ["Appointment"] },
+        { "key": "documents", "label": "Documents", "icon": "FileText", "position": 2, "visible": true, "fhirResources": ["DocumentReference"] },
+        { "key": "messages", "label": "Messages", "icon": "MessageSquare", "position": 3, "visible": true, "fhirResources": [] },
+        { "key": "relationships", "label": "Relationships", "icon": "Users", "position": 4, "visible": true, "fhirResources": ["RelatedPerson"] },
+        { "key": "services", "label": "Services", "icon": "Stethoscope", "position": 5, "visible": true, "fhirResources": ["ServiceRequest"] },
+        { "key": "consents", "label": "Consents", "icon": "ShieldCheck", "position": 6, "visible": true, "fhirResources": ["Consent"] }
       ]
     },
     {
@@ -147,38 +49,11 @@
       "label": "Financial",
       "position": 3,
       "tabs": [
-        {
-          "key": "billing",
-          "label": "Billing",
-          "icon": "Receipt",
-          "position": 0,
-          "visible": true,
-          "fhirResources": ["Claim"]
-        },
-        {
-          "key": "insurance",
-          "label": "Insurance",
-          "icon": "Shield",
-          "position": 1,
-          "visible": true,
-          "fhirResources": ["Coverage", "Organization"]
-        },
-        {
-          "key": "transactions",
-          "label": "Transactions",
-          "icon": "ArrowLeftRight",
-          "position": 2,
-          "visible": true,
-          "fhirResources": ["PaymentReconciliation"]
-        },
-        {
-          "key": "payment",
-          "label": "Payment",
-          "icon": "CreditCard",
-          "position": 3,
-          "visible": true,
-          "fhirResources": ["PaymentNotice"]
-        }
+        { "key": "billing", "label": "Billing", "icon": "Receipt", "position": 0, "visible": true, "fhirResources": ["Claim"] },
+        { "key": "insurance", "label": "Insurance", "icon": "Shield", "position": 1, "visible": true, "fhirResources": ["Coverage", "Organization"] },
+        { "key": "prior-auth", "label": "Prior Authorization", "icon": "ClipboardCheck", "position": 2, "visible": true, "fhirResources": [] },
+        { "key": "transactions", "label": "Transactions", "icon": "ArrowLeftRight", "position": 3, "visible": true, "fhirResources": ["PaymentReconciliation"] },
+        { "key": "payment", "label": "Payment", "icon": "CreditCard", "position": 4, "visible": true, "fhirResources": ["PaymentNotice"] }
       ]
     }
   ]

@@ -1,0 +1,21 @@
+{
+  "tabKey": "documents",
+  "fhirResources": ["DocumentReference"],
+  "sections": [
+    {
+      "key": "document",
+      "title": "Document",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "description", "label": "Document Name", "type": "text", "required": true, "colSpan": 2, "fhirMapping": { "resource": "DocumentReference", "path": "description", "type": "string" } },
+        { "key": "type", "label": "Document Type", "type": "select", "colSpan": 1, "options": [{ "label": "Lab Report", "value": "lab" }, { "label": "Radiology", "value": "radiology" }, { "label": "Referral", "value": "referral" }, { "label": "Consent", "value": "consent" }, { "label": "Insurance Card", "value": "insurance" }, { "label": "Photo ID", "value": "id" }, { "label": "Clinical Note", "value": "note" }, { "label": "Correspondence", "value": "correspondence" }, { "label": "Other", "value": "other" }], "fhirMapping": { "resource": "DocumentReference", "path": "type.coding[0].code", "type": "code" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Current", "value": "current" }, { "label": "Superseded", "value": "superseded" }, { "label": "Entered in Error", "value": "entered-in-error" }], "fhirMapping": { "resource": "DocumentReference", "path": "status", "type": "code" } },
+        { "key": "date", "label": "Document Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "DocumentReference", "path": "date", "type": "datetime" } },
+        { "key": "author", "label": "Author", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "DocumentReference", "path": "author[0].reference", "type": "Reference" } },
+        { "key": "attachment", "label": "File", "type": "file", "colSpan": 2, "fhirMapping": { "resource": "DocumentReference", "path": "content[0].attachment", "type": "Attachment" }, "fileConfig": { "uploadEndpoint": "/api/files-proxy/upload", "downloadEndpoint": "/api/files-proxy/{id}/download", "allowedTypes": ["application/pdf", "image/png", "image/jpeg", "image/tiff", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"], "maxSizeMB": 10, "preview": true, "dragDrop": true } },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    }
+  ]
+}

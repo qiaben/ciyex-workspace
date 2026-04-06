@@ -1,0 +1,70 @@
+{
+  "tabKey": "history",
+  "fhirResources": ["FamilyMemberHistory", "Observation"],
+  "sections": [
+    {
+      "key": "family-history",
+      "title": "Family History",
+      "columns": 1,
+      "visible": true,
+      "fields": [
+        {
+          "key": "familyHistory",
+          "label": "Family History",
+          "type": "family-history-list",
+          "colSpan": 1,
+          "fhirMapping": { "resource": "FamilyMemberHistory", "path": "", "type": "resource" },
+          "familyHistoryConfig": {
+            "relationships": [
+              { "value": "FATHER", "label": "Father" },
+              { "value": "MOTHER", "label": "Mother" },
+              { "value": "SIBLING", "label": "Sibling" },
+              { "value": "SPOUSE", "label": "Spouse" },
+              { "value": "OFFSPRING", "label": "Child" },
+              { "value": "GRANDPARENT", "label": "Grandparent" },
+              { "value": "UNCLE", "label": "Uncle" },
+              { "value": "AUNT", "label": "Aunt" }
+            ],
+            "fields": { "ageOfOnset": true, "deceased": true, "notes": true }
+          }
+        }
+      ]
+    },
+    {
+      "key": "social-history",
+      "title": "Social History",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "smokingStatus", "label": "Smoking Status", "type": "select", "colSpan": 1, "options": [{ "label": "Never Smoker", "value": "never" }, { "label": "Former Smoker", "value": "former" }, { "label": "Current Every Day Smoker", "value": "current-every-day" }, { "label": "Current Some Day Smoker", "value": "current-some-day" }, { "label": "Unknown", "value": "unknown" }], "fhirMapping": { "resource": "Observation", "path": "valueCodeableConcept.coding[0].code", "type": "code", "code": "72166-2", "system": "http://loinc.org" } },
+        { "key": "smokingPackYears", "label": "Pack-Years", "type": "number", "colSpan": 1, "showWhen": { "field": "smokingStatus", "equals": ["former", "current-every-day", "current-some-day"] } },
+        { "key": "smokingQuitDate", "label": "Quit Date", "type": "date", "colSpan": 1, "showWhen": { "field": "smokingStatus", "equals": ["former"] } },
+        { "key": "alcoholUse", "label": "Alcohol Use", "type": "select", "colSpan": 1, "options": [{ "label": "None", "value": "none" }, { "label": "Occasional", "value": "occasional" }, { "label": "Social", "value": "social" }, { "label": "Moderate", "value": "moderate" }, { "label": "Heavy", "value": "heavy" }] },
+        { "key": "alcoholFrequency", "label": "Drinks Per Week", "type": "number", "colSpan": 1, "showWhen": { "field": "alcoholUse", "notEquals": ["none"] } },
+        { "key": "drugUse", "label": "Recreational Drug Use", "type": "select", "colSpan": 1, "options": [{ "label": "None", "value": "none" }, { "label": "Past Use", "value": "past" }, { "label": "Current Use", "value": "current" }] },
+        { "key": "drugDetails", "label": "Drug Details", "type": "text", "colSpan": 1, "showWhen": { "field": "drugUse", "notEquals": ["none"] } },
+        { "key": "occupation", "label": "Occupation", "type": "text", "colSpan": 1 },
+        { "key": "employer", "label": "Employer", "type": "text", "colSpan": 1 },
+        { "key": "exerciseFrequency", "label": "Exercise Frequency", "type": "select", "colSpan": 1, "options": [{ "label": "None", "value": "none" }, { "label": "1-2x/week", "value": "1-2" }, { "label": "3-4x/week", "value": "3-4" }, { "label": "5+/week", "value": "5+" }] },
+        { "key": "diet", "label": "Diet", "type": "select", "colSpan": 1, "options": [{ "label": "Regular", "value": "regular" }, { "label": "Vegetarian", "value": "vegetarian" }, { "label": "Vegan", "value": "vegan" }, { "label": "Low Sodium", "value": "low-sodium" }, { "label": "Diabetic", "value": "diabetic" }, { "label": "Gluten Free", "value": "gluten-free" }] },
+        { "key": "livingSituation", "label": "Living Situation", "type": "select", "colSpan": 1, "options": [{ "label": "Alone", "value": "alone" }, { "label": "With Family", "value": "family" }, { "label": "With Spouse/Partner", "value": "spouse" }, { "label": "Assisted Living", "value": "assisted" }, { "label": "Nursing Home", "value": "nursing" }, { "label": "Homeless", "value": "homeless" }] },
+        { "key": "education", "label": "Education Level", "type": "select", "colSpan": 1, "options": [{ "label": "Less than High School", "value": "less-hs" }, { "label": "High School", "value": "hs" }, { "label": "Some College", "value": "some-college" }, { "label": "College Degree", "value": "college" }, { "label": "Graduate Degree", "value": "graduate" }] },
+        { "key": "socialHistoryNotes", "label": "Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    },
+    {
+      "key": "surgical-history",
+      "title": "Surgical History",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "procedureName", "label": "Procedure", "type": "text", "required": true, "colSpan": 1 },
+        { "key": "procedureDate", "label": "Date", "type": "date", "colSpan": 1 },
+        { "key": "surgeon", "label": "Surgeon", "type": "text", "colSpan": 1 },
+        { "key": "hospital", "label": "Hospital/Facility", "type": "text", "colSpan": 1 },
+        { "key": "surgicalNotes", "label": "Notes", "type": "textarea", "colSpan": 2 }
+      ]
+    }
+  ]
+}

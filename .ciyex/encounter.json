@@ -52,76 +52,22 @@
           "colSpan": 1,
           "rosConfig": {
             "systems": [
-              {
-                "key": "constitutional",
-                "label": "Constitutional",
-                "findings": ["fever", "chills", "nightSweats", "lossOfAppetite", "weightLoss", "weightGain", "fatigue", "weakness", "tiredness", "troubleSleeping"]
-              },
-              {
-                "key": "eyes",
-                "label": "Eyes",
-                "findings": ["visionLoss", "doubleVision", "blurredVision", "eyeIrritation", "eyePain", "eyeDischarge", "lightSensitivity", "eyeRedness"]
-              },
-              {
-                "key": "ent",
-                "label": "ENT",
-                "findings": ["earache", "earDischarge", "ringingInEars", "decreasedHearing", "frequentColds", "nasalCongestion", "nosebleeds", "bleedingGums", "difficultySwallowing", "hoarseness", "soreThroat", "sinusitis"]
-              },
-              {
-                "key": "cardiovascular",
-                "label": "Cardiovascular",
-                "findings": ["chestPain", "irregularHeartbeats", "shortnessOfBreathOnExertion", "palpitations", "rapidHeartbeat", "slowHeartbeat", "lossOfConsciousness", "chestTightness", "legSwelling", "legCramps"]
-              },
-              {
-                "key": "respiratory",
-                "label": "Respiratory",
-                "findings": ["shortnessOfBreath", "wheezing", "cough", "chestDiscomfort", "snoring", "excessiveSputum", "coughingUpBlood", "painfulBreathing"]
-              },
-              {
-                "key": "gastrointestinal",
-                "label": "Gastrointestinal",
-                "findings": ["changeInAppetite", "indigestion", "heartburn", "nausea", "vomiting", "excessiveGas", "abdominalPain", "abdominalBloating", "hemorrhoids", "diarrhea", "changeInBowelHabits", "constipation", "blackOrTarryStools", "bloodyStools"]
-              },
-              {
-                "key": "genitourinary",
-                "label": "Genitourinary",
-                "findings": ["painfulUrination", "frequentUrination", "bloodInUrine", "incontinence", "urgency", "hesitancy", "nocturia"]
-              },
-              {
-                "key": "musculoskeletal",
-                "label": "Musculoskeletal",
-                "findings": ["jointPain", "jointStiffness", "backPain", "muscleCramps", "muscleWeakness", "muscleAches", "lossOfStrength", "neckPain", "swellingHandsFeet"]
-              },
-              {
-                "key": "skin",
-                "label": "Skin",
-                "findings": ["suspiciousLesions", "excessivePerspiration", "poorWoundHealing", "dryness", "itching", "rash", "flushing", "cyanosis", "hairLoss", "skinColorChanges"]
-              },
-              {
-                "key": "neurologic",
-                "label": "Neurologic",
-                "findings": ["headaches", "poorBalance", "difficultySpeaking", "difficultyConcentrating", "coordinationProblems", "weakness", "numbness", "tingling", "visualDisturbances", "seizures", "tremors", "dizziness", "memoryLoss"]
-              },
-              {
-                "key": "psychiatric",
-                "label": "Psychiatric",
-                "findings": ["anxiety", "nervousness", "depression", "hallucinations", "suicidalIdeation", "homicidalIdeation", "impendingSenseOfDoom", "disturbingThoughts", "memoryLoss"]
-              },
-              {
-                "key": "endocrine",
-                "label": "Endocrine",
-                "findings": ["heatColdIntolerance", "weightChange", "excessiveThirstOrHunger", "excessiveSweating", "frequentUrination"]
-              },
-              {
-                "key": "hematologicLymphatic",
-                "label": "Hematologic/Lymphatic",
-                "findings": ["skinDiscoloration", "easyBleeding", "enlargedLymphNodes", "easyBruising", "anemia", "bloodClots"]
-              },
-              {
-                "key": "allergicImmunologic",
-                "label": "Allergic/Immunologic",
-                "findings": ["seasonalAllergies", "hivesOrRash", "persistentInfections", "hivExposure", "immuneDeficiencies"]
-              }
+              { "key": "constitutional", "label": "Constitutional", "findings": ["fever", "chills", "nightSweats", "lossOfAppetite", "weightLoss", "weightGain", "fatigue", "weakness", "tiredness", "troubleSleeping"] },
+              { "key": "eyes", "label": "Eyes", "findings": ["visionLoss", "doubleVision", "blurredVision", "eyeIrritation", "eyePain", "eyeDischarge", "lightSensitivity", "eyeRedness"] },
+              { "key": "ent", "label": "ENT", "findings": ["earache", "earDischarge", "ringingInEars", "decreasedHearing", "frequentColds", "nasalCongestion", "nosebleeds", "bleedingGums", "difficultySwallowing", "hoarseness", "soreThroat", "dryLips", "redSwollenTongue", "toothAche", "sinusitis", "dryMouth"] },
+              { "key": "neck", "label": "Neck", "findings": ["thyroidEnlargement", "neckPain"] },
+              { "key": "cardiovascular", "label": "Cardiovascular", "findings": ["difficultyBreathingAtNight", "chestPain", "irregularHeartbeats", "shortnessOfBreathOnExertion", "palpitations", "difficultyBreathingWhenLyingDown", "rapidHeartbeat", "slowHeartbeat", "lossOfConsciousness", "chestDiscomfort", "chestTightness", "legSwelling", "legCramps", "tortuousLegVeins"] },
+              { "key": "respiratory", "label": "Respiratory", "findings": ["shortnessOfBreath", "wheezing", "cough", "chestDiscomfort", "snoring", "excessiveSputum", "coughingUpBlood", "painfulBreathing"] },
+              { "key": "gastrointestinal", "label": "Gastrointestinal", "findings": ["changeInAppetite", "indigestion", "heartburn", "nausea", "vomiting", "excessiveGas", "abdominalPain", "abdominalBloating", "hemorrhoids", "diarrhea", "changeInBowelHabits", "constipation", "blackOrTarryStools", "bloodyStools", "abdominalSwelling", "enlargedLiver", "jaundice", "ascites", "vomitingBlood", "distendedAbdomen", "clayColoredStool"] },
+              { "key": "genitourinaryMale", "label": "Genitourinary (Male)", "findings": ["frequentUrination", "bloodInUrine", "foulUrinaryDischarge", "kidneyPain", "urinaryUrgency", "troubleStartingUrine", "inabilityToEmptyBladder", "burningOnUrination", "genitalRashesOrSores", "testicularPainOrMasses", "urinaryRetention", "leakingUrine", "excessiveNightUrination", "urinaryHesitancy", "kidneyStones", "hernia", "penileDischarge", "shortWeakErections", "painfulErection", "decreasedSexualDesire", "prematureEjaculation"] },
+              { "key": "genitourinaryFemale", "label": "Genitourinary (Female)", "findings": ["inabilityToControlBladder", "unusualUrinaryColor", "missedPeriods", "excessivelyHeavyPeriods", "lumpsOrSores", "pelvicPain", "urinaryRetention", "vaginalDischarge", "vaginalItching", "vaginalRash", "urinaryFrequency", "urinaryHesitancy", "excessiveNightUrination", "urinaryUrgency", "painfulMenstruation", "irregularMenses", "kidneyStones"] },
+              { "key": "musculoskeletal", "label": "Musculoskeletal", "findings": ["jointPain", "jointStiffness", "backPain", "muscleCramps", "muscleWeakness", "muscleAches", "lossOfStrength", "neckPain", "swellingHandsFeet", "legCramps", "shoulderPain", "elbowPain", "handPain", "hipPain", "thighPain", "calfPain", "legPain", "wristPain", "fingerPain", "heelPain", "toePain", "anklePain", "kneePain"] },
+              { "key": "skin", "label": "Skin", "findings": ["suspiciousLesions", "excessivePerspiration", "poorWoundHealing", "dryness", "itching", "rash", "flushing", "cyanosis", "clammySkin", "hairLoss", "lumps", "changesInHairOrNails", "skinColorChanges", "jaundice"] },
+              { "key": "neurologic", "label": "Neurologic", "findings": ["headaches", "poorBalance", "difficultySpeaking", "difficultyConcentrating", "coordinationProblems", "weakness", "briefParalysis", "numbness", "tingling", "visualDisturbances", "seizures", "tremors", "roomSpinning", "memoryLoss", "excessiveDaytimeSleepiness", "dizziness", "facialPain", "lightheadedness", "faintingSpells", "lethargy", "insomnia", "somnolence", "disorientation"] },
+              { "key": "psychiatric", "label": "Psychiatric", "findings": ["anxiety", "nervousness", "depression", "hallucinations", "frighteningVisionsOrSounds", "suicidalIdeation", "homicidalIdeation", "impendingSenseOfDoom", "disturbingThoughts", "memoryLoss"] },
+              { "key": "endocrine", "label": "Endocrine", "findings": ["heatColdIntolerance", "weightChange", "excessiveThirstOrHunger", "excessiveSweating", "frequentUrination"] },
+              { "key": "hematologicLymphatic", "label": "Hematologic/Lymphatic", "findings": ["skinDiscoloration", "easyBleeding", "enlargedLymphNodes", "easyBruising", "anemia", "bloodClots", "swollenGlandsOrThyroid"] },
+              { "key": "allergicImmunologic", "label": "Allergic/Immunologic", "findings": ["seasonalAllergies", "hivesOrRash", "persistentInfections", "hivExposure", "immuneDeficiencies"] }
             ]
           }
         }

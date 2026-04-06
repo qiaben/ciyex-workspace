@@ -8,17 +8,61 @@
       "columns": 2,
       "visible": true,
       "fields": [
-        { "key": "name", "label": "Payer Name", "type": "text", "required": true, "colSpan": 2, "fhirMapping": { "resource": "Organization", "path": "name", "type": "string" }, "validation": { "pattern": "^[A-Za-z\\s\\-'.&]+$" } },
-        { "key": "payerId", "label": "Payer ID", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "identifier[0].value", "type": "string" } },
-        { "key": "type", "label": "Plan Type", "type": "select", "colSpan": 1, "options": [{ "label": "Commercial", "value": "commercial" }, { "label": "Medicare", "value": "medicare" }, { "label": "Medicaid", "value": "medicaid" }, { "label": "Workers Comp", "value": "workers-comp" }, { "label": "Tricare", "value": "tricare" }, { "label": "Self-Pay", "value": "self-pay" }, { "label": "Other", "value": "other" }] },
-        { "key": "phone", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Organization", "path": "telecom[?system=phone].value", "type": "string" } },
-        { "key": "fax", "label": "Fax", "type": "phone", "colSpan": 1 },
+        { "key": "payerName", "label": "Payer / Insurance Company", "type": "lookup", "required": true, "colSpan": 2, "lookupConfig": { "endpoint": "/api/fhir-resource/insurance", "displayField": "name", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Coverage", "path": "payor[0].display", "type": "string" } },
+        { "key": "planName", "label": "Plan Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "class[?type=plan].name", "type": "string" } },
+        { "key": "coverageType", "label": "Coverage Type", "type": "select", "colSpan": 1, "options": [{ "label": "Primary", "value": "primary" }, { "label": "Secondary", "value": "secondary" }, { "label": "Tertiary", "value": "tertiary" }, { "label": "Workers Comp", "value": "workers-comp" }, { "label": "Auto/Accident", "value": "auto" }] },
+        { "key": "memberId", "label": "Member ID", "type": "text", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "subscriberId", "type": "string" } },
+        { "key": "groupNumber", "label": "Group Number", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "class[?type=group].value", "type": "string" } },
+        { "key": "groupName", "label": "Group Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "class[?type=group].name", "type": "string" } },
+        { "key": "subscriberName", "label": "Subscriber Name", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "subscriber.display", "type": "string" } },
+        { "key": "relationship", "label": "Relationship to Subscriber", "type": "select", "colSpan": 1, "options": [{ "label": "Self", "value": "self" }, { "label": "Spouse", "value": "spouse" }, { "label": "Child", "value": "child" }, { "label": "Other", "value": "other" }], "fhirMapping": { "resource": "Coverage", "path": "relationship.coding[0].code", "type": "code" } },
+        { "key": "policyNumber", "label": "Policy Number", "type": "text", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "identifier[0].value", "type": "string" } },
+        { "key": "effectiveDate", "label": "Effective Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "period.start", "type": "date" } },
+        { "key": "endDate", "label": "End Date", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "Coverage", "path": "period.end", "type": "date" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Cancelled", "value": "cancelled" }, { "label": "Entered in Error", "value": "entered-in-error" }], "fhirMapping": { "resource": "Coverage", "path": "status", "type": "code" } }
+      ]
+    },
+    {
+      "key": "copay-deductible",
+      "title": "Copay & Deductible",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "copay", "label": "Copay Amount", "type": "number", "colSpan": 1, "placeholder": "0.00" },
+        { "key": "deductible", "label": "Deductible", "type": "number", "colSpan": 1, "placeholder": "0.00" },
+        { "key": "deductibleMet", "label": "Deductible Met", "type": "number", "colSpan": 1, "placeholder": "0.00" },
+        { "key": "outOfPocketMax", "label": "Out-of-Pocket Max", "type": "number", "colSpan": 1, "placeholder": "0.00" },
+        { "key": "coinsurance", "label": "Coinsurance (%)", "type": "number", "colSpan": 1, "validation": { "min": 0, "max": 100 } },
+        { "key": "priorAuthRequired", "label": "Prior Auth Required", "type": "boolean", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "payer-contact",
+      "title": "Payer Contact",
+      "columns": 2,
+      "visible": true,
+      "collapsible": true,
+      "fields": [
+        { "key": "payerPhone", "label": "Phone", "type": "phone", "colSpan": 1 },
+        { "key": "payerFax", "label": "Fax", "type": "phone", "colSpan": 1 },
         { "key": "claimsAddress", "label": "Claims Address", "type": "text", "colSpan": 2 },
-        { "key": "city", "label": "City", "type": "text", "colSpan": 1 },
-        { "key": "state", "label": "State", "type": "text", "colSpan": 1 },
-        { "key": "postalCode", "label": "ZIP", "type": "text", "colSpan": 1 },
-        { "key": "electronicPayerId", "label": "Electronic Payer ID", "type": "text", "colSpan": 1 },
-        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Active", "value": "active" }, { "label": "Inactive", "value": "inactive" }] }
+        { "key": "payerCity", "label": "City", "type": "text", "colSpan": 1 },
+        { "key": "payerState", "label": "State", "type": "text", "colSpan": 1 },
+        { "key": "payerZip", "label": "ZIP", "type": "text", "colSpan": 1 },
+        { "key": "electronicPayerId", "label": "Electronic Payer ID", "type": "text", "colSpan": 1 }
+      ]
+    },
+    {
+      "key": "notes",
+      "title": "Notes",
+      "columns": 1,
+      "visible": true,
+      "collapsible": true,
+      "collapsed": true,
+      "fields": [
+        { "key": "authorizationNotes", "label": "Authorization Notes", "type": "textarea", "colSpan": 1 },
+        { "key": "insuranceNotes", "label": "General Notes", "type": "textarea", "colSpan": 1 }
       ]
     }
   ]

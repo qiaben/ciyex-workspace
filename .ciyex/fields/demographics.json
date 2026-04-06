@@ -32,7 +32,10 @@
         { "key": "ethnicity", "label": "Ethnicity", "type": "select", "colSpan": 1, "options": [{ "label": "Hispanic or Latino", "value": "2135-2" }, { "label": "Not Hispanic or Latino", "value": "2186-5" }], "fhirMapping": { "resource": "Patient", "path": "extension[?url=http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity].extension[?url=ombCategory].valueCoding.code", "type": "code" } },
         { "key": "language", "label": "Preferred Language", "type": "select", "colSpan": 1, "options": [{ "label": "English", "value": "en" }, { "label": "Spanish", "value": "es" }, { "label": "French", "value": "fr" }, { "label": "Chinese", "value": "zh" }, { "label": "Vietnamese", "value": "vi" }, { "label": "Korean", "value": "ko" }, { "label": "Arabic", "value": "ar" }], "fhirMapping": { "resource": "Patient", "path": "communication[0].language.coding[0].code", "type": "code" } },
         { "key": "maritalStatus", "label": "Marital Status", "type": "select", "colSpan": 1, "options": [{ "label": "Single", "value": "S" }, { "label": "Married", "value": "M" }, { "label": "Divorced", "value": "D" }, { "label": "Widowed", "value": "W" }, { "label": "Separated", "value": "L" }], "fhirMapping": { "resource": "Patient", "path": "maritalStatus.coding[0].code", "type": "code" } },
-        { "key": "primaryProvider", "label": "Primary Provider", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Patient", "path": "generalPractitioner[0].reference", "type": "Reference" } }
+        { "key": "primaryProvider", "label": "Primary Provider", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "Patient", "path": "generalPractitioner[0].reference", "type": "Reference" } },
+        { "key": "referringProvider", "label": "Referring Provider", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/fhir-resource/referral-providers", "displayField": "fullName", "valueField": "id", "searchable": true } },
+        { "key": "driversLicense", "label": "Driver's License #", "type": "text", "colSpan": 1, "validation": { "maxLength": 14 } },
+        { "key": "driversLicenseState", "label": "License State", "type": "text", "colSpan": 1 }
       ]
     },
     {
@@ -42,9 +45,12 @@
       "visible": true,
       "collapsible": true,
       "fields": [
-        { "key": "phoneNumber", "label": "Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[0].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
-        { "key": "mobilePhone", "label": "Mobile Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" } },
-        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[2].value", "type": "string" } }
+        { "key": "phoneNumber", "label": "Mobile Phone", "type": "phone", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
+        { "key": "homePhone", "label": "Home Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=home].value", "type": "string" } },
+        { "key": "workPhone", "label": "Work Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=work].value", "type": "string" } },
+        { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=email].value", "type": "string" } },
+        { "key": "preferredContact", "label": "Preferred Contact", "type": "select", "colSpan": 1, "options": [{ "label": "Mobile", "value": "mobile" }, { "label": "Home", "value": "home" }, { "label": "Work", "value": "work" }, { "label": "Email", "value": "email" }] },
+        { "key": "consentToText", "label": "Consent to Text", "type": "boolean", "colSpan": 1 }
       ]
     },
     {

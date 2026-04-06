@@ -1,0 +1,28 @@
+{
+  "tabKey": "referrals",
+  "fhirResources": ["ServiceRequest"],
+  "sections": [
+    {
+      "key": "referral",
+      "title": "Referral",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "referralType", "label": "Referral Type", "type": "select", "required": true, "colSpan": 1, "options": [{ "label": "Specialist Referral", "value": "specialist" }, { "label": "Diagnostic", "value": "diagnostic" }, { "label": "Therapeutic", "value": "therapeutic" }, { "label": "Second Opinion", "value": "second-opinion" }] },
+        { "key": "priority", "label": "Priority", "type": "select", "colSpan": 1, "options": [{ "label": "Routine", "value": "routine" }, { "label": "Urgent", "value": "urgent" }, { "label": "ASAP", "value": "asap" }, { "label": "STAT", "value": "stat" }], "fhirMapping": { "resource": "ServiceRequest", "path": "priority", "type": "code" } },
+        { "key": "referTo", "label": "Refer To (Provider)", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/fhir-resource/referral-providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "ServiceRequest", "path": "performer[0].reference", "type": "Reference" } },
+        { "key": "referToPractice", "label": "Refer To (Practice)", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/fhir-resource/referral-practices", "displayField": "name", "valueField": "id", "searchable": true } },
+        { "key": "referringProvider", "label": "Referring Provider", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "ServiceRequest", "path": "requester.reference", "type": "Reference" } },
+        { "key": "specialty", "label": "Specialty", "type": "text", "colSpan": 1 },
+        { "key": "diagnosis", "label": "Diagnosis", "type": "code-lookup", "colSpan": 2, "codeLookupConfig": { "codeSystem": "ICD10", "allowMultiple": true, "showFee": false }, "fhirMapping": { "resource": "ServiceRequest", "path": "reasonCode", "type": "CodeableConcept" } },
+        { "key": "reason", "label": "Reason for Referral", "type": "textarea", "required": true, "colSpan": 2, "fhirMapping": { "resource": "ServiceRequest", "path": "reasonCode[0].text", "type": "string" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Draft", "value": "draft" }, { "label": "Active", "value": "active" }, { "label": "On Hold", "value": "on-hold" }, { "label": "Completed", "value": "completed" }, { "label": "Cancelled", "value": "revoked" }], "fhirMapping": { "resource": "ServiceRequest", "path": "status", "type": "code" } },
+        { "key": "dateRequested", "label": "Date Requested", "type": "date", "colSpan": 1, "fhirMapping": { "resource": "ServiceRequest", "path": "authoredOn", "type": "datetime" } },
+        { "key": "numberOfVisits", "label": "Authorized Visits", "type": "number", "colSpan": 1, "validation": { "min": 1 } },
+        { "key": "expirationDate", "label": "Expiration Date", "type": "date", "colSpan": 1 },
+        { "key": "authorizationNumber", "label": "Authorization #", "type": "text", "colSpan": 1 },
+        { "key": "notes", "label": "Notes", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "ServiceRequest", "path": "note[0].text", "type": "string" } }
+      ]
+    }
+  ]
+}

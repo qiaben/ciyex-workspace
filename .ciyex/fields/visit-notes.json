@@ -1,0 +1,21 @@
+{
+  "tabKey": "visit-notes",
+  "fhirResources": ["DocumentReference"],
+  "sections": [
+    {
+      "key": "note",
+      "title": "Visit Note",
+      "columns": 2,
+      "visible": true,
+      "fields": [
+        { "key": "noteType", "label": "Note Type", "type": "combobox", "required": true, "colSpan": 1, "options": [{ "label": "Progress Note", "value": "progress" }, { "label": "SOAP Note", "value": "soap" }, { "label": "Consult Note", "value": "consult" }, { "label": "Procedure Note", "value": "procedure" }, { "label": "Discharge Summary", "value": "discharge" }, { "label": "H&P", "value": "history" }, { "label": "Follow-up Note", "value": "followup" }, { "label": "Telephone Note", "value": "telephone" }, { "label": "Other", "value": "other" }], "fhirMapping": { "resource": "DocumentReference", "path": "type.coding[0].code", "type": "code" } },
+        { "key": "status", "label": "Status", "type": "select", "colSpan": 1, "options": [{ "label": "Draft", "value": "draft" }, { "label": "Final", "value": "final" }, { "label": "Amended", "value": "amended" }, { "label": "Entered in Error", "value": "entered-in-error" }], "fhirMapping": { "resource": "DocumentReference", "path": "status", "type": "code" } },
+        { "key": "author", "label": "Author", "type": "lookup", "colSpan": 1, "lookupConfig": { "endpoint": "/api/providers", "displayField": "fullName", "valueField": "id", "searchable": true }, "fhirMapping": { "resource": "DocumentReference", "path": "author[0].reference", "type": "Reference" } },
+        { "key": "date", "label": "Date", "type": "datetime", "colSpan": 1, "fhirMapping": { "resource": "DocumentReference", "path": "date", "type": "datetime" } },
+        { "key": "description", "label": "Title/Subject", "type": "text", "colSpan": 2, "fhirMapping": { "resource": "DocumentReference", "path": "description", "type": "string" } },
+        { "key": "content", "label": "Note Content", "type": "textarea", "colSpan": 2, "fhirMapping": { "resource": "DocumentReference", "path": "content[0].attachment.data", "type": "string" } },
+        { "key": "action", "label": "Action", "type": "combobox", "colSpan": 1, "options": [{ "label": "Review", "value": "review" }, { "label": "Sign", "value": "sign" }, { "label": "Cosign", "value": "cosign" }, { "label": "Addendum", "value": "addendum" }, { "label": "Amend", "value": "amend" }, { "label": "Complete", "value": "complete" }, { "label": "Archive", "value": "archive" }] }
+      ]
+    }
+  ]
+}
