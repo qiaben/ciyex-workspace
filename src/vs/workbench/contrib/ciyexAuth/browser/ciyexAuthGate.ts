@@ -483,6 +483,24 @@ export class CiyexAuthGate extends Disposable {
 		// Sign In button
 		const loginBtn = this._buildButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Sign In', true, c, this._loading || !this._password);
 		card.appendChild(loginBtn);
+
+		// IDP buttons (Google, Microsoft, etc.) from discover response
+		const idpButtons: HTMLButtonElement[] = [];
+		if (this._discoverResult?.idps?.length) {
+			const divider = h('div', { marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${c.border}`, textAlign: 'center' });
+			divider.appendChild(text(h('span', { fontSize: '11px', color: c.textSecondary, opacity: '0.6' }), 'or sign in with'));
+			card.appendChild(divider);
+
+			const idpRow = h('div', { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' });
+			for (const idp of this._discoverResult.idps) {
+				const idpBtn = this._buildButton(`ciyex-idp-${idp.alias}`, `Continue with ${idp.displayName || idp.alias}`, false, c);
+				idpBtn.style.fontSize = '13px';
+				idpRow.appendChild(idpBtn);
+				idpButtons.push(idpBtn);
+			}
+			card.appendChild(idpRow);
+		}
+
 		wrapper.appendChild(card);
 
 		// Listeners
@@ -491,6 +509,15 @@ export class CiyexAuthGate extends Disposable {
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		toggleBtn.addEventListener('click', () => { this._showPassword = !this._showPassword; this._render(); });
 		loginBtn.addEventListener('click', () => this._handleLogin());
+
+		// IDP button listeners
+		if (this._discoverResult?.idps) {
+			for (let i = 0; i < idpButtons.length; i++) {
+				const alias = this._discoverResult.idps[i].alias;
+				idpButtons[i].addEventListener('click', () => this._handleIdpLogin(alias));
+			}
+		}
+
 		setTimeout(() => pwInput.focus(), 50);
 
 		return wrapper;
@@ -636,6 +663,23 @@ export class CiyexAuthGate extends Disposable {
 
 		if (!result.success) {
 			this._error = result.error || 'Login failed';
+			this._render();
+		}
+	}
+
+	private async _handleIdpLogin(idpAlias: string): Promise<void> {
+		if (this._loading) {
+			return;
+		}
+		this._loading = true;
+		this._error = '';
+		this._render();
+
+		const result = await this._authService.keycloakLogin(this._email, idpAlias);
+		this._loading = false;
+
+		if (!result.success) {
+			this._error = result.error || 'SSO login failed';
 			this._render();
 		}
 	}

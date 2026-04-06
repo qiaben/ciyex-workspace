@@ -28,9 +28,14 @@ export interface ICiyexAuthService {
 	discover(email: string): Promise<CiyexDiscoverResult>;
 
 	/**
-	 * Step 2: Login with email + password
+	 * Step 2a: Login with email + password
 	 */
 	login(email: string, password: string): Promise<CiyexLoginResult>;
+
+	/**
+	 * Step 2b: Login with Keycloak IDP (opens popup window for OAuth PKCE)
+	 */
+	keycloakLogin(email: string, idpAlias: string): Promise<CiyexLoginResult>;
 
 	/**
 	 * Refresh the access token
@@ -259,6 +264,107 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			}
 		} catch {
 			return { success: false, error: 'Unable to connect to server.' };
+		}
+	}
+
+	async keycloakLogin(email: string, idpAlias: string): Promise<CiyexLoginResult> {
+		try {
+			// Generate PKCE code verifier and challenge
+			const array = new Uint8Array(32);
+			crypto.getRandomValues(array);
+			const codeVerifier = btoa(String.fromCharCode(...array))
+				.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+			const encoder = new TextEncoder();
+			const hash = await crypto.subtle.digest('SHA-256', encoder.encode(codeVerifier));
+			const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
+				.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+			// Build Keycloak auth URL
+			const redirectUri = `${this.apiUrl}/api/auth/keycloak-callback`;
+			const authUrl = `${this.keycloakUrl}/realms/${this.keycloakRealm}/protocol/openid-connect/auth`;
+			const params = new URLSearchParams({
+				client_id: this.keycloakClientId,
+				redirect_uri: redirectUri,
+				response_type: 'code',
+				scope: 'openid profile email organization',
+				code_challenge: codeChallenge,
+				code_challenge_method: 'S256',
+				kc_idp_hint: idpAlias,
+				login_hint: email,
+			});
+
+			// Open popup for Keycloak login
+			const popup = window.open(
+				`${authUrl}?${params.toString()}`,
+				'ciyex-keycloak-login',
+				'width=500,height=700,menubar=no,toolbar=no'
+			);
+
+			if (!popup) {
+				return { success: false, error: 'Unable to open login window. Check popup blocker.' };
+			}
+
+			// Poll popup for redirect with auth code
+			return new Promise<CiyexLoginResult>((resolve) => {
+				const interval = setInterval(() => {
+					try {
+						if (popup.closed) {
+							clearInterval(interval);
+							resolve({ success: false, error: 'Login window was closed.' });
+							return;
+						}
+						const url = popup.location.href;
+						if (url && url.includes('code=')) {
+							clearInterval(interval);
+							popup.close();
+							const code = new URL(url).searchParams.get('code');
+							if (code) {
+								// Exchange code for tokens via backend
+								this._exchangeKeycloakCode(code, codeVerifier, redirectUri).then(resolve);
+							} else {
+								resolve({ success: false, error: 'No authorization code received.' });
+							}
+						}
+					} catch {
+						// Cross-origin - popup still on Keycloak domain, keep polling
+					}
+				}, 500);
+
+				// Timeout after 5 minutes
+				setTimeout(() => {
+					clearInterval(interval);
+					if (!popup.closed) {
+						popup.close();
+					}
+					resolve({ success: false, error: 'Login timed out.' });
+				}, 300000);
+			});
+		} catch {
+			return { success: false, error: 'Failed to initiate SSO login.' };
+		}
+	}
+
+	private async _exchangeKeycloakCode(code: string, codeVerifier: string, redirectUri: string): Promise<CiyexLoginResult> {
+		try {
+			const res = await fetch(`${this.apiUrl}/api/auth/keycloak-callback`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ code, codeVerifier, redirectUri }),
+			});
+
+			const data = await res.json();
+			if (data.success && data.data?.token) {
+				this._storeAuth(data.data);
+				this._userEmail = data.data.email || data.data.username || '';
+				this._setState(CiyexAuthState.Authenticated);
+				this._scheduleTokenRefresh();
+				this._resetIdleTimer();
+				return { success: true, data: data.data };
+			}
+			return { success: false, error: data.error || 'SSO login failed.' };
+		} catch {
+			return { success: false, error: 'Failed to exchange authorization code.' };
 		}
 	}
 
