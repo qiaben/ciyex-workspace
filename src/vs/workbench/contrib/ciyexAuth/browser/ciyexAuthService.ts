@@ -465,6 +465,21 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		this._lastActivity = Date.now();
 		if (this._state === CiyexAuthState.Authenticated) {
 			this._resetIdleTimer();
+
+			// Proactively refresh if token is close to expiry and user is active
+			const token = localStorage.getItem('ciyex_token');
+			const payload = decodeJwt(token);
+			if (payload?.exp) {
+				const secsLeft = payload.exp - Math.floor(Date.now() / 1000);
+				if (secsLeft > 0 && secsLeft < REFRESH_BEFORE_EXPIRY_SEC * 2) {
+					// Token expires within 2 minutes and user is active - refresh now
+					this.refreshToken().then(ok => {
+						if (ok) {
+							this._scheduleTokenRefresh();
+						}
+					});
+				}
+			}
 		}
 	}
 
