@@ -27,7 +27,10 @@ interface Appointment {
 	type?: string;
 	status: string;
 	startTime: string;
+	start?: string;
 	duration?: number;
+	providerName?: string;
+	practitionerName?: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -186,8 +189,8 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// Sort by time
 		const sorted = [...this.appointments].sort((a, b) => {
-			const ta = a.startTime || '';
-			const tb = b.startTime || '';
+			const ta = a.start || a.startTime || '';
+			const tb = b.start || b.startTime || '';
 			return ta.localeCompare(tb);
 		});
 
@@ -213,10 +216,10 @@ export class ScheduleSidebarPane extends ViewPane {
 		const time = DOM.append(row, DOM.$('.time'));
 		time.style.cssText = 'width:42px;font-size:11px;font-weight:500;color:var(--vscode-foreground);flex-shrink:0;';
 		try {
-			const d = new Date(apt.startTime);
+			const d = new Date(apt.start || apt.startTime);
 			time.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 		} catch {
-			time.textContent = apt.startTime || '--:--';
+			time.textContent = apt.start || apt.startTime || '--:--';
 		}
 
 		// Patient info

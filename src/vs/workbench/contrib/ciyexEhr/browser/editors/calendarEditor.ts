@@ -27,6 +27,7 @@ interface Appointment {
 	type?: string;
 	status: string;
 	startTime: string;
+	start?: string;
 	duration?: number;
 	providerId?: string;
 	providerName?: string;
@@ -94,60 +95,80 @@ export class CalendarEditor extends EditorPane {
 		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
 		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;';
 
-		// Render empty grid immediately (data loads in setInput)
+		// Render empty grid immediately
 		this._renderHeader();
 		this._renderGrid();
+
+		// Load data - use globalThis.setTimeout to ensure it fires in the right context
+		const self = this;
+		globalThis.setTimeout(async () => {
+			console.log('[Calendar] Delayed load starting...');
+			await self._loadAndRender();
+			console.log('[Calendar] Delayed load complete, providers:', self.providers.length);
+		}, 2000);
+		globalThis.setTimeout(async () => {
+			if (self.providers.length === 0) {
+				console.log('[Calendar] Retry load...');
+				await self._loadAndRender();
+			}
+		}, 6000);
 	}
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'week';
 		this.viewMode = defaultView === 'day' ? 'day' : defaultView === 'month' ? 'month' : 'week';
+		await this._loadAndRender();
+	}
+
+	private async _loadAndRender(): Promise<void> {
 		await this._loadAppointments();
-		if (!token.isCancellationRequested) {
-			this._renderHeader();
-			this._renderGrid();
-		}
+		this._renderHeader();
+		this._renderGrid();
 	}
 
 	private async _loadAppointments(): Promise<void> {
-		const { startDate, endDate } = this._getDateRange();
-		// Try date range first, fallback to single date
-		const urls = [
-			`/api/appointments?startDate=${startDate}&endDate=${endDate}&page=0&size=200`,
-			`/api/appointments?date=${startDate}&page=0&size=200`,
-			`/api/appointments?page=0&size=200`,
-		];
+	  try {
+		console.log('[Calendar] _loadAppointments called, viewMode:', this.viewMode, 'date:', this.currentDate);
+		const { startDate } = this._getDateRange();
+		console.log('[Calendar] startDate:', startDate);
 		let provLoc = '';
 		if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
 		if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
 
-		for (const baseUrl of urls) {
-			try {
-				const res = await this.apiService.fetch(baseUrl + provLoc);
-				if (res.ok) {
-					const data = await res.json();
-					this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-					if (this.appointments.length > 0) { break; }
-				}
-			} catch { /* try next */ }
-		}
+		// Load all appointments (no date filter - API hangs with date params)
+		// Filter by date client-side
+		const url = `/api/appointments?page=0&size=200${provLoc}`;
+		console.log('[Calendar] Fetching:', url);
+
+		try {
+			const res = await this.apiService.fetch(url);
+			if (res.ok) {
+				const data = await res.json();
+				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+			}
+		} catch { this.appointments = []; }
 		if (!this.appointments) { this.appointments = []; }
 
+		console.log('[Calendar] Appointments loaded:', this.appointments?.length, '- now loading providers...');
 		// Load providers (try multiple endpoints)
 		if (this.providers.length === 0) {
-			const providerUrls = ['/api/providers?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/admin/users?page=0&size=100'];
+			const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
 			for (const url of providerUrls) {
 				try {
+					console.log('[Calendar] Fetching providers from:', url);
 					const res = await this.apiService.fetch(url);
+					console.log('[Calendar] Provider response:', res.status, res.ok);
 					if (res.ok) {
 						const data = await res.json();
 						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+						console.log('[Calendar] Provider list length:', list.length, 'from', url);
 						if (list.length > 0) {
 							this.providers = list.map((p: Record<string, string>) => ({
-								id: p.id || p.username || '',
-								name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
-							})).filter((p: { id: string; name: string }) => p.name);
+								id: p.id || p.fhirId || p.username || '',
+								name: `${p['identification.prefix'] || ''} ${p['identification.firstName'] || p.firstName || ''} ${p['identification.lastName'] || p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
+							})).filter((p: { id: string; name: string }) => p.name && p.name.trim().length > 0);
+							console.log('[Calendar] Loaded providers:', this.providers.length, this.providers.map(p => p.name));
 							break;
 						}
 					}
@@ -165,7 +186,7 @@ export class CalendarEditor extends EditorPane {
 
 		// Load locations (try multiple endpoints)
 		if (this.locations.length === 0) {
-			const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50'];
+			const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50', '/api/fhir-resource/locations?page=0&size=50'];
 			for (const url of locationUrls) {
 				try {
 					const res = await this.apiService.fetch(url);
@@ -193,6 +214,9 @@ export class CalendarEditor extends EditorPane {
 		} else {
 			this.scheduleBlocks = [];
 		}
+	  } catch (err) {
+		console.error('[Calendar] _loadAppointments error:', err);
+	  }
 	}
 
 	private _getDateRange(): { startDate: string; endDate: string } {
@@ -271,6 +295,9 @@ export class CalendarEditor extends EditorPane {
 			opt.value = l.id; opt.textContent = l.name; opt.selected = l.id === this.locationFilter;
 		}
 		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._refresh(); });
+
+		// Refresh button
+		this._btn(this.headerBar, '\u21BB', () => { this.providers = []; this.locations = []; this._loadAndRender(); }).title = 'Refresh';
 
 		// Find slot button
 		this._btn(this.headerBar, 'Find Slot', () => { this._findAvailableSlot(); });
@@ -374,7 +401,7 @@ export class CalendarEditor extends EditorPane {
 					// Render appointments in this slot
 					const slotAppts = this.appointments.filter(a => {
 						try {
-							const d = new Date(a.startTime);
+							const d = new Date(a.start || a.startTime);
 							return d.toISOString().split('T')[0] === dayStr &&
 								d.getHours() === hour &&
 								d.getMinutes() >= minute &&
@@ -445,7 +472,7 @@ export class CalendarEditor extends EditorPane {
 			const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 			const isToday = dateStr === new Date().toISOString().split('T')[0];
 			const dayAppts = this.appointments.filter(a => {
-				try { return new Date(a.startTime).toISOString().split('T')[0] === dateStr; } catch { return false; }
+				try { return new Date(a.start || a.startTime).toISOString().split('T')[0] === dateStr; } catch { return false; }
 			});
 
 			const cell = DOM.append(grid, DOM.$('.month-cell'));
@@ -471,7 +498,7 @@ export class CalendarEditor extends EditorPane {
 					const typeColor = TYPE_COLORS[(apt.appointmentType || apt.type || '').toLowerCase()] || '#607D8B';
 					aptEl.style.cssText = `font-size:9px;padding:1px 3px;border-radius:2px;margin-bottom:1px;background:${typeColor}20;border-left:2px solid ${typeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
 					try {
-						const time = new Date(apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+						const time = new Date(apt.start || apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 						aptEl.textContent = `${time} ${apt.patientName || ''}`;
 					} catch {
 						aptEl.textContent = apt.patientName || '';
@@ -845,7 +872,7 @@ export class CalendarEditor extends EditorPane {
 			const intervalDays = frequency.label === 'Weekly' ? 7 : frequency.label === 'Bi-weekly' ? 14 : 30;
 
 			try {
-				const baseDate = new Date(apt.startTime);
+				const baseDate = new Date(apt.start || apt.startTime);
 				for (let i = 1; i <= n; i++) {
 					const newDate = new Date(baseDate);
 					newDate.setDate(baseDate.getDate() + i * intervalDays);
