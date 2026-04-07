@@ -84,13 +84,24 @@ export class ScheduleSidebarPane extends ViewPane {
 		this.refreshTimer = setInterval(() => this._loadAndRender(), 60000);
 	}
 
-	private async _loadAndRender(): Promise<void> {
-		const today = new Date().toISOString().split('T')[0];
+	private currentPage = 0;
+	private pageSize = 25;
+	private totalAppointments = 0;
+	private hasMore = false;
+
+	private async _loadAndRender(append = false): Promise<void> {
 		try {
-			const res = await this.apiService.fetch(`/api/appointments?date=${today}&page=0&size=100`);
+			const res = await this.apiService.fetch(`/api/appointments?page=${this.currentPage}&size=${this.pageSize}`);
 			if (res.ok) {
 				const data = await res.json();
-				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+				const page = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+				this.totalAppointments = data?.data?.totalElements || data?.totalElements || page.length;
+				if (append) {
+					this.appointments = [...this.appointments, ...page];
+				} else {
+					this.appointments = page;
+				}
+				this.hasMore = page.length === this.pageSize;
 			}
 		} catch (err) {
 			this.logService.warn('[Schedule] Failed to load appointments:', err);
@@ -125,6 +136,11 @@ export class ScheduleSidebarPane extends ViewPane {
 		// -- Today's Timeline --
 		this._renderTimeline();
 
+		// -- Load More --
+		if (this.hasMore) {
+			this._renderLoadMore();
+		}
+
 		// -- Waitlist --
 		this._renderWaitlist();
 
@@ -136,7 +152,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		const stats = DOM.append(this.container, DOM.$('.stats-bar'));
 		stats.style.cssText = 'display:flex;gap:2px;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
-		const total = this.appointments.length;
+		const total = this.totalAppointments || this.appointments.length;
 		const completed = this.appointments.filter(a => ['fulfilled', 'completed', 'checked-out'].includes(a.status?.toLowerCase())).length;
 		const noShows = this.appointments.filter(a => ['noshow', 'no-show'].includes(a.status?.toLowerCase())).length;
 		const remaining = total - completed - noShows;
@@ -240,6 +256,21 @@ export class ScheduleSidebarPane extends ViewPane {
 		badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;white-space:nowrap;background:${statusColor}22;color:${statusColor};font-weight:500;`;
 	}
 
+	private _renderLoadMore(): void {
+		const loadMore = DOM.append(this.container, DOM.$('.load-more'));
+		loadMore.style.cssText = 'padding:8px 10px;text-align:center;border-top:1px solid var(--vscode-editorWidget-border);';
+
+		const btn = DOM.append(loadMore, DOM.$('button')) as HTMLButtonElement;
+		btn.textContent = `Load More (${this.appointments.length} of ${this.totalAppointments})`;
+		btn.style.cssText = 'padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;width:100%;';
+		btn.addEventListener('click', async () => {
+			this.currentPage++;
+			btn.textContent = 'Loading...';
+			btn.disabled = true;
+			await this._loadAndRender(true);
+		});
+	}
+
 	private _renderWaitlist(): void {
 		if (this.waitlist.length === 0) { return; }
 
@@ -324,6 +355,13 @@ export class ScheduleSidebarPane extends ViewPane {
 		super.layoutBody(height, width);
 		if (this.container) {
 			this.container.style.height = `${height}px`;
+		}
+		// Calculate how many appointments fit: ~35px per row, minus ~180px for header/stats/upcoming
+		const availableHeight = Math.max(height - 180, 200);
+		const rowHeight = 35;
+		const newPageSize = Math.max(10, Math.floor(availableHeight / rowHeight));
+		if (newPageSize !== this.pageSize && this.appointments.length === 0) {
+			this.pageSize = newPageSize;
 		}
 	}
 

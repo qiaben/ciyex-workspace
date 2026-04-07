@@ -96,23 +96,10 @@ export class CalendarEditor extends EditorPane {
 		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
 		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;';
 
-		// Render empty grid immediately
+		// Render empty grid, then load data once ready
 		this._renderHeader();
 		this._renderGrid();
-
-		// Load data - use globalThis.setTimeout to ensure it fires in the right context
-		const self = this;
-		globalThis.setTimeout(async () => {
-			console.log('[Calendar] Delayed load starting...');
-			await self._loadAndRender();
-			console.log('[Calendar] Delayed load complete, providers:', self.providers.length);
-		}, 2000);
-		globalThis.setTimeout(async () => {
-			if (self.providers.length === 0) {
-				console.log('[Calendar] Retry load...');
-				await self._loadAndRender();
-			}
-		}, 6000);
+		globalThis.setTimeout(() => this._loadAndRender(), 500);
 	}
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
