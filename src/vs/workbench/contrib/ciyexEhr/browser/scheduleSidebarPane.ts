@@ -14,6 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
@@ -31,6 +32,10 @@ interface Appointment {
 	duration?: number;
 	providerName?: string;
 	practitionerName?: string;
+	patientId?: string;
+	encounterId?: string;
+	room?: string;
+	visitType?: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -69,6 +74,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ILogService private readonly logService: ILogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -80,8 +86,8 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		this._loadAndRender();
 
-		// Auto-refresh every 60 seconds
-		this.refreshTimer = setInterval(() => this._loadAndRender(), 60000);
+		// Auto-refresh every 30 seconds
+		this.refreshTimer = setInterval(() => this._loadAndRender(), 30000);
 	}
 
 	private currentPage = 0;
@@ -107,6 +113,39 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.logService.warn('[Schedule] Failed to load appointments:', err);
 		}
 
+		// Load status options from API (once)
+		if (this.statusOptions.length === 0) {
+			try {
+				const res = await this.apiService.fetch('/api/appointments/status-options');
+				if (res.ok) {
+					const data = await res.json();
+					this.statusOptions = data?.data || data || [];
+				}
+			} catch { /* use fallback */ }
+			if (this.statusOptions.length === 0) {
+				this.statusOptions = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
+			}
+			// Terminal statuses are the last 3 typically
+			this.terminalStatuses = new Set(this.statusOptions.filter(s => ['completed', 'no show', 'cancelled', 'fulfilled'].includes(s.toLowerCase())).map(s => s.toLowerCase()));
+			if (this.terminalStatuses.size === 0) {
+				this.terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
+			}
+		}
+
+		// Load room options (once)
+		if (this.roomOptions.length === 0) {
+			try {
+				const res = await this.apiService.fetch('/api/rooms');
+				if (res.ok) {
+					const data = await res.json();
+					this.roomOptions = (data?.data || data || []).map((r: Record<string, string>) => r.name || r.id || r);
+				}
+			} catch { /* use fallback */ }
+			if (this.roomOptions.length === 0) {
+				this.roomOptions = ['Exam 1', 'Exam 2', 'Exam 3', 'Exam 4', 'Lab', 'Procedure Room', 'Triage'];
+			}
+		}
+
 		// Load waitlist
 		try {
 			const res = await this.apiService.fetch('/api/waitlist?page=0&size=20');
@@ -123,12 +162,40 @@ export class ScheduleSidebarPane extends ViewPane {
 	}
 
 	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
+	private showFilter: 'active' | 'completed' | 'all' = 'active';
+
+	private statusOptions: string[] = [];
+	private roomOptions: string[] = [];
+	private terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
+
+	private _getFilteredAppointments(): Appointment[] {
+		let filtered = [...this.appointments];
+
+		// Filter
+		if (this.showFilter === 'active') {
+			filtered = filtered.filter(a => !this.terminalStatuses.has(a.status?.toLowerCase()));
+		} else if (this.showFilter === 'completed') {
+			filtered = filtered.filter(a => this.terminalStatuses.has(a.status?.toLowerCase()));
+		}
+
+		// Sort by time (upcoming first)
+		filtered.sort((a, b) => {
+			const ta = a.start || a.startTime || '';
+			const tb = b.start || b.startTime || '';
+			return ta.localeCompare(tb);
+		});
+
+		return filtered;
+	}
 
 	private _render(): void {
 		DOM.clearNode(this.container);
 
 		// -- Actions (top) --
 		this._renderActions();
+
+		// -- Filter Bar --
+		this._renderFilterBar();
 
 		// -- Quick Stats Bar --
 		this._renderStats();
@@ -143,9 +210,6 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// -- Waitlist --
 		this._renderWaitlist();
-
-		// -- Upcoming Days --
-		this._renderUpcoming();
 	}
 
 	private _renderStats(): void {
@@ -186,74 +250,181 @@ export class ScheduleSidebarPane extends ViewPane {
 		lbl.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
 	}
 
+	private _renderFilterBar(): void {
+		const bar = DOM.append(this.container, DOM.$('.filter-bar'));
+		bar.style.cssText = 'display:flex;gap:2px;padding:4px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+
+		for (const f of ['active', 'completed', 'all'] as const) {
+			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+			btn.textContent = f === 'active' ? 'Active' : f === 'completed' ? 'Done' : 'All';
+			const isActive = this.showFilter === f;
+			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
+			btn.addEventListener('click', () => { this.showFilter = f; this._render(); });
+		}
+	}
+
 	private _renderTimeline(): void {
 		const section = DOM.append(this.container, DOM.$('.timeline-section'));
-		section.style.cssText = 'padding:8px 0;';
+		section.style.cssText = 'padding:4px 0;';
+
+		const filtered = this._getFilteredAppointments();
 
 		// Section header
 		const header = DOM.append(section, DOM.$('.section-header'));
-		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);display:flex;';
 		const now = new Date();
-		header.textContent = `Today \u2014 ${now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`;
+		const headerText = DOM.append(header, DOM.$('span'));
+		headerText.textContent = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+		headerText.style.cssText = 'flex:1;';
+		const countText = DOM.append(header, DOM.$('span'));
+		countText.textContent = `${filtered.length} appts`;
+		countText.style.cssText = 'font-size:10px;';
 
-		if (this.appointments.length === 0) {
+		if (filtered.length === 0) {
 			const empty = DOM.append(section, DOM.$('.empty'));
-			empty.style.cssText = 'padding:16px 10px;color:var(--vscode-descriptionForeground);text-align:center;';
-			empty.textContent = 'No appointments today';
+			empty.style.cssText = 'padding:12px 10px;color:var(--vscode-descriptionForeground);text-align:center;font-size:12px;';
+			empty.textContent = this.showFilter === 'active' ? 'No active appointments' : this.showFilter === 'completed' ? 'No completed appointments' : 'No appointments';
 			return;
 		}
 
-		// Sort by time
-		const sorted = [...this.appointments].sort((a, b) => {
-			const ta = a.start || a.startTime || '';
-			const tb = b.start || b.startTime || '';
-			return ta.localeCompare(tb);
-		});
-
-		for (const apt of sorted) {
+		for (const apt of filtered) {
 			this._renderAppointmentRow(section, apt);
 		}
 	}
 
+	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {
+		try {
+			await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
+		} catch {
+			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, status: newStatus }) }); } catch { /* */ }
+		}
+		await this._loadAndRender();
+	}
+
+	private async _assignRoom(apt: Appointment, room: string): Promise<void> {
+		try {
+			await this.apiService.fetch(`/api/appointments/${apt.id}/room`, { method: 'PUT', body: JSON.stringify({ room }) });
+		} catch {
+			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, room }) }); } catch { /* */ }
+		}
+		await this._loadAndRender();
+	}
+
 	private _renderAppointmentRow(parent: HTMLElement, apt: Appointment): void {
 		const row = DOM.append(parent, DOM.$('.apt-row'));
-		row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;border-left:3px solid transparent;';
+		row.style.cssText = 'padding:6px 10px;border-left:3px solid transparent;border-bottom:1px solid rgba(128,128,128,0.06);';
 
 		const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
 		row.style.borderLeftColor = statusColor;
-
 		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground, rgba(255,255,255,0.04))'; });
 		row.addEventListener('mouseleave', () => { row.style.background = ''; });
-		row.addEventListener('click', () => {
-			this.commandService.executeCommand('ciyex.openCalendar');
-		});
 
-		// Time
-		const time = DOM.append(row, DOM.$('.time'));
-		time.style.cssText = 'width:42px;font-size:11px;font-weight:500;color:var(--vscode-foreground);flex-shrink:0;';
+		// Top line: time + name + status badge
+		const topLine = DOM.append(row, DOM.$('.top'));
+		topLine.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:2px;';
+
+		const time = DOM.append(topLine, DOM.$('span'));
+		time.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-foreground);width:50px;flex-shrink:0;';
 		try {
 			const d = new Date(apt.start || apt.startTime);
 			time.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-		} catch {
-			time.textContent = apt.start || apt.startTime || '--:--';
+		} catch { time.textContent = '--:--'; }
+
+		const name = DOM.append(topLine, DOM.$('span'));
+		name.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown';
+		name.style.cssText = 'flex:1;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+		// Status badge (clickable - advances to next status)
+		const badge = DOM.append(topLine, DOM.$('span'));
+		badge.textContent = (apt.status || 'scheduled').replace(/-/g, ' ');
+		badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;cursor:pointer;background:${statusColor}22;color:${statusColor};font-weight:500;white-space:nowrap;`;
+		badge.title = 'Click to advance status';
+		// Find next status in workflow
+		const currentIdx = this.statusOptions.findIndex(s => s.toLowerCase() === apt.status?.toLowerCase());
+		const nextStatus = currentIdx >= 0 && currentIdx < this.statusOptions.length - 1 ? this.statusOptions[currentIdx + 1] : null;
+		if (nextStatus && !this.terminalStatuses.has(apt.status?.toLowerCase())) {
+			badge.addEventListener('click', () => this._changeStatus(apt, nextStatus));
 		}
 
-		// Patient info
-		const info = DOM.append(row, DOM.$('.info'));
-		info.style.cssText = 'flex:1;min-width:0;overflow:hidden;';
+		// Middle line: type + provider + room
+		const midLine = DOM.append(row, DOM.$('.mid'));
+		midLine.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
 
-		const name = DOM.append(info, DOM.$('.name'));
-		name.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown';
-		name.style.cssText = 'font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+		const typeEl = DOM.append(midLine, DOM.$('span'));
+		typeEl.textContent = apt.appointmentType || apt.type || '';
 
-		const type = DOM.append(info, DOM.$('.type'));
-		type.textContent = apt.appointmentType || apt.type || '';
-		type.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+		if (apt.providerName || apt.practitionerName) {
+			DOM.append(midLine, DOM.$('span')).textContent = '\u00B7';
+			const provEl = DOM.append(midLine, DOM.$('span'));
+			provEl.textContent = apt.providerName || apt.practitionerName || '';
+		}
 
-		// Status badge
-		const badge = DOM.append(row, DOM.$('.status-badge'));
-		badge.textContent = (apt.status || 'scheduled').replace(/-/g, ' ');
-		badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;white-space:nowrap;background:${statusColor}22;color:${statusColor};font-weight:500;`;
+		// Room badge (clickable to assign)
+		const roomBadge = DOM.append(midLine, DOM.$('span'));
+		roomBadge.style.cssText = `margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;cursor:pointer;${apt.room ? 'background:rgba(99,102,241,0.15);color:#818cf8;' : 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);'}`;
+		roomBadge.textContent = apt.room || 'Room';
+		roomBadge.title = 'Click to assign room';
+		roomBadge.addEventListener('click', async () => {
+			const items = this.roomOptions.map(r => ({ label: r }));
+			const pick = await this.quickInputService.pick(items, { placeHolder: 'Assign room' });
+			if (pick) { await this._assignRoom(apt, pick.label); }
+		});
+
+		// Action icons row
+		const actions = DOM.append(row, DOM.$('.actions'));
+		actions.style.cssText = 'display:flex;gap:3px;opacity:0;transition:opacity 0.1s;';
+		row.addEventListener('mouseenter', () => { actions.style.opacity = '1'; });
+		row.addEventListener('mouseleave', () => { actions.style.opacity = '0'; });
+
+		const iconBtn = (parent: HTMLElement, label: string, symbol: string, color: string, onClick: () => void) => {
+			const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+			btn.textContent = symbol;
+			btn.title = label;
+			btn.style.cssText = `padding:2px 5px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};`;
+			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = `${color}15`; });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+		};
+
+		// Check-in (if not already checked in)
+		if (!this.terminalStatuses.has(apt.status?.toLowerCase()) && apt.status?.toLowerCase() !== 'checked-in' && apt.status?.toLowerCase() !== 'in-room' && apt.status?.toLowerCase() !== 'with-provider') {
+			iconBtn(actions, 'Check In', '\u2713', '#22c55e', () => this._changeStatus(apt, 'Checked-in'));
+		}
+
+		// Open Patient Chart
+		iconBtn(actions, 'Patient Chart', '\u{1F4CB}', '#3b82f6', () => {
+			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId); }
+		});
+
+		// Record Vitals
+		if (apt.encounterId) {
+			iconBtn(actions, 'Record Vitals', '\u2764', '#a855f7', () => {
+				this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId);
+			});
+		}
+
+		// Create Encounter (if none exists)
+		if (!apt.encounterId && !this.terminalStatuses.has(apt.status?.toLowerCase())) {
+			iconBtn(actions, 'Create Encounter', '\u2795', '#22c55e', async () => {
+				try {
+					await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+					await this._loadAndRender();
+				} catch { /* */ }
+			});
+		}
+
+		// Telehealth (if visit type includes telehealth/virtual)
+		const vt = (apt.appointmentType || apt.type || apt.visitType || '').toLowerCase();
+		if (vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video')) {
+			iconBtn(actions, 'Video Call', '\u{1F4F9}', '#22c55e', () => {
+				this.commandService.executeCommand('ciyex.openTelehealth', apt.id);
+			});
+		}
+
+		// No Show
+		if (!this.terminalStatuses.has(apt.status?.toLowerCase())) {
+			iconBtn(actions, 'No Show', '\u2716', '#ef4444', () => this._changeStatus(apt, 'No Show'));
+		}
 	}
 
 	private _renderLoadMore(): void {
@@ -303,36 +474,6 @@ export class ScheduleSidebarPane extends ViewPane {
 				pri.textContent = `P${item.priority}`;
 				pri.style.cssText = 'font-size:9px;padding:1px 4px;border-radius:2px;background:rgba(245,158,11,0.15);color:#f59e0b;font-weight:600;';
 			}
-		}
-	}
-
-	private _renderUpcoming(): void {
-		const section = DOM.append(this.container, DOM.$('.upcoming-section'));
-		section.style.cssText = 'padding:8px 0;border-top:1px solid var(--vscode-editorWidget-border);';
-
-		const header = DOM.append(section, DOM.$('.section-header'));
-		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
-		header.textContent = 'Upcoming';
-
-		// Show next 3 days
-		const today = new Date();
-		for (let i = 1; i <= 3; i++) {
-			const date = new Date(today);
-			date.setDate(date.getDate() + i);
-			const dayName = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-			const row = DOM.append(section, DOM.$('.upcoming-row'));
-			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:pointer;';
-			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground, rgba(255,255,255,0.04))'; });
-			row.addEventListener('mouseleave', () => { row.style.background = ''; });
-
-			const dayEl = DOM.append(row, DOM.$('span'));
-			dayEl.textContent = dayName;
-			dayEl.style.cssText = 'flex:1;font-size:12px;';
-
-			const countEl = DOM.append(row, DOM.$('span'));
-			countEl.textContent = '\u2014'; // Will be filled by API call later
-			countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		}
 	}
 
