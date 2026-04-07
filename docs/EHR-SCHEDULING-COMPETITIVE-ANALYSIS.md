@@ -1622,52 +1622,52 @@ The scheduler replaces the simple appointment list with a full **calendar Editor
 
 ### Phase 1 — Core Calendar (Must-Have)
 
-- [ ] **Calendar EditorPane** — custom EditorPane with day/week/month views
-  - [ ] Week view: 7 columns (Mon-Sun), time rows (configurable start/end hour)
-  - [ ] Day view: single column with 15/30/60-min slots
+- [x] **Calendar EditorPane** — custom EditorPane with day/week/month views
+  - [x] Week view: 7 columns (Mon-Sun), time rows (configurable start/end hour)
+  - [x] Day view: single column with 15/30/60-min slots
   - [ ] Month view: grid with appointment count per day
   - [ ] List view: flat chronological list with grouping by date
-  - [ ] View toggle buttons in toolbar
-  - [ ] Date navigation (prev/next, today button, date picker)
-  - [ ] Current time indicator (red line)
+  - [x] View toggle buttons in toolbar
+  - [x] Date navigation (prev/next, today button, date picker)
+  - [x] Current time indicator (red line)
 
 - [ ] **Appointment Blocks** — visual blocks in the calendar grid
-  - [ ] Color-coded by visit type / provider / location (from settings)
-  - [ ] Show: patient name, time, visit type, status badge
-  - [ ] Height proportional to duration
-  - [ ] Hover tooltip with full details
-  - [ ] Click to open appointment detail/edit
+  - [x] Color-coded by visit type / provider / location (from settings)
+  - [x] Show: patient name, time, visit type, status badge
+  - [x] Height proportional to duration
+  - [x] Hover tooltip with full details
+  - [x] Click to open appointment detail/edit
 
 - [ ] **Appointment CRUD**
-  - [ ] Click empty slot → New Appointment (QuickInput for patient, type, provider)
-  - [ ] Click existing → Edit Appointment (QuickInput for details)
-  - [ ] Right-click → Cancel, No-Show, Reschedule
+  - [x] Click empty slot → New Appointment (QuickInput for patient, type, provider)
+  - [x] Click existing → Edit Appointment (QuickInput for details)
+  - [x] Right-click → Cancel, No-Show, Reschedule
   - [ ] Drag to reschedule (change time/day)
   - [ ] Resize to change duration
 
-- [ ] **Appointment Statuses** — visual status workflow
+- [x] **Appointment Statuses** — visual status workflow
   - [ ] Scheduled → Confirmed → Arrived → Checked-In → In Room → With Provider → Checked-Out
-  - [ ] Status badges with color coding
-  - [ ] Click status badge to advance to next status
-  - [ ] Cancelled / No-Show as terminal states
+  - [x] Status badges with color coding
+  - [x] Click status badge to advance to next status
+  - [x] Cancelled / No-Show as terminal states
 
-- [ ] **Provider Filter** — dropdown to filter by provider
+- [x] **Provider Filter** — dropdown to filter by provider
   - [ ] All providers (side-by-side columns)
   - [ ] Single provider view
   - [ ] Provider color coding
 
-- [ ] **Location Filter** — dropdown to filter by location/facility
+- [x] **Location Filter** — dropdown to filter by location/facility
 
 ### Phase 2 — Sidebar Panel (Replace Flat List)
 
-- [ ] **Today's Schedule** — timeline view in sidebar
-  - [ ] Time-ordered list with status badges
-  - [ ] Available slots shown as "(available)"
-  - [ ] Click appointment to open in main calendar
-  - [ ] Mini patient avatar with initials
+- [x] **Today's Schedule** — timeline view in sidebar
+  - [x] Time-ordered list with status badges
+  - [x] Available slots shown as "(available)"
+  - [x] Click appointment to open in main calendar
+  - [x] Mini patient avatar with initials
 
-- [ ] **Upcoming** — next 2-3 days summary
-  - [ ] Day name + appointment count
+- [x] **Upcoming** — next 2-3 days summary
+  - [x] Day name + appointment count
   - [ ] Click to navigate calendar to that day
 
 - [ ] **Waitlist** — patients waiting for cancellation slot
@@ -1675,9 +1675,9 @@ The scheduler replaces the simple appointment list with a full **calendar Editor
   - [ ] Click to book when slot opens
   - [ ] Priority ordering
 
-- [ ] **Quick Stats** — today's numbers
-  - [ ] Total appointments / completed / remaining
-  - [ ] No-shows today
+- [x] **Quick Stats** — today's numbers
+  - [x] Total appointments / completed / remaining
+  - [x] No-shows today
   - [ ] Average wait time
 
 ### Phase 3 — Provider Schedule Management
