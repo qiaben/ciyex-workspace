@@ -493,6 +493,45 @@ configRegistry.registerConfiguration({
 	},
 });
 
+// --- Layout Configuration (links to visual editors) ------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.layoutConfig',
+	order: 27,
+	title: localize('ciyexLayoutConfig', "Ciyex: Layout Configuration"),
+	properties: {
+		'ciyex.layout.chartLayout': { type: 'null', markdownDescription: localize('cfgChartLayout', "Configure patient chart tabs and categories.\n\n[Open Chart Layout Editor](command:ciyex.openChartLayout)"), scope: ConfigurationScope.WINDOW },
+		'ciyex.layout.encounterForm': { type: 'null', markdownDescription: localize('cfgEncounter', "Configure encounter form sections (CC, HPI, ROS, PE, Assessment, Plan, etc.).\n\n[Open Encounter Form Editor](command:ciyex.openEncounterConfig)"), scope: ConfigurationScope.WINDOW },
+		'ciyex.layout.menuConfig': { type: 'null', markdownDescription: localize('cfgMenu', "Configure sidebar and menu bar navigation items.\n\n[Open Menu Configuration Editor](command:ciyex.openMenuConfig)"), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.fieldConfig',
+	order: 28,
+	title: localize('ciyexFieldConfig', "Ciyex: Field Configuration"),
+	properties: {
+		'ciyex.fields.demographics': { type: 'null', markdownDescription: localize('cfgDemo', "Configure patient demographics form fields and FHIR mappings.\n\n[Open Demographics Editor](command:ciyex.openFieldConfig 'demographics')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.vitals': { type: 'null', markdownDescription: localize('cfgVitals', "Configure vital signs form with dual unit system.\n\n[Open Vitals Editor](command:ciyex.openFieldConfig 'vitals')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.problems': { type: 'null', markdownDescription: localize('cfgProblems', "Configure problems/conditions form with ICD-10 lookup.\n\n[Open Problems Editor](command:ciyex.openFieldConfig 'problems')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.allergies': { type: 'null', markdownDescription: localize('cfgAllergies', "Configure allergy intolerance form fields.\n\n[Open Allergies Editor](command:ciyex.openFieldConfig 'allergies')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.medications': { type: 'null', markdownDescription: localize('cfgMeds', "Configure medication/prescription form with NDC lookup.\n\n[Open Medications Editor](command:ciyex.openFieldConfig 'medications')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.immunizations': { type: 'null', markdownDescription: localize('cfgImm', "Configure immunization form with CVX codes.\n\n[Open Immunizations Editor](command:ciyex.openFieldConfig 'immunizations')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.labs': { type: 'null', markdownDescription: localize('cfgLabs', "Configure lab results form with LOINC codes.\n\n[Open Lab Results Editor](command:ciyex.openFieldConfig 'labs')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.appointments': { type: 'null', markdownDescription: localize('cfgAppt', "Configure appointment form with visit types.\n\n[Open Appointments Editor](command:ciyex.openFieldConfig 'appointments')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.insurance': { type: 'null', markdownDescription: localize('cfgInsFields', "Configure insurance/coverage form fields.\n\n[Open Insurance Editor](command:ciyex.openFieldConfig 'insurance')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.providers': { type: 'null', markdownDescription: localize('cfgProv', "Configure provider registration form.\n\n[Open Providers Editor](command:ciyex.openFieldConfig 'providers')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.facilities': { type: 'null', markdownDescription: localize('cfgFac', "Configure facility/location form.\n\n[Open Facilities Editor](command:ciyex.openFieldConfig 'facilities')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.documents': { type: 'null', markdownDescription: localize('cfgDocs', "Configure document upload form.\n\n[Open Documents Editor](command:ciyex.openFieldConfig 'documents')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.referrals': { type: 'null', markdownDescription: localize('cfgRef', "Configure referral/service request form.\n\n[Open Referrals Editor](command:ciyex.openFieldConfig 'referrals')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.history': { type: 'null', markdownDescription: localize('cfgHist', "Configure family, social, and surgical history form.\n\n[Open History Editor](command:ciyex.openFieldConfig 'history')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.visitNotes': { type: 'null', markdownDescription: localize('cfgNotes', "Configure clinical visit notes form.\n\n[Open Visit Notes Editor](command:ciyex.openFieldConfig 'visit-notes')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.practice': { type: 'null', markdownDescription: localize('cfgPractice', "Configure practice info form.\n\n[Open Practice Editor](command:ciyex.openFieldConfig 'practice')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.referralProviders': { type: 'null', markdownDescription: localize('cfgRefProv', "Configure referral provider form.\n\n[Open Referral Providers Editor](command:ciyex.openFieldConfig 'referral-providers')"), scope: ConfigurationScope.WINDOW },
+		'ciyex.fields.referralPractices': { type: 'null', markdownDescription: localize('cfgRefPrac', "Configure referral practice form.\n\n[Open Referral Practices Editor](command:ciyex.openFieldConfig 'referral-practices')"), scope: ConfigurationScope.WINDOW },
+	},
+});
+
 // --- Clinical Workflow -----------------------------------------------
 
 configRegistry.registerConfiguration({
