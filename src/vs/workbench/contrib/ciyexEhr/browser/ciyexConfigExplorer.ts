@@ -33,33 +33,33 @@ interface ConfigItem {
 }
 
 const CONFIG_ITEMS: ConfigItem[] = [
-	{ label: 'Ciyex Settings', icon: 'codicon-settings-gear', commandId: 'ciyex.openSettings', description: 'Practice, display, features' },
-	{ label: 'Chart Layout', icon: 'codicon-layout', commandId: 'ciyex.openChartLayout', description: 'Tabs and categories' },
-	{ label: 'Encounter Form', icon: 'codicon-notebook', commandId: 'ciyex.openEncounterConfig', description: '17 sections, ROS, PE' },
+	// Ciyex Settings excluded — already in VS Code Settings (Cmd+,), search "@ciyex"
+	{ label: 'Chart Layout', icon: 'codicon-preview', commandId: 'ciyex.openChartLayout', description: 'Tabs and categories' },
+	{ label: 'Encounter Form', icon: 'codicon-note', commandId: 'ciyex.openEncounterConfig', description: '17 sections, ROS, PE' },
 	{ label: 'Menu Configuration', icon: 'codicon-list-tree', commandId: 'ciyex.openMenuConfig', description: 'Sidebar navigation' },
 	{ label: 'Calendar Colors', icon: 'codicon-symbol-color', commandId: 'ciyex.openCalendarColors', description: 'Visit type, provider colors' },
 	{ label: 'Patient Portal', icon: 'codicon-globe', commandId: 'ciyex.openPortalConfig', description: 'Branding, features, forms' },
-	{ label: 'Roles & Permissions', icon: 'codicon-shield', commandId: 'ciyex.openRolesConfig', description: 'FHIR scopes, features' },
+	{ label: 'Roles & Permissions', icon: 'codicon-verified-filled', commandId: 'ciyex.openRolesConfig', description: 'FHIR scopes, features' },
 	{
-		label: 'FIELD CONFIGURATIONS', icon: 'codicon-symbol-field', commandId: '', children: [
+		label: 'FIELD CONFIGURATIONS', icon: '', commandId: '', children: [
 			{ label: 'Demographics', icon: 'codicon-person', commandId: 'ciyex.openFieldConfig', description: 'Patient info fields' },
 			{ label: 'Vitals', icon: 'codicon-pulse', commandId: 'ciyex.openFieldConfig', description: 'Vital signs' },
 			{ label: 'Problems', icon: 'codicon-warning', commandId: 'ciyex.openFieldConfig', description: 'Conditions' },
-			{ label: 'Allergies', icon: 'codicon-alert', commandId: 'ciyex.openFieldConfig', description: 'Allergy intolerance' },
-			{ label: 'Medications', icon: 'codicon-symbol-method', commandId: 'ciyex.openFieldConfig', description: 'Prescriptions' },
-			{ label: 'Immunizations', icon: 'codicon-syringe', commandId: 'ciyex.openFieldConfig', description: 'Vaccines' },
+			{ label: 'Allergies', icon: 'codicon-circle-slash', commandId: 'ciyex.openFieldConfig', description: 'Allergy intolerance' },
+			{ label: 'Medications', icon: 'codicon-diff-added', commandId: 'ciyex.openFieldConfig', description: 'Prescriptions' },
+			{ label: 'Immunizations', icon: 'codicon-shield', commandId: 'ciyex.openFieldConfig', description: 'Vaccines' },
 			{ label: 'Lab Results', icon: 'codicon-beaker', commandId: 'ciyex.openFieldConfig', description: 'Diagnostic reports' },
 			{ label: 'Appointments', icon: 'codicon-calendar', commandId: 'ciyex.openFieldConfig', description: 'Scheduling' },
-			{ label: 'Insurance', icon: 'codicon-shield', commandId: 'ciyex.openFieldConfig', description: 'Coverage' },
+			{ label: 'Insurance', icon: 'codicon-credit-card', commandId: 'ciyex.openFieldConfig', description: 'Coverage' },
 			{ label: 'Providers', icon: 'codicon-account', commandId: 'ciyex.openFieldConfig', description: 'Practitioners' },
-			{ label: 'Facilities', icon: 'codicon-server', commandId: 'ciyex.openFieldConfig', description: 'Locations' },
-			{ label: 'Documents', icon: 'codicon-file', commandId: 'ciyex.openFieldConfig', description: 'File uploads' },
+			{ label: 'Facilities', icon: 'codicon-home', commandId: 'ciyex.openFieldConfig', description: 'Locations' },
+			{ label: 'Documents', icon: 'codicon-file-text', commandId: 'ciyex.openFieldConfig', description: 'File uploads' },
 			{ label: 'Referrals', icon: 'codicon-link-external', commandId: 'ciyex.openFieldConfig', description: 'Service requests' },
 			{ label: 'History', icon: 'codicon-history', commandId: 'ciyex.openFieldConfig', description: 'Family, social, surgical' },
 			{ label: 'Visit Notes', icon: 'codicon-edit', commandId: 'ciyex.openFieldConfig', description: 'Clinical notes' },
-			{ label: 'Practice', icon: 'codicon-home', commandId: 'ciyex.openFieldConfig', description: 'Organization info' },
+			{ label: 'Practice', icon: 'codicon-organization', commandId: 'ciyex.openFieldConfig', description: 'Organization info' },
 			{ label: 'Referral Providers', icon: 'codicon-person-add', commandId: 'ciyex.openFieldConfig', description: 'External providers' },
-			{ label: 'Referral Practices', icon: 'codicon-organization', commandId: 'ciyex.openFieldConfig', description: 'External orgs' },
+			{ label: 'Referral Practices', icon: 'codicon-remote', commandId: 'ciyex.openFieldConfig', description: 'External orgs' },
 		]
 	},
 ];
@@ -118,8 +118,8 @@ class CiyexConfigPane extends ViewPane {
 			}
 		});
 
-		const icon = DOM.append(row, DOM.$(`.${item.icon}`));
-		icon.style.cssText = 'font-size:14px;width:16px;color:var(--vscode-descriptionForeground);';
+		const icon = DOM.append(row, DOM.$('span.codicon.' + item.icon));
+		icon.style.cssText = 'font-size:14px;width:16px;text-align:center;color:var(--vscode-icon-foreground);';
 
 		const label = DOM.append(row, DOM.$('span'));
 		label.textContent = item.label;
