@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isWeb, isWindows } from '../../../../base/common/platform.js';
+// import { isWeb, isWindows } from '../../../../base/common/platform.js'; // unused after removing dev sections
 import { localize } from '../../../../nls.js';
 import { ISetting, ISettingsGroup } from '../../../services/preferences/common/preferences.js';
 
@@ -27,21 +27,9 @@ export interface ITOCEntry<T> {
 	hide?: boolean;
 }
 
-const COMMONLY_USED_SETTINGS: readonly string[] = [
-	'editor.fontSize',
-	'editor.formatOnSave',
-	'files.autoSave',
-	'GitHub.copilot-chat.manageExtension',
-	'editor.defaultFormatter',
-	'editor.fontFamily',
-	'editor.wordWrap',
-	'chat.agent.maxRequests',
-	'files.exclude',
-	'workbench.colorTheme',
-	'editor.tabSize',
-	'editor.mouseWheelZoom',
-	'editor.formatOnPaste'
-];
+// Commonly Used settings hidden for EHR app
+/* eslint-disable */
+// COMMONLY_USED_SETTINGS removed for EHR app
 
 export function getCommonlyUsedData(settingGroups: ISettingsGroup[]): ITOCEntry<ISetting> {
 	const allSettings = new Map<string, ISetting>();
@@ -52,17 +40,11 @@ export function getCommonlyUsedData(settingGroups: ISettingsGroup[]): ITOCEntry<
 			}
 		}
 	}
-	const settings: ISetting[] = [];
-	for (const id of COMMONLY_USED_SETTINGS) {
-		const setting = allSettings.get(id);
-		if (setting) {
-			settings.push(setting);
-		}
-	}
+	// "Commonly Used" section hidden for EHR app — only Ciyex settings shown
 	return {
 		id: 'commonlyUsed',
 		label: localize('commonlyUsed', "Commonly Used"),
-		settings
+		settings: []
 	};
 }
 
@@ -70,71 +52,67 @@ export const tocData: ITOCEntry<string> = {
 	id: 'root',
 	label: 'root',
 	children: [
+		{ id: 'ciyex/practice', label: localize('ciyexPracticeToc', "Practice"), settings: ['ciyex.practice.*'] },
+		{ id: 'ciyex/clinical', label: localize('ciyexClinicalToc', "Clinical Workflow"), settings: ['ciyex.clinical.*'] },
+		{ id: 'ciyex/calendar', label: localize('ciyexCalendarToc', "Calendar"), settings: ['ciyex.calendar.*', 'ciyex.calendarColors.*'] },
+		{ id: 'ciyex/billing', label: localize('ciyexBillingToc', "Billing"), settings: ['ciyex.billing.*'] },
+		{ id: 'ciyex/prescriptions', label: localize('ciyexRxToc', "Prescriptions"), settings: ['ciyex.prescriptions.*'] },
+		{ id: 'ciyex/lab', label: localize('ciyexLabToc', "Lab & Imaging"), settings: ['ciyex.lab.*'] },
+		{ id: 'ciyex/telehealth', label: localize('ciyexTeleToc', "Telehealth"), settings: ['ciyex.telehealth.*'] },
+		{ id: 'ciyex/portal', label: localize('ciyexPortalToc', "Patient Portal"), settings: ['ciyex.portal.*'] },
+		{ id: 'ciyex/notifications', label: localize('ciyexNotifToc', "Notifications"), settings: ['ciyex.notifications.*'] },
+		{ id: 'ciyex/security', label: localize('ciyexSecToc', "Security"), settings: ['ciyex.security.*', 'ciyex.session.*'] },
+		{ id: 'ciyex/audit', label: localize('ciyexAuditToc', "Audit & Compliance"), settings: ['ciyex.audit.*', 'ciyex.compliance.*'] },
+		{ id: 'ciyex/esign', label: localize('ciyexEsignToc', "E-Sign & Consent"), settings: ['ciyex.esign.*', 'ciyex.consent.*'] },
+		{ id: 'ciyex/documents', label: localize('ciyexDocsToc', "Documents"), settings: ['ciyex.documents.*'] },
+		{ id: 'ciyex/insurance', label: localize('ciyexInsToc', "Insurance"), settings: ['ciyex.insurance.*'] },
+		{ id: 'ciyex/roles', label: localize('ciyexRolesToc', "Roles & Permissions"), settings: ['ciyex.roles.*'] },
+		{ id: 'ciyex/features', label: localize('ciyexFeaturesToc', "Features"), settings: ['ciyex.features.*'] },
+		{ id: 'ciyex/ai', label: localize('ciyexAiToc', "AI"), settings: ['ciyex.ai.*'] },
+		{ id: 'ciyex/display', label: localize('ciyexDisplayToc', "Display"), settings: ['ciyex.display.*'] },
+		{ id: 'ciyex/flowBoard', label: localize('ciyexFlowToc', "Patient Flow Board"), settings: ['ciyex.flowBoard.*'] },
+		{ id: 'ciyex/kiosk', label: localize('ciyexKioskToc', "Kiosk"), settings: ['ciyex.kiosk.*'] },
+		{ id: 'ciyex/print', label: localize('ciyexPrintToc', "Print & PDF"), settings: ['ciyex.print.*'] },
+		{ id: 'ciyex/reporting', label: localize('ciyexReportToc', "Reporting"), settings: ['ciyex.reporting.*'] },
+		{ id: 'ciyex/server', label: localize('ciyexServerToc', "Server"), settings: ['ciyex.server.*'] },
 		{
-			id: 'ciyex',
-			label: localize('ciyex', "Ciyex"),
-			settings: ['ciyex.*'],
+			id: 'ciyex/layoutConfig',
+			label: localize('ciyexLayoutToc', "Layout Configuration"),
+			settings: ['ciyex.layout.*'],
 			children: [
-				{ id: 'ciyex/practice', label: localize('ciyexPracticeToc', "Practice"), settings: ['ciyex.practice.*'] },
-				{ id: 'ciyex/clinical', label: localize('ciyexClinicalToc', "Clinical Workflow"), settings: ['ciyex.clinical.*'] },
-				{ id: 'ciyex/calendar', label: localize('ciyexCalendarToc', "Calendar"), settings: ['ciyex.calendar.*', 'ciyex.calendarColors.*'] },
-				{ id: 'ciyex/billing', label: localize('ciyexBillingToc', "Billing"), settings: ['ciyex.billing.*'] },
-				{ id: 'ciyex/prescriptions', label: localize('ciyexRxToc', "Prescriptions"), settings: ['ciyex.prescriptions.*'] },
-				{ id: 'ciyex/lab', label: localize('ciyexLabToc', "Lab & Imaging"), settings: ['ciyex.lab.*'] },
-				{ id: 'ciyex/telehealth', label: localize('ciyexTeleToc', "Telehealth"), settings: ['ciyex.telehealth.*'] },
-				{ id: 'ciyex/portal', label: localize('ciyexPortalToc', "Patient Portal"), settings: ['ciyex.portal.*'] },
-				{ id: 'ciyex/notifications', label: localize('ciyexNotifToc', "Notifications"), settings: ['ciyex.notifications.*'] },
-				{ id: 'ciyex/security', label: localize('ciyexSecToc', "Security"), settings: ['ciyex.security.*', 'ciyex.session.*'] },
-				{ id: 'ciyex/audit', label: localize('ciyexAuditToc', "Audit & Compliance"), settings: ['ciyex.audit.*', 'ciyex.compliance.*'] },
-				{ id: 'ciyex/esign', label: localize('ciyexEsignToc', "E-Sign & Consent"), settings: ['ciyex.esign.*', 'ciyex.consent.*'] },
-				{ id: 'ciyex/documents', label: localize('ciyexDocsToc', "Documents"), settings: ['ciyex.documents.*'] },
-				{ id: 'ciyex/insurance', label: localize('ciyexInsToc', "Insurance"), settings: ['ciyex.insurance.*'] },
-				{ id: 'ciyex/roles', label: localize('ciyexRolesToc', "Roles & Permissions"), settings: ['ciyex.roles.*'] },
-				{ id: 'ciyex/features', label: localize('ciyexFeaturesToc', "Features"), settings: ['ciyex.features.*'] },
-				{ id: 'ciyex/ai', label: localize('ciyexAiToc', "AI"), settings: ['ciyex.ai.*'] },
-				{ id: 'ciyex/display', label: localize('ciyexDisplayToc', "Display"), settings: ['ciyex.display.*'] },
-				{ id: 'ciyex/flowBoard', label: localize('ciyexFlowToc', "Patient Flow Board"), settings: ['ciyex.flowBoard.*'] },
-				{ id: 'ciyex/kiosk', label: localize('ciyexKioskToc', "Kiosk"), settings: ['ciyex.kiosk.*'] },
-				{ id: 'ciyex/print', label: localize('ciyexPrintToc', "Print & PDF"), settings: ['ciyex.print.*'] },
-				{ id: 'ciyex/reporting', label: localize('ciyexReportToc', "Reporting"), settings: ['ciyex.reporting.*'] },
-				{ id: 'ciyex/server', label: localize('ciyexServerToc', "Server"), settings: ['ciyex.server.*'] },
-				{
-					id: 'ciyex/layoutConfig',
-					label: localize('ciyexLayoutToc', "Layout Configuration"),
-					settings: ['ciyex.layout.*'],
-					children: [
-						{ id: 'ciyex/layoutConfig/chartLayout', label: localize('ciyexChartToc', "Chart Layout"), settings: ['ciyex.layout.chartLayout'] },
-						{ id: 'ciyex/layoutConfig/encounter', label: localize('ciyexEncToc', "Encounter Form"), settings: ['ciyex.layout.encounterForm'] },
-						{ id: 'ciyex/layoutConfig/menu', label: localize('ciyexMenuToc', "Menu Config"), settings: ['ciyex.layout.menuConfig'] },
-					]
-				},
-				{
-					id: 'ciyex/fieldConfig',
-					label: localize('ciyexFieldsToc', "Field Configuration"),
-					settings: ['ciyex.fields.*'],
-					children: [
-						{ id: 'ciyex/fieldConfig/demographics', label: localize('ciyexFDemoToc', "Demographics"), settings: ['ciyex.fields.demographics'] },
-						{ id: 'ciyex/fieldConfig/vitals', label: localize('ciyexFVitalsToc', "Vitals"), settings: ['ciyex.fields.vitals'] },
-						{ id: 'ciyex/fieldConfig/problems', label: localize('ciyexFProbToc', "Problems"), settings: ['ciyex.fields.problems'] },
-						{ id: 'ciyex/fieldConfig/allergies', label: localize('ciyexFAllergyToc', "Allergies"), settings: ['ciyex.fields.allergies'] },
-						{ id: 'ciyex/fieldConfig/medications', label: localize('ciyexFMedsToc', "Medications"), settings: ['ciyex.fields.medications'] },
-						{ id: 'ciyex/fieldConfig/immunizations', label: localize('ciyexFImmToc', "Immunizations"), settings: ['ciyex.fields.immunizations'] },
-						{ id: 'ciyex/fieldConfig/labs', label: localize('ciyexFLabsToc', "Lab Results"), settings: ['ciyex.fields.labs'] },
-						{ id: 'ciyex/fieldConfig/appointments', label: localize('ciyexFApptToc', "Appointments"), settings: ['ciyex.fields.appointments'] },
-						{ id: 'ciyex/fieldConfig/insurance', label: localize('ciyexFInsToc', "Insurance"), settings: ['ciyex.fields.insurance'] },
-						{ id: 'ciyex/fieldConfig/providers', label: localize('ciyexFProvToc', "Providers"), settings: ['ciyex.fields.providers'] },
-						{ id: 'ciyex/fieldConfig/facilities', label: localize('ciyexFFacToc', "Facilities"), settings: ['ciyex.fields.facilities'] },
-						{ id: 'ciyex/fieldConfig/documents', label: localize('ciyexFDocsToc', "Documents"), settings: ['ciyex.fields.documents'] },
-						{ id: 'ciyex/fieldConfig/referrals', label: localize('ciyexFRefToc', "Referrals"), settings: ['ciyex.fields.referrals'] },
-						{ id: 'ciyex/fieldConfig/history', label: localize('ciyexFHistToc', "History"), settings: ['ciyex.fields.history'] },
-						{ id: 'ciyex/fieldConfig/visitNotes', label: localize('ciyexFNotesToc', "Visit Notes"), settings: ['ciyex.fields.visitNotes'] },
-						{ id: 'ciyex/fieldConfig/practice', label: localize('ciyexFPracToc', "Practice"), settings: ['ciyex.fields.practice'] },
-						{ id: 'ciyex/fieldConfig/referralProviders', label: localize('ciyexFRefProvToc', "Referral Providers"), settings: ['ciyex.fields.referralProviders'] },
-						{ id: 'ciyex/fieldConfig/referralPractices', label: localize('ciyexFRefPracToc', "Referral Practices"), settings: ['ciyex.fields.referralPractices'] },
-					]
-				},
+				{ id: 'ciyex/layoutConfig/chartLayout', label: localize('ciyexChartToc', "Chart Layout"), settings: ['ciyex.layout.chartLayout'] },
+				{ id: 'ciyex/layoutConfig/encounter', label: localize('ciyexEncToc', "Encounter Form"), settings: ['ciyex.layout.encounterForm'] },
+				{ id: 'ciyex/layoutConfig/menu', label: localize('ciyexMenuToc', "Menu Config"), settings: ['ciyex.layout.menuConfig'] },
 			]
 		},
+		{
+			id: 'ciyex/fieldConfig',
+			label: localize('ciyexFieldsToc', "Field Configuration"),
+			settings: ['ciyex.fields.*'],
+			children: [
+				{ id: 'ciyex/fieldConfig/demographics', label: localize('ciyexFDemoToc', "Demographics"), settings: ['ciyex.fields.demographics'] },
+				{ id: 'ciyex/fieldConfig/vitals', label: localize('ciyexFVitalsToc', "Vitals"), settings: ['ciyex.fields.vitals'] },
+				{ id: 'ciyex/fieldConfig/problems', label: localize('ciyexFProbToc', "Problems"), settings: ['ciyex.fields.problems'] },
+				{ id: 'ciyex/fieldConfig/allergies', label: localize('ciyexFAllergyToc', "Allergies"), settings: ['ciyex.fields.allergies'] },
+				{ id: 'ciyex/fieldConfig/medications', label: localize('ciyexFMedsToc', "Medications"), settings: ['ciyex.fields.medications'] },
+				{ id: 'ciyex/fieldConfig/immunizations', label: localize('ciyexFImmToc', "Immunizations"), settings: ['ciyex.fields.immunizations'] },
+				{ id: 'ciyex/fieldConfig/labs', label: localize('ciyexFLabsToc', "Lab Results"), settings: ['ciyex.fields.labs'] },
+				{ id: 'ciyex/fieldConfig/appointments', label: localize('ciyexFApptToc', "Appointments"), settings: ['ciyex.fields.appointments'] },
+				{ id: 'ciyex/fieldConfig/insurance', label: localize('ciyexFInsToc', "Insurance"), settings: ['ciyex.fields.insurance'] },
+				{ id: 'ciyex/fieldConfig/providers', label: localize('ciyexFProvToc', "Providers"), settings: ['ciyex.fields.providers'] },
+				{ id: 'ciyex/fieldConfig/facilities', label: localize('ciyexFFacToc', "Facilities"), settings: ['ciyex.fields.facilities'] },
+				{ id: 'ciyex/fieldConfig/documents', label: localize('ciyexFDocsToc', "Documents"), settings: ['ciyex.fields.documents'] },
+				{ id: 'ciyex/fieldConfig/referrals', label: localize('ciyexFRefToc', "Referrals"), settings: ['ciyex.fields.referrals'] },
+				{ id: 'ciyex/fieldConfig/history', label: localize('ciyexFHistToc', "History"), settings: ['ciyex.fields.history'] },
+				{ id: 'ciyex/fieldConfig/visitNotes', label: localize('ciyexFNotesToc', "Visit Notes"), settings: ['ciyex.fields.visitNotes'] },
+				{ id: 'ciyex/fieldConfig/practice', label: localize('ciyexFPracToc', "Practice"), settings: ['ciyex.fields.practice'] },
+				{ id: 'ciyex/fieldConfig/referralProviders', label: localize('ciyexFRefProvToc', "Referral Providers"), settings: ['ciyex.fields.referralProviders'] },
+				{ id: 'ciyex/fieldConfig/referralPractices', label: localize('ciyexFRefPracToc', "Referral Practices"), settings: ['ciyex.fields.referralPractices'] },
+			]
+		},
+		// VS Code developer settings hidden for EHR users.
+		// Uncomment below to restore for developers.
+		/*
 		{
 			id: 'editor',
 			label: localize('textEditor', "Text Editor"),
@@ -506,5 +484,6 @@ export const tocData: ITOCEntry<string> = {
 				}
 			]
 		}
+		*/
 	]
 };
