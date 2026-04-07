@@ -538,6 +538,8 @@ export class CalendarEditor extends EditorPane {
 			{ label: 'Change Status', description: `Current: ${apt.status}` },
 			{ label: 'Send Reminder', description: 'Email/SMS reminder to patient' },
 			{ label: 'Reschedule', description: 'Move to a different time' },
+			{ label: 'Create Series', description: 'Recurring appointments (e.g., 6 weekly PT)' },
+			{ label: 'Add to Waitlist', description: 'Add patient to cancellation waitlist' },
 			{ label: 'Edit Details' },
 			{ label: 'Cancel Appointment' },
 			{ label: 'Mark No-Show' },
@@ -596,6 +598,56 @@ export class CalendarEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Info, message: 'Marked as no-show' });
 				await this._refresh();
 			} catch { /* */ }
+		} else if (pick.label === 'Create Series') {
+			const count = await this.quickInputService.input({ prompt: 'Number of appointments in series', value: '6' });
+			if (!count) { return; }
+			const frequency = await this.quickInputService.pick(
+				[{ label: 'Weekly' }, { label: 'Bi-weekly' }, { label: 'Monthly' }],
+				{ placeHolder: 'Recurrence frequency' }
+			);
+			if (!frequency) { return; }
+
+			const n = parseInt(count);
+			const intervalDays = frequency.label === 'Weekly' ? 7 : frequency.label === 'Bi-weekly' ? 14 : 30;
+
+			try {
+				const baseDate = new Date(apt.startTime);
+				for (let i = 1; i <= n; i++) {
+					const newDate = new Date(baseDate);
+					newDate.setDate(baseDate.getDate() + i * intervalDays);
+					await this.apiService.fetch('/api/appointments', {
+						method: 'POST',
+						body: JSON.stringify({
+							patientName: apt.patientName,
+							appointmentType: apt.appointmentType || apt.type,
+							startTime: newDate.toISOString(),
+							status: 'scheduled',
+							duration: apt.duration || 30,
+							providerId: apt.providerId,
+							locationId: apt.locationId,
+						}),
+					});
+				}
+				this.notificationService.notify({ severity: Severity.Info, message: `Created ${n} ${frequency.label.toLowerCase()} appointments` });
+				await this._refresh();
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create series: ${err}` });
+			}
+		} else if (pick.label === 'Add to Waitlist') {
+			try {
+				await this.apiService.fetch('/api/waitlist', {
+					method: 'POST',
+					body: JSON.stringify({
+						patientName: apt.patientName,
+						requestedType: apt.appointmentType || apt.type,
+						requestedDate: apt.startTime,
+						priority: 1,
+					}),
+				});
+				this.notificationService.notify({ severity: Severity.Info, message: `${apt.patientName} added to waitlist` });
+			} catch {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Waitlist API not available' });
+			}
 		}
 	}
 
