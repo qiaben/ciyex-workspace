@@ -183,9 +183,8 @@ export class CiyexAuthGate extends Disposable {
 
 	// --- theme helpers ---
 	private _isDark(): boolean {
-		return document.body.classList.contains('vs-dark') ||
-			document.body.classList.contains('hc-black') ||
-			window.matchMedia('(prefers-color-scheme: dark)').matches;
+		// Ciyex Workspace: always use dark theme for auth gate
+		return true;
 	}
 
 	private _colors() {

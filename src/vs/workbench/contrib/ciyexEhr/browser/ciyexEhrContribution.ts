@@ -20,6 +20,7 @@ import { IEnvironmentService } from '../../../../platform/environment/common/env
 import { URI } from '../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 /**
  * Main EHR workbench contribution.
@@ -42,6 +43,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService private readonly environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 
@@ -72,6 +74,11 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		// Hide developer sidebar containers (Explorer, Search, SCM, Debug)
 		this._hideDevSidebarContainers();
+
+		// Open Calendar as welcome page (after a brief delay for workbench to finish)
+		globalThis.setTimeout(() => {
+			this.commandService.executeCommand('ciyex.openCalendar').catch(() => { /* command may not be ready */ });
+		}, 500);
 
 		// Wire patient list TreeView with API data
 		this._wirePatientList();
