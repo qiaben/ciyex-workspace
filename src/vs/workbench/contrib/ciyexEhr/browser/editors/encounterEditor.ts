@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -33,7 +34,8 @@ export class EncounterEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(EncounterEditor.ID, group, t, th, s);
 	}
 
@@ -132,16 +134,16 @@ export class EncounterEditor extends EditorPane {
 		this._slink(ctrl, 'Delete', () => this._deleteSection(si), true);
 	}
 
-	private _addSection(): void {
-		const title = globalThis.prompt?.('Section title:');
+	private async _addSection(): Promise<void> {
+		const title = await this.quickInputService.input({ prompt: 'Section title:' });
 		if (!title) { return; }
 		this.config.sections.push({ key: title.toLowerCase().replace(/\s+/g, '-'), title, columns: 1, visible: true, collapsible: true, fields: [] });
 		this._dirty = true; this._render();
 	}
 
-	private _editSection(si: number): void {
+	private async _editSection(si: number): Promise<void> {
 		const sec = this.config.sections[si];
-		const title = globalThis.prompt?.('Section title:', sec.title);
+		const title = await this.quickInputService.input({ prompt: 'Section title:', value: sec.title });
 		if (title !== null && title !== undefined) { sec.title = title; sec.key = title.toLowerCase().replace(/\s+/g, '-'); this._dirty = true; this._render(); }
 	}
 

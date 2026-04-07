@@ -11,6 +11,7 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -29,7 +30,8 @@ export class ColorsEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService) {
+		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(ColorsEditor.ID, group, t, th, s);
 	}
 
@@ -106,8 +108,8 @@ export class ColorsEditor extends EditorPane {
 		this._addColorToCategory(0);
 	}
 
-	private _addColorToCategory(ci: number): void {
-		const label = globalThis.prompt?.('Entity name (e.g., "New Patient"):');
+	private async _addColorToCategory(ci: number): Promise<void> {
+		const label = await this.quickInputService.input({ prompt: 'Entity name (e.g., "New Patient"):' });
 		if (!label) { return; }
 		const color = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
 		const lum = this._luminance(color);

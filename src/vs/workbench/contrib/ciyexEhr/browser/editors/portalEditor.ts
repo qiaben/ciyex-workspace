@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -35,7 +36,8 @@ export class PortalEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(PortalEditor.ID, group, t, th, s);
 	}
 
@@ -114,7 +116,7 @@ export class PortalEditor extends EditorPane {
 		}
 	}
 
-	private _renderFeatures(): void {
+	private async _renderFeatures(): Promise<void> {
 		const featureKeys = Object.keys(this.config.features).length > 0
 			? Object.keys(this.config.features)
 			: ['onlineBooking', 'messaging', 'labResults', 'prescriptionRefills', 'billPay', 'formSubmission', 'telehealth', 'educationalContent'];
@@ -134,13 +136,13 @@ export class PortalEditor extends EditorPane {
 			lbl.style.cssText = 'font-size:13px;text-transform:capitalize;';
 		}
 
-		this._link(this.body, '+ Add Feature', () => {
-			const name = globalThis.prompt?.('Feature name (camelCase):');
+		this._link(this.body, '+ Add Feature', async () => {
+			const name = await this.quickInputService.input({ prompt: 'Feature name (camelCase):' });
 			if (name) { this.config.features[name] = true; this._dirty = true; this._render(); }
 		});
 	}
 
-	private _renderForms(): void {
+	private async _renderForms(): Promise<void> {
 		for (let i = 0; i < this.config.forms.length; i++) {
 			const form = this.config.forms[i];
 			const row = DOM.append(this.body, DOM.$('.setting-item'));
@@ -169,17 +171,17 @@ export class PortalEditor extends EditorPane {
 			}
 		}
 
-		this._link(this.body, '+ Add Form', () => {
-			const title = globalThis.prompt?.('Form title:');
+		this._link(this.body, '+ Add Form', async () => {
+			const title = await this.quickInputService.input({ prompt: 'Form title:' });
 			if (title) { this.config.forms.push({ title, fields: [], active: true }); this._dirty = true; this._render(); }
 		});
 	}
 
-	private _editForm(fi: number): void {
+	private async _editForm(fi: number): Promise<void> {
 		const form = this.config.forms[fi];
-		const title = globalThis.prompt?.('Form title:', form.title);
+		const title = await this.quickInputService.input({ prompt: 'Form title:', value: form.title });
 		if (title !== null && title !== undefined) { form.title = title; }
-		const desc = globalThis.prompt?.('Description:', form.description || '');
+		const desc = await this.quickInputService.input({ prompt: 'Description:', value: form.description || '' });
 		if (desc !== null && desc !== undefined) { form.description = desc; }
 		this._dirty = true;
 		this._render();
@@ -193,7 +195,7 @@ export class PortalEditor extends EditorPane {
 		this._render();
 	}
 
-	private _renderNavigation(): void {
+	private async _renderNavigation(): Promise<void> {
 		for (let i = 0; i < this.config.navigation.length; i++) {
 			const item = this.config.navigation[i];
 			const row = DOM.append(this.body, DOM.$('.setting-item'));
@@ -223,10 +225,10 @@ export class PortalEditor extends EditorPane {
 			this._slink(ctrl, '\u25BC', () => { if (i < this.config.navigation.length - 1) { [this.config.navigation[i], this.config.navigation[i + 1]] = [this.config.navigation[i + 1], this.config.navigation[i]]; this._dirty = true; this._render(); } });
 		}
 
-		this._link(this.body, '+ Add Nav Item', () => {
-			const label = globalThis.prompt?.('Label:');
+		this._link(this.body, '+ Add Nav Item', async () => {
+			const label = await this.quickInputService.input({ prompt: 'Label:' });
 			if (!label) { return; }
-			const route = globalThis.prompt?.('Route:', '/') || '/';
+			const route = await this.quickInputService.input({ prompt: 'Route:', value: '/' }) || '/';
 			this.config.navigation.push({ key: label.toLowerCase().replace(/\s+/g, '-'), label, route, icon: 'Home', visible: true });
 			this._dirty = true;
 			this._render();

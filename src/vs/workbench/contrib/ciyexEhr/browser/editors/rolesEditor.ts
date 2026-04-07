@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -29,7 +30,8 @@ export class RolesEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(RolesEditor.ID, group, t, th, s);
 	}
 
@@ -91,21 +93,21 @@ export class RolesEditor extends EditorPane {
 		}
 	}
 
-	private _addRole(): void {
-		const name = globalThis.prompt?.('Role name (e.g., physician):'); if (!name) { return; }
-		const label = globalThis.prompt?.('Display label:', name.charAt(0).toUpperCase() + name.slice(1)); if (!label) { return; }
-		const desc = globalThis.prompt?.('Description:') || '';
+	private async _addRole(): Promise<void> {
+		const name = await this.quickInputService.input({ prompt: 'Role name (e.g., physician):' }); if (!name) { return; }
+		const label = await this.quickInputService.input({ prompt: 'Display label:', value: name.charAt(0).toUpperCase() + name.slice(1) }); if (!label) { return; }
+		const desc = await this.quickInputService.input({ prompt: 'Description:' }) || '';
 		this.config.roles.push({ id: name, name, label, description: desc, isSystem: false, smartScopes: [], permissions: [] });
 		this._dirty = true; this._render();
 	}
 
-	private _editRole(ri: number): void {
+	private async _editRole(ri: number): Promise<void> {
 		const role = this.config.roles[ri];
-		const label = globalThis.prompt?.('Label:', role.label); if (label !== null && label !== undefined) { role.label = label; }
-		const desc = globalThis.prompt?.('Description:', role.description); if (desc !== null && desc !== undefined) { role.description = desc; }
-		const scopes = globalThis.prompt?.('FHIR Scopes (comma-separated):', role.smartScopes.join(', '));
+		const label = await this.quickInputService.input({ prompt: 'Label:', value: role.label }); if (label !== null && label !== undefined) { role.label = label; }
+		const desc = await this.quickInputService.input({ prompt: 'Description:', value: role.description }); if (desc !== null && desc !== undefined) { role.description = desc; }
+		const scopes = await this.quickInputService.input({ prompt: 'FHIR Scopes (comma-separated):', value: role.smartScopes.join(', ') });
 		if (scopes !== null && scopes !== undefined) { role.smartScopes = scopes.split(',').map(s => s.trim()).filter(Boolean); }
-		const perms = globalThis.prompt?.('Permissions (comma-separated):', role.permissions.join(', '));
+		const perms = await this.quickInputService.input({ prompt: 'Permissions (comma-separated):', value: role.permissions.join(', ') });
 		if (perms !== null && perms !== undefined) { role.permissions = perms.split(',').map(s => s.trim()).filter(Boolean); }
 		this._dirty = true; this._render();
 	}

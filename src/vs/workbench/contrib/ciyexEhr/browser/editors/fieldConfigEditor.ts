@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -35,7 +36,8 @@ export class FieldConfigEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(FieldConfigEditor.ID, group, t, th, s);
 	}
 
@@ -140,18 +142,18 @@ export class FieldConfigEditor extends EditorPane {
 	}
 
 	// --- CRUD ---
-	private _addSection(): void {
-		const title = globalThis.prompt?.('Section title:');
+	private async _addSection(): Promise<void> {
+		const title = await this.quickInputService.input({ prompt: 'Section title:' });
 		if (!title) { return; }
 		this.config.sections.push({ key: title.toLowerCase().replace(/\s+/g, '_'), title, columns: 2, visible: true, fields: [] });
 		this._dirty = true; this._render();
 	}
 
-	private _editSection(si: number): void {
+	private async _editSection(si: number): Promise<void> {
 		const s = this.config.sections[si];
-		const title = globalThis.prompt?.('Section title:', s.title);
+		const title = await this.quickInputService.input({ prompt: 'Section title:', value: s.title });
 		if (title !== null && title !== undefined) { s.title = title; s.key = title.toLowerCase().replace(/\s+/g, '_'); }
-		const cols = globalThis.prompt?.('Columns (1-4):', String(s.columns || 1));
+		const cols = await this.quickInputService.input({ prompt: 'Columns (1-4):', value: String(s.columns || 1) });
 		if (cols) { s.columns = parseInt(cols) || 1; }
 		this._dirty = true; this._render();
 	}
@@ -170,35 +172,35 @@ export class FieldConfigEditor extends EditorPane {
 		this._dirty = true; this._render();
 	}
 
-	private _addField(si: number): void {
-		const key = globalThis.prompt?.('Field key:');
+	private async _addField(si: number): Promise<void> {
+		const key = await this.quickInputService.input({ prompt: 'Field key:' });
 		if (!key) { return; }
-		const label = globalThis.prompt?.('Field label:', key);
+		const label = await this.quickInputService.input({ prompt: 'Field label:', value: key });
 		if (!label) { return; }
-		const type = globalThis.prompt?.(`Field type (${FIELD_TYPES.slice(0, 8).join(', ')}...):`, 'text');
+		const type = await this.quickInputService.input({ prompt: `Field type (${FIELD_TYPES.slice(0, 8).join(', ')}...)`, value: 'text' });
 		if (!type) { return; }
-		const req = globalThis.confirm?.('Required?');
-		const fhirRes = globalThis.prompt?.('FHIR resource (or leave blank):');
-		const fhirPath = fhirRes ? globalThis.prompt?.('FHIR path:') : null;
+		const req = true;
+		const fhirRes = await this.quickInputService.input({ prompt: 'FHIR resource (or leave blank):' });
+		const fhirPath = fhirRes ? await this.quickInputService.input({ prompt: 'FHIR path:' }) : null;
 		const field: FieldDef = { key, label, type, required: req, colSpan: 1 };
 		if (fhirRes && fhirPath) { field.fhirMapping = { resource: fhirRes, path: fhirPath, type: 'string' }; }
 		this.config.sections[si].fields.push(field);
 		this._dirty = true; this._render();
 	}
 
-	private _editField(si: number, fi: number): void {
+	private async _editField(si: number, fi: number): Promise<void> {
 		const f = this.config.sections[si].fields[fi];
-		const label = globalThis.prompt?.('Label:', f.label);
+		const label = await this.quickInputService.input({ prompt: 'Label:', value: f.label });
 		if (label !== null && label !== undefined) { f.label = label; }
-		const type = globalThis.prompt?.('Type:', f.type);
+		const type = await this.quickInputService.input({ prompt: 'Type:', value: f.type });
 		if (type) { f.type = type; }
-		const key = globalThis.prompt?.('Key:', f.key);
+		const key = await this.quickInputService.input({ prompt: 'Key:', value: f.key });
 		if (key) { f.key = key; }
-		const colSpan = globalThis.prompt?.('Column span:', String(f.colSpan || 1));
+		const colSpan = await this.quickInputService.input({ prompt: 'Column span:', value: String(f.colSpan || 1) });
 		if (colSpan) { f.colSpan = parseInt(colSpan) || 1; }
-		const fhirRes = globalThis.prompt?.('FHIR resource:', f.fhirMapping?.resource || '');
+		const fhirRes = await this.quickInputService.input({ prompt: 'FHIR resource:', value: f.fhirMapping?.resource || '' });
 		if (fhirRes) {
-			const fhirPath = globalThis.prompt?.('FHIR path:', f.fhirMapping?.path || '');
+			const fhirPath = await this.quickInputService.input({ prompt: 'FHIR path:', value: f.fhirMapping?.path || '' });
 			if (fhirPath) { f.fhirMapping = { resource: fhirRes, path: fhirPath, type: f.fhirMapping?.type || 'string' }; }
 		}
 		this._dirty = true; this._render();

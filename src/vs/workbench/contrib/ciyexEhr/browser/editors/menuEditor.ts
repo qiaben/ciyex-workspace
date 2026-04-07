@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -29,7 +30,8 @@ export class MenuEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService) {
 		super(MenuEditor.ID, group, t, th, s);
 	}
 
@@ -86,20 +88,20 @@ export class MenuEditor extends EditorPane {
 		}
 	}
 
-	private _addItem(): void {
-		const label = globalThis.prompt?.('Menu item label:'); if (!label) { return; }
-		const icon = globalThis.prompt?.('Icon:', 'FileText') || 'FileText';
-		const slug = globalThis.prompt?.('Screen slug (e.g., /calendar):') || '';
+	private async _addItem(): Promise<void> {
+		const label = await this.quickInputService.input({ prompt: 'Menu item label:' }); if (!label) { return; }
+		const icon = await this.quickInputService.input({ prompt: 'Icon:', value: 'FileText' }) || 'FileText';
+		const slug = await this.quickInputService.input({ prompt: 'Screen slug (e.g., /calendar):' }) || '';
 		this.config.items.push({ itemKey: label.toLowerCase().replace(/\s+/g, '-'), label, icon, screenSlug: slug || undefined, position: this.config.items.length, visible: true, children: [] });
 		this._dirty = true; this._render();
 	}
 
-	private _editItem(items: MenuItem[], i: number): void {
+	private async _editItem(items: MenuItem[], i: number): Promise<void> {
 		const item = items[i];
-		const label = globalThis.prompt?.('Label:', item.label); if (label !== null && label !== undefined) { item.label = label; }
-		const icon = globalThis.prompt?.('Icon:', item.icon); if (icon) { item.icon = icon; }
-		const slug = globalThis.prompt?.('Screen slug:', item.screenSlug || ''); if (slug !== null && slug !== undefined) { item.screenSlug = slug || undefined; }
-		const perm = globalThis.prompt?.('Required permission:', item.requiredPermission || ''); if (perm !== null && perm !== undefined) { item.requiredPermission = perm || undefined; }
+		const label = await this.quickInputService.input({ prompt: 'Label:', value: item.label }); if (label !== null && label !== undefined) { item.label = label; }
+		const icon = await this.quickInputService.input({ prompt: 'Icon:', value: item.icon }); if (icon) { item.icon = icon; }
+		const slug = await this.quickInputService.input({ prompt: 'Screen slug:', value: item.screenSlug || '' }); if (slug !== null && slug !== undefined) { item.screenSlug = slug || undefined; }
+		const perm = await this.quickInputService.input({ prompt: 'Required permission:', value: item.requiredPermission || '' }); if (perm !== null && perm !== undefined) { item.requiredPermission = perm || undefined; }
 		this._dirty = true; this._render();
 	}
 
