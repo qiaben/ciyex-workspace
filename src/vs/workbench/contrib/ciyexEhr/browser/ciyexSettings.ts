@@ -103,7 +103,7 @@ configRegistry.registerConfiguration({
 		'ciyex.calendar.defaultView': {
 			type: 'string',
 			enum: ['day', 'week', 'month'],
-			default: 'week',
+			default: 'day',
 			description: localize('ciyexCalView', "Default calendar view when opening the calendar."),
 			scope: ConfigurationScope.WINDOW,
 			order: 1,

@@ -61,12 +61,13 @@ export class CalendarEditor extends EditorPane {
 	private gridContainer!: HTMLElement;
 	private headerBar!: HTMLElement;
 	private currentDate = new Date();
-	private viewMode: 'day' | 'week' | 'month' = 'week';
+	private viewMode: 'day' | 'week' | 'month' = 'day';
 	private appointments: Appointment[] = [];
 	private providerFilter = '';
 	private locationFilter = '';
 	private providers: Array<{ id: string; name: string }> = [];
 	private locations: Array<{ id: string; name: string }> = [];
+	private scheduleBlocks: Array<{ providerId?: string; status: string; startTime: string; endTime: string; recurrence?: { frequency: string; byWeekday?: string[] }; serviceType?: string }> = [];
 
 	constructor(
 		group: IEditorGroup,
@@ -154,6 +155,19 @@ export class CalendarEditor extends EditorPane {
 				}
 			} catch { /* */ }
 		}
+
+		// Load provider schedule blocks (availability)
+		if (this.providerFilter) {
+			try {
+				const res = await this.apiService.fetch(`/api/providers/${this.providerFilter}/availability`);
+				if (res.ok) {
+					const data = await res.json();
+					this.scheduleBlocks = data?.data || (Array.isArray(data) ? data : []);
+				}
+			} catch { this.scheduleBlocks = []; }
+		} else {
+			this.scheduleBlocks = [];
+		}
 	}
 
 	private _getDateRange(): { startDate: string; endDate: string } {
@@ -233,6 +247,15 @@ export class CalendarEditor extends EditorPane {
 		}
 		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._refresh(); });
 
+		// New appointment button
+		const newBtn = this._btn(this.headerBar, '+ New', async () => {
+			const today = this.currentDate.toISOString().split('T')[0];
+			await this._createAppointment(today, '09:00');
+		});
+		newBtn.style.background = 'var(--vscode-button-background)';
+		newBtn.style.color = 'var(--vscode-button-foreground)';
+		newBtn.style.fontWeight = '600';
+
 		// Appointment count
 		const count = DOM.append(this.headerBar, DOM.$('span'));
 		count.textContent = `${this.appointments.length} appts`;
@@ -292,10 +315,25 @@ export class CalendarEditor extends EditorPane {
 
 				// Day cells
 				for (let di = 0; di < days.length; di++) {
+					// Check if this slot is outside provider availability (blocked)
+					const dayOfWeek = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][days[di].getDay()];
+					const slotTime = hour * 60 + minute;
+					const isBlocked = this.scheduleBlocks.length > 0 && !this.scheduleBlocks.some(b => {
+						if (b.status !== 'active') { return false; }
+						if (b.recurrence?.byWeekday && !b.recurrence.byWeekday.includes(dayOfWeek)) { return false; }
+						try {
+							const start = parseInt(b.startTime?.split(':')[0] || '0') * 60 + parseInt(b.startTime?.split(':')[1] || '0');
+							const end = parseInt(b.endTime?.split(':')[0] || '0') * 60 + parseInt(b.endTime?.split(':')[1] || '0');
+							return slotTime >= start && slotTime < end;
+						} catch { return false; }
+					});
+
 					const cell = DOM.append(table, DOM.$('.cal-cell'));
-					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
-					cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
-					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${isBlocked ? 'background:rgba(128,128,128,0.06);' : ''}`;
+					if (!isBlocked) {
+						cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
+						cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+					}
 
 					// Click to create appointment
 					const dayStr = days[di].toISOString().split('T')[0];
