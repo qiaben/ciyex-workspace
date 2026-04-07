@@ -533,88 +533,238 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private async _createAppointment(date: string, time: string): Promise<void> {
-		// Step 1: Patient search/lookup
-		const patientQuery = await this.quickInputService.input({ prompt: 'Search patient (name or MRN)', placeHolder: 'Type to search...' });
-		if (!patientQuery) { return; }
+		// Calculate end time (default 30 min)
+		const [h, m] = time.split(':').map(Number);
+		const endH = m + 30 >= 60 ? h + 1 : h;
+		const endM = (m + 30) % 60;
+		const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-		// Search patients from API
-		let patientName = patientQuery;
-		let patientId = '';
-		try {
-			const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(patientQuery)}&page=0&size=10`);
-			if (res.ok) {
-				const data = await res.json();
-				const patients = data?.data?.content || data?.content || [];
-				if (patients.length > 0) {
-					const items = patients.map((p: Record<string, string>) => ({
-						label: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || '',
-						description: `DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`,
-						id: p.id,
-					}));
-					const pick = await this.quickInputService.pick(items, { placeHolder: `${patients.length} patients found` });
-					if (pick) {
-						patientName = pick.label;
-						patientId = (pick as unknown as { id: string }).id || '';
-					} else {
-						return;
-					}
-				}
-			}
-		} catch { /* use typed name */ }
+		// Build form overlay
+		const overlay = DOM.append(this.root, DOM.$('.appt-form-overlay'));
+		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;';
 
-		// Step 2: Appointment type
-		const types = ['New Patient', 'Follow-Up', 'Sick Visit', 'Annual Physical', 'Well Child', 'Telehealth', 'Urgent', 'Procedure', 'Lab Only', 'Injection'];
-		const typePick = await this.quickInputService.pick(
-			types.map(t => ({ label: t })),
-			{ placeHolder: 'Appointment type' }
-		);
-		if (!typePick) { return; }
+		const form = DOM.append(overlay, DOM.$('.appt-form'));
+		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
 
-		// Step 3: Provider (optional)
-		let providerId = '';
-		let providerName = '';
-		if (this.providers.length > 0) {
-			const provPick = await this.quickInputService.pick(
-				[{ label: 'No preference', description: '' }, ...this.providers.map(p => ({ label: p.name, description: p.id }))],
-				{ placeHolder: 'Select provider (optional)' }
-			);
-			if (provPick && provPick.label !== 'No preference') {
-				const prov = this.providers.find(p => p.name === provPick.label);
-				if (prov) { providerId = prov.id; providerName = prov.name; }
-			}
-		}
+		// Title
+		const title = DOM.append(form, DOM.$('h3'));
+		title.textContent = 'Schedule Appointment';
+		title.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
 
-		// Step 4: Duration
-		const durPick = await this.quickInputService.pick(
-			[{ label: '15 min' }, { label: '30 min' }, { label: '45 min' }, { label: '60 min' }],
-			{ placeHolder: 'Duration' }
-		);
-		const duration = durPick ? parseInt(durPick.label) : 30;
+		// Helper: create form field
+		const field = (label: string, id: string, type: string, value: string, required: boolean, options?: Array<{ value: string; label: string }>): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement => {
+			const group = DOM.append(form, DOM.$('.form-group'));
+			group.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(group, DOM.$('label'));
+			lbl.textContent = label + (required ? ' *' : '');
+			lbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;color:var(--vscode-foreground);';
+			const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 
-		// Step 5: Confirm and create
-		try {
-			const res = await this.apiService.fetch('/api/appointments', {
-				method: 'POST',
-				body: JSON.stringify({
-					patientName,
-					patientId: patientId || undefined,
-					appointmentType: typePick.label,
-					startTime: `${date}T${time}:00`,
-					status: 'scheduled',
-					duration,
-					providerId: providerId || undefined,
-					providerName: providerName || undefined,
-				}),
-			});
-			if (res.ok) {
-				this.notificationService.notify({ severity: Severity.Info, message: `Scheduled ${typePick.label} for ${patientName} at ${time} with ${providerName || 'any provider'}` });
-				await this._refresh();
+			if (options) {
+				const sel = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
+				sel.id = id; sel.style.cssText = inputStyle;
+				for (const opt of options) { const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement; o.value = opt.value; o.textContent = opt.label; o.selected = opt.value === value; }
+				return sel;
+			} else if (type === 'textarea') {
+				const ta = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
+				ta.id = id; ta.value = value; ta.rows = 3; ta.style.cssText = inputStyle + 'resize:vertical;';
+				return ta;
 			} else {
-				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create appointment (${res.status})` });
+				const inp = DOM.append(group, DOM.$('input')) as HTMLInputElement;
+				inp.id = id; inp.type = type; inp.value = value; inp.style.cssText = inputStyle;
+				return inp;
 			}
-		} catch (err) {
-			this.notificationService.notify({ severity: Severity.Error, message: `Failed to create: ${err}` });
-		}
+		};
+
+		// Form row helper
+		const row = (label1: string, id1: string, type1: string, val1: string, req1: boolean, label2: string, id2: string, type2: string, val2: string, req2: boolean) => {
+			const r = DOM.append(form, DOM.$('.form-row'));
+			r.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
+			const g1 = DOM.append(r, DOM.$('.fg')); const g2 = DOM.append(r, DOM.$('.fg'));
+			const makeField = (parent: HTMLElement, label: string, id: string, type: string, value: string, required: boolean) => {
+				const lbl = DOM.append(parent, DOM.$('label'));
+				lbl.textContent = label + (required ? ' *' : '');
+				lbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
+				const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
+				inp.id = id; inp.type = type; inp.value = value;
+				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+				return inp;
+			};
+			makeField(g1, label1, id1, type1, val1, req1);
+			makeField(g2, label2, id2, type2, val2, req2);
+		};
+
+		// --- Form Fields ---
+
+		// Patient search (with live results)
+		const patientGroup = DOM.append(form, DOM.$('.form-group'));
+		patientGroup.style.cssText = 'margin-bottom:12px;position:relative;';
+		const patLabel = DOM.append(patientGroup, DOM.$('label'));
+		patLabel.textContent = 'Patient *';
+		patLabel.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
+		const patInput = DOM.append(patientGroup, DOM.$('input')) as HTMLInputElement;
+		patInput.id = 'patientSearch'; patInput.placeholder = 'Search by name or MRN...';
+		patInput.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		const patResults = DOM.append(patientGroup, DOM.$('.pat-results'));
+		patResults.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:150px;overflow-y:auto;z-index:10;display:none;';
+		const patIdHidden = DOM.append(patientGroup, DOM.$('input')) as HTMLInputElement;
+		patIdHidden.type = 'hidden'; patIdHidden.id = 'patientId';
+
+		let searchTimer: ReturnType<typeof setTimeout> | undefined;
+		patInput.addEventListener('input', () => {
+			if (searchTimer) { clearTimeout(searchTimer); }
+			const q = patInput.value;
+			if (q.length < 2) { patResults.style.display = 'none'; return; }
+			searchTimer = setTimeout(async () => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+					if (res.ok) {
+						const data = await res.json();
+						const patients = data?.data?.content || data?.content || [];
+						DOM.clearNode(patResults);
+						for (const p of patients) {
+							const item = DOM.append(patResults, DOM.$('div'));
+							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+							item.textContent = `${p.firstName || ''} ${p.lastName || ''} — DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`;
+							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+							item.addEventListener('mouseleave', () => { item.style.background = ''; });
+							item.addEventListener('click', () => {
+								patInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+								patIdHidden.value = p.id || '';
+								patResults.style.display = 'none';
+							});
+						}
+						patResults.style.display = patients.length > 0 ? 'block' : 'none';
+					}
+				} catch { /* */ }
+			}, 300);
+		});
+
+		// Visit Type
+		const visitTypes = [
+			{ value: 'Consultation', label: 'Consultation' }, { value: 'New Patient', label: 'New Patient' },
+			{ value: 'Follow-Up', label: 'Follow-Up' }, { value: 'Sick Visit', label: 'Sick Visit' },
+			{ value: 'Annual Physical', label: 'Annual Physical' }, { value: 'Well Child', label: 'Well Child' },
+			{ value: 'Telehealth', label: 'Telehealth' }, { value: 'Urgent', label: 'Urgent' },
+			{ value: 'Procedure', label: 'Procedure' }, { value: 'Lab Only', label: 'Lab Only' },
+			{ value: 'Injection', label: 'Injection' },
+		];
+		field('Visit Type', 'visitType', 'select', 'Consultation', false, visitTypes);
+
+		// Date + Time row
+		row('Date', 'startDate', 'date', date, true, 'Start Time', 'startTime', 'time', time, true);
+		row('End Time', 'endTime', 'time', endTime, true, 'Priority', 'priority', 'text', 'Routine', false);
+
+		// Provider
+		const provOptions = [{ value: '', label: 'Select provider...' }, ...this.providers.map(p => ({ value: p.id, label: p.name }))];
+		field('Provider', 'providerId', 'select', '', true, provOptions);
+
+		// Location
+		const locOptions = [{ value: '', label: 'Select location...' }, ...this.locations.map(l => ({ value: l.id, label: l.name }))];
+		field('Location', 'locationId', 'select', '', true, locOptions);
+
+		// Status
+		field('Status', 'status', 'select', 'scheduled', false, [
+			{ value: 'scheduled', label: 'Scheduled' }, { value: 'confirmed', label: 'Confirmed' },
+		]);
+
+		// Notes
+		field('Reason / Notes', 'notes', 'textarea', '', false);
+
+		// Buttons
+		const btnRow = DOM.append(form, DOM.$('.btn-row'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 16px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
+		cancelBtn.addEventListener('click', () => { overlay.remove(); });
+
+		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Schedule Appointment';
+		saveBtn.style.cssText = 'padding:6px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+
+		saveBtn.addEventListener('click', async () => {
+			const patName = patInput.value;
+			const patId = patIdHidden.value;
+			const visitType = (form.querySelector('#visitType') as HTMLSelectElement)?.value;
+			const startD = (form.querySelector('#startDate') as HTMLInputElement)?.value;
+			const startT = (form.querySelector('#startTime') as HTMLInputElement)?.value;
+			const endT = (form.querySelector('#endTime') as HTMLInputElement)?.value;
+			const provId = (form.querySelector('#providerId') as HTMLSelectElement)?.value;
+			const locId = (form.querySelector('#locationId') as HTMLSelectElement)?.value;
+			const status = (form.querySelector('#status') as HTMLSelectElement)?.value;
+			const notes = (form.querySelector('#notes') as HTMLTextAreaElement)?.value;
+
+			if (!patName) { this.notificationService.notify({ severity: Severity.Warning, message: 'Patient is required' }); return; }
+			if (!startD || !startT) { this.notificationService.notify({ severity: Severity.Warning, message: 'Date and time are required' }); return; }
+
+			// Calculate duration in minutes
+			const startMins = parseInt(startT.split(':')[0]) * 60 + parseInt(startT.split(':')[1]);
+			const endMins = parseInt(endT.split(':')[0]) * 60 + parseInt(endT.split(':')[1]);
+			const duration = endMins > startMins ? endMins - startMins : 30;
+
+			const provName = this.providers.find(p => p.id === provId)?.name || '';
+
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Scheduling...';
+
+			try {
+				// Try FHIR-style endpoint first, fallback to simple
+				const endpoints = [
+					patId ? `/api/fhir-resource/appointments/patient/${patId}` : null,
+					'/api/appointments',
+				].filter(Boolean) as string[];
+
+				let success = false;
+				for (const endpoint of endpoints) {
+					try {
+						const body: Record<string, unknown> = {
+							appointmentType: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0276', code: visitType, display: visitType }], text: visitType },
+							status: status || 'scheduled',
+							priority: (form.querySelector('#priority') as HTMLInputElement)?.value || 'routine',
+							start: `${startD}T${startT}:00`,
+							end: `${startD}T${endT}:00`,
+							reason: notes || null,
+							patientName: patName,
+							patientId: patId || undefined,
+							providerId: provId || undefined,
+							providerName: provName || undefined,
+							locationId: locId || undefined,
+							duration,
+							participant: [
+								patId ? { actor: { reference: `Patient/${patId}` }, required: 'required', status: 'accepted' } : null,
+								provId ? { actor: { reference: `Practitioner/${provId}` }, required: 'required', status: 'accepted' } : null,
+								locId ? { actor: { reference: `Location/${locId}` }, required: 'required', status: 'accepted' } : null,
+							].filter(Boolean),
+						};
+
+						const res = await this.apiService.fetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
+						if (res.ok) {
+							success = true;
+							break;
+						}
+					} catch { /* try next */ }
+				}
+
+				overlay.remove();
+				if (success) {
+					this.notificationService.notify({ severity: Severity.Info, message: `Scheduled ${visitType} for ${patName} at ${startT}${provName ? ' with ' + provName : ''}` });
+					await this._refresh();
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create appointment. Check API connection.' });
+				}
+			} catch (err) {
+				overlay.remove();
+				this.notificationService.notify({ severity: Severity.Error, message: `Error: ${err}` });
+			}
+		});
+
+		// Close on overlay click (outside form)
+		overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); } });
+
+		// Focus patient search
+		patInput.focus();
 	}
 
 	private async _editAppointment(apt: Appointment): Promise<void> {
