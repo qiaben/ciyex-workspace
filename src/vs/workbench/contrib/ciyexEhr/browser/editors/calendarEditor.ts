@@ -247,6 +247,12 @@ export class CalendarEditor extends EditorPane {
 		}
 		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._refresh(); });
 
+		// Find slot button
+		this._btn(this.headerBar, 'Find Slot', () => { this._findAvailableSlot(); });
+
+		// Stats button
+		this._btn(this.headerBar, 'Stats', () => { this._showStats(); });
+
 		// New appointment button
 		const newBtn = this._btn(this.headerBar, '+ New', async () => {
 			const today = this.currentDate.toISOString().split('T')[0];
@@ -530,6 +536,8 @@ export class CalendarEditor extends EditorPane {
 	private async _editAppointment(apt: Appointment): Promise<void> {
 		const items = [
 			{ label: 'Change Status', description: `Current: ${apt.status}` },
+			{ label: 'Send Reminder', description: 'Email/SMS reminder to patient' },
+			{ label: 'Reschedule', description: 'Move to a different time' },
 			{ label: 'Edit Details' },
 			{ label: 'Cancel Appointment' },
 			{ label: 'Mark No-Show' },
@@ -550,6 +558,32 @@ export class CalendarEditor extends EditorPane {
 					await this._refresh();
 				} catch { /* */ }
 			}
+		} else if (pick.label === 'Send Reminder') {
+			const channels = await this.quickInputService.pick(
+				[{ label: 'Email' }, { label: 'SMS' }, { label: 'Both' }],
+				{ placeHolder: 'Send reminder via' }
+			);
+			if (channels) {
+				try {
+					await this.apiService.fetch(`/api/appointments/${apt.id}/reminder`, { method: 'POST', body: JSON.stringify({ channel: channels.label.toLowerCase() }) });
+					this.notificationService.notify({ severity: Severity.Info, message: `Reminder sent via ${channels.label}` });
+				} catch {
+					this.notificationService.notify({ severity: Severity.Warning, message: 'Reminder API not available' });
+				}
+			}
+		} else if (pick.label === 'Reschedule') {
+			const newDate = await this.quickInputService.input({ prompt: 'New date (YYYY-MM-DD)', value: new Date().toISOString().split('T')[0] });
+			if (!newDate) { return; }
+			const newTime = await this.quickInputService.input({ prompt: 'New time (HH:MM)', value: '09:00' });
+			if (!newTime) { return; }
+			try {
+				await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, startTime: `${newDate}T${newTime}:00` }) });
+				this.notificationService.notify({ severity: Severity.Info, message: 'Appointment rescheduled' });
+				this.currentDate = new Date(newDate + 'T00:00:00');
+				await this._refresh();
+			} catch {
+				this.notificationService.notify({ severity: Severity.Error, message: 'Failed to reschedule' });
+			}
 		} else if (pick.label === 'Cancel Appointment') {
 			try {
 				await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
@@ -562,6 +596,106 @@ export class CalendarEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Info, message: 'Marked as no-show' });
 				await this._refresh();
 			} catch { /* */ }
+		}
+	}
+
+	private async _showStats(): Promise<void> {
+		const total = this.appointments.length;
+		const completed = this.appointments.filter(a => ['fulfilled', 'completed'].includes(a.status?.toLowerCase())).length;
+		const noShows = this.appointments.filter(a => ['noshow', 'no-show'].includes(a.status?.toLowerCase())).length;
+		const cancelled = this.appointments.filter(a => a.status?.toLowerCase() === 'cancelled').length;
+		const scheduled = total - completed - noShows - cancelled;
+
+		// Count by type
+		const byType: Record<string, number> = {};
+		for (const a of this.appointments) {
+			const t = a.appointmentType || a.type || 'Unknown';
+			byType[t] = (byType[t] || 0) + 1;
+		}
+
+		// Count by provider
+		const byProvider: Record<string, number> = {};
+		for (const a of this.appointments) {
+			const p = a.providerName || 'Unassigned';
+			byProvider[p] = (byProvider[p] || 0) + 1;
+		}
+
+		const noShowRate = total > 0 ? Math.round((noShows / total) * 100) : 0;
+		const cancelRate = total > 0 ? Math.round((cancelled / total) * 100) : 0;
+		const fillRate = total > 0 ? Math.round((scheduled + completed) / total * 100) : 0;
+
+		const items = [
+			{ label: `Total: ${total}`, description: `Completed: ${completed}, Scheduled: ${scheduled}` },
+			{ label: `No-Show Rate: ${noShowRate}%`, description: `${noShows} no-shows` },
+			{ label: `Cancellation Rate: ${cancelRate}%`, description: `${cancelled} cancelled` },
+			{ label: `Fill Rate: ${fillRate}%`, description: 'Scheduled + completed / total' },
+			{ label: '--- By Type ---', description: '' },
+			...Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ label: t, description: `${c} appointments` })),
+			{ label: '--- By Provider ---', description: '' },
+			...Object.entries(byProvider).sort((a, b) => b[1] - a[1]).map(([p, c]) => ({ label: p, description: `${c} appointments` })),
+		];
+
+		await this.quickInputService.pick(items, { placeHolder: `Schedule Statistics (${this._getDateRange().startDate} to ${this._getDateRange().endDate})` });
+	}
+
+	private async _findAvailableSlot(): Promise<void> {
+		// Pick appointment type
+		const types = ['New Patient', 'Follow-Up', 'Sick Visit', 'Annual Physical', 'Telehealth', 'Procedure'];
+		const typePick = await this.quickInputService.pick(
+			types.map(t => ({ label: t })),
+			{ placeHolder: 'What type of appointment?' }
+		);
+		if (!typePick) { return; }
+
+		// Pick provider (optional)
+		const provItems = [{ label: 'Any Provider', id: '' }, ...this.providers.map(p => ({ label: p.name, id: p.id }))];
+		const provPick = await this.quickInputService.pick(
+			provItems.map(p => ({ label: p.label, description: p.id ? '' : '(first available)' })),
+			{ placeHolder: 'Select provider' }
+		);
+
+		// Search for available slots
+		const searchDate = this.currentDate.toISOString().split('T')[0];
+		let slotsUrl = `/api/slots/available?date=${searchDate}&type=${encodeURIComponent(typePick.label)}&days=14`;
+		const selectedProv = provItems.find(p => p.label === provPick?.label);
+		if (selectedProv?.id) { slotsUrl += `&providerId=${selectedProv.id}`; }
+
+		try {
+			const res = await this.apiService.fetch(slotsUrl);
+			if (res.ok) {
+				const data = await res.json();
+				const slots = data?.data || data?.content || (Array.isArray(data) ? data : []);
+
+				if (slots.length === 0) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'No available slots found in the next 14 days.' });
+					return;
+				}
+
+				// Show available slots as QuickPick
+				const slotItems = slots.slice(0, 20).map((s: Record<string, string>) => {
+					const d = new Date(s.start || s.startTime);
+					return {
+						label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+						description: d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + (s.providerName ? ` — ${s.providerName}` : ''),
+						slot: s,
+					};
+				});
+
+				const slotPick = await this.quickInputService.pick(slotItems, { placeHolder: `${slots.length} slots available` });
+				if (slotPick) {
+					// Navigate calendar to the selected slot
+					const slotData = (slotPick as unknown as { slot: Record<string, string> }).slot;
+					const slotDate = new Date(slotData.start || slotData.startTime);
+					this.currentDate = slotDate;
+					this.viewMode = 'day';
+					await this._refresh();
+					this.notificationService.notify({ severity: Severity.Info, message: `Showing ${slotPick.label} ${slotPick.description}` });
+				}
+			} else {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Slot search not available. Create appointment manually.' });
+			}
+		} catch {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Slot search API not available.' });
 		}
 	}
 
