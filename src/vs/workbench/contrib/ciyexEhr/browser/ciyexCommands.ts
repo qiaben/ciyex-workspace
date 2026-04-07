@@ -4,11 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { ServicesAccessor, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
-import { ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
+import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { CalendarEditorInput } from './editors/ciyexEditorInput.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
 
 /**
  * Build dark-themed HTML wrapper for webview content.
@@ -183,50 +187,15 @@ registerAction2(class extends Action2 {
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
-		// Get ALL services BEFORE any await
-		const apiService = accessor.get(ICiyexApiService);
-		const webviewService = accessor.get(IWebviewWorkbenchService);
-
-		let body: string;
-		try {
-			const today = new Date().toISOString().split('T')[0];
-			const response = await apiService.fetch(`/api/appointments?date=${today}&page=0&size=50`);
-			if (response.ok) {
-				const data = await response.json();
-				const appointments = data?.data?.content || data?.content || [];
-				if (appointments.length === 0) {
-					body = `<h1>Calendar</h1><div class="card"><p>No appointments for today (${today})</p></div>`;
-				} else {
-					let rows = '';
-					for (const apt of appointments) {
-						const time = apt.startTime ? new Date(apt.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-						const name = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
-						rows += `<tr><td>${time}</td><td>${name}</td><td>${apt.appointmentType || apt.type || ''}</td><td>${apt.status || ''}</td></tr>`;
-					}
-					body = `<h1>Today's Appointments</h1>
-						<p style="color:var(--vscode-descriptionForeground);">${today} &mdash; ${appointments.length} appointments</p>
-						<div class="card"><table>
-							<thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Status</th></tr></thead>
-							<tbody>${rows}</tbody>
-						</table></div>`;
-				}
-			} else {
-				body = `<h1>Calendar</h1><p style="color:#f48771;">Failed to load: ${response.status}</p>`;
-			}
-		} catch {
-			body = '<h1>Calendar</h1><p style="color:#f48771;">Error loading appointments</p>';
-		}
-
-		const input = webviewService.openWebview(
-			{ title: 'Calendar', options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
-			'ciyex.calendar',
-			'Calendar',
-			undefined,
-			{ group: ACTIVE_GROUP, preserveFocus: false },
-		);
-		input.webview.setHtml(wrapHtml(body));
+		const editorService = accessor.get(IEditorService);
+		const inst = accessor.get(IInstantiationService);
+		const env = accessor.get(IEnvironmentService);
+		const uri = URI.joinPath(env.userRoamingDataHome, '.ciyex', 'calendar');
+		const input = inst.createInstance(CalendarEditorInput, 'calendar', uri, 'Calendar', ThemeIcon.fromId('calendar'));
+		await editorService.openEditor(input);
 	}
 });
+
 
 /**
  * Command: New Patient

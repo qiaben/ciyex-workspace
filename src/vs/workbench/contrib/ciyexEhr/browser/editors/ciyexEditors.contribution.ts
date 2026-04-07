@@ -8,13 +8,14 @@ import { EditorExtensions } from '../../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { localize } from '../../../../../nls.js';
-import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput } from './ciyexEditorInput.js';
+import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
 import { FieldConfigEditor } from './fieldConfigEditor.js';
 import { MenuEditor } from './menuEditor.js';
 import { ColorsEditor } from './colorsEditor.js';
 import { RolesEditor } from './rolesEditor.js';
+import { CalendarEditor } from './calendarEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -24,3 +25,4 @@ reg.registerEditorPane(EditorPaneDescriptor.create(FieldConfigEditor, FieldConfi
 reg.registerEditorPane(EditorPaneDescriptor.create(MenuEditor, MenuEditor.ID, localize('menu', "Menu Configuration")), [new SyncDescriptor(MenuEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(ColorsEditor, ColorsEditor.ID, localize('colors', "Calendar Colors")), [new SyncDescriptor(ColorsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(RolesEditor, RolesEditor.ID, localize('roles', "Roles & Permissions")), [new SyncDescriptor(RolesEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(CalendarEditor, CalendarEditor.ID, localize('calendar', "Calendar")), [new SyncDescriptor(CalendarEditorInput)]);

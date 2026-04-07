@@ -1,0 +1,398 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
+import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
+import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { ICiyexApiService } from '../ciyexApiService.js';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { IEditorOpenContext } from '../../../../common/editor.js';
+import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
+import { BaseCiyexInput } from './ciyexEditorInput.js';
+import * as DOM from '../../../../../base/browser/dom.js';
+
+interface Appointment {
+	id: string;
+	patientName: string;
+	patientFirstName?: string;
+	patientLastName?: string;
+	appointmentType: string;
+	type?: string;
+	status: string;
+	startTime: string;
+	duration?: number;
+	providerId?: string;
+	providerName?: string;
+	locationId?: string;
+	locationName?: string;
+}
+
+const TYPE_COLORS: Record<string, string> = {
+	'new-patient': '#4CAF50', 'new patient': '#4CAF50',
+	'follow-up': '#2196F3', 'follow up': '#2196F3',
+	'sick-visit': '#FF9800', 'sick visit': '#FF9800',
+	'annual-physical': '#9C27B0', 'annual physical': '#9C27B0',
+	'well-child': '#00BCD4', 'well child': '#00BCD4',
+	'telehealth': '#3F51B5',
+	'urgent': '#F44336',
+	'procedure': '#795548',
+	'lab-only': '#607D8B', 'lab only': '#607D8B',
+	'injection': '#E91E63',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+	'scheduled': '#3b82f6', 'confirmed': '#6366f1', 'arrived': '#f59e0b',
+	'checked-in': '#8b5cf6', 'in-room': '#06b6d4', 'with-provider': '#22c55e',
+	'fulfilled': '#6b7280', 'completed': '#6b7280',
+	'cancelled': '#ef4444', 'noshow': '#dc2626', 'no-show': '#dc2626',
+};
+
+export class CalendarEditor extends EditorPane {
+	static readonly ID = 'workbench.editor.ciyexCalendar';
+
+	private root!: HTMLElement;
+	private gridContainer!: HTMLElement;
+	private headerBar!: HTMLElement;
+	private currentDate = new Date();
+	private viewMode: 'day' | 'week' = 'week';
+	private appointments: Appointment[] = [];
+
+	constructor(
+		group: IEditorGroup,
+		@ITelemetryService telemetryService: ITelemetryService,
+		@IThemeService themeService: IThemeService,
+		@IStorageService storageService: IStorageService,
+		@IConfigurationService private readonly configService: IConfigurationService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@ICiyexApiService private readonly apiService: ICiyexApiService,
+	) {
+		super(CalendarEditor.ID, group, telemetryService, themeService, storageService);
+	}
+
+	protected createEditor(parent: HTMLElement): void {
+		this.root = DOM.append(parent, DOM.$('.ciyex-calendar-editor'));
+		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
+
+		// Header bar
+		this.headerBar = DOM.append(this.root, DOM.$('.calendar-header'));
+		this.headerBar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+
+		// Grid container
+		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
+		this.gridContainer.style.cssText = 'flex:1;overflow:auto;';
+	}
+
+	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		await super.setInput(input, options, context, token);
+		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'week';
+		this.viewMode = defaultView === 'day' ? 'day' : 'week';
+		await this._loadAppointments();
+		if (!token.isCancellationRequested) {
+			this._renderHeader();
+			this._renderGrid();
+		}
+	}
+
+	private async _loadAppointments(): Promise<void> {
+		const { startDate, endDate } = this._getDateRange();
+		try {
+			const res = await this.apiService.fetch(`/api/appointments?startDate=${startDate}&endDate=${endDate}&page=0&size=200`);
+			if (res.ok) {
+				const data = await res.json();
+				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+			}
+		} catch {
+			this.appointments = [];
+		}
+	}
+
+	private _getDateRange(): { startDate: string; endDate: string } {
+		const d = new Date(this.currentDate);
+		if (this.viewMode === 'day') {
+			const s = d.toISOString().split('T')[0];
+			return { startDate: s, endDate: s };
+		}
+		// Week: find Monday
+		const day = d.getDay();
+		const monday = new Date(d);
+		monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+		const sunday = new Date(monday);
+		sunday.setDate(monday.getDate() + 6);
+		return {
+			startDate: monday.toISOString().split('T')[0],
+			endDate: sunday.toISOString().split('T')[0],
+		};
+	}
+
+	private _renderHeader(): void {
+		DOM.clearNode(this.headerBar);
+
+		// Nav buttons
+		const prevBtn = this._btn(this.headerBar, '\u25C0', () => this._navigate(-1));
+		prevBtn.title = 'Previous';
+		const todayBtn = this._btn(this.headerBar, 'Today', () => { this.currentDate = new Date(); this._refresh(); });
+		todayBtn.style.fontWeight = '600';
+		const nextBtn = this._btn(this.headerBar, '\u25B6', () => this._navigate(1));
+		nextBtn.title = 'Next';
+
+		// Date label
+		const label = DOM.append(this.headerBar, DOM.$('span'));
+		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;text-align:center;';
+		if (this.viewMode === 'day') {
+			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+		} else {
+			const { startDate, endDate } = this._getDateRange();
+			const s = new Date(startDate + 'T00:00:00');
+			const e = new Date(endDate + 'T00:00:00');
+			label.textContent = `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} \u2013 ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+		}
+
+		// View toggles
+		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
+		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
+		for (const mode of ['day', 'week'] as const) {
+			const btn = DOM.append(viewGroup, DOM.$('button'));
+			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			btn.addEventListener('click', () => { this.viewMode = mode; this._refresh(); });
+		}
+
+		// Appointment count
+		const count = DOM.append(this.headerBar, DOM.$('span'));
+		count.textContent = `${this.appointments.length} appointments`;
+		count.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+	}
+
+	private _renderGrid(): void {
+		DOM.clearNode(this.gridContainer);
+
+		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 8;
+		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
+		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
+		const slotHeight = 20; // px per slot
+		// hourHeight = (60 / slotDuration) * slotHeight — used for time indicator positioning
+
+		const days = this.viewMode === 'day' ? [new Date(this.currentDate)] : this._getWeekDays();
+
+		// Grid table
+		const table = DOM.append(this.gridContainer, DOM.$('.cal-table'));
+		table.style.cssText = 'display:grid;grid-template-columns:50px ' + days.map(() => '1fr').join(' ') + ';min-width:100%;';
+
+		// Header row
+		const corner = DOM.append(table, DOM.$('.cal-corner'));
+		corner.style.cssText = 'border-bottom:1px solid var(--vscode-editorWidget-border);border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;text-align:center;font-size:10px;color:var(--vscode-descriptionForeground);position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;';
+
+		for (const day of days) {
+			const isToday = day.toDateString() === new Date().toDateString();
+			const hdr = DOM.append(table, DOM.$('.cal-day-header'));
+			hdr.style.cssText = `border-bottom:1px solid var(--vscode-editorWidget-border);border-right:1px solid var(--vscode-editorWidget-border);padding:6px 8px;text-align:center;position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;${isToday ? 'font-weight:700;' : ''}`;
+			const dayName = DOM.append(hdr, DOM.$('div'));
+			dayName.textContent = day.toLocaleDateString('en-US', { weekday: 'short' });
+			dayName.style.cssText = 'font-size:10px;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+			const dayNum = DOM.append(hdr, DOM.$('div'));
+			dayNum.textContent = String(day.getDate());
+			dayNum.style.cssText = `font-size:16px;font-weight:600;${isToday ? 'color:var(--vscode-textLink-foreground);' : ''}`;
+		}
+
+		// Time rows
+		for (let hour = startHour; hour < endHour; hour++) {
+			for (let slot = 0; slot < 60 / slotDuration; slot++) {
+				const minute = slot * slotDuration;
+				const isHourStart = minute === 0;
+
+				// Time label
+				const timeCell = DOM.append(table, DOM.$('.cal-time'));
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}`;
+				if (isHourStart) {
+					const h = hour > 12 ? hour - 12 : hour;
+					const ampm = hour >= 12 ? 'PM' : 'AM';
+					timeCell.textContent = `${h}${ampm}`;
+				}
+
+				// Day cells
+				for (let di = 0; di < days.length; di++) {
+					const cell = DOM.append(table, DOM.$('.cal-cell'));
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
+					cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
+					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+
+					// Click to create appointment
+					const dayStr = days[di].toISOString().split('T')[0];
+					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+					cell.addEventListener('click', () => this._createAppointment(dayStr, timeStr));
+
+					// Render appointments in this slot
+					const slotAppts = this.appointments.filter(a => {
+						try {
+							const d = new Date(a.startTime);
+							return d.toISOString().split('T')[0] === dayStr &&
+								d.getHours() === hour &&
+								d.getMinutes() >= minute &&
+								d.getMinutes() < minute + slotDuration;
+						} catch { return false; }
+					});
+
+					for (const apt of slotAppts) {
+						const dur = apt.duration || 30;
+						const slots = Math.max(1, Math.ceil(dur / slotDuration));
+						const block = DOM.append(cell, DOM.$('.apt-block'));
+						const typeColor = TYPE_COLORS[(apt.appointmentType || apt.type || '').toLowerCase()] || '#607D8B';
+						const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
+
+						block.style.cssText = `position:absolute;left:2px;right:2px;top:0;height:${slots * slotHeight - 2}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						block.addEventListener('mouseenter', () => { block.style.background = `${typeColor}35`; });
+						block.addEventListener('mouseleave', () => { block.style.background = `${typeColor}20`; });
+						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
+
+						const nameEl = DOM.append(block, DOM.$('div'));
+						nameEl.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
+						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+						if (slots > 1) {
+							const typeEl = DOM.append(block, DOM.$('div'));
+							typeEl.textContent = apt.appointmentType || apt.type || '';
+							typeEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
+						}
+
+						// Status dot
+						const dot = DOM.append(block, DOM.$('span'));
+						dot.style.cssText = `position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:${statusColor};`;
+						dot.title = apt.status;
+					}
+				}
+			}
+		}
+
+		// Current time indicator
+		this._renderTimeIndicator(table, days, startHour, slotDuration, slotHeight);
+	}
+
+	private _renderTimeIndicator(table: HTMLElement, days: Date[], startHour: number, slotDuration: number, slotHeight: number): void {
+		const now = new Date();
+		const todayIdx = days.findIndex(d => d.toDateString() === now.toDateString());
+		if (todayIdx < 0) { return; }
+
+		const minutesSinceStart = (now.getHours() - startHour) * 60 + now.getMinutes();
+		if (minutesSinceStart < 0) { return; }
+
+		const top = (minutesSinceStart / slotDuration) * slotHeight + 30; // +30 for header
+		const line = DOM.append(this.gridContainer, DOM.$('.time-indicator'));
+		line.style.cssText = `position:absolute;left:50px;right:0;top:${top}px;height:2px;background:#ef4444;z-index:10;pointer-events:none;`;
+		const dot = DOM.append(line, DOM.$('.time-dot'));
+		dot.style.cssText = 'position:absolute;left:-4px;top:-3px;width:8px;height:8px;border-radius:50%;background:#ef4444;';
+	}
+
+	private _getWeekDays(): Date[] {
+		const d = new Date(this.currentDate);
+		const day = d.getDay();
+		const monday = new Date(d);
+		monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+		const days: Date[] = [];
+		for (let i = 0; i < 7; i++) {
+			const dd = new Date(monday);
+			dd.setDate(monday.getDate() + i);
+			days.push(dd);
+		}
+		return days;
+	}
+
+	private _navigate(dir: number): void {
+		if (this.viewMode === 'day') {
+			this.currentDate.setDate(this.currentDate.getDate() + dir);
+		} else {
+			this.currentDate.setDate(this.currentDate.getDate() + dir * 7);
+		}
+		this._refresh();
+	}
+
+	private async _refresh(): Promise<void> {
+		await this._loadAppointments();
+		this._renderHeader();
+		this._renderGrid();
+	}
+
+	private async _createAppointment(date: string, time: string): Promise<void> {
+		const patient = await this.quickInputService.input({ prompt: 'Patient name' });
+		if (!patient) { return; }
+		const type = await this.quickInputService.input({ prompt: 'Appointment type', value: 'Follow-Up' });
+		if (!type) { return; }
+
+		try {
+			const res = await this.apiService.fetch('/api/appointments', {
+				method: 'POST',
+				body: JSON.stringify({
+					patientName: patient,
+					appointmentType: type,
+					startTime: `${date}T${time}:00`,
+					status: 'scheduled',
+					duration: 30,
+				}),
+			});
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: `Appointment created for ${patient}` });
+				await this._refresh();
+			}
+		} catch (err) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Failed to create: ${err}` });
+		}
+	}
+
+	private async _editAppointment(apt: Appointment): Promise<void> {
+		const items = [
+			{ label: 'Change Status', description: `Current: ${apt.status}` },
+			{ label: 'Edit Details' },
+			{ label: 'Cancel Appointment' },
+			{ label: 'Mark No-Show' },
+		];
+		const pick = await this.quickInputService.pick(items, { placeHolder: `${apt.patientName} — ${apt.appointmentType}` });
+		if (!pick) { return; }
+
+		if (pick.label === 'Change Status') {
+			const statuses = ['scheduled', 'confirmed', 'arrived', 'checked-in', 'in-room', 'with-provider', 'fulfilled'];
+			const statusPick = await this.quickInputService.pick(
+				statuses.map(s => ({ label: s, description: s === apt.status ? '(current)' : '' })),
+				{ placeHolder: 'Select new status' }
+			);
+			if (statusPick) {
+				try {
+					await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: statusPick.label }) });
+					this.notificationService.notify({ severity: Severity.Info, message: `Status updated to ${statusPick.label}` });
+					await this._refresh();
+				} catch { /* */ }
+			}
+		} else if (pick.label === 'Cancel Appointment') {
+			try {
+				await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
+				this.notificationService.notify({ severity: Severity.Info, message: 'Appointment cancelled' });
+				await this._refresh();
+			} catch { /* */ }
+		} else if (pick.label === 'Mark No-Show') {
+			try {
+				await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'noshow' }) });
+				this.notificationService.notify({ severity: Severity.Info, message: 'Marked as no-show' });
+				await this._refresh();
+			} catch { /* */ }
+		}
+	}
+
+	private _btn(parent: HTMLElement, text: string, onClick: () => void): HTMLButtonElement {
+		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		btn.textContent = text;
+		btn.style.cssText = 'padding:3px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;cursor:pointer;font-size:11px;';
+		btn.addEventListener('click', onClick);
+		return btn;
+	}
+
+	override layout(dimension: DOM.Dimension): void {
+		this.root.style.height = `${dimension.height}px`;
+		this.root.style.width = `${dimension.width}px`;
+	}
+}
