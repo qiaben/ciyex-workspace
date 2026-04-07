@@ -20,6 +20,12 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { URI } from '../../../../base/common/uri.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
 const configIcon = registerIcon('ciyex-config', Codicon.settingsGear, localize('cConfig', 'Ciyex Configuration'));
@@ -65,6 +71,8 @@ const CONFIG_ITEMS: ConfigItem[] = [
 class CiyexConfigPane extends ViewPane {
 	static readonly ID = 'ciyex.config.tree';
 
+	private listElement!: HTMLElement;
+
 	constructor(
 		options: IViewPaneOptions,
 		@IKeybindingService keybindingService: IKeybindingService,
@@ -77,27 +85,45 @@ class CiyexConfigPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IFileService private readonly fileService: IFileService,
+		@IEnvironmentService private readonly environmentService: IEnvironmentService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
 
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
-		const list = DOM.append(container, DOM.$('.ciyex-config-list'));
-		list.style.cssText = 'padding:4px 0;';
+		this.listElement = DOM.append(container, DOM.$('.ciyex-config-list'));
+		this.listElement.style.cssText = 'padding:4px 0;';
+		this._renderList();
+	}
+
+	private _renderList(): void {
+		DOM.clearNode(this.listElement);
 
 		for (const item of CONFIG_ITEMS) {
 			if (item.children) {
-				// Section header
-				const header = DOM.append(list, DOM.$('.section-header'));
-				header.style.cssText = 'padding:12px 12px 4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
-				header.textContent = item.label;
+				// Section header with + button
+				const headerRow = DOM.append(this.listElement, DOM.$('.section-header'));
+				headerRow.style.cssText = 'padding:12px 12px 4px;display:flex;align-items:center;gap:6px;';
+				const headerText = DOM.append(headerRow, DOM.$('span'));
+				headerText.textContent = item.label;
+				headerText.style.cssText = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);flex:1;';
+				// + New button
+				const addBtn = DOM.append(headerRow, DOM.$('span.codicon.codicon-add'));
+				addBtn.style.cssText = 'font-size:14px;cursor:pointer;color:var(--vscode-descriptionForeground);border-radius:3px;padding:1px;';
+				addBtn.title = 'Add new field configuration';
+				addBtn.addEventListener('mouseenter', () => { addBtn.style.color = 'var(--vscode-icon-foreground)'; addBtn.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1))'; });
+				addBtn.addEventListener('mouseleave', () => { addBtn.style.color = 'var(--vscode-descriptionForeground)'; addBtn.style.background = ''; });
+				addBtn.addEventListener('click', () => this._addFieldConfig());
 
 				for (const child of item.children) {
-					this._renderItem(list, child, true);
+					this._renderItem(this.listElement, child, true);
 				}
 			} else {
-				this._renderItem(list, item, false);
+				this._renderItem(this.listElement, item, false);
 			}
 		}
 	}
@@ -127,6 +153,81 @@ class CiyexConfigPane extends ViewPane {
 			const desc = DOM.append(row, DOM.$('span'));
 			desc.textContent = item.description;
 			desc.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
+
+		// Delete button for field configs (show on hover)
+		if (isChild && item.commandId === 'ciyex.openFieldConfig') {
+			const del = DOM.append(row, DOM.$('span.codicon.codicon-close'));
+			del.style.cssText = 'font-size:12px;cursor:pointer;color:var(--vscode-descriptionForeground);opacity:0;padding:1px;border-radius:3px;';
+			del.title = 'Delete this field configuration';
+			row.addEventListener('mouseenter', () => { del.style.opacity = '1'; });
+			row.addEventListener('mouseleave', () => { del.style.opacity = '0'; });
+			del.addEventListener('mouseenter', () => { del.style.color = 'var(--vscode-errorForeground)'; del.style.background = 'rgba(255,255,255,0.06)'; });
+			del.addEventListener('mouseleave', () => { del.style.color = 'var(--vscode-descriptionForeground)'; del.style.background = ''; });
+			del.addEventListener('click', (e) => {
+				e.stopPropagation();
+				const tabKey = item.label.toLowerCase().replace(/\s+/g, '-');
+				this._deleteFieldConfig(tabKey, item.label);
+			});
+		}
+	}
+
+	private async _addFieldConfig(): Promise<void> {
+		const name = await this.quickInputService.input({
+			placeHolder: 'e.g., social-history',
+			prompt: 'Enter a name for the new field configuration (lowercase, hyphens)',
+			validateInput: async (v) => {
+				if (!v) { return 'Name is required'; }
+				if (!/^[a-z][a-z0-9-]*$/.test(v)) { return 'Use lowercase letters, numbers, and hyphens only'; }
+				return undefined;
+			}
+		});
+		if (!name) { return; }
+
+		const label = await this.quickInputService.input({
+			placeHolder: 'e.g., Social History',
+			prompt: 'Display label for this configuration',
+			value: name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+		});
+		if (!label) { return; }
+
+		const fhirResource = await this.quickInputService.input({
+			placeHolder: 'e.g., Patient, Observation',
+			prompt: 'FHIR resource type (comma-separated)',
+			value: 'Patient',
+		});
+
+		const template = {
+			tabKey: name,
+			fhirResources: fhirResource ? fhirResource.split(',').map(s => s.trim()).filter(Boolean) : [],
+			sections: [{
+				key: 'main',
+				title: label,
+				columns: 2,
+				visible: true,
+				fields: []
+			}]
+		};
+
+		const fileUri = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex', 'fields', `${name}.json`);
+		await this.fileService.writeFile(fileUri, VSBuffer.fromString(JSON.stringify(template, null, 2)));
+
+		// Open the new config in the visual editor
+		this.commandService.executeCommand('ciyex.openFieldConfig', name);
+	}
+
+	private async _deleteFieldConfig(tabKey: string, label: string): Promise<void> {
+		const { confirmed } = await this.dialogService.confirm({
+			message: `Delete field configuration "${label}"?`,
+			detail: 'This will permanently delete the configuration file.',
+		});
+		if (!confirmed) { return; }
+
+		const fileUri = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex', 'fields', `${tabKey}.json`);
+		try {
+			await this.fileService.del(fileUri);
+		} catch {
+			// File might not exist
 		}
 	}
 
