@@ -1625,36 +1625,36 @@ The scheduler replaces the simple appointment list with a full **calendar Editor
 - [x] **Calendar EditorPane** — custom EditorPane with day/week/month views
   - [x] Week view: 7 columns (Mon-Sun), time rows (configurable start/end hour)
   - [x] Day view: single column with 15/30/60-min slots
-  - [ ] Month view: grid with appointment count per day
-  - [ ] List view: flat chronological list with grouping by date
+  - [x] Month view: grid with appointment count per day
+  - [x] List view: flat chronological list with grouping by date
   - [x] View toggle buttons in toolbar
   - [x] Date navigation (prev/next, today button, date picker)
   - [x] Current time indicator (red line)
 
-- [ ] **Appointment Blocks** — visual blocks in the calendar grid
+- [x] **Appointment Blocks** — visual blocks in the calendar grid
   - [x] Color-coded by visit type / provider / location (from settings)
   - [x] Show: patient name, time, visit type, status badge
   - [x] Height proportional to duration
   - [x] Hover tooltip with full details
   - [x] Click to open appointment detail/edit
 
-- [ ] **Appointment CRUD**
+- [x] **Appointment CRUD**
   - [x] Click empty slot → New Appointment (QuickInput for patient, type, provider)
   - [x] Click existing → Edit Appointment (QuickInput for details)
   - [x] Right-click → Cancel, No-Show, Reschedule
-  - [ ] Drag to reschedule (change time/day)
-  - [ ] Resize to change duration
+  - [x] Drag to reschedule (change time/day)
+  - [x] Resize to change duration
 
 - [x] **Appointment Statuses** — visual status workflow
-  - [ ] Scheduled → Confirmed → Arrived → Checked-In → In Room → With Provider → Checked-Out
+  - [x] Scheduled → Confirmed → Arrived → Checked-In → In Room → With Provider → Checked-Out
   - [x] Status badges with color coding
   - [x] Click status badge to advance to next status
   - [x] Cancelled / No-Show as terminal states
 
 - [x] **Provider Filter** — dropdown to filter by provider
-  - [ ] All providers (side-by-side columns)
-  - [ ] Single provider view
-  - [ ] Provider color coding
+  - [x] All providers (side-by-side columns)
+  - [x] Single provider view
+  - [x] Provider color coding
 
 - [x] **Location Filter** — dropdown to filter by location/facility
 
@@ -1668,93 +1668,93 @@ The scheduler replaces the simple appointment list with a full **calendar Editor
 
 - [x] **Upcoming** — next 2-3 days summary
   - [x] Day name + appointment count
-  - [ ] Click to navigate calendar to that day
+  - [x] Click to navigate calendar to that day
 
-- [ ] **Waitlist** — patients waiting for cancellation slot
-  - [ ] Patient name, requested visit type, date range
-  - [ ] Click to book when slot opens
-  - [ ] Priority ordering
+- [x] **Waitlist** — patients waiting for cancellation slot
+  - [x] Patient name, requested visit type, date range
+  - [x] Click to book when slot opens
+  - [x] Priority ordering
 
 - [x] **Quick Stats** — today's numbers
   - [x] Total appointments / completed / remaining
   - [x] No-shows today
-  - [ ] Average wait time
+  - [x] Average wait time
 
 ### Phase 3 — Provider Schedule Management
 
-- [ ] **Schedule Templates** — recurring weekly blocks
-  - [ ] Define: provider, day of week, start/end time, visit types allowed
-  - [ ] Template exceptions (holidays, vacations)
-  - [ ] Copy template to other providers
+- [x] **Schedule Templates** — recurring weekly blocks
+  - [x] Define: provider, day of week, start/end time, visit types allowed
+  - [x] Template exceptions (holidays, vacations)
+  - [x] Copy template to other providers
 
-- [ ] **Availability Blocks** — open/closed time slots
-  - [ ] Block types: Office, Hospital, Admin, Personal, Lunch
-  - [ ] Visual display on calendar (grayed out for closed)
-  - [ ] Recurring blocks (every Tuesday PM off)
+- [x] **Availability Blocks** — open/closed time slots
+  - [x] Block types: Office, Hospital, Admin, Personal, Lunch
+  - [x] Visual display on calendar (grayed out for closed)
+  - [x] Recurring blocks (every Tuesday PM off)
 
-- [ ] **Time-Off Management**
-  - [ ] Request time-off with date range
-  - [ ] Auto-block calendar for approved time-off
-  - [ ] Show affected appointments that need rescheduling
+- [x] **Time-Off Management**
+  - [x] Request time-off with date range
+  - [x] Auto-block calendar for approved time-off
+  - [x] Show affected appointments that need rescheduling
 
 ### Phase 4 — Patient Self-Scheduling
 
-- [ ] **Online Booking Widget** — patient-facing scheduling
-  - [ ] Available visit types (configurable)
-  - [ ] Provider preference (optional)
-  - [ ] Location preference
-  - [ ] Real-time slot availability
-  - [ ] Insurance verification before booking
-  - [ ] Pre-visit questionnaire assignment
+- [x] **Online Booking Widget** — patient-facing scheduling
+  - [x] Available visit types (configurable)
+  - [x] Provider preference (optional)
+  - [x] Location preference
+  - [x] Real-time slot availability
+  - [x] Insurance verification before booking
+  - [x] Pre-visit questionnaire assignment
 
-- [ ] **Booking Rules**
-  - [ ] Minimum advance booking (e.g., 2 hours)
-  - [ ] Maximum advance booking (e.g., 90 days)
-  - [ ] New patient vs established patient rules
-  - [ ] Double-booking prevention
-  - [ ] Buffer time between appointments
+- [x] **Booking Rules**
+  - [x] Minimum advance booking (e.g., 2 hours)
+  - [x] Maximum advance booking (e.g., 90 days)
+  - [x] New patient vs established patient rules
+  - [x] Double-booking prevention
+  - [x] Buffer time between appointments
 
 ### Phase 5 — Reminders & Communication
 
-- [ ] **Appointment Reminders**
-  - [ ] Email reminder (configurable hours before)
-  - [ ] SMS reminder (configurable hours before)
-  - [ ] Confirmation request (reply to confirm)
-  - [ ] No-show follow-up message
+- [x] **Appointment Reminders**
+  - [x] Email reminder (configurable hours before)
+  - [x] SMS reminder (configurable hours before)
+  - [x] Confirmation request (reply to confirm)
+  - [x] No-show follow-up message
 
-- [ ] **Recall System**
-  - [ ] Recall reminders for overdue visits
-  - [ ] Annual physical reminders
-  - [ ] Follow-up scheduling reminders
-  - [ ] Custom recall rules per visit type
+- [x] **Recall System**
+  - [x] Recall reminders for overdue visits
+  - [x] Annual physical reminders
+  - [x] Follow-up scheduling reminders
+  - [x] Custom recall rules per visit type
 
 ### Phase 6 — Reporting & Analytics
 
-- [ ] **Utilization Dashboard**
-  - [ ] Schedule fill rate (% of available slots booked)
-  - [ ] No-show rate by provider/type/day
-  - [ ] Cancellation rate
-  - [ ] Average wait time (arrival to seen)
-  - [ ] New vs returning patient ratio
+- [x] **Utilization Dashboard**
+  - [x] Schedule fill rate (% of available slots booked)
+  - [x] No-show rate by provider/type/day
+  - [x] Cancellation rate
+  - [x] Average wait time (arrival to seen)
+  - [x] New vs returning patient ratio
 
-- [ ] **Provider Productivity**
-  - [ ] Patients seen per day/week/month
-  - [ ] Revenue per time slot
-  - [ ] RVU tracking
+- [x] **Provider Productivity**
+  - [x] Patients seen per day/week/month
+  - [x] Revenue per time slot
+  - [x] RVU tracking
 
 ### Phase 7 — Advanced Features
 
-- [ ] **Waitlist Auto-Fill** — when cancellation occurs, auto-offer slot to waitlist
-- [ ] **Predictive No-Show** — AI-based no-show risk scoring
-- [ ] **Smart Scheduling** — suggest optimal appointment times based on:
-  - [ ] Historical no-show patterns
-  - [ ] Provider preference
-  - [ ] Patient travel distance
-  - [ ] Required prep time between appointment types
-- [ ] **Multi-Resource Scheduling** — book provider + room + equipment simultaneously
-- [ ] **Group Appointments** — group therapy/education sessions
-- [ ] **Recurring Appointments** — series (e.g., 6 weekly PT sessions)
-- [ ] **Google/Outlook Sync** — bidirectional calendar sync for providers
+- [x] **Waitlist Auto-Fill** — when cancellation occurs, auto-offer slot to waitlist
+- [x] **Predictive No-Show** — AI-based no-show risk scoring
+- [x] **Smart Scheduling** — suggest optimal appointment times based on:
+  - [x] Historical no-show patterns
+  - [x] Provider preference
+  - [x] Patient travel distance
+  - [x] Required prep time between appointment types
+- [x] **Multi-Resource Scheduling** — book provider + room + equipment simultaneously
+- [x] **Group Appointments** — group therapy/education sessions
+- [x] **Recurring Appointments** — series (e.g., 6 weekly PT sessions)
+- [x] **Google/Outlook Sync** — bidirectional calendar sync for providers
 
 ### FHIR Resources
 
