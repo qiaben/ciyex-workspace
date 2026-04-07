@@ -16,7 +16,7 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 
 // Map API item keys to sidebar view IDs
 const ITEM_KEY_TO_VIEW: Record<string, string> = {
-	'calendar': 'ciyex.calendar.view',
+	'calendar': 'ciyex.calendar.schedule',
 	'appointments': 'ciyex.appointments.view',
 	'patients': 'ciyex.patients.list',
 	'encounters': 'ciyex.encounters.view',

@@ -12,6 +12,7 @@ import { codiconsLibrary as Codicon } from '../../../../base/common/codiconsLibr
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { PatientListPane } from './patientListPane.js';
 import { GenericListPane } from './genericListPane.js';
+import { ScheduleSidebarPane } from './scheduleSidebarPane.js';
 
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
@@ -191,8 +192,9 @@ GenericListPane.configs.set('ciyex.system.auditlog', {
 
 // ─── Views ──────────────────────────────────────────────────────────────
 
-// Leaf containers - single view each
-viewsRegistry.registerViews([{ id: 'ciyex.calendar.view', name: localize2('todayAppts', "Today's Appointments"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], CALENDAR_CONTAINER);
+// Calendar - rich schedule sidebar (today's timeline + upcoming + stats)
+viewsRegistry.registerViews([{ id: ScheduleSidebarPane.ID, name: localize2('schedule', "Schedule"), ctorDescriptor: new SyncDescriptor(ScheduleSidebarPane) }], CALENDAR_CONTAINER);
+// Appointments flat list kept as secondary view
 viewsRegistry.registerViews([{ id: 'ciyex.appointments.view', name: localize2('allAppts', "All Appointments"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], APPOINTMENTS_CONTAINER);
 viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('patientList', "Patient List"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
 viewsRegistry.registerViews([{ id: 'ciyex.encounters.view', name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], ENCOUNTERS_CONTAINER);
