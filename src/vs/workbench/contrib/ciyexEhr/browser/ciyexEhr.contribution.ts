@@ -31,8 +31,11 @@ import './ciyexSettings.js';
 // Register visual editors for .ciyex config files (Layout, Encounter, Fields, etc.)
 import './editors/ciyexEditors.contribution.js';
 
+// Register Config Explorer sidebar (gear icon in activity bar)
+import './ciyexConfigExplorer.js';
+
 // .ciyex config files also openable from Settings UI or file explorer
-// (ciyexConfigExplorer.ts removed — configs accessible via Cmd+, settings)
+// (previously removed, now re-enabled as clickable directory — configs accessible via Cmd+, settings)
 
 // Register services
 registerSingleton(ICiyexApiService, CiyexApiService, InstantiationType.Delayed);

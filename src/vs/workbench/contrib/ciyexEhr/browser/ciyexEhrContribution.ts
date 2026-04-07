@@ -176,13 +176,12 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Try to copy from workspace .ciyex/ folder first (has full configs from repo)
 		// Fall back to minimal defaults if workspace not available
 		const configFiles = [
-			'settings.json', 'layout.json', 'encounter.json', 'menu.json',
+			'settings.json', 'chart-layout.json', 'encounter.json', 'menu.json',
 			'colors.json', 'portal.json', 'roles.json',
 		];
 
 		try {
 			// Check if workspace has .ciyex/ folder with configs
-			const workspaceService = this.contextKeyService; // We'll use fileService to check
 			let workspaceCiyexRoot: URI | undefined;
 
 			// Try common workspace paths for .ciyex/ folder
@@ -252,7 +251,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	private _getMinimalDefault(filename: string): string {
 		switch (filename) {
 			case 'settings.json': return JSON.stringify({ 'ciyex.practice.name': '', 'ciyex.practice.timezone': 'America/New_York', 'ciyex.display.fontSize': 'default', 'ciyex.calendar.defaultView': 'week', 'ciyex.session.idleTimeoutMinutes': 30, 'ciyex.features.cdsHooksEnabled': true }, null, 2);
-			case 'layout.json': return JSON.stringify({ source: 'UNIVERSAL_DEFAULT', categories: [{ key: 'clinical', label: 'Clinical', position: 0, tabs: [{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', position: 0, visible: true, fhirResources: ['Encounter'] }, { key: 'demographics', label: 'Demographics', icon: 'User', position: 1, visible: true, fhirResources: ['Patient'] }] }] }, null, 2);
+			case 'chart-layout.json': return JSON.stringify({ source: 'UNIVERSAL_DEFAULT', categories: [{ key: 'clinical', label: 'Clinical', position: 0, tabs: [{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', position: 0, visible: true, fhirResources: ['Encounter'] }, { key: 'demographics', label: 'Demographics', icon: 'User', position: 1, visible: true, fhirResources: ['Patient'] }] }] }, null, 2);
 			case 'encounter.json': return JSON.stringify({ tabKey: 'encounter-form', source: 'UNIVERSAL_DEFAULT', sections: [{ key: 'cc', title: 'Chief Complaint', columns: 1, visible: true, fields: [{ key: 'chiefComplaint', label: 'Chief Complaint', type: 'textarea', required: true }] }] }, null, 2);
 			case 'menu.json': return JSON.stringify({ items: [{ itemKey: 'calendar', label: 'Calendar', icon: 'Calendar', screenSlug: '/calendar', position: 0, visible: true, children: [] }, { itemKey: 'patients', label: 'Patients', icon: 'Users', screenSlug: '/patients', position: 1, visible: true, children: [] }] }, null, 2);
 			case 'colors.json': return JSON.stringify({ categories: [{ key: 'visit-type', label: 'Visit Types', colors: [{ entityKey: 'new-patient', entityLabel: 'New Patient', bgColor: '#4CAF50', borderColor: '#4CAF50', textColor: '#ffffff' }] }] }, null, 2);

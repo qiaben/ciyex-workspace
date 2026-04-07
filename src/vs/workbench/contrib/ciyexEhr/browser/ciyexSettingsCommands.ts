@@ -44,7 +44,7 @@ registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openChartLayout', title: localize2('chartLayout', "Open Chart Layout"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const inst = accessor.get(IInstantiationService);
-		const uri = ciyexUri(accessor.get(IEnvironmentService), 'layout.json');
+		const uri = ciyexUri(accessor.get(IEnvironmentService), 'chart-layout.json');
 		accessor.get(IEditorService).openEditor(inst.createInstance(LayoutEditorInput, 'layout', uri, 'Chart Layout', ThemeIcon.fromId('layout')));
 	}
 });

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 // Layout settings editors have been replaced by .ciyex/ JSON config files.
-// Chart Layout  → .ciyex/layout.json (opened via ciyex.openChartLayout command)
+// Chart Layout  → .ciyex/chart-layout.json (opened via ciyex.openChartLayout command)
 // Field Config  → .ciyex/fields/{tabKey}.json (opened via ciyex.openFieldConfig command)
 // Encounter     → .ciyex/encounter.json (opened via ciyex.openEncounterConfig command)
 //
