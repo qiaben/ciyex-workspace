@@ -134,26 +134,51 @@ export class CalendarEditor extends EditorPane {
 		}
 		if (!this.appointments) { this.appointments = []; }
 
-		// Load providers and locations (once)
+		// Load providers (try multiple endpoints)
 		if (this.providers.length === 0) {
-			try {
-				const res = await this.apiService.fetch('/api/providers?page=0&size=100');
-				if (res.ok) {
-					const data = await res.json();
-					const list = data?.data?.content || data?.content || [];
-					this.providers = list.map((p: Record<string, string>) => ({ id: p.id, name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || p.id }));
+			const providerUrls = ['/api/providers?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/admin/users?page=0&size=100'];
+			for (const url of providerUrls) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (res.ok) {
+						const data = await res.json();
+						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+						if (list.length > 0) {
+							this.providers = list.map((p: Record<string, string>) => ({
+								id: p.id || p.username || '',
+								name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
+							})).filter((p: { id: string; name: string }) => p.name);
+							break;
+						}
+					}
+				} catch { /* try next */ }
+			}
+			// Also extract unique providers from appointments
+			if (this.providers.length === 0 && this.appointments.length > 0) {
+				const provMap = new Map<string, string>();
+				for (const a of this.appointments) {
+					if (a.providerName) { provMap.set(a.providerId || a.providerName, a.providerName); }
 				}
-			} catch { /* */ }
+				this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
+			}
 		}
+
+		// Load locations (try multiple endpoints)
 		if (this.locations.length === 0) {
-			try {
-				const res = await this.apiService.fetch('/api/fhir-resource/facilities?page=0&size=50');
-				if (res.ok) {
-					const data = await res.json();
-					const list = data?.data?.content || data?.content || [];
-					this.locations = list.map((l: Record<string, string>) => ({ id: l.id, name: l.name || l.id }));
-				}
-			} catch { /* */ }
+			const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50'];
+			for (const url of locationUrls) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (res.ok) {
+						const data = await res.json();
+						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+						if (list.length > 0) {
+							this.locations = list.map((l: Record<string, string>) => ({ id: l.id || '', name: l.name || l.id || '' })).filter((l: { id: string; name: string }) => l.name);
+							break;
+						}
+					}
+				} catch { /* try next */ }
+			}
 		}
 
 		// Load provider schedule blocks (availability)
@@ -373,11 +398,11 @@ export class CalendarEditor extends EditorPane {
 						nameEl.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
 						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
-						if (slots > 1) {
-							const typeEl = DOM.append(block, DOM.$('div'));
-							typeEl.textContent = apt.appointmentType || apt.type || '';
-							typeEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
-						}
+						const detailLine = DOM.append(block, DOM.$('div'));
+						detailLine.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
+						const parts = [apt.appointmentType || apt.type || ''];
+						if (apt.providerName) { parts.push(apt.providerName); }
+						detailLine.textContent = parts.filter(Boolean).join(' \u00B7 ');
 
 						// Status dot
 						const dot = DOM.append(block, DOM.$('span'));
@@ -508,25 +533,84 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private async _createAppointment(date: string, time: string): Promise<void> {
-		const patient = await this.quickInputService.input({ prompt: 'Patient name' });
-		if (!patient) { return; }
-		const type = await this.quickInputService.input({ prompt: 'Appointment type', value: 'Follow-Up' });
-		if (!type) { return; }
+		// Step 1: Patient search/lookup
+		const patientQuery = await this.quickInputService.input({ prompt: 'Search patient (name or MRN)', placeHolder: 'Type to search...' });
+		if (!patientQuery) { return; }
 
+		// Search patients from API
+		let patientName = patientQuery;
+		let patientId = '';
+		try {
+			const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(patientQuery)}&page=0&size=10`);
+			if (res.ok) {
+				const data = await res.json();
+				const patients = data?.data?.content || data?.content || [];
+				if (patients.length > 0) {
+					const items = patients.map((p: Record<string, string>) => ({
+						label: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || '',
+						description: `DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`,
+						id: p.id,
+					}));
+					const pick = await this.quickInputService.pick(items, { placeHolder: `${patients.length} patients found` });
+					if (pick) {
+						patientName = pick.label;
+						patientId = (pick as unknown as { id: string }).id || '';
+					} else {
+						return;
+					}
+				}
+			}
+		} catch { /* use typed name */ }
+
+		// Step 2: Appointment type
+		const types = ['New Patient', 'Follow-Up', 'Sick Visit', 'Annual Physical', 'Well Child', 'Telehealth', 'Urgent', 'Procedure', 'Lab Only', 'Injection'];
+		const typePick = await this.quickInputService.pick(
+			types.map(t => ({ label: t })),
+			{ placeHolder: 'Appointment type' }
+		);
+		if (!typePick) { return; }
+
+		// Step 3: Provider (optional)
+		let providerId = '';
+		let providerName = '';
+		if (this.providers.length > 0) {
+			const provPick = await this.quickInputService.pick(
+				[{ label: 'No preference', description: '' }, ...this.providers.map(p => ({ label: p.name, description: p.id }))],
+				{ placeHolder: 'Select provider (optional)' }
+			);
+			if (provPick && provPick.label !== 'No preference') {
+				const prov = this.providers.find(p => p.name === provPick.label);
+				if (prov) { providerId = prov.id; providerName = prov.name; }
+			}
+		}
+
+		// Step 4: Duration
+		const durPick = await this.quickInputService.pick(
+			[{ label: '15 min' }, { label: '30 min' }, { label: '45 min' }, { label: '60 min' }],
+			{ placeHolder: 'Duration' }
+		);
+		const duration = durPick ? parseInt(durPick.label) : 30;
+
+		// Step 5: Confirm and create
 		try {
 			const res = await this.apiService.fetch('/api/appointments', {
 				method: 'POST',
 				body: JSON.stringify({
-					patientName: patient,
-					appointmentType: type,
+					patientName,
+					patientId: patientId || undefined,
+					appointmentType: typePick.label,
 					startTime: `${date}T${time}:00`,
 					status: 'scheduled',
-					duration: 30,
+					duration,
+					providerId: providerId || undefined,
+					providerName: providerName || undefined,
 				}),
 			});
 			if (res.ok) {
-				this.notificationService.notify({ severity: Severity.Info, message: `Appointment created for ${patient}` });
+				this.notificationService.notify({ severity: Severity.Info, message: `Scheduled ${typePick.label} for ${patientName} at ${time} with ${providerName || 'any provider'}` });
 				await this._refresh();
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create appointment (${res.status})` });
 			}
 		} catch (err) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Failed to create: ${err}` });

@@ -113,6 +113,9 @@ export class ScheduleSidebarPane extends ViewPane {
 	private _render(): void {
 		DOM.clearNode(this.container);
 
+		// -- Actions (top) --
+		this._renderActions();
+
 		// -- Quick Stats Bar --
 		this._renderStats();
 
@@ -124,9 +127,6 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// -- Upcoming Days --
 		this._renderUpcoming();
-
-		// -- Actions --
-		this._renderActions();
 	}
 
 	private _renderStats(): void {
