@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -40,13 +41,8 @@ interface LayoutConfig {
 	categories: CategoryDef[];
 }
 
-const FHIR_RESOURCES = [
-	'Patient', 'Encounter', 'Observation', 'Condition', 'Procedure',
-	'MedicationRequest', 'AllergyIntolerance', 'Immunization', 'DiagnosticReport',
-	'CarePlan', 'DocumentReference', 'Appointment', 'Schedule', 'ServiceRequest',
-	'Coverage', 'Claim', 'Organization', 'Location', 'Practitioner', 'PractitionerRole',
-	'RelatedPerson', 'FamilyMemberHistory', 'Goal', 'Consent', 'ImagingStudy',
-];
+// Available FHIR resource types for tab assignment
+// const FHIR_RESOURCES = ['Patient', 'Encounter', 'Observation', 'Condition', 'Procedure', 'MedicationRequest', 'AllergyIntolerance', 'Immunization', 'DiagnosticReport', 'CarePlan', 'DocumentReference', 'Appointment', 'Schedule', 'ServiceRequest', 'Coverage', 'Claim', 'Organization', 'Location', 'Practitioner', 'PractitionerRole', 'RelatedPerson', 'FamilyMemberHistory', 'Goal', 'Consent', 'ImagingStudy'];
 
 export class LayoutEditor extends EditorPane {
 
@@ -69,6 +65,7 @@ export class LayoutEditor extends EditorPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(LayoutEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -262,8 +259,8 @@ export class LayoutEditor extends EditorPane {
 
 	// ---- CRUD Operations ----
 
-	private _addCategory(): void {
-		const name = globalThis.prompt?.('Category name:');
+	private async _addCategory(): Promise<void> {
+		const name = await this.quickInputService.input({ prompt: 'Category name' });
 		if (!name) { return; }
 		this.config.categories.push({
 			key: name.toLowerCase().replace(/\s+/g, '-'),
@@ -275,10 +272,10 @@ export class LayoutEditor extends EditorPane {
 		this._render();
 	}
 
-	private _editCategory(ci: number): void {
+	private async _editCategory(ci: number): Promise<void> {
 		const cat = this.config.categories[ci];
-		const name = globalThis.prompt?.('Category name:', cat.label);
-		if (name === null || name === undefined) { return; }
+		const name = await this.quickInputService.input({ prompt: 'Category name', value: cat.label });
+		if (!name) { return; }
 		cat.label = name;
 		cat.key = name.toLowerCase().replace(/\s+/g, '-');
 		this._markDirty();
@@ -305,35 +302,35 @@ export class LayoutEditor extends EditorPane {
 		this._render();
 	}
 
-	private _addTab(): void {
+	private async _addTab(): Promise<void> {
 		if (this.config.categories.length === 0) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Add a category first.' });
 			return;
 		}
-		const key = globalThis.prompt?.('Tab key (e.g., vitals):');
+		const key = await this.quickInputService.input({ prompt: 'Tab key (e.g., vitals)' });
 		if (!key) { return; }
-		const label = globalThis.prompt?.('Tab label:', key.charAt(0).toUpperCase() + key.slice(1));
+		const label = await this.quickInputService.input({ prompt: 'Tab label', value: key.charAt(0).toUpperCase() + key.slice(1) });
 		if (!label) { return; }
 		const catNames = this.config.categories.map(c => c.label).join(', ');
-		const catName = globalThis.prompt?.(`Category (${catNames}):`, this.config.categories[0].label);
+		const catName = await this.quickInputService.input({ prompt: `Category (${catNames})`, value: this.config.categories[0].label });
 		const cat = this.config.categories.find(c => c.label === catName) || this.config.categories[0];
-		const fhirStr = globalThis.prompt?.(`FHIR Resources (comma-separated):\nAvailable: ${FHIR_RESOURCES.slice(0, 10).join(', ')}...`, 'Patient');
+		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR Resources (comma-separated)', value: 'Patient' });
 		const fhirResources = fhirStr ? fhirStr.split(',').map(s => s.trim()).filter(Boolean) : [];
 		cat.tabs.push({ key, label, icon: 'FileText', position: cat.tabs.length, visible: true, fhirResources });
 		this._markDirty();
 		this._render();
 	}
 
-	private _editTab(ci: number, ti: number): void {
+	private async _editTab(ci: number, ti: number): Promise<void> {
 		const tab = this.config.categories[ci].tabs[ti];
-		const label = globalThis.prompt?.('Tab label:', tab.label);
-		if (label === null || label === undefined) { return; }
+		const label = await this.quickInputService.input({ prompt: 'Tab label', value: tab.label });
+		if (!label) { return; }
 		tab.label = label;
-		const icon = globalThis.prompt?.('Icon name:', tab.icon);
+		const icon = await this.quickInputService.input({ prompt: 'Icon name', value: tab.icon });
 		if (icon) { tab.icon = icon; }
-		const key = globalThis.prompt?.('Tab key:', tab.key);
+		const key = await this.quickInputService.input({ prompt: 'Tab key', value: tab.key });
 		if (key) { tab.key = key; }
-		const fhirStr = globalThis.prompt?.('FHIR Resources (comma-separated):', tab.fhirResources.join(', '));
+		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR Resources (comma-separated)', value: tab.fhirResources.join(', ') });
 		if (fhirStr !== null && fhirStr !== undefined) {
 			tab.fhirResources = fhirStr.split(',').map(s => s.trim()).filter(Boolean);
 		}
