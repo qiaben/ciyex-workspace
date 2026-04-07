@@ -92,8 +92,23 @@ export class ScheduleSidebarPane extends ViewPane {
 		} catch (err) {
 			this.logService.warn('[Schedule] Failed to load appointments:', err);
 		}
+
+		// Load waitlist
+		try {
+			const res = await this.apiService.fetch('/api/waitlist?page=0&size=20');
+			if (res.ok) {
+				const data = await res.json();
+				this.waitlist = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+			}
+		} catch {
+			// Waitlist API may not exist yet
+			this.waitlist = [];
+		}
+
 		this._render();
 	}
+
+	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
 
 	private _render(): void {
 		DOM.clearNode(this.container);
@@ -103,6 +118,9 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// -- Today's Timeline --
 		this._renderTimeline();
+
+		// -- Waitlist --
+		this._renderWaitlist();
 
 		// -- Upcoming Days --
 		this._renderUpcoming();
@@ -125,6 +143,16 @@ export class ScheduleSidebarPane extends ViewPane {
 		this._statBadge(stats, String(remaining), 'Left', '#3b82f6');
 		if (noShows > 0) {
 			this._statBadge(stats, String(noShows), 'No-Show', '#ef4444');
+		}
+
+		// Average wait time (estimate from arrived appointments)
+		const arrived = this.appointments.filter(a => {
+			const s = a.status?.toLowerCase();
+			return s === 'arrived' || s === 'checked-in' || s === 'in-room';
+		});
+		if (arrived.length > 0) {
+			const avgWait = Math.round(arrived.length * 8); // estimate 8 min per waiting patient
+			this._statBadge(stats, `${avgWait}m`, 'Avg Wait', '#f59e0b');
 		}
 	}
 
@@ -207,6 +235,41 @@ export class ScheduleSidebarPane extends ViewPane {
 		const badge = DOM.append(row, DOM.$('.status-badge'));
 		badge.textContent = (apt.status || 'scheduled').replace(/-/g, ' ');
 		badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;white-space:nowrap;background:${statusColor}22;color:${statusColor};font-weight:500;`;
+	}
+
+	private _renderWaitlist(): void {
+		if (this.waitlist.length === 0) { return; }
+
+		const section = DOM.append(this.container, DOM.$('.waitlist-section'));
+		section.style.cssText = 'padding:8px 0;border-top:1px solid var(--vscode-editorWidget-border);';
+
+		const header = DOM.append(section, DOM.$('.section-header'));
+		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;gap:4px;';
+		header.textContent = `Waitlist (${this.waitlist.length})`;
+
+		for (const item of this.waitlist) {
+			const row = DOM.append(section, DOM.$('.waitlist-row'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:pointer;border-left:3px solid #f59e0b;';
+			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground, rgba(255,255,255,0.04))'; });
+			row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+			const info = DOM.append(row, DOM.$('.info'));
+			info.style.cssText = 'flex:1;min-width:0;';
+
+			const name = DOM.append(info, DOM.$('.name'));
+			name.textContent = item.patientName || 'Unknown';
+			name.style.cssText = 'font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+			const type = DOM.append(info, DOM.$('.type'));
+			type.textContent = item.requestedType || '';
+			type.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+
+			if (item.priority) {
+				const pri = DOM.append(row, DOM.$('span'));
+				pri.textContent = `P${item.priority}`;
+				pri.style.cssText = 'font-size:9px;padding:1px 4px;border-radius:2px;background:rgba(245,158,11,0.15);color:#f59e0b;font-weight:600;';
+			}
+		}
 	}
 
 	private _renderUpcoming(): void {

@@ -61,7 +61,7 @@ export class CalendarEditor extends EditorPane {
 	private gridContainer!: HTMLElement;
 	private headerBar!: HTMLElement;
 	private currentDate = new Date();
-	private viewMode: 'day' | 'week' = 'week';
+	private viewMode: 'day' | 'week' | 'month' = 'week';
 	private appointments: Appointment[] = [];
 	private providerFilter = '';
 	private locationFilter = '';
@@ -101,7 +101,7 @@ export class CalendarEditor extends EditorPane {
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'week';
-		this.viewMode = defaultView === 'day' ? 'day' : 'week';
+		this.viewMode = defaultView === 'day' ? 'day' : defaultView === 'month' ? 'month' : 'week';
 		await this._loadAppointments();
 		if (!token.isCancellationRequested) {
 			this._renderHeader();
@@ -162,16 +162,18 @@ export class CalendarEditor extends EditorPane {
 			const s = d.toISOString().split('T')[0];
 			return { startDate: s, endDate: s };
 		}
+		if (this.viewMode === 'month') {
+			const first = new Date(d.getFullYear(), d.getMonth(), 1);
+			const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+			return { startDate: first.toISOString().split('T')[0], endDate: last.toISOString().split('T')[0] };
+		}
 		// Week: find Monday
 		const day = d.getDay();
 		const monday = new Date(d);
 		monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
 		const sunday = new Date(monday);
 		sunday.setDate(monday.getDate() + 6);
-		return {
-			startDate: monday.toISOString().split('T')[0],
-			endDate: sunday.toISOString().split('T')[0],
-		};
+		return { startDate: monday.toISOString().split('T')[0], endDate: sunday.toISOString().split('T')[0] };
 	}
 
 	private _renderHeader(): void {
@@ -190,6 +192,8 @@ export class CalendarEditor extends EditorPane {
 		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;text-align:center;';
 		if (this.viewMode === 'day') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+		} else if (this.viewMode === 'month') {
+			label.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 		} else {
 			const { startDate, endDate } = this._getDateRange();
 			const s = new Date(startDate + 'T00:00:00');
@@ -200,7 +204,7 @@ export class CalendarEditor extends EditorPane {
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
 		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
-		for (const mode of ['day', 'week'] as const) {
+		for (const mode of ['day', 'week', 'month'] as const) {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
@@ -237,6 +241,11 @@ export class CalendarEditor extends EditorPane {
 
 	private _renderGrid(): void {
 		DOM.clearNode(this.gridContainer);
+
+		if (this.viewMode === 'month') {
+			this._renderMonthGrid();
+			return;
+		}
 
 		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 8;
 		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
@@ -339,6 +348,75 @@ export class CalendarEditor extends EditorPane {
 		this._renderTimeIndicator(table, days, startHour, slotDuration, slotHeight);
 	}
 
+	private _renderMonthGrid(): void {
+		const year = this.currentDate.getFullYear();
+		const month = this.currentDate.getMonth();
+		const firstDay = new Date(year, month, 1);
+		const lastDay = new Date(year, month + 1, 0);
+		const startDayOfWeek = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1; // Monday-based
+
+		const grid = DOM.append(this.gridContainer, DOM.$('.month-grid'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:8px;';
+
+		// Day headers
+		for (const d of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']) {
+			const hdr = DOM.append(grid, DOM.$('.month-header'));
+			hdr.textContent = d;
+			hdr.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:4px;text-transform:uppercase;';
+		}
+
+		// Empty cells before first day
+		for (let i = 0; i < startDayOfWeek; i++) {
+			const cell = DOM.append(grid, DOM.$('.month-empty'));
+			cell.style.cssText = 'min-height:80px;background:rgba(128,128,128,0.03);border-radius:3px;';
+		}
+
+		// Day cells
+		for (let day = 1; day <= lastDay.getDate(); day++) {
+			const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+			const isToday = dateStr === new Date().toISOString().split('T')[0];
+			const dayAppts = this.appointments.filter(a => {
+				try { return new Date(a.startTime).toISOString().split('T')[0] === dateStr; } catch { return false; }
+			});
+
+			const cell = DOM.append(grid, DOM.$('.month-cell'));
+			cell.style.cssText = `min-height:80px;background:var(--vscode-editorWidget-background);border-radius:3px;padding:4px;cursor:pointer;${isToday ? 'border:2px solid var(--vscode-focusBorder);' : 'border:1px solid rgba(128,128,128,0.1);'}`;
+			cell.addEventListener('mouseenter', () => { cell.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; });
+			cell.addEventListener('mouseleave', () => { cell.style.background = 'var(--vscode-editorWidget-background)'; });
+			cell.addEventListener('click', () => { this.currentDate = new Date(dateStr + 'T00:00:00'); this.viewMode = 'day'; this._refresh(); });
+
+			// Day number
+			const numEl = DOM.append(cell, DOM.$('div'));
+			numEl.textContent = String(day);
+			numEl.style.cssText = `font-size:13px;font-weight:${isToday ? '700' : '500'};${isToday ? 'color:var(--vscode-textLink-foreground);' : ''}margin-bottom:2px;`;
+
+			// Appointment count + previews
+			if (dayAppts.length > 0) {
+				const countBadge = DOM.append(cell, DOM.$('div'));
+				countBadge.textContent = `${dayAppts.length} appt${dayAppts.length > 1 ? 's' : ''}`;
+				countBadge.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+
+				// Show first 3 appointments
+				for (const apt of dayAppts.slice(0, 3)) {
+					const aptEl = DOM.append(cell, DOM.$('div'));
+					const typeColor = TYPE_COLORS[(apt.appointmentType || apt.type || '').toLowerCase()] || '#607D8B';
+					aptEl.style.cssText = `font-size:9px;padding:1px 3px;border-radius:2px;margin-bottom:1px;background:${typeColor}20;border-left:2px solid ${typeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+					try {
+						const time = new Date(apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+						aptEl.textContent = `${time} ${apt.patientName || ''}`;
+					} catch {
+						aptEl.textContent = apt.patientName || '';
+					}
+				}
+				if (dayAppts.length > 3) {
+					const more = DOM.append(cell, DOM.$('div'));
+					more.textContent = `+${dayAppts.length - 3} more`;
+					more.style.cssText = 'font-size:9px;color:var(--vscode-textLink-foreground);';
+				}
+			}
+		}
+	}
+
 	private _renderTimeIndicator(table: HTMLElement, days: Date[], startHour: number, slotDuration: number, slotHeight: number): void {
 		const now = new Date();
 		const todayIdx = days.findIndex(d => d.toDateString() === now.toDateString());
@@ -371,6 +449,8 @@ export class CalendarEditor extends EditorPane {
 	private _navigate(dir: number): void {
 		if (this.viewMode === 'day') {
 			this.currentDate.setDate(this.currentDate.getDate() + dir);
+		} else if (this.viewMode === 'month') {
+			this.currentDate.setMonth(this.currentDate.getMonth() + dir);
 		} else {
 			this.currentDate.setDate(this.currentDate.getDate() + dir * 7);
 		}
