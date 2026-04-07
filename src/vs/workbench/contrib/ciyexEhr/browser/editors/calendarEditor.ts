@@ -31,6 +31,7 @@ interface Appointment {
 	duration?: number;
 	providerId?: string;
 	providerName?: string;
+	practitionerName?: string;
 	locationId?: string;
 	locationName?: string;
 }
@@ -62,7 +63,7 @@ export class CalendarEditor extends EditorPane {
 	private gridContainer!: HTMLElement;
 	private headerBar!: HTMLElement;
 	private currentDate = new Date();
-	private viewMode: 'day' | 'week' | 'month' = 'day';
+	private viewMode: 'day' | 'week' | 'month' | 'providers' = 'day';
 	private appointments: Appointment[] = [];
 	private providerFilter = '';
 	private locationFilter = '';
@@ -253,7 +254,7 @@ export class CalendarEditor extends EditorPane {
 		// Date label
 		const label = DOM.append(this.headerBar, DOM.$('span'));
 		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;text-align:center;';
-		if (this.viewMode === 'day') {
+		if (this.viewMode === 'day' || this.viewMode === 'providers') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 		} else if (this.viewMode === 'month') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -267,7 +268,7 @@ export class CalendarEditor extends EditorPane {
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
 		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
-		for (const mode of ['day', 'week', 'month'] as const) {
+		for (const mode of ['day', 'week', 'month', 'providers'] as const) {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
@@ -325,6 +326,11 @@ export class CalendarEditor extends EditorPane {
 
 		if (this.viewMode === 'month') {
 			this._renderMonthGrid();
+			return;
+		}
+
+		if (this.viewMode === 'providers') {
+			this._renderProviderGrid();
 			return;
 		}
 
@@ -444,6 +450,116 @@ export class CalendarEditor extends EditorPane {
 		this._renderTimeIndicator(table, days, startHour, slotDuration, slotHeight);
 	}
 
+	private _renderProviderGrid(): void {
+		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
+		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
+		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
+		const slotHeight = 20;
+		const dateStr = this.currentDate.toISOString().split('T')[0];
+
+		// Get providers that have appointments today (or all if none filtered)
+		const activeProviders = this.providers.length > 0 ? this.providers : [];
+		if (activeProviders.length === 0) {
+			const empty = DOM.append(this.gridContainer, DOM.$('div'));
+			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
+			empty.textContent = 'No providers loaded. Click Refresh to load provider data.';
+			return;
+		}
+
+		const table = DOM.append(this.gridContainer, DOM.$('.cal-table'));
+		table.style.cssText = 'display:grid;grid-template-columns:50px ' + activeProviders.map(() => '1fr').join(' ') + ';min-width:100%;';
+
+		// Header: empty corner + provider names
+		const corner = DOM.append(table, DOM.$('.cal-corner'));
+		corner.style.cssText = 'border-bottom:1px solid var(--vscode-editorWidget-border);border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;';
+
+		const PROVIDER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#e11d48', '#0891b2', '#a855f7'];
+
+		for (let pi = 0; pi < activeProviders.length; pi++) {
+			const prov = activeProviders[pi];
+			const provColor = PROVIDER_COLORS[pi % PROVIDER_COLORS.length];
+			const hdr = DOM.append(table, DOM.$('.cal-prov-header'));
+			hdr.style.cssText = `border-bottom:2px solid ${provColor};border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;text-align:center;position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;`;
+			const nameEl = DOM.append(hdr, DOM.$('div'));
+			nameEl.textContent = prov.name;
+			nameEl.style.cssText = 'font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+			// Count today's appointments for this provider
+			const provAppts = this.appointments.filter(a => {
+				const aProvId = a.providerId || '';
+				const aProvName = a.providerName || a.practitionerName || '';
+				return (aProvId === prov.id || aProvName === prov.name);
+			});
+			const countEl = DOM.append(hdr, DOM.$('div'));
+			countEl.textContent = `${provAppts.length} appts`;
+			countEl.style.cssText = `font-size:9px;color:${provColor};`;
+		}
+
+		// Time rows
+		for (let hour = startHour; hour < endHour; hour++) {
+			for (let slot = 0; slot < 60 / slotDuration; slot++) {
+				const minute = slot * slotDuration;
+				const isHourStart = minute === 0;
+
+				// Time label
+				const timeCell = DOM.append(table, DOM.$('.cal-time'));
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}`;
+				if (isHourStart) {
+					const h = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
+					const ampm = hour >= 12 ? 'PM' : 'AM';
+					timeCell.textContent = `${h}${ampm}`;
+				}
+
+				// Provider cells
+				for (let pi = 0; pi < activeProviders.length; pi++) {
+					const prov = activeProviders[pi];
+					const provColor = PROVIDER_COLORS[pi % PROVIDER_COLORS.length];
+					const cell = DOM.append(table, DOM.$('.cal-cell'));
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
+					cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
+					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+
+					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+					cell.addEventListener('click', () => this._createAppointment(dateStr, timeStr));
+
+					// Find appointments for this provider at this time
+					const slotAppts = this.appointments.filter(a => {
+						const aProvId = a.providerId || '';
+						const aProvName = a.providerName || a.practitionerName || '';
+						if (aProvId !== prov.id && aProvName !== prov.name) { return false; }
+						try {
+							const d = new Date(a.start || a.startTime);
+							return d.getHours() === hour && d.getMinutes() >= minute && d.getMinutes() < minute + slotDuration;
+						} catch { return false; }
+					});
+
+					for (const apt of slotAppts) {
+						const dur = apt.duration || 30;
+						const slots = Math.max(1, Math.ceil(dur / slotDuration));
+						const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
+						const block = DOM.append(cell, DOM.$('.apt-block'));
+						block.style.cssText = `position:absolute;left:2px;right:2px;top:0;height:${slots * slotHeight - 2}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						block.addEventListener('mouseenter', () => { block.style.background = `${provColor}35`; });
+						block.addEventListener('mouseleave', () => { block.style.background = `${provColor}20`; });
+						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
+
+						const nameEl = DOM.append(block, DOM.$('div'));
+						nameEl.textContent = apt.patientName || '';
+						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+						const typeEl = DOM.append(block, DOM.$('div'));
+						typeEl.textContent = apt.appointmentType || apt.type || '';
+						typeEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
+
+						const dot = DOM.append(block, DOM.$('span'));
+						dot.style.cssText = `position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:${statusColor};`;
+						dot.title = apt.status;
+					}
+				}
+			}
+		}
+	}
+
 	private _renderMonthGrid(): void {
 		const year = this.currentDate.getFullYear();
 		const month = this.currentDate.getMonth();
@@ -543,7 +659,7 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private _navigate(dir: number): void {
-		if (this.viewMode === 'day') {
+		if (this.viewMode === 'day' || this.viewMode === 'providers') {
 			this.currentDate.setDate(this.currentDate.getDate() + dir);
 		} else if (this.viewMode === 'month') {
 			this.currentDate.setMonth(this.currentDate.getMonth() + dir);
