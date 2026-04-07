@@ -82,7 +82,7 @@ const MenubarClinicalMenu = new MenuId('MenubarClinicalMenu');
 const MenubarOperationsMenu = new MenuId('MenubarOperationsMenu');
 const MenubarSystemMenu = new MenuId('MenubarSystemMenu');
 const MenubarPortalMenu = new MenuId('MenubarPortalMenu');
-const MenubarEhrSettingsMenu = new MenuId('MenubarEhrSettingsMenu');
+// MenubarEhrSettingsMenu removed -- settings are in VS Code Settings Editor (Cmd+,)
 
 // "Ciyex" menu for leaf items (Calendar, Appointments, Patients, etc.)
 MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
@@ -116,101 +116,8 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
 	order: 2.5,
 });
 
-// Settings as submenu inside Ciyex menu (and also available via gear menu)
-MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
-	submenu: MenubarEhrSettingsMenu,
-	title: { ...localize2('settingsSubmenu', "Settings"), mnemonicTitle: localize2('mSettings', "&&Settings").value },
-	group: '2_settings',
-	order: 1,
-});
-
-// Static admin settings items in the Settings submenu
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openUserManagement', title: localize2('menuUserMgmt', "User Management").value },
-	when: ContextKeyExpr.has('ciyex.role.admin'),
-	group: '1_users',
-	order: 1,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openRolesConfig', title: localize2('menuRoles', "Roles & Permissions").value },
-	when: ContextKeyExpr.has('ciyex.role.admin'),
-	group: '1_users',
-	order: 2,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openMenuConfig', title: localize2('menuConfig', "Menu Configuration").value },
-	when: ContextKeyExpr.has('ciyex.role.admin'),
-	group: '2_layout',
-	order: 3,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openChartLayout', title: localize2('menuChartLayout', "Chart Layout").value },
-	group: '2_layout',
-	order: 4,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openEncounterConfig', title: localize2('menuEncounter', "Encounter Form").value },
-	group: '2_layout',
-	order: 5,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openCalendarColors', title: localize2('menuCalColors', "Calendar Colors").value },
-	group: '3_settings',
-	order: 6,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openPortalConfig', title: localize2('menuPortal', "Patient Portal").value },
-	group: '3_settings',
-	order: 7,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openFieldConfig', title: localize2('menuFieldConfig', "Field Configuration").value },
-	group: '2_layout',
-	order: 6,
-});
-MenuRegistry.appendMenuItem(MenubarEhrSettingsMenu, {
-	command: { id: 'ciyex.openSettings', title: localize2('menuSettings', "Settings").value },
-	group: '4_settings',
-	order: 8,
-});
-
-// Static gear menu items (all settings accessible from gear menu)
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openSettings', title: localize2('gearSettings', "Ciyex Settings").value },
-	group: '3_ciyex_settings',
-	order: 1,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openChartLayout', title: localize2('gearChartLayout', "Chart Layout").value },
-	group: '3_ciyex_settings',
-	order: 2,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openEncounterConfig', title: localize2('gearEncounter', "Encounter Form").value },
-	group: '3_ciyex_settings',
-	order: 3,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openMenuConfig', title: localize2('gearMenuConfig', "Menu Config").value },
-	group: '3_ciyex_settings',
-	order: 4,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openCalendarColors', title: localize2('gearCalColors', "Calendar Colors").value },
-	group: '3_ciyex_settings',
-	order: 5,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openPortalConfig', title: localize2('gearPortal', "Patient Portal").value },
-	group: '3_ciyex_settings',
-	order: 6,
-});
-MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-	command: { id: 'ciyex.openRolesConfig', title: localize2('gearRoles', "Roles & Permissions").value },
-	when: ContextKeyExpr.has('ciyex.role.admin'),
-	group: '3_ciyex_settings',
-	order: 7,
-});
+// All settings are in VS Code Settings Editor (Cmd+,) under "Ciyex" section.
+// No gear menu items or Settings submenu needed.
 
 // Placeholder commands so menus aren't empty at startup (disposable - cleared when real items load)
 CommandsRegistry.registerCommand('ciyex.nav._placeholder', () => { });
@@ -252,7 +159,7 @@ const MENU_MAP: Record<string, MenuId> = {
 	'operations': MenubarOperationsMenu,
 	'system': MenubarSystemMenu,
 	'portal-management': MenubarPortalMenu,
-	'settings': MenubarEhrSettingsMenu,
+	// 'settings' removed -- all settings are in VS Code Settings Editor (Cmd+,)
 };
 
 // --- Service Implementation -----------------------------------------
@@ -306,35 +213,7 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 		}
 		_placeholderDisposables.length = 0;
 
-		// Only "Settings" menu items go in the gear menu (GlobalActivity)
-		// Everything else goes in the top menu bar and sidebar only
-		let gearOrder = 10;
-		for (const entry of this._menuItems) {
-			const item = entry.item;
-			const children = entry.children || [];
-
-			// Only the "settings" parent goes into the gear menu
-			if (item.itemKey === 'settings' && children.length > 0) {
-				for (const childEntry of children) {
-					const child = childEntry.item;
-					const cmdId = `ciyex.gear.${child.itemKey}`;
-					this._menuDisposables.add(MenuRegistry.addCommand({ id: cmdId, title: { value: child.label, original: child.label } }));
-					this._menuDisposables.add(CommandsRegistry.registerCommand(cmdId, (accessor) => {
-						const viewsService = accessor.get(IViewsService);
-						const viewId = ITEM_KEY_TO_VIEW[child.itemKey];
-						if (viewId) {
-							viewsService.openView(viewId, true);
-						}
-						this.logService.info(`[CiyexMenu] Settings: ${child.label} -> ${viewId || child.screenSlug}`);
-					}));
-					this._menuDisposables.add(MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
-						command: { id: cmdId, title: child.label },
-						group: '3_ciyex_settings',
-						order: gearOrder++,
-					}));
-				}
-			}
-		}
+		// Settings removed from gear menu -- all in Cmd+, Settings Editor now
 
 		// Register leaf items directly in the Ciyex menu (top group)
 		let leafOrder = 1;
