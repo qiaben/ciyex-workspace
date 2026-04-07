@@ -23,7 +23,7 @@ interface Appointment {
 	patientName: string;
 	patientFirstName?: string;
 	patientLastName?: string;
-	appointmentType: string;
+	appointmentType: string | { text?: string; coding?: Array<{ display?: string; code?: string }> };
 	type?: string;
 	status: string;
 	startTime: string;
@@ -34,6 +34,13 @@ interface Appointment {
 	practitionerName?: string;
 	locationId?: string;
 	locationName?: string;
+}
+
+function getAppointmentType(apt: Appointment): string {
+	const t = apt.appointmentType;
+	if (typeof t === 'string') { return t; }
+	if (t && typeof t === 'object') { return t.text || t.coding?.[0]?.display || t.coding?.[0]?.code || ''; }
+	return apt.type || '';
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -63,7 +70,7 @@ export class CalendarEditor extends EditorPane {
 	private gridContainer!: HTMLElement;
 	private headerBar!: HTMLElement;
 	private currentDate = new Date();
-	private viewMode: 'day' | 'week' | 'month' | 'providers' = 'day';
+	private viewMode: 'day' | 'week' | 'month' = 'day';
 	private appointments: Appointment[] = [];
 	private providerFilter = '';
 	private locationFilter = '';
@@ -117,46 +124,33 @@ export class CalendarEditor extends EditorPane {
 
 	private async _loadAppointments(): Promise<void> {
 	  try {
-		console.log('[Calendar] _loadAppointments called, viewMode:', this.viewMode, 'date:', this.currentDate);
-		const { startDate } = this._getDateRange();
-		console.log('[Calendar] startDate:', startDate);
 		let provLoc = '';
 		if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
 		if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
 
-		// Load all appointments (no date filter - API hangs with date params)
-		// Filter by date client-side
-		const url = `/api/appointments?page=0&size=200${provLoc}`;
-		console.log('[Calendar] Fetching:', url);
-
+		// Load all appointments for the day
 		try {
-			const res = await this.apiService.fetch(url);
+			const res = await this.apiService.fetch(`/api/appointments?page=0&size=1000${provLoc}`);
 			if (res.ok) {
 				const data = await res.json();
 				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
 			}
-		} catch { this.appointments = []; }
+		} catch { /* */ }
 		if (!this.appointments) { this.appointments = []; }
-
-		console.log('[Calendar] Appointments loaded:', this.appointments?.length, '- now loading providers...');
 		// Load providers (try multiple endpoints)
 		if (this.providers.length === 0) {
 			const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
 			for (const url of providerUrls) {
 				try {
-					console.log('[Calendar] Fetching providers from:', url);
 					const res = await this.apiService.fetch(url);
-					console.log('[Calendar] Provider response:', res.status, res.ok);
 					if (res.ok) {
 						const data = await res.json();
 						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-						console.log('[Calendar] Provider list length:', list.length, 'from', url);
 						if (list.length > 0) {
 							this.providers = list.map((p: Record<string, string>) => ({
 								id: p.id || p.fhirId || p.username || '',
 								name: `${p['identification.prefix'] || ''} ${p['identification.firstName'] || p.firstName || ''} ${p['identification.lastName'] || p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
 							})).filter((p: { id: string; name: string }) => p.name && p.name.trim().length > 0);
-							console.log('[Calendar] Loaded providers:', this.providers.length, this.providers.map(p => p.name));
 							break;
 						}
 					}
@@ -203,7 +197,6 @@ export class CalendarEditor extends EditorPane {
 			this.scheduleBlocks = [];
 		}
 	  } catch (err) {
-		console.error('[Calendar] _loadAppointments error:', err);
 	  }
 	}
 
@@ -241,7 +234,7 @@ export class CalendarEditor extends EditorPane {
 		// Date label
 		const label = DOM.append(this.headerBar, DOM.$('span'));
 		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;text-align:center;';
-		if (this.viewMode === 'day' || this.viewMode === 'providers') {
+		if (this.viewMode === 'day') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 		} else if (this.viewMode === 'month') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -255,7 +248,7 @@ export class CalendarEditor extends EditorPane {
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
 		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
-		for (const mode of ['day', 'week', 'month', 'providers'] as const) {
+		for (const mode of ['day', 'week', 'month'] as const) {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
@@ -316,7 +309,8 @@ export class CalendarEditor extends EditorPane {
 			return;
 		}
 
-		if (this.viewMode === 'providers') {
+		// Day view = all providers side-by-side
+		if (this.viewMode === 'day') {
 			this._renderProviderGrid();
 			return;
 		}
@@ -327,7 +321,8 @@ export class CalendarEditor extends EditorPane {
 		const slotHeight = 20; // px per slot
 		// hourHeight = (60 / slotDuration) * slotHeight — used for time indicator positioning
 
-		const days = this.viewMode === 'day' ? [new Date(this.currentDate)] : this._getWeekDays();
+		// Week view always shows 7 days (Day view handled by _renderProviderGrid)
+		const days = this._getWeekDays();
 
 		// Grid table
 		const table = DOM.append(this.gridContainer, DOM.$('.cal-table'));
@@ -406,7 +401,7 @@ export class CalendarEditor extends EditorPane {
 						const dur = apt.duration || 30;
 						const slots = Math.max(1, Math.ceil(dur / slotDuration));
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						const typeColor = TYPE_COLORS[(apt.appointmentType || apt.type || '').toLowerCase()] || '#607D8B';
+						const typeColor = TYPE_COLORS[(getAppointmentType(apt) || '').toLowerCase()] || '#607D8B';
 						const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
 
 						block.style.cssText = `position:absolute;left:2px;right:2px;top:0;height:${slots * slotHeight - 2}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
@@ -420,7 +415,7 @@ export class CalendarEditor extends EditorPane {
 
 						const detailLine = DOM.append(block, DOM.$('div'));
 						detailLine.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
-						const parts = [apt.appointmentType || apt.type || ''];
+						const parts = [getAppointmentType(apt) || ''];
 						if (apt.providerName) { parts.push(apt.providerName); }
 						detailLine.textContent = parts.filter(Boolean).join(' \u00B7 ');
 
@@ -535,7 +530,7 @@ export class CalendarEditor extends EditorPane {
 						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
 						const typeEl = DOM.append(block, DOM.$('div'));
-						typeEl.textContent = apt.appointmentType || apt.type || '';
+						typeEl.textContent = getAppointmentType(apt) || '';
 						typeEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
 
 						const dot = DOM.append(block, DOM.$('span'));
@@ -598,7 +593,7 @@ export class CalendarEditor extends EditorPane {
 				// Show first 3 appointments
 				for (const apt of dayAppts.slice(0, 3)) {
 					const aptEl = DOM.append(cell, DOM.$('div'));
-					const typeColor = TYPE_COLORS[(apt.appointmentType || apt.type || '').toLowerCase()] || '#607D8B';
+					const typeColor = TYPE_COLORS[(getAppointmentType(apt) || '').toLowerCase()] || '#607D8B';
 					aptEl.style.cssText = `font-size:9px;padding:1px 3px;border-radius:2px;margin-bottom:1px;background:${typeColor}20;border-left:2px solid ${typeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
 					try {
 						const time = new Date(apt.start || apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -646,7 +641,7 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private _navigate(dir: number): void {
-		if (this.viewMode === 'day' || this.viewMode === 'providers') {
+		if (this.viewMode === 'day') {
 			this.currentDate.setDate(this.currentDate.getDate() + dir);
 		} else if (this.viewMode === 'month') {
 			this.currentDate.setMonth(this.currentDate.getMonth() + dir);
@@ -983,7 +978,7 @@ export class CalendarEditor extends EditorPane {
 						method: 'POST',
 						body: JSON.stringify({
 							patientName: apt.patientName,
-							appointmentType: apt.appointmentType || apt.type,
+							appointmentType: getAppointmentType(apt),
 							startTime: newDate.toISOString(),
 							status: 'scheduled',
 							duration: apt.duration || 30,
@@ -1003,7 +998,7 @@ export class CalendarEditor extends EditorPane {
 					method: 'POST',
 					body: JSON.stringify({
 						patientName: apt.patientName,
-						requestedType: apt.appointmentType || apt.type,
+						requestedType: getAppointmentType(apt),
 						requestedDate: apt.startTime,
 						priority: 1,
 					}),
@@ -1025,7 +1020,7 @@ export class CalendarEditor extends EditorPane {
 		// Count by type
 		const byType: Record<string, number> = {};
 		for (const a of this.appointments) {
-			const t = a.appointmentType || a.type || 'Unknown';
+			const t = getAppointmentType(a) || 'Unknown';
 			byType[t] = (byType[t] || 0) + 1;
 		}
 

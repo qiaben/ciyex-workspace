@@ -97,7 +97,8 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	private async _loadAndRender(append = false): Promise<void> {
 		try {
-			const res = await this.apiService.fetch(`/api/appointments?page=${this.currentPage}&size=${this.pageSize}`);
+			const today = new Date().toISOString().split('T')[0];
+			const res = await this.apiService.fetch(`/api/appointments?date=${today}&page=0&size=1000`);
 			if (res.ok) {
 				const data = await res.json();
 				const page = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
