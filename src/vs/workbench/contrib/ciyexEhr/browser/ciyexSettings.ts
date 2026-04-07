@@ -372,3 +372,123 @@ configRegistry.registerConfiguration({
 		},
 	},
 });
+
+// Calendar Colors (simple settings here, advanced color editor via Cmd+Shift+P "Open Calendar Colors")
+configRegistry.registerConfiguration({
+	id: 'ciyex.calendarColors',
+	order: 10,
+	title: localize('ciyexCalColors', "Ciyex: Calendar Colors"),
+	properties: {
+		'ciyex.calendarColors.colorBy': {
+			type: 'string',
+			enum: ['visit-type', 'provider', 'location'],
+			default: 'visit-type',
+			description: localize('calColorBy', "Color-code calendar appointments by this category."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.calendarColors.workingHoursBg': {
+			type: 'string',
+			default: '#ffffff',
+			description: localize('calWorkingBg', "Background color for working hours on calendar."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.calendarColors.nonWorkingHoursBg': {
+			type: 'string',
+			default: '#f1f5f9',
+			description: localize('calNonWorkingBg', "Background color for non-working hours on calendar."),
+			scope: ConfigurationScope.WINDOW,
+		},
+	},
+});
+
+// Patient Portal (simple settings here, advanced form/nav editor via Cmd+Shift+P "Open Patient Portal")
+configRegistry.registerConfiguration({
+	id: 'ciyex.portal',
+	order: 11,
+	title: localize('ciyexPortalSettings', "Ciyex: Patient Portal"),
+	properties: {
+		'ciyex.portal.name': {
+			type: 'string',
+			default: 'Patient Portal',
+			description: localize('portalName', "Portal display name shown to patients."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.portal.url': {
+			type: 'string',
+			default: '',
+			description: localize('portalUrl', "Portal URL (e.g., https://portal.example.com)."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.portal.language': {
+			type: 'string',
+			enum: ['en', 'es', 'fr'],
+			default: 'en',
+			description: localize('portalLang', "Portal default language."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.portal.onlineBooking': {
+			type: 'boolean',
+			default: true,
+			description: localize('portalBooking', "Allow patients to book appointments online."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.portal.messaging': {
+			type: 'boolean',
+			default: true,
+			description: localize('portalMsg', "Allow patient-provider messaging."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.portal.labResults': {
+			type: 'boolean',
+			default: true,
+			description: localize('portalLabs', "Allow patients to view lab results."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.portal.prescriptionRefills': {
+			type: 'boolean',
+			default: true,
+			description: localize('portalRx', "Allow patients to request prescription refills."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.portal.billPay': {
+			type: 'boolean',
+			default: false,
+			description: localize('portalBill', "Allow patients to pay bills online."),
+			scope: ConfigurationScope.WINDOW,
+		},
+		'ciyex.portal.telehealth': {
+			type: 'boolean',
+			default: false,
+			description: localize('portalTele', "Allow patients to join telehealth visits."),
+			scope: ConfigurationScope.WINDOW,
+		},
+	},
+});
+
+// Roles & Permissions (role list shown here, detailed scope/permission matrix via Cmd+Shift+P "Open Roles & Permissions")
+configRegistry.registerConfiguration({
+	id: 'ciyex.roles',
+	order: 12,
+	title: localize('ciyexRolesSettings', "Ciyex: Roles & Permissions"),
+	properties: {
+		'ciyex.roles.defaultRole': {
+			type: 'string',
+			enum: ['admin', 'physician', 'nurse', 'receptionist', 'billing', 'patient'],
+			default: 'receptionist',
+			description: localize('defaultRole', "Default role assigned to new staff users."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.roles.patientRole': {
+			type: 'string',
+			default: 'patient',
+			description: localize('patientRole', "Role assigned to patient portal users."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+		'ciyex.roles.requireMfa': {
+			type: 'boolean',
+			default: false,
+			description: localize('rolesMfa', "Require multi-factor authentication for admin roles."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+	},
+});

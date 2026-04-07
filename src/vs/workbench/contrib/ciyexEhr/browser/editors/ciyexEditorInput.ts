@@ -56,5 +56,10 @@ export class RolesEditorInput extends BaseCiyexInput {
 	override get typeId(): string { return RolesEditorInput.ID; }
 }
 
+export class PortalEditorInput extends BaseCiyexInput {
+	static readonly ID = 'workbench.input.ciyexPortal';
+	override get typeId(): string { return PortalEditorInput.ID; }
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;

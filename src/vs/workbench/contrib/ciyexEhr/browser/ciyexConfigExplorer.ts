@@ -37,9 +37,7 @@ const CONFIG_ITEMS: ConfigItem[] = [
 	{ label: 'Chart Layout', icon: 'codicon-preview', commandId: 'ciyex.openChartLayout', description: 'Tabs and categories' },
 	{ label: 'Encounter Form', icon: 'codicon-note', commandId: 'ciyex.openEncounterConfig', description: '17 sections, ROS, PE' },
 	{ label: 'Menu Configuration', icon: 'codicon-list-tree', commandId: 'ciyex.openMenuConfig', description: 'Sidebar navigation' },
-	{ label: 'Calendar Colors', icon: 'codicon-symbol-color', commandId: 'ciyex.openCalendarColors', description: 'Visit type, provider colors' },
-	{ label: 'Patient Portal', icon: 'codicon-globe', commandId: 'ciyex.openPortalConfig', description: 'Branding, features, forms' },
-	{ label: 'Roles & Permissions', icon: 'codicon-verified-filled', commandId: 'ciyex.openRolesConfig', description: 'FHIR scopes, features' },
+	// Calendar Colors, Patient Portal, Roles & Permissions moved to VS Code Settings (Cmd+,)
 	{
 		label: 'FIELD CONFIGURATIONS', icon: '', commandId: '', children: [
 			{ label: 'Demographics', icon: 'codicon-person', commandId: 'ciyex.openFieldConfig', description: 'Patient info fields' },
