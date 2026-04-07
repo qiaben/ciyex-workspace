@@ -63,6 +63,10 @@ export class CalendarEditor extends EditorPane {
 	private currentDate = new Date();
 	private viewMode: 'day' | 'week' = 'week';
 	private appointments: Appointment[] = [];
+	private providerFilter = '';
+	private locationFilter = '';
+	private providers: Array<{ id: string; name: string }> = [];
+	private locations: Array<{ id: string; name: string }> = [];
 
 	constructor(
 		group: IEditorGroup,
@@ -87,7 +91,11 @@ export class CalendarEditor extends EditorPane {
 
 		// Grid container
 		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
-		this.gridContainer.style.cssText = 'flex:1;overflow:auto;';
+		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;';
+
+		// Render empty grid immediately (data loads in setInput)
+		this._renderHeader();
+		this._renderGrid();
 	}
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -103,14 +111,48 @@ export class CalendarEditor extends EditorPane {
 
 	private async _loadAppointments(): Promise<void> {
 		const { startDate, endDate } = this._getDateRange();
-		try {
-			const res = await this.apiService.fetch(`/api/appointments?startDate=${startDate}&endDate=${endDate}&page=0&size=200`);
-			if (res.ok) {
-				const data = await res.json();
-				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-			}
-		} catch {
-			this.appointments = [];
+		// Try date range first, fallback to single date
+		const urls = [
+			`/api/appointments?startDate=${startDate}&endDate=${endDate}&page=0&size=200`,
+			`/api/appointments?date=${startDate}&page=0&size=200`,
+			`/api/appointments?page=0&size=200`,
+		];
+		let provLoc = '';
+		if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
+		if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
+
+		for (const baseUrl of urls) {
+			try {
+				const res = await this.apiService.fetch(baseUrl + provLoc);
+				if (res.ok) {
+					const data = await res.json();
+					this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+					if (this.appointments.length > 0) { break; }
+				}
+			} catch { /* try next */ }
+		}
+		if (!this.appointments) { this.appointments = []; }
+
+		// Load providers and locations (once)
+		if (this.providers.length === 0) {
+			try {
+				const res = await this.apiService.fetch('/api/providers?page=0&size=100');
+				if (res.ok) {
+					const data = await res.json();
+					const list = data?.data?.content || data?.content || [];
+					this.providers = list.map((p: Record<string, string>) => ({ id: p.id, name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || p.id }));
+				}
+			} catch { /* */ }
+		}
+		if (this.locations.length === 0) {
+			try {
+				const res = await this.apiService.fetch('/api/fhir-resource/facilities?page=0&size=50');
+				if (res.ok) {
+					const data = await res.json();
+					const list = data?.data?.content || data?.content || [];
+					this.locations = list.map((l: Record<string, string>) => ({ id: l.id, name: l.name || l.id }));
+				}
+			} catch { /* */ }
 		}
 	}
 
@@ -165,9 +207,31 @@ export class CalendarEditor extends EditorPane {
 			btn.addEventListener('click', () => { this.viewMode = mode; this._refresh(); });
 		}
 
+		// Provider filter
+		const provSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
+		provSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:140px;';
+		const provAll = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
+		provAll.value = ''; provAll.textContent = 'All Providers';
+		for (const p of this.providers) {
+			const opt = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
+			opt.value = p.id; opt.textContent = p.name; opt.selected = p.id === this.providerFilter;
+		}
+		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._refresh(); });
+
+		// Location filter
+		const locSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
+		locSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:140px;';
+		const locAll = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
+		locAll.value = ''; locAll.textContent = 'All Locations';
+		for (const l of this.locations) {
+			const opt = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
+			opt.value = l.id; opt.textContent = l.name; opt.selected = l.id === this.locationFilter;
+		}
+		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._refresh(); });
+
 		// Appointment count
 		const count = DOM.append(this.headerBar, DOM.$('span'));
-		count.textContent = `${this.appointments.length} appointments`;
+		count.textContent = `${this.appointments.length} appts`;
 		count.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 	}
 
