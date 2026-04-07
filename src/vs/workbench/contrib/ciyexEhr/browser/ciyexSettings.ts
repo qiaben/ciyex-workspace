@@ -492,3 +492,227 @@ configRegistry.registerConfiguration({
 		},
 	},
 });
+
+// --- Clinical Workflow -----------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.clinical',
+	order: 13,
+	title: localize('ciyexClinical', "Ciyex: Clinical Workflow"),
+	properties: {
+		'ciyex.clinical.defaultEncounterForm': { type: 'string', default: 'standard', description: localize('clinDefaultForm', "Default encounter form template."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.soapAutoSaveMinutes': { type: 'number', default: 2, minimum: 1, maximum: 30, description: localize('clinAutoSave', "Auto-save interval for SOAP notes (minutes)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.unitsOfMeasurement': { type: 'string', enum: ['imperial', 'metric'], default: 'imperial', description: localize('clinUnits', "Units of measurement for vitals and measurements."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.advanceDirectivesWarning': { type: 'boolean', default: true, description: localize('clinAdvDir', "Alert when patient has advance directives on file."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.enableAmendments': { type: 'boolean', default: true, description: localize('clinAmend', "Allow amendments to signed clinical records."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.enableTextTemplates': { type: 'boolean', default: true, description: localize('clinTemplates', "Enable text templates/macros in encounter forms."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.ageDisplayFormat': { type: 'string', enum: ['years', 'years-months', 'auto'], default: 'auto', description: localize('clinAge', "How to display patient age (auto switches to months for infants)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.clinical.defaultVisitCategory': { type: 'string', default: 'Office Visit', description: localize('clinVisitCat', "Default category for new visits."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Notifications / Email / SMS -------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.notifications',
+	order: 14,
+	title: localize('ciyexNotifications', "Ciyex: Notifications"),
+	properties: {
+		'ciyex.notifications.senderName': { type: 'string', default: '', description: localize('notifSender', "Sender name for patient reminders and emails."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.senderEmail': { type: 'string', default: '', description: localize('notifEmail', "Sender email address for notifications."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.adminEmail': { type: 'string', default: '', description: localize('notifAdmin', "Admin notification email address."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.smtpHost': { type: 'string', default: '', description: localize('notifSmtp', "SMTP server hostname for sending email."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.smtpPort': { type: 'number', default: 587, description: localize('notifPort', "SMTP server port."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.smtpSecurity': { type: 'string', enum: ['none', 'tls', 'ssl'], default: 'tls', description: localize('notifSec', "SMTP security protocol."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.emailReminderHours': { type: 'number', default: 48, description: localize('notifEmailHrs', "Hours before appointment to send email reminder."), scope: ConfigurationScope.WINDOW },
+		'ciyex.notifications.smsReminderHours': { type: 'number', default: 24, description: localize('notifSmsHrs', "Hours before appointment to send SMS reminder."), scope: ConfigurationScope.WINDOW },
+		'ciyex.notifications.smsGatewayApiKey': { type: 'string', default: '', description: localize('notifSmsKey', "SMS gateway API key (Twilio, etc.)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.notifications.appointmentReminderChannels': { type: 'string', enum: ['email', 'sms', 'both', 'none'], default: 'both', description: localize('notifChannels', "Default reminder channels for appointments."), scope: ConfigurationScope.WINDOW },
+		'ciyex.notifications.dailyAgendaEmail': { type: 'boolean', default: false, description: localize('notifAgenda', "Send daily schedule email to providers."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Audit / Compliance ----------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.audit',
+	order: 15,
+	title: localize('ciyexAudit', "Ciyex: Audit & Compliance"),
+	properties: {
+		'ciyex.audit.enabled': { type: 'boolean', default: true, description: localize('auditEnabled', "Enable audit logging for HIPAA compliance."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.audit.patientRecordAccess': { type: 'boolean', default: true, description: localize('auditPatient', "Log all patient record access events."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.audit.schedulingChanges': { type: 'boolean', default: true, description: localize('auditSched', "Log scheduling create/modify/delete events."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.audit.orderActivity': { type: 'boolean', default: true, description: localize('auditOrders', "Log all order activity (labs, prescriptions, referrals)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.audit.securityAdmin': { type: 'boolean', default: true, description: localize('auditSecurity', "Log security and administration changes."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.audit.logEncryption': { type: 'boolean', default: false, description: localize('auditEncrypt', "Encrypt audit log entries."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.compliance.mipsEnabled': { type: 'boolean', default: false, description: localize('compMips', "Enable MIPS quality reporting."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.compliance.mipsReportingYear': { type: 'number', default: 2026, description: localize('compMipsYear', "MIPS performance period year."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.compliance.cqmEnabled': { type: 'boolean', default: false, description: localize('compCqm', "Enable Clinical Quality Measures reporting."), scope: ConfigurationScope.APPLICATION },
+	},
+});
+
+// --- Security / Password Policy --------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.security',
+	order: 16,
+	title: localize('ciyexSecurity', "Ciyex: Security"),
+	properties: {
+		'ciyex.security.passwordMinLength': { type: 'number', default: 8, minimum: 6, maximum: 128, description: localize('secPwdMin', "Minimum password length."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.security.passwordRequireStrong': { type: 'boolean', default: true, description: localize('secPwdStrong', "Require strong passwords (uppercase, lowercase, number, special char)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.security.passwordExpirationDays': { type: 'number', default: 90, minimum: 0, maximum: 365, description: localize('secPwdExpire', "Days until password expires (0 = never)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.security.maxFailedLoginAttempts': { type: 'number', default: 5, minimum: 3, maximum: 20, description: localize('secMaxFailed', "Account lockout after N failed login attempts."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.security.twoFactorAuth': { type: 'string', enum: ['disabled', 'optional', 'required-admin', 'required-all'], default: 'optional', description: localize('sec2fa', "Two-factor authentication requirement."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.security.ssoEnabled': { type: 'boolean', default: true, description: localize('secSso', "Enable Single Sign-On via Keycloak/SAML."), scope: ConfigurationScope.APPLICATION },
+	},
+});
+
+// --- E-Sign / Consent ------------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.esign',
+	order: 17,
+	title: localize('ciyexEsign', "Ciyex: E-Sign & Consent"),
+	properties: {
+		'ciyex.esign.encounterSigningEnabled': { type: 'boolean', default: true, description: localize('esignEnc', "Enable electronic signing of encounters."), scope: ConfigurationScope.WINDOW },
+		'ciyex.esign.lockOnSign': { type: 'boolean', default: true, description: localize('esignLock', "Lock encounter after signing (prevent further edits)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.esign.formSigningEnabled': { type: 'boolean', default: true, description: localize('esignForm', "Enable electronic signing of individual forms."), scope: ConfigurationScope.WINDOW },
+		'ciyex.esign.cosignRequired': { type: 'boolean', default: false, description: localize('esignCosign', "Require co-signature for mid-level providers."), scope: ConfigurationScope.WINDOW },
+		'ciyex.consent.telehealthRequired': { type: 'boolean', default: true, description: localize('consentTele', "Require telehealth consent before video visit."), scope: ConfigurationScope.WINDOW },
+		'ciyex.consent.immunizationReporting': { type: 'boolean', default: true, description: localize('consentImm', "Default consent for immunization registry reporting."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Telehealth (expanded) -------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.telehealth',
+	order: 18,
+	title: localize('ciyexTelehealth', "Ciyex: Telehealth"),
+	properties: {
+		'ciyex.telehealth.provider': { type: 'string', enum: ['built-in', 'zoom', 'doxy', 'custom'], default: 'built-in', description: localize('teleProvider', "Video visit platform provider."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.telehealth.waitingRoomEnabled': { type: 'boolean', default: true, description: localize('teleWaiting', "Enable virtual waiting room for patients."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.recordingEnabled': { type: 'boolean', default: false, description: localize('teleRecord', "Allow visit recording (requires patient consent)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.maxDurationMinutes': { type: 'number', default: 60, minimum: 10, maximum: 240, description: localize('teleDuration', "Maximum telehealth visit duration (minutes)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.screenShareEnabled': { type: 'boolean', default: true, description: localize('teleScreen', "Allow screen sharing during visits."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.multiPartyEnabled': { type: 'boolean', default: true, description: localize('teleMulti', "Allow multi-party visits (family, interpreter)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.autoSendLink': { type: 'boolean', default: true, description: localize('teleAutoLink', "Auto-send video link to patient before visit."), scope: ConfigurationScope.WINDOW },
+		'ciyex.telehealth.reminderMinutes': { type: 'number', default: 15, description: localize('teleReminder', "Minutes before visit to send reminder."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Documents -------------------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.documents',
+	order: 19,
+	title: localize('ciyexDocuments', "Ciyex: Documents"),
+	properties: {
+		'ciyex.documents.storageMethod': { type: 'string', enum: ['s3', 'local'], default: 's3', description: localize('docStorage', "Document storage method."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.documents.maxFileSizeMB': { type: 'number', default: 10, minimum: 1, maximum: 100, description: localize('docMaxSize', "Maximum file upload size (MB)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.documents.thumbnailEnabled': { type: 'boolean', default: true, description: localize('docThumb', "Generate document thumbnails."), scope: ConfigurationScope.WINDOW },
+		'ciyex.documents.encryptOnDisk': { type: 'boolean', default: false, description: localize('docEncrypt', "Encrypt documents at rest."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.documents.scannerEnabled': { type: 'boolean', default: false, description: localize('docScanner', "Enable scanner/TWAIN support."), scope: ConfigurationScope.WINDOW },
+		'ciyex.documents.faxProvider': { type: 'string', enum: ['none', 'sfax', 'hylafax', 'srfax'], default: 'none', description: localize('docFax', "Fax service provider."), scope: ConfigurationScope.APPLICATION },
+	},
+});
+
+// --- Insurance / Eligibility -----------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.insurance',
+	order: 20,
+	title: localize('ciyexInsurance', "Ciyex: Insurance"),
+	properties: {
+		'ciyex.insurance.eligibilityVerification': { type: 'boolean', default: true, description: localize('insElig', "Enable real-time insurance eligibility verification."), scope: ConfigurationScope.WINDOW },
+		'ciyex.insurance.eligibilityProvider': { type: 'string', default: '', description: localize('insEligProvider', "Eligibility verification service (e.g., Office Ally, Availity)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.insurance.allowMultipleInsurance': { type: 'boolean', default: true, description: localize('insMultiple', "Allow primary, secondary, and tertiary insurance."), scope: ConfigurationScope.WINDOW },
+		'ciyex.insurance.autoVerifyOnCheckIn': { type: 'boolean', default: false, description: localize('insAutoVerify', "Auto-verify eligibility on patient check-in."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Reporting / Analytics -------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.reporting',
+	order: 21,
+	title: localize('ciyexReporting', "Ciyex: Reporting"),
+	properties: {
+		'ciyex.reporting.endOfDayReport': { type: 'boolean', default: true, description: localize('repEod', "Enable end-of-day report generation."), scope: ConfigurationScope.WINDOW },
+		'ciyex.reporting.endOfDayByProvider': { type: 'boolean', default: true, description: localize('repEodProv', "Generate end-of-day reports per provider."), scope: ConfigurationScope.WINDOW },
+		'ciyex.reporting.dashboardEnabled': { type: 'boolean', default: true, description: localize('repDash', "Enable real-time reporting dashboard."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Patient Flow Board ----------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.flowBoard',
+	order: 22,
+	title: localize('ciyexFlowBoard', "Ciyex: Patient Flow Board"),
+	properties: {
+		'ciyex.flowBoard.enabled': { type: 'boolean', default: true, description: localize('fbEnabled', "Enable patient flow board / waiting room display."), scope: ConfigurationScope.WINDOW },
+		'ciyex.flowBoard.refreshIntervalSeconds': { type: 'number', default: 30, minimum: 10, maximum: 300, description: localize('fbRefresh', "Auto-refresh interval (seconds)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.flowBoard.showVisitReason': { type: 'boolean', default: true, description: localize('fbReason', "Show reason for visit on flow board."), scope: ConfigurationScope.WINDOW },
+		'ciyex.flowBoard.showWaitTime': { type: 'boolean', default: true, description: localize('fbWait', "Show wait time on flow board."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- PDF / Print -----------------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.print',
+	order: 23,
+	title: localize('ciyexPrint', "Ciyex: Print & PDF"),
+	properties: {
+		'ciyex.print.paperSize': { type: 'string', enum: ['letter', 'a4', 'legal'], default: 'letter', description: localize('printPaper', "Default paper size for printing and PDF export."), scope: ConfigurationScope.WINDOW },
+		'ciyex.print.orientation': { type: 'string', enum: ['portrait', 'landscape'], default: 'portrait', description: localize('printOrient', "Default print orientation."), scope: ConfigurationScope.WINDOW },
+		'ciyex.print.fontSize': { type: 'number', default: 10, minimum: 8, maximum: 14, description: localize('printFont', "Default font size for printed documents (pt)."), scope: ConfigurationScope.WINDOW },
+		'ciyex.print.showPracticeLogo': { type: 'boolean', default: true, description: localize('printLogo', "Include practice logo on printed documents."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Kiosk (expanded) ------------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.kiosk',
+	order: 24,
+	title: localize('ciyexKiosk', "Ciyex: Patient Kiosk"),
+	properties: {
+		'ciyex.kiosk.demographicsVerification': { type: 'boolean', default: true, description: localize('kioskDemo', "Require demographics verification at check-in."), scope: ConfigurationScope.WINDOW },
+		'ciyex.kiosk.insuranceCapture': { type: 'boolean', default: true, description: localize('kioskIns', "Allow insurance card photo capture at kiosk."), scope: ConfigurationScope.WINDOW },
+		'ciyex.kiosk.copayCollection': { type: 'boolean', default: false, description: localize('kioskCopay', "Collect copay at kiosk check-in."), scope: ConfigurationScope.WINDOW },
+		'ciyex.kiosk.consentForms': { type: 'boolean', default: true, description: localize('kioskConsent', "Display consent forms at kiosk."), scope: ConfigurationScope.WINDOW },
+		'ciyex.kiosk.idleTimeoutSeconds': { type: 'number', default: 120, minimum: 30, maximum: 600, description: localize('kioskTimeout', "Kiosk session timeout (seconds)."), scope: ConfigurationScope.WINDOW },
+	},
+});
+
+// --- Lab / Imaging (expanded) ----------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.labExpanded',
+	order: 25,
+	title: localize('ciyexLabExp', "Ciyex: Lab & Imaging"),
+	properties: {
+		'ciyex.lab.hl7Enabled': { type: 'boolean', default: false, description: localize('labHl7', "Enable HL7 message processing for lab interfaces."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.lab.abnormalResultAlerts': { type: 'boolean', default: true, description: localize('labAbnormal', "Alert providers on abnormal lab results."), scope: ConfigurationScope.WINDOW },
+		'ciyex.lab.criticalValueAlerts': { type: 'boolean', default: true, description: localize('labCritical', "Urgent notification for critical lab values."), scope: ConfigurationScope.WINDOW },
+		'ciyex.lab.immunizationRegistryEnabled': { type: 'boolean', default: false, description: localize('labIis', "Enable immunization registry (IIS) reporting."), scope: ConfigurationScope.APPLICATION },
+	},
+});
+
+// --- Prescription (expanded) -----------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.rxExpanded',
+	order: 26,
+	title: localize('ciyexRxExp', "Ciyex: Prescriptions (Advanced)"),
+	properties: {
+		'ciyex.prescriptions.eRxProvider': { type: 'string', enum: ['none', 'surescripts', 'newcrop', 'weno'], default: 'none', description: localize('rxProvider', "Electronic prescribing service provider."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.prescriptions.epcsEnabled': { type: 'boolean', default: false, description: localize('rxEpcs', "Enable electronic prescribing of controlled substances (EPCS)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.prescriptions.showDeaNumber': { type: 'boolean', default: true, description: localize('rxDea', "Show DEA number on prescriptions."), scope: ConfigurationScope.WINDOW },
+		'ciyex.prescriptions.showNpi': { type: 'boolean', default: true, description: localize('rxNpi', "Show NPI on prescriptions."), scope: ConfigurationScope.WINDOW },
+		'ciyex.prescriptions.tallManNames': { type: 'boolean', default: true, description: localize('rxTallMan', "Display Tall Man medication names for safety."), scope: ConfigurationScope.WINDOW },
+		'ciyex.prescriptions.formularySearch': { type: 'boolean', default: false, description: localize('rxFormulary', "Default to formulary search when prescribing."), scope: ConfigurationScope.WINDOW },
+	},
+});
