@@ -1555,3 +1555,255 @@ The FHIR standard defines the following scheduling-related resources. Support va
 - [FHIR R4 -- Schedule](https://www.hl7.org/fhir/R4/schedule.html)
 - [FHIR R4 -- Slot](https://www.hl7.org/fhir/R4/slot.html)
 - [Argonaut Scheduling Implementation Guide](https://www.fhir.org/guides/argonaut/scheduling/patient-scheduling.html)
+
+---
+
+## Implementation Checklist for Ciyex Workspace Scheduler
+
+### Current State
+- Sidebar: flat list of appointments (patient name, type, status) — NOT a scheduler
+- Webview: basic table of today's appointments — NOT interactive
+- Settings registered but unused (defaultView, slotDuration, colorBy, etc.)
+
+### Design: Rich Scheduler (EditorPane)
+
+The scheduler replaces the simple appointment list with a full **calendar EditorPane** (like Google Calendar / Epic Cadence) that opens as the main editor.
+
+```
++------------------------------------------------------------------+
+| << April 2026 >>  [Day] [Week] [Month] [List]  [+ New] [Today]  |
++--------+--------+--------+--------+--------+--------+--------+--+
+|        | Mon 6  | Tue 7  | Wed 8  | Thu 9  | Fri 10 | Sat 11 |  |
++--------+--------+--------+--------+--------+--------+--------+--+
+| 8:00   | ██████ |        | ██████ |        |        |        |  |
+|        | Smith  |        | Davis  |        |        |        |  |
+|        | Follow |        | New Pt |        |        |        |  |
++--------+--------+--------+--------+--------+--------+--------+  |
+| 8:30   |        | ██████ |        | ██████ |        |        |  |
+|        |        | Jones  |        | Brown  |        |        |  |
++--------+--------+--------+--------+--------+--------+--------+  |
+| 9:00   | ██████ | ██████ | ██████ |        | ██████ |        |  |
+|        | Chen   | Park   | Wilson |        | Taylor |        |  |
+|        | Sick V | Annual | Teleh  |        | Follow |        |  |
++--------+--------+--------+--------+--------+--------+--------+--+
+| Provider: Dr. Smith ▼ | Location: Main Office ▼ | 12 appts today |
++------------------------------------------------------------------+
+```
+
+**Sidebar Panel (replaces flat list):**
+```
++---------------------------+
+| TODAY - Mon, Apr 6        |
+|                           |
+| ● 8:00  Smith, J.        |
+|   Follow-Up  [Arrived]   |
+|                           |
+| ● 9:00  Chen, M.         |
+|   Sick Visit [Scheduled]  |
+|                           |
+| ● 9:30  Park, S.         |
+|   Annual     [Checked In] |
+|                           |
+| ● 10:00 (available)      |
+|                           |
+| ● 10:30 Wilson, T.       |
+|   Telehealth [Confirmed]  |
+|                           |
+|  UPCOMING                 |
+|  Tomorrow: 8 appointments |
+|  Wed: 6 appointments      |
+|                           |
+|  WAITLIST (3)             |
+|  Davis, R. - Follow-up    |
+|  Brown, A. - New Patient  |
+|  Lee, K. - Procedure      |
++---------------------------+
+```
+
+### Phase 1 — Core Calendar (Must-Have)
+
+- [ ] **Calendar EditorPane** — custom EditorPane with day/week/month views
+  - [ ] Week view: 7 columns (Mon-Sun), time rows (configurable start/end hour)
+  - [ ] Day view: single column with 15/30/60-min slots
+  - [ ] Month view: grid with appointment count per day
+  - [ ] List view: flat chronological list with grouping by date
+  - [ ] View toggle buttons in toolbar
+  - [ ] Date navigation (prev/next, today button, date picker)
+  - [ ] Current time indicator (red line)
+
+- [ ] **Appointment Blocks** — visual blocks in the calendar grid
+  - [ ] Color-coded by visit type / provider / location (from settings)
+  - [ ] Show: patient name, time, visit type, status badge
+  - [ ] Height proportional to duration
+  - [ ] Hover tooltip with full details
+  - [ ] Click to open appointment detail/edit
+
+- [ ] **Appointment CRUD**
+  - [ ] Click empty slot → New Appointment (QuickInput for patient, type, provider)
+  - [ ] Click existing → Edit Appointment (QuickInput for details)
+  - [ ] Right-click → Cancel, No-Show, Reschedule
+  - [ ] Drag to reschedule (change time/day)
+  - [ ] Resize to change duration
+
+- [ ] **Appointment Statuses** — visual status workflow
+  - [ ] Scheduled → Confirmed → Arrived → Checked-In → In Room → With Provider → Checked-Out
+  - [ ] Status badges with color coding
+  - [ ] Click status badge to advance to next status
+  - [ ] Cancelled / No-Show as terminal states
+
+- [ ] **Provider Filter** — dropdown to filter by provider
+  - [ ] All providers (side-by-side columns)
+  - [ ] Single provider view
+  - [ ] Provider color coding
+
+- [ ] **Location Filter** — dropdown to filter by location/facility
+
+### Phase 2 — Sidebar Panel (Replace Flat List)
+
+- [ ] **Today's Schedule** — timeline view in sidebar
+  - [ ] Time-ordered list with status badges
+  - [ ] Available slots shown as "(available)"
+  - [ ] Click appointment to open in main calendar
+  - [ ] Mini patient avatar with initials
+
+- [ ] **Upcoming** — next 2-3 days summary
+  - [ ] Day name + appointment count
+  - [ ] Click to navigate calendar to that day
+
+- [ ] **Waitlist** — patients waiting for cancellation slot
+  - [ ] Patient name, requested visit type, date range
+  - [ ] Click to book when slot opens
+  - [ ] Priority ordering
+
+- [ ] **Quick Stats** — today's numbers
+  - [ ] Total appointments / completed / remaining
+  - [ ] No-shows today
+  - [ ] Average wait time
+
+### Phase 3 — Provider Schedule Management
+
+- [ ] **Schedule Templates** — recurring weekly blocks
+  - [ ] Define: provider, day of week, start/end time, visit types allowed
+  - [ ] Template exceptions (holidays, vacations)
+  - [ ] Copy template to other providers
+
+- [ ] **Availability Blocks** — open/closed time slots
+  - [ ] Block types: Office, Hospital, Admin, Personal, Lunch
+  - [ ] Visual display on calendar (grayed out for closed)
+  - [ ] Recurring blocks (every Tuesday PM off)
+
+- [ ] **Time-Off Management**
+  - [ ] Request time-off with date range
+  - [ ] Auto-block calendar for approved time-off
+  - [ ] Show affected appointments that need rescheduling
+
+### Phase 4 — Patient Self-Scheduling
+
+- [ ] **Online Booking Widget** — patient-facing scheduling
+  - [ ] Available visit types (configurable)
+  - [ ] Provider preference (optional)
+  - [ ] Location preference
+  - [ ] Real-time slot availability
+  - [ ] Insurance verification before booking
+  - [ ] Pre-visit questionnaire assignment
+
+- [ ] **Booking Rules**
+  - [ ] Minimum advance booking (e.g., 2 hours)
+  - [ ] Maximum advance booking (e.g., 90 days)
+  - [ ] New patient vs established patient rules
+  - [ ] Double-booking prevention
+  - [ ] Buffer time between appointments
+
+### Phase 5 — Reminders & Communication
+
+- [ ] **Appointment Reminders**
+  - [ ] Email reminder (configurable hours before)
+  - [ ] SMS reminder (configurable hours before)
+  - [ ] Confirmation request (reply to confirm)
+  - [ ] No-show follow-up message
+
+- [ ] **Recall System**
+  - [ ] Recall reminders for overdue visits
+  - [ ] Annual physical reminders
+  - [ ] Follow-up scheduling reminders
+  - [ ] Custom recall rules per visit type
+
+### Phase 6 — Reporting & Analytics
+
+- [ ] **Utilization Dashboard**
+  - [ ] Schedule fill rate (% of available slots booked)
+  - [ ] No-show rate by provider/type/day
+  - [ ] Cancellation rate
+  - [ ] Average wait time (arrival to seen)
+  - [ ] New vs returning patient ratio
+
+- [ ] **Provider Productivity**
+  - [ ] Patients seen per day/week/month
+  - [ ] Revenue per time slot
+  - [ ] RVU tracking
+
+### Phase 7 — Advanced Features
+
+- [ ] **Waitlist Auto-Fill** — when cancellation occurs, auto-offer slot to waitlist
+- [ ] **Predictive No-Show** — AI-based no-show risk scoring
+- [ ] **Smart Scheduling** — suggest optimal appointment times based on:
+  - [ ] Historical no-show patterns
+  - [ ] Provider preference
+  - [ ] Patient travel distance
+  - [ ] Required prep time between appointment types
+- [ ] **Multi-Resource Scheduling** — book provider + room + equipment simultaneously
+- [ ] **Group Appointments** — group therapy/education sessions
+- [ ] **Recurring Appointments** — series (e.g., 6 weekly PT sessions)
+- [ ] **Google/Outlook Sync** — bidirectional calendar sync for providers
+
+### FHIR Resources
+
+| Resource | Usage |
+|----------|-------|
+| `Appointment` | Core appointment record (patient, provider, time, status, type) |
+| `Schedule` | Provider's available schedule blocks |
+| `Slot` | Individual bookable time slots within a Schedule |
+| `Practitioner` | Provider info |
+| `PractitionerRole` | Provider's role at a location |
+| `Location` | Facility/room |
+| `HealthcareService` | Service types offered at a location |
+| `Patient` | Patient reference in appointment |
+
+### API Endpoints Needed
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/appointments` | GET | List appointments (date, provider, location filters) |
+| `/api/appointments` | POST | Create appointment |
+| `/api/appointments/{id}` | PUT | Update appointment |
+| `/api/appointments/{id}/status` | PATCH | Update status (check-in, no-show, etc.) |
+| `/api/appointments/{id}` | DELETE | Cancel appointment |
+| `/api/schedules` | GET | Provider schedule templates |
+| `/api/schedules/{id}/slots` | GET | Available slots for a schedule |
+| `/api/slots/available` | GET | Search available slots (provider, type, date range) |
+| `/api/waitlist` | GET/POST/DELETE | Waitlist management |
+| `/api/appointments/reminders` | POST | Send/schedule reminders |
+
+### Settings Used (already registered in Cmd+,)
+
+- `ciyex.calendar.defaultView` — day/week/month
+- `ciyex.calendar.startHour` / `endHour` — visible hours
+- `ciyex.calendar.slotDuration` — 10/15/20/30/60 min
+- `ciyex.calendar.colorBy` — visit-type/provider/location
+- `ciyex.calendar.showWeekends` — boolean
+- `ciyex.calendar.showCancelled` — boolean
+- `ciyex.calendar.defaultAppointmentDuration` — minutes
+- `ciyex.calendarColors.*` — color assignments
+- `ciyex.notifications.emailReminderHours` — reminder timing
+- `ciyex.notifications.smsReminderHours` — SMS timing
+- `ciyex.notifications.appointmentReminderChannels` — email/sms/both
+
+### Priority Order
+
+1. **Phase 1** — Core Calendar EditorPane (blocks, CRUD, status, filters) ← START HERE
+2. **Phase 2** — Sidebar Panel (today's timeline, upcoming, waitlist)
+3. **Phase 3** — Provider Schedule Management
+4. **Phase 4** — Patient Self-Scheduling
+5. **Phase 5** — Reminders
+6. **Phase 6** — Reporting
+7. **Phase 7** — Advanced (AI, sync, multi-resource)
