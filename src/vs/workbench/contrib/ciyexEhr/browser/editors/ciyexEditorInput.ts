@@ -66,5 +66,47 @@ export class CalendarEditorInput extends BaseCiyexInput {
 	override get typeId(): string { return CalendarEditorInput.ID; }
 }
 
+// ─── Clinical EditorInputs (patient-scoped, not file-based) ───
+
+export class PatientChartEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexPatientChart';
+	override get typeId(): string { return PatientChartEditorInput.ID; }
+
+	constructor(
+		readonly patientId: string,
+		readonly patientName: string,
+	) { super(); }
+
+	override getName(): string { return this.patientName || 'Patient Chart'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('person'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-patient', path: `/${this.patientId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof PatientChartEditorInput && this.patientId === other.patientId;
+	}
+}
+
+export class EncounterFormEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexEncounterForm';
+	override get typeId(): string { return EncounterFormEditorInput.ID; }
+
+	constructor(
+		readonly patientId: string,
+		readonly encounterId: string,
+		readonly patientName: string,
+		readonly encounterLabel: string,
+	) { super(); }
+
+	override getName(): string { return this.encounterLabel || 'Encounter'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('notebook'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-encounter', path: `/encounter/${this.patientId || '_'}/${this.encounterId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof EncounterFormEditorInput && this.patientId === other.patientId && this.encounterId === other.encounterId;
+	}
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;

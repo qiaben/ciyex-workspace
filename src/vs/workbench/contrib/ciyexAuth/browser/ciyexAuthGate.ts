@@ -430,7 +430,7 @@ export class CiyexAuthGate extends Disposable {
 		}
 
 		// Listeners
-		emailInput.addEventListener('input', () => { this._email = emailInput.value; });
+		emailInput.addEventListener('input', () => { this._email = emailInput.value; btn.disabled = !this._email.trim(); });
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
 		settingsLink.addEventListener('click', () => { this._showSettings = true; this._render(); });
@@ -510,7 +510,7 @@ export class CiyexAuthGate extends Disposable {
 
 		// Listeners
 		backBtn.addEventListener('click', () => { this._step = 'email'; this._password = ''; this._error = ''; this._discoverResult = null; this._render(); });
-		pwInput.addEventListener('input', () => { this._password = pwInput.value; });
+		pwInput.addEventListener('input', () => { this._password = pwInput.value; loginBtn.disabled = !this._password; });
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		toggleBtn.addEventListener('click', () => { this._showPassword = !this._showPassword; this._render(); });
 		loginBtn.addEventListener('click', () => this._handleLogin());
@@ -570,10 +570,14 @@ export class CiyexAuthGate extends Disposable {
 		wrapper.appendChild(card);
 
 		// Listeners
-		pwInput.addEventListener('input', () => { this._password = pwInput.value; });
+		pwInput.addEventListener('input', () => { this._password = pwInput.value; unlockBtn.disabled = !this._password; });
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		unlockBtn.addEventListener('click', () => this._handleLogin());
 		switchBtn.addEventListener('click', () => this._authService.signOut());
+		// DEV: auto-fill password for testing
+		this._password = 'Test@123';
+		pwInput.value = 'Test@123';
+		unlockBtn.disabled = false;
 		setTimeout(() => pwInput.focus(), 50);
 
 		return wrapper;

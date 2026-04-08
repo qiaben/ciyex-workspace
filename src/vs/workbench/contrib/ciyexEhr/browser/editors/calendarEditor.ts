@@ -12,6 +12,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../../ciyexAuth/browser/ciyexAuthService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -87,6 +88,7 @@ export class CalendarEditor extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(CalendarEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -103,24 +105,50 @@ export class CalendarEditor extends EditorPane {
 		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
 		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;';
 
-		// Render empty grid, then load data once ready
+		// Render full UI skeleton immediately
 		this._renderHeader();
 		this._renderGrid();
-		globalThis.setTimeout(() => this._loadAndRender(), 500);
+
+		// Retry loading every 2s until providers appear (no cap)
+		const retryTimer = setInterval(() => {
+			if (this.providers.length > 0) {
+				clearInterval(retryTimer);
+				return;
+			}
+			this._loadAndRender();
+		}, 2000);
+
+		// Also reload on auth state changes
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.Authenticated) {
+				this._loadAndRender();
+			}
+		}));
+		// Note: setInput() also calls _loadAndRender() on editor open
 	}
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'week';
-		this.viewMode = defaultView === 'day' ? 'day' : defaultView === 'month' ? 'month' : 'week';
+		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'day';
+		this.viewMode = defaultView === 'week' ? 'week' : defaultView === 'month' ? 'month' : 'day';
 		await this._loadAndRender();
 	}
 
 	private async _loadAndRender(): Promise<void> {
 		await this._loadAppointments();
-		this._renderHeader();
-		this._renderGrid();
+		// Only rebuild header if providers/locations changed (for dropdowns)
+		// Otherwise just update the count and re-render the grid
+		if (this._headerRendered) {
+			this._updateHeaderCount();
+			this._renderGrid();
+		} else {
+			this._renderHeader();
+			this._renderGrid();
+			this._headerRendered = true;
+		}
 	}
+	private _headerRendered = false;
+	private _countEl: HTMLElement | null = null;
 
 	private async _loadAppointments(): Promise<void> {
 	  try {
@@ -128,17 +156,31 @@ export class CalendarEditor extends EditorPane {
 		if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
 		if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
 
-		// Load all appointments for the day
-		try {
-			const res = await this.apiService.fetch(`/api/appointments?page=0&size=1000${provLoc}`);
-			if (res.ok) {
-				const data = await res.json();
-				this.appointments = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-			}
-		} catch { /* */ }
-		if (!this.appointments) { this.appointments = []; }
-		// Load providers (try multiple endpoints)
-		if (this.providers.length === 0) {
+		// Load appointments, providers, and locations in PARALLEL
+		const loadAppts = async () => {
+			try {
+				const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200${provLoc}`);
+				if (res.ok) {
+					const data = await res.json();
+					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+					// Normalize FHIR field names
+					this.appointments = raw.map((a: Record<string, unknown>) => ({
+						...a,
+						patientName: a.patientName || a.patientDisplay || '',
+						providerName: a.providerName || a.providerDisplay || '',
+						practitionerName: a.practitionerName || a.providerDisplay || '',
+						providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
+						locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
+						locationName: a.locationName || a.locationDisplay || '',
+						status: a.status || 'Scheduled',
+					})) as Appointment[];
+				}
+			} catch { /* */ }
+			if (!this.appointments) { this.appointments = []; }
+		};
+
+		const loadProviders = async () => {
+			if (this.providers.length > 0) { return; }
 			const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
 			for (const url of providerUrls) {
 				try {
@@ -156,18 +198,10 @@ export class CalendarEditor extends EditorPane {
 					}
 				} catch { /* try next */ }
 			}
-			// Also extract unique providers from appointments
-			if (this.providers.length === 0 && this.appointments.length > 0) {
-				const provMap = new Map<string, string>();
-				for (const a of this.appointments) {
-					if (a.providerName) { provMap.set(a.providerId || a.providerName, a.providerName); }
-				}
-				this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
-			}
-		}
+		};
 
-		// Load locations (try multiple endpoints)
-		if (this.locations.length === 0) {
+		const loadLocations = async () => {
+			if (this.locations.length > 0) { return; }
 			const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50', '/api/fhir-resource/locations?page=0&size=50'];
 			for (const url of locationUrls) {
 				try {
@@ -182,9 +216,21 @@ export class CalendarEditor extends EditorPane {
 					}
 				} catch { /* try next */ }
 			}
+		};
+
+		await Promise.all([loadAppts(), loadProviders(), loadLocations()]);
+
+		// Extract providers from appointments as fallback
+		if (this.providers.length === 0 && this.appointments.length > 0) {
+			const provMap = new Map<string, string>();
+			for (const a of this.appointments) {
+				const pName = a.providerName || a.practitionerName || '';
+				if (pName) { provMap.set(a.providerId || pName, pName); }
+			}
+			this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
 		}
 
-		// Load provider schedule blocks (availability)
+		// Load provider schedule blocks (availability) — only when filtered
 		if (this.providerFilter) {
 			try {
 				const res = await this.apiService.fetch(`/api/providers/${this.providerFilter}/availability`);
@@ -198,6 +244,27 @@ export class CalendarEditor extends EditorPane {
 		}
 	  } catch (err) {
 	  }
+	}
+
+	/** Parse appointment start date/time robustly — handles ISO, epoch, date-only, time-only */
+	private _parseAptDate(apt: Appointment): Date | null {
+		const raw = apt.start || apt.startTime;
+		if (!raw) { return null; }
+		// If it's a number or numeric string, treat as epoch ms
+		if (typeof raw === 'number' || /^\d{10,13}$/.test(String(raw))) {
+			const ms = typeof raw === 'number' ? raw : (String(raw).length <= 10 ? Number(raw) * 1000 : Number(raw));
+			const d = new Date(ms);
+			return isNaN(d.getTime()) ? null : d;
+		}
+		// Standard Date parse
+		const d = new Date(String(raw));
+		if (!isNaN(d.getTime())) { return d; }
+		// Try date-only "YYYY-MM-DD"
+		if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) {
+			const d2 = new Date(String(raw) + 'T00:00:00');
+			return isNaN(d2.getTime()) ? null : d2;
+		}
+		return null;
 	}
 
 	private _getDateRange(): { startDate: string; endDate: string } {
@@ -224,11 +291,12 @@ export class CalendarEditor extends EditorPane {
 		DOM.clearNode(this.headerBar);
 
 		// Nav buttons
-		const prevBtn = this._btn(this.headerBar, '\u25C0', () => this._navigate(-1));
+		const rerender = () => { this._headerRendered = false; this._renderHeader(); this._renderGrid(); };
+		const prevBtn = this._btn(this.headerBar, '\u25C0', () => { this._navigate(-1); });
 		prevBtn.title = 'Previous';
-		const todayBtn = this._btn(this.headerBar, 'Today', () => { this.currentDate = new Date(); this._refresh(); });
+		const todayBtn = this._btn(this.headerBar, 'Today', () => { this.currentDate = new Date(); rerender(); });
 		todayBtn.style.fontWeight = '600';
-		const nextBtn = this._btn(this.headerBar, '\u25B6', () => this._navigate(1));
+		const nextBtn = this._btn(this.headerBar, '\u25B6', () => { this._navigate(1); });
 		nextBtn.title = 'Next';
 
 		// Date label
@@ -252,7 +320,7 @@ export class CalendarEditor extends EditorPane {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
-			btn.addEventListener('click', () => { this.viewMode = mode; this._refresh(); });
+			btn.addEventListener('click', () => { this.viewMode = mode; this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
 		// Provider filter
@@ -264,7 +332,7 @@ export class CalendarEditor extends EditorPane {
 			const opt = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
 			opt.value = p.id; opt.textContent = p.name; opt.selected = p.id === this.providerFilter;
 		}
-		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._refresh(); });
+		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._renderGrid(); });
 
 		// Location filter
 		const locSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
@@ -275,10 +343,10 @@ export class CalendarEditor extends EditorPane {
 			const opt = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
 			opt.value = l.id; opt.textContent = l.name; opt.selected = l.id === this.locationFilter;
 		}
-		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._refresh(); });
+		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._renderGrid(); });
 
 		// Refresh button
-		this._btn(this.headerBar, '\u21BB', () => { this.providers = []; this.locations = []; this._loadAndRender(); }).title = 'Refresh';
+		this._btn(this.headerBar, '\u21BB', () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); }).title = 'Refresh';
 
 		// Find slot button
 		this._btn(this.headerBar, 'Find Slot', () => { this._findAvailableSlot(); });
@@ -295,10 +363,29 @@ export class CalendarEditor extends EditorPane {
 		newBtn.style.color = 'var(--vscode-button-foreground)';
 		newBtn.style.fontWeight = '600';
 
-		// Appointment count
-		const count = DOM.append(this.headerBar, DOM.$('span'));
-		count.textContent = `${this.appointments.length} appts`;
-		count.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		// Appointment count (filtered by current view date range)
+		const { startDate, endDate } = this._getDateRange();
+		const viewAppts = this.appointments.filter(a => {
+			const d = this._parseAptDate(a);
+			if (!d) { return false; }
+			const ds = d.toISOString().split('T')[0];
+			return ds >= startDate && ds <= endDate;
+		});
+		this._countEl = DOM.append(this.headerBar, DOM.$('span'));
+		this._countEl.textContent = `${viewAppts.length} appts`;
+		this._countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+	}
+
+	private _updateHeaderCount(): void {
+		if (!this._countEl) { return; }
+		const { startDate, endDate } = this._getDateRange();
+		const viewAppts = this.appointments.filter(a => {
+			const d = this._parseAptDate(a);
+			if (!d) { return false; }
+			const ds = d.toISOString().split('T')[0];
+			return ds >= startDate && ds <= endDate;
+		});
+		this._countEl.textContent = `${viewAppts.length} appts`;
 	}
 
 	private _renderGrid(): void {
@@ -323,6 +410,19 @@ export class CalendarEditor extends EditorPane {
 
 		// Week view always shows 7 days (Day view handled by _renderProviderGrid)
 		const days = this._getWeekDays();
+
+		// Pre-index appointments by date+hour+slot for O(1) lookup
+		const weekIndex = new Map<string, Appointment[]>();
+		for (const a of this.appointments) {
+			const d = this._parseAptDate(a);
+			if (!d) { continue; }
+			const ds = d.toISOString().split('T')[0];
+			const h = d.getHours();
+			const m = Math.floor(d.getMinutes() / slotDuration) * slotDuration;
+			const key = `${ds}|${h}|${m}`;
+			const arr = weekIndex.get(key);
+			if (arr) { arr.push(a); } else { weekIndex.set(key, [a]); }
+		}
 
 		// Grid table
 		const table = DOM.append(this.gridContainer, DOM.$('.cal-table'));
@@ -386,16 +486,8 @@ export class CalendarEditor extends EditorPane {
 					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 					cell.addEventListener('click', () => this._createAppointment(dayStr, timeStr));
 
-					// Render appointments in this slot
-					const slotAppts = this.appointments.filter(a => {
-						try {
-							const d = new Date(a.start || a.startTime);
-							return d.toISOString().split('T')[0] === dayStr &&
-								d.getHours() === hour &&
-								d.getMinutes() >= minute &&
-								d.getMinutes() < minute + slotDuration;
-						} catch { return false; }
-					});
+					// O(1) lookup from pre-built index
+					const slotAppts = weekIndex.get(`${dayStr}|${hour}|${minute}`) || [];
 
 					for (const apt of slotAppts) {
 						const dur = apt.duration || 30;
@@ -433,13 +525,12 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private _renderProviderGrid(): void {
-		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
-		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
+		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 8;
+		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
 		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
 		const slotHeight = 20;
 		const dateStr = this.currentDate.toISOString().split('T')[0];
 
-		// Get providers that have appointments today (or all if none filtered)
 		const activeProviders = this.providers.length > 0 ? this.providers : [];
 		if (activeProviders.length === 0) {
 			const empty = DOM.append(this.gridContainer, DOM.$('div'));
@@ -448,10 +539,24 @@ export class CalendarEditor extends EditorPane {
 			return;
 		}
 
+		// PRE-INDEX appointments by provider+slot for O(1) lookup (instead of O(N) filter per cell)
+		const apptIndex = new Map<string, Appointment[]>();
+		const provCounts = new Map<string, number>();
+		for (const a of this.appointments) {
+			const provKey = a.providerId || a.providerName || a.practitionerName || '';
+			provCounts.set(provKey, (provCounts.get(provKey) || 0) + 1);
+			const d = this._parseAptDate(a);
+			if (!d) { continue; }
+			const h = d.getHours();
+			const m = Math.floor(d.getMinutes() / slotDuration) * slotDuration;
+			const key = `${provKey}|${h}|${m}`;
+			const arr = apptIndex.get(key);
+			if (arr) { arr.push(a); } else { apptIndex.set(key, [a]); }
+		}
+
 		const table = DOM.append(this.gridContainer, DOM.$('.cal-table'));
 		table.style.cssText = 'display:grid;grid-template-columns:50px ' + activeProviders.map(() => '1fr').join(' ') + ';min-width:100%;';
 
-		// Header: empty corner + provider names
 		const corner = DOM.append(table, DOM.$('.cal-corner'));
 		corner.style.cssText = 'border-bottom:1px solid var(--vscode-editorWidget-border);border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;';
 
@@ -466,14 +571,9 @@ export class CalendarEditor extends EditorPane {
 			nameEl.textContent = prov.name;
 			nameEl.style.cssText = 'font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
-			// Count today's appointments for this provider
-			const provAppts = this.appointments.filter(a => {
-				const aProvId = a.providerId || '';
-				const aProvName = a.providerName || a.practitionerName || '';
-				return (aProvId === prov.id || aProvName === prov.name);
-			});
+			const count = (provCounts.get(prov.id) || 0) + (prov.id !== prov.name ? (provCounts.get(prov.name) || 0) : 0);
 			const countEl = DOM.append(hdr, DOM.$('div'));
-			countEl.textContent = `${provAppts.length} appts`;
+			countEl.textContent = `${count} appts`;
 			countEl.style.cssText = `font-size:9px;color:${provColor};`;
 		}
 
@@ -483,7 +583,6 @@ export class CalendarEditor extends EditorPane {
 				const minute = slot * slotDuration;
 				const isHourStart = minute === 0;
 
-				// Time label
 				const timeCell = DOM.append(table, DOM.$('.cal-time'));
 				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}`;
 				if (isHourStart) {
@@ -504,16 +603,11 @@ export class CalendarEditor extends EditorPane {
 					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 					cell.addEventListener('click', () => this._createAppointment(dateStr, timeStr));
 
-					// Find appointments for this provider at this time
-					const slotAppts = this.appointments.filter(a => {
-						const aProvId = a.providerId || '';
-						const aProvName = a.providerName || a.practitionerName || '';
-						if (aProvId !== prov.id && aProvName !== prov.name) { return false; }
-						try {
-							const d = new Date(a.start || a.startTime);
-							return d.getHours() === hour && d.getMinutes() >= minute && d.getMinutes() < minute + slotDuration;
-						} catch { return false; }
-					});
+					// O(1) lookup from pre-built index
+					const slotAppts = [
+						...(apptIndex.get(`${prov.id}|${hour}|${minute}`) || []),
+						...(prov.id !== prov.name ? (apptIndex.get(`${prov.name}|${hour}|${minute}`) || []) : []),
+					];
 
 					for (const apt of slotAppts) {
 						const dur = apt.duration || 30;
@@ -570,7 +664,9 @@ export class CalendarEditor extends EditorPane {
 			const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 			const isToday = dateStr === new Date().toISOString().split('T')[0];
 			const dayAppts = this.appointments.filter(a => {
-				try { return new Date(a.start || a.startTime).toISOString().split('T')[0] === dateStr; } catch { return false; }
+				const d = this._parseAptDate(a);
+				if (!d) { return false; }
+				try { return d.toISOString().split('T')[0] === dateStr; } catch { return false; }
 			});
 
 			const cell = DOM.append(grid, DOM.$('.month-cell'));
@@ -595,10 +691,11 @@ export class CalendarEditor extends EditorPane {
 					const aptEl = DOM.append(cell, DOM.$('div'));
 					const typeColor = TYPE_COLORS[(getAppointmentType(apt) || '').toLowerCase()] || '#607D8B';
 					aptEl.style.cssText = `font-size:9px;padding:1px 3px;border-radius:2px;margin-bottom:1px;background:${typeColor}20;border-left:2px solid ${typeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
-					try {
-						const time = new Date(apt.start || apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+					const parsedTime = this._parseAptDate(apt);
+					if (parsedTime) {
+						const time = parsedTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 						aptEl.textContent = `${time} ${apt.patientName || ''}`;
-					} catch {
+					} else {
 						aptEl.textContent = apt.patientName || '';
 					}
 				}
@@ -648,7 +745,9 @@ export class CalendarEditor extends EditorPane {
 		} else {
 			this.currentDate.setDate(this.currentDate.getDate() + dir * 7);
 		}
-		this._refresh();
+		this._headerRendered = false;
+		this._renderHeader();
+		this._renderGrid();
 	}
 
 	private async _refresh(): Promise<void> {
@@ -970,7 +1069,7 @@ export class CalendarEditor extends EditorPane {
 			const intervalDays = frequency.label === 'Weekly' ? 7 : frequency.label === 'Bi-weekly' ? 14 : 30;
 
 			try {
-				const baseDate = new Date(apt.start || apt.startTime);
+				const baseDate = this._parseAptDate(apt) || new Date();
 				for (let i = 1; i <= n; i++) {
 					const newDate = new Date(baseDate);
 					newDate.setDate(baseDate.getDate() + i * intervalDays);

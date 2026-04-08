@@ -21,6 +21,9 @@ import { URI } from '../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IViewsService } from '../../../services/views/common/viewsService.js';
+import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 
 /**
  * Main EHR workbench contribution.
@@ -44,13 +47,13 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IEnvironmentService private readonly environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IViewsService private readonly viewsService: IViewsService,
+		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
+		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super();
 
-		// .ciyex config folder in user data home (~/.ciyex-workspace/.ciyex/)
 		this._ciyexConfigHome = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex');
-
-		// Copy default configs on startup (before auth)
 		this._ensureDefaultConfigs();
 
 		// Load permissions when authenticated
@@ -63,28 +66,103 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 				this._onAuthenticated();
 			}
 		}));
+
+		// ─── Sidebar ↔ Editor pairing ───
+		// When a sidebar container is activated, auto-open its paired editor
+		this._setupSidebarEditorPairing();
 	}
 
+	/**
+	 * Generic bidirectional sidebar ↔ editor pairing.
+	 *
+	 * Direction 1: Click sidebar icon → auto-open paired editor command
+	 * Direction 2: Click editor tab → auto-switch sidebar to paired container
+	 *
+	 * Add new pairs here — no other code changes needed.
+	 */
+	private _setupSidebarEditorPairing(): void {
+		// Sidebar container ID → editor command (sidebar click opens editor)
+		const sidebarToEditor: Record<string, string> = {
+			'ciyex.calendar': 'ciyex.openCalendar',
+			// 'ciyex.patients' intentionally NOT here — chart opens on patient click, not sidebar click
+		};
+
+		// Editor typeId → sidebar container ID (editor tab click switches sidebar)
+		const editorToSidebar: Record<string, string> = {
+			'workbench.input.ciyexCalendar': 'ciyex.calendar',
+			'workbench.input.ciyexPatientChart': 'ciyex.patients',
+			'workbench.input.ciyexEncounterForm': 'ciyex.encounters',
+		};
+
+		// Container ID → view ID inside it (force-open view when container activates)
+		const containerToView: Record<string, string> = {
+			'ciyex.calendar': 'ciyex.calendar.schedule',
+			'ciyex.patients': 'ciyex.patients.list',
+			'ciyex.encounters': 'ciyex.encounters.view',
+		};
+
+		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)
+
+		// Direction 1: Sidebar → Editor + force-open view
+		this._register(this.paneCompositeService.onDidPaneCompositeOpen(e => {
+			if (Date.now() < _blockUntil) { return; }
+			const id = e.composite.getId();
+			if (e.viewContainerLocation === ViewContainerLocation.Sidebar) {
+				// Force-open the view inside the container
+				const viewId = containerToView[id];
+				if (viewId) { this.viewsService.openView(viewId, false).catch(() => {}); }
+				// Open paired editor
+				const cmd = sidebarToEditor[id];
+				if (cmd) {
+					_blockUntil = Date.now() + 200;
+					this.commandService.executeCommand(cmd).catch(() => {});
+				}
+			}
+		}));
+
+		// Direction 2: Editor → Sidebar (use both events for reliability)
+		const switchSidebar = () => {
+			if (Date.now() < _blockUntil) { return; }
+			const typeId = this.editorService.activeEditorPane?.input?.typeId;
+			if (typeId && typeId in editorToSidebar) {
+				const containerId = editorToSidebar[typeId];
+				_blockUntil = Date.now() + 200;
+				this.paneCompositeService.openPaneComposite(containerId, ViewContainerLocation.Sidebar, false).then(() => {
+					// Force-open the view inside the container (fixes collapsed/hidden state)
+					const viewId = containerToView[containerId];
+					if (viewId) { this.viewsService.openView(viewId, false).catch(() => {}); }
+				}).catch(() => {});
+			}
+		};
+		this._register(this.editorService.onDidActiveEditorChange(switchSidebar));
+		this._register(this.editorService.onDidVisibleEditorsChange(switchSidebar));
+	}
+
+	private _authenticated = false;
+
 	private async _onAuthenticated(): Promise<void> {
-		// Load permissions and set context keys
-		await this.permissionService.loadPermissions();
+		if (this._authenticated) { return; }
+		this._authenticated = true;
 
-		// Load API-driven menus
-		await this.menuService.loadMenus();
-
-		// Hide developer sidebar containers (Explorer, Search, SCM, Debug)
+		// Hide developer sidebar containers immediately (no API call)
 		this._hideDevSidebarContainers();
 
-		// Open Calendar as welcome page (after a brief delay for workbench to finish)
-		globalThis.setTimeout(() => {
-			this.commandService.executeCommand('ciyex.openCalendar').catch(() => { /* command may not be ready */ });
-		}, 500);
+		// Open Calendar editor + expand the Schedule sidebar panel
+		this.commandService.executeCommand('ciyex.openCalendar').catch(() => { /* command may not be ready */ });
+		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { /* view may not be ready */ });
 
-		// Wire patient list TreeView with API data
+		// Open the Schedule sidebar panel
+		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => {});
+
+		// Load permissions, menus, patient list, and status bar in parallel
+		Promise.all([
+			this.permissionService.loadPermissions(),
+			this.menuService.loadMenus(),
+		]).then(() => {
+			this._registerStatusBarItems();
+		}).catch(() => { /* non-critical */ });
+
 		this._wirePatientList();
-
-		// Register status bar items
-		this._registerStatusBarItems();
 	}
 
 	private _hideDevSidebarContainers(): void {

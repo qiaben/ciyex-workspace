@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -63,6 +63,43 @@ registerAction2(class extends Action2 {
 		super({
 			id: 'ciyex.openPatientChart',
 			title: localize2('openPatientChart', "Open Patient Chart"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, patientId?: string, patientName?: string): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+
+		// If no patientId, search for a patient
+		if (!patientId) {
+			const apiService = accessor.get(ICiyexApiService);
+			try {
+				const res = await apiService.fetch('/api/patients?page=0&size=20&sort=lastName,asc');
+				if (res.ok) {
+					const data = await res.json();
+					const patients = data?.data?.content || data?.content || [];
+					if (patients.length > 0) {
+						// Open first patient as default
+						const p = patients[0] as Record<string, string>;
+						patientId = p.id || p.fhirId;
+						patientName = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+					}
+				}
+			} catch { /* */ }
+			if (!patientId) { return; }
+		}
+
+		const input = new PatientChartEditorInput(patientId, patientName || `Patient ${patientId}`);
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+/* OLD webview patient chart — replaced by PatientChartEditor EditorPane */
+/*registerAction2(class extends Action2_DISABLED {
+	constructor() {
+		super({
+			id: 'ciyex.openPatientChart_OLD',
+			title: localize2('openPatientChart', "Open Patient Chart"),
 			f1: false,
 		});
 	}
@@ -71,8 +108,6 @@ registerAction2(class extends Action2 {
 		if (!patientId) {
 			return;
 		}
-
-		// Get ALL services BEFORE any await
 		const apiService = accessor.get(ICiyexApiService);
 		const webviewService = accessor.get(IWebviewWorkbenchService);
 		const label = patientName || `Patient ${patientId}`;
@@ -172,7 +207,7 @@ registerAction2(class extends Action2 {
 		);
 		input.webview.setHtml(wrapHtml(body));
 	}
-});
+});*/
 
 /**
  * Command: Open Calendar
@@ -192,7 +227,53 @@ registerAction2(class extends Action2 {
 		const env = accessor.get(IEnvironmentService);
 		const uri = URI.joinPath(env.userRoamingDataHome, '.ciyex', 'calendar');
 		const input = inst.createInstance(CalendarEditorInput, 'calendar', uri, 'Calendar', ThemeIcon.fromId('calendar'));
-		await editorService.openEditor(input);
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Encounter Form
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openEncounter',
+			title: localize2('openEncounter', "Open Encounter"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, patientId?: string, encounterId?: string, patientName?: string, encounterLabel?: string): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+
+		// If no encounterId, fetch latest non-errored encounter
+		if (!encounterId) {
+			const apiService = accessor.get(ICiyexApiService);
+			try {
+				const res = await apiService.fetch('/api/fhir-resource/encounters?page=0&size=20');
+				if (res.ok) {
+					const data = await res.json();
+					const items = (data?.data?.content || []) as Array<Record<string, string>>;
+					// Skip entered-in-error encounters
+					const valid = items.find(e => e.status !== 'entered-in-error');
+					if (valid) {
+						encounterId = valid.id || valid.fhirId;
+						patientId = patientId || valid.patientId || '';
+						patientName = patientName || valid.patientDisplay || valid.patientName || '';
+						encounterLabel = encounterLabel || `${valid.type || valid.serviceType || 'Encounter'} - ${valid.providerDisplay || ''}`;
+					}
+				}
+			} catch { /* */ }
+			if (!encounterId) { return; }
+		}
+
+		const input = new EncounterFormEditorInput(
+			patientId || '',
+			encounterId,
+			patientName || '',
+			encounterLabel || `Encounter ${encounterId}`,
+		);
+		await editorService.openEditor(input, { pinned: true });
 	}
 });
 
@@ -243,59 +324,7 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/**
- * Command: Open Encounter
- */
-registerAction2(class extends Action2 {
-	constructor() {
-		super({
-			id: 'ciyex.openEncounter',
-			title: localize2('openEncounter', "Open Encounter"),
-			f1: false,
-		});
-	}
-
-	async run(accessor: ServicesAccessor, encounterId?: string, encounterLabel?: string): Promise<void> {
-		if (!encounterId) {
-			return;
-		}
-		const apiService = accessor.get(ICiyexApiService);
-		const webviewService = accessor.get(IWebviewWorkbenchService);
-		const label = encounterLabel || `Encounter ${encounterId}`;
-
-		let body: string;
-		try {
-			const response = await apiService.fetch(`/api/encounters/${encounterId}`);
-			if (response.ok) {
-				const data = await response.json();
-				const e = data?.data || data;
-				body = `
-					<h1>Encounter: ${e.patientName || e.patientRefDisplay || ''}</h1>
-					<div class="card">
-						<h3>Details</h3>
-						<div class="grid">
-							<span class="label">Date</span><span>${e.encounterDate || e.startDate || 'N/A'}</span>
-							<span class="label">Type</span><span>${e.visitCategory || e.type || 'N/A'}</span>
-							<span class="label">Provider</span><span>${e.encounterProvider || e.providerDisplay || 'N/A'}</span>
-							<span class="label">Status</span><span class="status-active">${e.status || 'N/A'}</span>
-							<span class="label">Reason</span><span>${e.reason || 'N/A'}</span>
-							<span class="label">FHIR ID</span><span>${e.fhirId || e.id || 'N/A'}</span>
-						</div>
-					</div>`;
-			} else {
-				body = `<p style="color:#f48771;">Failed to load encounter: ${response.status}</p>`;
-			}
-		} catch {
-			body = '<p style="color:#f48771;">Error loading encounter</p>';
-		}
-
-		const input = webviewService.openWebview(
-			{ title: label, options: { enableFindWidget: true }, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
-			'ciyex.encounter', label, undefined, { group: ACTIVE_GROUP, preserveFocus: false },
-		);
-		input.webview.setHtml(wrapHtml(body));
-	}
-});
+/* OLD webview encounter command removed — replaced by EncounterFormEditor EditorPane above */
 
 /**
  * Command: Upload Document

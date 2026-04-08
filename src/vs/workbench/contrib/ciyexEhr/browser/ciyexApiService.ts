@@ -43,12 +43,16 @@ export class CiyexApiService extends Disposable implements ICiyexApiService {
 	}
 
 	async fetch(path: string, options?: RequestInit): Promise<Response> {
+		// Block API calls without token — prevents hung connections before login
+		if (!this._token && !path.includes('/auth/')) {
+			throw new Error('Not authenticated');
+		}
 		const url = path.startsWith('http') ? path : `${this.apiUrl}${path}`;
 		return globalThis.fetch(url, {
 			...options,
 			headers: {
 				'Content-Type': 'application/json',
-				...(this._token ? { 'Authorization': `Bearer ${this._token}` } : {}),
+				'Authorization': `Bearer ${this._token}`,
 				...(this._tenant ? { 'X-Tenant-Name': this._tenant } : {}),
 				...options?.headers,
 			},

@@ -246,8 +246,10 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 	}
 
 	private _setState(state: CiyexAuthState): void {
-		if (this._state !== state) {
-			this._state = state;
+		const changed = this._state !== state;
+		this._state = state;
+		// Always fire on Authenticated (handles re-login / session unlock where state was already Authenticated)
+		if (changed || state === CiyexAuthState.Authenticated) {
 			this._onDidChangeAuthState.fire(state);
 		}
 	}

@@ -110,7 +110,7 @@ configRegistry.registerConfiguration({
 		},
 		'ciyex.calendar.startHour': {
 			type: 'number',
-			default: 0,
+			default: 7,
 			minimum: 0,
 			maximum: 23,
 			description: localize('ciyexCalStart', "Calendar day start hour (0-23). Set 0 for full day."),
@@ -119,7 +119,7 @@ configRegistry.registerConfiguration({
 		},
 		'ciyex.calendar.endHour': {
 			type: 'number',
-			default: 24,
+			default: 19,
 			minimum: 1,
 			maximum: 24,
 			description: localize('ciyexCalEnd', "Calendar day end hour (1-24). Set 24 for full day."),

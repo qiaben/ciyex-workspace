@@ -2,11 +2,16 @@
   "source": "UNIVERSAL_DEFAULT",
   "categories": [
     {
-      "key": "overview",
-      "label": "Overview",
+      "key": "general",
+      "label": "General",
       "position": 0,
       "tabs": [
-        { "key": "dashboard", "label": "Dashboard", "icon": "LayoutDashboard", "position": 0, "visible": true, "fhirResources": ["Patient"] }
+        { "key": "demographics", "label": "Demographics", "icon": "User", "emoji": "\ud83d\udc64", "color": "#4FC3F7", "position": 0, "visible": true, "display": "form", "panel": "main", "fhirResources": ["Patient"] },
+        { "key": "appointments", "label": "Appointments", "icon": "Calendar", "emoji": "\ud83d\udcc5", "color": "#7E57C2", "position": 1, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Appointment"] },
+        { "key": "documents", "label": "Documents", "icon": "FileText", "emoji": "\ud83d\udcc4", "color": "#8D6E63", "position": 2, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DocumentReference"] },
+        { "key": "messages", "label": "Messages", "icon": "MessageSquare", "emoji": "\ud83d\udce8", "color": "#26C6DA", "position": 3, "visible": true, "display": "list", "panel": "main", "fhirResources": [] },
+        { "key": "relationships", "label": "Relationships", "icon": "Users", "emoji": "\ud83d\udc65", "color": "#78909C", "position": 4, "visible": true, "display": "list", "panel": "main", "fhirResources": ["RelatedPerson"] },
+        { "key": "consents", "label": "Consents", "icon": "ShieldCheck", "emoji": "\ud83d\udee1\ufe0f", "color": "#78909C", "position": 5, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Consent"] }
       ]
     },
     {
@@ -14,46 +19,27 @@
       "label": "Clinical",
       "position": 1,
       "tabs": [
-        { "key": "encounters", "label": "Encounters", "icon": "ClipboardList", "position": 0, "visible": true, "fhirResources": ["Encounter"] },
-        { "key": "problems", "label": "Problems", "icon": "AlertCircle", "position": 1, "visible": true, "fhirResources": ["Condition"] },
-        { "key": "allergies", "label": "Allergies", "icon": "AlertTriangle", "position": 2, "visible": true, "fhirResources": ["AllergyIntolerance"] },
-        { "key": "medications", "label": "Medications", "icon": "Pill", "position": 3, "visible": true, "fhirResources": ["MedicationRequest"] },
-        { "key": "vitals", "label": "Vitals", "icon": "Activity", "position": 4, "visible": true, "fhirResources": ["Observation"] },
-        { "key": "labs", "label": "Lab Results", "icon": "TestTube", "position": 5, "visible": true, "fhirResources": ["DiagnosticReport", "Observation"] },
-        { "key": "immunizations", "label": "Immunizations", "icon": "Syringe", "position": 6, "visible": true, "fhirResources": ["Immunization"] },
-        { "key": "procedures", "label": "Procedures", "icon": "Scissors", "position": 7, "visible": true, "fhirResources": ["Procedure"] },
-        { "key": "history", "label": "History", "icon": "History", "position": 8, "visible": true, "fhirResources": ["FamilyMemberHistory", "Observation"] },
-        { "key": "visit-notes", "label": "Visit Notes", "icon": "FileEdit", "position": 9, "visible": true, "fhirResources": ["DocumentReference"] },
-        { "key": "care-plans", "label": "Care Plans", "icon": "Heart", "position": 10, "visible": true, "fhirResources": ["CarePlan", "Goal"] },
-        { "key": "referrals", "label": "Referrals", "icon": "ExternalLink", "position": 11, "visible": true, "fhirResources": ["ServiceRequest"] },
-        { "key": "clinical-alerts", "label": "Clinical Alerts", "icon": "Bell", "position": 12, "visible": true, "fhirResources": [] },
-        { "key": "imaging", "label": "Imaging", "icon": "Image", "position": 13, "visible": true, "fhirResources": ["ImagingStudy"] }
-      ]
-    },
-    {
-      "key": "general",
-      "label": "General",
-      "position": 2,
-      "tabs": [
-        { "key": "demographics", "label": "Demographics", "icon": "User", "position": 0, "visible": true, "fhirResources": ["Patient"] },
-        { "key": "appointments", "label": "Appointments", "icon": "Calendar", "position": 1, "visible": true, "fhirResources": ["Appointment"] },
-        { "key": "documents", "label": "Documents", "icon": "FileText", "position": 2, "visible": true, "fhirResources": ["DocumentReference"] },
-        { "key": "messages", "label": "Messages", "icon": "MessageSquare", "position": 3, "visible": true, "fhirResources": [] },
-        { "key": "relationships", "label": "Relationships", "icon": "Users", "position": 4, "visible": true, "fhirResources": ["RelatedPerson"] },
-        { "key": "services", "label": "Services", "icon": "Stethoscope", "position": 5, "visible": true, "fhirResources": ["ServiceRequest"] },
-        { "key": "consents", "label": "Consents", "icon": "ShieldCheck", "position": 6, "visible": true, "fhirResources": ["Consent"] }
+        { "key": "encounters", "label": "Encounters", "icon": "ClipboardList", "emoji": "\ud83d\udccb", "color": "#5C6BC0", "position": 0, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Encounter"] },
+        { "key": "problems", "label": "Problems", "icon": "AlertCircle", "emoji": "\u26a0\ufe0f", "color": "#FFA726", "position": 1, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Condition"] },
+        { "key": "allergies", "label": "Allergies", "icon": "AlertTriangle", "emoji": "\ud83d\udea8", "color": "#EF5350", "position": 2, "visible": true, "display": "list", "panel": "main", "fhirResources": ["AllergyIntolerance"] },
+        { "key": "medications", "label": "Medications", "icon": "Pill", "emoji": "\ud83d\udc8a", "color": "#FF8A65", "position": 3, "visible": true, "display": "list", "panel": "main", "fhirResources": ["MedicationRequest"] },
+        { "key": "vitals", "label": "Vitals", "icon": "Activity", "emoji": "\u2764\ufe0f", "color": "#66BB6A", "position": 4, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Observation"] },
+        { "key": "labs", "label": "Lab Results", "icon": "TestTube", "emoji": "\ud83e\uddea", "color": "#FFD54F", "position": 5, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DiagnosticReport", "Observation"] },
+        { "key": "immunizations", "label": "Immunizations", "icon": "Syringe", "emoji": "\ud83d\udc89", "color": "#26A69A", "position": 6, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Immunization"] },
+        { "key": "procedures", "label": "Procedures", "icon": "Scissors", "emoji": "\u2702\ufe0f", "color": "#AB47BC", "position": 7, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Procedure"] },
+        { "key": "history", "label": "History", "icon": "History", "emoji": "\ud83d\udcda", "color": "#8D6E63", "position": 8, "visible": true, "display": "list", "panel": "main", "fhirResources": ["FamilyMemberHistory", "Observation"] },
+        { "key": "visit-notes", "label": "Visit Notes", "icon": "FileEdit", "emoji": "\ud83d\udcdd", "color": "#5C6BC0", "position": 9, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DocumentReference"] },
+        { "key": "referrals", "label": "Referrals", "icon": "ExternalLink", "emoji": "\ud83d\udd17", "color": "#7E57C2", "position": 10, "visible": true, "display": "list", "panel": "main", "fhirResources": ["ServiceRequest"] }
       ]
     },
     {
       "key": "financial",
       "label": "Financial",
-      "position": 3,
+      "position": 2,
       "tabs": [
-        { "key": "billing", "label": "Billing", "icon": "Receipt", "position": 0, "visible": true, "fhirResources": ["Claim"] },
-        { "key": "insurance", "label": "Insurance", "icon": "Shield", "position": 1, "visible": true, "fhirResources": ["Coverage", "Organization"] },
-        { "key": "prior-auth", "label": "Prior Authorization", "icon": "ClipboardCheck", "position": 2, "visible": true, "fhirResources": [] },
-        { "key": "transactions", "label": "Transactions", "icon": "ArrowLeftRight", "position": 3, "visible": true, "fhirResources": ["PaymentReconciliation"] },
-        { "key": "payment", "label": "Payment", "icon": "CreditCard", "position": 4, "visible": true, "fhirResources": ["PaymentNotice"] }
+        { "key": "billing", "label": "Billing", "icon": "Receipt", "emoji": "\ud83e\uddfe", "color": "#78909C", "position": 0, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Claim"] },
+        { "key": "insurance", "label": "Insurance", "icon": "Shield", "emoji": "\ud83d\udee1\ufe0f", "color": "#78909C", "position": 1, "visible": true, "display": "form", "panel": "main", "fhirResources": ["Coverage", "Organization"] },
+        { "key": "transactions", "label": "Transactions", "icon": "ArrowLeftRight", "emoji": "\ud83d\udcb3", "color": "#78909C", "position": 2, "visible": true, "display": "list", "panel": "main", "fhirResources": ["PaymentReconciliation"] }
       ]
     }
   ]

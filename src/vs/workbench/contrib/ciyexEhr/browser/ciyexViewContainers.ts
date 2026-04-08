@@ -87,15 +87,21 @@ GenericListPane.configs.set('ciyex.appointments.view', {
 	emptyMessage: 'No appointments',
 });
 
-// Encounters
+// Encounters — FHIR endpoint (faster than /api/encounters which hangs)
+// Type codes mapped: AMB=Ambulatory, HH=Home Health, EMER=Emergency, SS=Short Stay, VR=Virtual, OBSENC=Observation
 GenericListPane.configs.set('ciyex.encounters.view', {
-	apiPath: '/api/encounters',
-	columns: [{ key: 'patientName' }, { key: 'type' }, { key: 'status' }],
-	avatarFields: ['patientName', 'patientName'],
+	apiPath: '/api/fhir-resource/encounters?page=0&size=200',
+	columns: [
+		{ key: 'providerDisplay', label: 'Provider' },
+		{ key: 'type', label: 'Type' },
+		{ key: 'status', label: 'Status' },
+	],
+	avatarFields: ['providerDisplay', 'providerDisplay'],
 	onClickCommand: 'ciyex.openEncounter',
 	onClickIdField: 'fhirId',
-	onClickLabelField: 'patientName',
+	onClickLabelField: 'providerDisplay',
 	emptyMessage: 'No encounters',
+	labelMap: { 'AMB': 'Ambulatory', 'HH': 'Home Health', 'EMER': 'Emergency', 'SS': 'Short Stay', 'VR': 'Virtual', 'OBSENC': 'Observation' },
 });
 
 // Tasks
@@ -197,7 +203,8 @@ viewsRegistry.registerViews([{ id: ScheduleSidebarPane.ID, name: localize2('sche
 // Appointments flat list kept as secondary view
 viewsRegistry.registerViews([{ id: 'ciyex.appointments.view', name: localize2('allAppts', "All Appointments"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], APPOINTMENTS_CONTAINER);
 viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('patientList', "Patient List"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
-viewsRegistry.registerViews([{ id: 'ciyex.encounters.view', name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], ENCOUNTERS_CONTAINER);
+import { EncounterListPane } from './encounterListPane.js';
+viewsRegistry.registerViews([{ id: EncounterListPane.ID, name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(EncounterListPane) }], ENCOUNTERS_CONTAINER);
 viewsRegistry.registerViews([{ id: 'ciyex.tasks.view', name: localize2('tasks', "Tasks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], TASKS_CONTAINER);
 viewsRegistry.registerViews([{ id: 'ciyex.messaging.view', name: localize2('inbox', "Inbox"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], MESSAGING_CONTAINER);
 
@@ -241,3 +248,4 @@ viewsRegistry.registerViews([
 // Hub and Developer - placeholder views
 viewsRegistry.registerViews([{ id: 'ciyex.hub.view', name: localize2('hubBrowse', "Browse Apps"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], HUB_CONTAINER);
 viewsRegistry.registerViews([{ id: 'ciyex.developer.view', name: localize2('devPortal', "API & Webhooks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], DEVELOPER_CONTAINER);
+

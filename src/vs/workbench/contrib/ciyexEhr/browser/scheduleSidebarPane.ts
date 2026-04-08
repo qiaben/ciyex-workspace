@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
@@ -24,7 +25,7 @@ interface Appointment {
 	patientName: string;
 	patientFirstName?: string;
 	patientLastName?: string;
-	appointmentType: string;
+	appointmentType: string | { text?: string; coding?: Array<{ display?: string; code?: string }> };
 	type?: string;
 	status: string;
 	startTime: string;
@@ -36,6 +37,13 @@ interface Appointment {
 	encounterId?: string;
 	room?: string;
 	visitType?: string;
+}
+
+function getAppointmentType(apt: Appointment): string {
+	const t = apt.appointmentType;
+	if (typeof t === 'string') { return t; }
+	if (t && typeof t === 'object') { return t.text || t.coding?.[0]?.display || t.coding?.[0]?.code || ''; }
+	return apt.type || '';
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -73,6 +81,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexAuthService _authService: ICiyexAuthService,
 		@ILogService private readonly logService: ILogService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
@@ -84,10 +93,22 @@ export class ScheduleSidebarPane extends ViewPane {
 		this.container = DOM.append(parent, DOM.$('.schedule-sidebar'));
 		this.container.style.cssText = 'padding:0;overflow-y:auto;height:100%;font-size:12px;';
 
-		this._loadAndRender();
+		// Render skeleton, then poll every 2s until data loads
+		this._render();
+		const poll = setInterval(() => {
+			try {
+				const token = localStorage.getItem('ciyex_token');
+				if (!token) { return; } // Wait for login
+			} catch { return; }
 
-		// Auto-refresh every 30 seconds
-		this.refreshTimer = setInterval(() => this._loadAndRender(), 30000);
+			if (this.appointments.length === 0) {
+				this._loadAndRender();
+			} else {
+				clearInterval(poll);
+				// Switch to 30s auto-refresh
+				this.refreshTimer = setInterval(() => this._loadAndRender(), 30000);
+			}
+		}, 2000);
 	}
 
 	private currentPage = 0;
@@ -96,26 +117,52 @@ export class ScheduleSidebarPane extends ViewPane {
 	private hasMore = false;
 
 	private async _loadAndRender(append = false): Promise<void> {
-		try {
-			const today = new Date().toISOString().split('T')[0];
-			const res = await this.apiService.fetch(`/api/appointments?date=${today}&page=0&size=1000`);
-			if (res.ok) {
-				const data = await res.json();
-				const page = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-				this.totalAppointments = data?.data?.totalElements || data?.totalElements || page.length;
-				if (append) {
-					this.appointments = [...this.appointments, ...page];
-				} else {
-					this.appointments = page;
-				}
-				this.hasMore = page.length === this.pageSize;
-			}
-		} catch (err) {
-			this.logService.warn('[Schedule] Failed to load appointments:', err);
-		}
+		const today = new Date().toISOString().split('T')[0];
 
-		// Load status options from API (once)
-		if (this.statusOptions.length === 0) {
+		// Load appointments + status options only (rooms/waitlist are secondary)
+		const loadAppts = async () => {
+			try {
+				const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=200');
+				if (res.ok) {
+					const data = await res.json();
+					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+					// Normalize FHIR field names to flat field names
+					const page = raw.map((a: Record<string, unknown>) => ({
+						...a,
+						patientName: a.patientName || a.patientDisplay || '',
+						providerName: a.providerName || a.providerDisplay || '',
+						practitionerName: a.practitionerName || a.providerDisplay || '',
+						providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
+						locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
+						locationName: a.locationName || a.locationDisplay || '',
+						status: a.status || 'Scheduled',
+					}));
+					// Filter client-side to today only
+					const todayFiltered = page.filter((a: Appointment) => {
+						const raw = a.start || a.startTime;
+						if (!raw) { return false; }
+						try {
+							const d = new Date(String(raw));
+							if (isNaN(d.getTime())) { return false; }
+							return d.toISOString().split('T')[0] === today;
+						} catch { return false; }
+					});
+					const useFiltered = todayFiltered.length > 0 || page.length === 0;
+					if (append) {
+						this.appointments = [...this.appointments, ...(useFiltered ? todayFiltered : page)];
+					} else {
+						this.appointments = useFiltered ? todayFiltered : page;
+					}
+					this.totalAppointments = this.appointments.length;
+					this.hasMore = false;
+				}
+			} catch (err) {
+				this.logService.warn('[Schedule] Failed to load appointments:', err);
+			}
+		};
+
+		const loadStatusOptions = async () => {
+			if (this.statusOptions.length > 0) { return; }
 			try {
 				const res = await this.apiService.fetch('/api/appointments/status-options');
 				if (res.ok) {
@@ -126,15 +173,15 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (this.statusOptions.length === 0) {
 				this.statusOptions = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
 			}
-			// Terminal statuses are the last 3 typically
+			this.statusOptions = this.statusOptions.map(s => typeof s === 'string' ? s : String(s || '')).filter(s => s.length > 0);
 			this.terminalStatuses = new Set(this.statusOptions.filter(s => ['completed', 'no show', 'cancelled', 'fulfilled'].includes(s.toLowerCase())).map(s => s.toLowerCase()));
 			if (this.terminalStatuses.size === 0) {
 				this.terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
 			}
-		}
+		};
 
-		// Load room options (once)
-		if (this.roomOptions.length === 0) {
+		const loadRooms = async () => {
+			if (this.roomOptions.length > 0) { return; }
 			try {
 				const res = await this.apiService.fetch('/api/rooms');
 				if (res.ok) {
@@ -147,19 +194,28 @@ export class ScheduleSidebarPane extends ViewPane {
 			}
 		}
 
-		// Load waitlist
-		try {
-			const res = await this.apiService.fetch('/api/waitlist?page=0&size=20');
-			if (res.ok) {
-				const data = await res.json();
-				this.waitlist = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+		const loadWaitlist = async () => {
+			try {
+				const res = await this.apiService.fetch('/api/waitlist?page=0&size=20');
+				if (res.ok) {
+					const data = await res.json();
+					this.waitlist = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+				}
+			} catch {
+				this.waitlist = [];
 			}
-		} catch {
-			// Waitlist API may not exist yet
-			this.waitlist = [];
+		};
+
+		try {
+			await Promise.all([loadAppts(), loadStatusOptions()]);
+		} catch (err) {
+			this.logService.warn('[Schedule] Load error:', err);
 		}
 
 		this._render();
+
+		// Load secondary data in background (rooms, waitlist) — don't block render
+		Promise.all([loadRooms(), loadWaitlist()]).catch(() => {});
 	}
 
 	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
@@ -168,6 +224,24 @@ export class ScheduleSidebarPane extends ViewPane {
 	private statusOptions: string[] = [];
 	private roomOptions: string[] = [];
 	private terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
+
+	/** Parse appointment date robustly — handles ISO, epoch, date-only */
+	private _parseAptDate(apt: Appointment): Date | null {
+		const raw = apt.start || apt.startTime;
+		if (!raw) { return null; }
+		if (typeof raw === 'number' || /^\d{10,13}$/.test(String(raw))) {
+			const ms = typeof raw === 'number' ? raw : (String(raw).length <= 10 ? Number(raw) * 1000 : Number(raw));
+			const d = new Date(ms);
+			return isNaN(d.getTime()) ? null : d;
+		}
+		const d = new Date(String(raw));
+		if (!isNaN(d.getTime())) { return d; }
+		if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) {
+			const d2 = new Date(String(raw) + 'T00:00:00');
+			return isNaN(d2.getTime()) ? null : d2;
+		}
+		return null;
+	}
 
 	private _getFilteredAppointments(): Appointment[] {
 		let filtered = [...this.appointments];
@@ -179,10 +253,12 @@ export class ScheduleSidebarPane extends ViewPane {
 			filtered = filtered.filter(a => this.terminalStatuses.has(a.status?.toLowerCase()));
 		}
 
-		// Sort by time (upcoming first)
+		// Sort by time (upcoming first, no-time at bottom)
 		filtered.sort((a, b) => {
 			const ta = a.start || a.startTime || '';
 			const tb = b.start || b.startTime || '';
+			if (!ta && tb) { return 1; }
+			if (ta && !tb) { return -1; }
 			return ta.localeCompare(tb);
 		});
 
@@ -217,7 +293,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		const stats = DOM.append(this.container, DOM.$('.stats-bar'));
 		stats.style.cssText = 'display:flex;gap:2px;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
-		const total = this.totalAppointments || this.appointments.length;
+		const total = this.appointments.length;
 		const completed = this.appointments.filter(a => ['fulfilled', 'completed', 'checked-out'].includes(a.status?.toLowerCase())).length;
 		const noShows = this.appointments.filter(a => ['noshow', 'no-show'].includes(a.status?.toLowerCase())).length;
 		const remaining = total - completed - noShows;
@@ -326,10 +402,22 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		const time = DOM.append(topLine, DOM.$('span'));
 		time.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-foreground);width:50px;flex-shrink:0;';
-		try {
-			const d = new Date(apt.start || apt.startTime);
-			time.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-		} catch { time.textContent = '--:--'; }
+		// Try direct date parsing first, fall back to _parseAptDate
+		const rawTime = apt.start || apt.startTime;
+		if (rawTime && typeof rawTime === 'string') {
+			try {
+				const d = new Date(rawTime);
+				if (!isNaN(d.getTime())) {
+					time.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+				} else {
+					time.textContent = '--:--';
+				}
+			} catch {
+				time.textContent = '--:--';
+			}
+		} else {
+			time.textContent = '--:--';
+		}
 
 		const name = DOM.append(topLine, DOM.$('span'));
 		name.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown';
@@ -352,7 +440,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		midLine.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
 
 		const typeEl = DOM.append(midLine, DOM.$('span'));
-		typeEl.textContent = apt.appointmentType || apt.type || '';
+		typeEl.textContent = getAppointmentType(apt);
 
 		if (apt.providerName || apt.practitionerName) {
 			DOM.append(midLine, DOM.$('span')).textContent = '\u00B7';
@@ -415,7 +503,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		}
 
 		// Telehealth (if visit type includes telehealth/virtual)
-		const vt = (apt.appointmentType || apt.type || apt.visitType || '').toLowerCase();
+		const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
 		if (vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video')) {
 			iconBtn(actions, 'Video Call', '\u{1F4F9}', '#22c55e', () => {
 				this.commandService.executeCommand('ciyex.openTelehealth', apt.id);
@@ -517,12 +605,13 @@ export class ScheduleSidebarPane extends ViewPane {
 		for (const apt of filtered) {
 			const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
 			let timeStr = '--:--';
-			try { timeStr = new Date(apt.start || apt.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); } catch { /* */ }
+			const pd = this._parseAptDate(apt);
+			if (pd) { timeStr = pd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); }
 
 			rows += `<tr>
 				<td style="font-weight:600;">${timeStr}</td>
 				<td>${apt.patientName || ''}</td>
-				<td>${apt.appointmentType || apt.type || ''}</td>
+				<td>${getAppointmentType(apt)}</td>
 				<td>${apt.providerName || apt.practitionerName || ''}</td>
 				<td style="color:${statusColor};font-weight:600;">${apt.room || '-'}</td>
 				<td><span style="background:${statusColor}22;color:${statusColor};padding:4px 12px;border-radius:6px;font-weight:600;">${(apt.status || '').replace(/-/g, ' ')}</span></td>
