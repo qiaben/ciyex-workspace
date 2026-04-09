@@ -26,6 +26,17 @@ const ITEMS: Array<{ icon: string; label: string; description: string; command: 
 	{ icon: '📋', label: 'Audit Log', description: 'System activity and compliance', command: 'ciyex.openCalendar' },
 ];
 
+const SETTINGS_ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
+	{ icon: '👥', label: 'User Management', description: 'Add, edit, delete users and assign roles', command: 'ciyex.openUserManagement' },
+	{ icon: '🛡️', label: 'Roles & Permissions', description: 'Manage roles, permissions, FHIR scopes', command: 'ciyex.openRolesConfig' },
+	{ icon: '🌐', label: 'Portal Settings', description: 'Patient portal features and navigation', command: 'ciyex.openPortalSettings' },
+	{ icon: '📋', label: 'Encounter Settings', description: 'Encounter form sections and fields', command: 'ciyex.openEncounterConfig' },
+	{ icon: '📐', label: 'Chart Layout', description: 'Patient chart tabs and field layout', command: 'ciyex.openChartLayout' },
+	{ icon: '📑', label: 'Menu Configuration', description: 'Sidebar menu items and navigation', command: 'ciyex.openMenuConfig' },
+	{ icon: '🎨', label: 'Calendar Colors', description: 'Appointment type and status colors', command: 'ciyex.openCalendarColors' },
+	{ icon: '⚙️', label: 'Practice Settings', description: 'General practice configuration', command: 'ciyex.openSettings' },
+];
+
 export class SystemMenuPane extends ViewPane {
 	static readonly ID = 'ciyex.system.menu';
 	private container!: HTMLElement;
@@ -38,7 +49,16 @@ export class SystemMenuPane extends ViewPane {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.system-menu-pane'));
 		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;';
-		for (const item of ITEMS) {
+		this._renderSection('System', ITEMS);
+		this._renderSection('Settings', SETTINGS_ITEMS);
+	}
+
+	private _renderSection(title: string, items: typeof ITEMS): void {
+		const header = DOM.append(this.container, DOM.$('div'));
+		header.style.cssText = 'padding:8px 10px 4px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);letter-spacing:0.5px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		header.textContent = title;
+
+		for (const item of items) {
 			const row = DOM.append(this.container, DOM.$('div'));
 			row.style.cssText = 'padding:8px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(128,128,128,0.06);';
 			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });

@@ -31,7 +31,6 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	operations: registerIcon('ciyex-operations', Codicon.briefcase, localize('cOperations', 'Operations')),
 	reports: registerIcon('ciyex-reports', Codicon.graph, localize('cReports', 'Reports')),
 	system: registerIcon('ciyex-system', Codicon.tools, localize('cSystem', 'System')),
-	settings: registerIcon('ciyex-settings', Codicon.settingsGear, localize('cSettings', 'Settings')),
 	hub: registerIcon('ciyex-hub', Codicon.library, localize('cHub', 'Ciyex Hub')),
 	developer: registerIcon('ciyex-developer', Codicon.code, localize('cDeveloper', 'Developer Portal')),
 };
@@ -66,8 +65,8 @@ export const OPERATIONS_CONTAINER = reg('ciyex.operations', 'Operations', icons.
 export const REPORTS_CONTAINER = reg('ciyex.reports', 'Reports', icons.reports, 10);
 export const SYSTEM_CONTAINER = reg('ciyex.system', 'System', icons.system, 11);
 
-// Settings
-export const SETTINGS_CONTAINER = reg('ciyex.settings', 'Settings', icons.settings, 12);
+// Settings — removed separate sidebar, items are in VS Code Settings (Cmd+,) and System menu
+// The SettingsListPane items (User Mgmt, Roles, Portal, etc.) are accessible via top menu System → Settings
 
 // Hub and Developer
 export const HUB_CONTAINER = reg('ciyex.hub', 'Ciyex Hub', icons.hub, 13);
@@ -248,12 +247,6 @@ import { SystemMenuPane } from './portal/systemMenuPane.js';
 viewsRegistry.registerViews([
 	{ id: SystemMenuPane.ID, name: localize2('systemMenu', "System"), ctorDescriptor: new SyncDescriptor(SystemMenuPane) },
 ], SYSTEM_CONTAINER);
-
-// Settings — clickable list that opens editors
-import { SettingsListPane } from './portal/settingsListPane.js';
-viewsRegistry.registerViews([
-	{ id: SettingsListPane.ID, name: localize2('settingsList', "Settings"), ctorDescriptor: new SyncDescriptor(SettingsListPane) },
-], SETTINGS_CONTAINER);
 
 // Hub and Developer - placeholder views
 viewsRegistry.registerViews([{ id: 'ciyex.hub.view', name: localize2('hubBrowse', "Browse Apps"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], HUB_CONTAINER);
