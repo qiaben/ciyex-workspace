@@ -8,7 +8,7 @@ import { EditorExtensions } from '../../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { localize } from '../../../../../nls.js';
-import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
+import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, UserManagementEditorInput, RolesEditorInput2, TasksEditorInput } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
 import { FieldConfigEditor } from './fieldConfigEditor.js';
@@ -18,6 +18,11 @@ import { RolesEditor } from './rolesEditor.js';
 import { CalendarEditor } from './calendarEditor.js';
 import { PatientChartEditor } from './patientChartEditor.js';
 import { EncounterFormEditor } from './encounterFormEditor.js';
+import { MessagingEditor } from './messagingEditor.js';
+import { PortalSettingsEditor } from './portalSettingsEditor.js';
+import { UserManagementEditor } from './userManagementEditor.js';
+import { RolesPermissionsEditor } from './rolesPermissionsEditor.js';
+import { TasksEditor } from './tasksEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -30,3 +35,8 @@ reg.registerEditorPane(EditorPaneDescriptor.create(RolesEditor, RolesEditor.ID, 
 reg.registerEditorPane(EditorPaneDescriptor.create(CalendarEditor, CalendarEditor.ID, localize('calendar', "Calendar")), [new SyncDescriptor(CalendarEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(PatientChartEditor, PatientChartEditor.ID, localize('patientChart', "Patient Chart")), [new SyncDescriptor(PatientChartEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(EncounterFormEditor, EncounterFormEditor.ID, localize('encounterForm', "Encounter")), [new SyncDescriptor(EncounterFormEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(MessagingEditor, MessagingEditor.ID, localize('messaging', "Messages")), [new SyncDescriptor(MessagingEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(PortalSettingsEditor, PortalSettingsEditor.ID, localize('portalSettings', "Portal Settings")), [new SyncDescriptor(PortalSettingsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(UserManagementEditor, UserManagementEditor.ID, localize('userMgmt', "User Management")), [new SyncDescriptor(UserManagementEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(RolesPermissionsEditor, RolesPermissionsEditor.ID, localize('rolesPerms', "Roles & Permissions")), [new SyncDescriptor(RolesEditorInput2)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(TasksEditor, TasksEditor.ID, localize('tasks', "Tasks")), [new SyncDescriptor(TasksEditorInput)]);

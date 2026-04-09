@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -486,5 +486,95 @@ registerAction2(class extends Action2 {
 		const { ICiyexAuthService } = await import('../../ciyexAuth/browser/ciyexAuthService.js');
 		const authService = accessor.get(ICiyexAuthService);
 		authService.signOut();
+	}
+});
+
+/**
+ * Command: Open Messaging (opens last channel or #general)
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openMessaging',
+			title: localize2('openMessaging', "Open Messaging"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		const apiService = accessor.get(ICiyexApiService);
+
+		try {
+			const res = await apiService.fetch('/api/channels');
+			if (res.ok) {
+				const data = await res.json();
+				const channels = (data?.content || data || []) as Array<{ id: string; name: string; type: string }>;
+				const first = channels[0];
+				if (first) {
+					const input = new MessagingEditorInput(first.id, first.name, first.type as 'public');
+					await editorService.openEditor(input, { pinned: true });
+					return;
+				}
+			}
+		} catch { /* */ }
+
+		// Fallback: open empty messaging
+		const input = new MessagingEditorInput('', 'Messages', 'public');
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Thread (opens thread as split editor)
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.messaging.openThread',
+			title: localize2('openThread', "Open Thread"),
+		});
+	}
+
+	async run(accessor: ServicesAccessor, channelId?: string, parentId?: string, channelName?: string): Promise<void> {
+		if (!channelId || !parentId) { return; }
+		const editorService = accessor.get(IEditorService);
+		const input = new MessagingEditorInput(channelId, channelName || 'Thread', 'public', parentId);
+		await editorService.openEditor(input, { pinned: false }, ACTIVE_GROUP);
+	}
+});
+
+/**
+ * Command: Open Portal Settings
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openPortalSettings',
+			title: localize2('openPortalSettings', "Open Portal Settings"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		const input = new PortalSettingsEditorInput();
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+// Note: ciyex.openUserManagement already registered in ciyexSettingsCommands.ts
+
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openRolesPermissions', title: localize2('openRoles', "Open Roles & Permissions"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new RolesEditorInput2(), { pinned: true });
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openTasks', title: localize2('openTasks', "Open Tasks"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new TasksEditorInput(), { pinned: true });
 	}
 });

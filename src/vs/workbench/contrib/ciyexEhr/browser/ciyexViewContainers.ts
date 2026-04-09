@@ -30,7 +30,8 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	clinical: registerIcon('ciyex-clinical', Codicon.beaker, localize('cClinical', 'Clinical')),
 	operations: registerIcon('ciyex-operations', Codicon.briefcase, localize('cOperations', 'Operations')),
 	reports: registerIcon('ciyex-reports', Codicon.graph, localize('cReports', 'Reports')),
-	system: registerIcon('ciyex-system', Codicon.settingsGear, localize('cSystem', 'System')),
+	system: registerIcon('ciyex-system', Codicon.tools, localize('cSystem', 'System')),
+	settings: registerIcon('ciyex-settings', Codicon.settingsGear, localize('cSettings', 'Settings')),
 	hub: registerIcon('ciyex-hub', Codicon.library, localize('cHub', 'Ciyex Hub')),
 	developer: registerIcon('ciyex-developer', Codicon.code, localize('cDeveloper', 'Developer Portal')),
 };
@@ -65,8 +66,11 @@ export const OPERATIONS_CONTAINER = reg('ciyex.operations', 'Operations', icons.
 export const REPORTS_CONTAINER = reg('ciyex.reports', 'Reports', icons.reports, 10);
 export const SYSTEM_CONTAINER = reg('ciyex.system', 'System', icons.system, 11);
 
+// Settings
+export const SETTINGS_CONTAINER = reg('ciyex.settings', 'Settings', icons.settings, 12);
+
 // Hub and Developer
-export const HUB_CONTAINER = reg('ciyex.hub', 'Ciyex Hub', icons.hub, 12);
+export const HUB_CONTAINER = reg('ciyex.hub', 'Ciyex Hub', icons.hub, 13);
 export const DEVELOPER_CONTAINER = reg('ciyex.developer', 'Developer Portal', icons.developer, 13);
 
 // ─── GenericListPane Configs ─────────────────────────────────────────
@@ -128,69 +132,69 @@ GenericListPane.configs.set('ciyex.portal.docreviews', {
 	emptyMessage: 'No document reviews',
 });
 
-// Clinical children
+// Clinical children — FHIR resource endpoints
 GenericListPane.configs.set('ciyex.clinical.prescriptions', {
-	apiPath: '/api/prescriptions', columns: [{ key: 'patientName' }, { key: 'medicationName' }, { key: 'status' }], iconId: 'beaker', emptyMessage: 'No prescriptions',
+	apiPath: '/api/fhir-resource/medications', columns: [{ key: 'patientRefDisplay' }, { key: 'medicationDisplay' }, { key: 'status' }], iconId: 'beaker', emptyMessage: 'No prescriptions',
 });
 GenericListPane.configs.set('ciyex.clinical.labs', {
-	apiPath: '/api/labs', columns: [{ key: 'patientName' }, { key: 'testName' }, { key: 'status' }], iconId: 'beaker', emptyMessage: 'No lab orders',
+	apiPath: '/api/fhir-resource/lab-orders', columns: [{ key: 'patientRefDisplay' }, { key: 'testName' }, { key: 'status' }], iconId: 'beaker', emptyMessage: 'No lab orders',
 });
 GenericListPane.configs.set('ciyex.clinical.immunizations', {
-	apiPath: '/api/immunizations', columns: [{ key: 'patientName' }, { key: 'vaccineName' }, { key: 'status' }], iconId: 'shield', emptyMessage: 'No immunizations',
+	apiPath: '/api/fhir-resource/immunizations', columns: [{ key: 'patientRefDisplay' }, { key: 'vaccineDisplay' }, { key: 'status' }], iconId: 'shield', emptyMessage: 'No immunizations',
 });
 GenericListPane.configs.set('ciyex.clinical.referrals', {
-	apiPath: '/api/referrals', columns: [{ key: 'patientName' }, { key: 'specialistName' }, { key: 'status' }], iconId: 'arrow-right', emptyMessage: 'No referrals',
+	apiPath: '/api/fhir-resource/referrals', columns: [{ key: 'patientRefDisplay' }, { key: 'specialistDisplay' }, { key: 'status' }], iconId: 'arrow-right', emptyMessage: 'No referrals',
 });
 GenericListPane.configs.set('ciyex.clinical.authorizations', {
-	apiPath: '/api/authorizations', columns: [{ key: 'patientName' }, { key: 'type' }, { key: 'status' }], iconId: 'shield', emptyMessage: 'No authorizations',
+	apiPath: '/api/fhir-resource/authorizations', columns: [{ key: 'patientRefDisplay' }, { key: 'type' }, { key: 'status' }], iconId: 'shield', emptyMessage: 'No authorizations',
 });
 GenericListPane.configs.set('ciyex.clinical.careplans', {
-	apiPath: '/api/care-plans', columns: [{ key: 'patientName' }, { key: 'title' }, { key: 'status' }], iconId: 'heart', emptyMessage: 'No care plans',
+	apiPath: '/api/fhir-resource/care-plans', columns: [{ key: 'patientRefDisplay' }, { key: 'title' }, { key: 'status' }], iconId: 'heart', emptyMessage: 'No care plans',
 });
 GenericListPane.configs.set('ciyex.clinical.education', {
-	apiPath: '/api/education', columns: [{ key: 'title' }, { key: 'category' }], iconId: 'book', emptyMessage: 'No education materials',
+	apiPath: '/api/patient-education', columns: [{ key: 'title' }, { key: 'category' }], iconId: 'book', emptyMessage: 'No education materials',
 });
 
 // Operations children
 GenericListPane.configs.set('ciyex.operations.recall', {
-	apiPath: '/api/recall', columns: [{ key: 'patientName' }, { key: 'reason' }, { key: 'status' }], iconId: 'bell', emptyMessage: 'No recall items',
+	apiPath: '/api/recall-campaigns', columns: [{ key: 'name' }, { key: 'patientCount' }, { key: 'status' }], iconId: 'bell', emptyMessage: 'No recall campaigns',
 });
 GenericListPane.configs.set('ciyex.operations.codes', {
-	apiPath: '/api/codes', columns: [{ key: 'code' }, { key: 'description' }], iconId: 'file', emptyMessage: 'No codes',
+	apiPath: '/api/fhir-resource/code-sets', columns: [{ key: 'code' }, { key: 'display' }, { key: 'system' }], iconId: 'file', emptyMessage: 'No codes',
 });
 GenericListPane.configs.set('ciyex.operations.inventory', {
-	apiPath: '/api/inventory', columns: [{ key: 'name' }, { key: 'quantity' }, { key: 'status' }], iconId: 'package', emptyMessage: 'No inventory items',
+	apiPath: '/api/fhir-resource/supplies', columns: [{ key: 'name' }, { key: 'quantity' }, { key: 'status' }], iconId: 'package', emptyMessage: 'No inventory items',
 });
 GenericListPane.configs.set('ciyex.operations.payments', {
-	apiPath: '/api/payments', columns: [{ key: 'patientName' }, { key: 'amount' }, { key: 'status' }], iconId: 'credit-card', emptyMessage: 'No payments',
+	apiPath: '/api/fhir-resource/payments', columns: [{ key: 'patientRefDisplay' }, { key: 'amount' }, { key: 'status' }], iconId: 'credit-card', emptyMessage: 'No payments',
 });
 GenericListPane.configs.set('ciyex.operations.claims', {
-	apiPath: '/api/claims', columns: [{ key: 'patientName' }, { key: 'payerName' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No claims',
+	apiPath: '/api/fhir-resource/claims', columns: [{ key: 'patientRefDisplay' }, { key: 'payerDisplay' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No claims',
 });
 
 // Reports
 GenericListPane.configs.set('ciyex.reports.view', {
-	apiPath: '/api/reports', columns: [{ key: 'name' }, { key: 'type' }], iconId: 'graph', emptyMessage: 'No reports',
+	apiPath: '/api/report-configs', columns: [{ key: 'name' }, { key: 'type' }, { key: 'schedule' }], iconId: 'graph', emptyMessage: 'No reports configured',
 });
 
 // System children
 GenericListPane.configs.set('ciyex.system.alerts', {
-	apiPath: '/api/cds-alerts', columns: [{ key: 'patientName' }, { key: 'alertType' }, { key: 'severity' }], iconId: 'warning', emptyMessage: 'No clinical alerts',
+	apiPath: '/api/cds-hooks/alerts', columns: [{ key: 'patientRefDisplay' }, { key: 'summary' }, { key: 'indicator' }], iconId: 'warning', emptyMessage: 'No clinical alerts',
 });
 GenericListPane.configs.set('ciyex.system.consents', {
-	apiPath: '/api/consents', columns: [{ key: 'patientName' }, { key: 'type' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No consents',
+	apiPath: '/api/fhir-resource/consents', columns: [{ key: 'patientRefDisplay' }, { key: 'category' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No consents',
 });
 GenericListPane.configs.set('ciyex.system.notifications', {
-	apiPath: '/api/notifications', columns: [{ key: 'title' }, { key: 'type' }], iconId: 'bell', emptyMessage: 'No notifications',
+	apiPath: '/api/portal/notifications/my', columns: [{ key: 'title' }, { key: 'type' }, { key: 'createdAt' }], iconId: 'bell', emptyMessage: 'No notifications',
 });
 GenericListPane.configs.set('ciyex.system.fax', {
-	apiPath: '/api/fax', columns: [{ key: 'to' }, { key: 'subject' }, { key: 'status' }], iconId: 'mail', emptyMessage: 'No faxes',
+	apiPath: '/api/fax/messages', columns: [{ key: 'to' }, { key: 'status' }, { key: 'createdAt' }], iconId: 'mail', emptyMessage: 'No faxes',
 });
 GenericListPane.configs.set('ciyex.system.docscanning', {
-	apiPath: '/api/documents', columns: [{ key: 'patientName' }, { key: 'documentType' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No scanned documents',
+	apiPath: '/api/fhir-resource/documents', columns: [{ key: 'patientRefDisplay' }, { key: 'category' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No scanned documents',
 });
 GenericListPane.configs.set('ciyex.system.kiosk', {
-	apiPath: '/api/kiosk', columns: [{ key: 'patientName' }, { key: 'status' }], iconId: 'device-mobile', emptyMessage: 'No kiosk check-ins',
+	apiPath: '/api/kiosk/check-ins', columns: [{ key: 'patientName' }, { key: 'status' }, { key: 'checkedInAt' }], iconId: 'device-mobile', emptyMessage: 'No kiosk check-ins',
 });
 GenericListPane.configs.set('ciyex.system.auditlog', {
 	apiPath: '/api/admin/audit-log', columns: [{ key: 'user' }, { key: 'action' }, { key: 'timestamp' }], iconId: 'list-ordered', emptyMessage: 'No audit entries',
@@ -206,10 +210,22 @@ viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('patientL
 import { EncounterListPane } from './encounterListPane.js';
 viewsRegistry.registerViews([{ id: EncounterListPane.ID, name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(EncounterListPane) }], ENCOUNTERS_CONTAINER);
 viewsRegistry.registerViews([{ id: 'ciyex.tasks.view', name: localize2('tasks', "Tasks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], TASKS_CONTAINER);
-viewsRegistry.registerViews([{ id: 'ciyex.messaging.view', name: localize2('inbox', "Inbox"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], MESSAGING_CONTAINER);
+import { ChannelListPane } from './messaging/channelListPane.js';
+viewsRegistry.registerViews([{ id: ChannelListPane.ID, name: localize2('channels', "Channels"), ctorDescriptor: new SyncDescriptor(ChannelListPane) }], MESSAGING_CONTAINER);
 
-// Portal Management
-viewsRegistry.registerViews([{ id: 'ciyex.portal.docreviews', name: localize2('docReviews', "Document Reviews"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], PORTAL_MGMT_CONTAINER);
+// Portal Management — dedicated panes replacing GenericListPane
+import { DocumentReviewPane } from './portal/documentReviewPane.js';
+import { AccessRequestPane } from './portal/accessRequestPane.js';
+import { FormSubmissionPane } from './portal/formSubmissionPane.js';
+import { PortalFormsPane } from './portal/portalFormsPane.js';
+import { TemplatesPane } from './portal/templatesPane.js';
+viewsRegistry.registerViews([
+	{ id: DocumentReviewPane.ID, name: localize2('docReviews', "Document Reviews"), ctorDescriptor: new SyncDescriptor(DocumentReviewPane) },
+	{ id: AccessRequestPane.ID, name: localize2('accessRequests', "Access Requests"), ctorDescriptor: new SyncDescriptor(AccessRequestPane) },
+	{ id: FormSubmissionPane.ID, name: localize2('formSubmissions', "Form Submissions"), ctorDescriptor: new SyncDescriptor(FormSubmissionPane) },
+	{ id: PortalFormsPane.ID, name: localize2('portalForms', "Portal Forms"), ctorDescriptor: new SyncDescriptor(PortalFormsPane) },
+	{ id: TemplatesPane.ID, name: localize2('templates', "Templates"), ctorDescriptor: new SyncDescriptor(TemplatesPane) },
+], PORTAL_MGMT_CONTAINER);
 
 // Clinical - multiple views
 viewsRegistry.registerViews([
@@ -244,6 +260,12 @@ viewsRegistry.registerViews([
 	{ id: 'ciyex.system.kiosk', name: localize2('kiosk', "Check-in Kiosk"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
 	{ id: 'ciyex.system.auditlog', name: localize2('auditLog', "Audit Log"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
 ], SYSTEM_CONTAINER);
+
+// Settings — clickable list that opens editors
+import { SettingsListPane } from './portal/settingsListPane.js';
+viewsRegistry.registerViews([
+	{ id: SettingsListPane.ID, name: localize2('settingsList', "Settings"), ctorDescriptor: new SyncDescriptor(SettingsListPane) },
+], SETTINGS_CONTAINER);
 
 // Hub and Developer - placeholder views
 viewsRegistry.registerViews([{ id: 'ciyex.hub.view', name: localize2('hubBrowse', "Browse Apps"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], HUB_CONTAINER);

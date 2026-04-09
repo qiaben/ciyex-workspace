@@ -85,6 +85,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		const sidebarToEditor: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.openCalendar',
 			// 'ciyex.patients' intentionally NOT here — chart opens on patient click, not sidebar click
+			// 'ciyex.messaging' intentionally NOT here — conversation opens on channel click, not sidebar click
 		};
 
 		// Editor typeId → sidebar container ID (editor tab click switches sidebar)
@@ -92,6 +93,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexCalendar': 'ciyex.calendar',
 			'workbench.input.ciyexPatientChart': 'ciyex.patients',
 			'workbench.input.ciyexEncounterForm': 'ciyex.encounters',
+			'workbench.input.ciyexMessaging': 'ciyex.messaging',
+			'workbench.input.ciyexPortalSettings': 'ciyex.portal-management',
 		};
 
 		// Container ID → view ID inside it (force-open view when container activates)
@@ -99,6 +102,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.calendar': 'ciyex.calendar.schedule',
 			'ciyex.patients': 'ciyex.patients.list',
 			'ciyex.encounters': 'ciyex.encounters.view',
+			'ciyex.messaging': 'ciyex.messaging.channels',
+			'ciyex.portal-management': 'ciyex.portal.docreviews',
 		};
 
 		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)
@@ -160,6 +165,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			this.menuService.loadMenus(),
 		]).then(() => {
 			this._registerStatusBarItems();
+			this._startUnreadPolling();
 		}).catch(() => { /* non-critical */ });
 
 		this._wirePatientList();
@@ -243,6 +249,35 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 				ariaLabel: `Role: ${role}`,
 			}, 'ciyex.role', StatusbarAlignment.RIGHT, 98);
 		}
+	}
+
+	private _unreadEntry: { dispose(): void } | null = null;
+
+	private _startUnreadPolling(): void {
+		const poll = async () => {
+			try {
+				const res = await this.apiService.fetch('/api/channels');
+				if (!res.ok) { return; }
+				const data = await res.json();
+				const channels = (data?.data || data?.content || data || []) as Array<{ unreadCount?: number }>;
+				const total = channels.reduce((sum: number, ch: { unreadCount?: number }) => sum + (ch.unreadCount || 0), 0);
+
+				// Update or create status bar entry
+				if (this._unreadEntry) { this._unreadEntry.dispose(); }
+				if (total > 0) {
+					this._unreadEntry = this.statusbarService.addEntry({
+						name: 'Ciyex Messages',
+						text: `$(comment-discussion) ${total}`,
+						tooltip: `${total} unread message${total === 1 ? '' : 's'}`,
+						ariaLabel: `${total} unread messages`,
+						command: 'ciyex.openMessaging',
+					}, 'ciyex.messaging.unread', StatusbarAlignment.RIGHT, 97);
+				}
+			} catch { /* */ }
+		};
+
+		poll();
+		setInterval(poll, 30000);
 	}
 
 	private _getUserName(): string {

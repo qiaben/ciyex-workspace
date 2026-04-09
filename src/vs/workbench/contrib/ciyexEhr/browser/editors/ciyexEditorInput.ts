@@ -108,5 +108,94 @@ export class EncounterFormEditorInput extends EditorInput {
 	}
 }
 
+// ─── Messaging EditorInput (channel-scoped) ───
+
+export class MessagingEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexMessaging';
+	override get typeId(): string { return MessagingEditorInput.ID; }
+
+	constructor(
+		readonly channelId: string,
+		readonly channelName: string,
+		readonly channelType: 'public' | 'private' | 'dm' | 'group_dm',
+		readonly threadParentId?: string,
+	) { super(); }
+
+	override getName(): string {
+		if (this.threadParentId) { return `Thread`; }
+		return this.channelType === 'dm' || this.channelType === 'group_dm'
+			? this.channelName || 'Direct Message'
+			: `#${this.channelName || 'channel'}`;
+	}
+
+	override getIcon(): ThemeIcon | undefined {
+		if (this.threadParentId) { return ThemeIcon.fromId('git-pull-request'); }
+		return this.channelType === 'dm' ? ThemeIcon.fromId('account') : ThemeIcon.fromId('comment-discussion');
+	}
+
+	get resource(): URI {
+		const path = this.threadParentId
+			? `/messaging/${this.channelId}/thread/${this.threadParentId}`
+			: `/messaging/${this.channelId}`;
+		return URI.from({ scheme: 'ciyex-messaging', path });
+	}
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof MessagingEditorInput
+			&& this.channelId === other.channelId
+			&& this.threadParentId === other.threadParentId;
+	}
+}
+
+// ─── Portal Management EditorInput ───
+
+export class PortalSettingsEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexPortalSettings';
+	override get typeId(): string { return PortalSettingsEditorInput.ID; }
+
+	constructor() { super(); }
+
+	override getName(): string { return 'Portal Settings'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('globe'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-portal', path: '/settings' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof PortalSettingsEditorInput;
+	}
+}
+
+// ─── Settings EditorInputs (singleton, no params) ───
+
+export class UserManagementEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexUserMgmt';
+	override get typeId(): string { return UserManagementEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'User Management'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('people'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/user-management' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof UserManagementEditorInput; }
+}
+
+export class RolesEditorInput2 extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexRolesPerms';
+	override get typeId(): string { return RolesEditorInput2.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Roles & Permissions'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('shield'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/roles-permissions' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof RolesEditorInput2; }
+}
+
+export class TasksEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexTasks';
+	override get typeId(): string { return TasksEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Tasks'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('tasklist'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/tasks' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof TasksEditorInput; }
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;
