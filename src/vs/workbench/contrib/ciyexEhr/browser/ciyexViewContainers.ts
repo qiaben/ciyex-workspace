@@ -227,39 +227,26 @@ viewsRegistry.registerViews([
 	{ id: TemplatesPane.ID, name: localize2('templates', "Templates"), ctorDescriptor: new SyncDescriptor(TemplatesPane) },
 ], PORTAL_MGMT_CONTAINER);
 
-// Clinical - multiple views
+// Clinical — clickable menu pane that opens EditorPanes
+import { ClinicalMenuPane } from './portal/clinicalMenuPane.js';
 viewsRegistry.registerViews([
-	{ id: 'ciyex.clinical.prescriptions', name: localize2('prescriptions', "Prescriptions"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.labs', name: localize2('labs', "Labs"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.immunizations', name: localize2('immunizations', "Immunizations"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.referrals', name: localize2('referrals', "Referrals"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.authorizations', name: localize2('authorizations', "Authorizations"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.careplans', name: localize2('carePlans', "Care Plans"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.clinical.education', name: localize2('education', "Education"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
+	{ id: ClinicalMenuPane.ID, name: localize2('clinicalMenu', "Clinical"), ctorDescriptor: new SyncDescriptor(ClinicalMenuPane) },
 ], CLINICAL_CONTAINER);
 
-// Operations - multiple views
+// Operations — clickable menu pane
+import { OperationsMenuPane } from './portal/operationsMenuPane.js';
 viewsRegistry.registerViews([
-	{ id: 'ciyex.operations.recall', name: localize2('recall', "Recall"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.operations.codes', name: localize2('codes', "Codes"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.operations.inventory', name: localize2('inventory', "Inventory"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.operations.payments', name: localize2('payments', "Payments"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.operations.claims', name: localize2('claims', "Claims"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
+	{ id: OperationsMenuPane.ID, name: localize2('operationsMenu', "Operations"), ctorDescriptor: new SyncDescriptor(OperationsMenuPane) },
 ], OPERATIONS_CONTAINER);
 
-// Reports
+// Reports — clickable report list with categories
 import { ReportsPane } from './portal/reportsPane.js';
 viewsRegistry.registerViews([{ id: ReportsPane.ID, name: localize2('reports', "Reports"), ctorDescriptor: new SyncDescriptor(ReportsPane) }], REPORTS_CONTAINER);
 
-// System - multiple views
+// System — clickable menu pane
+import { SystemMenuPane } from './portal/systemMenuPane.js';
 viewsRegistry.registerViews([
-	{ id: 'ciyex.system.alerts', name: localize2('clinicalAlerts', "Clinical Alerts"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.consents', name: localize2('consents', "Consents"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.notifications', name: localize2('notifications', "Notifications"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.fax', name: localize2('fax', "Fax"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.docscanning', name: localize2('docScanning', "Doc Scanning"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.kiosk', name: localize2('kiosk', "Check-in Kiosk"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
-	{ id: 'ciyex.system.auditlog', name: localize2('auditLog', "Audit Log"), ctorDescriptor: new SyncDescriptor(GenericListPane) },
+	{ id: SystemMenuPane.ID, name: localize2('systemMenu', "System"), ctorDescriptor: new SyncDescriptor(SystemMenuPane) },
 ], SYSTEM_CONTAINER);
 
 // Settings — clickable list that opens editors
