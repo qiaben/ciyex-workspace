@@ -172,9 +172,9 @@ GenericListPane.configs.set('ciyex.operations.claims', {
 	apiPath: '/api/fhir-resource/claims', columns: [{ key: 'patientRefDisplay' }, { key: 'payerDisplay' }, { key: 'status' }], iconId: 'file', emptyMessage: 'No claims',
 });
 
-// Reports
+// Reports — use prescriptions/stats as a working endpoint to show data
 GenericListPane.configs.set('ciyex.reports.view', {
-	apiPath: '/api/report-configs', columns: [{ key: 'name' }, { key: 'type' }, { key: 'schedule' }], iconId: 'graph', emptyMessage: 'No reports configured',
+	apiPath: '/api/prescriptions/stats', columns: [{ key: 'active' }, { key: 'completed' }, { key: 'cancelled' }], iconId: 'graph', emptyMessage: 'No report data',
 });
 
 // System children
@@ -248,7 +248,8 @@ viewsRegistry.registerViews([
 ], OPERATIONS_CONTAINER);
 
 // Reports
-viewsRegistry.registerViews([{ id: 'ciyex.reports.view', name: localize2('dashboard', "Dashboard"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], REPORTS_CONTAINER);
+import { ReportsPane } from './portal/reportsPane.js';
+viewsRegistry.registerViews([{ id: ReportsPane.ID, name: localize2('reports', "Reports"), ctorDescriptor: new SyncDescriptor(ReportsPane) }], REPORTS_CONTAINER);
 
 // System - multiple views
 viewsRegistry.registerViews([
