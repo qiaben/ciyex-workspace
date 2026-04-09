@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -577,4 +577,30 @@ registerAction2(class extends Action2 {
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await accessor.get(IEditorService).openEditor(new TasksEditorInput(), { pinned: true });
 	}
+});
+
+// Clinical editors
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openPrescriptions', title: localize2('openRx', "Open Prescriptions"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new PrescriptionsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openImmunizations', title: localize2('openImm', "Open Immunizations"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ImmunizationsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openReferrals', title: localize2('openRef', "Open Referrals"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ReferralsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openCarePlans', title: localize2('openCP', "Open Care Plans"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new CarePlansEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openCds', title: localize2('openCds', "Open Clinical Decision Support"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new CdsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openAuthorizations', title: localize2('openAuth', "Open Authorizations"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new AuthorizationsEditorInput(), { pinned: true }); }
 });

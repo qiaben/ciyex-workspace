@@ -8,7 +8,7 @@ import { EditorExtensions } from '../../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { localize } from '../../../../../nls.js';
-import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, UserManagementEditorInput, RolesEditorInput2, TasksEditorInput } from './ciyexEditorInput.js';
+import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, UserManagementEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
 import { FieldConfigEditor } from './fieldConfigEditor.js';
@@ -23,6 +23,7 @@ import { PortalSettingsEditor } from './portalSettingsEditor.js';
 import { UserManagementEditor } from './userManagementEditor.js';
 import { RolesPermissionsEditor } from './rolesPermissionsEditor.js';
 import { TasksEditor } from './tasksEditor.js';
+import { PrescriptionsEditor, ImmunizationsEditor, ReferralsEditor, CarePlansEditor, CdsEditor, AuthorizationsEditor } from './clinicalEditors.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -40,3 +41,11 @@ reg.registerEditorPane(EditorPaneDescriptor.create(PortalSettingsEditor, PortalS
 reg.registerEditorPane(EditorPaneDescriptor.create(UserManagementEditor, UserManagementEditor.ID, localize('userMgmt', "User Management")), [new SyncDescriptor(UserManagementEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(RolesPermissionsEditor, RolesPermissionsEditor.ID, localize('rolesPerms', "Roles & Permissions")), [new SyncDescriptor(RolesEditorInput2)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(TasksEditor, TasksEditor.ID, localize('tasks', "Tasks")), [new SyncDescriptor(TasksEditorInput)]);
+
+// Clinical editors
+reg.registerEditorPane(EditorPaneDescriptor.create(PrescriptionsEditor, PrescriptionsEditor.ID, localize('prescriptions', "Prescriptions")), [new SyncDescriptor(PrescriptionsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(ImmunizationsEditor, ImmunizationsEditor.ID, localize('immunizations', "Immunizations")), [new SyncDescriptor(ImmunizationsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(ReferralsEditor, ReferralsEditor.ID, localize('referrals', "Referrals")), [new SyncDescriptor(ReferralsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(CarePlansEditor, CarePlansEditor.ID, localize('carePlans', "Care Plans")), [new SyncDescriptor(CarePlansEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(CdsEditor, CdsEditor.ID, localize('cds', "Clinical Decision Support")), [new SyncDescriptor(CdsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(AuthorizationsEditor, AuthorizationsEditor.ID, localize('authorizations', "Prior Authorizations")), [new SyncDescriptor(AuthorizationsEditorInput)]);

@@ -197,5 +197,26 @@ export class TasksEditorInput extends EditorInput {
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof TasksEditorInput; }
 }
 
+// ─── Clinical EditorInputs ───
+
+function clinicalInput(id: string, label: string, iconName: string) {
+	return class extends EditorInput {
+		static readonly ID = id;
+		override get typeId(): string { return id; }
+		constructor() { super(); }
+		override getName(): string { return label; }
+		override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId(iconName); }
+		get resource(): URI { return URI.from({ scheme: 'ciyex-clinical', path: `/${label.toLowerCase().replace(/\s+/g, '-')}` }); }
+		override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof this.constructor; }
+	};
+}
+
+export const PrescriptionsEditorInput = clinicalInput('workbench.input.ciyexPrescriptions', 'Prescriptions', 'beaker');
+export const ImmunizationsEditorInput = clinicalInput('workbench.input.ciyexImmunizations', 'Immunizations', 'shield');
+export const ReferralsEditorInput = clinicalInput('workbench.input.ciyexReferrals', 'Referrals', 'arrow-right');
+export const CarePlansEditorInput = clinicalInput('workbench.input.ciyexCarePlans', 'Care Plans', 'heart');
+export const CdsEditorInput = clinicalInput('workbench.input.ciyexCds', 'Clinical Decision Support', 'warning');
+export const AuthorizationsEditorInput = clinicalInput('workbench.input.ciyexAuthorizations', 'Authorizations', 'verified');
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;
