@@ -13,6 +13,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { ReportsEditorInput } from '../editors/ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface ReportCategory {
@@ -92,6 +94,7 @@ export class ReportsPane extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
+		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -129,7 +132,9 @@ export class ReportsPane extends ViewPane {
 				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 				row.addEventListener('mouseleave', () => { row.style.background = ''; });
 				row.addEventListener('click', () => {
-					// TODO: Open report editor with specific report type
+					const key = report.label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+					const input = new ReportsEditorInput(key, report.label, cat.label);
+					this.editorService.openEditor(input, { pinned: true });
 				});
 
 				const col = DOM.append(row, DOM.$('div'));

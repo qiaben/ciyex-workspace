@@ -197,6 +197,28 @@ export class TasksEditorInput extends EditorInput {
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof TasksEditorInput; }
 }
 
+// ─── Reports EditorInput ───
+
+export class ReportsEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexReport';
+	override get typeId(): string { return ReportsEditorInput.ID; }
+
+	constructor(
+		readonly reportKey: string,
+		readonly reportLabel: string,
+		readonly category: string,
+	) { super(); }
+
+	override getName(): string { return this.reportLabel; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('graph'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-report', path: `/${this.category}/${this.reportKey}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof ReportsEditorInput && this.reportKey === other.reportKey;
+	}
+}
+
 // ─── Clinical EditorInputs ───
 
 function clinicalInput(id: string, label: string, iconName: string) {
