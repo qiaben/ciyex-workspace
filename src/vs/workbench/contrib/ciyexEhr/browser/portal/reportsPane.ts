@@ -13,28 +13,73 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
-const REPORT_ITEMS: Array<{ icon: string; label: string; description: string; command?: string; apiPath?: string }> = [
-	{ icon: '💊', label: 'Prescriptions', description: 'Active, completed, discontinued Rx', command: 'ciyex.openPrescriptions' },
-	{ icon: '🔬', label: 'Lab Results', description: 'Lab orders and results', apiPath: '/api/lab-results' },
-	{ icon: '📋', label: 'Referrals', description: 'Referral status and tracking', command: 'ciyex.openReferrals' },
-	{ icon: '🛡️', label: 'Authorizations', description: 'Prior auth approvals and denials', command: 'ciyex.openAuthorizations' },
-	{ icon: '💉', label: 'Immunizations', description: 'Vaccine administration records', command: 'ciyex.openImmunizations' },
-	{ icon: '📅', label: 'Appointments', description: 'Appointment volume and no-shows', command: 'ciyex.openCalendar' },
-	{ icon: '👥', label: 'Patient Census', description: 'Active patients and demographics', command: 'ciyex.openPatientChart' },
-	{ icon: '🧠', label: 'CDS Alerts', description: 'Clinical decision support triggers', command: 'ciyex.openCds' },
-	{ icon: '📝', label: 'Care Plans', description: 'Active care plan tracking', command: 'ciyex.openCarePlans' },
-	{ icon: '📋', label: 'Tasks', description: 'Task completion and overdue items', command: 'ciyex.openTasks' },
+interface ReportCategory {
+	label: string;
+	color: string;
+	reports: Array<{ label: string; description: string }>;
+}
+
+const REPORT_CATEGORIES: ReportCategory[] = [
+	{
+		label: 'Clinical', color: '#3b82f6',
+		reports: [
+			{ label: 'Patient Demographics', description: 'Population by age, gender, status, insurance' },
+			{ label: 'Encounter Summary', description: 'Encounters by type, provider, status, trends' },
+			{ label: 'Lab Orders & Results', description: 'Order volume, status, turnaround times' },
+			{ label: 'Medication & Prescriptions', description: 'Prescribing patterns, drug classes, refills' },
+			{ label: 'Referral Tracking', description: 'Completion rates, turnaround, outgoing/incoming' },
+			{ label: 'Immunizations', description: 'Vaccine coverage, compliance rates, overdue' },
+			{ label: 'Care Gaps', description: 'Preventive care opportunities, HEDIS measures' },
+			{ label: 'No-Show Analysis', description: 'No-show rates, patterns, productivity impact' },
+			{ label: 'Problem List', description: 'Active diagnoses, patient conditions' },
+		],
+	},
+	{
+		label: 'Financial', color: '#10b981',
+		reports: [
+			{ label: 'Revenue Overview', description: 'Monthly revenue, charge trends, payer mix' },
+			{ label: 'Payer Mix', description: 'Claims by payer, collection rates, denials' },
+			{ label: 'CPT Utilization', description: 'Procedure code usage, top procedures, revenue' },
+			{ label: 'AR Aging', description: 'Receivable aging buckets (0-30, 31-60, 61-90, 90+)' },
+		],
+	},
+	{
+		label: 'Operational', color: '#8b5cf6',
+		reports: [
+			{ label: 'Appointment Volume', description: 'Booking trends, scheduling utilization' },
+			{ label: 'Provider Productivity', description: 'Encounters/revenue per provider, RVU tracking' },
+			{ label: 'Document Completion', description: 'Unsigned notes, incomplete encounters' },
+		],
+	},
+	{
+		label: 'Compliance', color: '#f59e0b',
+		reports: [
+			{ label: 'Quality Measures', description: 'MIPS measures, performance benchmarking' },
+			{ label: 'Audit Log', description: 'System activity, user actions, compliance' },
+		],
+	},
+	{
+		label: 'Population Health', color: '#ec4899',
+		reports: [
+			{ label: 'Risk Stratification', description: 'Risk scoring, high-risk patients, interventions' },
+			{ label: 'Disease Registry', description: 'Chronic conditions, enrolled populations, outcomes' },
+		],
+	},
+	{
+		label: 'Administrative', color: '#64748b',
+		reports: [
+			{ label: 'Portal Usage', description: 'Enrollment, active users, message volume' },
+			{ label: 'AI Usage', description: 'Token usage, model costs, performance metrics' },
+		],
+	},
 ];
 
 export class ReportsPane extends ViewPane {
 	static readonly ID = 'ciyex.reports.view';
 
 	private container!: HTMLElement;
-	private stats: Record<string, Record<string, number>> = {};
 
 	constructor(
 		options: IViewPaneOptions,
@@ -47,8 +92,6 @@ export class ReportsPane extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
-		@ICommandService private readonly commandService: ICommandService,
-		@ICiyexApiService private readonly apiService: ICiyexApiService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -57,82 +100,53 @@ export class ReportsPane extends ViewPane {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.reports-pane'));
 		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;';
-
-		this._loadStats();
-		this._render();
-	}
-
-	private async _loadStats(): Promise<void> {
-		// Load stats from available endpoints
-		for (const [key, path] of [
-			['prescriptions', '/api/prescriptions/stats'],
-			['referrals', '/api/referrals/stats'],
-		]) {
-			try {
-				const res = await this.apiService.fetch(path);
-				if (res.ok) {
-					const data = await res.json();
-					this.stats[key] = (data?.data || data || {}) as Record<string, number>;
-				}
-			} catch { /* */ }
-		}
 		this._render();
 	}
 
 	private _render(): void {
 		DOM.clearNode(this.container);
 
-		// Quick stats if loaded
-		if (Object.keys(this.stats).length > 0) {
-			const statsSection = DOM.append(this.container, DOM.$('div'));
-			statsSection.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		for (const cat of REPORT_CATEGORIES) {
+			// Category header
+			const header = DOM.append(this.container, DOM.$('div'));
+			header.style.cssText = `padding:8px 10px 4px;display:flex;align-items:center;gap:6px;`;
 
-			for (const [category, data] of Object.entries(this.stats)) {
-				const row = DOM.append(statsSection, DOM.$('div'));
-				row.style.cssText = 'display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap;';
+			const dot = DOM.append(header, DOM.$('span'));
+			dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${cat.color};flex-shrink:0;`;
 
-				const label = DOM.append(row, DOM.$('span'));
-				label.textContent = `${category}:`;
-				label.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:capitalize;min-width:80px;';
+			const label = DOM.append(header, DOM.$('span'));
+			label.textContent = cat.label;
+			label.style.cssText = 'font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);letter-spacing:0.5px;';
 
-				for (const [k, v] of Object.entries(data)) {
-					if (typeof v !== 'number') { continue; }
-					const badge = DOM.append(row, DOM.$('span'));
-					badge.textContent = `${k}: ${v}`;
-					badge.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(0,122,204,0.1);color:var(--vscode-textLink-foreground);';
-				}
+			const count = DOM.append(header, DOM.$('span'));
+			count.textContent = `${cat.reports.length}`;
+			count.style.cssText = 'font-size:9px;padding:0 4px;border-radius:8px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
+
+			// Report items
+			for (const report of cat.reports) {
+				const row = DOM.append(this.container, DOM.$('div'));
+				row.style.cssText = 'padding:6px 10px 6px 24px;cursor:pointer;display:flex;align-items:center;gap:6px;';
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+				row.addEventListener('mouseleave', () => { row.style.background = ''; });
+				row.addEventListener('click', () => {
+					// TODO: Open report editor with specific report type
+				});
+
+				const col = DOM.append(row, DOM.$('div'));
+				col.style.cssText = 'flex:1;min-width:0;';
+
+				const name = DOM.append(col, DOM.$('div'));
+				name.textContent = report.label;
+				name.style.cssText = 'font-weight:500;font-size:12px;';
+
+				const desc = DOM.append(col, DOM.$('div'));
+				desc.textContent = report.description;
+				desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+				const arrow = DOM.append(row, DOM.$('span'));
+				arrow.textContent = '›';
+				arrow.style.cssText = 'color:var(--vscode-descriptionForeground);flex-shrink:0;';
 			}
-		}
-
-		// Report links
-		for (const item of REPORT_ITEMS) {
-			const row = DOM.append(this.container, DOM.$('div'));
-			row.style.cssText = 'padding:8px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(128,128,128,0.06);';
-			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-			row.addEventListener('mouseleave', () => { row.style.background = ''; });
-
-			if (item.command) {
-				row.addEventListener('click', () => this.commandService.executeCommand(item.command!));
-			}
-
-			const icon = DOM.append(row, DOM.$('span'));
-			icon.textContent = item.icon;
-			icon.style.cssText = 'font-size:16px;width:24px;text-align:center;flex-shrink:0;';
-
-			const col = DOM.append(row, DOM.$('div'));
-			col.style.cssText = 'flex:1;';
-
-			const lbl = DOM.append(col, DOM.$('div'));
-			lbl.textContent = item.label;
-			lbl.style.cssText = 'font-weight:500;';
-
-			const desc = DOM.append(col, DOM.$('div'));
-			desc.textContent = item.description;
-			desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
-
-			const arrow = DOM.append(row, DOM.$('span'));
-			arrow.textContent = '›';
-			arrow.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:16px;';
 		}
 	}
 
