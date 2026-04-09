@@ -8,36 +8,32 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
-import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize2 } from '../../../../nls.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 
 // Map API item keys to sidebar view IDs
+// Item key → sidebar view ID (for items that open sidebar views)
 const ITEM_KEY_TO_VIEW: Record<string, string> = {
 	'calendar': 'ciyex.calendar.schedule',
 	'appointments': 'ciyex.appointments.view',
 	'patients': 'ciyex.patients.list',
 	'encounters': 'ciyex.encounters.view',
 	'tasks': 'ciyex.tasks.view',
-	'messaging': 'ciyex.messaging.view',
+	'messaging': 'ciyex.messaging.channels',
 	'reports': 'ciyex.reports.view',
 	'hub': 'ciyex.hub.view',
 	'developer-portal': 'ciyex.developer.view',
-	// Children map to their parent container's views
-	'prescriptions': 'ciyex.clinical.prescriptions',
+	// Clinical children → sidebar views (GenericListPane for simple ones)
 	'labs': 'ciyex.clinical.labs',
-	'immunizations': 'ciyex.clinical.immunizations',
-	'referrals': 'ciyex.clinical.referrals',
-	'authorizations': 'ciyex.clinical.authorizations',
-	'care-plans': 'ciyex.clinical.careplans',
 	'education': 'ciyex.clinical.education',
+	// Operations children → sidebar views
 	'recall': 'ciyex.operations.recall',
 	'codes': 'ciyex.operations.codes',
 	'inventory-management': 'ciyex.operations.inventory',
-	'payments': 'ciyex.operations.payments',
-	'claim-management': 'ciyex.operations.claims',
+	// System children → sidebar views
 	'clinical-alerts': 'ciyex.system.alerts',
 	'consents': 'ciyex.system.consents',
 	'notifications': 'ciyex.system.notifications',
@@ -45,7 +41,22 @@ const ITEM_KEY_TO_VIEW: Record<string, string> = {
 	'document-scanning': 'ciyex.system.docscanning',
 	'kiosk': 'ciyex.system.kiosk',
 	'audit-log': 'ciyex.system.auditlog',
+	// Portal children → sidebar views
 	'document-reviews': 'ciyex.portal.docreviews',
+};
+
+// Item key → F1 command ID (for items that open EditorPanes)
+const ITEM_KEY_TO_COMMAND: Record<string, string> = {
+	'prescriptions': 'ciyex.openPrescriptions',
+	'immunizations': 'ciyex.openImmunizations',
+	'referrals': 'ciyex.openReferrals',
+	'authorizations': 'ciyex.openAuthorizations',
+	'care-plans': 'ciyex.openCarePlans',
+	'payments': 'ciyex.operations.payments',  // sidebar for now
+	'claim-management': 'ciyex.openAuthorizations',  // shares auth editor
+	'calendar': 'ciyex.openCalendar',
+	'tasks': 'ciyex.openTasks',
+	'messaging': 'ciyex.openMessaging',
 };
 
 export const ICiyexMenuService = createDecorator<ICiyexMenuService>('ciyexMenuService');
@@ -225,12 +236,18 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 				const commandId = `ciyex.nav.${item.itemKey}`;
 				this._menuDisposables.add(MenuRegistry.addCommand({ id: commandId, title: { value: item.label, original: item.label } }));
 				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
+					const editorCmd = ITEM_KEY_TO_COMMAND[item.itemKey];
+					if (editorCmd) {
+						accessor.get(ICommandService).executeCommand(editorCmd);
+						this.logService.info(`[CiyexMenu] Navigate (editor): ${item.label} -> ${editorCmd}`);
+						return;
+					}
 					const viewsService = accessor.get(IViewsService);
 					const viewId = ITEM_KEY_TO_VIEW[item.itemKey];
 					if (viewId) {
 						viewsService.openView(viewId, true);
 					}
-					this.logService.info(`[CiyexMenu] Navigate: ${item.label} -> ${viewId || item.screenSlug}`);
+					this.logService.info(`[CiyexMenu] Navigate (view): ${item.label} -> ${viewId || item.screenSlug}`);
 				}));
 				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 					command: { id: commandId, title: item.label },
@@ -270,12 +287,20 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 				}));
 
 				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
+					// Try EditorPane command first, then sidebar view
+					const editorCmd = ITEM_KEY_TO_COMMAND[child.itemKey];
+					if (editorCmd) {
+						const commandService = accessor.get(ICommandService);
+						commandService.executeCommand(editorCmd);
+						this.logService.info(`[CiyexMenu] Navigate (editor): ${child.label} -> ${editorCmd}`);
+						return;
+					}
 					const viewsService = accessor.get(IViewsService);
 					const viewId = ITEM_KEY_TO_VIEW[child.itemKey];
 					if (viewId) {
 						viewsService.openView(viewId, true);
 					}
-					this.logService.info(`[CiyexMenu] Navigate: ${child.label} -> ${viewId || slug}`);
+					this.logService.info(`[CiyexMenu] Navigate (view): ${child.label} -> ${viewId || slug}`);
 				}));
 
 				// Register menu item
