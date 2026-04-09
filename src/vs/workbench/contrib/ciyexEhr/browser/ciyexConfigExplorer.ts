@@ -28,7 +28,8 @@ import { URI } from '../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
-const configIcon = registerIcon('ciyex-config', Codicon.settingsGear, localize('cConfig', 'Ciyex Configuration'));
+// Changed from settingsGear to avoid duplicate gear icon in sidebar
+const configIcon = registerIcon('ciyex-config', Codicon.json, localize('cConfig', 'Ciyex Configuration'));
 
 interface ConfigItem {
 	label: string;
