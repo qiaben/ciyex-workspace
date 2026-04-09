@@ -27,14 +27,31 @@ const ITEMS: Array<{ icon: string; label: string; description: string; command: 
 ];
 
 const SETTINGS_ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
-	{ icon: '👥', label: 'User Management', description: 'Add, edit, delete users and assign roles', command: 'ciyex.openUserManagement' },
-	{ icon: '🛡️', label: 'Roles & Permissions', description: 'Manage roles, permissions, FHIR scopes', command: 'ciyex.openRolesConfig' },
-	{ icon: '🌐', label: 'Portal Settings', description: 'Patient portal features and navigation', command: 'ciyex.openPortalSettings' },
-	{ icon: '📋', label: 'Encounter Settings', description: 'Encounter form sections and fields', command: 'ciyex.openEncounterConfig' },
+	// Matches EHR UI /settings/ sidebar — all settings categories
+	{ icon: '🏥', label: 'Practice', description: 'Practice name, address, NPI, tax ID', command: 'ciyex.openSettings' },
+	{ icon: '🔄', label: 'Clinical Workflow', description: 'Encounter types, visit reasons, templates', command: 'ciyex.openEncounterConfig' },
+	{ icon: '📅', label: 'Calendar', description: 'Appointment types, scheduling, colors', command: 'ciyex.openCalendarColors' },
+	{ icon: '💰', label: 'Billing', description: 'Fee schedules, superbills, statements', command: 'ciyex.openSettings' },
+	{ icon: '💊', label: 'Prescriptions', description: 'E-prescribing, pharmacy, formulary', command: 'ciyex.openSettings' },
+	{ icon: '🔬', label: 'Lab & Imaging', description: 'Lab interfaces, order sets, results', command: 'ciyex.openSettings' },
+	{ icon: '📹', label: 'Telehealth', description: 'Video visit config, waiting room', command: 'ciyex.openSettings' },
+	{ icon: '🌐', label: 'Patient Portal', description: 'Portal features, navigation, forms', command: 'ciyex.openPortalSettings' },
+	{ icon: '🔔', label: 'Notifications', description: 'Email, SMS, push notification settings', command: 'ciyex.openSettings' },
+	{ icon: '🔒', label: 'Security', description: 'Password policy, session timeout, 2FA', command: 'ciyex.openSettings' },
+	{ icon: '📊', label: 'Audit & Compliance', description: 'Audit trail, HIPAA compliance', command: 'ciyex.openSettings' },
+	{ icon: '✍️', label: 'E-Sign & Consent', description: 'Consent forms, e-signature config', command: 'ciyex.openSettings' },
+	{ icon: '📄', label: 'Documents', description: 'Document categories, templates, scanning', command: 'ciyex.openSettings' },
+	{ icon: '🛡️', label: 'Insurance', description: 'Payer directory, eligibility, ERA', command: 'ciyex.openSettings' },
+	{ icon: '👥', label: 'Roles & Permissions', description: 'RBAC, FHIR scopes, user management', command: 'ciyex.openUserManagement' },
+	{ icon: '🎛️', label: 'Features', description: 'Feature flags, module toggles', command: 'ciyex.openSettings' },
+	{ icon: '🤖', label: 'AI', description: 'AI models, token budgets, usage tracking', command: 'ciyex.openSettings' },
+	{ icon: '🖥️', label: 'Display', description: 'Theme, font size, layout preferences', command: 'ciyex.openSettings' },
+	{ icon: '📋', label: 'Patient Flow Board', description: 'Flow board columns and statuses', command: 'ciyex.openSettings' },
+	{ icon: '🖨️', label: 'Print & PDF', description: 'Print templates, PDF generation', command: 'ciyex.openSettings' },
+	{ icon: '📈', label: 'Reporting', description: 'Report schedules, auto-reports', command: 'ciyex.openSettings' },
 	{ icon: '📐', label: 'Chart Layout', description: 'Patient chart tabs and field layout', command: 'ciyex.openChartLayout' },
 	{ icon: '📑', label: 'Menu Configuration', description: 'Sidebar menu items and navigation', command: 'ciyex.openMenuConfig' },
-	{ icon: '🎨', label: 'Calendar Colors', description: 'Appointment type and status colors', command: 'ciyex.openCalendarColors' },
-	{ icon: '⚙️', label: 'Practice Settings', description: 'General practice configuration', command: 'ciyex.openSettings' },
+	{ icon: '📋', label: 'Encounter Settings', description: 'Encounter form sections and fields', command: 'ciyex.openEncounterConfig' },
 ];
 
 export class SystemMenuPane extends ViewPane {
