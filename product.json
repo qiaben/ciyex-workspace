@@ -93,9 +93,9 @@
 		}
 	},
 	"extensionsGallery": {
-		"serviceUrl": "https://marketplace-dev.ciyexhub.com/vscode/gallery",
-		"itemUrl": "https://marketplace-dev.ciyexhub.com/vscode/item?itemName={publisher}.{name}",
-		"resourceUrlTemplate": "https://marketplace-dev.ciyexhub.com/vscode/unpkg/{publisher}/{name}/{version}/{path}",
+		"serviceUrl": "https://open-vsx.org/vscode/gallery",
+		"itemUrl": "https://open-vsx.org/vscode/item?itemName={publisher}.{name}",
+		"resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}",
 		"controlUrl": "",
 		"nlsBaseUrl": "",
 		"publisherUrl": ""
