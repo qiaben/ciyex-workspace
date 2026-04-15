@@ -226,24 +226,6 @@ export class ScheduleSidebarPane extends ViewPane {
 	private roomOptions: string[] = [];
 	private terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
 
-	/** Parse appointment date robustly — handles ISO, epoch, date-only */
-	private _parseAptDate(apt: Appointment): Date | null {
-		const raw = apt.start || apt.startTime;
-		if (!raw) { return null; }
-		if (typeof raw === 'number' || /^\d{10,13}$/.test(String(raw))) {
-			const ms = typeof raw === 'number' ? raw : (String(raw).length <= 10 ? Number(raw) * 1000 : Number(raw));
-			const d = new Date(ms);
-			return isNaN(d.getTime()) ? null : d;
-		}
-		const d = new Date(String(raw));
-		if (!isNaN(d.getTime())) { return d; }
-		if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) {
-			const d2 = new Date(String(raw) + 'T00:00:00');
-			return isNaN(d2.getTime()) ? null : d2;
-		}
-		return null;
-	}
-
 	private _getFilteredAppointments(): Appointment[] {
 		let filtered = [...this.appointments];
 
@@ -271,9 +253,6 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// -- Quick Stats Bar (very top) --
 		this._renderStats();
-
-		// -- Icon Action Buttons --
-		this._renderActions();
 
 		// -- Filter Bar --
 		this._renderFilterBar();
@@ -403,7 +382,7 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		const time = DOM.append(topLine, DOM.$('span'));
 		time.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-foreground);width:50px;flex-shrink:0;';
-		// Try direct date parsing first, fall back to _parseAptDate
+		// Try direct date parsing
 		const rawTime = apt.start || apt.startTime;
 		if (rawTime && typeof rawTime === 'string') {
 			try {
@@ -565,117 +544,6 @@ export class ScheduleSidebarPane extends ViewPane {
 				pri.style.cssText = 'font-size:9px;padding:1px 4px;border-radius:2px;background:rgba(245,158,11,0.15);color:#f59e0b;font-weight:600;';
 			}
 		}
-	}
-
-	private _renderActions(): void {
-		const bar = DOM.append(this.container, DOM.$('.actions-bar'));
-		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-
-		const iconBtn = (symbol: string, label: string, primary: boolean, onClick: () => void) => {
-			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = symbol;
-			btn.title = label;
-			btn.style.cssText = `flex:1;padding:6px;border:none;border-radius:4px;cursor:pointer;font-size:14px;text-align:center;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
-			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
-			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
-			btn.addEventListener('click', onClick);
-		};
-
-		iconBtn('+', 'New Appointment', true, () => {
-			this.commandService.executeCommand('ciyex.newAppointment').catch(err => {
-				this.logService.error('[Schedule] New appointment failed:', err);
-			});
-		});
-		iconBtn('\u{1F4C5}', 'Open Calendar', false, () => {
-			this.commandService.executeCommand('ciyex.openCalendar').catch(err => {
-				this.logService.error('[Schedule] Open calendar failed:', err);
-			});
-		});
-		iconBtn('\u{1F4FA}', 'TV Display (Flow Board)', false, () => this._openTvDisplay());
-		iconBtn('\u21BB', 'Refresh', false, () => {
-			this.currentPage = 0;
-			this._loadAndRender().catch(err => {
-				this.logService.error('[Schedule] Refresh failed:', err);
-			});
-		});
-	}
-
-	private _openTvDisplay(): void {
-		// Build flow board HTML and open as a Blob URL (works in Electron)
-		try {
-			const html = this._buildFlowBoardHtml();
-			const blob = new Blob([html], { type: 'text/html' });
-			const url = URL.createObjectURL(blob);
-			const w = globalThis.open(url, '_blank');
-			// Revoke after a short delay so the window has time to load
-			setTimeout(() => URL.revokeObjectURL(url), 5000);
-			if (!w) {
-				this.logService.warn('[Schedule] Could not open TV display window — popup may be blocked');
-			}
-		} catch (err) {
-			this.logService.error('[Schedule] TV display error:', err);
-		}
-	}
-
-	private _buildFlowBoardHtml(): string {
-		const filtered = this._getFilteredAppointments();
-		const now = new Date();
-
-		let rows = '';
-		for (const apt of filtered) {
-			const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
-			let timeStr = '--:--';
-			const pd = this._parseAptDate(apt);
-			if (pd) { timeStr = pd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); }
-
-			rows += `<tr>
-				<td style="font-weight:600;">${timeStr}</td>
-				<td>${apt.patientName || ''}</td>
-				<td>${getAppointmentType(apt)}</td>
-				<td>${apt.providerName || apt.practitionerName || ''}</td>
-				<td style="color:${statusColor};font-weight:600;">${apt.room || '-'}</td>
-				<td><span style="background:${statusColor}22;color:${statusColor};padding:4px 12px;border-radius:6px;font-weight:600;">${(apt.status || '').replace(/-/g, ' ')}</span></td>
-			</tr>`;
-		}
-
-		const total = this.totalAppointments || this.appointments.length;
-		const done = this.appointments.filter(a => this.terminalStatuses.has(a.status?.toLowerCase())).length;
-		const active = total - done;
-
-		return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="refresh" content="30">
-		<title>Patient Flow Board</title>
-		<style>
-			* { margin:0; padding:0; box-sizing:border-box; }
-			body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#0f172a; color:#e2e8f0; }
-			.header { display:flex; align-items:center; padding:20px 32px; background:#1e293b; border-bottom:2px solid #334155; }
-			.header h1 { font-size:24px; flex:1; }
-			.header .time { font-size:20px; font-weight:300; }
-			.stats { display:flex; gap:16px; padding:16px 32px; }
-			.stat { flex:1; text-align:center; padding:16px; background:#1e293b; border-radius:12px; }
-			.stat .num { font-size:36px; font-weight:700; }
-			.stat .label { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; margin-top:4px; }
-			table { width:100%; border-collapse:collapse; margin:0 32px; }
-			th { text-align:left; padding:12px 16px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#64748b; border-bottom:1px solid #334155; }
-			td { padding:14px 16px; font-size:16px; border-bottom:1px solid #1e293b; }
-			tr:hover td { background:#1e293b; }
-			.footer { position:fixed; bottom:0; left:0; right:0; padding:12px 32px; background:#1e293b; text-align:center; font-size:12px; color:#64748b; }
-		</style></head><body>
-		<div class="header">
-			<h1>\u{1F3E5} Patient Flow Board</h1>
-			<div class="time">${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u2014 ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
-		</div>
-		<div class="stats">
-			<div class="stat"><div class="num" style="color:#3b82f6;">${total}</div><div class="label">Total</div></div>
-			<div class="stat"><div class="num" style="color:#22c55e;">${done}</div><div class="label">Completed</div></div>
-			<div class="stat"><div class="num" style="color:#f59e0b;">${active}</div><div class="label">Active</div></div>
-			<div class="stat"><div class="num" style="color:#ef4444;">${this.appointments.filter(a => a.status?.toLowerCase() === 'noshow' || a.status?.toLowerCase() === 'no-show' || a.status?.toLowerCase() === 'no show').length}</div><div class="label">No Show</div></div>
-		</div>
-		<table>
-			<thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Provider</th><th>Room</th><th>Status</th></tr></thead>
-			<tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:40px;color:#64748b;">No appointments</td></tr>'}</tbody>
-		</table>
-		<div class="footer">Auto-refreshes every 30 seconds \u2014 Ciyex Workspace Flow Board</div>
-		</body></html>`;
 	}
 
 	protected override layoutBody(height: number, width: number): void {

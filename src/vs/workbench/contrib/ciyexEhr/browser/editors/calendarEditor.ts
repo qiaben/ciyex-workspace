@@ -366,23 +366,38 @@ export class CalendarEditor extends EditorPane {
 		}
 		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._updateHeaderCount(); this._renderGrid(); });
 
-		// Refresh button
-		this._btn(this.headerBar, '\u21BB', () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); }).title = 'Refresh';
+		// Right-side action icons group
+		const actionsGroup = DOM.append(this.headerBar, DOM.$('.actions-group'));
+		actionsGroup.style.cssText = 'display:flex;gap:4px;margin-left:auto;align-items:center;';
 
-		// Find slot button
-		this._btn(this.headerBar, 'Find Slot', () => { this._findAvailableSlot(); });
+		const iconBtn = (parent: HTMLElement, symbol: string, title: string, primary: boolean, onClick: () => void) => {
+			const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+			btn.textContent = symbol;
+			btn.title = title;
+			btn.style.cssText = `padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:14px;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:600;' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
+			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
+			btn.addEventListener('click', onClick);
+			return btn;
+		};
 
-		// Stats button
-		this._btn(this.headerBar, 'Stats', () => { this._showStats(); });
-
-		// New appointment button
-		const newBtn = this._btn(this.headerBar, '+ New', async () => {
+		// + New Appointment
+		iconBtn(actionsGroup, '+', 'New Appointment', true, async () => {
 			const today = this.currentDate.toISOString().split('T')[0];
 			await this._createAppointment(today, '09:00');
 		});
-		newBtn.style.background = 'var(--vscode-button-background)';
-		newBtn.style.color = 'var(--vscode-button-foreground)';
-		newBtn.style.fontWeight = '600';
+
+		// Calendar (Find Slot)
+		iconBtn(actionsGroup, '\u{1F4C5}', 'Find Available Slot', false, () => { this._findAvailableSlot(); });
+
+		// TV Display (Flow Board)
+		iconBtn(actionsGroup, '\u{1F4FA}', 'TV Display (Flow Board)', false, () => { this._openFlowBoard(); });
+
+		// Stats
+		iconBtn(actionsGroup, '\u{1F4CA}', 'Stats', false, () => { this._showStats(); });
+
+		// Refresh
+		iconBtn(actionsGroup, '\u21BB', 'Refresh', false, () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); });
 
 		// Appointment count (filtered by current view date range + provider/location)
 		const { startDate, endDate } = this._getDateRange();
@@ -1240,6 +1255,117 @@ export class CalendarEditor extends EditorPane {
 			}
 		} catch {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Slot search API not available.' });
+		}
+	}
+
+	private _openFlowBoard(): void {
+		const STATUS_CLR: Record<string, string> = {
+			'scheduled': '#3b82f6', 'confirmed': '#6366f1', 'arrived': '#f59e0b',
+			'checked-in': '#8b5cf6', 'in-room': '#06b6d4', 'with-provider': '#22c55e',
+			'fulfilled': '#6b7280', 'completed': '#6b7280', 'cancelled': '#ef4444',
+			'noshow': '#dc2626', 'no-show': '#dc2626',
+		};
+
+		const overlay = DOM.append(this.root, DOM.$('.flowboard-overlay'));
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;overflow-y:auto;';
+
+		// Close button
+		const closeBtn = DOM.append(overlay, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715 Close';
+		closeBtn.style.cssText = 'position:fixed;top:12px;right:24px;z-index:210;padding:8px 16px;background:#334155;color:#e2e8f0;border:none;border-radius:6px;cursor:pointer;font-size:13px;';
+		closeBtn.addEventListener('click', () => { overlay.remove(); });
+
+		// Header
+		const hdr = DOM.append(overlay, DOM.$('.fb-header'));
+		hdr.style.cssText = 'display:flex;align-items:center;padding:20px 32px;background:#1e293b;border-bottom:2px solid #334155;';
+		const h1 = DOM.append(hdr, DOM.$('h1'));
+		h1.textContent = '\u{1F3E5} Patient Flow Board';
+		h1.style.cssText = 'font-size:24px;flex:1;margin:0;';
+		const timeEl = DOM.append(hdr, DOM.$('div'));
+		const now = new Date();
+		timeEl.textContent = `${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u2014 ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		timeEl.style.cssText = 'font-size:20px;font-weight:300;';
+
+		// Stats
+		const filtered = this._getViewFilteredAppointments();
+		const total = filtered.length;
+		const done = filtered.filter(a => ['fulfilled', 'completed', 'cancelled'].includes(a.status?.toLowerCase())).length;
+		const noShows = filtered.filter(a => ['noshow', 'no-show'].includes(a.status?.toLowerCase())).length;
+		const active = total - done - noShows;
+
+		const statsBar = DOM.append(overlay, DOM.$('.fb-stats'));
+		statsBar.style.cssText = 'display:flex;gap:16px;padding:16px 32px;';
+		const addStat = (val: string, lbl: string, color: string) => {
+			const card = DOM.append(statsBar, DOM.$('.fb-stat'));
+			card.style.cssText = 'flex:1;text-align:center;padding:16px;background:#1e293b;border-radius:12px;';
+			const numEl = DOM.append(card, DOM.$('div'));
+			numEl.textContent = val;
+			numEl.style.cssText = `font-size:36px;font-weight:700;color:${color};`;
+			const lblEl = DOM.append(card, DOM.$('div'));
+			lblEl.textContent = lbl;
+			lblEl.style.cssText = 'font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-top:4px;';
+		};
+		addStat(String(total), 'Total', '#3b82f6');
+		addStat(String(done), 'Completed', '#22c55e');
+		addStat(String(active), 'Active', '#f59e0b');
+		addStat(String(noShows), 'No Show', '#ef4444');
+
+		// Table
+		const tbl = DOM.append(overlay, DOM.$('table'));
+		tbl.style.cssText = 'width:calc(100% - 64px);margin:0 32px;border-collapse:collapse;';
+		const thead = DOM.append(tbl, DOM.$('thead'));
+		const headRow = DOM.append(thead, DOM.$('tr'));
+		for (const col of ['Time', 'Patient', 'Type', 'Provider', 'Room', 'Status']) {
+			const th = DOM.append(headRow, DOM.$('th'));
+			th.textContent = col;
+			th.style.cssText = 'text-align:left;padding:12px 16px;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#64748b;border-bottom:1px solid #334155;';
+		}
+		const tbody = DOM.append(tbl, DOM.$('tbody'));
+
+		for (const apt of filtered) {
+			const statusColor = STATUS_CLR[apt.status?.toLowerCase()] || '#6b7280';
+			const tr = DOM.append(tbody, DOM.$('tr'));
+			tr.style.cssText = 'border-bottom:1px solid #1e293b;';
+			tr.addEventListener('mouseenter', () => { tr.style.background = '#1e293b'; });
+			tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
+
+			const tdStyle = 'padding:14px 16px;font-size:16px;';
+			const pd = this._parseAptDate(apt);
+			const timeStr = pd ? pd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '--:--';
+
+			const timeTd = DOM.append(tr, DOM.$('td'));
+			timeTd.textContent = timeStr;
+			timeTd.style.cssText = tdStyle + 'font-weight:600;';
+
+			const nameTd = DOM.append(tr, DOM.$('td'));
+			nameTd.textContent = apt.patientName || '';
+			nameTd.style.cssText = tdStyle;
+
+			const typeTd = DOM.append(tr, DOM.$('td'));
+			typeTd.textContent = getAppointmentType(apt);
+			typeTd.style.cssText = tdStyle;
+
+			const provTd = DOM.append(tr, DOM.$('td'));
+			provTd.textContent = apt.providerName || apt.practitionerName || '';
+			provTd.style.cssText = tdStyle;
+
+			const roomTd = DOM.append(tr, DOM.$('td'));
+			roomTd.textContent = '-';
+			roomTd.style.cssText = tdStyle + `color:${statusColor};font-weight:600;`;
+
+			const statusTd = DOM.append(tr, DOM.$('td'));
+			statusTd.style.cssText = tdStyle;
+			const badge = DOM.append(statusTd, DOM.$('span'));
+			badge.textContent = (apt.status || '').replace(/-/g, ' ');
+			badge.style.cssText = `background:${statusColor}22;color:${statusColor};padding:4px 12px;border-radius:6px;font-weight:600;text-transform:capitalize;`;
+		}
+
+		if (filtered.length === 0) {
+			const emptyRow = DOM.append(tbody, DOM.$('tr'));
+			const emptyTd = DOM.append(emptyRow, DOM.$('td')) as HTMLTableCellElement;
+			emptyTd.colSpan = 6;
+			emptyTd.textContent = 'No appointments';
+			emptyTd.style.cssText = 'text-align:center;padding:40px;color:#64748b;font-size:16px;';
 		}
 	}
 
