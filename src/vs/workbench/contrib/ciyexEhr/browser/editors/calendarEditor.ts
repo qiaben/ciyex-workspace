@@ -110,9 +110,10 @@ export class CalendarEditor extends EditorPane {
 		this._renderGrid();
 
 		// Retry loading every 2s until providers appear (no cap)
-		const retryTimer = setInterval(() => {
+		const win = DOM.getActiveWindow();
+		const retryTimer = win.setInterval(() => {
 			if (this.providers.length > 0) {
-				clearInterval(retryTimer);
+				win.clearInterval(retryTimer);
 				return;
 			}
 			this._loadAndRender();
@@ -151,99 +152,100 @@ export class CalendarEditor extends EditorPane {
 	private _countEl: HTMLElement | null = null;
 
 	private async _loadAppointments(): Promise<void> {
-	  try {
-		let provLoc = '';
-		if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
-		if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
+		try {
+			let provLoc = '';
+			if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
+			if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
 
-		// Load appointments, providers, and locations in PARALLEL
-		const loadAppts = async () => {
-			try {
-				const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200${provLoc}`);
-				if (res.ok) {
-					const data = await res.json();
-					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-					// Normalize FHIR field names
-					this.appointments = raw.map((a: Record<string, unknown>) => ({
-						...a,
-						patientName: a.patientName || a.patientDisplay || '',
-						providerName: a.providerName || a.providerDisplay || '',
-						practitionerName: a.practitionerName || a.providerDisplay || '',
-						providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
-						locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
-						locationName: a.locationName || a.locationDisplay || '',
-						status: a.status || 'Scheduled',
-					})) as Appointment[];
-				}
-			} catch { /* */ }
-			if (!this.appointments) { this.appointments = []; }
-		};
-
-		const loadProviders = async () => {
-			if (this.providers.length > 0) { return; }
-			const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
-			for (const url of providerUrls) {
+			// Load appointments, providers, and locations in PARALLEL
+			const loadAppts = async () => {
 				try {
-					const res = await this.apiService.fetch(url);
+					const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200${provLoc}`);
 					if (res.ok) {
 						const data = await res.json();
-						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-						if (list.length > 0) {
-							this.providers = list.map((p: Record<string, string>) => ({
-								id: p.id || p.fhirId || p.username || '',
-								name: `${p['identification.prefix'] || ''} ${p['identification.firstName'] || p.firstName || ''} ${p['identification.lastName'] || p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
-							})).filter((p: { id: string; name: string }) => p.name && p.name.trim().length > 0);
-							break;
-						}
+						const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+						// Normalize FHIR field names
+						this.appointments = raw.map((a: Record<string, unknown>) => ({
+							...a,
+							patientName: a.patientName || a.patientDisplay || '',
+							providerName: a.providerName || a.providerDisplay || '',
+							practitionerName: a.practitionerName || a.providerDisplay || '',
+							providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
+							locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
+							locationName: a.locationName || a.locationDisplay || '',
+							status: a.status || 'Scheduled',
+						})) as Appointment[];
 					}
-				} catch { /* try next */ }
-			}
-		};
+				} catch { /* */ }
+				if (!this.appointments) { this.appointments = []; }
+			};
 
-		const loadLocations = async () => {
-			if (this.locations.length > 0) { return; }
-			const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50', '/api/fhir-resource/locations?page=0&size=50'];
-			for (const url of locationUrls) {
+			const loadProviders = async () => {
+				if (this.providers.length > 0) { return; }
+				const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
+				for (const url of providerUrls) {
+					try {
+						const res = await this.apiService.fetch(url);
+						if (res.ok) {
+							const data = await res.json();
+							const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+							if (list.length > 0) {
+								this.providers = list.map((p: Record<string, string>) => ({
+									id: p.id || p.fhirId || p.username || '',
+									name: `${p['identification.prefix'] || ''} ${p['identification.firstName'] || p.firstName || ''} ${p['identification.lastName'] || p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
+								})).filter((p: { id: string; name: string }) => p.name && p.name.trim().length > 0);
+								break;
+							}
+						}
+					} catch { /* try next */ }
+				}
+			};
+
+			const loadLocations = async () => {
+				if (this.locations.length > 0) { return; }
+				const locationUrls = ['/api/fhir-resource/facilities?page=0&size=50', '/api/locations?page=0&size=50', '/api/fhir-resource/locations?page=0&size=50'];
+				for (const url of locationUrls) {
+					try {
+						const res = await this.apiService.fetch(url);
+						if (res.ok) {
+							const data = await res.json();
+							const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+							if (list.length > 0) {
+								this.locations = list.map((l: Record<string, string>) => ({ id: l.id || '', name: l.name || l.id || '' })).filter((l: { id: string; name: string }) => l.name);
+								break;
+							}
+						}
+					} catch { /* try next */ }
+				}
+			};
+
+			await Promise.all([loadAppts(), loadProviders(), loadLocations()]);
+
+			// Extract providers from appointments as fallback
+			if (this.providers.length === 0 && this.appointments.length > 0) {
+				const provMap = new Map<string, string>();
+				for (const a of this.appointments) {
+					const pName = a.providerName || a.practitionerName || '';
+					if (pName) { provMap.set(a.providerId || pName, pName); }
+				}
+				this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
+			}
+
+			// Load provider schedule blocks (availability) — only when filtered
+			if (this.providerFilter) {
 				try {
-					const res = await this.apiService.fetch(url);
+					const res = await this.apiService.fetch(`/api/providers/${this.providerFilter}/availability`);
 					if (res.ok) {
 						const data = await res.json();
-						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-						if (list.length > 0) {
-							this.locations = list.map((l: Record<string, string>) => ({ id: l.id || '', name: l.name || l.id || '' })).filter((l: { id: string; name: string }) => l.name);
-							break;
-						}
+						this.scheduleBlocks = data?.data || (Array.isArray(data) ? data : []);
 					}
-				} catch { /* try next */ }
+				} catch { this.scheduleBlocks = []; }
+			} else {
+				this.scheduleBlocks = [];
 			}
-		};
-
-		await Promise.all([loadAppts(), loadProviders(), loadLocations()]);
-
-		// Extract providers from appointments as fallback
-		if (this.providers.length === 0 && this.appointments.length > 0) {
-			const provMap = new Map<string, string>();
-			for (const a of this.appointments) {
-				const pName = a.providerName || a.practitionerName || '';
-				if (pName) { provMap.set(a.providerId || pName, pName); }
-			}
-			this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
+		} catch {
+			// ignore
 		}
-
-		// Load provider schedule blocks (availability) — only when filtered
-		if (this.providerFilter) {
-			try {
-				const res = await this.apiService.fetch(`/api/providers/${this.providerFilter}/availability`);
-				if (res.ok) {
-					const data = await res.json();
-					this.scheduleBlocks = data?.data || (Array.isArray(data) ? data : []);
-				}
-			} catch { this.scheduleBlocks = []; }
-		} else {
-			this.scheduleBlocks = [];
-		}
-	  } catch (err) {
-	  }
 	}
 
 	/** Parse appointment start date/time robustly — handles ISO, epoch, date-only, time-only */
@@ -265,6 +267,25 @@ export class CalendarEditor extends EditorPane {
 			return isNaN(d2.getTime()) ? null : d2;
 		}
 		return null;
+	}
+
+	/** Return appointments filtered by the current provider/location dropdown selections */
+	private _getViewFilteredAppointments(): Appointment[] {
+		let filtered = this.appointments;
+		if (this.providerFilter) {
+			filtered = filtered.filter(a =>
+				a.providerId === this.providerFilter ||
+				a.providerName === this.providerFilter ||
+				a.practitionerName === this.providerFilter
+			);
+		}
+		if (this.locationFilter) {
+			filtered = filtered.filter(a =>
+				a.locationId === this.locationFilter ||
+				a.locationName === this.locationFilter
+			);
+		}
+		return filtered;
 	}
 
 	private _getDateRange(): { startDate: string; endDate: string } {
@@ -332,7 +353,7 @@ export class CalendarEditor extends EditorPane {
 			const opt = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
 			opt.value = p.id; opt.textContent = p.name; opt.selected = p.id === this.providerFilter;
 		}
-		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._renderGrid(); });
+		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._updateHeaderCount(); this._renderGrid(); });
 
 		// Location filter
 		const locSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
@@ -343,7 +364,7 @@ export class CalendarEditor extends EditorPane {
 			const opt = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
 			opt.value = l.id; opt.textContent = l.name; opt.selected = l.id === this.locationFilter;
 		}
-		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._renderGrid(); });
+		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._updateHeaderCount(); this._renderGrid(); });
 
 		// Refresh button
 		this._btn(this.headerBar, '\u21BB', () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); }).title = 'Refresh';
@@ -363,9 +384,9 @@ export class CalendarEditor extends EditorPane {
 		newBtn.style.color = 'var(--vscode-button-foreground)';
 		newBtn.style.fontWeight = '600';
 
-		// Appointment count (filtered by current view date range)
+		// Appointment count (filtered by current view date range + provider/location)
 		const { startDate, endDate } = this._getDateRange();
-		const viewAppts = this.appointments.filter(a => {
+		const viewAppts = this._getViewFilteredAppointments().filter(a => {
 			const d = this._parseAptDate(a);
 			if (!d) { return false; }
 			const ds = d.toISOString().split('T')[0];
@@ -379,7 +400,7 @@ export class CalendarEditor extends EditorPane {
 	private _updateHeaderCount(): void {
 		if (!this._countEl) { return; }
 		const { startDate, endDate } = this._getDateRange();
-		const viewAppts = this.appointments.filter(a => {
+		const viewAppts = this._getViewFilteredAppointments().filter(a => {
 			const d = this._parseAptDate(a);
 			if (!d) { return false; }
 			const ds = d.toISOString().split('T')[0];
@@ -412,8 +433,9 @@ export class CalendarEditor extends EditorPane {
 		const days = this._getWeekDays();
 
 		// Pre-index appointments by date+hour+slot for O(1) lookup
+		const viewAppointments = this._getViewFilteredAppointments();
 		const weekIndex = new Map<string, Appointment[]>();
-		for (const a of this.appointments) {
+		for (const a of viewAppointments) {
 			const d = this._parseAptDate(a);
 			if (!d) { continue; }
 			const ds = d.toISOString().split('T')[0];
@@ -531,18 +553,22 @@ export class CalendarEditor extends EditorPane {
 		const slotHeight = 20;
 		const dateStr = this.currentDate.toISOString().split('T')[0];
 
-		const activeProviders = this.providers.length > 0 ? this.providers : [];
+		let activeProviders = this.providers.length > 0 ? [...this.providers] : [];
+		if (this.providerFilter) {
+			activeProviders = activeProviders.filter(p => p.id === this.providerFilter);
+		}
 		if (activeProviders.length === 0) {
 			const empty = DOM.append(this.gridContainer, DOM.$('div'));
 			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
-			empty.textContent = 'No providers loaded. Click Refresh to load provider data.';
+			empty.textContent = this.providerFilter ? 'No matching provider found.' : 'No providers loaded. Click Refresh to load provider data.';
 			return;
 		}
 
 		// PRE-INDEX appointments by provider+slot for O(1) lookup (instead of O(N) filter per cell)
+		const viewAppointments = this._getViewFilteredAppointments();
 		const apptIndex = new Map<string, Appointment[]>();
 		const provCounts = new Map<string, number>();
-		for (const a of this.appointments) {
+		for (const a of viewAppointments) {
 			const provKey = a.providerId || a.providerName || a.practitionerName || '';
 			provCounts.set(provKey, (provCounts.get(provKey) || 0) + 1);
 			const d = this._parseAptDate(a);
@@ -660,10 +686,11 @@ export class CalendarEditor extends EditorPane {
 		}
 
 		// Day cells
+		const monthAppointments = this._getViewFilteredAppointments();
 		for (let day = 1; day <= lastDay.getDate(); day++) {
 			const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 			const isToday = dateStr === new Date().toISOString().split('T')[0];
-			const dayAppts = this.appointments.filter(a => {
+			const dayAppts = monthAppointments.filter(a => {
 				const d = this._parseAptDate(a);
 				if (!d) { return false; }
 				try { return d.toISOString().split('T')[0] === dateStr; } catch { return false; }
@@ -775,6 +802,9 @@ export class CalendarEditor extends EditorPane {
 		title.textContent = 'Schedule Appointment';
 		title.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
 
+		// Map to store form field references (avoids querySelector)
+		const formFields = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+
 		// Helper: create form field
 		const field = (label: string, id: string, type: string, value: string, required: boolean, options?: Array<{ value: string; label: string }>): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement => {
 			const group = DOM.append(form, DOM.$('.form-group'));
@@ -788,14 +818,17 @@ export class CalendarEditor extends EditorPane {
 				const sel = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
 				sel.id = id; sel.style.cssText = inputStyle;
 				for (const opt of options) { const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement; o.value = opt.value; o.textContent = opt.label; o.selected = opt.value === value; }
+				formFields.set(id, sel);
 				return sel;
 			} else if (type === 'textarea') {
 				const ta = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				ta.id = id; ta.value = value; ta.rows = 3; ta.style.cssText = inputStyle + 'resize:vertical;';
+				formFields.set(id, ta);
 				return ta;
 			} else {
 				const inp = DOM.append(group, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value; inp.style.cssText = inputStyle;
+				formFields.set(id, inp);
 				return inp;
 			}
 		};
@@ -812,6 +845,7 @@ export class CalendarEditor extends EditorPane {
 				const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value;
 				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+				formFields.set(id, inp);
 				return inp;
 			};
 			makeField(g1, label1, id1, type1, val1, req1);
@@ -873,7 +907,7 @@ export class CalendarEditor extends EditorPane {
 			{ value: 'Procedure', label: 'Procedure' }, { value: 'Lab Only', label: 'Lab Only' },
 			{ value: 'Injection', label: 'Injection' },
 		];
-		field('Visit Type', 'visitType', 'select', 'Consultation', false, visitTypes);
+		const visitTypeEl = field('Visit Type', 'visitType', 'select', 'Consultation', false, visitTypes) as HTMLSelectElement;
 
 		// Date + Time row
 		row('Date', 'startDate', 'date', date, true, 'Start Time', 'startTime', 'time', time, true);
@@ -881,19 +915,19 @@ export class CalendarEditor extends EditorPane {
 
 		// Provider
 		const provOptions = [{ value: '', label: 'Select provider...' }, ...this.providers.map(p => ({ value: p.id, label: p.name }))];
-		field('Provider', 'providerId', 'select', '', true, provOptions);
+		const providerIdEl = field('Provider', 'providerId', 'select', '', true, provOptions) as HTMLSelectElement;
 
 		// Location
 		const locOptions = [{ value: '', label: 'Select location...' }, ...this.locations.map(l => ({ value: l.id, label: l.name }))];
-		field('Location', 'locationId', 'select', '', true, locOptions);
+		const locationIdEl = field('Location', 'locationId', 'select', '', true, locOptions) as HTMLSelectElement;
 
 		// Status
-		field('Status', 'status', 'select', 'scheduled', false, [
+		const statusEl = field('Status', 'status', 'select', 'scheduled', false, [
 			{ value: 'scheduled', label: 'Scheduled' }, { value: 'confirmed', label: 'Confirmed' },
-		]);
+		]) as HTMLSelectElement;
 
 		// Notes
-		field('Reason / Notes', 'notes', 'textarea', '', false);
+		const notesEl = field('Reason / Notes', 'notes', 'textarea', '', false) as HTMLTextAreaElement;
 
 		// Buttons
 		const btnRow = DOM.append(form, DOM.$('.btn-row'));
@@ -911,14 +945,14 @@ export class CalendarEditor extends EditorPane {
 		saveBtn.addEventListener('click', async () => {
 			const patName = patInput.value;
 			const patId = patIdHidden.value;
-			const visitType = (form.querySelector('#visitType') as HTMLSelectElement)?.value;
-			const startD = (form.querySelector('#startDate') as HTMLInputElement)?.value;
-			const startT = (form.querySelector('#startTime') as HTMLInputElement)?.value;
-			const endT = (form.querySelector('#endTime') as HTMLInputElement)?.value;
-			const provId = (form.querySelector('#providerId') as HTMLSelectElement)?.value;
-			const locId = (form.querySelector('#locationId') as HTMLSelectElement)?.value;
-			const status = (form.querySelector('#status') as HTMLSelectElement)?.value;
-			const notes = (form.querySelector('#notes') as HTMLTextAreaElement)?.value;
+			const visitType = visitTypeEl.value;
+			const startD = (formFields.get('startDate') as HTMLInputElement | undefined)?.value || '';
+			const startT = (formFields.get('startTime') as HTMLInputElement | undefined)?.value || '';
+			const endT = (formFields.get('endTime') as HTMLInputElement | undefined)?.value || '';
+			const provId = providerIdEl.value;
+			const locId = locationIdEl.value;
+			const status = statusEl.value;
+			const notes = notesEl.value;
 
 			if (!patName) { this.notificationService.notify({ severity: Severity.Warning, message: 'Patient is required' }); return; }
 			if (!startD || !startT) { this.notificationService.notify({ severity: Severity.Warning, message: 'Date and time are required' }); return; }
@@ -946,7 +980,7 @@ export class CalendarEditor extends EditorPane {
 						const body: Record<string, unknown> = {
 							appointmentType: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0276', code: visitType, display: visitType }], text: visitType },
 							status: status || 'scheduled',
-							priority: (form.querySelector('#priority') as HTMLInputElement)?.value || 'routine',
+							priority: (formFields.get('priority') as HTMLInputElement | undefined)?.value || 'routine',
 							start: `${startD}T${startT}:00`,
 							end: `${startD}T${endT}:00`,
 							reason: notes || null,

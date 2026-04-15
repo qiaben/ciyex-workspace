@@ -303,6 +303,7 @@ registerAction2(class extends Action2 {
 
 /**
  * Command: New Appointment
+ * Opens the Calendar editor which contains the full appointment creation form.
  */
 registerAction2(class extends Action2 {
 	constructor() {
@@ -314,13 +315,12 @@ registerAction2(class extends Action2 {
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const webviewService = accessor.get(IWebviewWorkbenchService);
-		const body = `<h1>New Appointment</h1><div class="card"><p>Appointment creation form coming soon.</p></div>`;
-		const input = webviewService.openWebview(
-			{ title: 'New Appointment', options: {}, contentOptions: { allowScripts: true, localResourceRoots: [] }, extension: undefined },
-			'ciyex.newAppointment', 'New Appointment', undefined, { group: ACTIVE_GROUP, preserveFocus: false },
-		);
-		input.webview.setHtml(wrapHtml(body));
+		const editorService = accessor.get(IEditorService);
+		const inst = accessor.get(IInstantiationService);
+		const env = accessor.get(IEnvironmentService);
+		const uri = URI.joinPath(env.userRoamingDataHome, '.ciyex', 'calendar');
+		const input = inst.createInstance(CalendarEditorInput, 'calendar', uri, 'Calendar', ThemeIcon.fromId('calendar'));
+		await editorService.openEditor(input, { pinned: true });
 	}
 });
 

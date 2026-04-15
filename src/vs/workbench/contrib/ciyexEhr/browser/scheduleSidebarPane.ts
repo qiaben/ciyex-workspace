@@ -66,7 +66,7 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	private container!: HTMLElement;
 	private appointments: Appointment[] = [];
-	private refreshTimer: ReturnType<typeof setInterval> | undefined;
+	private refreshTimer: number | undefined;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -95,7 +95,8 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		// Render skeleton, then poll every 2s until data loads
 		this._render();
-		const poll = setInterval(() => {
+		const win = DOM.getWindow(this.container);
+		const poll = win.setInterval(() => {
 			try {
 				const token = localStorage.getItem('ciyex_token');
 				if (!token) { return; } // Wait for login
@@ -104,9 +105,9 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (this.appointments.length === 0) {
 				this._loadAndRender();
 			} else {
-				clearInterval(poll);
+				win.clearInterval(poll);
 				// Switch to 30s auto-refresh
-				this.refreshTimer = setInterval(() => this._loadAndRender(), 30000);
+				this.refreshTimer = win.setInterval(() => this._loadAndRender(), 30000);
 			}
 		}, 2000);
 	}
@@ -192,7 +193,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (this.roomOptions.length === 0) {
 				this.roomOptions = ['Exam 1', 'Exam 2', 'Exam 3', 'Exam 4', 'Lab', 'Procedure Room', 'Triage'];
 			}
-		}
+		};
 
 		const loadWaitlist = async () => {
 			try {
@@ -215,7 +216,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		this._render();
 
 		// Load secondary data in background (rooms, waitlist) — don't block render
-		Promise.all([loadRooms(), loadWaitlist()]).catch(() => {});
+		Promise.all([loadRooms(), loadWaitlist()]).catch(() => { });
 	}
 
 	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
@@ -580,20 +581,39 @@ export class ScheduleSidebarPane extends ViewPane {
 			btn.addEventListener('click', onClick);
 		};
 
-		iconBtn('+', 'New Appointment', true, () => this.commandService.executeCommand('ciyex.openCalendar'));
-		iconBtn('\u{1F4C5}', 'Open Calendar', false, () => this.commandService.executeCommand('ciyex.openCalendar'));
+		iconBtn('+', 'New Appointment', true, () => {
+			this.commandService.executeCommand('ciyex.newAppointment').catch(err => {
+				this.logService.error('[Schedule] New appointment failed:', err);
+			});
+		});
+		iconBtn('\u{1F4C5}', 'Open Calendar', false, () => {
+			this.commandService.executeCommand('ciyex.openCalendar').catch(err => {
+				this.logService.error('[Schedule] Open calendar failed:', err);
+			});
+		});
 		iconBtn('\u{1F4FA}', 'TV Display (Flow Board)', false, () => this._openTvDisplay());
-		iconBtn('\u21BB', 'Refresh', false, () => { this.currentPage = 0; this._loadAndRender(); });
+		iconBtn('\u21BB', 'Refresh', false, () => {
+			this.currentPage = 0;
+			this._loadAndRender().catch(err => {
+				this.logService.error('[Schedule] Refresh failed:', err);
+			});
+		});
 	}
 
 	private _openTvDisplay(): void {
-		// Open patient flow board as a full-screen webview
-		const body = this._buildFlowBoardHtml();
-		// Use a new browser window for TV display
-		const w = globalThis.open('', 'flowboard', 'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no');
-		if (w) {
-			w.document.write(body);
-			w.document.close();
+		// Build flow board HTML and open as a Blob URL (works in Electron)
+		try {
+			const html = this._buildFlowBoardHtml();
+			const blob = new Blob([html], { type: 'text/html' });
+			const url = URL.createObjectURL(blob);
+			const w = globalThis.open(url, '_blank');
+			// Revoke after a short delay so the window has time to load
+			setTimeout(() => URL.revokeObjectURL(url), 5000);
+			if (!w) {
+				this.logService.warn('[Schedule] Could not open TV display window — popup may be blocked');
+			}
+		} catch (err) {
+			this.logService.error('[Schedule] TV display error:', err);
 		}
 	}
 
@@ -674,7 +694,7 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	override dispose(): void {
 		if (this.refreshTimer) {
-			clearInterval(this.refreshTimer);
+			DOM.getActiveWindow().clearInterval(this.refreshTimer);
 		}
 		super.dispose();
 	}
