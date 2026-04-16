@@ -87,13 +87,147 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	private async _loadFormSchema(): Promise<void> {
+		// 1) Try API first (config-driven from backend)
+		try {
+			const res = await this.apiService.fetch('/api/tab-field-config/encounter-form');
+			if (res.ok) {
+				const data = await res.json();
+				const cfg = data?.data || data || {};
+				const sections = cfg?.field_config?.sections || cfg?.sections || [];
+				if (sections.length > 0) {
+					this.formSections = sections;
+					return;
+				}
+			}
+		} catch { /* fall through */ }
+
+		// 2) Try local file
 		try {
 			const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'encounter.json'));
 			const json = JSON.parse(file.value.toString());
-			this.formSections = json.sections || [];
-		} catch {
-			this.formSections = [];
-		}
+			if (json.sections && json.sections.length > 1) {
+				this.formSections = json.sections;
+				return;
+			}
+		} catch { /* fall through */ }
+
+		// 3) Hardcoded default — all 12 sections matching the web app
+		this.formSections = EncounterFormEditor._defaultSections();
+	}
+
+	private static _defaultSections(): FieldSection[] {
+		return [
+			{
+				key: 'cc', title: 'Chief Complaint', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'chiefComplaint', label: 'Chief Complaint', type: 'textarea', required: true, placeholder: 'Why is the patient being seen today?' },
+				]
+			},
+			{
+				key: 'hpi', title: 'History of Present Illness', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'hpi_onset', label: 'Onset', type: 'text', placeholder: 'When did it start?' },
+					{ key: 'hpi_location', label: 'Location', type: 'text', placeholder: 'Where is it?' },
+					{ key: 'hpi_duration', label: 'Duration', type: 'text', placeholder: 'How long?' },
+					{ key: 'hpi_character', label: 'Character', type: 'text', placeholder: 'What does it feel like?' },
+					{
+						key: 'hpi_severity', label: 'Severity', type: 'select', options: [
+							{ label: 'Mild', value: 'mild' }, { label: 'Moderate', value: 'moderate' }, { label: 'Severe', value: 'severe' },
+						]
+					},
+					{ key: 'hpi_timing', label: 'Timing', type: 'text', placeholder: 'Constant, intermittent?' },
+					{ key: 'hpi_context', label: 'Context', type: 'text', placeholder: 'What were you doing?' },
+					{ key: 'hpi_modifying', label: 'Modifying Factors', type: 'text', placeholder: 'What makes it better/worse?' },
+					{ key: 'hpi_associated', label: 'Associated Signs/Symptoms', type: 'text', colSpan: 2, placeholder: 'Any other symptoms?' },
+					{ key: 'hpi_narrative', label: 'HPI Narrative', type: 'textarea', colSpan: 2, placeholder: 'Free-text narrative...' },
+				]
+			},
+			{
+				key: 'ros', title: 'Review of Systems', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'ros_data', label: 'Review of Systems', type: 'ros-grid' },
+				]
+			},
+			{
+				key: 'vitals', title: 'Vitals', columns: 4, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'vitals_bp_systolic', label: 'BP Systolic', type: 'number', placeholder: 'mmHg' },
+					{ key: 'vitals_bp_diastolic', label: 'BP Diastolic', type: 'number', placeholder: 'mmHg' },
+					{ key: 'vitals_heart_rate', label: 'Heart Rate', type: 'number', placeholder: 'bpm' },
+					{ key: 'vitals_temperature', label: 'Temperature', type: 'number', placeholder: '\u00B0F' },
+					{ key: 'vitals_spo2', label: 'SpO2', type: 'number', placeholder: '%' },
+					{ key: 'vitals_respiratory_rate', label: 'Respiratory Rate', type: 'number', placeholder: '/min' },
+					{ key: 'vitals_weight', label: 'Weight', type: 'number', placeholder: 'lbs' },
+					{ key: 'vitals_height', label: 'Height', type: 'number', placeholder: 'in' },
+					{ key: 'vitals_bmi', label: 'BMI', type: 'number', placeholder: 'Auto-calculated' },
+					{ key: 'vitals_notes', label: 'Notes', type: 'text', colSpan: 3, placeholder: 'Additional notes...' },
+				]
+			},
+			{
+				key: 'pe', title: 'Physical Exam', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'pe_data', label: 'Physical Exam', type: 'exam-grid' },
+				]
+			},
+			{
+				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'pmh_conditions', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
+					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
+				]
+			},
+			{
+				key: 'fh', title: 'Family History', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'fh_father', label: 'Father', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'fh_mother', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'fh_siblings', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'fh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 2 },
+				]
+			},
+			{
+				key: 'sh', title: 'Social History', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{
+						key: 'sh_smoking', label: 'Smoking', type: 'select', options: [
+							{ label: 'Never', value: 'never' }, { label: 'Former', value: 'former' }, { label: 'Current', value: 'current' },
+						]
+					},
+					{
+						key: 'sh_alcohol', label: 'Alcohol', type: 'select', options: [
+							{ label: 'None', value: 'none' }, { label: 'Social', value: 'social' }, { label: 'Daily', value: 'daily' },
+						]
+					},
+					{
+						key: 'sh_exercise', label: 'Exercise', type: 'select', options: [
+							{ label: 'None', value: 'none' }, { label: '1-2x/week', value: '1-2' }, { label: '3-5x/week', value: '3-5' }, { label: 'Daily', value: 'daily' },
+						]
+					},
+					{ key: 'sh_occupation', label: 'Occupation', type: 'text' },
+					{
+						key: 'sh_drugs', label: 'Recreational Drugs', type: 'select', options: [
+							{ label: 'None', value: 'none' }, { label: 'Past', value: 'past' }, { label: 'Current', value: 'current' },
+						]
+					},
+					{ key: 'sh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 3 },
+				]
+			},
+			{
+				key: 'assessment', title: 'Assessment & Diagnosis', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'assessment_diagnoses', label: 'Diagnoses (ICD-10)', type: 'diagnosis-list' },
+					{ key: 'assessment_notes', label: 'Assessment Notes', type: 'textarea', placeholder: 'Clinical assessment narrative...' },
+				]
+			},
+			{
+				key: 'plan', title: 'Plan', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'plan_items', label: 'Plan Items', type: 'plan-items' },
+					{ key: 'plan_followup', label: 'Follow-up', type: 'text', placeholder: 'Return in 2 weeks, PRN, etc.' },
+					{ key: 'plan_notes', label: 'Plan Notes', type: 'textarea', placeholder: 'Additional plan details...' },
+				]
+			},
+			{
+				key: 'provider-note', title: 'Provider Notes', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'provider_narrative', label: 'Provider Narrative', type: 'textarea', placeholder: 'Free-text provider notes...', colSpan: 1 },
+				]
+			},
+			{
+				key: 'procedures', title: 'Procedures & Coding', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'procedures_data', label: 'Procedures', type: 'procedure-list' },
+				]
+			},
+		];
 	}
 
 	private async _loadEncounterData(): Promise<void> {
@@ -125,6 +259,7 @@ export class EncounterFormEditor extends EditorPane {
 	};
 
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
+	private sectionCards = new Map<string, HTMLElement>();
 
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
@@ -205,7 +340,7 @@ export class EncounterFormEditor extends EditorPane {
 			item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 			item.addEventListener('mouseleave', () => { if (!item.classList.contains('active')) { item.style.background = ''; } });
 			item.addEventListener('click', () => {
-				const el = this.scrollArea.querySelector(`[data-section="${sec.key}"]`);
+				const el = this.sectionCards.get(sec.key);
 				if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 			});
 
@@ -216,13 +351,12 @@ export class EncounterFormEditor extends EditorPane {
 	private _setupScrollSync(): void {
 		this.scrollArea.addEventListener('scroll', () => {
 			let activeKey = '';
-			const sections = this.scrollArea.querySelectorAll('[data-section]');
 			const scrollTop = this.scrollArea.scrollTop + 60;
-			sections.forEach(sec => {
-				if ((sec as HTMLElement).offsetTop <= scrollTop) {
-					activeKey = sec.getAttribute('data-section') || '';
+			for (const [key, card] of this.sectionCards) {
+				if (card.offsetTop <= scrollTop) {
+					activeKey = key;
 				}
-			});
+			}
 			this.tocItems.forEach(({ key, el }) => {
 				const isActive = key === activeKey;
 				el.style.borderLeftColor = isActive ? 'var(--vscode-focusBorder, #007acc)' : 'transparent';
@@ -233,27 +367,43 @@ export class EncounterFormEditor extends EditorPane {
 		});
 	}
 
+	private static ROS_SYSTEMS = ['Constitutional', 'Eyes', 'ENT', 'Cardiovascular', 'Respiratory', 'GI', 'GU', 'Musculoskeletal', 'Skin', 'Neurological', 'Psychiatric', 'Endocrine', 'Hematologic/Lymphatic', 'Allergic/Immunologic'];
+	private static PE_SYSTEMS: Array<{ system: string; normal: string }> = [
+		{ system: 'General Appearance', normal: 'Well-appearing, in no acute distress' },
+		{ system: 'HEENT', normal: 'Normocephalic, PERRL, TMs clear, oropharynx normal' },
+		{ system: 'Neck', normal: 'Supple, no lymphadenopathy, no thyromegaly' },
+		{ system: 'Chest/Lungs', normal: 'Clear to auscultation bilaterally, no wheezes/rhonchi/rales' },
+		{ system: 'Cardiovascular', normal: 'RRR, no murmurs/gallops/rubs, pulses intact' },
+		{ system: 'Abdomen', normal: 'Soft, non-tender, non-distended, BS active' },
+		{ system: 'Extremities', normal: 'No edema, no cyanosis, full ROM' },
+		{ system: 'Neurological', normal: 'Alert, oriented x4, CN II-XII intact, sensation normal' },
+		{ system: 'Skin', normal: 'Warm, dry, intact, no rashes or lesions' },
+		{ system: 'Psychiatric', normal: 'Appropriate mood and affect, cooperative' },
+	];
+
 	private _renderForm(): void {
 		DOM.clearNode(this.scrollArea);
 
 		const container = DOM.append(this.scrollArea, DOM.$('div'));
 		container.style.cssText = 'max-width:900px;margin:0 auto;padding:16px 24px 60px;';
+		this.sectionCards.clear();
 
 		for (const sec of this.formSections) {
 			if (!sec.visible) { continue; }
 
 			const cols = Math.min(sec.columns || 1, 4);
 
-			// Card — clean VS Code blue accent
 			const card = DOM.append(container, DOM.$('div'));
 			card.setAttribute('data-section', sec.key);
+			this.sectionCards.set(sec.key, card);
 			card.style.cssText = 'margin-bottom:14px;border:1px solid var(--vscode-editorWidget-border);border-left:3px solid var(--vscode-focusBorder,#007acc);border-radius:6px;overflow:hidden;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));box-shadow:0 1px 3px rgba(0,0,0,0.15);';
 
-			// Header
+			// Header (collapsible)
 			const header = DOM.append(card, DOM.$('div'));
-			header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:9px 14px;background:rgba(0,122,204,0.12);border-bottom:1px solid rgba(0,122,204,0.2);';
+			header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:9px 14px;background:rgba(0,122,204,0.12);border-bottom:1px solid rgba(0,122,204,0.2);cursor:pointer;user-select:none;';
 
-			// No collapse — all sections always expanded
+			const chevron = DOM.append(header, DOM.$('span'));
+			chevron.style.cssText = 'font-size:10px;transition:transform 0.15s;';
 
 			const secIcon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
 			if (secIcon) {
@@ -264,7 +414,7 @@ export class EncounterFormEditor extends EditorPane {
 
 			const titleEl = DOM.append(header, DOM.$('span'));
 			titleEl.textContent = sec.title;
-			titleEl.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+			titleEl.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);flex:1;';
 
 			if (sec.fields.some(f => f.required)) {
 				const req = DOM.append(header, DOM.$('span'));
@@ -272,17 +422,50 @@ export class EncounterFormEditor extends EditorPane {
 				req.style.cssText = 'color:#EF5350;font-weight:700;';
 			}
 
-			// Body — always expanded
+			// Body
 			const body = DOM.append(card, DOM.$('div'));
 			body.style.cssText = `display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:6px 16px;padding:14px;`;
 
-			// Fields
+			// Collapse toggle
+			let collapsed = !!sec.collapsed;
+			const applyCollapse = () => {
+				body.style.display = collapsed ? 'none' : 'grid';
+				chevron.textContent = collapsed ? '\u25B6' : '\u25BC';
+			};
+			applyCollapse();
+			if (sec.collapsible !== false) {
+				header.addEventListener('click', () => { collapsed = !collapsed; applyCollapse(); });
+			}
+
+			// Render fields
 			for (const f of sec.fields) {
 				const val = (this.encounterData as Record<string, unknown>)[f.key] ?? '';
-
 				const cell = DOM.append(body, DOM.$('div'));
 				cell.style.cssText = `grid-column:span ${Math.min(f.colSpan || 1, cols)};`;
 
+				// Special field types
+				if (f.type === 'ros-grid') {
+					this._renderRosGrid(cell, f.key);
+					continue;
+				}
+				if (f.type === 'exam-grid') {
+					this._renderExamGrid(cell, f.key);
+					continue;
+				}
+				if (f.type === 'diagnosis-list') {
+					this._renderDiagnosisList(cell, f.key);
+					continue;
+				}
+				if (f.type === 'plan-items') {
+					this._renderPlanItems(cell, f.key);
+					continue;
+				}
+				if (f.type === 'procedure-list') {
+					this._renderProcedureList(cell, f.key);
+					continue;
+				}
+
+				// Standard field label
 				const lbl = DOM.append(cell, DOM.$('label'));
 				lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:4px;';
 				const lblText = DOM.append(lbl, DOM.$('span'));
@@ -295,7 +478,6 @@ export class EncounterFormEditor extends EditorPane {
 
 				const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;transition:border-color 0.15s;';
 				const focusCss = 'border-color:var(--vscode-focusBorder,#007acc);box-shadow:0 0 0 1px var(--vscode-focusBorder,#007acc);';
-
 				const addFocus = (el: HTMLElement) => {
 					el.addEventListener('focus', () => { el.style.cssText = inputStyle + (el.tagName === 'TEXTAREA' ? 'min-height:80px;resize:vertical;' : el.tagName === 'SELECT' ? 'height:32px;cursor:pointer;' : 'height:32px;') + focusCss; });
 					el.addEventListener('blur', () => { el.style.cssText = inputStyle + (el.tagName === 'TEXTAREA' ? 'min-height:80px;resize:vertical;' : el.tagName === 'SELECT' ? 'height:32px;cursor:pointer;' : 'height:32px;'); });
@@ -337,6 +519,267 @@ export class EncounterFormEditor extends EditorPane {
 				}
 			}
 		}
+	}
+
+	/** ROS: multi-system checkbox grid */
+	private _renderRosGrid(parent: HTMLElement, dataKey: string): void {
+		const rosData = (this.encounterData[dataKey] || {}) as Record<string, string>;
+		const grid = DOM.append(parent, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(2,1fr);gap:4px;';
+
+		const checkboxes: HTMLInputElement[] = [];
+		for (const system of EncounterFormEditor.ROS_SYSTEMS) {
+			const sysKey = system.toLowerCase().replace(/[^a-z]/g, '_');
+			const row = DOM.append(grid, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;background:rgba(128,128,128,0.05);';
+
+			const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+			cb.type = 'checkbox';
+			cb.checked = rosData[sysKey] === 'positive' || rosData[sysKey] === 'abnormal';
+			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;flex-shrink:0;';
+			checkboxes.push(cb);
+
+			const label = DOM.append(row, DOM.$('span'));
+			label.textContent = system;
+			label.style.cssText = 'font-size:12px;flex:1;';
+
+			const noteInput = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+			noteInput.type = 'text';
+			noteInput.value = typeof rosData[sysKey] === 'string' && rosData[sysKey] !== 'positive' && rosData[sysKey] !== 'negative' && rosData[sysKey] !== 'abnormal' ? rosData[sysKey] : '';
+			noteInput.placeholder = 'Findings...';
+			noteInput.style.cssText = 'width:120px;padding:2px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
+		}
+
+		// "All Normal" button
+		const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		allNorm.textContent = 'Mark All Negative / Normal';
+		allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+		allNorm.addEventListener('click', () => {
+			for (const cb of checkboxes) { cb.checked = false; }
+		});
+	}
+
+	/** Physical Exam: system-by-system exam grid */
+	private _renderExamGrid(parent: HTMLElement, dataKey: string): void {
+		const peData = (this.encounterData[dataKey] || {}) as Record<string, string>;
+		const peCheckboxes: HTMLInputElement[] = [];
+		const peTextareas: HTMLTextAreaElement[] = [];
+
+		for (const { system, normal } of EncounterFormEditor.PE_SYSTEMS) {
+			const sysKey = system.toLowerCase().replace(/[^a-z]/g, '_');
+			const row = DOM.append(parent, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
+
+			const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+			cb.type = 'checkbox';
+			cb.checked = !peData[sysKey] || peData[sysKey] === normal;
+			cb.title = 'Normal';
+			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;margin-top:2px;flex-shrink:0;';
+			peCheckboxes.push(cb);
+
+			const label = DOM.append(row, DOM.$('span'));
+			label.textContent = system;
+			label.style.cssText = 'font-size:12px;font-weight:600;width:120px;flex-shrink:0;padding-top:2px;';
+
+			const ta = DOM.append(row, DOM.$('textarea')) as HTMLTextAreaElement;
+			ta.value = peData[sysKey] || normal;
+			ta.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);resize:vertical;min-height:28px;';
+			peTextareas.push(ta);
+
+			cb.addEventListener('change', () => { if (cb.checked) { ta.value = normal; } });
+		}
+
+		// "All Normal" button
+		const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		allNorm.textContent = 'Set All Normal';
+		allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+		allNorm.addEventListener('click', () => {
+			for (const cb of peCheckboxes) { cb.checked = true; }
+			for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
+				if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
+			}
+		});
+	}
+
+	/** Diagnosis list with ICD-10 search */
+	private _renderDiagnosisList(parent: HTMLElement, dataKey: string): void {
+		const diagnoses = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string }>;
+		const listEl = DOM.append(parent, DOM.$('div'));
+
+		const renderList = () => {
+			DOM.clearNode(listEl);
+			for (let i = 0; i < diagnoses.length; i++) {
+				const dx = diagnoses[i];
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
+
+				const code = DOM.append(row, DOM.$('span'));
+				code.textContent = dx.code;
+				code.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-textLink-foreground);width:80px;';
+
+				const desc = DOM.append(row, DOM.$('span'));
+				desc.textContent = dx.description;
+				desc.style.cssText = 'font-size:12px;flex:1;';
+
+				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				removeBtn.textContent = '\u2715';
+				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+				removeBtn.addEventListener('click', () => { diagnoses.splice(i, 1); renderList(); });
+			}
+		};
+		renderList();
+
+		// Search input
+		const searchRow = DOM.append(parent, DOM.$('div'));
+		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search ICD-10 codes...';
+		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+
+		const results = DOM.append(parent, DOM.$('div'));
+		results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (timer) { clearTimeout(timer); }
+			const q = searchInput.value;
+			if (q.length < 2) { results.style.display = 'none'; return; }
+			timer = setTimeout(async () => {
+				try {
+					const res = await this.apiService.fetch(`/api/global_codes?codeType=ICD10&search=${encodeURIComponent(q)}&page=0&size=15`);
+					if (res.ok) {
+						const data = await res.json();
+						const codes = data?.data?.content || data?.content || [];
+						DOM.clearNode(results);
+						for (const c of codes) {
+							const item = DOM.append(results, DOM.$('div'));
+							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+							item.textContent = `${c.code || c.codeValue || ''} — ${c.description || c.shortDescription || ''}`;
+							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+							item.addEventListener('mouseleave', () => { item.style.background = ''; });
+							item.addEventListener('click', () => {
+								diagnoses.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '' });
+								renderList();
+								searchInput.value = '';
+								results.style.display = 'none';
+							});
+						}
+						results.style.display = codes.length > 0 ? 'block' : 'none';
+					}
+				} catch { /* */ }
+			}, 300);
+		});
+	}
+
+	/** Plan items: simple add/remove list */
+	private _renderPlanItems(parent: HTMLElement, dataKey: string): void {
+		const items = (this.encounterData[dataKey] || []) as string[];
+		const listEl = DOM.append(parent, DOM.$('div'));
+
+		const renderList = () => {
+			DOM.clearNode(listEl);
+			for (let i = 0; i < items.length; i++) {
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;';
+
+				const bullet = DOM.append(row, DOM.$('span'));
+				bullet.textContent = `${i + 1}.`;
+				bullet.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);width:20px;';
+
+				const inp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				inp.type = 'text';
+				inp.value = items[i];
+				inp.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
+				inp.addEventListener('change', () => { items[i] = inp.value; });
+
+				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				removeBtn.textContent = '\u2715';
+				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+				removeBtn.addEventListener('click', () => { items.splice(i, 1); renderList(); });
+			}
+		};
+		renderList();
+
+		const addBtn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Plan Item';
+		addBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+		addBtn.addEventListener('click', () => { items.push(''); renderList(); });
+	}
+
+	/** Procedures & Coding list */
+	private _renderProcedureList(parent: HTMLElement, dataKey: string): void {
+		const procs = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string; units: number }>;
+		const listEl = DOM.append(parent, DOM.$('div'));
+
+		const renderList = () => {
+			DOM.clearNode(listEl);
+			for (let i = 0; i < procs.length; i++) {
+				const p = procs[i];
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
+
+				const code = DOM.append(row, DOM.$('span'));
+				code.textContent = p.code;
+				code.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-textLink-foreground);width:80px;';
+
+				const desc = DOM.append(row, DOM.$('span'));
+				desc.textContent = p.description;
+				desc.style.cssText = 'font-size:12px;flex:1;';
+
+				const units = DOM.append(row, DOM.$('span'));
+				units.textContent = `x${p.units || 1}`;
+				units.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
+				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				removeBtn.textContent = '\u2715';
+				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+				removeBtn.addEventListener('click', () => { procs.splice(i, 1); renderList(); });
+			}
+		};
+		renderList();
+
+		// Search input for CPT codes
+		const searchRow = DOM.append(parent, DOM.$('div'));
+		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search CPT/HCPCS codes...';
+		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+
+		const results = DOM.append(parent, DOM.$('div'));
+		results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (timer) { clearTimeout(timer); }
+			const q = searchInput.value;
+			if (q.length < 2) { results.style.display = 'none'; return; }
+			timer = setTimeout(async () => {
+				try {
+					const res = await this.apiService.fetch(`/api/global_codes?codeType=CPT4&search=${encodeURIComponent(q)}&page=0&size=15`);
+					if (res.ok) {
+						const data = await res.json();
+						const codes = data?.data?.content || data?.content || [];
+						DOM.clearNode(results);
+						for (const c of codes) {
+							const item = DOM.append(results, DOM.$('div'));
+							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+							item.textContent = `${c.code || c.codeValue || ''} — ${c.description || c.shortDescription || ''}`;
+							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+							item.addEventListener('mouseleave', () => { item.style.background = ''; });
+							item.addEventListener('click', () => {
+								procs.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '', units: 1 });
+								renderList();
+								searchInput.value = '';
+								results.style.display = 'none';
+							});
+						}
+						results.style.display = codes.length > 0 ? 'block' : 'none';
+					}
+				} catch { /* */ }
+			}, 300);
+		});
 	}
 
 	override layout(dimension: DOM.Dimension): void {
