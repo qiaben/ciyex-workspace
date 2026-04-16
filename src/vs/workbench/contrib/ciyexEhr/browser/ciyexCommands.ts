@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -603,4 +603,10 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openAuthorizations', title: localize2('openAuth', "Open Authorizations"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new AuthorizationsEditorInput(), { pinned: true }); }
+});
+
+// Appointments
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openAppointments', title: localize2('openAppointments', "Open Appointments"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new AppointmentsEditorInput(), { pinned: true }); }
 });

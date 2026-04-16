@@ -84,6 +84,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Sidebar container ID → editor command (sidebar click opens editor)
 		const sidebarToEditor: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.openCalendar',
+			'ciyex.appointments': 'ciyex.openAppointments',
 			// 'ciyex.patients' intentionally NOT here — chart opens on patient click, not sidebar click
 			// 'ciyex.messaging' intentionally NOT here — conversation opens on channel click, not sidebar click
 		};
@@ -91,6 +92,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Editor typeId → sidebar container ID (editor tab click switches sidebar)
 		const editorToSidebar: Record<string, string> = {
 			'workbench.input.ciyexCalendar': 'ciyex.calendar',
+			'workbench.input.ciyexAppointments': 'ciyex.appointments',
 			'workbench.input.ciyexPatientChart': 'ciyex.patients',
 			'workbench.input.ciyexEncounterForm': 'ciyex.encounters',
 			'workbench.input.ciyexMessaging': 'ciyex.messaging',
@@ -100,6 +102,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Container ID → view ID inside it (force-open view when container activates)
 		const containerToView: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.calendar.schedule',
+			'ciyex.appointments': 'ciyex.appointments.view',
 			'ciyex.patients': 'ciyex.patients.list',
 			'ciyex.encounters': 'ciyex.encounters.view',
 			'ciyex.messaging': 'ciyex.messaging.channels',

@@ -157,7 +157,7 @@ export class GenericListPane extends ViewPane {
 
 		// Pagination controls
 		if (this._paginationEl) {
-			this._paginationEl.innerHTML = '';
+			while (this._paginationEl.firstChild) { this._paginationEl.removeChild(this._paginationEl.firstChild); }
 			const total = items.length;
 			const totalPages = Math.ceil(total / this._pageSize);
 			if (totalPages <= 1) { return; }
@@ -240,7 +240,7 @@ export class GenericListPane extends ViewPane {
 		if (!this._listEl) {
 			return;
 		}
-		this._listEl.innerHTML = '';
+		while (this._listEl.firstChild) { this._listEl.removeChild(this._listEl.firstChild); }
 		if (items.length === 0) {
 			this._showMsg(this._config.emptyMessage || 'No items found');
 			return;
@@ -338,7 +338,7 @@ export class GenericListPane extends ViewPane {
 		if (!this._listEl) {
 			return;
 		}
-		this._listEl.innerHTML = '';
+		while (this._listEl.firstChild) { this._listEl.removeChild(this._listEl.firstChild); }
 		const el = document.createElement('div');
 		el.style.padding = '12px 16px';
 		el.style.color = 'var(--vscode-descriptionForeground)';

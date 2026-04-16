@@ -221,24 +221,75 @@ export class ReportsEditorInput extends EditorInput {
 
 // ─── Clinical EditorInputs ───
 
-function clinicalInput(id: string, label: string, iconName: string) {
-	return class extends EditorInput {
-		static readonly ID = id;
-		override get typeId(): string { return id; }
-		constructor() { super(); }
-		override getName(): string { return label; }
-		override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId(iconName); }
-		get resource(): URI { return URI.from({ scheme: 'ciyex-clinical', path: `/${label.toLowerCase().replace(/\s+/g, '-')}` }); }
-		override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof this.constructor; }
-	};
+abstract class BaseClinicalEditorInput extends EditorInput {
+	abstract readonly clinicalId: string;
+	abstract readonly clinicalLabel: string;
+	abstract readonly clinicalIcon: string;
+
+	override get typeId(): string { return this.clinicalId; }
+	override getName(): string { return this.clinicalLabel; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId(this.clinicalIcon); }
+	get resource(): URI {
+		return URI.from({ scheme: 'ciyex-clinical', path: `/${this.clinicalLabel.toLowerCase().replace(/\s+/g, '-')}` });
+	}
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof BaseClinicalEditorInput && other.constructor === this.constructor;
+	}
 }
 
-export const PrescriptionsEditorInput = clinicalInput('workbench.input.ciyexPrescriptions', 'Prescriptions', 'beaker');
-export const ImmunizationsEditorInput = clinicalInput('workbench.input.ciyexImmunizations', 'Immunizations', 'shield');
-export const ReferralsEditorInput = clinicalInput('workbench.input.ciyexReferrals', 'Referrals', 'arrow-right');
-export const CarePlansEditorInput = clinicalInput('workbench.input.ciyexCarePlans', 'Care Plans', 'heart');
-export const CdsEditorInput = clinicalInput('workbench.input.ciyexCds', 'Clinical Decision Support', 'warning');
-export const AuthorizationsEditorInput = clinicalInput('workbench.input.ciyexAuthorizations', 'Authorizations', 'verified');
+export class PrescriptionsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexPrescriptions';
+	readonly clinicalId = PrescriptionsEditorInput.ID;
+	readonly clinicalLabel = 'Prescriptions';
+	readonly clinicalIcon = 'beaker';
+}
+
+export class ImmunizationsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexImmunizations';
+	readonly clinicalId = ImmunizationsEditorInput.ID;
+	readonly clinicalLabel = 'Immunizations';
+	readonly clinicalIcon = 'shield';
+}
+
+export class ReferralsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexReferrals';
+	readonly clinicalId = ReferralsEditorInput.ID;
+	readonly clinicalLabel = 'Referrals';
+	readonly clinicalIcon = 'arrow-right';
+}
+
+export class CarePlansEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexCarePlans';
+	readonly clinicalId = CarePlansEditorInput.ID;
+	readonly clinicalLabel = 'Care Plans';
+	readonly clinicalIcon = 'heart';
+}
+
+export class CdsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexCds';
+	readonly clinicalId = CdsEditorInput.ID;
+	readonly clinicalLabel = 'Clinical Decision Support';
+	readonly clinicalIcon = 'warning';
+}
+
+export class AuthorizationsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexAuthorizations';
+	readonly clinicalId = AuthorizationsEditorInput.ID;
+	readonly clinicalLabel = 'Authorizations';
+	readonly clinicalIcon = 'verified';
+}
+
+// ─── Appointments EditorInput (singleton) ───
+
+export class AppointmentsEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexAppointments';
+	override get typeId(): string { return AppointmentsEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Appointments'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('checklist'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-appointments', path: '/appointments' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof AppointmentsEditorInput; }
+}
 
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;

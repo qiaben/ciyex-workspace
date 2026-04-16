@@ -8,7 +8,7 @@ import { EditorExtensions } from '../../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { localize } from '../../../../../nls.js';
-import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, UserManagementEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, ReportsEditorInput } from './ciyexEditorInput.js';
+import { LayoutEditorInput, EncounterEditorInput, FieldConfigEditorInput, MenuEditorInput, ColorsEditorInput, RolesEditorInput, CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, UserManagementEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, ReportsEditorInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
 import { FieldConfigEditor } from './fieldConfigEditor.js';
@@ -25,6 +25,7 @@ import { RolesPermissionsEditor } from './rolesPermissionsEditor.js';
 import { TasksEditor } from './tasksEditor.js';
 import { PrescriptionsEditor, ImmunizationsEditor, ReferralsEditor, CarePlansEditor, CdsEditor, AuthorizationsEditor } from './clinicalEditors.js';
 import { ReportsEditor } from './reportsEditor.js';
+import { AppointmentsEditor } from './appointmentsEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -53,3 +54,6 @@ reg.registerEditorPane(EditorPaneDescriptor.create(AuthorizationsEditor, Authori
 
 // Reports
 reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.ID, localize('report', "Report")), [new SyncDescriptor(ReportsEditorInput)]);
+
+// Appointments
+reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, AppointmentsEditor.ID, localize('appointments', "Appointments")), [new SyncDescriptor(AppointmentsEditorInput)]);
