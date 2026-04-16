@@ -82,11 +82,16 @@ GenericListPane.configs.set('ciyex.calendar.view', {
 	emptyMessage: 'No appointments today',
 });
 
-// Appointments
+// Appointments — FHIR endpoint (the /api/appointments endpoint returns empty/hangs)
+// Column keys use "|" fallbacks because FHIR returns patientDisplay/providerDisplay, not patientName
 GenericListPane.configs.set('ciyex.appointments.view', {
-	apiPath: '/api/appointments?page=0&size=50',
-	columns: [{ key: 'patientName' }, { key: 'appointmentType' }, { key: 'status' }],
-	avatarFields: ['patientFirstName', 'patientLastName'],
+	apiPath: '/api/fhir-resource/appointments?page=0&size=200',
+	columns: [
+		{ key: 'patientName|patientDisplay' },
+		{ key: 'appointmentType|type|serviceType' },
+		{ key: 'status' },
+	],
+	avatarFields: ['patientFirstName|patientDisplay', 'patientLastName|patientDisplay'],
 	emptyMessage: 'No appointments',
 });
 

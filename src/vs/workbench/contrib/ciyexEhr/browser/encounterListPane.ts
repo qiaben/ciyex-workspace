@@ -25,8 +25,8 @@ export class EncounterListPane extends ViewPane {
 	private allItems: Record<string, unknown>[] = [];
 	private loaded = false;
 	private filterValue = '';
-	private dateFrom = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-	private dateTo = new Date().toISOString().slice(0, 10);
+	private dateFrom = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+	private dateTo = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 	private currentPage = 0;
 	private pageSize = 15;
 

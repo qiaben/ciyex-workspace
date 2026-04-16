@@ -327,11 +327,25 @@ export class GenericListPane extends ViewPane {
 	}
 
 	private _resolveValue(item: Record<string, unknown>, key: string): string {
-		const val = item[key];
-		if (val === null || val === undefined) {
-			return '';
+		// Support fallback keys via "|" (e.g. "patientName|patientDisplay")
+		const keys = key.split('|');
+		for (const k of keys) {
+			const v = item[k];
+			if (v === null || v === undefined || v === '') { continue; }
+			// FHIR CodeableConcept-like: { text, coding: [{ display, code }] }
+			if (typeof v === 'object') {
+				const obj = v as Record<string, unknown>;
+				const text = obj.text as string | undefined;
+				if (text) { return text; }
+				const coding = obj.coding as Array<{ display?: string; code?: string }> | undefined;
+				if (Array.isArray(coding) && coding.length > 0) {
+					return coding[0].display || coding[0].code || '';
+				}
+				continue;
+			}
+			return String(v);
 		}
-		return String(val);
+		return '';
 	}
 
 	private _showMsg(msg: string): void {
