@@ -1,0 +1,162 @@
+name: Build Windows
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  VSCODE_ARCH: x64
+  VSCODE_QUALITY: 'oss'
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Prepare node_modules cache key
+        shell: pwsh
+        run: |
+          mkdir .build -ea 0
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts win32 x64 $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: .build/node_modules_cache
+          key: node_modules-win32-x64-${{ hashFiles('.build/packagelockhash') }}
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: 7z.exe x .build/node_modules_cache/cache.7z -aoa
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          npm_config_arch: x64
+          npm_config_foreground_scripts: 'true'
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Create node_modules archive
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt
+          mkdir -Force .build/node_modules_cache
+          7z.exe a .build/node_modules_cache/cache.7z -mx3 `@.build/node_modules_list.txt
+
+      - name: Download Electron
+        shell: pwsh
+        run: npm run electron x64
+
+      - name: Install built-in extensions
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp install-builtin-extensions
+
+      - name: Compile
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp core-ci
+
+      - name: Build client (minified)
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp "vscode-win32-x64-min-ci"
+
+      - name: Build inno updater
+        shell: pwsh
+        run: npm run gulp "vscode-win32-x64-inno-updater"
+
+      - name: Build user setup (installer)
+        shell: pwsh
+        run: npm run gulp "vscode-win32-x64-user-setup"
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          $Version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          echo "APP_VERSION=$Version" >> $env:GITHUB_ENV
+          7z.exe a -tzip "CiyexWorkspace-win32-x64-$Version.zip" "..\VSCode-win32-x64\*"
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          $Version = $env:APP_VERSION
+          mkdir artifacts -Force
+
+          # Portable zip
+          Move-Item "CiyexWorkspace-win32-x64-$Version.zip" artifacts/
+
+          # User installer
+          if (Test-Path ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe") {
+            Move-Item ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe" "artifacts\CiyexWorkspaceSetup-x64-$Version.exe"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ciyex-workspace-win32-x64
+          path: artifacts/*
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release || github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
+          name: Ciyex Workspace v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          body: |
+            ## Ciyex Workspace - Windows x64
+
+            ### Downloads
+            - **Installer (.exe)** — Double-click to install (recommended)
+            - **Portable (.zip)** — Extract and run, no installation needed
+
+            ### Install
+            1. Download `CiyexWorkspaceSetup-x64-${{ env.APP_VERSION }}.exe`
+            2. Run the installer
+            3. Launch "Ciyex Workspace" from Start Menu
+
+            ---
+            Built from commit ${{ github.sha }}
+          files: artifacts/*
+          draft: false
+          prerelease: false
