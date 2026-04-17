@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import * as DOM from '../../../../base/browser/dom.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { ICiyexPermissionService } from './ciyexPermissionService.js';
@@ -11,9 +12,8 @@ import { ICiyexMenuService } from './ciyexMenuService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { PatientListDataProvider } from './patientListDataProvider.js';
-import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation } from '../../../common/views.js';
+import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation, IViewDescriptorService } from '../../../common/views.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { IViewDescriptorService } from '../../../common/views.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -67,29 +67,29 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			}
 		}));
 
-		// ─── Sidebar ↔ Editor pairing ───
+		// Sidebar <-> Editor pairing
 		// When a sidebar container is activated, auto-open its paired editor
 		this._setupSidebarEditorPairing();
 	}
 
 	/**
-	 * Generic bidirectional sidebar ↔ editor pairing.
+	 * Generic bidirectional sidebar <-> editor pairing.
 	 *
-	 * Direction 1: Click sidebar icon → auto-open paired editor command
-	 * Direction 2: Click editor tab → auto-switch sidebar to paired container
+	 * Direction 1: Click sidebar icon -> auto-open paired editor command
+	 * Direction 2: Click editor tab -> auto-switch sidebar to paired container
 	 *
-	 * Add new pairs here — no other code changes needed.
+	 * Add new pairs here -- no other code changes needed.
 	 */
 	private _setupSidebarEditorPairing(): void {
-		// Sidebar container ID → editor command (sidebar click opens editor)
+		// Sidebar container ID -> editor command (sidebar click opens editor)
 		const sidebarToEditor: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.openCalendar',
 			'ciyex.appointments': 'ciyex.openAppointments',
-			// 'ciyex.patients' intentionally NOT here — chart opens on patient click, not sidebar click
-			// 'ciyex.messaging' intentionally NOT here — conversation opens on channel click, not sidebar click
+			// 'ciyex.patients' intentionally NOT here -- chart opens on patient click, not sidebar click
+			// 'ciyex.messaging' intentionally NOT here -- conversation opens on channel click, not sidebar click
 		};
 
-		// Editor typeId → sidebar container ID (editor tab click switches sidebar)
+		// Editor typeId -> sidebar container ID (editor tab click switches sidebar)
 		const editorToSidebar: Record<string, string> = {
 			'workbench.input.ciyexCalendar': 'ciyex.calendar',
 			'workbench.input.ciyexAppointments': 'ciyex.appointments',
@@ -97,9 +97,24 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexEncounterForm': 'ciyex.encounters',
 			'workbench.input.ciyexMessaging': 'ciyex.messaging',
 			'workbench.input.ciyexPortalSettings': 'ciyex.portal-management',
+			// Clinical editors -> Clinical sidebar
+			'workbench.input.ciyexPrescriptions': 'ciyex.clinical',
+			'workbench.input.ciyexLabs': 'ciyex.clinical',
+			'workbench.input.ciyexImmunizations': 'ciyex.clinical',
+			'workbench.input.ciyexReferrals': 'ciyex.clinical',
+			'workbench.input.ciyexAuthorizations': 'ciyex.clinical',
+			'workbench.input.ciyexCarePlans': 'ciyex.clinical',
+			'workbench.input.ciyexCds': 'ciyex.clinical',
+			'workbench.input.ciyexEducation': 'ciyex.clinical',
+			// Operations editors -> Operations sidebar
+			'workbench.input.ciyexRecall': 'ciyex.operations',
+			'workbench.input.ciyexCodes': 'ciyex.operations',
+			'workbench.input.ciyexInventory': 'ciyex.operations',
+			'workbench.input.ciyexPayments': 'ciyex.operations',
+			'workbench.input.ciyexClaims': 'ciyex.operations',
 		};
 
-		// Container ID → view ID inside it (force-open view when container activates)
+		// Container ID -> view ID inside it (force-open view when container activates)
 		const containerToView: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.calendar.schedule',
 			'ciyex.appointments': 'ciyex.appointments.view',
@@ -107,39 +122,41 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.encounters': 'ciyex.encounters.view',
 			'ciyex.messaging': 'ciyex.messaging.channels',
 			'ciyex.portal-management': 'ciyex.portal.docreviews',
+			'ciyex.clinical': 'ciyex.clinical.menu',
+			'ciyex.operations': 'ciyex.operations.menu',
 		};
 
 		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)
 
-		// Direction 1: Sidebar → Editor + force-open view
+		// Direction 1: Sidebar -> Editor + force-open view
 		this._register(this.paneCompositeService.onDidPaneCompositeOpen(e => {
 			if (Date.now() < _blockUntil) { return; }
 			const id = e.composite.getId();
 			if (e.viewContainerLocation === ViewContainerLocation.Sidebar) {
 				// Force-open the view inside the container
 				const viewId = containerToView[id];
-				if (viewId) { this.viewsService.openView(viewId, false).catch(() => {}); }
+				if (viewId) { this.viewsService.openView(viewId, false).catch(() => { }); }
 				// Open paired editor
 				const cmd = sidebarToEditor[id];
 				if (cmd) {
 					_blockUntil = Date.now() + 200;
-					this.commandService.executeCommand(cmd).catch(() => {});
+					this.commandService.executeCommand(cmd).catch(() => { });
 				}
 			}
 		}));
 
-		// Direction 2: Editor → Sidebar (use both events for reliability)
+		// Direction 2: Editor -> Sidebar (use both events for reliability)
 		const switchSidebar = () => {
 			if (Date.now() < _blockUntil) { return; }
 			const typeId = this.editorService.activeEditorPane?.input?.typeId;
-			if (typeId && typeId in editorToSidebar) {
+			if (typeId && Object.prototype.hasOwnProperty.call(editorToSidebar, typeId)) {
 				const containerId = editorToSidebar[typeId];
 				_blockUntil = Date.now() + 200;
 				this.paneCompositeService.openPaneComposite(containerId, ViewContainerLocation.Sidebar, false).then(() => {
 					// Force-open the view inside the container (fixes collapsed/hidden state)
 					const viewId = containerToView[containerId];
-					if (viewId) { this.viewsService.openView(viewId, false).catch(() => {}); }
-				}).catch(() => {});
+					if (viewId) { this.viewsService.openView(viewId, false).catch(() => { }); }
+				}).catch(() => { });
 			}
 		};
 		this._register(this.editorService.onDidActiveEditorChange(switchSidebar));
@@ -160,7 +177,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { /* view may not be ready */ });
 
 		// Open the Schedule sidebar panel
-		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => {});
+		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { });
 
 		// Load permissions, menus, patient list, and status bar in parallel
 		Promise.all([
@@ -280,7 +297,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		};
 
 		poll();
-		setInterval(poll, 30000);
+		const win = DOM.getActiveWindow();
+		win.setInterval(poll, 30000);
 	}
 
 	private _getUserName(): string {
@@ -293,7 +311,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 	/**
 	 * Copy default .ciyex config files to user data home if they don't exist.
-	 * Files are written only if missing — existing user configs are preserved.
+	 * Files are written only if missing -- existing user configs are preserved.
 	 */
 	private async _ensureDefaultConfigs(): Promise<void> {
 		// Try to copy from workspace .ciyex/ folder first (has full configs from repo)

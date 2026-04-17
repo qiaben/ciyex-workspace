@@ -17,11 +17,16 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import * as DOM from '../../../../../base/browser/dom.js';
 
 const ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
-	{ icon: '🔔', label: 'Recall Campaigns', description: 'Patient follow-up campaigns', command: 'ciyex.openCalendar' },
-	{ icon: '📖', label: 'Medical Codes', description: 'ICD-10, CPT, HCPCS, SNOMED', command: 'ciyex.openCalendar' },
-	{ icon: '📦', label: 'Inventory', description: 'Supplies, orders, suppliers', command: 'ciyex.openCalendar' },
-	{ icon: '💳', label: 'Payments', description: 'Transactions, plans, ledger', command: 'ciyex.openCalendar' },
-	{ icon: '📄', label: 'Claims', description: 'Claim submission, status tracking', command: 'ciyex.openAuthorizations' },
+	// allow-any-unicode-next-line
+	{ icon: '🔔', label: 'Patient Recall', description: 'Follow-up, outreach, compliance', command: 'ciyex.openRecall' },
+	// allow-any-unicode-next-line
+	{ icon: '📖', label: 'Medical Codes', description: 'ICD-10, CPT, HCPCS, SNOMED', command: 'ciyex.openCodes' },
+	// allow-any-unicode-next-line
+	{ icon: '📦', label: 'Inventory', description: 'Supplies, stock, orders', command: 'ciyex.openInventory' },
+	// allow-any-unicode-next-line
+	{ icon: '💳', label: 'Payments', description: 'Transactions, plans, ledger', command: 'ciyex.openPayments' },
+	// allow-any-unicode-next-line
+	{ icon: '📄', label: 'Claims', description: 'Claim submission, status tracking', command: 'ciyex.openClaims' },
 ];
 
 export class OperationsMenuPane extends ViewPane {
@@ -50,6 +55,7 @@ export class OperationsMenuPane extends ViewPane {
 			(col.firstChild as HTMLElement).style.cssText = 'font-weight:500;';
 			DOM.append(col, DOM.$('div')).textContent = item.description;
 			(col.lastChild as HTMLElement).style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+			// allow-any-unicode-next-line
 			DOM.append(row, DOM.$('span')).textContent = '›';
 			(row.lastChild as HTMLElement).style.cssText = 'color:var(--vscode-descriptionForeground);font-size:16px;flex-shrink:0;';
 		}

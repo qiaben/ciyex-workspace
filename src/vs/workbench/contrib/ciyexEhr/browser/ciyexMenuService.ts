@@ -48,12 +48,17 @@ const ITEM_KEY_TO_VIEW: Record<string, string> = {
 // Item key → F1 command ID (for items that open EditorPanes)
 const ITEM_KEY_TO_COMMAND: Record<string, string> = {
 	'prescriptions': 'ciyex.openPrescriptions',
+	'labs': 'ciyex.openLabs',
 	'immunizations': 'ciyex.openImmunizations',
 	'referrals': 'ciyex.openReferrals',
 	'authorizations': 'ciyex.openAuthorizations',
 	'care-plans': 'ciyex.openCarePlans',
-	'payments': 'ciyex.operations.payments',  // sidebar for now
-	'claim-management': 'ciyex.openAuthorizations',  // shares auth editor
+	'education': 'ciyex.openEducation',
+	'recall': 'ciyex.openRecall',
+	'codes': 'ciyex.openCodes',
+	'inventory-management': 'ciyex.openInventory',
+	'payments': 'ciyex.openPayments',
+	'claim-management': 'ciyex.openClaims',
 	'calendar': 'ciyex.openCalendar',
 	'tasks': 'ciyex.openTasks',
 	'messaging': 'ciyex.openMessaging',
@@ -208,7 +213,7 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 
 			// Force menu bar refresh after a delay (macOS native menu bar needs focus + rebuild)
 			setTimeout(() => {
-				window.focus();
+				globalThis.focus();
 			}, 1000);
 		} catch (err) {
 			this.logService.warn('[CiyexMenu] Menu load error:', err);

@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -609,4 +609,36 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openAppointments', title: localize2('openAppointments', "Open Appointments"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new AppointmentsEditorInput(), { pinned: true }); }
+});
+
+// Additional clinical editors
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openLabs', title: localize2('openLabs', "Open Labs"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new LabsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openEducation', title: localize2('openEducation', "Open Patient Education"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new EducationEditorInput(), { pinned: true }); }
+});
+
+// Operations editors
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openRecall', title: localize2('openRecall', "Open Patient Recall"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new RecallEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openCodes', title: localize2('openCodes', "Open Medical Codes"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new CodesEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openInventory', title: localize2('openInventory', "Open Inventory"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new InventoryEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openPayments', title: localize2('openPayments', "Open Payments"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new PaymentsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openClaims', title: localize2('openClaims', "Open Claims"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ClaimsEditorInput(), { pinned: true }); }
 });

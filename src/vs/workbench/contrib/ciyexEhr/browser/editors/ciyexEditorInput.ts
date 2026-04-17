@@ -66,6 +66,7 @@ export class CalendarEditorInput extends BaseCiyexInput {
 	override get typeId(): string { return CalendarEditorInput.ID; }
 }
 
+// allow-any-unicode-next-line
 // ─── Clinical EditorInputs (patient-scoped, not file-based) ───
 
 export class PatientChartEditorInput extends EditorInput {
@@ -108,6 +109,7 @@ export class EncounterFormEditorInput extends EditorInput {
 	}
 }
 
+// allow-any-unicode-next-line
 // ─── Messaging EditorInput (channel-scoped) ───
 
 export class MessagingEditorInput extends EditorInput {
@@ -148,6 +150,7 @@ export class MessagingEditorInput extends EditorInput {
 	}
 }
 
+// allow-any-unicode-next-line
 // ─── Portal Management EditorInput ───
 
 export class PortalSettingsEditorInput extends EditorInput {
@@ -165,6 +168,7 @@ export class PortalSettingsEditorInput extends EditorInput {
 	}
 }
 
+// allow-any-unicode-next-line
 // ─── Settings EditorInputs (singleton, no params) ───
 
 export class UserManagementEditorInput extends EditorInput {
@@ -197,6 +201,7 @@ export class TasksEditorInput extends EditorInput {
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof TasksEditorInput; }
 }
 
+// allow-any-unicode-next-line
 // ─── Reports EditorInput ───
 
 export class ReportsEditorInput extends EditorInput {
@@ -219,6 +224,7 @@ export class ReportsEditorInput extends EditorInput {
 	}
 }
 
+// allow-any-unicode-next-line
 // ─── Clinical EditorInputs ───
 
 abstract class BaseClinicalEditorInput extends EditorInput {
@@ -279,6 +285,7 @@ export class AuthorizationsEditorInput extends BaseClinicalEditorInput {
 	readonly clinicalIcon = 'verified';
 }
 
+// allow-any-unicode-next-line
 // ─── Appointments EditorInput (singleton) ───
 
 export class AppointmentsEditorInput extends EditorInput {
@@ -289,6 +296,61 @@ export class AppointmentsEditorInput extends EditorInput {
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('checklist'); }
 	get resource(): URI { return URI.from({ scheme: 'ciyex-appointments', path: '/appointments' }); }
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof AppointmentsEditorInput; }
+}
+
+// allow-any-unicode-next-line
+// ─── Additional Clinical EditorInputs ───
+
+export class LabsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexLabs';
+	readonly clinicalId = LabsEditorInput.ID;
+	readonly clinicalLabel = 'Labs';
+	readonly clinicalIcon = 'beaker';
+}
+
+export class EducationEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexEducation';
+	readonly clinicalId = EducationEditorInput.ID;
+	readonly clinicalLabel = 'Patient Education';
+	readonly clinicalIcon = 'book';
+}
+
+// allow-any-unicode-next-line
+// ─── Operations EditorInputs ───
+
+export class RecallEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexRecall';
+	readonly clinicalId = RecallEditorInput.ID;
+	readonly clinicalLabel = 'Patient Recall';
+	readonly clinicalIcon = 'bell';
+}
+
+export class CodesEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexCodes';
+	readonly clinicalId = CodesEditorInput.ID;
+	readonly clinicalLabel = 'Medical Codes';
+	readonly clinicalIcon = 'file';
+}
+
+export class InventoryEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexInventory';
+	readonly clinicalId = InventoryEditorInput.ID;
+	readonly clinicalLabel = 'Inventory';
+	readonly clinicalIcon = 'package';
+}
+
+export class PaymentsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexPayments';
+	readonly clinicalId = PaymentsEditorInput.ID;
+	readonly clinicalLabel = 'Payments';
+	readonly clinicalIcon = 'credit-card';
+}
+
+export class ClaimsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexClaims';
+	readonly clinicalId = ClaimsEditorInput.ID;
+	readonly clinicalLabel = 'Claims';
+	readonly clinicalIcon = 'file';
 }
 
 // Keep backward compat alias

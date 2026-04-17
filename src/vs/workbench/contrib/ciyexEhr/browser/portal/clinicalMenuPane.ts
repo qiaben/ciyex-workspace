@@ -17,14 +17,22 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import * as DOM from '../../../../../base/browser/dom.js';
 
 const CLINICAL_ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
+	// allow-any-unicode-next-line
 	{ icon: '💊', label: 'Prescriptions', description: 'Active Rx, refills, discontinue', command: 'ciyex.openPrescriptions' },
-	{ icon: '🔬', label: 'Lab Orders & Results', description: 'Order volume, status, turnaround', command: 'ciyex.openCds' },
+	// allow-any-unicode-next-line
+	{ icon: '🔬', label: 'Lab Orders & Results', description: 'Order volume, status, turnaround', command: 'ciyex.openLabs' },
+	// allow-any-unicode-next-line
 	{ icon: '💉', label: 'Immunizations', description: 'Vaccine records, CVX codes', command: 'ciyex.openImmunizations' },
+	// allow-any-unicode-next-line
 	{ icon: '📋', label: 'Referrals', description: 'Status workflow, specialist tracking', command: 'ciyex.openReferrals' },
+	// allow-any-unicode-next-line
 	{ icon: '🛡️', label: 'Authorizations', description: 'Prior auth, approve/deny/appeal', command: 'ciyex.openAuthorizations' },
+	// allow-any-unicode-next-line
 	{ icon: '❤️', label: 'Care Plans', description: 'Goals, interventions, categories', command: 'ciyex.openCarePlans' },
+	// allow-any-unicode-next-line
 	{ icon: '🧠', label: 'CDS Rules & Alerts', description: 'Clinical decision support rules', command: 'ciyex.openCds' },
-	{ icon: '📚', label: 'Patient Education', description: 'Education materials and handouts', command: 'ciyex.openCds' },
+	// allow-any-unicode-next-line
+	{ icon: '📚', label: 'Patient Education', description: 'Education materials and handouts', command: 'ciyex.openEducation' },
 ];
 
 export class ClinicalMenuPane extends ViewPane {
@@ -76,6 +84,7 @@ export class ClinicalMenuPane extends ViewPane {
 			desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 			const arrow = DOM.append(row, DOM.$('span'));
+			// allow-any-unicode-next-line
 			arrow.textContent = '›';
 			arrow.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:16px;flex-shrink:0;';
 		}
