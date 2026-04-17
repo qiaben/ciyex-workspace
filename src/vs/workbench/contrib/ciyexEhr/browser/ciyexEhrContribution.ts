@@ -85,6 +85,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		const sidebarToEditor: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.openCalendar',
 			'ciyex.appointments': 'ciyex.openAppointments',
+			'ciyex.tasks': 'ciyex.openTasks',
 			// 'ciyex.patients' intentionally NOT here -- chart opens on patient click, not sidebar click
 			// 'ciyex.messaging' intentionally NOT here -- conversation opens on channel click, not sidebar click
 		};
@@ -95,6 +96,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexAppointments': 'ciyex.appointments',
 			'workbench.input.ciyexPatientChart': 'ciyex.patients',
 			'workbench.input.ciyexEncounterForm': 'ciyex.encounters',
+			'workbench.input.ciyexTasks': 'ciyex.tasks',
 			'workbench.input.ciyexMessaging': 'ciyex.messaging',
 			'workbench.input.ciyexPortalSettings': 'ciyex.portal-management',
 			// Clinical editors -> Clinical sidebar
@@ -120,6 +122,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.appointments': 'ciyex.appointments.view',
 			'ciyex.patients': 'ciyex.patients.list',
 			'ciyex.encounters': 'ciyex.encounters.view',
+			'ciyex.tasks': 'ciyex.tasks.view',
 			'ciyex.messaging': 'ciyex.messaging.channels',
 			'ciyex.portal-management': 'ciyex.portal.docreviews',
 			'ciyex.clinical': 'ciyex.clinical.menu',

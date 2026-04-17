@@ -112,7 +112,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.clinical-list-editor'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
+		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);position:relative;';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'max-width:1200px;margin:0 auto;padding:20px 24px;';
 	}
