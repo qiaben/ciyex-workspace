@@ -84,13 +84,7 @@ jobs:
         shell: pwsh
         run: npm run electron x64
 
-      - name: Install built-in extensions
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run gulp install-builtin-extensions
-
-      - name: Compile
+      - name: Compile core and extensions
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
