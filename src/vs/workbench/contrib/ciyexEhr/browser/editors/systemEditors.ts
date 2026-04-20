@@ -116,67 +116,7 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 }
 
 
-/**
- * Notifications Editor — Notification log, retry, and delivery tracking.
- */
-export class NotificationsEditor extends ClinicalListEditorBase {
-	static readonly ID = 'workbench.editor.ciyexNotifications';
-	protected readonly config: ClinicalEditorConfig = {
-		title: 'Notifications',
-		apiPath: '/api/notifications/log',
-		statsPath: '/api/notifications/log/stats',
-		searchPlaceholder: 'Search by recipient, subject...',
-		editable: false,
-		columns: [
-			{ key: 'channelType', label: 'Channel', width: '80px' },
-			{ key: 'recipientName', label: 'Recipient' },
-			{ key: 'recipient', label: 'Address' },
-			{ key: 'subject', label: 'Subject', width: '1.5fr' },
-			{ key: 'triggerType', label: 'Trigger', width: '80px' },
-			{ key: 'status', label: 'Status', width: '90px' },
-			{ key: 'sentAt', label: 'Sent At', width: '130px' },
-		],
-		statusTabs: [
-			{ label: 'Queued', value: 'queued' },
-			{ label: 'Sent', value: 'sent' },
-			{ label: 'Delivered', value: 'delivered' },
-			{ label: 'Failed', value: 'failed' },
-			{ label: 'Bounced', value: 'bounced' },
-		],
-		cellRenderer: (key, value) => {
-			if (key === 'channelType' && typeof value === 'string') {
-				return value.toUpperCase();
-			}
-			if (key === 'triggerType' && typeof value === 'string') {
-				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-			}
-			if (key === 'sentAt' && typeof value === 'string') {
-				try { return new Date(value).toLocaleString(); } catch { return String(value); }
-			}
-			return String(value ?? '');
-		},
-		actions: [
-			{
-				// allow-any-unicode-next-line
-				label: 'Retry', icon: '🔄', handler: async (item, api, reload) => {
-					if (item.status !== 'failed' && item.status !== 'bounced') { return; }
-					await api.fetch(`/api/notifications/${item.id}/retry`, { method: 'POST' });
-					reload();
-				}
-			},
-			{
-				// allow-any-unicode-next-line
-				label: 'Resend', icon: '📤', handler: async (item, api, reload) => {
-					if (confirm(`Resend notification to ${item.recipientName || item.recipient}?`)) {
-						await api.fetch(`/api/notifications/resend/${item.id}`, { method: 'POST' });
-						reload();
-					}
-				}
-			},
-		],
-	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(NotificationsEditor.ID, group, t, th, s, a); }
-}
+// NotificationsEditor moved to notificationsEditor.ts (custom 5-tab editor)
 
 
 /**
@@ -338,47 +278,7 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 }
 
 
-/**
- * Kiosk Editor — Check-in kiosk log viewer.
- * Shows today's check-ins and their completion status.
- */
-export class KioskEditor extends ClinicalListEditorBase {
-	static readonly ID = 'workbench.editor.ciyexKiosk';
-	protected readonly config: ClinicalEditorConfig = {
-		title: 'Check-in Kiosk',
-		apiPath: '/api/kiosk/checkins',
-		statsPath: '/api/kiosk/stats',
-		searchPlaceholder: 'Search by patient name...',
-		editable: false,
-		columns: [
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'checkInTime', label: 'Check-in Time', width: '130px' },
-			{ key: 'verificationMethod', label: 'Verified By', width: '100px' },
-			{ key: 'demographicsUpdated', label: 'Demographics', width: '100px' },
-			{ key: 'insuranceUpdated', label: 'Insurance', width: '90px' },
-			{ key: 'consentSigned', label: 'Consent', width: '80px' },
-			{ key: 'copayCollected', label: 'Copay', width: '80px' },
-			{ key: 'copayAmount', label: 'Amount', width: '70px' },
-		],
-		cellRenderer: (key, value) => {
-			if (key === 'checkInTime' && typeof value === 'string') {
-				try { return new Date(value).toLocaleString(); } catch { return String(value); }
-			}
-			if (key === 'verificationMethod' && typeof value === 'string') {
-				return value.toUpperCase();
-			}
-			if (typeof value === 'boolean') {
-				// allow-any-unicode-next-line
-				return value ? '✓ Yes' : '✗ No';
-			}
-			if (key === 'copayAmount' && typeof value === 'number') {
-				return `$${value.toFixed(2)}`;
-			}
-			return String(value ?? '');
-		},
-	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(KioskEditor.ID, group, t, th, s, a); }
-}
+// KioskEditor moved to kioskEditor.ts (custom Config + Log dual-tab editor)
 
 
 /**

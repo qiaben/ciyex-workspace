@@ -46,8 +46,10 @@ import {
 	RecallEditor, CodesEditor, InventoryEditor, PaymentsEditor, ClaimsEditor,
 } from './clinicalEditors.js';
 import {
-	ConsentsEditor, NotificationsEditor, FaxEditor, DocScanningEditor, KioskEditor, AuditLogEditor,
+	ConsentsEditor, FaxEditor, DocScanningEditor, AuditLogEditor,
 } from './systemEditors.js';
+import { NotificationsEditor } from './notificationsEditor.js';
+import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
 

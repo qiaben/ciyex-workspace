@@ -106,7 +106,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexReferrals': 'ciyex.clinical',
 			'workbench.input.ciyexAuthorizations': 'ciyex.clinical',
 			'workbench.input.ciyexCarePlans': 'ciyex.clinical',
-			'workbench.input.ciyexCds': 'ciyex.clinical',
+			'workbench.input.ciyexCds': 'ciyex.system',
 			'workbench.input.ciyexEducation': 'ciyex.clinical',
 			// Operations editors -> Operations sidebar
 			'workbench.input.ciyexRecall': 'ciyex.operations',
