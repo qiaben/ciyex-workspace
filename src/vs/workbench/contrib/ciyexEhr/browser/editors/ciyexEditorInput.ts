@@ -353,5 +353,50 @@ export class ClaimsEditorInput extends BaseClinicalEditorInput {
 	readonly clinicalIcon = 'file';
 }
 
+// allow-any-unicode-next-line
+// ─── System EditorInputs (singleton, no params) ───
+
+export class ConsentsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexConsents';
+	readonly clinicalId = ConsentsEditorInput.ID;
+	readonly clinicalLabel = 'Consents';
+	readonly clinicalIcon = 'file';
+}
+
+export class NotificationsEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexNotifications';
+	readonly clinicalId = NotificationsEditorInput.ID;
+	readonly clinicalLabel = 'Notifications';
+	readonly clinicalIcon = 'bell';
+}
+
+export class FaxEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexFax';
+	readonly clinicalId = FaxEditorInput.ID;
+	readonly clinicalLabel = 'Fax';
+	readonly clinicalIcon = 'mail';
+}
+
+export class DocScanningEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexDocScanning';
+	readonly clinicalId = DocScanningEditorInput.ID;
+	readonly clinicalLabel = 'Document Scanning';
+	readonly clinicalIcon = 'file-media';
+}
+
+export class KioskEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexKiosk';
+	readonly clinicalId = KioskEditorInput.ID;
+	readonly clinicalLabel = 'Check-in Kiosk';
+	readonly clinicalIcon = 'device-desktop';
+}
+
+export class AuditLogEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexAuditLog';
+	readonly clinicalId = AuditLogEditorInput.ID;
+	readonly clinicalLabel = 'Audit Log';
+	readonly clinicalIcon = 'list-ordered';
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;

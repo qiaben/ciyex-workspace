@@ -20,6 +20,8 @@ import {
 	LabsEditorInput, EducationEditorInput,
 	// Operations
 	RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput,
+	// System
+	ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -43,6 +45,9 @@ import {
 	// Operations
 	RecallEditor, CodesEditor, InventoryEditor, PaymentsEditor, ClaimsEditor,
 } from './clinicalEditors.js';
+import {
+	ConsentsEditor, NotificationsEditor, FaxEditor, DocScanningEditor, KioskEditor, AuditLogEditor,
+} from './systemEditors.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
 
@@ -88,3 +93,11 @@ reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.
 
 // Appointments
 reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, AppointmentsEditor.ID, localize('appointments', "Appointments")), [new SyncDescriptor(AppointmentsEditorInput)]);
+
+// System editors
+reg.registerEditorPane(EditorPaneDescriptor.create(ConsentsEditor, ConsentsEditor.ID, localize('consents', "Consents")), [new SyncDescriptor(ConsentsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(NotificationsEditor, NotificationsEditor.ID, localize('notifications', "Notifications")), [new SyncDescriptor(NotificationsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(FaxEditor, FaxEditor.ID, localize('fax', "Fax")), [new SyncDescriptor(FaxEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(DocScanningEditor, DocScanningEditor.ID, localize('docScanning', "Document Scanning")), [new SyncDescriptor(DocScanningEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(KioskEditor, KioskEditor.ID, localize('kiosk', "Check-in Kiosk")), [new SyncDescriptor(KioskEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(AuditLogEditor, AuditLogEditor.ID, localize('auditLog', "Audit Log")), [new SyncDescriptor(AuditLogEditorInput)]);

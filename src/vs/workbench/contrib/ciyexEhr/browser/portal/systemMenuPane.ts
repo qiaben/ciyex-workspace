@@ -16,41 +16,73 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
+// allow-any-unicode-next-line
 const ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
+	// allow-any-unicode-next-line
 	{ icon: '⚠️', label: 'Clinical Alerts', description: 'CDS alerts and triggers', command: 'ciyex.openCds' },
-	{ icon: '📜', label: 'Consents', description: 'HIPAA, treatment, research consents', command: 'ciyex.openCalendar' },
-	{ icon: '🔔', label: 'Notifications', description: 'System and portal notifications', command: 'ciyex.openCalendar' },
-	{ icon: '📠', label: 'Fax', description: 'Inbound/outbound fax queue', command: 'ciyex.openCalendar' },
-	{ icon: '📷', label: 'Document Scanning', description: 'OCR upload and processing', command: 'ciyex.openCalendar' },
-	{ icon: '🖥️', label: 'Check-in Kiosk', description: 'Kiosk config and check-ins', command: 'ciyex.openCalendar' },
-	{ icon: '📋', label: 'Audit Log', description: 'System activity and compliance', command: 'ciyex.openCalendar' },
+	// allow-any-unicode-next-line
+	{ icon: '📜', label: 'Consents', description: 'HIPAA, treatment, research consents', command: 'ciyex.openConsents' },
+	// allow-any-unicode-next-line
+	{ icon: '🔔', label: 'Notifications', description: 'System and portal notifications', command: 'ciyex.openNotifications' },
+	// allow-any-unicode-next-line
+	{ icon: '📠', label: 'Fax', description: 'Inbound/outbound fax queue', command: 'ciyex.openFax' },
+	// allow-any-unicode-next-line
+	{ icon: '📷', label: 'Document Scanning', description: 'OCR upload and processing', command: 'ciyex.openDocScanning' },
+	// allow-any-unicode-next-line
+	{ icon: '🖥️', label: 'Check-in Kiosk', description: 'Kiosk config and check-ins', command: 'ciyex.openKiosk' },
+	// allow-any-unicode-next-line
+	{ icon: '📋', label: 'Audit Log', description: 'System activity and compliance', command: 'ciyex.openAuditLog' },
 ];
 
+// allow-any-unicode-next-line
 const SETTINGS_ITEMS: Array<{ icon: string; label: string; description: string; command: string }> = [
-	// Matches EHR UI /settings/ sidebar — all settings categories
+	// allow-any-unicode-next-line
 	{ icon: '🏥', label: 'Practice', description: 'Practice name, address, NPI, tax ID', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🔄', label: 'Clinical Workflow', description: 'Encounter types, visit reasons, templates', command: 'ciyex.openEncounterConfig' },
+	// allow-any-unicode-next-line
 	{ icon: '📅', label: 'Calendar', description: 'Appointment types, scheduling, colors', command: 'ciyex.openCalendarColors' },
+	// allow-any-unicode-next-line
 	{ icon: '💰', label: 'Billing', description: 'Fee schedules, superbills, statements', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '💊', label: 'Prescriptions', description: 'E-prescribing, pharmacy, formulary', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🔬', label: 'Lab & Imaging', description: 'Lab interfaces, order sets, results', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📹', label: 'Telehealth', description: 'Video visit config, waiting room', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🌐', label: 'Patient Portal', description: 'Portal features, navigation, forms', command: 'ciyex.openPortalSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🔔', label: 'Notifications', description: 'Email, SMS, push notification settings', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🔒', label: 'Security', description: 'Password policy, session timeout, 2FA', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📊', label: 'Audit & Compliance', description: 'Audit trail, HIPAA compliance', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '✍️', label: 'E-Sign & Consent', description: 'Consent forms, e-signature config', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📄', label: 'Documents', description: 'Document categories, templates, scanning', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🛡️', label: 'Insurance', description: 'Payer directory, eligibility, ERA', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '👥', label: 'Roles & Permissions', description: 'RBAC, FHIR scopes, user management', command: 'ciyex.openUserManagement' },
+	// allow-any-unicode-next-line
 	{ icon: '🎛️', label: 'Features', description: 'Feature flags, module toggles', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🤖', label: 'AI', description: 'AI models, token budgets, usage tracking', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🖥️', label: 'Display', description: 'Theme, font size, layout preferences', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📋', label: 'Patient Flow Board', description: 'Flow board columns and statuses', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '🖨️', label: 'Print & PDF', description: 'Print templates, PDF generation', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📈', label: 'Reporting', description: 'Report schedules, auto-reports', command: 'ciyex.openSettings' },
+	// allow-any-unicode-next-line
 	{ icon: '📐', label: 'Chart Layout', description: 'Patient chart tabs and field layout', command: 'ciyex.openChartLayout' },
+	// allow-any-unicode-next-line
 	{ icon: '📑', label: 'Menu Configuration', description: 'Sidebar menu items and navigation', command: 'ciyex.openMenuConfig' },
+	// allow-any-unicode-next-line
 	{ icon: '📋', label: 'Encounter Settings', description: 'Encounter form sections and fields', command: 'ciyex.openEncounterConfig' },
 ];
 
@@ -89,6 +121,7 @@ export class SystemMenuPane extends ViewPane {
 			(col.firstChild as HTMLElement).style.cssText = 'font-weight:500;';
 			DOM.append(col, DOM.$('div')).textContent = item.description;
 			(col.lastChild as HTMLElement).style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+			// allow-any-unicode-next-line
 			DOM.append(row, DOM.$('span')).textContent = '›';
 			(row.lastChild as HTMLElement).style.cssText = 'color:var(--vscode-descriptionForeground);font-size:16px;flex-shrink:0;';
 		}

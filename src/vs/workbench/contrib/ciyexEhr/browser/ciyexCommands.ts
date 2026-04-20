@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -576,4 +576,30 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openClaims', title: localize2('openClaims', "Open Claims"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ClaimsEditorInput(), { pinned: true }); }
+});
+
+// System editors
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openConsents', title: localize2('openConsents', "Open Consents"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ConsentsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openNotifications', title: localize2('openNotifications', "Open Notifications"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new NotificationsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openFax', title: localize2('openFax', "Open Fax"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new FaxEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openDocScanning', title: localize2('openDocScanning', "Open Document Scanning"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new DocScanningEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openKiosk', title: localize2('openKiosk', "Open Check-in Kiosk"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new KioskEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openAuditLog', title: localize2('openAuditLog', "Open Audit Log"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new AuditLogEditorInput(), { pinned: true }); }
 });

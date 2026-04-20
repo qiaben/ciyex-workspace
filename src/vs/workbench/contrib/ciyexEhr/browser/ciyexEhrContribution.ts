@@ -114,6 +114,13 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexInventory': 'ciyex.operations',
 			'workbench.input.ciyexPayments': 'ciyex.operations',
 			'workbench.input.ciyexClaims': 'ciyex.operations',
+			// System editors -> System sidebar
+			'workbench.input.ciyexConsents': 'ciyex.system',
+			'workbench.input.ciyexNotifications': 'ciyex.system',
+			'workbench.input.ciyexFax': 'ciyex.system',
+			'workbench.input.ciyexDocScanning': 'ciyex.system',
+			'workbench.input.ciyexKiosk': 'ciyex.system',
+			'workbench.input.ciyexAuditLog': 'ciyex.system',
 		};
 
 		// Container ID -> view ID inside it (force-open view when container activates)
@@ -127,6 +134,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.portal-management': 'ciyex.portal.docreviews',
 			'ciyex.clinical': 'ciyex.clinical.menu',
 			'ciyex.operations': 'ciyex.operations.menu',
+			'ciyex.system': 'ciyex.system.menu',
 		};
 
 		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)
