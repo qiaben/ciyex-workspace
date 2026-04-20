@@ -17,6 +17,7 @@ import { ScheduleSidebarPane } from './scheduleSidebarPane.js';
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
 
+// allow-any-unicode-next-line
 // ─── Icons (mapped from Lucide names in API to VS Code codicons) ─────
 
 const icons: Record<string, ReturnType<typeof registerIcon>> = {
@@ -31,47 +32,48 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	operations: registerIcon('ciyex-operations', Codicon.briefcase, localize('cOperations', 'Operations')),
 	reports: registerIcon('ciyex-reports', Codicon.graph, localize('cReports', 'Reports')),
 	system: registerIcon('ciyex-system', Codicon.tools, localize('cSystem', 'System')),
-	hub: registerIcon('ciyex-hub', Codicon.library, localize('cHub', 'Ciyex Hub')),
 	developer: registerIcon('ciyex-developer', Codicon.code, localize('cDeveloper', 'Developer Portal')),
 };
 
+// allow-any-unicode-next-line
 // ─── Helper to register a ViewContainer + GenericListPane ────────────
 
-function reg(id: string, title: string, icon: ReturnType<typeof registerIcon>, order: number): ViewContainer {
+function reg(id: string, title: ReturnType<typeof localize2>, icon: ReturnType<typeof registerIcon>, order: number): ViewContainer {
 	return viewContainerRegistry.registerViewContainer({
 		id,
-		title: localize2(id, title),
+		title,
 		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [id, {}]),
 		icon,
 		order,
 	}, ViewContainerLocation.Sidebar);
 }
 
-// ─── All 13 sidebar ViewContainers (matching API menu items) ─────────
+// allow-any-unicode-next-line
+// ─── All 12 sidebar ViewContainers (matching API menu items) ─────────
 // Settings is in gear menu only, not sidebar
 
 // Leaf items (no children - single GenericListPane each)
-export const CALENDAR_CONTAINER = reg('ciyex.calendar', 'Calendar', icons.calendar, 1);
-export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', 'Appointments', icons.appointments, 2);
-export const PATIENTS_CONTAINER = reg('ciyex.patients', 'Patients', icons.patients, 3);
-export const ENCOUNTERS_CONTAINER = reg('ciyex.encounters', 'Encounters', icons.encounters, 4);
-export const TASKS_CONTAINER = reg('ciyex.tasks', 'Tasks', icons.tasks, 5);
-export const MESSAGING_CONTAINER = reg('ciyex.messaging', 'Messaging', icons.messaging, 6);
+export const CALENDAR_CONTAINER = reg('ciyex.calendar', localize2('ciyex.calendar', "Calendar"), icons.calendar, 1);
+export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', localize2('ciyex.appointments', "Appointments"), icons.appointments, 2);
+export const PATIENTS_CONTAINER = reg('ciyex.patients', localize2('ciyex.patients', "Patients"), icons.patients, 3);
+export const ENCOUNTERS_CONTAINER = reg('ciyex.encounters', localize2('ciyex.encounters', "Encounters"), icons.encounters, 4);
+export const TASKS_CONTAINER = reg('ciyex.tasks', localize2('ciyex.tasks', "Tasks"), icons.tasks, 5);
+export const MESSAGING_CONTAINER = reg('ciyex.messaging', localize2('ciyex.messaging', "Messaging"), icons.messaging, 6);
 
 // Parents (with children - multiple GenericListPanes)
-export const PORTAL_MGMT_CONTAINER = reg('ciyex.portal-management', 'Portal Management', icons.portalMgmt, 7);
-export const CLINICAL_CONTAINER = reg('ciyex.clinical', 'Clinical', icons.clinical, 8);
-export const OPERATIONS_CONTAINER = reg('ciyex.operations', 'Operations', icons.operations, 9);
-export const REPORTS_CONTAINER = reg('ciyex.reports', 'Reports', icons.reports, 10);
-export const SYSTEM_CONTAINER = reg('ciyex.system', 'System', icons.system, 11);
+export const PORTAL_MGMT_CONTAINER = reg('ciyex.portal-management', localize2('ciyex.portal-management', "Portal Management"), icons.portalMgmt, 7);
+export const CLINICAL_CONTAINER = reg('ciyex.clinical', localize2('ciyex.clinical', "Clinical"), icons.clinical, 8);
+export const OPERATIONS_CONTAINER = reg('ciyex.operations', localize2('ciyex.operations', "Operations"), icons.operations, 9);
+export const REPORTS_CONTAINER = reg('ciyex.reports', localize2('ciyex.reports', "Reports"), icons.reports, 10);
+export const SYSTEM_CONTAINER = reg('ciyex.system', localize2('ciyex.system', "System"), icons.system, 11);
 
 // Settings — removed separate sidebar, items are in VS Code Settings (Cmd+,) and System menu
 // The SettingsListPane items (User Mgmt, Roles, Portal, etc.) are accessible via top menu System → Settings
 
-// Hub and Developer
-export const HUB_CONTAINER = reg('ciyex.hub', 'Ciyex Hub', icons.hub, 13);
-export const DEVELOPER_CONTAINER = reg('ciyex.developer', 'Developer Portal', icons.developer, 13);
+// Developer
+export const DEVELOPER_CONTAINER = reg('ciyex.developer', localize2('ciyex.developer', "Developer Portal"), icons.developer, 12);
 
+// allow-any-unicode-next-line
 // ─── GenericListPane Configs ─────────────────────────────────────────
 
 // Calendar
@@ -204,6 +206,7 @@ GenericListPane.configs.set('ciyex.system.auditlog', {
 	apiPath: '/api/admin/audit-log', columns: [{ key: 'user' }, { key: 'action' }, { key: 'timestamp' }], iconId: 'list-ordered', emptyMessage: 'No audit entries',
 });
 
+// allow-any-unicode-next-line
 // ─── Views ──────────────────────────────────────────────────────────────
 
 // Calendar - rich schedule sidebar (today's timeline + upcoming + stats)
@@ -253,7 +256,6 @@ viewsRegistry.registerViews([
 	{ id: SystemMenuPane.ID, name: localize2('systemMenu', "System"), ctorDescriptor: new SyncDescriptor(SystemMenuPane) },
 ], SYSTEM_CONTAINER);
 
-// Hub and Developer - placeholder views
-viewsRegistry.registerViews([{ id: 'ciyex.hub.view', name: localize2('hubBrowse', "Browse Apps"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], HUB_CONTAINER);
+// Developer - placeholder view
 viewsRegistry.registerViews([{ id: 'ciyex.developer.view', name: localize2('devPortal', "API & Webhooks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], DEVELOPER_CONTAINER);
 
