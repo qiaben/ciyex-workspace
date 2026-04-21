@@ -256,6 +256,7 @@ viewsRegistry.registerViews([
 	{ id: SystemMenuPane.ID, name: localize2('systemMenu', "System"), ctorDescriptor: new SyncDescriptor(SystemMenuPane) },
 ], SYSTEM_CONTAINER);
 
-// Developer - placeholder view
-viewsRegistry.registerViews([{ id: 'ciyex.developer.view', name: localize2('devPortal', "API & Webhooks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], DEVELOPER_CONTAINER);
+// Developer Portal — menu pane with all developer sections
+import { DeveloperMenuPane } from './portal/developerMenuPane.js';
+viewsRegistry.registerViews([{ id: DeveloperMenuPane.ID, name: localize2('devPortal', "Developer Portal"), ctorDescriptor: new SyncDescriptor(DeveloperMenuPane) }], DEVELOPER_CONTAINER);
 

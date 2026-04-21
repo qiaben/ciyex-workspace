@@ -33,8 +33,6 @@ const REPORT_CATEGORIES: ReportCategory[] = [
 			{ label: 'Medication & Prescriptions', description: 'Prescribing patterns, drug classes, refills' },
 			{ label: 'Referral Tracking', description: 'Completion rates, turnaround, outgoing/incoming' },
 			{ label: 'Immunizations', description: 'Vaccine coverage, compliance rates, overdue' },
-			{ label: 'Care Gaps', description: 'Preventive care opportunities, HEDIS measures' },
-			{ label: 'No-Show Analysis', description: 'No-show rates, patterns, productivity impact' },
 			{ label: 'Problem List', description: 'Active diagnoses, patient conditions' },
 		],
 	},
@@ -42,24 +40,26 @@ const REPORT_CATEGORIES: ReportCategory[] = [
 		label: 'Financial', color: '#10b981',
 		reports: [
 			{ label: 'Revenue Overview', description: 'Monthly revenue, charge trends, payer mix' },
+			{ label: 'AR Aging', description: 'Receivable aging buckets (0-30, 31-60, 61-90, 90+)' },
+			{ label: 'Denial Management', description: 'Denial reasons, appeal rates, recovery trends' },
 			{ label: 'Payer Mix', description: 'Claims by payer, collection rates, denials' },
 			{ label: 'CPT Utilization', description: 'Procedure code usage, top procedures, revenue' },
-			{ label: 'AR Aging', description: 'Receivable aging buckets (0-30, 31-60, 61-90, 90+)' },
 		],
 	},
 	{
 		label: 'Operational', color: '#8b5cf6',
 		reports: [
 			{ label: 'Appointment Volume', description: 'Booking trends, scheduling utilization' },
+			{ label: 'No-Show Analysis', description: 'No-show rates, patterns, productivity impact' },
 			{ label: 'Provider Productivity', description: 'Encounters/revenue per provider, RVU tracking' },
-			{ label: 'Document Completion', description: 'Unsigned notes, incomplete encounters' },
+			{ label: 'Scheduling Utilization', description: 'Slot usage, overbooking, provider capacity' },
 		],
 	},
 	{
 		label: 'Compliance', color: '#f59e0b',
 		reports: [
-			{ label: 'Quality Measures', description: 'MIPS measures, performance benchmarking' },
-			{ label: 'Audit Log', description: 'System activity, user actions, compliance' },
+			{ label: 'Quality Measures', description: 'Clinical quality measures, MIPS benchmarking' },
+			{ label: 'Care Gaps', description: 'Preventive care opportunities, HEDIS measures' },
 		],
 	},
 	{
@@ -72,7 +72,14 @@ const REPORT_CATEGORIES: ReportCategory[] = [
 	{
 		label: 'Administrative', color: '#64748b',
 		reports: [
+			{ label: 'Audit Log', description: 'System activity, user actions, compliance trail' },
 			{ label: 'Portal Usage', description: 'Enrollment, active users, message volume' },
+			{ label: 'Document Completion', description: 'Unsigned notes, incomplete encounters' },
+		],
+	},
+	{
+		label: 'AI Usage', color: '#7c3aed',
+		reports: [
 			{ label: 'AI Usage', description: 'Token usage, model costs, performance metrics' },
 		],
 	},
@@ -149,6 +156,7 @@ export class ReportsPane extends ViewPane {
 				desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
 				const arrow = DOM.append(row, DOM.$('span'));
+				// allow-any-unicode-next-line
 				arrow.textContent = '›';
 				arrow.style.cssText = 'color:var(--vscode-descriptionForeground);flex-shrink:0;';
 			}

@@ -398,5 +398,26 @@ export class AuditLogEditorInput extends BaseClinicalEditorInput {
 	readonly clinicalIcon = 'list-ordered';
 }
 
+// allow-any-unicode-next-line
+// ─── Developer Portal EditorInput ───
+
+export class DeveloperPortalEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexDeveloperPortal';
+	override get typeId(): string { return DeveloperPortalEditorInput.ID; }
+
+	constructor(
+		readonly section: string = 'overview',
+	) { super(); }
+
+	override getName(): string { return 'Developer Portal'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('code'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-developer', path: `/${this.section}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof DeveloperPortalEditorInput && this.section === other.section;
+	}
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;

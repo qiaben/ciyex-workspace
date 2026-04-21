@@ -19,6 +19,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#14b8a6'];
 const INPUT_STYLE = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
+// allow-any-unicode-next-line
 // ─── Report definitions ───
 interface ReportDef {
 	apiPath: string;
@@ -46,10 +47,19 @@ function getReportDef(key: string): ReportDef {
 		case 'ar-aging': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }, { key: 'serviceDate', label: 'Service Date' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'AR by Status' };
 		case 'audit-log': return { apiPath: '/api/admin/audit-log?page=0&size=200', columns: [{ key: 'user', label: 'User' }, { key: 'action', label: 'Action' }, { key: 'resourceType', label: 'Resource' }, { key: 'timestamp', label: 'Timestamp' }], chartType: 'bar', chartGroupKey: 'action', chartLabel: 'Actions by Type' };
 		case 'portal-usage': return { apiPath: '/api/portal/notifications/my?page=0&size=200', columns: [{ key: 'title', label: 'Title' }, { key: 'type', label: 'Type' }, { key: 'createdAt', label: 'Date' }], chartType: 'bar', chartGroupKey: 'type', chartLabel: 'Notifications by Type' };
+		case 'denial-management': return { apiPath: '/api/fhir-resource/claims?page=0&size=500&status=denied', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'denialReason', label: 'Denial Reason' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }, { key: 'serviceDate', label: 'Service Date' }], chartType: 'bar', chartGroupKey: 'denialReason', chartLabel: 'Denials by Reason' };
+		case 'cpt-utilization': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'procedureCode', label: 'CPT Code' }, { key: 'procedureDisplay', label: 'Procedure' }, { key: 'patientRefDisplay', label: 'Patient' }, { key: 'providerDisplay', label: 'Provider' }, { key: 'totalAmount', label: 'Charge' }, { key: 'serviceDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'procedureCode', chartLabel: 'Top CPT Codes' };
+		case 'scheduling-utilization': return { apiPath: '/api/fhir-resource/appointments?page=0&size=500', columns: [{ key: 'patientDisplay', label: 'Patient' }, { key: 'appointmentType', label: 'Type' }, { key: 'providerName', label: 'Provider' }, { key: 'status', label: 'Status' }, { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }], chartType: 'bar', chartGroupKey: 'providerName', chartLabel: 'Slots by Provider' };
+		case 'quality-measures': return { apiPath: '/api/fhir-resource/care-plans?page=0&size=500', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'title', label: 'Measure' }, { key: 'category', label: 'Category' }, { key: 'status', label: 'Status' }, { key: 'period', label: 'Period' }], chartType: 'pie', chartGroupKey: 'status', chartLabel: 'Measures by Status' };
+		case 'risk-stratification': return { apiPath: '/api/fhir-resource/patients?page=0&size=500', columns: [{ key: 'name', label: 'Patient' }, { key: 'gender', label: 'Gender' }, { key: 'birthDate', label: 'DOB' }, { key: 'riskScore', label: 'Risk Score' }, { key: 'riskLevel', label: 'Risk Level' }, { key: 'active', label: 'Status' }], chartType: 'pie', chartGroupKey: 'riskLevel', chartLabel: 'Risk Distribution' };
+		case 'disease-registry': return { apiPath: '/api/fhir-resource/conditions?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'code', label: 'Condition' }, { key: 'clinicalStatus', label: 'Status' }, { key: 'verificationStatus', label: 'Verification' }, { key: 'onsetDate', label: 'Onset' }, { key: 'recordedDate', label: 'Recorded' }], chartType: 'bar', chartGroupKey: 'code', chartLabel: 'Top Conditions' };
+		case 'document-completion': return { apiPath: '/api/fhir-resource/encounters?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'providerDisplay', label: 'Provider' }, { key: 'type', label: 'Type' }, { key: 'status', label: 'Status' }, { key: 'startDate', label: 'Date' }, { key: 'noteStatus', label: 'Note Status' }], chartType: 'pie', chartGroupKey: 'status', chartLabel: 'Completion Status' };
+		case 'ai-usage': return { apiPath: '/api/app-proxy/ask-ciya/api/audit?page=0&size=200', columns: [{ key: 'model', label: 'Model' }, { key: 'inputTokens', label: 'Input Tokens' }, { key: 'outputTokens', label: 'Output Tokens' }, { key: 'cost', label: 'Cost ($)' }, { key: 'latencyMs', label: 'Latency (ms)' }, { key: 'createdAt', label: 'Date' }], chartType: 'bar', chartGroupKey: 'model', chartLabel: 'Usage by Model' };
 		default: return { apiPath: '/api/fhir-resource/patients?page=0&size=50', columns: [{ key: 'name', label: 'Name' }, { key: 'status', label: 'Status' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Data Distribution' };
 	}
 }
 
+// allow-any-unicode-next-line
 // ─── Reports Editor ───
 
 export class ReportsEditor extends EditorPane {
@@ -93,6 +103,7 @@ export class ReportsEditor extends EditorPane {
 	private async _loadAndRender(input: ReportsEditorInput): Promise<void> {
 		DOM.clearNode(this.contentEl);
 
+		// allow-any-unicode-next-line
 		// ─── Header ───
 		const header = DOM.append(this.contentEl, DOM.$('div'));
 		header.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px;';
@@ -105,14 +116,17 @@ export class ReportsEditor extends EditorPane {
 
 		// Export buttons
 		const exportBtn = DOM.append(header, DOM.$('button'));
+		// allow-any-unicode-next-line
 		exportBtn.textContent = '📥 Export CSV';
 		exportBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:11px;';
 		exportBtn.addEventListener('click', () => this._exportCsv(input.reportLabel));
 		const printBtn = DOM.append(header, DOM.$('button'));
+		// allow-any-unicode-next-line
 		printBtn.textContent = '🖨️ Print';
 		printBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:11px;';
-		printBtn.addEventListener('click', () => window.print());
+		printBtn.addEventListener('click', () => DOM.getActiveWindow().print());
 
+		// allow-any-unicode-next-line
 		// ─── Filters ───
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
 		filters.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:rgba(0,122,204,0.03);';
@@ -143,18 +157,22 @@ export class ReportsEditor extends EditorPane {
 
 		DOM.append(filters, DOM.$('span')).style.flex = '1';
 		const runBtn = DOM.append(filters, DOM.$('button'));
+		// allow-any-unicode-next-line
 		runBtn.textContent = '▶ Run Report';
 		runBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
 		runBtn.addEventListener('click', () => this._loadAndRender(input));
 
+		// allow-any-unicode-next-line
 		// ─── KPI cards ───
 		this.kpiEl = DOM.append(this.contentEl, DOM.$('div'));
 		this.kpiEl.style.cssText = 'margin-bottom:16px;';
 
+		// allow-any-unicode-next-line
 		// ─── Chart ───
 		this.chartEl = DOM.append(this.contentEl, DOM.$('div'));
 		this.chartEl.style.cssText = 'margin-bottom:16px;padding:14px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
 
+		// allow-any-unicode-next-line
 		// ─── Data table ───
 		this.tableEl = DOM.append(this.contentEl, DOM.$('div'));
 
@@ -256,6 +274,7 @@ export class ReportsEditor extends EditorPane {
 				valEl.textContent = String(value);
 				valEl.style.cssText = 'font-size:10px;font-weight:600;';
 				const lblEl = DOM.append(col, DOM.$('div'));
+				// allow-any-unicode-next-line
 				lblEl.textContent = label.length > 12 ? label.substring(0, 12) + '…' : label;
 				lblEl.style.cssText = 'font-size:8px;color:var(--vscode-descriptionForeground);text-align:center;max-width:100%;overflow:hidden;';
 			}

@@ -22,6 +22,8 @@ import {
 	RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput,
 	// System
 	ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput,
+	// Developer Portal
+	DeveloperPortalEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -51,6 +53,7 @@ import {
 import { NotificationsEditor } from './notificationsEditor.js';
 import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
+import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
@@ -103,3 +106,6 @@ reg.registerEditorPane(EditorPaneDescriptor.create(FaxEditor, FaxEditor.ID, loca
 reg.registerEditorPane(EditorPaneDescriptor.create(DocScanningEditor, DocScanningEditor.ID, localize('docScanning', "Document Scanning")), [new SyncDescriptor(DocScanningEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(KioskEditor, KioskEditor.ID, localize('kiosk', "Check-in Kiosk")), [new SyncDescriptor(KioskEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(AuditLogEditor, AuditLogEditor.ID, localize('auditLog', "Audit Log")), [new SyncDescriptor(AuditLogEditorInput)]);
+
+// Developer Portal
+reg.registerEditorPane(EditorPaneDescriptor.create(DeveloperPortalEditor, DeveloperPortalEditor.ID, localize('developerPortal', "Developer Portal")), [new SyncDescriptor(DeveloperPortalEditorInput)]);

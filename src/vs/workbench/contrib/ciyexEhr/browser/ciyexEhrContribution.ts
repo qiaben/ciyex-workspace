@@ -88,6 +88,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.tasks': 'ciyex.openTasks',
 			// 'ciyex.patients' intentionally NOT here -- chart opens on patient click, not sidebar click
 			// 'ciyex.messaging' intentionally NOT here -- conversation opens on channel click, not sidebar click
+			// 'ciyex.developer' intentionally NOT here -- sections open on menu item click, not sidebar click
 		};
 
 		// Editor typeId -> sidebar container ID (editor tab click switches sidebar)
@@ -121,6 +122,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'workbench.input.ciyexDocScanning': 'ciyex.system',
 			'workbench.input.ciyexKiosk': 'ciyex.system',
 			'workbench.input.ciyexAuditLog': 'ciyex.system',
+			// Developer Portal
+			'workbench.input.ciyexDeveloperPortal': 'ciyex.developer',
 		};
 
 		// Container ID -> view ID inside it (force-open view when container activates)
@@ -135,6 +138,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.clinical': 'ciyex.clinical.menu',
 			'ciyex.operations': 'ciyex.operations.menu',
 			'ciyex.system': 'ciyex.system.menu',
+			'ciyex.developer': 'ciyex.developer.menu',
 		};
 
 		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)
