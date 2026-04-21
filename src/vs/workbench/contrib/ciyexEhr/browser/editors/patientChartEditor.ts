@@ -6,7 +6,7 @@
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -20,15 +20,13 @@ import { PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditor
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
-// ─── Types ───
+// --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
-interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[] }
+interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[] }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string> }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
-
-// Colors and icons come from chart-layout.json per tab (color + emoji fields)
-// No hardcoded colors — everything from config
+interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
 const FHIR_MAP: Record<string, string> = {
 	'Patient': '/api/fhir-resource/demographics', 'Encounter': '/api/fhir-resource/encounters',
@@ -39,87 +37,190 @@ const FHIR_MAP: Record<string, string> = {
 	'Appointment': '/api/fhir-resource/appointments', 'Coverage': '/api/fhir-resource/insurance-coverage',
 	'ServiceRequest': '/api/fhir-resource/service-requests', 'CarePlan': '/api/fhir-resource/care-plans',
 	'Consent': '/api/fhir-resource/consents', 'FamilyMemberHistory': '/api/fhir-resource/family-member-histories',
+	'Claim': '/api/fhir-resource/claims', 'PaymentReconciliation': '/api/fhir-resource/payment-reconciliations',
+	'RelatedPerson': '/api/fhir-resource/related-persons', 'Organization': '/api/fhir-resource/organizations',
 };
+
+// Default chart layout matching the screenshots. Merged with user's chart-layout.json
+// so admins can still customize; defaults fill any gaps.
+const DEFAULT_CATEGORIES: ChartCategory[] = [
+	{
+		key: 'overview', label: 'Overview', position: 0, tabs: [
+			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: true, display: 'custom', panel: 'main', fhirResources: [] },
+			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
+			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Observation'] },
+			{ key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'] },
+			{ key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'] },
+		],
+	},
+	{
+		key: 'clinical', label: 'Clinical', position: 1, tabs: [
+			{ key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'medications', label: 'Medications', icon: 'Pill', emoji: '\u{1F48A}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['MedicationRequest'] },
+			{ key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'] },
+			{ key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Immunization'] },
+			{ key: 'procedures', label: 'Procedures', icon: 'Scissors', emoji: '\u{2702}\u{FE0F}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['Procedure'] },
+			{ key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'] },
+		],
+	},
+	{
+		key: 'encounters', label: 'Encounters', position: 2, tabs: [
+			{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', emoji: '\u{1F4CB}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Encounter'] },
+			{ key: 'appointments', label: 'Appointments', icon: 'Calendar', emoji: '\u{1F4C5}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Appointment'] },
+			{ key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'] },
+		],
+	},
+	{
+		key: 'billing', label: 'Billing', position: 3, tabs: [
+			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
+			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
+			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
+		],
+	},
+	{
+		key: 'financial', label: 'Financial', position: 4, tabs: [
+			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		],
+	},
+	{
+		key: 'other', label: 'Other', position: 5, tabs: [
+			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		],
+	},
+	{
+		key: 'portal', label: 'Portal', position: 6, tabs: [
+			{ key: 'portal-demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		],
+	},
+	{
+		key: 'general', label: 'General', position: 7, tabs: [
+			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
+			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		],
+	},
+];
+
+const SIDEBAR_COLLAPSED_KEY = 'ciyex.patientChart.sidebarCollapsed';
+const LAST_TAB_KEY_PREFIX = 'ciyex.patientChart.lastTab.';
 
 export class PatientChartEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexPatientChart';
 
 	private root!: HTMLElement;
-	private tocNav!: HTMLElement;
-	private scrollArea!: HTMLElement;
 	private headerBar!: HTMLElement;
-	private searchInput!: HTMLInputElement;
+	private sidebarEl!: HTMLElement;
+	private mainEl!: HTMLElement;
 	private patientId = '';
 	private patientName = '';
 	private patientData: Record<string, unknown> = {};
 	private categories: ChartCategory[] = [];
+	private activeTab = 'dashboard';
+	private sidebarCollapsed = false;
+	private quickInfo: QuickInfo = { allergies: '—', problems: '—', history: '—', vitals: '—' };
 	private readonly _configHome: URI;
-	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
+	private readonly _tabDataCache = new Map<string, { config: FieldConfig | null; data: Record<string, unknown>[] }>();
+	private readonly _tabNavMap = new Map<string, HTMLElement>();
+	private readonly _quickInfoValEls = new Map<string, HTMLElement>();
 
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
-		@IStorageService storageService: IStorageService,
+		@IStorageService private readonly storageSvc: IStorageService,
 		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 	) {
-		super(PatientChartEditor.ID, group, telemetryService, themeService, storageService);
+		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
+		this.sidebarCollapsed = this.storageSvc.getBoolean(SIDEBAR_COLLAPSED_KEY, StorageScope.PROFILE, false);
 	}
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.ciyex-patient-chart'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 
-		// ─ Header ─
+		// Header bar
 		this.headerBar = DOM.append(this.root, DOM.$('.chart-header'));
-		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;align-items:center;gap:10px;';
+		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;align-items:center;gap:10px;background:var(--vscode-editor-background);';
 
-		// ─ Body: TOC + scrollable main ─
+		// Body: sidebar + main
 		const body = DOM.append(this.root, DOM.$('.chart-body'));
-		body.style.cssText = 'flex:1;display:flex;overflow:hidden;';
+		body.style.cssText = 'flex:1;display:flex;overflow:hidden;min-height:0;';
 
-		this.tocNav = DOM.append(body, DOM.$('.chart-toc'));
-		this.tocNav.style.cssText = 'width:200px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--vscode-editorWidget-border);padding:8px 0;';
+		this.sidebarEl = DOM.append(body, DOM.$('.chart-sidebar'));
+		this.sidebarEl.style.cssText = 'width:240px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background, var(--vscode-editor-background));';
 
-		this.scrollArea = DOM.append(body, DOM.$('.chart-scroll'));
-		this.scrollArea.style.cssText = 'flex:1;overflow-y:auto;';
+		this.mainEl = DOM.append(body, DOM.$('.chart-main'));
+		this.mainEl.style.cssText = 'flex:1;min-width:0;overflow-y:auto;padding:20px 24px;';
 	}
 
 	override async setInput(input: PatientChartEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		this.patientId = input.patientId;
 		this.patientName = input.patientName;
-		this.tocItems = [];
+		this._tabDataCache.clear();
+		this._tabNavMap.clear();
+		this._quickInfoValEls.clear();
+		this.activeTab = this.storageSvc.get(LAST_TAB_KEY_PREFIX + this.patientId, StorageScope.PROFILE, 'dashboard');
 
 		await Promise.all([this._loadLayout(), this._loadPatient()]);
 		if (token.isCancellationRequested) { return; }
 
 		this._renderHeader();
-		this._renderToc();
-		await this._renderSections();
-		this._setupScrollSync();
+		this._renderSidebar();
+		this._renderMain();
+		void this._loadQuickInfo();
 	}
 
-	// ═══ Data loading ═══
+	override clearInput(): void {
+		this._tabDataCache.clear();
+		this._tabNavMap.clear();
+		this._quickInfoValEls.clear();
+		super.clearInput();
+	}
+
+	// --- Data loading ---
 
 	private async _loadLayout(): Promise<void> {
+		let userCategories: ChartCategory[] = [];
 		try {
 			const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'chart-layout.json'));
 			const json = JSON.parse(file.value.toString());
-			this.categories = (json.categories || [])
-				.filter((c: ChartCategory) => !c.hideFromChart)
-				.sort((a: ChartCategory, b: ChartCategory) => a.position - b.position);
-		} catch {
-			this.categories = [
-				{ key: 'general', label: 'General', position: 0, tabs: [{ key: 'demographics', label: 'Demographics', icon: '', position: 0, visible: true, fhirResources: ['Patient'] }] },
-				{ key: 'clinical', label: 'Clinical', position: 1, tabs: [{ key: 'encounters', label: 'Encounters', icon: '', position: 0, visible: true, fhirResources: ['Encounter'] }] },
-			];
+			userCategories = (json.categories || []).filter((c: ChartCategory) => !c.hideFromChart);
+		} catch { /* no user config, fall through to defaults */ }
+
+		// Merge: user categories override defaults by key; unknown user categories appended.
+		const byKey = new Map<string, ChartCategory>();
+		for (const cat of DEFAULT_CATEGORIES) { byKey.set(cat.key, { ...cat, tabs: [...cat.tabs] }); }
+		for (const userCat of userCategories) {
+			const existing = byKey.get(userCat.key);
+			if (existing) {
+				// Merge tabs by key, user tabs override
+				const tabByKey = new Map<string, ChartTab>();
+				for (const t of existing.tabs) { tabByKey.set(t.key, t); }
+				for (const t of userCat.tabs || []) { tabByKey.set(t.key, t); }
+				existing.tabs = Array.from(tabByKey.values());
+				existing.label = userCat.label || existing.label;
+				existing.position = userCat.position ?? existing.position;
+			} else {
+				byKey.set(userCat.key, userCat);
+			}
 		}
+		this.categories = Array.from(byKey.values())
+			.sort((a, b) => a.position - b.position)
+			.map(cat => ({ ...cat, tabs: cat.tabs.filter(t => t.visible !== false).sort((a, b) => a.position - b.position) }));
 	}
 
 	private async _loadPatient(): Promise<void> {
@@ -130,6 +231,8 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	private async _loadTabData(tab: ChartTab): Promise<{ config: FieldConfig | null; data: Record<string, unknown>[] }> {
+		const cached = this._tabDataCache.get(tab.key);
+		if (cached) { return cached; }
 		let config: FieldConfig | null = null;
 		let data: Record<string, unknown>[] = [];
 		try {
@@ -147,231 +250,563 @@ export class PatientChartEditor extends EditorPane {
 				}
 			} catch { /* */ }
 		}
-		return { config, data };
+		const result = { config, data };
+		this._tabDataCache.set(tab.key, result);
+		return result;
 	}
 
-	// ═══ Header ═══
+	private async _loadQuickInfo(): Promise<void> {
+		const fetchCount = async (resource: string): Promise<number | null> => {
+			try {
+				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
+				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=1`);
+				if (!res.ok) { return null; }
+				const json = await res.json();
+				const count = json?.data?.totalElements ?? json?.totalElements ?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
+				return typeof count === 'number' ? count : null;
+			} catch { return null; }
+		};
+		const [allergies, problems, history, vitals] = await Promise.all([
+			fetchCount('AllergyIntolerance'), fetchCount('Condition'),
+			fetchCount('FamilyMemberHistory'), fetchCount('Observation'),
+		]);
+		this.quickInfo = {
+			allergies: allergies === null ? '—' : allergies === 0 ? 'NKA' : String(allergies),
+			problems: problems === null ? '—' : problems === 0 ? 'None' : String(problems),
+			history: history === null ? '—' : history === 0 ? 'No records' : String(history),
+			vitals: vitals === null ? '—' : vitals === 0 ? 'No recorded vitals' : String(vitals),
+		};
+		this._refreshQuickInfoDom();
+	}
+
+	// --- Header ---
 
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
-		const pd = (this.patientData || {}) as Record<string, string>;
-		const name = this.patientName || `${pd.firstName || ''} ${pd.lastName || ''}`.trim();
-		const dob = pd.dateOfBirth || '';
-		const gender = pd.gender || '';
-		const mrn = pd.mrn || pd.id || this.patientId;
-		const rawStatus = pd.status || 'Active';
+		const pd = (this.patientData || {}) as Record<string, unknown>;
+		const name = this.patientName || `${String(pd.firstName || '')} ${String(pd.lastName || '')}`.trim() || 'Patient';
+		const dobRaw = pd.dateOfBirth;
+		const gender = this._genderLabel(String(pd.gender || ''));
+		const mrn = String(pd.mrn || pd.medicalRecordNumber || pd.id || this.patientId);
+		const phone = String(pd.phoneNumber || pd.phone || '');
+		const rawStatus = String(pd.status || 'Active');
 		const status = rawStatus === 'true' || rawStatus === 'Active' ? 'Active' : rawStatus;
 
-		// Avatar
-		const initials = name.split(' ').map(w => w[0] || '').join('').substring(0, 2).toUpperCase();
-		const hue = Math.abs(name.split('').reduce((h, c) => (h << 5) - h + c.charCodeAt(0), 0)) % 360;
-		const av = DOM.append(this.headerBar, DOM.$('div'));
-		av.textContent = initials;
-		av.style.cssText = `width:30px;height:30px;border-radius:50%;background:hsl(${hue},55%,42%);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;`;
+		// Back arrow
+		const back = DOM.append(this.headerBar, DOM.$('button'));
+		back.innerHTML = '←';
+		back.title = 'Back';
+		back.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px;';
+		back.addEventListener('mouseenter', () => { back.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+		back.addEventListener('mouseleave', () => { back.style.background = 'transparent'; });
+		back.addEventListener('click', () => { this.group.closeEditor(this.input!); });
 
+		// Name
 		const nameEl = DOM.append(this.headerBar, DOM.$('span'));
 		nameEl.textContent = name;
-		nameEl.style.cssText = 'font-size:14px;font-weight:700;';
+		nameEl.style.cssText = 'font-size:14px;font-weight:700;color:var(--vscode-foreground);';
 
-		const pill = (text: string, color: string) => {
+		// MRN pill
+		if (mrn) {
+			const pill = DOM.append(this.headerBar, DOM.$('span'));
+			pill.textContent = `MRN: ${mrn}`;
+			pill.style.cssText = 'font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#3b82f6;';
+		}
+
+		// DOB + age
+		if (dobRaw) {
+			const dobStr = this._formatDate(dobRaw);
+			const age = this._calculateAge(dobRaw);
 			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = text;
-			el.style.cssText = `font-size:10px;padding:1px 7px;border-radius:10px;background:${color}15;color:${color};font-weight:500;`;
-		};
-		if (dob) { const age = Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000); pill(`${age}y`, '#3b82f6'); }
-		if (gender) { pill(gender, '#8b5cf6'); }
-		pill(`MRN ${mrn}`, '#6b7280');
-		pill(status, status === 'Active' ? '#22c55e' : '#ef4444');
+			el.textContent = `DOB: ${dobStr}${age ? ` (${age})` : ''}`;
+			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
+		if (gender) {
+			const el = DOM.append(this.headerBar, DOM.$('span'));
+			el.textContent = `Sex: ${gender}`;
+			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
+		if (phone) {
+			const el = DOM.append(this.headerBar, DOM.$('span'));
+			el.textContent = phone;
+			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
 
+		// Status pill
+		const statusPill = DOM.append(this.headerBar, DOM.$('span'));
+		statusPill.textContent = status;
+		const statusColor = status === 'Active' ? '#22c55e' : status === 'Inactive' ? '#ef4444' : '#f59e0b';
+		statusPill.style.cssText = `font-size:11px;font-weight:600;padding:2px 10px;border-radius:10px;background:${statusColor}20;color:${statusColor};`;
+
+		// Spacer
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
 
-		const btn = (label: string, primary: boolean, fn: () => void) => {
-			const b = DOM.append(this.headerBar, DOM.$('button'));
-			b.textContent = label;
-			b.style.cssText = `padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;border:${primary ? 'none' : '1px solid var(--vscode-editorWidget-border)'};background:${primary ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'};color:${primary ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'};`;
-			b.addEventListener('click', fn);
-		};
-		btn('+ Encounter', true, () => this.notificationService.info('New encounter — coming soon'));
+		// Action buttons
+		const newEnc = DOM.append(this.headerBar, DOM.$('button'));
+		newEnc.textContent = '+ New Encounter';
+		newEnc.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+		newEnc.addEventListener('click', () => this._openNewEncounter());
+
+		const schedBtn = DOM.append(this.headerBar, DOM.$('button'));
+		schedBtn.textContent = '\u{1F4C5} Schedule Appointment';
+		schedBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
+		schedBtn.addEventListener('click', () => this._navigate('appointments'));
 	}
 
-	// ═══ TOC Navigation ═══
+	// --- Sidebar ---
 
-	private _renderToc(): void {
-		DOM.clearNode(this.tocNav);
-		this.tocItems = [];
+	private _renderSidebar(): void {
+		DOM.clearNode(this.sidebarEl);
+		this._tabNavMap.clear();
+		this._quickInfoValEls.clear();
 
-		// Search
-		this.searchInput = DOM.append(this.tocNav, DOM.$('input')) as HTMLInputElement;
-		this.searchInput.type = 'text';
-		this.searchInput.placeholder = 'Search chart...';
-		this.searchInput.style.cssText = 'width:calc(100% - 16px);margin:4px 8px 10px;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;height:28px;';
-		this.searchInput.addEventListener('input', () => this._filterSections(this.searchInput.value));
+		// CHART heading with collapse button
+		const chartHdr = DOM.append(this.sidebarEl, DOM.$('div'));
+		chartHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;';
 
+		const chartLabel = DOM.append(chartHdr, DOM.$('span'));
+		chartLabel.textContent = 'CHART';
+		chartLabel.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+
+		const collapseBtn = DOM.append(chartHdr, DOM.$('button'));
+		collapseBtn.textContent = this.sidebarCollapsed ? '>' : '<';
+		collapseBtn.title = this.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+		collapseBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:3px;';
+		collapseBtn.addEventListener('click', () => this._toggleSidebar());
+
+		if (this.sidebarCollapsed) {
+			this.sidebarEl.style.width = '48px';
+			return;
+		}
+		this.sidebarEl.style.width = '240px';
+
+		// QUICK INFO section
+		const qiHeader = DOM.append(this.sidebarEl, DOM.$('div'));
+		qiHeader.textContent = 'QUICK INFO';
+		qiHeader.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);padding:4px 14px 6px;';
+
+		const qiBlock = DOM.append(this.sidebarEl, DOM.$('div'));
+		qiBlock.style.cssText = 'padding:0 10px 12px;display:flex;flex-direction:column;gap:4px;';
+		this._renderQuickInfoRow(qiBlock, 'allergies', '\u{1F6A8}', 'Allergies', this.quickInfo.allergies);
+		this._renderQuickInfoRow(qiBlock, 'problems', '\u{1F90D}', 'Problems', this.quickInfo.problems);
+		this._renderQuickInfoRow(qiBlock, 'history', '\u{1F4DC}', 'History', this.quickInfo.history);
+		this._renderQuickInfoRow(qiBlock, 'vitals', '\u{1FAC0}', 'Vitals', this.quickInfo.vitals);
+
+		// Category tabs
 		for (const cat of this.categories) {
-			const catEl = DOM.append(this.tocNav, DOM.$('div'));
-			catEl.textContent = cat.label;
-			catEl.style.cssText = 'padding:12px 14px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+			if (cat.tabs.length === 0) { continue; }
 
-			for (const tab of cat.tabs.filter(t => t.visible)) {
-				const item = DOM.append(this.tocNav, DOM.$('div'));
-				item.setAttribute('data-toc', tab.key);
-				item.style.cssText = 'padding:4px 14px 4px 20px;cursor:pointer;color:var(--vscode-foreground);border-left:2px solid transparent;display:flex;align-items:center;gap:6px;font-size:13px;';
+			const catHdr = DOM.append(this.sidebarEl, DOM.$('div'));
+			catHdr.textContent = cat.label.toUpperCase();
+			catHdr.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);padding:14px 14px 6px;';
+
+			for (const tab of cat.tabs) {
+				const item = DOM.append(this.sidebarEl, DOM.$('div'));
+				item.setAttribute('data-tab', tab.key);
+				item.style.cssText = 'padding:6px 14px 6px 20px;cursor:pointer;color:var(--vscode-foreground);display:flex;align-items:center;gap:8px;font-size:13px;border-left:2px solid transparent;';
 
 				if (tab.emoji) {
-					const icon = DOM.append(item, DOM.$('span'));
-					icon.textContent = tab.emoji;
-					icon.style.cssText = 'font-size:13px;width:18px;text-align:center;flex-shrink:0;';
+					const ic = DOM.append(item, DOM.$('span'));
+					ic.textContent = tab.emoji;
+					ic.style.cssText = 'font-size:13px;width:18px;text-align:center;flex-shrink:0;';
 				}
 
-				const label = DOM.append(item, DOM.$('span'));
-				label.textContent = tab.label;
-				label.style.cssText = 'flex:1;opacity:0.9;';
+				const lbl = DOM.append(item, DOM.$('span'));
+				lbl.textContent = tab.label;
+				lbl.style.cssText = 'flex:1;';
 
-				const badge = DOM.append(item, DOM.$('span'));
-				badge.setAttribute('data-toc-badge', tab.key);
-				badge.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-
-				item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-				item.addEventListener('mouseleave', () => { if (!item.classList.contains('active')) { item.style.background = ''; } });
-				item.addEventListener('click', () => {
-					const el = this.scrollArea.querySelector(`[data-section="${tab.key}"]`);
-					if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+				item.addEventListener('mouseenter', () => {
+					if (this.activeTab !== tab.key) { item.style.background = 'var(--vscode-list-hoverBackground)'; }
 				});
-
-				this.tocItems.push({ key: tab.key, el: item });
+				item.addEventListener('mouseleave', () => {
+					if (this.activeTab !== tab.key) { item.style.background = ''; }
+				});
+				item.addEventListener('click', () => this._navigate(tab.key));
+				this._tabNavMap.set(tab.key, item);
 			}
+		}
+		this._highlightActiveTab();
+	}
+
+	private _renderQuickInfoRow(parent: HTMLElement, key: string, icon: string, label: string, value: string): void {
+		const row = DOM.append(parent, DOM.$('div'));
+		row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;font-size:12px;';
+
+		const ic = DOM.append(row, DOM.$('span'));
+		ic.textContent = icon;
+		ic.style.cssText = 'font-size:13px;width:18px;text-align:center;flex-shrink:0;';
+
+		const lbl = DOM.append(row, DOM.$('span'));
+		lbl.textContent = `${label}:`;
+		lbl.style.cssText = 'font-weight:600;color:var(--vscode-foreground);';
+
+		const val = DOM.append(row, DOM.$('span'));
+		val.textContent = value;
+		val.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:11px;';
+		this._quickInfoValEls.set(key, val);
+	}
+
+	private _refreshQuickInfoDom(): void {
+		const map: Record<string, string> = {
+			allergies: this.quickInfo.allergies, problems: this.quickInfo.problems,
+			history: this.quickInfo.history, vitals: this.quickInfo.vitals,
+		};
+		for (const [key, val] of Object.entries(map)) {
+			const el = this._quickInfoValEls.get(key);
+			if (el) { el.textContent = val; }
 		}
 	}
 
-	// ═══ Sections (single scrollable page) ═══
+	private _highlightActiveTab(): void {
+		this._tabNavMap.forEach((el, key) => {
+			const isActive = key === this.activeTab;
+			el.style.borderLeftColor = isActive ? 'var(--vscode-focusBorder, #007acc)' : 'transparent';
+			el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground, rgba(0,120,212,0.15))' : '';
+			el.style.fontWeight = isActive ? '600' : '';
+		});
+	}
 
-	private async _renderSections(): Promise<void> {
-		DOM.clearNode(this.scrollArea);
+	private _toggleSidebar(): void {
+		this.sidebarCollapsed = !this.sidebarCollapsed;
+		this.storageSvc.store(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed, StorageScope.PROFILE, StorageTarget.USER);
+		this._renderSidebar();
+	}
 
-		const mainContainer = DOM.append(this.scrollArea, DOM.$('div'));
-		mainContainer.style.cssText = 'max-width:1000px;margin:0 auto;padding:0 24px 60px;';
+	private _navigate(tabKey: string): void {
+		this.activeTab = tabKey;
+		this.storageSvc.store(LAST_TAB_KEY_PREFIX + this.patientId, tabKey, StorageScope.PROFILE, StorageTarget.USER);
+		this._highlightActiveTab();
+		this._renderMain();
+		this.mainEl.scrollTop = 0;
+	}
 
+	// --- Main panel ---
+
+	private _renderMain(): void {
+		DOM.clearNode(this.mainEl);
+		const tab = this._findTab(this.activeTab);
+		if (!tab) {
+			const msg = DOM.append(this.mainEl, DOM.$('div'));
+			msg.textContent = 'Tab not found.';
+			msg.style.cssText = 'color:var(--vscode-descriptionForeground);padding:24px;';
+			return;
+		}
+
+		if (tab.key === 'dashboard') {
+			this._renderDashboard();
+			return;
+		}
+
+		this._renderGenericTab(tab);
+	}
+
+	private _findTab(key: string): ChartTab | null {
 		for (const cat of this.categories) {
-			const mainTabs = cat.tabs.filter(t => t.visible && (t.panel || 'main') === 'main');
-			if (mainTabs.length === 0) { continue; }
+			const t = cat.tabs.find(t => t.key === key);
+			if (t) { return t; }
+		}
+		return null;
+	}
 
-			// Category divider
-			const catLabel = DOM.append(mainContainer, DOM.$('div'));
-			catLabel.textContent = cat.label;
-			catLabel.style.cssText = `font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--vscode-descriptionForeground);padding:${cat === this.categories[0] ? '8' : '28'}px 0 8px;`;
+	// --- Dashboard view ---
 
-			for (const tab of mainTabs) {
-				// const c = ''; // Single VS Code blue — color comes from border only
-				const emoji = tab.emoji || '';
+	private _renderDashboard(): void {
+		// Recent & Upcoming card
+		const card = DOM.append(this.mainEl, DOM.$('div'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;margin-bottom:20px;';
 
-				// Card — colored left border + subtle shadow
-				const section = DOM.append(mainContainer, DOM.$('div'));
-				section.setAttribute('data-section', tab.key);
-				section.style.cssText = 'margin-bottom:16px;border:1px solid var(--vscode-editorWidget-border);border-left:3px solid var(--vscode-focusBorder,#007acc);border-radius:6px;overflow:hidden;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));box-shadow:0 1px 3px rgba(0,0,0,0.15);transition:box-shadow 0.2s,border-color 0.2s;';
-				section.addEventListener('mouseenter', () => { section.style.boxShadow = '0 3px 10px rgba(0,0,0,0.25)'; section.style.borderColor = 'var(--vscode-focusBorder,#007acc)'; });
-				section.addEventListener('mouseleave', () => { section.style.boxShadow = '0 1px 3px rgba(0,0,0,0.15)'; section.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+		const title = DOM.append(card, DOM.$('h3'));
+		title.textContent = 'Recent & Upcoming';
+		title.style.cssText = 'margin:0 0 16px;font-size:16px;font-weight:600;color:var(--vscode-foreground);';
 
-				// Header — blue accent background
-				const header = DOM.append(section, DOM.$('div'));
-				header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(0,122,204,0.12);border-bottom:1px solid rgba(0,122,204,0.2);';
+		const grid = DOM.append(card, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:24px;';
 
-				if (emoji) {
-					const iconEl = DOM.append(header, DOM.$('span'));
-					iconEl.textContent = emoji;
-					iconEl.style.cssText = 'font-size:15px;';
+		// Recent Activity
+		const recent = DOM.append(grid, DOM.$('div'));
+		const recentHdr = DOM.append(recent, DOM.$('h4'));
+		recentHdr.textContent = 'Recent Activity';
+		recentHdr.style.cssText = 'margin:0 0 10px;font-size:13px;font-weight:600;color:#3b82f6;';
+		const recentList = DOM.append(recent, DOM.$('div'));
+		recentList.setAttribute('data-slot', 'recent-activity');
+		const loading1 = DOM.append(recentList, DOM.$('div'));
+		loading1.textContent = 'Loading...';
+		loading1.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
+
+		// Upcoming
+		const upcoming = DOM.append(grid, DOM.$('div'));
+		const upHdrRow = DOM.append(upcoming, DOM.$('div'));
+		upHdrRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:0 0 10px;';
+		const upHdr = DOM.append(upHdrRow, DOM.$('h4'));
+		upHdr.textContent = 'Upcoming';
+		upHdr.style.cssText = 'margin:0;font-size:13px;font-weight:600;color:#3b82f6;';
+		const viewAll = DOM.append(upHdrRow, DOM.$('a'));
+		viewAll.textContent = 'View all →';
+		viewAll.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+		viewAll.addEventListener('click', () => this._navigate('appointments'));
+
+		const upBox = DOM.append(upcoming, DOM.$('div'));
+		upBox.style.cssText = 'background:var(--vscode-editor-background);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;padding:24px;text-align:center;';
+		const upIcon = DOM.append(upBox, DOM.$('div'));
+		upIcon.textContent = '\u{1F4C5}';
+		upIcon.style.cssText = 'font-size:28px;margin-bottom:6px;';
+		const upText = DOM.append(upBox, DOM.$('div'));
+		upText.textContent = 'View upcoming appointments';
+		upText.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
+		const goLink = DOM.append(upBox, DOM.$('a'));
+		goLink.textContent = 'Go to Appointments →';
+		goLink.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+		goLink.addEventListener('click', () => this._navigate('appointments'));
+
+		void this._loadRecentActivity(recentList);
+
+		// Summary cards grid
+		const cardsGrid = DOM.append(this.mainEl, DOM.$('div'));
+		cardsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:16px;';
+		this._renderSummaryCard(cardsGrid, 'allergies', '\u{1F6E1}\u{FE0F}', 'Allergies', 'AllergyIntolerance', 'allergyName', 'NKA — No Known Allergies');
+		this._renderSummaryCard(cardsGrid, 'problems', '\u{1F90D}', 'Medical Problems', 'Condition', 'code', 'No problems recorded');
+		this._renderSummaryCard(cardsGrid, 'insurance', '\u{1F512}', 'Insurance', 'Coverage', 'payerName', 'No insurance on file');
+		this._renderPortalAccountCard(cardsGrid);
+	}
+
+	private async _loadRecentActivity(parent: HTMLElement): Promise<void> {
+		interface ActivityItem { title: string; description: string; timestamp: string; status: string; emoji: string }
+		const acts: ActivityItem[] = [];
+		try {
+			const res = await this.apiService.fetch(`${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=5`);
+			if (res.ok) {
+				const json = await res.json();
+				const items = json?.data?.content || json?.content || [];
+				for (const a of items) {
+					acts.push({
+						title: `Appointment: ${a.visitType || a.appointmentType || 'Visit'}`,
+						description: `With Provider at ${a.appointmentStartTime || this._formatDate(a.appointmentStartDate) || ''}`,
+						timestamp: this._formatDate(a.appointmentStartDate) || '',
+						status: String(a.status || 'scheduled'),
+						emoji: '\u{1F4C5}',
+					});
 				}
-
-				const title = DOM.append(header, DOM.$('span'));
-				title.textContent = tab.label;
-				title.style.cssText = 'font-size:14px;font-weight:600;color:var(--vscode-foreground);';
-
-				const countEl = DOM.append(header, DOM.$('span'));
-				countEl.setAttribute('data-count', tab.key);
-				countEl.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-weight:600;';
-
-				DOM.append(header, DOM.$('span')).style.flex = '1';
-
-				const actionSlot = DOM.append(header, DOM.$('span'));
-				actionSlot.setAttribute('data-action', tab.key);
-
-				const content = DOM.append(section, DOM.$('div'));
-				content.setAttribute('data-content', tab.key);
-				content.style.cssText = 'padding:12px 14px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
-				content.textContent = 'Loading...';
-
-				const observer = new IntersectionObserver((entries) => {
-					if (entries[0].isIntersecting) { observer.disconnect(); this._loadSection(tab, content, actionSlot); }
-				}, { root: this.scrollArea, rootMargin: '300px' });
-				observer.observe(section);
 			}
+		} catch { /* */ }
+
+		DOM.clearNode(parent);
+		if (acts.length === 0) {
+			const empty = DOM.append(parent, DOM.$('div'));
+			empty.textContent = 'No recent activity';
+			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
+			return;
+		}
+
+		for (const act of acts) {
+			const row = DOM.append(parent, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);';
+
+			const ic = DOM.append(row, DOM.$('div'));
+			ic.textContent = act.emoji;
+			ic.style.cssText = 'font-size:18px;padding-top:2px;';
+
+			const content = DOM.append(row, DOM.$('div'));
+			content.style.cssText = 'flex:1;min-width:0;';
+
+			const titleRow = DOM.append(content, DOM.$('div'));
+			titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+			const t = DOM.append(titleRow, DOM.$('span'));
+			t.textContent = act.title;
+			t.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-foreground);';
+			const badge = DOM.append(titleRow, DOM.$('span'));
+			badge.textContent = act.status;
+			badge.style.cssText = 'font-size:10px;padding:1px 8px;border-radius:10px;background:rgba(59,130,246,0.15);color:#3b82f6;';
+
+			const desc = DOM.append(content, DOM.$('div'));
+			desc.textContent = act.description;
+			desc.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+			const time = DOM.append(content, DOM.$('div'));
+			time.textContent = act.timestamp;
+			time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
 		}
 	}
 
-	private async _loadSection(tab: ChartTab, content: HTMLElement, actionSlot: HTMLElement): Promise<void> {
-		const { config, data } = await this._loadTabData(tab);
-		DOM.clearNode(content);
-		content.style.fontStyle = 'normal';
+	private _renderSummaryCard(parent: HTMLElement, _key: string, icon: string, title: string, resource: string, displayField: string, emptyMsg: string): void {
+		const card = DOM.append(parent, DOM.$('div'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
 
-		// Update count badge
-		const countEl = this.scrollArea.querySelector(`[data-count="${tab.key}"]`);
-		if (countEl) { countEl.textContent = data.length > 0 ? `(${data.length})` : ''; }
-		const tocBadge = this.tocNav.querySelector(`[data-toc-badge="${tab.key}"]`);
-		if (tocBadge) { tocBadge.textContent = data.length > 0 ? String(data.length) : ''; }
+		const hdr = DOM.append(card, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
 
-		// Action button
-		DOM.clearNode(actionSlot);
-		if (tab.display === 'form') {
-			// Auto-save indicator (shows briefly on save)
-			const saved = DOM.append(actionSlot, DOM.$('span'));
-			saved.setAttribute('data-saved', tab.key);
-			saved.style.cssText = 'font-size:11px;color:#22c55e;opacity:0;transition:opacity 0.3s;margin-right:6px;';
-			saved.textContent = '\u2713 Saved';
+		const titleRow = DOM.append(hdr, DOM.$('div'));
+		titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		const ic = DOM.append(titleRow, DOM.$('span'));
+		ic.textContent = icon;
+		ic.style.cssText = 'font-size:16px;';
+		const t = DOM.append(titleRow, DOM.$('span'));
+		t.textContent = title;
+		t.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+
+		const viewAll = DOM.append(hdr, DOM.$('a'));
+		viewAll.textContent = 'View all';
+		viewAll.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+		const tabKey = title === 'Allergies' ? 'allergies' : title === 'Medical Problems' ? 'problems' : 'insurance';
+		viewAll.addEventListener('click', () => this._navigate(tabKey));
+
+		const body = DOM.append(card, DOM.$('div'));
+		body.setAttribute('data-card-body', resource);
+		body.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);min-height:40px;';
+		body.textContent = 'Loading...';
+
+		void (async () => {
+			try {
+				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
+				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=3`);
+				if (res.ok) {
+					const json = await res.json();
+					const items: Record<string, unknown>[] = json?.data?.content || json?.content || [];
+					DOM.clearNode(body);
+					if (items.length === 0) {
+						body.textContent = emptyMsg;
+						return;
+					}
+					for (const item of items.slice(0, 3)) {
+						const row = DOM.append(body, DOM.$('div'));
+						row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
+						const v = item[displayField];
+						let text: string;
+						if (v && typeof v === 'object') {
+							const obj = v as Record<string, unknown>;
+							text = String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || JSON.stringify(v).substring(0, 40));
+						} else {
+							text = String(v || item.name || item.code || '—');
+						}
+						row.textContent = text.substring(0, 50);
+					}
+				} else {
+					body.textContent = emptyMsg;
+				}
+			} catch {
+				body.textContent = emptyMsg;
+			}
+		})();
+	}
+
+	private _renderPortalAccountCard(parent: HTMLElement): void {
+		const card = DOM.append(parent, DOM.$('div'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
+
+		const hdrRow = DOM.append(card, DOM.$('div'));
+		hdrRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:12px;';
+		const ic = DOM.append(hdrRow, DOM.$('span'));
+		ic.textContent = '\u{2705}';
+		ic.style.cssText = 'font-size:16px;';
+		const t = DOM.append(hdrRow, DOM.$('span'));
+		t.textContent = 'Portal Account';
+		t.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+
+		const email = String((this.patientData as Record<string, unknown>).email || '');
+		const emailRow = DOM.append(card, DOM.$('div'));
+		emailRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:12px;color:var(--vscode-foreground);';
+		const dot = DOM.append(emailRow, DOM.$('span'));
+		dot.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#22c55e;flex-shrink:0;';
+		const emailEl = DOM.append(emailRow, DOM.$('span'));
+		emailEl.textContent = email || 'No email on file';
+		emailEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+		const btnRow = DOM.append(card, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+
+		const mkBtn = (label: string, color: string, bg: string, fn: () => void) => {
+			const b = DOM.append(btnRow, DOM.$('button'));
+			b.textContent = label;
+			b.style.cssText = `padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:1px solid ${color}40;background:${bg};color:${color};`;
+			b.addEventListener('click', fn);
+		};
+		mkBtn('\u{1F511} Reset Password', 'var(--vscode-foreground)', 'var(--vscode-button-secondaryBackground)', () => this.notificationService.info('Reset Password — coming soon'));
+		mkBtn('\u{2709} Email Reset', 'var(--vscode-foreground)', 'var(--vscode-button-secondaryBackground)', () => this.notificationService.info('Email Reset — coming soon'));
+		mkBtn('\u{26D4} Block', '#ef4444', 'transparent', () => this.notificationService.info('Block — coming soon'));
+	}
+
+	// --- Generic tab (list or form) ---
+
+	private async _renderGenericTab(tab: ChartTab): Promise<void> {
+		// Section card header
+		const card = DOM.append(this.mainEl, DOM.$('div'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+		const hdr = DOM.append(card, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;gap:8px;padding:12px 16px;background:rgba(0,122,204,0.08);border-bottom:1px solid var(--vscode-editorWidget-border);';
+
+		if (tab.emoji) {
+			const ic = DOM.append(hdr, DOM.$('span'));
+			ic.textContent = tab.emoji;
+			ic.style.cssText = 'font-size:16px;';
 		}
-		this._makeBtn(actionSlot, '+ Add', () => this.notificationService.info(`New ${tab.label} — coming soon`));
+		const t = DOM.append(hdr, DOM.$('span'));
+		t.textContent = tab.label;
+		t.style.cssText = 'font-size:14px;font-weight:600;';
+		const countEl = DOM.append(hdr, DOM.$('span'));
+		countEl.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
 
-		// Render content based on display mode from chart-layout.json
+		DOM.append(hdr, DOM.$('span')).style.flex = '1';
+
+		const actionSlot = DOM.append(hdr, DOM.$('div'));
+		actionSlot.style.cssText = 'display:flex;gap:6px;';
+		const addBtn = DOM.append(actionSlot, DOM.$('button'));
+		addBtn.textContent = `+ Add`;
+		addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+		addBtn.addEventListener('click', () => this.notificationService.info(`New ${tab.label} — coming soon`));
+
+		const content = DOM.append(card, DOM.$('div'));
+		content.style.cssText = 'padding:14px 16px;';
+		const loading = DOM.append(content, DOM.$('div'));
+		loading.textContent = 'Loading...';
+		loading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+
+		// Empty-data tab with no FHIR resources → show placeholder
+		if (tab.fhirResources.length === 0) {
+			DOM.clearNode(content);
+			const placeholder = DOM.append(content, DOM.$('div'));
+			placeholder.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);';
+			const icon = DOM.append(placeholder, DOM.$('div'));
+			icon.textContent = tab.emoji || '\u{1F4CB}';
+			icon.style.cssText = 'font-size:32px;margin-bottom:8px;';
+			const msg = DOM.append(placeholder, DOM.$('div'));
+			msg.textContent = `${tab.label} — coming soon`;
+			msg.style.cssText = 'font-size:13px;';
+			return;
+		}
+
+		const { config, data } = await this._loadTabData(tab);
+		// Active tab may have changed while loading
+		if (tab.key !== this.activeTab) { return; }
+
+		DOM.clearNode(content);
+		countEl.textContent = data.length > 0 ? String(data.length) : '';
+
 		const isForm = tab.display === 'form';
 		if (config?.sections && isForm) {
-			this._renderForm(content, config.sections, data.length > 0 ? data : [{}], tab.key);
+			this._renderForm(content, config.sections, data.length > 0 ? data : [{}]);
 		} else if (data.length > 0) {
 			this._listAuto(content, tab, data);
 		} else {
-			// Empty state — show table headers from field config if available
-			const cols = config?.sections
-				? config.sections.filter(s => s.visible).flatMap(s => s.fields).filter(f => f.colSpan !== 0).slice(0, 6).map(f => f.label)
-				: [];
-			if (cols.length > 0) {
-				this._table(content, cols, []);
-			}
 			const empty = DOM.append(content, DOM.$('div'));
 			empty.textContent = `No ${tab.label.toLowerCase()} records`;
-			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;padding:16px;text-align:center;';
+			empty.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
 		}
 	}
 
-	// ═══ Form fields — grid layout per section ═══
-	//
-	// Section "Patient Name" (columns: 4)
-	//   ┌──────────┬──────────┬──────────┬──────────┐
-	//   │ First    │ Middle   │ Last     │ Suffix   │
-	//   │ [Leo   ] │ [Anthony]│ [Rogers] │ [▼     ] │
-	//   └──────────┴──────────┴──────────┴──────────┘
+	// --- Form renderer (grid by section) ---
 
-	private _renderForm(container: HTMLElement, sections: FieldSection[], data: Record<string, unknown>[], tabKey: string): void {
-		const record = (data[0] as Record<string, unknown>)?.data || data[0] || {};
+	private _renderForm(container: HTMLElement, sections: FieldSection[], data: Record<string, unknown>[]): void {
+		const record = ((data[0] as Record<string, unknown>)?.data as Record<string, unknown>) || data[0] || {};
 
 		for (const sec of sections) {
 			if (!sec.visible) { continue; }
 			const cols = Math.min(sec.columns || 3, 4);
 
-			// Sub-header (just a label, not a nested card)
 			const subHeader = DOM.append(container, DOM.$('div'));
 			subHeader.textContent = sec.title;
 			subHeader.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:14px 0 6px;padding-top:8px;border-top:1px solid var(--vscode-editorWidget-border);';
-			// Hide border on first section
 			if (sections.indexOf(sec) === 0) { subHeader.style.borderTop = 'none'; subHeader.style.marginTop = '0'; }
 
-			// Grid of fields
 			const gridBody = DOM.append(container, DOM.$('div'));
 			gridBody.style.cssText = `display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:4px 16px;margin-bottom:4px;`;
 
@@ -381,7 +816,6 @@ export class PatientChartEditor extends EditorPane {
 				const cell = DOM.append(gridBody, DOM.$('div'));
 				cell.style.cssText = `grid-column:span ${Math.min(f.colSpan || 1, cols)};padding:4px 0;`;
 
-				// Label
 				const lbl = DOM.append(cell, DOM.$('label'));
 				lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.3px;';
 				const lblText = DOM.append(lbl, DOM.$('span'));
@@ -392,16 +826,7 @@ export class PatientChartEditor extends EditorPane {
 					req.style.cssText = 'color:#ef4444;';
 				}
 
-				// Control
-				const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:13px;height:32px;box-sizing:border-box;transition:border-color 0.15s;outline:none;';
-				const focusStyle = 'border-color:var(--vscode-focusBorder,#007acc);box-shadow:0 0 0 1px var(--vscode-focusBorder,#007acc);';
-
-				const addFocus = (el: HTMLElement) => {
-					el.addEventListener('focus', () => { el.style.cssText = inputStyle + (el.tagName === 'SELECT' ? 'cursor:pointer;' : '') + focusStyle; });
-					el.addEventListener('blur', () => { el.style.cssText = inputStyle + (el.tagName === 'SELECT' ? 'cursor:pointer;' : ''); });
-					el.addEventListener('change', () => this._autoSave(tabKey));
-					el.addEventListener('input', () => this._autoSave(tabKey));
-				};
+				const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:13px;height:32px;box-sizing:border-box;outline:none;';
 
 				if (f.type === 'select') {
 					const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
@@ -410,60 +835,48 @@ export class PatientChartEditor extends EditorPane {
 						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
 					}
-					addFocus(sel);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const wrap = DOM.append(cell, DOM.$('div'));
 					wrap.style.cssText = 'display:flex;align-items:center;gap:8px;height:32px;';
 					const cb = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 					cb.type = 'checkbox'; cb.checked = !!val;
-					cb.style.cssText = 'width:18px;height:18px;border-radius:4px;cursor:pointer;accent-color:var(--vscode-focusBorder,#007acc);';
+					cb.style.cssText = 'width:18px;height:18px;cursor:pointer;accent-color:var(--vscode-focusBorder,#007acc);';
 					const cbLabel = DOM.append(wrap, DOM.$('span'));
 					cbLabel.textContent = val ? 'Yes' : 'No';
-					cbLabel.style.cssText = 'font-size:13px;color:var(--vscode-foreground);';
 					cb.addEventListener('change', () => { cbLabel.textContent = cb.checked ? 'Yes' : 'No'; });
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
-					addFocus(ta);
 				} else if (f.type === 'date') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'date'; inp.value = String(val).split('T')[0]; inp.style.cssText = inputStyle;
-					addFocus(inp);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
-					addFocus(inp);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
 					inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					inp.style.cssText = inputStyle;
-					addFocus(inp);
 				}
 			}
 		}
 	}
 
-
-	// ═══ List renderers ═══
-
-	// ═══ Generic auto-list for any FHIR data ═══
+	// --- List renderer (FHIR auto-columns) ---
 
 	private _listAuto(c: HTMLElement, tab: ChartTab, data: Record<string, unknown>[]): void {
-		// Smart column detection from data
 		const sample = data[0] || {};
 		const allKeys = Object.keys(sample);
 
-		// Priority keys: common FHIR/clinical fields first
 		const priorityKeys = ['start', 'date', 'period', 'effectiveDateTime', 'recordedDate', 'authoredOn',
 			'appointmentType', 'type', 'visitType', 'class', 'serviceType', 'code', 'medicationCodeableConcept',
 			'providerName', 'providerDisplay', 'practitionerName', 'patientName', 'patientDisplay',
 			'status', 'clinicalStatus', 'verificationStatus', 'category', 'severity', 'criticality',
 			'reason', 'note', 'description', 'text'];
 
-		// Pick columns: prioritized keys that exist, then fill from remaining
 		const usedKeys: string[] = [];
 		for (const pk of priorityKeys) {
 			if (allKeys.includes(pk) && usedKeys.length < 6) { usedKeys.push(pk); }
@@ -480,20 +893,17 @@ export class PatientChartEditor extends EditorPane {
 		const rows = data.slice(0, 50).map(item => {
 			const cells = usedKeys.map(k => {
 				const v = item[k];
-				if (v == null) { return ''; }
+				if (v === null || v === undefined) { return ''; }
 				if (typeof v === 'object') {
-					// Handle FHIR CodeableConcept, Reference, etc.
 					const obj = v as Record<string, unknown>;
 					return String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || '');
 				}
-				// Format dates
 				if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
 					try { return new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { /* */ }
 				}
 				return String(v).substring(0, 40);
 			});
 
-			// Click handler: encounters open in side group
 			const isEncounter = tab.fhirResources.includes('Encounter');
 			const onClick = isEncounter ? () => {
 				const id = String(item.id || item.fhirId || '');
@@ -506,13 +916,12 @@ export class PatientChartEditor extends EditorPane {
 		this._table(c, cols, rows);
 	}
 
-	// ═══ Table renderer (VS Code style) ═══
-
 	private _table(container: HTMLElement, columns: string[], rows: Array<{ cells: string[]; onClick?: () => void }>): void {
-		const table = DOM.append(container, DOM.$('table'));
+		const wrap = DOM.append(container, DOM.$('div'));
+		wrap.style.cssText = 'overflow-x:auto;';
+		const table = DOM.append(wrap, DOM.$('table'));
 		table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
 
-		// Header
 		const thead = DOM.append(table, DOM.$('thead'));
 		const hrow = DOM.append(thead, DOM.$('tr'));
 		for (const col of columns) {
@@ -521,7 +930,6 @@ export class PatientChartEditor extends EditorPane {
 			th.style.cssText = 'text-align:left;padding:8px 12px;font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);white-space:nowrap;';
 		}
 
-		// Body
 		const tbody = DOM.append(table, DOM.$('tbody'));
 		for (const row of rows) {
 			const tr = DOM.append(tbody, DOM.$('tr'));
@@ -534,11 +942,10 @@ export class PatientChartEditor extends EditorPane {
 				const td = DOM.append(tr, DOM.$('td'));
 				td.style.cssText = 'padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.08);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;';
 
-				// Last column = status badge
 				if (i === row.cells.length - 1 && columns[i] === 'Status') {
 					const badge = DOM.append(td, DOM.$('span'));
 					badge.textContent = row.cells[i];
-					badge.style.cssText = 'font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(59,130,246,0.12);color:#3b82f6;text-transform:capitalize;';
+					badge.style.cssText = 'font-size:10px;padding:2px 7px;border-radius:3px;background:rgba(59,130,246,0.12);color:#3b82f6;text-transform:capitalize;';
 				} else if (i === 0) {
 					td.style.fontWeight = '600';
 					td.textContent = row.cells[i];
@@ -549,70 +956,51 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
-	private _makeBtn(parent: HTMLElement, label: string, fn: () => void, primary?: boolean): void {
-		const b = DOM.append(parent, DOM.$('button'));
-		b.textContent = label;
-		b.style.cssText = `padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;border:${primary ? 'none' : '1px solid var(--vscode-editorWidget-border)'};background:${primary ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'};color:${primary ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'};`;
-		b.addEventListener('click', fn);
+	private _openNewEncounter(): void {
+		this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, 'new', this.patientName, 'New Encounter'), {}, SIDE_GROUP);
 	}
 
-	// ═══ Auto-save ═══
+	// --- Formatting helpers ---
 
-	private _saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-	private _autoSave(tabKey: string): void {
-		// Debounce: save 1.5s after last change
-		const existing = this._saveTimers.get(tabKey);
-		if (existing) { clearTimeout(existing); }
-		this._saveTimers.set(tabKey, setTimeout(() => {
-			// Show saved indicator
-			const indicator = this.scrollArea.querySelector(`[data-saved="${tabKey}"]`) as HTMLElement;
-			if (indicator) {
-				indicator.style.opacity = '1';
-				setTimeout(() => { indicator.style.opacity = '0'; }, 2000);
+	private _formatDate(raw: unknown): string {
+		if (!raw) { return ''; }
+		if (Array.isArray(raw)) {
+			const [y, m, d] = raw;
+			if (typeof y === 'number' && typeof m === 'number' && typeof d === 'number') {
+				return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
 			}
-			// TODO: collect form data and PUT to API
-		}, 1500));
+			return '';
+		}
+		try { return new Date(String(raw)).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); }
+		catch { return String(raw); }
 	}
 
-	// ═══ Search filter ═══
-
-	private _filterSections(query: string): void {
-		const q = query.toLowerCase().trim();
-		const sections = this.scrollArea.querySelectorAll('[data-section]');
-		sections.forEach(sec => {
-			const key = sec.getAttribute('data-section') || '';
-			const text = sec.textContent?.toLowerCase() || '';
-			const visible = !q || text.includes(q) || key.includes(q);
-			(sec as HTMLElement).style.display = visible ? '' : 'none';
-		});
-		// Update TOC visibility
-		this.tocItems.forEach(({ key, el }) => {
-			const section = this.scrollArea.querySelector(`[data-section="${key}"]`) as HTMLElement;
-			el.style.display = section?.style.display === 'none' ? 'none' : '';
-		});
+	private _calculateAge(raw: unknown): string {
+		if (!raw) { return ''; }
+		let birthDate: Date;
+		if (Array.isArray(raw)) {
+			const [y, m, d] = raw;
+			if (typeof y !== 'number' || typeof m !== 'number' || typeof d !== 'number') { return ''; }
+			birthDate = new Date(y, m - 1, d);
+		} else {
+			birthDate = new Date(String(raw));
+		}
+		if (isNaN(birthDate.getTime())) { return ''; }
+		const now = new Date();
+		let years = now.getFullYear() - birthDate.getFullYear();
+		let months = now.getMonth() - birthDate.getMonth();
+		let days = now.getDate() - birthDate.getDate();
+		if (days < 0) { months--; const prev = new Date(now.getFullYear(), now.getMonth(), 0); days += prev.getDate(); }
+		if (months < 0) { years--; months += 12; }
+		if (years > 0) { return `${years} yr${years !== 1 ? 's' : ''}${months > 0 ? ` ${months} mo` : ''}`; }
+		if (months > 0) { return `${months} mo${days > 0 ? ` ${days} d` : ''}`; }
+		return `${days} d`;
 	}
 
-	// ═══ Scroll ↔ TOC sync ═══
-
-	private _setupScrollSync(): void {
-		this.scrollArea.addEventListener('scroll', () => {
-			let activeKey = '';
-			const sections = this.scrollArea.querySelectorAll('[data-section]');
-			const scrollTop = this.scrollArea.scrollTop + 60;
-			sections.forEach(sec => {
-				if ((sec as HTMLElement).offsetTop <= scrollTop) {
-					activeKey = sec.getAttribute('data-section') || '';
-				}
-			});
-			this.tocItems.forEach(({ key, el }) => {
-				const isActive = key === activeKey;
-				el.style.borderLeftColor = isActive ? 'var(--vscode-focusBorder, #007acc)' : 'transparent';
-				el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground, rgba(0,120,212,0.1))' : '';
-				el.style.fontWeight = isActive ? '600' : '';
-				if (isActive) { el.classList.add('active'); } else { el.classList.remove('active'); }
-			});
-		});
+	private _genderLabel(g: string): string {
+		if (!g) { return ''; }
+		const map: Record<string, string> = { M: 'Male', F: 'Female', O: 'Other', U: 'Unknown', Male: 'Male', Female: 'Female', Other: 'Other', Unknown: 'Unknown' };
+		return map[g] || g;
 	}
 
 	override layout(dimension: DOM.Dimension): void {
