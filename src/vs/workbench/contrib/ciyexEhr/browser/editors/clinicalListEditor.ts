@@ -32,6 +32,12 @@ export interface FormFieldDef {
 	searchDisplayField?: string;
 	/** For 'search' type: which field to use as value */
 	searchValueField?: string;
+	/** For 'search' type: API endpoint path for live search (appends ?search=) */
+	apiPath?: string;
+	/** For 'search' type: field key to auto-fill when a result is selected (e.g. patientId) */
+	relatedField?: string;
+	/** For 'search' type: fields from API response to display in dropdown */
+	relatedDisplayFields?: string[];
 	/** Default value for new records */
 	defaultValue?: string | number;
 	/** Width hint */
@@ -56,6 +62,8 @@ export interface ClinicalEditorConfig {
 	cellRenderer?: (key: string, value: unknown, item: Record<string, unknown>) => string;
 	/** Priority filter options */
 	priorityOptions?: Array<{ label: string; value: string }>;
+	/** Key used for status tab filtering. Defaults to 'status'. E.g. audit logs use 'action'. */
+	filterKey?: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -98,6 +106,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private formOverlay: HTMLElement | null = null;
 	private editingItem: Record<string, unknown> | null = null;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+	private searchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 	constructor(
 		id: string,
@@ -134,10 +143,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		try {
 			let url = `${this.config.apiPath}?page=${this.currentPage}&size=20`;
 			if (this.searchValue) { url += `&q=${encodeURIComponent(this.searchValue)}`; }
-			if (this.statusFilter) { url += `&status=${this.statusFilter}`; }
+			if (this.statusFilter) { const fk = this.config.filterKey || 'status'; url += `&${fk}=${this.statusFilter}`; }
 			if (this.priorityFilter) { url += `&priority=${this.priorityFilter}`; }
 			const res = await this.apiService.fetch(url);
-			if (!res.ok) { return; }
+			if (!res.ok) {
+				this.items = [];
+				this.totalPages = 1;
+				this._renderError(`Failed to load data (HTTP ${res.status}). The API endpoint may be unavailable.`);
+				return;
+			}
 			const data = await res.json();
 			const wrapper = data?.data || data;
 			if (wrapper?.content) {
@@ -151,7 +165,39 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				this.totalPages = 1;
 			}
 			this._render();
-		} catch { this._render(); }
+		} catch {
+			this.items = [];
+			this.totalPages = 1;
+			this._renderError('Unable to load data. Please check your connection and try again.');
+		}
+	}
+
+	private _renderError(message: string): void {
+		DOM.clearNode(this.contentEl);
+
+		const titleBar = DOM.append(this.contentEl, DOM.$('div'));
+		titleBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
+		const h = DOM.append(titleBar, DOM.$('h2'));
+		h.textContent = this.config.title;
+		h.style.cssText = 'font-size:20px;font-weight:600;margin:0;';
+
+		const errorBox = DOM.append(this.contentEl, DOM.$('div'));
+		errorBox.style.cssText = 'padding:24px;text-align:center;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-top:12px;';
+
+		// allow-any-unicode-next-line
+		const iconEl = DOM.append(errorBox, DOM.$('div'));
+		// allow-any-unicode-next-line
+		iconEl.textContent = '⚠';
+		iconEl.style.cssText = 'font-size:28px;margin-bottom:8px;';
+
+		const msgEl = DOM.append(errorBox, DOM.$('div'));
+		msgEl.textContent = message;
+		msgEl.style.cssText = 'font-size:13px;color:var(--vscode-descriptionForeground);margin-bottom:12px;';
+
+		const retryBtn = DOM.append(errorBox, DOM.$('button'));
+		retryBtn.textContent = 'Retry';
+		retryBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		retryBtn.addEventListener('click', () => this._loadData());
 	}
 
 	private _render(): void {
@@ -398,7 +444,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 			if (field.type === 'select' && field.options) {
 				inputEl = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
-				inputEl.style.cssText = inputStyle;
+				inputEl.style.cssText = inputStyle + 'min-width:200px;';
 				const emptyOpt = DOM.append(inputEl, DOM.$('option')) as HTMLOptionElement;
 				emptyOpt.value = '';
 				emptyOpt.textContent = `Select ${field.label}...`;
@@ -411,9 +457,95 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				inputEl.style.cssText = inputStyle + 'min-height:60px;resize:vertical;font-family:inherit;';
 				inputEl.placeholder = field.placeholder || '';
+			} else if (field.type === 'search' && (field.apiPath || field.searchApiPath)) {
+				// Search field with live autocomplete dropdown
+				const searchWrapper = DOM.append(group, DOM.$('div'));
+				searchWrapper.style.cssText = 'position:relative;';
+
+				inputEl = DOM.append(searchWrapper, DOM.$('input')) as HTMLInputElement;
+				inputEl.type = 'text';
+				inputEl.style.cssText = inputStyle;
+				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
+
+				const dropdown = DOM.append(searchWrapper, DOM.$('div'));
+				dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
+
+				const searchEndpoint = field.apiPath || field.searchApiPath || '';
+				const displayField = field.searchDisplayField || 'name';
+				const valueField = field.searchValueField || 'id';
+
+				inputEl.addEventListener('input', () => {
+					const timerKey = field.key;
+					const existing = this.searchDebounceTimers.get(timerKey);
+					if (existing) { clearTimeout(existing); }
+					const query = (inputEl as HTMLInputElement).value.trim();
+					if (query.length < 2) {
+						dropdown.style.display = 'none';
+						DOM.clearNode(dropdown);
+						return;
+					}
+					this.searchDebounceTimers.set(timerKey, setTimeout(async () => {
+						try {
+							const res = await this.apiService.fetch(`${searchEndpoint}?search=${encodeURIComponent(query)}`);
+							if (!res.ok) { return; }
+							const data = await res.json();
+							const wrapper = data?.data || data;
+							const results: Record<string, unknown>[] = wrapper?.content || (Array.isArray(wrapper) ? wrapper : []);
+							DOM.clearNode(dropdown);
+							if (results.length === 0) {
+								const noRes = DOM.append(dropdown, DOM.$('div'));
+								noRes.textContent = 'No results found';
+								noRes.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
+								dropdown.style.display = 'block';
+								return;
+							}
+							for (const result of results.slice(0, 15)) {
+								const item = DOM.append(dropdown, DOM.$('div'));
+								// Build display text
+								let displayText = String(result[displayField] ?? '');
+								if (field.relatedDisplayFields) {
+									const parts = field.relatedDisplayFields.map(f => String(result[f] ?? '')).filter(Boolean);
+									if (parts.length > 0) { displayText = parts.join(' '); }
+								}
+								if (!displayText) {
+									// Fallback: try firstName + lastName
+									const fn = String(result['firstName'] ?? '');
+									const ln = String(result['lastName'] ?? '');
+									displayText = [fn, ln].filter(Boolean).join(' ') || String(result[valueField] ?? '');
+								}
+								item.textContent = displayText;
+								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+								item.addEventListener('mouseleave', () => { item.style.background = ''; });
+								item.addEventListener('click', () => {
+									(inputEl as HTMLInputElement).value = displayText;
+									dropdown.style.display = 'none';
+									// Auto-fill related field (e.g. patientId)
+									if (field.relatedField) {
+										const relatedInput = inputs.get(field.relatedField);
+										if (relatedInput) {
+											relatedInput.value = String(result[valueField] ?? '');
+										}
+									}
+								});
+							}
+							dropdown.style.display = 'block';
+						} catch {
+							// Silently ignore search errors
+						}
+					}, 300));
+				});
+
+				// Hide dropdown on blur (with delay for click)
+				inputEl.addEventListener('blur', () => {
+					setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+				});
+				inputEl.addEventListener('focus', () => {
+					if (dropdown.childElementCount > 0) { dropdown.style.display = 'block'; }
+				});
 			} else {
 				inputEl = DOM.append(group, DOM.$('input')) as HTMLInputElement;
-				inputEl.type = field.type === 'search' ? 'text' : field.type;
+				inputEl.type = field.type;
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || '';
 			}
@@ -518,6 +650,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	override dispose(): void {
 		if (this.debounceTimer) { clearTimeout(this.debounceTimer); }
+		for (const timer of this.searchDebounceTimers.values()) { clearTimeout(timer); }
+		this.searchDebounceTimers.clear();
 		this._closeForm();
 		super.dispose();
 	}

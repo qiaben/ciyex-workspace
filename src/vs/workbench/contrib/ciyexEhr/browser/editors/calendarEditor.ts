@@ -37,6 +37,10 @@ interface Appointment {
 	locationName?: string;
 }
 
+function localDateStr(d: Date): string {
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function getAppointmentType(apt: Appointment): string {
 	const t = apt.appointmentType;
 	if (typeof t === 'string') { return t; }
@@ -291,13 +295,13 @@ export class CalendarEditor extends EditorPane {
 	private _getDateRange(): { startDate: string; endDate: string } {
 		const d = new Date(this.currentDate);
 		if (this.viewMode === 'day') {
-			const s = d.toISOString().split('T')[0];
+			const s = localDateStr(d);
 			return { startDate: s, endDate: s };
 		}
 		if (this.viewMode === 'month') {
 			const first = new Date(d.getFullYear(), d.getMonth(), 1);
 			const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-			return { startDate: first.toISOString().split('T')[0], endDate: last.toISOString().split('T')[0] };
+			return { startDate: localDateStr(first), endDate: localDateStr(last) };
 		}
 		// Week: find Monday
 		const day = d.getDay();
@@ -305,7 +309,7 @@ export class CalendarEditor extends EditorPane {
 		monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
 		const sunday = new Date(monday);
 		sunday.setDate(monday.getDate() + 6);
-		return { startDate: monday.toISOString().split('T')[0], endDate: sunday.toISOString().split('T')[0] };
+		return { startDate: localDateStr(monday), endDate: localDateStr(sunday) };
 	}
 
 	private _renderHeader(): void {
@@ -346,7 +350,7 @@ export class CalendarEditor extends EditorPane {
 
 		// Provider filter
 		const provSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
-		provSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:140px;';
+		provSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:180px;';
 		const provAll = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
 		provAll.value = ''; provAll.textContent = 'All Providers';
 		for (const p of this.providers) {
@@ -357,7 +361,7 @@ export class CalendarEditor extends EditorPane {
 
 		// Location filter
 		const locSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
-		locSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:140px;';
+		locSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:180px;';
 		const locAll = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
 		locAll.value = ''; locAll.textContent = 'All Locations';
 		for (const l of this.locations) {
@@ -383,7 +387,7 @@ export class CalendarEditor extends EditorPane {
 
 		// + New Appointment
 		iconBtn(actionsGroup, '+', 'New Appointment', true, async () => {
-			const today = this.currentDate.toISOString().split('T')[0];
+			const today = localDateStr(this.currentDate);
 			await this._createAppointment(today, '09:00');
 		});
 
@@ -404,7 +408,7 @@ export class CalendarEditor extends EditorPane {
 		const viewAppts = this._getViewFilteredAppointments().filter(a => {
 			const d = this._parseAptDate(a);
 			if (!d) { return false; }
-			const ds = d.toISOString().split('T')[0];
+			const ds = localDateStr(d);
 			return ds >= startDate && ds <= endDate;
 		});
 		this._countEl = DOM.append(this.headerBar, DOM.$('span'));
@@ -418,7 +422,7 @@ export class CalendarEditor extends EditorPane {
 		const viewAppts = this._getViewFilteredAppointments().filter(a => {
 			const d = this._parseAptDate(a);
 			if (!d) { return false; }
-			const ds = d.toISOString().split('T')[0];
+			const ds = localDateStr(d);
 			return ds >= startDate && ds <= endDate;
 		});
 		this._countEl.textContent = `${viewAppts.length} appts`;
@@ -453,7 +457,7 @@ export class CalendarEditor extends EditorPane {
 		for (const a of viewAppointments) {
 			const d = this._parseAptDate(a);
 			if (!d) { continue; }
-			const ds = d.toISOString().split('T')[0];
+			const ds = localDateStr(d);
 			const h = d.getHours();
 			const m = Math.floor(d.getMinutes() / slotDuration) * slotDuration;
 			const key = `${ds}|${h}|${m}`;
@@ -519,7 +523,7 @@ export class CalendarEditor extends EditorPane {
 					}
 
 					// Click to create appointment
-					const dayStr = days[di].toISOString().split('T')[0];
+					const dayStr = localDateStr(days[di]);
 					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 					cell.addEventListener('click', () => this._createAppointment(dayStr, timeStr));
 
@@ -566,7 +570,7 @@ export class CalendarEditor extends EditorPane {
 		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
 		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
 		const slotHeight = 20;
-		const dateStr = this.currentDate.toISOString().split('T')[0];
+		const dateStr = localDateStr(this.currentDate);
 
 		let activeProviders = this.providers.length > 0 ? [...this.providers] : [];
 		if (this.providerFilter) {
@@ -580,7 +584,12 @@ export class CalendarEditor extends EditorPane {
 		}
 
 		// PRE-INDEX appointments by provider+slot for O(1) lookup (instead of O(N) filter per cell)
-		const viewAppointments = this._getViewFilteredAppointments();
+		// Filter to only the selected day
+		const viewAppointments = this._getViewFilteredAppointments().filter(a => {
+			const d = this._parseAptDate(a);
+			if (!d) { return false; }
+			return localDateStr(d) === dateStr;
+		});
 		const apptIndex = new Map<string, Appointment[]>();
 		const provCounts = new Map<string, number>();
 		for (const a of viewAppointments) {
@@ -704,11 +713,11 @@ export class CalendarEditor extends EditorPane {
 		const monthAppointments = this._getViewFilteredAppointments();
 		for (let day = 1; day <= lastDay.getDate(); day++) {
 			const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-			const isToday = dateStr === new Date().toISOString().split('T')[0];
+			const isToday = dateStr === localDateStr(new Date());
 			const dayAppts = monthAppointments.filter(a => {
 				const d = this._parseAptDate(a);
 				if (!d) { return false; }
-				try { return d.toISOString().split('T')[0] === dateStr; } catch { return false; }
+				try { return localDateStr(d) === dateStr; } catch { return false; }
 			});
 
 			const cell = DOM.append(grid, DOM.$('.month-cell'));
@@ -810,7 +819,7 @@ export class CalendarEditor extends EditorPane {
 		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;';
 
 		const form = DOM.append(overlay, DOM.$('.appt-form'));
-		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:520px;max-width:90vw;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
 
 		// Title
 		const title = DOM.append(form, DOM.$('h3'));
@@ -926,7 +935,29 @@ export class CalendarEditor extends EditorPane {
 
 		// Date + Time row
 		row('Date', 'startDate', 'date', date, true, 'Start Time', 'startTime', 'time', time, true);
-		row('End Time', 'endTime', 'time', endTime, true, 'Priority', 'priority', 'text', 'Routine', false);
+		// End Time + Priority in a manual row
+		const endPriorityRow = DOM.append(form, DOM.$('.form-row'));
+		endPriorityRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
+		const endTimeGroup = DOM.append(endPriorityRow, DOM.$('.fg'));
+		const endTimeLbl = DOM.append(endTimeGroup, DOM.$('label'));
+		endTimeLbl.textContent = 'End Time *';
+		endTimeLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
+		const endTimeInp = DOM.append(endTimeGroup, DOM.$('input')) as HTMLInputElement;
+		endTimeInp.id = 'endTime'; endTimeInp.type = 'time'; endTimeInp.value = endTime;
+		endTimeInp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		formFields.set('endTime', endTimeInp);
+		const priorityGroup = DOM.append(endPriorityRow, DOM.$('.fg'));
+		const priorityLbl = DOM.append(priorityGroup, DOM.$('label'));
+		priorityLbl.textContent = 'Priority';
+		priorityLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
+		const prioritySel = DOM.append(priorityGroup, DOM.$('select')) as HTMLSelectElement;
+		prioritySel.id = 'priority';
+		prioritySel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		for (const opt of [{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }]) {
+			const o = DOM.append(prioritySel, DOM.$('option')) as HTMLOptionElement;
+			o.value = opt.value; o.textContent = opt.label; o.selected = opt.value === 'routine';
+		}
+		formFields.set('priority', prioritySel);
 
 		// Provider
 		const provOptions = [{ value: '', label: 'Select provider...' }, ...this.providers.map(p => ({ value: p.id, label: p.name }))];
@@ -939,6 +970,10 @@ export class CalendarEditor extends EditorPane {
 		// Status
 		const statusEl = field('Status', 'status', 'select', 'scheduled', false, [
 			{ value: 'scheduled', label: 'Scheduled' }, { value: 'confirmed', label: 'Confirmed' },
+			{ value: 'arrived', label: 'Arrived' }, { value: 'checked-in', label: 'Checked In' },
+			{ value: 'in-room', label: 'In Room' }, { value: 'with-provider', label: 'With Provider' },
+			{ value: 'fulfilled', label: 'Fulfilled' }, { value: 'cancelled', label: 'Cancelled' },
+			{ value: 'noshow', label: 'No Show' },
 		]) as HTMLSelectElement;
 
 		// Notes
@@ -995,7 +1030,7 @@ export class CalendarEditor extends EditorPane {
 						const body: Record<string, unknown> = {
 							appointmentType: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0276', code: visitType, display: visitType }], text: visitType },
 							status: status || 'scheduled',
-							priority: (formFields.get('priority') as HTMLInputElement | undefined)?.value || 'routine',
+							priority: (formFields.get('priority') as HTMLSelectElement | undefined)?.value || 'routine',
 							start: `${startD}T${startT}:00`,
 							end: `${startD}T${endT}:00`,
 							reason: notes || null,
@@ -1081,7 +1116,7 @@ export class CalendarEditor extends EditorPane {
 				}
 			}
 		} else if (pick.label === 'Reschedule') {
-			const newDate = await this.quickInputService.input({ prompt: 'New date (YYYY-MM-DD)', value: new Date().toISOString().split('T')[0] });
+			const newDate = await this.quickInputService.input({ prompt: 'New date (YYYY-MM-DD)', value: localDateStr(new Date()) });
 			if (!newDate) { return; }
 			const newTime = await this.quickInputService.input({ prompt: 'New time (HH:MM)', value: '09:00' });
 			if (!newTime) { return; }
@@ -1214,7 +1249,7 @@ export class CalendarEditor extends EditorPane {
 		);
 
 		// Search for available slots
-		const searchDate = this.currentDate.toISOString().split('T')[0];
+		const searchDate = localDateStr(this.currentDate);
 		let slotsUrl = `/api/slots/available?date=${searchDate}&type=${encodeURIComponent(typePick.label)}&days=14`;
 		const selectedProv = provItems.find(p => p.label === provPick?.label);
 		if (selectedProv?.id) { slotsUrl += `&providerId=${selectedProv.id}`; }

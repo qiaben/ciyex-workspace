@@ -38,9 +38,16 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true, placeholder: 'Patient name' },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Patient ID' },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', placeholder: '10-digit NPI' },
 			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg' },
+			{
+				key: 'codeSystem', label: 'Code System', type: 'select', options: [
+					{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
+				]
+			},
 			{ key: 'strength', label: 'Strength', type: 'text', placeholder: '500mg' },
 			{
 				key: 'dosageForm', label: 'Dosage Form', type: 'select', options: [
@@ -54,8 +61,15 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30' },
 			{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30' },
 			{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0 },
-			{ key: 'prescriberName', label: 'Prescriber', type: 'text', placeholder: 'Provider name' },
+			{
+				key: 'deaSchedule', label: 'DEA Schedule', type: 'select', options: [
+					{ label: 'Schedule II', value: 'II' }, { label: 'Schedule III', value: 'III' },
+					{ label: 'Schedule IV', value: 'IV' }, { label: 'Schedule V', value: 'V' },
+				]
+			},
 			{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', placeholder: 'Pharmacy name' },
+			{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', placeholder: 'e.g. (555) 123-4567' },
+			{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
@@ -63,8 +77,9 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			},
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'active' }, { label: 'On Hold', value: 'on_hold' },
-					{ label: 'Completed', value: 'completed' },
+					{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
+					{ label: 'Stopped', value: 'stopped' }, { label: 'Cancelled', value: 'cancelled' },
+					{ label: 'On Hold', value: 'on-hold' },
 				], defaultValue: 'active'
 			},
 			{ key: 'startDate', label: 'Start Date', type: 'date' },
@@ -130,11 +145,15 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
 			{ key: 'patientFirstName', label: 'Patient First Name', type: 'text', required: true },
 			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', required: true },
+			{ key: 'orderNumber', label: 'Order Number', type: 'text', placeholder: 'Auto-generated' },
 			{ key: 'orderName', label: 'Order/Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, BMP, Lipid Panel' },
 			{ key: 'testCode', label: 'Test Code', type: 'text', placeholder: 'LOINC code' },
+			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'Specimen identifier' },
 			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
 			{ key: 'physicianName', label: 'Ordering Provider', type: 'text' },
 			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'e.g. Z00.00' },
+			{ key: 'orderDate', label: 'Order Date', type: 'date' },
+			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
@@ -164,10 +183,10 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 		],
 		statusTabs: [{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' }, { label: 'Entered in Error', value: 'entered_in_error' }],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'e.g. Influenza, COVID-19' },
-			{ key: 'cvxCode', label: 'CVX Code', type: 'text', placeholder: '141' },
+			{ key: 'cvxCode', label: 'CVX Code', type: 'text', placeholder: 'e.g. 141, 208, 213 (enter CVX number)' },
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
 			{ key: 'lot', label: 'Lot Number', type: 'text' },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
@@ -185,7 +204,11 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				]
 			},
 			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1' },
-			{ key: 'provider', label: 'Administered By', type: 'text', required: true },
+			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: 'e.g. 1 of 3' },
+			{ key: 'provider', label: 'Administered By', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'orderingProvider', label: 'Ordering Provider', type: 'search', placeholder: 'Search ordering provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'visDate', label: 'VIS Date', type: 'date' },
+			{ key: 'refusalReason', label: 'Refusal Reason', type: 'text', placeholder: 'Reason if refused' },
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
 					{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' },
@@ -222,24 +245,42 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			{ label: 'Cancelled', value: 'cancelled' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
-			{ key: 'referringProvider', label: 'Referring Provider', type: 'text', required: true },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true },
 			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI' },
 			{
 				key: 'specialty', label: 'Specialty', type: 'select', options: [
+					{ label: 'Allergy/Immunology', value: 'Allergy/Immunology' },
 					{ label: 'Cardiology', value: 'Cardiology' }, { label: 'Dermatology', value: 'Dermatology' },
-					{ label: 'Endocrinology', value: 'Endocrinology' }, { label: 'Gastroenterology', value: 'Gastroenterology' },
-					{ label: 'Neurology', value: 'Neurology' }, { label: 'Oncology', value: 'Oncology' },
-					{ label: 'Ophthalmology', value: 'Ophthalmology' }, { label: 'Orthopedics', value: 'Orthopedics' },
-					{ label: 'Psychiatry', value: 'Psychiatry' }, { label: 'Pulmonology', value: 'Pulmonology' },
-					{ label: 'Rheumatology', value: 'Rheumatology' }, { label: 'Surgery', value: 'Surgery' },
-					{ label: 'Urology', value: 'Urology' }, { label: 'Other', value: 'Other' },
+					{ label: 'Endocrinology', value: 'Endocrinology' }, { label: 'ENT', value: 'ENT' },
+					{ label: 'Gastroenterology', value: 'Gastroenterology' },
+					{ label: 'Geriatrics', value: 'Geriatrics' },
+					{ label: 'Hematology', value: 'Hematology' },
+					{ label: 'Infectious Disease', value: 'Infectious Disease' },
+					{ label: 'Nephrology', value: 'Nephrology' }, { label: 'Neurology', value: 'Neurology' },
+					{ label: 'Obstetrics/Gynecology', value: 'Obstetrics/Gynecology' },
+					{ label: 'Oncology', value: 'Oncology' }, { label: 'Ophthalmology', value: 'Ophthalmology' },
+					{ label: 'Orthopedics', value: 'Orthopedics' },
+					{ label: 'Pain Management', value: 'Pain Management' },
+					{ label: 'Palliative Care', value: 'Palliative Care' },
+					{ label: 'Pathology', value: 'Pathology' }, { label: 'Pediatrics', value: 'Pediatrics' },
+					{ label: 'Physical Medicine', value: 'Physical Medicine' },
+					{ label: 'Plastic Surgery', value: 'Plastic Surgery' },
+					{ label: 'Podiatry', value: 'Podiatry' }, { label: 'Psychiatry', value: 'Psychiatry' },
+					{ label: 'Pulmonology', value: 'Pulmonology' }, { label: 'Radiology', value: 'Radiology' },
+					{ label: 'Rheumatology', value: 'Rheumatology' },
+					{ label: 'Sports Medicine', value: 'Sports Medicine' },
+					{ label: 'Surgery', value: 'Surgery' }, { label: 'Urology', value: 'Urology' },
+					{ label: 'Vascular Surgery', value: 'Vascular Surgery' },
+					{ label: 'Other', value: 'Other' },
 				]
 			},
 			{ key: 'facilityName', label: 'Facility Name', type: 'text' },
+			{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: 'Street address' },
 			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text' },
+			{ key: 'facilityFax', label: 'Facility Fax', type: 'text' },
 			{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true },
 			{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea' },
 			{
@@ -247,8 +288,13 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
 			},
-			{ key: 'insuranceName', label: 'Insurance', type: 'text' },
+			{ key: 'insuranceName', label: 'Insurance Name', type: 'text' },
+			{ key: 'insuranceId', label: 'Insurance ID', type: 'text', placeholder: 'Member/policy ID' },
 			{ key: 'authorizationNumber', label: 'Auth Number', type: 'text' },
+			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
+			{ key: 'appointmentDate', label: 'Appointment Date', type: 'date' },
+			{ key: 'appointmentNotes', label: 'Appointment Notes', type: 'textarea', placeholder: 'Scheduling notes...' },
+			{ key: 'followUpNotes', label: 'Follow-Up Notes', type: 'textarea', placeholder: 'Follow-up instructions...' },
 		],
 		actions: [
 			{
@@ -288,8 +334,8 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			{ key: 'title', label: 'Plan Title', type: 'text', required: true, placeholder: 'e.g. Diabetes Management Plan' },
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{
 				key: 'category', label: 'Category', type: 'select', required: true, options: [
 					{ label: 'Chronic Disease', value: 'chronic_disease' }, { label: 'Preventive', value: 'preventive' },
@@ -298,10 +344,11 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'other' },
 				]
 			},
-			{ key: 'authorName', label: 'Author', type: 'text' },
+			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'startDate', label: 'Start Date', type: 'date' },
 			{ key: 'endDate', label: 'End Date', type: 'date' },
 			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
 					{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
@@ -322,10 +369,46 @@ export class CdsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Clinical Decision Support', apiPath: '/api/cds/rules',
 		searchPlaceholder: 'Search by rule name...',
+		editable: true,
 		columns: [
 			{ key: 'name', label: 'Rule Name', width: '1.5fr' }, { key: 'type', label: 'Type', width: '120px' },
 			{ key: 'description', label: 'Description', width: '2fr' },
 			{ key: 'severity', label: 'Severity', width: '80px' }, { key: 'status', label: 'Status', width: '70px' },
+		],
+		statusTabs: [
+			{ label: 'Active', value: 'active' },
+			{ label: 'Inactive', value: 'inactive' },
+			{ label: 'Draft', value: 'draft' },
+		],
+		formFields: [
+			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'Enter alert/rule name' },
+			{
+				key: 'type', label: 'Type', type: 'select', required: true, options: [
+					{ label: 'Drug Interaction', value: 'drug_interaction' },
+					{ label: 'Allergy Alert', value: 'allergy_alert' },
+					{ label: 'Duplicate Order', value: 'duplicate_order' },
+					{ label: 'Age-Based', value: 'age_based' },
+					{ label: 'Lab Value', value: 'lab_value' },
+					{ label: 'Preventive Care', value: 'preventive_care' },
+					{ label: 'Custom', value: 'custom' },
+				]
+			},
+			{ key: 'description', label: 'Description', type: 'textarea', required: true, placeholder: 'Describe the clinical rule or alert...' },
+			{
+				key: 'severity', label: 'Severity', type: 'select', required: true, options: [
+					{ label: 'Info', value: 'info' },
+					{ label: 'Warning', value: 'warning' },
+					{ label: 'Critical', value: 'critical' },
+				], defaultValue: 'warning'
+			},
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+					{ label: 'Draft', value: 'draft' },
+				], defaultValue: 'draft'
+			},
+			{ key: 'condition', label: 'Condition Expression', type: 'textarea', placeholder: 'Rule condition (e.g. age > 50 AND diagnosis contains "diabetes")' },
 		],
 		actions: [
 			// allow-any-unicode-next-line
@@ -360,20 +443,30 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
-			{ key: 'providerName', label: 'Provider', type: 'text' },
-			{ key: 'insuranceName', label: 'Insurance Name', type: 'text', required: true },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
 			{ key: 'memberId', label: 'Member ID', type: 'text' },
+			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
 			{ key: 'procedureCode', label: 'CPT Code', type: 'text', required: true, placeholder: 'e.g. 99213' },
 			{ key: 'procedureDescription', label: 'Procedure Description', type: 'text' },
 			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'e.g. E11.9' },
 			{ key: 'diagnosisDescription', label: 'Diagnosis Description', type: 'text' },
+			{ key: 'reviewDate', label: 'Review Date', type: 'date' },
+			{ key: 'approvedDate', label: 'Approved Date', type: 'date' },
+			{ key: 'deniedDate', label: 'Denied Date', type: 'date' },
+			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
+			{ key: 'approvedUnits', label: 'Approved Units', type: 'number', placeholder: 'Number of approved units' },
+			{ key: 'usedUnits', label: 'Used Units', type: 'number', placeholder: 'Units already used' },
+			{ key: 'remainingUnits', label: 'Remaining Units', type: 'number', placeholder: 'Units remaining' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
 			},
+			{ key: 'denialReason', label: 'Denial Reason', type: 'textarea', placeholder: 'Reason for denial if applicable' },
+			{ key: 'appealDeadline', label: 'Appeal Deadline', type: 'date' },
 			{ key: 'notes', label: 'Notes', type: 'textarea' },
 		],
 		actions: [
@@ -413,10 +506,12 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 export class EducationEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexEducation';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Patient Education', apiPath: '/api/education/assignments',
+		title: 'Patient Education', apiPath: '/api/patient-education',
 		searchPlaceholder: 'Search by topic, category...',
 		columns: [
 			{ key: 'materialTitle', label: 'Topic', width: '1.5fr' },
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'category', label: 'Category', width: '100px' },
 			{ key: 'status', label: 'Status', width: '100px' },
 			{ key: 'priority', label: 'Priority', width: '80px' },
 			{ key: 'dueDate', label: 'Due Date', width: '100px' },

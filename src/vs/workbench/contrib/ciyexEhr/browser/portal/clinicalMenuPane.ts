@@ -30,8 +30,6 @@ const CLINICAL_ITEMS: Array<{ icon: string; label: string; description: string; 
 	// allow-any-unicode-next-line
 	{ icon: '❤️', label: 'Care Plans', description: 'Goals, interventions, categories', command: 'ciyex.openCarePlans' },
 	// allow-any-unicode-next-line
-	{ icon: '🧠', label: 'CDS Rules & Alerts', description: 'Clinical decision support rules', command: 'ciyex.openCds' },
-	// allow-any-unicode-next-line
 	{ icon: '📚', label: 'Patient Education', description: 'Education materials and handouts', command: 'ciyex.openEducation' },
 ];
 

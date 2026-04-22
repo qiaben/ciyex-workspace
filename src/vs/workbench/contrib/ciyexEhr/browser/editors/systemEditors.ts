@@ -44,8 +44,8 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			{ label: 'Revoked', value: 'revoked' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true, placeholder: 'Patient name' },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Patient ID' },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{
 				key: 'consentType', label: 'Consent Type', type: 'select', required: true, options: [
 					{ label: 'HIPAA Privacy', value: 'hipaa_privacy' },
@@ -132,13 +132,14 @@ export class FaxEditor extends ClinicalListEditorBase {
 		editable: true,
 		columns: [
 			{ key: 'direction', label: 'Direction', width: '80px' },
-			{ key: 'faxNumber', label: 'Fax Number', width: '110px' },
-			{ key: 'senderName', label: 'Sender' },
-			{ key: 'recipientName', label: 'Recipient' },
+			{ key: 'faxNumber', label: 'Fax Number', width: '120px' },
+			{ key: 'senderName', label: 'Sender', width: '1fr' },
+			{ key: 'recipientName', label: 'Recipient', width: '1fr' },
 			{ key: 'subject', label: 'Subject', width: '1.3fr' },
 			{ key: 'pageCount', label: 'Pages', width: '55px' },
 			{ key: 'category', label: 'Category', width: '100px' },
 			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'sentAt', label: 'Sent At', width: '130px' },
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' },
@@ -149,11 +150,12 @@ export class FaxEditor extends ClinicalListEditorBase {
 			{ label: 'Received', value: 'received' },
 		],
 		formFields: [
-			{ key: 'recipientName', label: 'Recipient Name', type: 'text', required: true, placeholder: 'Recipient name' },
+			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '+1-555-555-5555' },
 			{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
 			{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
-			{ key: 'patientName', label: 'Patient Name', type: 'text', placeholder: 'Linked patient (optional)' },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', placeholder: 'Auto-filled from patient search' },
 			{
 				key: 'category', label: 'Category', type: 'select', options: [
 					{ label: 'Referral', value: 'referral' },
@@ -167,10 +169,14 @@ export class FaxEditor extends ClinicalListEditorBase {
 		],
 		cellRenderer: (key, value) => {
 			if (key === 'direction' && typeof value === 'string') {
-				return value === 'inbound' ? 'Inbound' : 'Outbound';
+				// allow-any-unicode-next-line
+				return value === 'inbound' ? '📥 Inbound' : '📤 Outbound';
 			}
 			if (key === 'category' && typeof value === 'string') {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			if (key === 'sentAt' && typeof value === 'string') {
+				try { return new Date(value).toLocaleString(); } catch { return String(value); }
 			}
 			return String(value ?? '');
 		},
@@ -219,9 +225,11 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexDocScanning';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Document Scanning',
-		apiPath: '/api/document-scanning',
+		apiPath: '/api/documents',
+		statsPath: '/api/documents/stats',
 		searchPlaceholder: 'Search by file name, patient...',
-		editable: false,
+		editable: true,
+		filterKey: 'ocrStatus',
 		columns: [
 			{ key: 'fileName', label: 'File Name', width: '1.5fr' },
 			{ key: 'patientName', label: 'Patient' },
@@ -236,6 +244,23 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			{ label: 'Processing', value: 'processing' },
 			{ label: 'Completed', value: 'completed' },
 			{ label: 'Failed', value: 'failed' },
+		],
+		formFields: [
+			{ key: 'fileName', label: 'File Name', type: 'text', required: true, placeholder: 'Document file name' },
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{
+				key: 'category', label: 'Category', type: 'select', required: true, options: [
+					{ label: 'Lab Report', value: 'lab_report' },
+					{ label: 'Imaging', value: 'imaging' },
+					{ label: 'Insurance Card', value: 'insurance_card' },
+					{ label: 'Consent Form', value: 'consent_form' },
+					{ label: 'Referral', value: 'referral' },
+					{ label: 'Discharge Summary', value: 'discharge_summary' },
+					{ label: 'Other', value: 'other' },
+				]
+			},
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes about this document...' },
 		],
 		cellRenderer: (key, value) => {
 			if (key === 'category' && typeof value === 'string') {
@@ -293,6 +318,7 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 		statsPath: '/api/audit-log/stats',
 		searchPlaceholder: 'Search by user, resource, patient...',
 		editable: false,
+		filterKey: 'action',
 		columns: [
 			{ key: 'action', label: 'Action', width: '80px' },
 			{ key: 'resourceType', label: 'Resource Type', width: '120px' },

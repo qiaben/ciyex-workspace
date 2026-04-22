@@ -205,7 +205,7 @@ export class TasksEditor extends EditorPane {
 
 		// Priority filter
 		const priFilter = DOM.append(bar, DOM.$('select')) as HTMLSelectElement;
-		priFilter.style.cssText = inputStyle + 'cursor:pointer;';
+		priFilter.style.cssText = inputStyle + 'cursor:pointer;appearance:auto;';
 		const priAll = DOM.append(priFilter, DOM.$('option')) as HTMLOptionElement;
 		priAll.value = ''; priAll.textContent = 'All Priorities';
 		for (const p of PRIORITIES) {
@@ -216,7 +216,7 @@ export class TasksEditor extends EditorPane {
 
 		// Type filter
 		const typeFilter = DOM.append(bar, DOM.$('select')) as HTMLSelectElement;
-		typeFilter.style.cssText = inputStyle + 'cursor:pointer;';
+		typeFilter.style.cssText = inputStyle + 'cursor:pointer;appearance:auto;';
 		const typeAll = DOM.append(typeFilter, DOM.$('option')) as HTMLOptionElement;
 		typeAll.value = ''; typeAll.textContent = 'All Types';
 		for (const t of TASK_TYPES) {
@@ -261,8 +261,8 @@ export class TasksEditor extends EditorPane {
 		// Table header
 		const table = DOM.append(this.contentEl, DOM.$('div'));
 		const headerRow = DOM.append(table, DOM.$('div'));
-		headerRow.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 70px;gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		for (const col of ['', 'Title', 'Type', 'Assigned To', 'Patient', 'Due', 'Status', '']) {
+		headerRow.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		for (const col of ['', 'Title', 'Type', 'Assigned To', 'Patient', 'Due', 'Status', 'Actions']) {
 			const h = DOM.append(headerRow, DOM.$('span'));
 			h.textContent = col;
 		}
@@ -270,9 +270,9 @@ export class TasksEditor extends EditorPane {
 		// Rows
 		for (const task of this.tasks) {
 			const row = DOM.append(table, DOM.$('div'));
-			row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 70px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;cursor:pointer;';
-			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; actionsEl.style.opacity = '1'; });
-			row.addEventListener('mouseleave', () => { row.style.background = ''; actionsEl.style.opacity = '0'; });
+			row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;cursor:pointer;';
+			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+			row.addEventListener('mouseleave', () => { row.style.background = ''; });
 			row.addEventListener('click', () => this._openForm(task));
 
 			// Priority dot
@@ -329,7 +329,18 @@ export class TasksEditor extends EditorPane {
 
 			// Actions
 			const actionsEl = DOM.append(row, DOM.$('div'));
-			actionsEl.style.cssText = 'display:flex;gap:4px;opacity:0;transition:opacity 0.1s;';
+			actionsEl.style.cssText = 'display:flex;gap:4px;';
+
+			// Edit button
+			const editBtn = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
+			// allow-any-unicode-next-line
+			editBtn.textContent = '\u270F';
+			editBtn.title = 'Edit';
+			editBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;color:var(--vscode-textLink-foreground);padding:2px;';
+			editBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this._openForm(task);
+			});
 
 			if (task.status !== 'completed' && task.status !== 'cancelled') {
 				const completeBtn = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
@@ -344,6 +355,7 @@ export class TasksEditor extends EditorPane {
 			}
 
 			const delBtn = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
+			// allow-any-unicode-next-line
 			delBtn.textContent = '\u{1F5D1}';
 			delBtn.title = 'Delete';
 			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:12px;padding:2px;';
@@ -400,7 +412,7 @@ export class TasksEditor extends EditorPane {
 
 		// Panel
 		const panel = DOM.append(this.formOverlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:480px;max-width:90%;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;';
+		panel.style.cssText = 'position:relative;width:520px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;';
 
 		// Header
 		const hdr = DOM.append(panel, DOM.$('div'));
@@ -430,7 +442,7 @@ export class TasksEditor extends EditorPane {
 
 			if (type === 'select' && opts?.options) {
 				const sel = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
-				sel.style.cssText = inputStyle + 'height:32px;cursor:pointer;';
+				sel.style.cssText = inputStyle + 'height:32px;cursor:pointer;appearance:auto;';
 				for (const o of opts.options) {
 					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 					opt.value = o.value; opt.textContent = o.label; opt.selected = o.value === val;

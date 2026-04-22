@@ -298,7 +298,52 @@ export class EncounterFormEditor extends EditorPane {
 		const saveBtn = DOM.append(this.headerBar, DOM.$('button'));
 		saveBtn.textContent = 'Save';
 		saveBtn.style.cssText = 'padding:5px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
-		saveBtn.addEventListener('click', () => this.notificationService.info('Save encounter — coming soon'));
+		saveBtn.addEventListener('click', async () => {
+			if (!(this.input instanceof EncounterFormEditorInput)) { return; }
+			const encounterId = this.input.encounterId;
+			const patientId = this.input.patientId;
+			if (!encounterId) { this.notificationService.warn('No encounter ID'); return; }
+
+			// Collect all form data from section cards via tracked field references
+			const formData: Record<string, string> = {};
+			for (const [, card] of this.sectionCards) {
+				// Walk child elements to find inputs without querySelectorAll
+				const walk = (el: HTMLElement) => {
+					for (let i = 0; i < el.children.length; i++) {
+						const child = el.children[i] as HTMLElement;
+						const tag = child.tagName;
+						if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+							const inp = child as HTMLInputElement;
+							const key = inp.id || inp.name || inp.dataset.key || '';
+							if (key) { formData[key] = inp.value; }
+						}
+						if (child.children.length > 0) { walk(child); }
+					}
+				};
+				walk(card);
+			}
+
+			saveBtn.textContent = 'Saving...';
+			(saveBtn as HTMLButtonElement).disabled = true;
+			try {
+				const res = await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ ...formData, patientId, id: encounterId }),
+				});
+				if (res.ok) {
+					this.notificationService.info('Encounter saved successfully');
+				} else {
+					const err = await res.text().catch(() => 'Unknown error');
+					this.notificationService.error(`Failed to save: ${err}`);
+				}
+			} catch (e) {
+				this.notificationService.error(`Save error: ${e}`);
+			} finally {
+				saveBtn.textContent = 'Save';
+				(saveBtn as HTMLButtonElement).disabled = false;
+			}
+		});
 
 		const signBtn = DOM.append(this.headerBar, DOM.$('button'));
 		signBtn.textContent = 'Sign & Lock';
