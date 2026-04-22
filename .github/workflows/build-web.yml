@@ -77,6 +77,11 @@ jobs:
           mkdir -p .build/node_modules_cache
           tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
 
+      - name: Compile core
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp core-ci
+
       - name: Compile & Build web server
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
