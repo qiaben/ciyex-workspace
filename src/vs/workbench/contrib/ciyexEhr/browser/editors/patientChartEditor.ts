@@ -294,7 +294,7 @@ export class PatientChartEditor extends EditorPane {
 
 		// Back arrow
 		const back = DOM.append(this.headerBar, DOM.$('button'));
-		back.innerHTML = '←';
+		back.textContent = '←';
 		back.title = 'Back';
 		back.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px;';
 		back.addEventListener('mouseenter', () => { back.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
