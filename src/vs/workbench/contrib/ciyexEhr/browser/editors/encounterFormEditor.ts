@@ -396,7 +396,8 @@ export class EncounterFormEditor extends EditorPane {
 	private _setupScrollSync(): void {
 		this.scrollArea.addEventListener('scroll', () => {
 			let activeKey = '';
-			const scrollTop = this.scrollArea.scrollTop + 60;
+			// Use dynamic offset based on scroll area position instead of hardcoded 60px
+			const scrollTop = this.scrollArea.scrollTop + this.scrollArea.offsetTop + 20;
 			for (const [key, card] of this.sectionCards) {
 				if (card.offsetTop <= scrollTop) {
 					activeKey = key;
@@ -409,6 +410,12 @@ export class EncounterFormEditor extends EditorPane {
 				el.style.fontWeight = isActive ? '600' : '';
 				if (isActive) { el.classList.add('active'); } else { el.classList.remove('active'); }
 			});
+
+			// Auto-scroll TOC to keep active item visible
+			const activeItem = this.tocItems.find(t => t.el.classList.contains('active'));
+			if (activeItem) {
+				activeItem.el.scrollIntoView({ block: 'nearest' });
+			}
 		});
 	}
 
