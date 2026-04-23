@@ -21,7 +21,7 @@ env:
 jobs:
   build:
     name: Build Web & Push Docker
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
 
     steps:
