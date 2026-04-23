@@ -24,7 +24,7 @@ const ITEM_KEY_TO_VIEW: Record<string, string> = {
 	'tasks': 'ciyex.tasks.view',
 	'messaging': 'ciyex.messaging.channels',
 	'reports': 'ciyex.reports.view',
-	'developer-portal': 'ciyex.developer.view',
+	'developer-portal': 'ciyex.developer.menu',
 	// Clinical children → sidebar views (GenericListPane for simple ones)
 	'labs': 'ciyex.clinical.labs',
 	'education': 'ciyex.clinical.education',
@@ -61,6 +61,7 @@ const ITEM_KEY_TO_COMMAND: Record<string, string> = {
 	'calendar': 'ciyex.openCalendar',
 	'tasks': 'ciyex.openTasks',
 	'messaging': 'ciyex.openMessaging',
+	'developer-portal': 'ciyex.openDeveloperPortal',
 };
 
 export const ICiyexMenuService = createDecorator<ICiyexMenuService>('ciyexMenuService');

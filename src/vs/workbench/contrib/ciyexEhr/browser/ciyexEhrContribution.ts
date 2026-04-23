@@ -88,7 +88,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.tasks': 'ciyex.openTasks',
 			// 'ciyex.patients' intentionally NOT here -- chart opens on patient click, not sidebar click
 			// 'ciyex.messaging' intentionally NOT here -- conversation opens on channel click, not sidebar click
-			// 'ciyex.developer' intentionally NOT here -- sections open on menu item click, not sidebar click
+			'ciyex.developer': 'ciyex.openDeveloperPortal',
 		};
 
 		// Editor typeId -> sidebar container ID (editor tab click switches sidebar)
