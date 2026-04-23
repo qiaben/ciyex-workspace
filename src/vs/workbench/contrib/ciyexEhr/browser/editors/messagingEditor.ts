@@ -16,7 +16,6 @@ import { MessagingEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface Message {
 	id: string;
@@ -60,7 +59,7 @@ export class MessagingEditor extends EditorPane {
 	private messages: Message[] = [];
 	private channelInfo: ChannelInfo | null = null;
 	private currentUserId = '';
-	private pollTimer: ReturnType<typeof setInterval> | null = null;
+	private pollTimer: Timeout | null = null;
 	private loading = false;
 
 	constructor(
@@ -111,7 +110,8 @@ export class MessagingEditor extends EditorPane {
 
 		// Start polling
 		this._stopPolling();
-		this.pollTimer = mainWindow.setInterval(() => {
+		// eslint-disable-next-line no-restricted-globals
+		this.pollTimer = setInterval(() => {
 			if (!this.loading) {
 				this._loadMessages(input.channelId, input.threadParentId);
 			}
@@ -608,7 +608,8 @@ export class MessagingEditor extends EditorPane {
 
 	private _stopPolling(): void {
 		if (this.pollTimer) {
-			mainWindow.clearInterval(this.pollTimer);
+			// eslint-disable-next-line no-restricted-globals
+			clearInterval(this.pollTimer);
 			this.pollTimer = null;
 		}
 	}
