@@ -142,24 +142,45 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
 		formFields: [
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
-			{ key: 'patientFirstName', label: 'Patient First Name', type: 'text', required: true },
-			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', required: true },
-			{ key: 'orderNumber', label: 'Order Number', type: 'text', placeholder: 'Auto-generated' },
-			{ key: 'orderName', label: 'Order/Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, BMP, Lipid Panel' },
-			{ key: 'testCode', label: 'Test Code', type: 'text', placeholder: 'LOINC code' },
-			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'Specimen identifier' },
+			// Patient Information
+			{ key: 'patientFirstName', label: 'Patient', type: 'search', required: true, placeholder: 'Search patient by name, MRN or ID...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled' },
+			// Order Meta
 			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
-			{ key: 'physicianName', label: 'Ordering Provider', type: 'text' },
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'e.g. Z00.00' },
-			{ key: 'orderDate', label: 'Order Date', type: 'date' },
-			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)' },
+			{ key: 'orderNumber', label: 'Order Number', type: 'text', required: true, placeholder: 'ORD-2026-0001 (auto-generated)' },
+			{ key: 'orderName', label: 'Order Name', type: 'text', placeholder: 'Order name' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+			// Test Details
+			{ key: 'testCode', label: 'Test Code', type: 'text', required: true, placeholder: '12345' },
+			{ key: 'testDisplay', label: 'Test Display', type: 'text', placeholder: 'Complete Blood Count' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
+					{ label: 'Pending', value: 'pending' }, { label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' }, { label: 'Revoked', value: 'revoked' },
+				], defaultValue: 'active'
+			},
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
 			},
-			{ key: 'notes', label: 'Notes', type: 'textarea' },
+			{ key: 'orderDate', label: 'Order Date', type: 'date' },
+			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)' },
+			{ key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'orderingProvider', label: 'Physician Name', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
+			{
+				key: 'resultStatus', label: 'Result Status', type: 'select', options: [
+					{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
+					{ label: 'Partial', value: 'Partial' }, { label: 'Final', value: 'Final' },
+					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
+				], defaultValue: 'Pending'
+			},
+			// Diagnosis
+			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'e.g. Z00.00, E11.9' },
+			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'text', placeholder: 'e.g. 99213' },
 		],
 		actions: [
 			// allow-any-unicode-next-line
@@ -183,18 +204,56 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 		],
 		statusTabs: [{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' }, { label: 'Entered in Error', value: 'entered_in_error' }],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			// Patient Information
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient by name...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'e.g. Influenza, COVID-19' },
-			{ key: 'cvxCode', label: 'CVX Code', type: 'text', placeholder: 'e.g. 141, 208, 213 (enter CVX number)' },
-			{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
-			{ key: 'lot', label: 'Lot Number', type: 'text' },
+			// Vaccine Information
+			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Influenza, inactivated' },
+			{
+				key: 'cvxCode', label: 'CVX Code', type: 'select', options: [
+					{ label: 'Select CVX code...', value: '' },
+					{ label: '03 - MMR', value: '03' }, { label: '08 - Hep B, adolescent/high risk', value: '08' },
+					{ label: '10 - IPV', value: '10' }, { label: '20 - DTaP', value: '20' },
+					{ label: '21 - Varicella', value: '21' }, { label: '33 - Pneumococcal', value: '33' },
+					{ label: '43 - Hep B, adult', value: '43' }, { label: '44 - Hep B, dialysis', value: '44' },
+					{ label: '49 - Hib (PRP-OMP)', value: '49' }, { label: '62 - HPV, quadrivalent', value: '62' },
+					{ label: '83 - Hep A, pediatric', value: '83' }, { label: '88 - Influenza, unspecified', value: '88' },
+					{ label: '94 - MMRV', value: '94' }, { label: '104 - Hep A-Hep B', value: '104' },
+					{ label: '113 - Td (adult)', value: '113' }, { label: '114 - MCV4 (Menactra)', value: '114' },
+					{ label: '115 - Tdap', value: '115' }, { label: '116 - Rotavirus, pentavalent', value: '116' },
+					{ label: '118 - HPV, bivalent', value: '118' }, { label: '133 - PCV13', value: '133' },
+					{ label: '140 - Influenza, IIV, seasonal', value: '140' },
+					{ label: '141 - Influenza, IIV, seasonal, preservative free', value: '141' },
+					{ label: '150 - Influenza, IIV4, seasonal', value: '150' },
+					{ label: '158 - Influenza, IIV, seasonal, HD', value: '158' },
+					{ label: '165 - HPV9', value: '165' }, { label: '171 - Influenza, IIV4, adjuvanted', value: '171' },
+					{ label: '185 - Recombinant Zoster', value: '185' }, { label: '187 - Zoster recombinant', value: '187' },
+					{ label: '197 - Influenza, high-dose, QIV', value: '197' },
+					{ label: '205 - Influenza, IIV4, adjuvanted', value: '205' },
+					{ label: '207 - COVID-19 Moderna', value: '207' }, { label: '208 - COVID-19 Pfizer', value: '208' },
+					{ label: '210 - COVID-19 AstraZeneca', value: '210' }, { label: '211 - COVID-19 Novavax', value: '211' },
+					{ label: '212 - COVID-19 J&J/Janssen', value: '212' }, { label: '213 - COVID-19 unspecified', value: '213' },
+					{ label: '217 - COVID-19 Pfizer bivalent', value: '217' },
+					{ label: '218 - COVID-19 Pfizer BA.4/BA.5', value: '218' },
+					{ label: '219 - COVID-19 Moderna bivalent', value: '219' },
+					{ label: '221 - COVID-19 Moderna BA.4/BA.5', value: '221' },
+					{ label: '228 - RSV (Arexvy, adult)', value: '228' },
+					{ label: '229 - RSV (Abrysvo, maternal)', value: '229' },
+					{ label: '300 - COVID-19 XBB.1.5 updated', value: '300' },
+				]
+			},
+			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
+			{ key: 'lot', label: 'Lot Number', type: 'text', placeholder: 'ABC123' },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
+			// Administration Details
 			{ key: 'administrationDate', label: 'Administration Date', type: 'date', required: true },
 			{
 				key: 'site', label: 'Site', type: 'select', options: [
+					{ label: 'Select site...', value: '' },
 					{ label: 'Left Arm', value: 'left_arm' }, { label: 'Right Arm', value: 'right_arm' },
 					{ label: 'Left Thigh', value: 'left_thigh' }, { label: 'Right Thigh', value: 'right_thigh' },
+					{ label: 'Left Deltoid', value: 'left_deltoid' }, { label: 'Right Deltoid', value: 'right_deltoid' },
+					{ label: 'Left Gluteal', value: 'left_gluteal' }, { label: 'Right Gluteal', value: 'right_gluteal' },
 				]
 			},
 			{
@@ -204,18 +263,21 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				]
 			},
 			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1' },
-			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: 'e.g. 1 of 3' },
+			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: '1 of 3 or booster' },
+			// Provider Information
 			{ key: 'provider', label: 'Administered By', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'orderingProvider', label: 'Ordering Provider', type: 'search', placeholder: 'Search ordering provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'visDate', label: 'VIS Date', type: 'date' },
-			{ key: 'refusalReason', label: 'Refusal Reason', type: 'text', placeholder: 'Reason if refused' },
+			{ key: 'orderingProvider', label: 'Ordering Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			// Status & Notes
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
 					{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' },
 					{ label: 'Entered in Error', value: 'entered_in_error' },
 				], defaultValue: 'completed'
 			},
-			{ key: 'notes', label: 'Notes', type: 'textarea' },
+			{ key: 'visDate', label: 'VIS Date', type: 'date' },
+			{ key: 'refusalReason', label: 'Refusal Reason', type: 'text', placeholder: 'Patient declined...' },
+			{ key: 'reaction', label: 'Reaction', type: 'text', placeholder: 'None observed' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 		],
 		actions: [
 			// allow-any-unicode-next-line
