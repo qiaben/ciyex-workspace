@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Prescriptions', apiPath: '/api/prescriptions', statsPath: '/api/prescriptions/stats',
 		searchPlaceholder: 'Search by patient, medication, pharmacy...',
+		clientSideFilter: ['patientName', 'medicationName', 'sig', 'pharmacyName', 'prescriberName', 'status', 'priority', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'medicationName', label: 'Medication' },
@@ -88,8 +90,9 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Refill', icon: '🔄', handler: async (item, api, reload) => {
-					if (confirm(`Refill ${item.medicationName}?`)) {
+				label: 'Refill', icon: '🔄', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: `Refill ${item.medicationName}?`, type: 'question' });
+					if (r.confirmed) {
 						await api.fetch(`/api/prescriptions/${item.id}/refill`, { method: 'POST' });
 						reload();
 					}
@@ -97,8 +100,9 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Discontinue', icon: '⏹', handler: async (item, api, reload) => {
-					const reason = prompt('Reason for discontinuation:');
+				label: 'Discontinue', icon: '⏹', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.input({ type: 'question', message: 'Reason for discontinuation', inputs: [{ placeholder: 'Reason...' }] });
+					const reason = r.confirmed ? r.values?.[0]?.trim() : undefined;
 					if (reason) {
 						await api.fetch(`/api/prescriptions/${item.id}/discontinue`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -110,8 +114,9 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => {
-					if (confirm('Delete this prescription?')) {
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Delete this prescription?', type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
 						await api.fetch(`/api/prescriptions/${item.id}`, { method: 'DELETE' });
 						reload();
 					}
@@ -119,7 +124,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(PrescriptionsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PrescriptionsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class LabsEditor extends ClinicalListEditorBase {
@@ -127,6 +132,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Lab Orders', apiPath: '/api/lab-order/search', statsPath: undefined,
 		searchPlaceholder: 'Search by patient, test, order number...',
+		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'resultStatus', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientFirstName', label: 'Patient' }, { key: 'orderNumber', label: 'Order #', width: '100px' },
@@ -184,16 +190,17 @@ export class LabsEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete this lab order?')) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(LabsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(LabsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ImmunizationsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexImmunizations';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Immunizations', apiPath: '/api/immunizations', searchPlaceholder: 'Search by patient, vaccine...',
+		clientSideFilter: ['patientName', 'vaccineName', 'cvxCode', 'site', 'route', 'provider', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine', width: '1.5fr' },
@@ -281,10 +288,10 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/immunizations/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this immunization?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/immunizations/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(ImmunizationsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ImmunizationsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ReferralsEditor extends ClinicalListEditorBase {
@@ -292,6 +299,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Referrals', apiPath: '/api/referrals', statsPath: '/api/referrals/stats',
 		searchPlaceholder: 'Search by patient, specialist, facility...',
+		clientSideFilter: ['patientName', 'specialistName', 'specialty', 'facilityName', 'reason', 'urgency', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'specialistName', label: 'Specialist' },
@@ -372,10 +380,10 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				}
 			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/referrals/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this referral?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/referrals/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(ReferralsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ReferralsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class CarePlansEditor extends ClinicalListEditorBase {
@@ -383,6 +391,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Care Plans', apiPath: '/api/care-plans', statsPath: '/api/care-plans/stats',
 		searchPlaceholder: 'Search by title, patient, author...',
+		clientSideFilter: ['title', 'patientName', 'authorName', 'category', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'title', label: 'Title', width: '1.5fr' }, { key: 'patientName', label: 'Patient' },
@@ -420,10 +429,10 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm(`Delete "${item.title}"?`)) { await api.fetch(`/api/care-plans/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.title}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/care-plans/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(CarePlansEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CarePlansEditor.ID, group, t, th, s, a, d); }
 }
 
 export class CdsEditor extends ClinicalListEditorBase {
@@ -431,6 +440,7 @@ export class CdsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Clinical Decision Support', apiPath: '/api/cds/rules',
 		searchPlaceholder: 'Search by rule name...',
+		clientSideFilter: ['name', 'type', 'description', 'severity', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'name', label: 'Rule Name', width: '1.5fr' }, { key: 'type', label: 'Type', width: '120px' },
@@ -476,10 +486,10 @@ export class CdsEditor extends ClinicalListEditorBase {
 			// allow-any-unicode-next-line
 			{ label: 'Toggle', icon: '⏻', handler: async (item, api, reload) => { await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' }); reload(); } },
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm(`Delete "${item.name}"?`)) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(CdsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CdsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class AuthorizationsEditor extends ClinicalListEditorBase {
@@ -487,6 +497,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Prior Authorizations', apiPath: '/api/prior-auth', statsPath: '/api/prior-auth/stats',
 		searchPlaceholder: 'Search by auth#, patient, procedure, insurance...',
+		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authNumber', 'priority', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
@@ -534,8 +545,9 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Approve', icon: '✓', handler: async (item, api, reload) => {
-					const u = prompt('Approved units:', '1');
+				label: 'Approve', icon: '✓', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Approve authorization', inputs: [{ placeholder: 'Approved units', value: '1' }] });
+					const u = res.confirmed ? res.values?.[0]?.trim() : undefined;
 					if (u) {
 						await api.fetch(`/api/prior-auth/${item.id}/approve`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -547,8 +559,9 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Deny', icon: '✗', handler: async (item, api, reload) => {
-					const r = prompt('Denial reason:');
+				label: 'Deny', icon: '✗', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Deny authorization', inputs: [{ placeholder: 'Denial reason' }] });
+					const r = res.confirmed ? res.values?.[0]?.trim() : undefined;
 					if (r) {
 						await api.fetch(`/api/prior-auth/${item.id}/deny`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -559,10 +572,10 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				}
 			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/prior-auth/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this authorization?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/prior-auth/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(AuthorizationsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(AuthorizationsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class EducationEditor extends ClinicalListEditorBase {
@@ -570,6 +583,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Education', apiPath: '/api/patient-education',
 		searchPlaceholder: 'Search by topic, category...',
+		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
 		columns: [
 			{ key: 'materialTitle', label: 'Topic', width: '1.5fr' },
 			{ key: 'patientName', label: 'Patient' },
@@ -583,7 +597,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 			{ label: 'Completed', value: 'completed' }, { label: 'Dismissed', value: 'dismissed' },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(EducationEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(EducationEditor.ID, group, t, th, s, a, d); }
 }
 
 // allow-any-unicode-next-line
@@ -597,6 +611,7 @@ export class RecallEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Recall', apiPath: '/api/recalls',
 		searchPlaceholder: 'Search by patient name...',
+		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'recallTypeName', label: 'Type' },
@@ -632,8 +647,9 @@ export class RecallEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Log Outreach', icon: '📞', handler: async (item, api, reload) => {
-					const method = prompt('Outreach method (PHONE, EMAIL, SMS):');
+				label: 'Log Outreach', icon: '📞', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE' }] });
+					const method = res.confirmed ? res.values?.[0]?.trim() : undefined;
 					if (method) {
 						await api.fetch(`/api/recalls/${item.id}/outreach`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -644,10 +660,10 @@ export class RecallEditor extends ClinicalListEditorBase {
 				}
 			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/recalls/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this recall?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/recalls/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(RecallEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(RecallEditor.ID, group, t, th, s, a, d); }
 }
 
 export class CodesEditor extends ClinicalListEditorBase {
@@ -655,6 +671,9 @@ export class CodesEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Medical Codes', apiPath: '/api/global_codes',
 		searchPlaceholder: 'Search by code, description...',
+		// "Status tabs" here are actually code-type categories, so filter on codeType.
+		filterKey: 'codeType',
+		clientSideFilter: ['code', 'codeType', 'shortDescription', 'category', 'id'],
 		columns: [
 			{ key: 'code', label: 'Code', width: '100px' }, { key: 'codeType', label: 'Type', width: '80px' },
 			{ key: 'shortDescription', label: 'Description', width: '2fr' },
@@ -683,45 +702,88 @@ export class CodesEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/global_codes/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this code?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/global_codes/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(CodesEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CodesEditor.ID, group, t, th, s, a, d); }
 }
 
 export class InventoryEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexInventory';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Inventory Management', apiPath: '/api/inventory',
-		searchPlaceholder: 'Search by name, SKU, barcode...',
+		searchPlaceholder: 'Search by name, SKU, barcode, category...',
+		clientSideFilter: ['name', 'sku', 'barcode', 'description', 'categoryName', 'locationName', 'manufacturer', 'unit', 'status', 'id'],
 		editable: true,
+		mergeOnEdit: true,
 		columns: [
-			{ key: 'name', label: 'Item Name', width: '1.5fr' }, { key: 'sku', label: 'SKU', width: '100px' },
-			{ key: 'category', label: 'Category', width: '100px' }, { key: 'quantity', label: 'Qty', width: '60px' },
-			{ key: 'minimumLevel', label: 'Min', width: '50px' }, { key: 'unitCost', label: 'Cost', width: '70px' },
-			{ key: 'supplier', label: 'Supplier' }, { key: 'expirationDate', label: 'Expires', width: '90px' },
+			{ key: 'name', label: 'Item Name', width: '1.5fr' },
+			{ key: 'sku', label: 'SKU', width: '100px' },
+			{ key: 'categoryName', label: 'Category', width: '110px' },
+			{ key: 'stockOnHand', label: 'Stock', width: '60px' },
+			{ key: 'minStock', label: 'Min', width: '50px' },
+			{ key: 'unit', label: 'Unit', width: '70px' },
+			{ key: 'costPerUnit', label: 'Cost', width: '70px' },
+			{ key: 'status', label: 'Status', width: '80px' },
+		],
+		statusTabs: [
+			{ label: 'Active', value: 'active' },
+			{ label: 'Inactive', value: 'inactive' },
 		],
 		formFields: [
-			{ key: 'name', label: 'Item Name', type: 'text', required: true, placeholder: 'e.g. Latex Gloves Medium' },
-			{ key: 'sku', label: 'SKU', type: 'text' },
+			{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Latex Gloves Medium' },
+			{ key: 'sku', label: 'SKU', type: 'text', required: true, placeholder: 'e.g. GLV-M-001' },
+			{ key: 'description', label: 'Description', type: 'text' },
+			{ key: 'unit', label: 'Unit', type: 'text', required: true, placeholder: 'pcs / box / vial' },
+			{ key: 'costPerUnit', label: 'Cost Per Unit ($)', type: 'number' },
+			{ key: 'stockOnHand', label: 'Stock On Hand', type: 'number', required: true, defaultValue: 0 },
+			{ key: 'minStock', label: 'Min Stock', type: 'number', required: true, defaultValue: 0 },
+			{ key: 'maxStock', label: 'Max Stock', type: 'number' },
+			{ key: 'reorderPoint', label: 'Reorder Point', type: 'number' },
+			{ key: 'reorderQty', label: 'Reorder Qty', type: 'number' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+				], defaultValue: 'active'
+			},
+			{
+				key: 'itemType', label: 'Item Type', type: 'select', options: [
+					{ label: 'Consumable', value: 'consumable' },
+					{ label: 'Durable', value: 'durable' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Equipment', value: 'equipment' },
+				], defaultValue: 'consumable'
+			},
 			{ key: 'barcode', label: 'Barcode', type: 'text' },
-			{ key: 'category', label: 'Category', type: 'text', placeholder: 'e.g. Supplies, Equipment' },
-			{ key: 'location', label: 'Storage Location', type: 'text' },
-			{ key: 'quantity', label: 'Quantity', type: 'number', required: true, defaultValue: 0 },
-			{ key: 'minimumLevel', label: 'Minimum Level', type: 'number', defaultValue: 10 },
-			{ key: 'reorderLevel', label: 'Reorder Level', type: 'number', defaultValue: 20 },
-			{ key: 'unitCost', label: 'Unit Cost ($)', type: 'number' },
-			{ key: 'supplier', label: 'Supplier', type: 'text' },
-			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
-			{ key: 'notes', label: 'Notes', type: 'textarea' },
+			{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
+			{
+				key: 'costMethod', label: 'Cost Method', type: 'select', options: [
+					{ label: 'FIFO', value: 'fifo' },
+					{ label: 'LIFO', value: 'lifo' },
+					{ label: 'Average', value: 'avg' },
+				], defaultValue: 'fifo'
+			},
+			{ key: 'categoryId', label: 'Category ID', type: 'number' },
+			{ key: 'locationId', label: 'Location ID', type: 'number' },
+			{ key: 'supplierId', label: 'Supplier ID', type: 'number' },
 		],
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Adjust Stock', icon: '📦', handler: async (item, api, reload) => {
-					const qty = prompt('Adjustment quantity (positive to add, negative to remove):', '0');
+				label: 'Adjust Stock', icon: '📦', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({
+						type: 'question', message: 'Adjust stock',
+						detail: 'Positive to add, negative to remove. Reason is optional.',
+						inputs: [
+							{ placeholder: 'Quantity', value: '0' },
+							{ placeholder: 'Reason (optional)' },
+						],
+					});
+					if (!res.confirmed) { return; }
+					const qty = res.values?.[0]?.trim();
+					const reason = res.values?.[1]?.trim() || 'Manual adjustment';
 					if (qty) {
-						const reason = prompt('Reason for adjustment:') || 'Manual adjustment';
 						await api.fetch(`/api/inventory/${item.id}/adjust`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ quantity: Number(qty), reason, adjustmentType: Number(qty) >= 0 ? 'ADD' : 'REMOVE' }),
@@ -731,10 +793,10 @@ export class InventoryEditor extends ClinicalListEditorBase {
 				}
 			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => { if (confirm('Delete?')) { await api.fetch(`/api/inventory/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this inventory item?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(InventoryEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }
 }
 
 export class PaymentsEditor extends ClinicalListEditorBase {
@@ -742,6 +804,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Payments', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
 		searchPlaceholder: 'Search by patient, transaction...',
+		// Backend doesn't filter on status= / q=, so do it client-side.
+		clientSideFilter: ['patientId', 'patientName', 'transactionType', 'paymentMethodType', 'description', 'status', 'transactionId', 'id'],
 		columns: [
 			{ key: 'patientId', label: 'Patient ID' },
 			{ key: 'amount', label: 'Amount', width: '80px' },
@@ -765,10 +829,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Refund', icon: '↩️', handler: async (item, api, reload) => {
-					const amount = prompt('Refund amount:', String(item.amount || ''));
+				label: 'Refund', icon: '↩️', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({
+						type: 'question', message: 'Issue a refund',
+						inputs: [
+							{ placeholder: 'Amount', value: String(item.amount || '') },
+							{ placeholder: 'Reason (optional)' },
+						],
+					});
+					if (!res.confirmed) { return; }
+					const amount = res.values?.[0]?.trim();
+					const reason = res.values?.[1]?.trim() || 'Refund';
 					if (amount) {
-						const reason = prompt('Refund reason:') || 'Refund';
 						await api.fetch(`/api/payments/transactions/${item.id}/refund`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ amount: Number(amount), reason }),
@@ -779,8 +851,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Void', icon: '⊘', handler: async (item, api, reload) => {
-					if (confirm('Void this transaction?')) {
+				label: 'Void', icon: '⊘', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Void this transaction?', type: 'warning', primaryButton: 'Void' });
+					if (r.confirmed) {
 						await api.fetch(`/api/payments/transactions/${item.id}/void`, { method: 'POST' });
 						reload();
 					}
@@ -788,7 +861,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(PaymentsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {
@@ -796,6 +869,12 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Claims Management', apiPath: '/api/all-claims',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
+		editable: true,
+		// /api/all-claims doesn't support server-side q=/status= — filter client-side
+		// across the fields the user searches by (matches ciyex-ehr-ui behavior).
+		clientSideFilter: ['patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'claimId', 'id'],
+		mergeOnEdit: true,
+		editTitle: (item) => `Edit Claim #${String(item.claimId || item.id || '')}`,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'diagnosisCode', label: 'Dx Code', width: '80px' },
@@ -810,11 +889,29 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			{ label: 'Pending', value: 'pending' }, { label: 'Approved', value: 'approved' },
 			{ label: 'Denied', value: 'denied' }, { label: 'Paid', value: 'paid' },
 		],
+		formFields: [
+			{ key: 'patientName', label: 'Patient Name', type: 'text', placeholder: 'Patient name' },
+			{ key: 'provider', label: 'Provider', type: 'text', placeholder: 'Provider' },
+			{ key: 'payerName', label: 'Payer Name', type: 'text', placeholder: 'Insurance payer' },
+			{ key: 'diagnosisCode', label: 'Diagnosis Code', type: 'text', placeholder: 'e.g. Z00.00' },
+			{ key: 'policyNumber', label: 'Policy Number', type: 'text', placeholder: 'Policy number' },
+			{ key: 'planName', label: 'Plan Name', type: 'text', placeholder: 'Plan name' },
+			{ key: 'type', label: 'Type', type: 'text', placeholder: 'e.g. professional, institutional' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+		],
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Update Status', icon: '📋', handler: async (item, api, reload) => {
-					const status = prompt('New status (draft, submitted, pending, approved, denied, paid):');
+				label: 'Update Status', icon: '📋', handler: async (item, api, reload, dlg) => {
+					const statuses = ['draft', 'submitted', 'pending', 'approved', 'denied', 'paid'];
+					const res = await dlg.prompt<string>({
+						type: 'question',
+						message: 'Update claim status',
+						detail: `Current status: ${String(item.status || '—')}`,
+						buttons: statuses.map(v => ({ label: v.charAt(0).toUpperCase() + v.slice(1), run: () => v })),
+						cancelButton: true,
+					});
+					const status = res.result;
 					if (status) {
 						await api.fetch(`/api/all-claims/${item.claimId || item.id}/status`, {
 							method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -826,8 +923,9 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Send', icon: '📤', handler: async (item, api, reload) => {
-					if (confirm('Send this claim to insurance?')) {
+				label: 'Send', icon: '📤', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.confirm({ message: 'Send this claim to insurance?', type: 'question' });
+					if (res.confirmed) {
 						await api.fetch(`/api/all-claims/${item.claimId || item.id}/sends`, { method: 'POST' });
 						reload();
 					}
@@ -835,5 +933,5 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(ClaimsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ClaimsEditor.ID, group, t, th, s, a, d); }
 }

@@ -16,6 +16,7 @@ import { MessagingEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface Message {
 	id: string;
@@ -45,6 +46,7 @@ interface ChannelInfo {
 	memberCount?: number;
 }
 
+// allow-any-unicode-next-line
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '🙏'];
 
 export class MessagingEditor extends EditorPane {
@@ -109,7 +111,7 @@ export class MessagingEditor extends EditorPane {
 
 		// Start polling
 		this._stopPolling();
-		this.pollTimer = setInterval(() => {
+		this.pollTimer = mainWindow.setInterval(() => {
 			if (!this.loading) {
 				this._loadMessages(input.channelId, input.threadParentId);
 			}
@@ -121,6 +123,7 @@ export class MessagingEditor extends EditorPane {
 
 		// Channel icon
 		const icon = DOM.append(this.headerEl, DOM.$('span'));
+		// allow-any-unicode-next-line
 		icon.textContent = input.channelType === 'dm' ? '👤' : input.threadParentId ? '🧵' : '#';
 		icon.style.cssText = 'font-size:18px;font-weight:700;color:var(--vscode-foreground);';
 
@@ -141,12 +144,14 @@ export class MessagingEditor extends EditorPane {
 
 		// Search button
 		const searchBtn = DOM.append(this.headerEl, DOM.$('button'));
+		// allow-any-unicode-next-line
 		searchBtn.textContent = '🔍';
 		searchBtn.title = 'Search messages';
 		searchBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:4px;';
 
 		// Pin button
 		const pinBtn = DOM.append(this.headerEl, DOM.$('button'));
+		// allow-any-unicode-next-line
 		pinBtn.textContent = '📌';
 		pinBtn.title = 'Pinned messages';
 		pinBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:4px;';
@@ -270,14 +275,7 @@ export class MessagingEditor extends EditorPane {
 		// Content
 		const content = DOM.append(col, DOM.$('div'));
 		content.style.cssText = 'margin-top:2px;line-height:1.5;word-break:break-word;white-space:pre-wrap;';
-		// Render mentions with highlight
-		let html = this._escapeHtml(msg.content);
-		html = html.replace(/@(\w+)/g, '<span style="background:rgba(0,122,204,0.15);color:var(--vscode-textLink-foreground);padding:0 2px;border-radius:3px;">@$1</span>');
-		// Render bold/italic/code
-		html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-		html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-		html = html.replace(/`(.+?)`/g, '<code style="background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>');
-		content.innerHTML = html;
+		this._renderRichContent(content, msg.content);
 
 		// Attachments
 		if (msg.attachments && msg.attachments.length > 0) {
@@ -289,6 +287,7 @@ export class MessagingEditor extends EditorPane {
 				card.addEventListener('mouseenter', () => { card.style.background = 'var(--vscode-list-hoverBackground)'; });
 				card.addEventListener('mouseleave', () => { card.style.background = ''; });
 				const icon = DOM.append(card, DOM.$('span'));
+				// allow-any-unicode-next-line
 				icon.textContent = att.fileType?.startsWith('image') ? '🖼️' : '📎';
 				const info = DOM.append(card, DOM.$('div'));
 				const fname = DOM.append(info, DOM.$('div'));
@@ -316,6 +315,7 @@ export class MessagingEditor extends EditorPane {
 		if (msg.replyCount && msg.replyCount > 0 && !this._getInput()?.threadParentId) {
 			const thread = DOM.append(col, DOM.$('div'));
 			thread.style.cssText = 'margin-top:4px;font-size:12px;color:var(--vscode-textLink-foreground);cursor:pointer;';
+			// allow-any-unicode-next-line
 			thread.textContent = `💬 ${msg.replyCount} ${msg.replyCount === 1 ? 'reply' : 'replies'}`;
 			thread.addEventListener('click', () => {
 				const input = this._getInput();
@@ -341,6 +341,7 @@ export class MessagingEditor extends EditorPane {
 		// Reply button
 		if (!this._getInput()?.threadParentId) {
 			const replyBtn = DOM.append(hoverActions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			replyBtn.textContent = '💬';
 			replyBtn.title = 'Reply in thread';
 			replyBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
@@ -356,6 +357,7 @@ export class MessagingEditor extends EditorPane {
 
 		// Pin button
 		const pinBtn = DOM.append(hoverActions, DOM.$('button'));
+		// allow-any-unicode-next-line
 		pinBtn.textContent = '📌';
 		pinBtn.title = msg.pinned ? 'Unpin' : 'Pin';
 		pinBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
@@ -366,6 +368,7 @@ export class MessagingEditor extends EditorPane {
 		// Edit button (only for own messages)
 		if (msg.senderId === this.currentUserId) {
 			const editBtn = DOM.append(hoverActions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			editBtn.textContent = '✏️';
 			editBtn.title = 'Edit';
 			editBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
@@ -374,6 +377,7 @@ export class MessagingEditor extends EditorPane {
 			editBtn.addEventListener('click', () => this._editMessage(msg.id, msg.content));
 
 			const delBtn = DOM.append(hoverActions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			delBtn.textContent = '🗑️';
 			delBtn.title = 'Delete';
 			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
@@ -386,6 +390,7 @@ export class MessagingEditor extends EditorPane {
 	private _buildCompose(): void {
 		// Attach button
 		const attachBtn = DOM.append(this.composeEl, DOM.$('button'));
+		// allow-any-unicode-next-line
 		attachBtn.textContent = '📎';
 		attachBtn.title = 'Attach file';
 		attachBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;';
@@ -415,6 +420,7 @@ export class MessagingEditor extends EditorPane {
 
 		// Send button
 		const sendBtn = DOM.append(this.composeEl, DOM.$('button'));
+		// allow-any-unicode-next-line
 		sendBtn.textContent = '▶';
 		sendBtn.title = 'Send';
 		sendBtn.style.cssText = 'padding:6px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0;';
@@ -561,8 +567,37 @@ export class MessagingEditor extends EditorPane {
 		} catch { /* delete failed */ }
 	}
 
-	private _escapeHtml(text: string): string {
-		return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	// Parse @mentions and *bold* / _italic_ / `code` into DOM nodes without innerHTML
+	// (VS Code's Trusted Types policy throws on direct innerHTML string assignment).
+	private _renderRichContent(container: HTMLElement, text: string): void {
+		const pattern = /@(\w+)|\*\*(.+?)\*\*|_(.+?)_|`(.+?)`/g;
+		let lastIndex = 0;
+		let match: RegExpExecArray | null;
+		while ((match = pattern.exec(text)) !== null) {
+			if (match.index > lastIndex) {
+				container.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+			}
+			const [full, mention, bold, italic, code] = match;
+			if (mention !== undefined) {
+				const span = DOM.append(container, DOM.$('span'));
+				span.textContent = `@${mention}`;
+				span.style.cssText = 'background:rgba(0,122,204,0.15);color:var(--vscode-textLink-foreground);padding:0 2px;border-radius:3px;';
+			} else if (bold !== undefined) {
+				const el = DOM.append(container, DOM.$('strong'));
+				el.textContent = bold;
+			} else if (italic !== undefined) {
+				const el = DOM.append(container, DOM.$('em'));
+				el.textContent = italic;
+			} else if (code !== undefined) {
+				const el = DOM.append(container, DOM.$('code'));
+				el.textContent = code;
+				el.style.cssText = 'background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;font-size:12px;';
+			}
+			lastIndex = match.index + full.length;
+		}
+		if (lastIndex < text.length) {
+			container.appendChild(document.createTextNode(text.substring(lastIndex)));
+		}
 	}
 
 	private _formatSize(bytes: number): string {
@@ -573,7 +608,7 @@ export class MessagingEditor extends EditorPane {
 
 	private _stopPolling(): void {
 		if (this.pollTimer) {
-			clearInterval(this.pollTimer);
+			mainWindow.clearInterval(this.pollTimer);
 			this.pollTimer = null;
 		}
 	}

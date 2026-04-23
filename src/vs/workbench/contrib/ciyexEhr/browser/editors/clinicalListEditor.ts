@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -17,7 +18,11 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 interface ColumnDef { key: string; label: string; width?: string }
 interface StatusTab { label: string; value: string }
-interface ActionDef { label: string; icon: string; handler: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void) => void }
+interface ActionDef {
+	label: string;
+	icon: string;
+	handler: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void;
+}
 
 export interface FormFieldDef {
 	key: string;
@@ -64,6 +69,21 @@ export interface ClinicalEditorConfig {
 	priorityOptions?: Array<{ label: string; value: string }>;
 	/** Key used for status tab filtering. Defaults to 'status'. E.g. audit logs use 'action'. */
 	filterKey?: string;
+	/**
+	 * When set, the editor loads all records in one call and filters client-side
+	 * against these fields. Use for small datasets where the backend doesn't
+	 * support `q=` / status params. Status tabs still filter on `filterKey` (default: status).
+	 */
+	clientSideFilter?: string[];
+	/**
+	 * When true, the edit save payload is the merge of the original record and
+	 * the form values (instead of only the form values). Also strips nested
+	 * objects whose `id` is null to avoid backend "id cannot be null" errors.
+	 * Needed when the backend requires a complete record on PUT.
+	 */
+	mergeOnEdit?: boolean;
+	/** Custom dialog title for edit. Default: `Edit ${title without trailing s}`. */
+	editTitle?: (item: Record<string, unknown>) => string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -107,6 +127,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private editingItem: Record<string, unknown> | null = null;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+	private refocusSearchAfterRender = false;
 
 	constructor(
 		id: string,
@@ -115,6 +136,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService protected readonly apiService: ICiyexApiService,
+		@IDialogService protected readonly dialogService: IDialogService,
 	) {
 		super(id, group, telemetryService, themeService, storageService);
 	}
@@ -141,10 +163,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	private async _loadData(): Promise<void> {
 		try {
-			let url = `${this.config.apiPath}?page=${this.currentPage}&size=20`;
-			if (this.searchValue) { url += `&q=${encodeURIComponent(this.searchValue)}`; }
-			if (this.statusFilter) { const fk = this.config.filterKey || 'status'; url += `&${fk}=${this.statusFilter}`; }
-			if (this.priorityFilter) { url += `&priority=${this.priorityFilter}`; }
+			const clientFilter = this.config.clientSideFilter;
+			let url: string;
+			if (clientFilter) {
+				// Client-side mode: load all in one page, skip server search/status params.
+				url = `${this.config.apiPath}?page=0&size=500`;
+			} else {
+				url = `${this.config.apiPath}?page=${this.currentPage}&size=20`;
+				if (this.searchValue) { url += `&q=${encodeURIComponent(this.searchValue)}`; }
+				if (this.statusFilter) { const fk = this.config.filterKey || 'status'; url += `&${fk}=${this.statusFilter}`; }
+				if (this.priorityFilter) { url += `&priority=${this.priorityFilter}`; }
+			}
 			const res = await this.apiService.fetch(url);
 			if (!res.ok) {
 				this.items = [];
@@ -234,7 +263,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				c.style.cssText = `padding:8px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:6px;text-align:center;cursor:pointer;min-width:70px;background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s;`;
 				c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
 				c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
-				c.addEventListener('click', () => { this.statusFilter = this.statusFilter === k ? '' : k; this.currentPage = 0; this._loadData(); });
+				c.addEventListener('click', () => { this.statusFilter = this.statusFilter === k ? '' : k; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 				const numEl = DOM.append(c, DOM.$('div'));
 				numEl.textContent = String(v);
 				numEl.style.cssText = `font-size:18px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};`;
@@ -254,7 +283,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				b.textContent = t.label;
 				const a = this.statusFilter === t.value;
 				b.style.cssText = `padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;border:1px solid ${a ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};background:${a ? 'rgba(0,122,204,0.15)' : 'transparent'};color:var(--vscode-foreground);transition:all 0.15s;`;
-				b.addEventListener('click', () => { this.statusFilter = t.value; this.currentPage = 0; this._loadData(); });
+				b.addEventListener('click', () => { this.statusFilter = t.value; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 			}
 		}
 
@@ -273,9 +302,21 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			this.debounceTimer = setTimeout(() => {
 				this.searchValue = s.value;
 				this.currentPage = 0;
-				this._loadData();
+				// Client-side filter: just re-render the already-loaded items.
+				// Server-side: re-query with ?q=...
+				if (cfg.clientSideFilter) {
+					this.refocusSearchAfterRender = true;
+					this._render();
+				} else {
+					this._loadData();
+				}
 			}, 300);
 		});
+		if (this.refocusSearchAfterRender) {
+			this.refocusSearchAfterRender = false;
+			const caret = this.searchValue.length;
+			setTimeout(() => { s.focus(); s.setSelectionRange(caret, caret); }, 0);
+		}
 
 		if (cfg.priorityOptions) {
 			const sel = DOM.append(tb, DOM.$('select')) as HTMLSelectElement;
@@ -289,7 +330,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				opt.textContent = p.label;
 				if (this.priorityFilter === p.value) { opt.selected = true; }
 			}
-			sel.addEventListener('change', () => { this.priorityFilter = sel.value; this.currentPage = 0; this._loadData(); });
+			sel.addEventListener('change', () => { this.priorityFilter = sel.value; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 		}
 
 		// allow-any-unicode-next-line
@@ -305,14 +346,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		for (const c of cfg.columns) { DOM.append(hr, DOM.$('span')).textContent = c.label; }
 		if (cfg.actions || cfg.editable) { DOM.append(hr, DOM.$('span')).textContent = 'Actions'; }
 
-		if (this.items.length === 0) {
+		const visibleItems = this._visibleItems();
+
+		if (visibleItems.length === 0) {
 			const e = DOM.append(tbl, DOM.$('div'));
 			e.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 			e.textContent = 'No records found';
 			return;
 		}
 
-		for (const item of this.items) {
+		for (const item of visibleItems) {
 			const r = DOM.append(tbl, DOM.$('div'));
 			r.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:6px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;transition:background 0.1s;`;
 			r.addEventListener('mouseenter', () => { r.style.background = 'var(--vscode-list-hoverBackground)'; });
@@ -353,35 +396,61 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						btn.textContent = a.icon;
 						btn.title = a.label;
 						btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;padding:2px;';
-						btn.addEventListener('click', (ev) => { ev.stopPropagation(); a.handler(item, this.apiService, () => { this._loadStats(); this._loadData(); }); });
+						btn.addEventListener('click', (ev) => { ev.stopPropagation(); a.handler(item, this.apiService, () => { this._loadStats(); this._loadData(); }, this.dialogService); });
 					}
 				}
 			}
 		}
 
 		// allow-any-unicode-next-line
-		// ─── Pagination ───
-		const pg = DOM.append(this.contentEl, DOM.$('div'));
-		pg.style.cssText = 'display:flex;justify-content:center;gap:8px;margin-top:12px;align-items:center;';
-		if (this.currentPage > 0) {
-			const p = DOM.append(pg, DOM.$('button'));
-			// allow-any-unicode-next-line
-			p.textContent = '◀ Previous';
-			p.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-			p.addEventListener('click', () => { this.currentPage--; this._loadData(); });
-		}
+		// ─── Pagination ─── (skipped in client-side-filter mode — all records loaded at once)
+		if (!cfg.clientSideFilter) {
+			const pg = DOM.append(this.contentEl, DOM.$('div'));
+			pg.style.cssText = 'display:flex;justify-content:center;gap:8px;margin-top:12px;align-items:center;';
+			if (this.currentPage > 0) {
+				const p = DOM.append(pg, DOM.$('button'));
+				// allow-any-unicode-next-line
+				p.textContent = '◀ Previous';
+				p.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
+				p.addEventListener('click', () => { this.currentPage--; this._loadData(); });
+			}
 
-		const pageInfo = DOM.append(pg, DOM.$('span'));
-		pageInfo.textContent = `Page ${this.currentPage + 1}${this.totalPages > 1 ? ` of ${this.totalPages}` : ''}`;
-		pageInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+			const pageInfo = DOM.append(pg, DOM.$('span'));
+			pageInfo.textContent = `Page ${this.currentPage + 1}${this.totalPages > 1 ? ` of ${this.totalPages}` : ''}`;
+			pageInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
-		if (this.items.length >= 20) {
-			const n = DOM.append(pg, DOM.$('button'));
-			// allow-any-unicode-next-line
-			n.textContent = 'Next ▶';
-			n.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-			n.addEventListener('click', () => { this.currentPage++; this._loadData(); });
+			if (this.items.length >= 20) {
+				const n = DOM.append(pg, DOM.$('button'));
+				// allow-any-unicode-next-line
+				n.textContent = 'Next ▶';
+				n.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
+				n.addEventListener('click', () => { this.currentPage++; this._loadData(); });
+			}
+		} else {
+			const info = DOM.append(this.contentEl, DOM.$('span'));
+			info.textContent = `${visibleItems.length} of ${this.items.length} records`;
+			info.style.cssText = 'display:block;text-align:center;margin-top:12px;font-size:11px;color:var(--vscode-descriptionForeground);';
 		}
+	}
+
+	// Apply search + status + priority filters in memory when clientSideFilter is set.
+	// Status filters use the configured filterKey (default 'status').
+	private _visibleItems(): Record<string, unknown>[] {
+		const cfg = this.config;
+		if (!cfg.clientSideFilter) { return this.items; }
+		const q = this.searchValue.trim().toLowerCase();
+		const fk = cfg.filterKey || 'status';
+		const statusF = this.statusFilter.toLowerCase();
+		const priF = this.priorityFilter.toLowerCase();
+		return this.items.filter(item => {
+			if (statusF && String(item[fk] ?? '').toLowerCase() !== statusF) { return false; }
+			if (priF && String(item['priority'] ?? '').toLowerCase() !== priF) { return false; }
+			if (q) {
+				const hit = cfg.clientSideFilter!.some(field => String(item[field] ?? '').toLowerCase().includes(q));
+				if (!hit) { return false; }
+			}
+			return true;
+		});
 	}
 
 	// allow-any-unicode-next-line
@@ -416,7 +485,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
 		const title = DOM.append(header, DOM.$('h3'));
-		title.textContent = isEdit ? `Edit ${cfg.title.replace(/s$/, '')}` : `New ${cfg.title.replace(/s$/, '')}`;
+		if (isEdit && cfg.editTitle && this.editingItem) {
+			title.textContent = cfg.editTitle(this.editingItem);
+		} else {
+			title.textContent = isEdit ? `Edit ${cfg.title.replace(/s$/, '')}` : `New ${cfg.title.replace(/s$/, '')}`;
+		}
 		title.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
 
 		const closeBtn = DOM.append(header, DOM.$('button'));
@@ -587,17 +660,37 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			}
 
-			// Build payload
-			const payload: Record<string, unknown> = {};
+			// Build payload from form values
+			const formValues: Record<string, unknown> = {};
 			for (const field of fields) {
 				const input = inputs.get(field.key);
 				if (!input) { continue; }
 				const v = input.value.trim();
-				if (field.type === 'number' && v) {
-					payload[field.key] = Number(v);
-				} else if (v) {
-					payload[field.key] = v;
+				if (field.type === 'number') {
+					formValues[field.key] = v === '' ? null : Number(v);
+				} else {
+					formValues[field.key] = v;
 				}
+			}
+
+			let payload: Record<string, unknown>;
+			if (isEdit && cfg.mergeOnEdit && this.editingItem) {
+				// Merge form values onto the original record; strip nested objects
+				// with null/undefined id (backend rejects them with "id cannot be null").
+				const merged = { ...this.editingItem, ...formValues };
+				payload = {};
+				for (const [k, v] of Object.entries(merged)) {
+					if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+						const obj = v as Record<string, unknown>;
+						if (Object.prototype.hasOwnProperty.call(obj, 'id')) {
+							const nestedId = obj.id;
+							if (nestedId === null || nestedId === undefined) { continue; }
+						}
+					}
+					payload[k] = v;
+				}
+			} else {
+				payload = formValues;
 			}
 
 			saveBtn.disabled = true;

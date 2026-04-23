@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,6 +28,7 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 		apiPath: '/api/consents',
 		statsPath: '/api/consents/stats',
 		searchPlaceholder: 'Search by patient name, consent type...',
+		clientSideFilter: ['patientName', 'consentType', 'status', 'signedBy', 'version', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
@@ -77,11 +79,19 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Sign', icon: '✍️', handler: async (item, api, reload) => {
+				label: 'Sign', icon: '✍️', handler: async (item, api, reload, dlg) => {
 					if (item.status !== 'pending') { return; }
-					const signedBy = prompt('Signed by (patient or guardian name):');
+					const res = await dlg.input({
+						type: 'question', message: 'Sign consent',
+						inputs: [
+							{ placeholder: 'Signed by (patient or guardian name)' },
+							{ placeholder: 'Witness name (optional)' },
+						],
+					});
+					if (!res.confirmed) { return; }
+					const signedBy = res.values?.[0]?.trim();
+					const witnessName = res.values?.[1]?.trim() || '';
 					if (signedBy) {
-						const witnessName = prompt('Witness name (optional):') || '';
 						await api.fetch(`/api/consents/${item.id}/sign`, {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
@@ -93,9 +103,10 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Revoke', icon: '🚫', handler: async (item, api, reload) => {
+				label: 'Revoke', icon: '🚫', handler: async (item, api, reload, dlg) => {
 					if (item.status !== 'signed') { return; }
-					if (confirm(`Revoke consent for ${item.patientName}?`)) {
+					const r = await dlg.confirm({ message: `Revoke consent for ${item.patientName}?`, type: 'warning', primaryButton: 'Revoke' });
+					if (r.confirmed) {
 						await api.fetch(`/api/consents/${item.id}/revoke`, { method: 'POST' });
 						reload();
 					}
@@ -103,8 +114,9 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => {
-					if (confirm('Delete this consent?')) {
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Delete this consent?', type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
 						await api.fetch(`/api/consents/${item.id}`, { method: 'DELETE' });
 						reload();
 					}
@@ -112,7 +124,7 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(ConsentsEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ConsentsEditor.ID, group, t, th, s, a, d); }
 }
 
 
@@ -129,6 +141,7 @@ export class FaxEditor extends ClinicalListEditorBase {
 		apiPath: '/api/fax',
 		statsPath: '/api/fax/stats',
 		searchPlaceholder: 'Search by sender, recipient, subject...',
+		clientSideFilter: ['direction', 'faxNumber', 'senderName', 'recipientName', 'subject', 'category', 'status', 'patientName', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'direction', label: 'Direction', width: '80px' },
@@ -183,9 +196,17 @@ export class FaxEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Assign to Patient', icon: '👤', handler: async (item, api, reload) => {
-					const patientId = prompt('Enter Patient ID:');
-					const patientName = prompt('Enter Patient Name:');
+				label: 'Assign to Patient', icon: '👤', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({
+						type: 'question', message: 'Assign fax to patient',
+						inputs: [
+							{ placeholder: 'Patient ID' },
+							{ placeholder: 'Patient Name' },
+						],
+					});
+					if (!res.confirmed) { return; }
+					const patientId = res.values?.[0]?.trim();
+					const patientName = res.values?.[1]?.trim();
 					if (patientId && patientName) {
 						await api.fetch(`/api/fax/${item.id}/assign`, {
 							method: 'POST',
@@ -205,8 +226,9 @@ export class FaxEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => {
-					if (confirm('Delete this fax?')) {
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Delete this fax?', type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
 						await api.fetch(`/api/fax/${item.id}`, { method: 'DELETE' });
 						reload();
 					}
@@ -214,7 +236,7 @@ export class FaxEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(FaxEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(FaxEditor.ID, group, t, th, s, a, d); }
 }
 
 
@@ -228,6 +250,7 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 		apiPath: '/api/documents',
 		statsPath: '/api/documents/stats',
 		searchPlaceholder: 'Search by file name, patient...',
+		clientSideFilter: ['fileName', 'patientName', 'category', 'mimeType', 'ocrStatus', 'id'],
 		editable: true,
 		filterKey: 'ocrStatus',
 		columns: [
@@ -290,8 +313,9 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Delete', icon: '🗑️', handler: async (item, api, reload) => {
-					if (confirm(`Delete ${item.fileName}?`)) {
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: `Delete ${item.fileName}?`, type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
 						await api.fetch(`/api/document-scanning/${item.id}`, { method: 'DELETE' });
 						reload();
 					}
@@ -299,7 +323,7 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(DocScanningEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(DocScanningEditor.ID, group, t, th, s, a, d); }
 }
 
 
@@ -317,6 +341,7 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 		apiPath: '/api/audit-log',
 		statsPath: '/api/audit-log/stats',
 		searchPlaceholder: 'Search by user, resource, patient...',
+		clientSideFilter: ['action', 'resourceType', 'resourceName', 'userName', 'userRole', 'patientName', 'ipAddress', 'id'],
 		editable: false,
 		filterKey: 'action',
 		columns: [
@@ -348,5 +373,5 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 			return String(value ?? '');
 		},
 	};
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService) { super(AuditLogEditor.ID, group, t, th, s, a); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(AuditLogEditor.ID, group, t, th, s, a, d); }
 }
