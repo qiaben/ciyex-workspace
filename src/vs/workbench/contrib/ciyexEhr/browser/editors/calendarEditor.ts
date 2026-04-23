@@ -819,7 +819,7 @@ export class CalendarEditor extends EditorPane {
 		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;';
 
 		const form = DOM.append(overlay, DOM.$('.appt-form'));
-		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:520px;max-width:90vw;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto;overflow-x:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4);scrollbar-width:none;';
 
 		// Title
 		const title = DOM.append(form, DOM.$('h3'));
