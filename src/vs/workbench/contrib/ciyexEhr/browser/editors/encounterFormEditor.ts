@@ -10,7 +10,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -21,8 +21,6 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; validation?: Record<string, unknown> }
-
-// All sections use VS Code focus blue
 
 export class EncounterFormEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexEncounterForm';
@@ -37,6 +35,14 @@ export class EncounterFormEditor extends EditorPane {
 	private encounterData: Record<string, unknown> = {};
 	private formSections: FieldSection[] = [];
 	private readonly _configHome: URI;
+
+	// Auto-save state
+	private _autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
+	private _isDirty = false;
+	private _compositionId = '';
+	private _encounterStatus = '';
+	private _statusBadge: HTMLElement | undefined;
+	private _autoSaveIndicator: HTMLElement | undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -76,6 +82,8 @@ export class EncounterFormEditor extends EditorPane {
 		this.patientId = input.patientId;
 		this.encounterId = input.encounterId;
 		this.patientName = input.patientName;
+		this._compositionId = '';
+		this._encounterStatus = '';
 
 		await Promise.all([this._loadFormSchema(), this._loadEncounterData()]);
 		if (token.isCancellationRequested) { return; }
@@ -84,16 +92,17 @@ export class EncounterFormEditor extends EditorPane {
 		this._renderToc();
 		this._renderForm();
 		this._setupScrollSync();
+		this._setupAutoSave();
 	}
 
 	private async _loadFormSchema(): Promise<void> {
-		// 1) Try API first (config-driven from backend)
+		// 1) Try API first
 		try {
 			const res = await this.apiService.fetch('/api/tab-field-config/encounter-form');
 			if (res.ok) {
 				const data = await res.json();
 				const cfg = data?.data || data || {};
-				const sections = cfg?.field_config?.sections || cfg?.sections || [];
+				const sections = cfg?.field_config?.sections || cfg?.fieldConfig?.sections || cfg?.sections || [];
 				if (sections.length > 0) {
 					this.formSections = sections;
 					return;
@@ -111,7 +120,7 @@ export class EncounterFormEditor extends EditorPane {
 			}
 		} catch { /* fall through */ }
 
-		// 3) Hardcoded default — all 12 sections matching the web app
+		// 3) Hardcoded default
 		this.formSections = EncounterFormEditor._defaultSections();
 	}
 
@@ -129,7 +138,7 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'hpi_duration', label: 'Duration', type: 'text', placeholder: 'How long?' },
 					{ key: 'hpi_character', label: 'Character', type: 'text', placeholder: 'What does it feel like?' },
 					{
-						key: 'hpi_severity', label: 'Severity', type: 'select', options: [
+						key: 'hpi_severity', label: 'Severity', type: 'select', placeholder: 'Select Severity...', options: [
 							{ label: 'Mild', value: 'mild' }, { label: 'Moderate', value: 'moderate' }, { label: 'Severe', value: 'severe' },
 						]
 					},
@@ -156,7 +165,8 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'vitals_weight', label: 'Weight', type: 'number', placeholder: 'lbs' },
 					{ key: 'vitals_height', label: 'Height', type: 'number', placeholder: 'in' },
 					{ key: 'vitals_bmi', label: 'BMI', type: 'number', placeholder: 'Auto-calculated' },
-					{ key: 'vitals_notes', label: 'Notes', type: 'text', colSpan: 3, placeholder: 'Additional notes...' },
+					{ key: 'vitals_pain_level', label: 'Pain Level', type: 'number', placeholder: '0-10' },
+					{ key: 'vitals_notes', label: 'Notes', type: 'text', colSpan: 2, placeholder: 'Additional notes...' },
 				]
 			},
 			{
@@ -168,6 +178,8 @@ export class EncounterFormEditor extends EditorPane {
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pmh_conditions', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
+					{ key: 'pmh_allergies', label: 'Allergies', type: 'textarea', placeholder: 'List known allergies...' },
+					{ key: 'pmh_medications', label: 'Current Medications', type: 'textarea', placeholder: 'List current medications...' },
 				]
 			},
 			{
@@ -213,7 +225,11 @@ export class EncounterFormEditor extends EditorPane {
 			{
 				key: 'plan', title: 'Plan', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
 					{ key: 'plan_items', label: 'Plan Items', type: 'plan-items' },
+					{ key: 'plan_medications', label: 'Medications Prescribed', type: 'textarea', placeholder: 'Medications prescribed or changed...' },
+					{ key: 'plan_labs', label: 'Labs / Imaging Ordered', type: 'textarea', placeholder: 'Lab tests, imaging, or diagnostics ordered...' },
+					{ key: 'plan_referrals', label: 'Referrals', type: 'textarea', placeholder: 'Specialist referrals...' },
 					{ key: 'plan_followup', label: 'Follow-up', type: 'text', placeholder: 'Return in 2 weeks, PRN, etc.' },
+					{ key: 'plan_patient_education', label: 'Patient Education', type: 'textarea', placeholder: 'Education and instructions provided...' },
 					{ key: 'plan_notes', label: 'Plan Notes', type: 'textarea', placeholder: 'Additional plan details...' },
 				]
 			},
@@ -224,28 +240,33 @@ export class EncounterFormEditor extends EditorPane {
 			},
 			{
 				key: 'procedures', title: 'Procedures & Coding', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'procedures_data', label: 'Procedures', type: 'procedure-list' },
+					{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', type: 'procedure-list' },
+					{ key: 'procedures_notes', label: 'Procedure Notes', type: 'textarea', placeholder: 'Procedure details and notes...' },
 				]
 			},
 		];
 	}
 
 	private async _loadEncounterData(): Promise<void> {
-		// Load from multiple endpoints in parallel
 		const loads = [
-			// FHIR encounter data
 			this.apiService.fetch(`/api/fhir-resource/encounters/${this.encounterId}`).then(async r => r.ok ? (await r.json())?.data || {} : {}).catch(() => ({})),
-			// EHR encounter data (has SIGNED/UNSIGNED status)
 			this.patientId
 				? this.apiService.fetch(`/api/encounters/${this.patientId}/${this.encounterId}`).then(async r => r.ok ? (await r.json())?.data || {} : {}).catch(() => ({}))
 				: Promise.resolve({}),
-			// Encounter form composition
 			this.patientId
-				? this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${this.patientId}/${this.encounterId}`).then(async r => r.ok ? (await r.json())?.data || {} : {}).catch(() => ({}))
+				? this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${this.patientId}?encounterRef=${this.encounterId}`).then(async r => {
+					if (r.ok) {
+						const d = await r.json();
+						const comp = d?.data || {};
+						if (comp.id) { this._compositionId = String(comp.id); }
+						return comp;
+					}
+					return {};
+				}).catch(() => ({}))
 				: Promise.resolve({}),
 		];
 		const [fhir, ehr, form] = await Promise.all(loads);
-		// EHR data takes precedence (has proper status), then FHIR, then form
+		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
 		this.encounterData = { ...fhir, ...ehr, ...form };
 	}
 
@@ -261,10 +282,13 @@ export class EncounterFormEditor extends EditorPane {
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
 	private sectionCards = new Map<string, HTMLElement>();
 
+	private get _isSigned(): boolean {
+		return this._encounterStatus.toUpperCase() === 'SIGNED';
+	}
+
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
 
-		// Encounter icon
 		const icon = DOM.append(this.headerBar, DOM.$('span'));
 		icon.textContent = '\u{1F4CB}';
 		icon.style.cssText = 'font-size:16px;';
@@ -279,8 +303,8 @@ export class EncounterFormEditor extends EditorPane {
 			patient.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		}
 
-		// Map FHIR status to readable label
-		const rawStatus = String(this.encounterData.status || 'draft');
+		// Status badge
+		const rawStatus = this._encounterStatus || 'draft';
 		const statusMap: Record<string, string> = {
 			'arrived': 'Arrived', 'in-progress': 'In Progress', 'finished': 'Completed',
 			'cancelled': 'Cancelled', 'entered-in-error': 'Error', 'planned': 'Planned',
@@ -289,65 +313,239 @@ export class EncounterFormEditor extends EditorPane {
 		};
 		const status = statusMap[rawStatus] || rawStatus;
 		const statusColor = ['Completed', 'Signed', 'finished'].includes(status) ? '#22c55e' : ['Unsigned', 'Error', 'Cancelled', 'entered-in-error'].includes(status) ? '#ef4444' : ['In Progress', 'Arrived', 'Incomplete'].includes(status) ? '#f59e0b' : '#3b82f6';
-		const badge = DOM.append(this.headerBar, DOM.$('span'));
-		badge.textContent = status;
-		badge.style.cssText = `font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}18;color:${statusColor};font-weight:500;`;
+		this._statusBadge = DOM.append(this.headerBar, DOM.$('span'));
+		this._statusBadge.textContent = status;
+		this._statusBadge.style.cssText = `font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}18;color:${statusColor};font-weight:500;`;
+
+		// Auto-save indicator
+		this._autoSaveIndicator = DOM.append(this.headerBar, DOM.$('span'));
+		this._autoSaveIndicator.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
 
+		// Save button
 		const saveBtn = DOM.append(this.headerBar, DOM.$('button'));
 		saveBtn.textContent = 'Save';
 		saveBtn.style.cssText = 'padding:5px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
-		saveBtn.addEventListener('click', async () => {
-			if (!(this.input instanceof EncounterFormEditorInput)) { return; }
-			const encounterId = this.input.encounterId;
-			const patientId = this.input.patientId;
-			if (!encounterId) { this.notificationService.warn('No encounter ID'); return; }
+		if (this._isSigned) { (saveBtn as HTMLButtonElement).disabled = true; saveBtn.style.opacity = '0.5'; saveBtn.style.cursor = 'not-allowed'; }
+		saveBtn.addEventListener('click', () => this._saveEncounter(saveBtn));
 
-			// Collect all form data from section cards via tracked field references
-			const formData: Record<string, string> = {};
-			for (const [, card] of this.sectionCards) {
-				// Walk child elements to find inputs without querySelectorAll
-				const walk = (el: HTMLElement) => {
-					for (let i = 0; i < el.children.length; i++) {
-						const child = el.children[i] as HTMLElement;
-						const tag = child.tagName;
-						if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
-							const inp = child as HTMLInputElement;
-							const key = inp.id || inp.name || inp.dataset.key || '';
-							if (key) { formData[key] = inp.value; }
-						}
-						if (child.children.length > 0) { walk(child); }
-					}
-				};
-				walk(card);
+		// Sign & Lock / Unsign button
+		const signBtn = DOM.append(this.headerBar, DOM.$('button'));
+		if (this._isSigned) {
+			signBtn.textContent = 'Unsign';
+			signBtn.style.cssText = 'padding:5px 16px;background:#f59e0b;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+			signBtn.addEventListener('click', () => this._unsignEncounter());
+		} else {
+			signBtn.textContent = 'Sign & Lock';
+			signBtn.style.cssText = 'padding:5px 16px;background:#22c55e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+			signBtn.addEventListener('click', () => this._signEncounter(saveBtn, signBtn));
+		}
+	}
+
+	private async _saveEncounter(saveBtn: HTMLElement): Promise<boolean> {
+		if (!(this.input instanceof EncounterFormEditorInput)) { return false; }
+		if (this._isSigned) { return false; }
+		const { encounterId, patientId } = this.input;
+		if (!encounterId) { this.notificationService.warn('No encounter ID'); return false; }
+
+		const formData = this._collectFormData();
+
+		saveBtn.textContent = 'Saving...';
+		(saveBtn as HTMLButtonElement).disabled = true;
+
+		try {
+			// Save to encounter-form composition (primary - matches EHR UI)
+			let compRes: Response;
+			if (this._compositionId) {
+				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}/${this._compositionId}`, {
+					method: 'PUT',
+					body: JSON.stringify(formData),
+				});
+			} else {
+				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encounterId}`, {
+					method: 'POST',
+					body: JSON.stringify(formData),
+				});
+				if (compRes.ok) {
+					const compData = await compRes.json();
+					this._compositionId = String(compData?.data?.id || compData?.id || '');
+				}
 			}
 
-			saveBtn.textContent = 'Saving...';
-			(saveBtn as HTMLButtonElement).disabled = true;
-			try {
-				const res = await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+			// Also save to encounter resource
+			await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+				method: 'PUT',
+				body: JSON.stringify({ ...formData, patientId, id: encounterId }),
+			}).catch(() => { /* secondary save, ignore errors */ });
+
+			if (compRes.ok) {
+				this._isDirty = false;
+				this._updateAutoSaveIndicator('Saved');
+				return true;
+			} else {
+				const err = await compRes.text().catch(() => 'Unknown error');
+				this.notificationService.error(`Failed to save: ${err}`);
+				return false;
+			}
+		} catch (e) {
+			this.notificationService.error(`Save error: ${e}`);
+			return false;
+		} finally {
+			saveBtn.textContent = 'Save';
+			(saveBtn as HTMLButtonElement).disabled = false;
+		}
+	}
+
+	private async _signEncounter(saveBtn: HTMLElement, signBtn: HTMLElement): Promise<void> {
+		if (!this.patientId || !this.encounterId) { return; }
+
+		// Save first if dirty
+		if (this._isDirty) {
+			const saved = await this._saveEncounter(saveBtn);
+			if (!saved) {
+				this.notificationService.warn('Please fix save errors before signing.');
+				return;
+			}
+		}
+
+		signBtn.textContent = 'Signing...';
+		(signBtn as HTMLButtonElement).disabled = true;
+
+		try {
+			const res = await this.apiService.fetch(`/api/${this.patientId}/encounters/${this.encounterId}/sign`, {
+				method: 'POST',
+			});
+
+			if (res.ok) {
+				this._encounterStatus = 'SIGNED';
+				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked.' });
+				// Re-render to show locked state
+				this._renderHeader();
+				this._renderForm();
+			} else {
+				const err = await res.text().catch(() => 'Unknown error');
+				this.notificationService.error(`Failed to sign: ${err}`);
+				signBtn.textContent = 'Sign & Lock';
+				(signBtn as HTMLButtonElement).disabled = false;
+			}
+		} catch (e) {
+			this.notificationService.error(`Sign error: ${e}`);
+			signBtn.textContent = 'Sign & Lock';
+			(signBtn as HTMLButtonElement).disabled = false;
+		}
+	}
+
+	private async _unsignEncounter(): Promise<void> {
+		if (!this.patientId || !this.encounterId) { return; }
+
+		try {
+			const res = await this.apiService.fetch(`/api/${this.patientId}/encounters/${this.encounterId}/unsign`, {
+				method: 'POST',
+			});
+
+			if (res.ok) {
+				this._encounterStatus = 'UNSIGNED';
+				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter unlocked.' });
+				this._renderHeader();
+				this._renderForm();
+			} else {
+				this.notificationService.error('Failed to unsign encounter.');
+			}
+		} catch {
+			this.notificationService.error('Failed to unsign encounter.');
+		}
+	}
+
+	private _collectFormData(): Record<string, unknown> {
+		const formData: Record<string, unknown> = {};
+		for (const [, card] of this.sectionCards) {
+			const walk = (el: HTMLElement) => {
+				for (let i = 0; i < el.children.length; i++) {
+					const child = el.children[i] as HTMLElement;
+					const tag = child.tagName;
+					if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+						const inp = child as HTMLInputElement;
+						const key = inp.dataset.key || inp.id || inp.name || '';
+						if (key) {
+							if (inp.type === 'checkbox') {
+								formData[key] = inp.checked;
+							} else {
+								formData[key] = inp.value;
+							}
+						}
+					}
+					if (child.children.length > 0) { walk(child); }
+				}
+			};
+			walk(card);
+		}
+		return formData;
+	}
+
+	// --- Auto-save ---
+
+	private _setupAutoSave(): void {
+		// Listen for input changes in scrollArea
+		this.scrollArea.addEventListener('input', () => this._onFormChange());
+		this.scrollArea.addEventListener('change', () => this._onFormChange());
+	}
+
+	private _onFormChange(): void {
+		if (this._isSigned) { return; }
+		this._isDirty = true;
+		this._updateAutoSaveIndicator('Unsaved changes');
+
+		if (this._autoSaveTimer) { clearTimeout(this._autoSaveTimer); }
+		this._autoSaveTimer = setTimeout(() => this._autoSave(), 3000);
+	}
+
+	private async _autoSave(): Promise<void> {
+		if (!this._isDirty || this._isSigned) { return; }
+		if (!(this.input instanceof EncounterFormEditorInput)) { return; }
+		const { encounterId, patientId } = this.input;
+		if (!encounterId || !patientId) { return; }
+
+		this._updateAutoSaveIndicator('Auto-saving...');
+
+		const formData = this._collectFormData();
+		try {
+			let res: Response;
+			if (this._compositionId) {
+				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}/${this._compositionId}`, {
 					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ ...formData, patientId, id: encounterId }),
+					body: JSON.stringify(formData),
+				});
+			} else {
+				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encounterId}`, {
+					method: 'POST',
+					body: JSON.stringify(formData),
 				});
 				if (res.ok) {
-					this.notificationService.info('Encounter saved successfully');
-				} else {
-					const err = await res.text().catch(() => 'Unknown error');
-					this.notificationService.error(`Failed to save: ${err}`);
+					const compData = await res.json();
+					this._compositionId = String(compData?.data?.id || compData?.id || '');
 				}
-			} catch (e) {
-				this.notificationService.error(`Save error: ${e}`);
-			} finally {
-				saveBtn.textContent = 'Save';
-				(saveBtn as HTMLButtonElement).disabled = false;
 			}
-		});
+			if (res.ok) {
+				this._isDirty = false;
+				this._updateAutoSaveIndicator('Auto-saved');
+			} else {
+				this._updateAutoSaveIndicator('Auto-save failed');
+			}
+		} catch {
+			this._updateAutoSaveIndicator('Auto-save failed');
+		}
+	}
 
-		const signBtn = DOM.append(this.headerBar, DOM.$('button'));
-		signBtn.textContent = 'Sign & Lock';
-		signBtn.style.cssText = 'padding:5px 16px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;';
+	private _updateAutoSaveIndicator(text: string): void {
+		if (this._autoSaveIndicator) {
+			this._autoSaveIndicator.textContent = text;
+			if (text.includes('failed') || text === 'Unsaved changes') {
+				this._autoSaveIndicator.style.color = '#f59e0b';
+			} else {
+				this._autoSaveIndicator.style.color = 'var(--vscode-descriptionForeground)';
+			}
+		}
 	}
 
 	private _renderToc(): void {
@@ -360,15 +558,15 @@ export class EncounterFormEditor extends EditorPane {
 
 		for (const sec of this.formSections) {
 			if (!sec.visible) { continue; }
-			const icon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
+			const secIcon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
 
 			const item = DOM.append(this.tocNav, DOM.$('div'));
 			item.setAttribute('data-toc', sec.key);
 			item.style.cssText = 'padding:4px 14px 4px 16px;cursor:pointer;color:var(--vscode-foreground);border-left:2px solid transparent;display:flex;align-items:center;gap:6px;font-size:13px;';
 
-			if (icon) {
+			if (secIcon) {
 				const iconEl = DOM.append(item, DOM.$('span'));
-				iconEl.textContent = icon;
+				iconEl.textContent = secIcon;
 				iconEl.style.cssText = 'font-size:13px;width:18px;text-align:center;flex-shrink:0;';
 			}
 
@@ -396,7 +594,6 @@ export class EncounterFormEditor extends EditorPane {
 	private _setupScrollSync(): void {
 		this.scrollArea.addEventListener('scroll', () => {
 			let activeKey = '';
-			// Use dynamic offset based on scroll area position instead of hardcoded 60px
 			const scrollTop = this.scrollArea.scrollTop + this.scrollArea.offsetTop + 20;
 			for (const [key, card] of this.sectionCards) {
 				if (card.offsetTop <= scrollTop) {
@@ -411,7 +608,6 @@ export class EncounterFormEditor extends EditorPane {
 				if (isActive) { el.classList.add('active'); } else { el.classList.remove('active'); }
 			});
 
-			// Auto-scroll TOC to keep active item visible
 			const activeItem = this.tocItems.find(t => t.el.classList.contains('active'));
 			if (activeItem) {
 				activeItem.el.scrollIntoView({ block: 'nearest' });
@@ -439,6 +635,8 @@ export class EncounterFormEditor extends EditorPane {
 		const container = DOM.append(this.scrollArea, DOM.$('div'));
 		container.style.cssText = 'max-width:900px;margin:0 auto;padding:16px 24px 60px;';
 		this.sectionCards.clear();
+
+		const readOnly = this._isSigned;
 
 		for (const sec of this.formSections) {
 			if (!sec.visible) { continue; }
@@ -496,26 +694,11 @@ export class EncounterFormEditor extends EditorPane {
 				cell.style.cssText = `grid-column:span ${Math.min(f.colSpan || 1, cols)};`;
 
 				// Special field types
-				if (f.type === 'ros-grid') {
-					this._renderRosGrid(cell, f.key);
-					continue;
-				}
-				if (f.type === 'exam-grid') {
-					this._renderExamGrid(cell, f.key);
-					continue;
-				}
-				if (f.type === 'diagnosis-list') {
-					this._renderDiagnosisList(cell, f.key);
-					continue;
-				}
-				if (f.type === 'plan-items') {
-					this._renderPlanItems(cell, f.key);
-					continue;
-				}
-				if (f.type === 'procedure-list') {
-					this._renderProcedureList(cell, f.key);
-					continue;
-				}
+				if (f.type === 'ros-grid') { this._renderRosGrid(cell, f.key, readOnly); continue; }
+				if (f.type === 'exam-grid') { this._renderExamGrid(cell, f.key, readOnly); continue; }
+				if (f.type === 'diagnosis-list') { this._renderDiagnosisList(cell, f.key, readOnly); continue; }
+				if (f.type === 'plan-items') { this._renderPlanItems(cell, f.key, readOnly); continue; }
+				if (f.type === 'procedure-list') { this._renderProcedureList(cell, f.key, readOnly); continue; }
 
 				// Standard field label
 				const lbl = DOM.append(cell, DOM.$('label'));
@@ -537,7 +720,9 @@ export class EncounterFormEditor extends EditorPane {
 
 				if (f.type === 'select') {
 					const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
+					sel.dataset.key = f.key;
 					sel.style.cssText = inputStyle + 'height:32px;cursor:pointer;';
+					if (readOnly) { sel.disabled = true; sel.style.opacity = '0.7'; }
 					for (const o of [{ label: `Select ${f.label}...`, value: '' }, ...(f.options || [])]) {
 						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
@@ -545,28 +730,39 @@ export class EncounterFormEditor extends EditorPane {
 					addFocus(sel);
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
+					ta.dataset.key = f.key;
 					ta.value = String(val);
 					ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:80px;resize:vertical;';
+					if (readOnly) { ta.readOnly = true; ta.style.opacity = '0.7'; }
 					addFocus(ta);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const cb = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					cb.type = 'checkbox'; cb.checked = !!val;
+					cb.dataset.key = f.key;
 					cb.style.cssText = 'width:18px;height:18px;cursor:pointer;';
+					if (readOnly) { cb.disabled = true; }
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '';
+					inp.dataset.key = f.key;
 					inp.style.cssText = inputStyle + 'height:32px;';
+					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
 				} else if (f.type === 'date' || f.type === 'datetime') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'datetime' ? 'datetime-local' : 'date';
-					inp.value = String(val).split('T')[0]; inp.style.cssText = inputStyle + 'height:32px;';
+					inp.value = String(val).split('T')[0];
+					inp.dataset.key = f.key;
+					inp.style.cssText = inputStyle + 'height:32px;';
+					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'text'; inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
+					inp.dataset.key = f.key;
 					inp.style.cssText = inputStyle + 'height:32px;';
+					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
 				}
 			}
@@ -574,7 +770,7 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	/** ROS: multi-system checkbox grid */
-	private _renderRosGrid(parent: HTMLElement, dataKey: string): void {
+	private _renderRosGrid(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const rosData = (this.encounterData[dataKey] || {}) as Record<string, string>;
 		const grid = DOM.append(parent, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(2,1fr);gap:4px;';
@@ -588,7 +784,9 @@ export class EncounterFormEditor extends EditorPane {
 			const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			cb.type = 'checkbox';
 			cb.checked = rosData[sysKey] === 'positive' || rosData[sysKey] === 'abnormal';
+			cb.dataset.key = `ros_${sysKey}`;
 			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;flex-shrink:0;';
+			if (readOnly) { cb.disabled = true; }
 			checkboxes.push(cb);
 
 			const label = DOM.append(row, DOM.$('span'));
@@ -599,20 +797,21 @@ export class EncounterFormEditor extends EditorPane {
 			noteInput.type = 'text';
 			noteInput.value = typeof rosData[sysKey] === 'string' && rosData[sysKey] !== 'positive' && rosData[sysKey] !== 'negative' && rosData[sysKey] !== 'abnormal' ? rosData[sysKey] : '';
 			noteInput.placeholder = 'Findings...';
+			noteInput.dataset.key = `ros_${sysKey}_note`;
 			noteInput.style.cssText = 'width:120px;padding:2px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
+			if (readOnly) { noteInput.readOnly = true; noteInput.style.opacity = '0.7'; }
 		}
 
-		// "All Normal" button
-		const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		allNorm.textContent = 'Mark All Negative / Normal';
-		allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
-		allNorm.addEventListener('click', () => {
-			for (const cb of checkboxes) { cb.checked = false; }
-		});
+		if (!readOnly) {
+			const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+			allNorm.textContent = 'Mark All Negative / Normal';
+			allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			allNorm.addEventListener('click', () => { for (const cb of checkboxes) { cb.checked = false; } });
+		}
 	}
 
 	/** Physical Exam: system-by-system exam grid */
-	private _renderExamGrid(parent: HTMLElement, dataKey: string): void {
+	private _renderExamGrid(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const peData = (this.encounterData[dataKey] || {}) as Record<string, string>;
 		const peCheckboxes: HTMLInputElement[] = [];
 		const peTextareas: HTMLTextAreaElement[] = [];
@@ -626,7 +825,9 @@ export class EncounterFormEditor extends EditorPane {
 			cb.type = 'checkbox';
 			cb.checked = !peData[sysKey] || peData[sysKey] === normal;
 			cb.title = 'Normal';
+			cb.dataset.key = `pe_${sysKey}_normal`;
 			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;margin-top:2px;flex-shrink:0;';
+			if (readOnly) { cb.disabled = true; }
 			peCheckboxes.push(cb);
 
 			const label = DOM.append(row, DOM.$('span'));
@@ -635,26 +836,29 @@ export class EncounterFormEditor extends EditorPane {
 
 			const ta = DOM.append(row, DOM.$('textarea')) as HTMLTextAreaElement;
 			ta.value = peData[sysKey] || normal;
+			ta.dataset.key = `pe_${sysKey}`;
 			ta.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);resize:vertical;min-height:28px;';
+			if (readOnly) { ta.readOnly = true; ta.style.opacity = '0.7'; }
 			peTextareas.push(ta);
 
 			cb.addEventListener('change', () => { if (cb.checked) { ta.value = normal; } });
 		}
 
-		// "All Normal" button
-		const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		allNorm.textContent = 'Set All Normal';
-		allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
-		allNorm.addEventListener('click', () => {
-			for (const cb of peCheckboxes) { cb.checked = true; }
-			for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
-				if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
-			}
-		});
+		if (!readOnly) {
+			const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+			allNorm.textContent = 'Set All Normal';
+			allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			allNorm.addEventListener('click', () => {
+				for (const cb of peCheckboxes) { cb.checked = true; }
+				for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
+					if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
+				}
+			});
+		}
 	}
 
 	/** Diagnosis list with ICD-10 search */
-	private _renderDiagnosisList(parent: HTMLElement, dataKey: string): void {
+	private _renderDiagnosisList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const diagnoses = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string }>;
 		const listEl = DOM.append(parent, DOM.$('div'));
 
@@ -673,15 +877,18 @@ export class EncounterFormEditor extends EditorPane {
 				desc.textContent = dx.description;
 				desc.style.cssText = 'font-size:12px;flex:1;';
 
-				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-				removeBtn.textContent = '\u2715';
-				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-				removeBtn.addEventListener('click', () => { diagnoses.splice(i, 1); renderList(); });
+				if (!readOnly) {
+					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+					removeBtn.textContent = '\u2715';
+					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+					removeBtn.addEventListener('click', () => { diagnoses.splice(i, 1); renderList(); });
+				}
 			}
 		};
 		renderList();
 
-		// Search input
+		if (readOnly) { return; }
+
 		const searchRow = DOM.append(parent, DOM.$('div'));
 		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
 		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
@@ -707,7 +914,7 @@ export class EncounterFormEditor extends EditorPane {
 						for (const c of codes) {
 							const item = DOM.append(results, DOM.$('div'));
 							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							item.textContent = `${c.code || c.codeValue || ''} — ${c.description || c.shortDescription || ''}`;
+							item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
 							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
 							item.addEventListener('click', () => {
@@ -725,7 +932,7 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	/** Plan items: simple add/remove list */
-	private _renderPlanItems(parent: HTMLElement, dataKey: string): void {
+	private _renderPlanItems(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const items = (this.encounterData[dataKey] || []) as string[];
 		const listEl = DOM.append(parent, DOM.$('div'));
 
@@ -742,25 +949,31 @@ export class EncounterFormEditor extends EditorPane {
 				const inp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				inp.type = 'text';
 				inp.value = items[i];
+				inp.dataset.key = `plan_item_${i}`;
 				inp.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
+				if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 				inp.addEventListener('change', () => { items[i] = inp.value; });
 
-				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-				removeBtn.textContent = '\u2715';
-				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-				removeBtn.addEventListener('click', () => { items.splice(i, 1); renderList(); });
+				if (!readOnly) {
+					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+					removeBtn.textContent = '\u2715';
+					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+					removeBtn.addEventListener('click', () => { items.splice(i, 1); renderList(); });
+				}
 			}
 		};
 		renderList();
 
-		const addBtn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		addBtn.textContent = '+ Add Plan Item';
-		addBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
-		addBtn.addEventListener('click', () => { items.push(''); renderList(); });
+		if (!readOnly) {
+			const addBtn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+			addBtn.textContent = '+ Add Plan Item';
+			addBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			addBtn.addEventListener('click', () => { items.push(''); renderList(); });
+		}
 	}
 
 	/** Procedures & Coding list */
-	private _renderProcedureList(parent: HTMLElement, dataKey: string): void {
+	private _renderProcedureList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const procs = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string; units: number }>;
 		const listEl = DOM.append(parent, DOM.$('div'));
 
@@ -783,15 +996,18 @@ export class EncounterFormEditor extends EditorPane {
 				units.textContent = `x${p.units || 1}`;
 				units.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
-				const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-				removeBtn.textContent = '\u2715';
-				removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-				removeBtn.addEventListener('click', () => { procs.splice(i, 1); renderList(); });
+				if (!readOnly) {
+					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+					removeBtn.textContent = '\u2715';
+					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+					removeBtn.addEventListener('click', () => { procs.splice(i, 1); renderList(); });
+				}
 			}
 		};
 		renderList();
 
-		// Search input for CPT codes
+		if (readOnly) { return; }
+
 		const searchRow = DOM.append(parent, DOM.$('div'));
 		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
 		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
@@ -817,7 +1033,7 @@ export class EncounterFormEditor extends EditorPane {
 						for (const c of codes) {
 							const item = DOM.append(results, DOM.$('div'));
 							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							item.textContent = `${c.code || c.codeValue || ''} — ${c.description || c.shortDescription || ''}`;
+							item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
 							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
 							item.addEventListener('click', () => {

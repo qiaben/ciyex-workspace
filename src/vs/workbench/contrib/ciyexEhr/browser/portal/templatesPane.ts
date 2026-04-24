@@ -13,6 +13,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
@@ -43,6 +45,8 @@ export class TemplatesPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -66,7 +70,8 @@ export class TemplatesPane extends ViewPane {
 		this.listEl.textContent = 'Loading...';
 
 		this._load();
-		const retry = setInterval(() => { if (this.loaded) { clearInterval(retry); return; } this._load(); }, 3000);
+		const win = DOM.getActiveWindow();
+		const retry = win.setInterval(() => { if (this.loaded) { win.clearInterval(retry); return; } this._load(); }, 3000);
 	}
 
 	private async _load(): Promise<void> {
@@ -98,7 +103,7 @@ export class TemplatesPane extends ViewPane {
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
 
 			const icon = DOM.append(row, DOM.$('span'));
-			icon.textContent = '📝';
+			icon.textContent = '\u{1F4DD}';
 
 			const col = DOM.append(row, DOM.$('div'));
 			col.style.cssText = 'flex:1;';
@@ -110,38 +115,69 @@ export class TemplatesPane extends ViewPane {
 			const meta = DOM.append(col, DOM.$('div'));
 			let updatedText = '';
 			try { updatedText = new Date(item.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { /* */ }
-			meta.textContent = `${item.context} · ${updatedText}`;
+			meta.textContent = `${item.context} \xb7 ${updatedText}`;
 			meta.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 			// Delete button
 			const delBtn = DOM.append(row, DOM.$('button'));
-			delBtn.textContent = '🗑️';
+			delBtn.textContent = '\u2715';
 			delBtn.title = 'Delete template';
-			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:12px;padding:2px;opacity:0.5;';
-			delBtn.addEventListener('mouseenter', () => { delBtn.style.opacity = '1'; });
-			delBtn.addEventListener('mouseleave', () => { delBtn.style.opacity = '0.5'; });
+			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;color:var(--vscode-descriptionForeground);opacity:0.5;';
+			delBtn.addEventListener('mouseenter', () => { delBtn.style.opacity = '1'; delBtn.style.color = '#ef4444'; });
+			delBtn.addEventListener('mouseleave', () => { delBtn.style.opacity = '0.5'; delBtn.style.color = 'var(--vscode-descriptionForeground)'; });
 			delBtn.addEventListener('click', async (e) => {
 				e.stopPropagation();
-				if (confirm(`Delete template "${item.name}"?`)) {
-					await this.apiService.fetch(`/api/template-documents/${item.id}`, { method: 'DELETE' });
-					this._load();
+				const confirmed = await new Promise<boolean>(resolve => {
+					const picker = this.quickInputService.createQuickPick<IQuickPickItem>();
+					picker.title = `Delete template "${item.name}"?`;
+					picker.placeholder = 'Type "delete" to confirm';
+					picker.onDidAccept(() => {
+						resolve(picker.value.toLowerCase() === 'delete');
+						picker.dispose();
+					});
+					picker.onDidHide(() => { resolve(false); picker.dispose(); });
+					picker.show();
+				});
+				if (confirmed) {
+					try {
+						await this.apiService.fetch(`/api/template-documents/${item.id}`, { method: 'DELETE' });
+						this.notificationService.notify({ severity: Severity.Info, message: `Template "${item.name}" deleted` });
+						this._load();
+					} catch {
+						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete template' });
+					}
 				}
 			});
 		}
 	}
 
 	private async _createTemplate(): Promise<void> {
-		const name = prompt('Template name:');
+		const name = await new Promise<string | undefined>(resolve => {
+			const inputBox = this.quickInputService.createInputBox();
+			inputBox.title = 'Create New Template';
+			inputBox.prompt = 'Enter template name';
+			inputBox.placeholder = 'e.g., Welcome Letter';
+			inputBox.onDidAccept(() => { resolve(inputBox.value.trim() || undefined); inputBox.dispose(); });
+			inputBox.onDidHide(() => { resolve(undefined); inputBox.dispose(); });
+			inputBox.show();
+		});
 		if (!name) { return; }
 
 		try {
-			await this.apiService.fetch('/api/template-documents', {
+			const res = await this.apiService.fetch('/api/template-documents', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name, context: 'PORTAL', content: '<h1>New Template</h1>' }),
 			});
-			this._load();
-		} catch { /* */ }
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: `Template "${name}" created` });
+				this._load();
+			} else {
+				const err = await res.text().catch(() => 'Unknown error');
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create template: ${err}` });
+			}
+		} catch {
+			this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create template' });
+		}
 	}
 
 	protected override layoutBody(height: number, width: number): void {

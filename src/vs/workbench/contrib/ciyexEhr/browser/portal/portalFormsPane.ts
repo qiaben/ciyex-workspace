@@ -13,6 +13,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
@@ -45,6 +47,8 @@ export class PortalFormsPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -68,7 +72,8 @@ export class PortalFormsPane extends ViewPane {
 		this.listEl.textContent = 'Loading...';
 
 		this._load();
-		const retry = setInterval(() => { if (this.loaded) { clearInterval(retry); return; } this._load(); }, 3000);
+		const win = DOM.getActiveWindow();
+		const retry = win.setInterval(() => { if (this.loaded) { win.clearInterval(retry); return; } this._load(); }, 3000);
 	}
 
 	private async _load(): Promise<void> {
@@ -100,7 +105,7 @@ export class PortalFormsPane extends ViewPane {
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
 
 			const icon = DOM.append(row, DOM.$('span'));
-			icon.textContent = '📋';
+			icon.textContent = '\u{1F4CB}';
 
 			const col = DOM.append(row, DOM.$('div'));
 			col.style.cssText = 'flex:1;min-width:0;';
@@ -110,7 +115,7 @@ export class PortalFormsPane extends ViewPane {
 			title.style.cssText = 'font-weight:500;';
 
 			const meta = DOM.append(col, DOM.$('div'));
-			meta.textContent = `${item.formType} · ${item.formKey}`;
+			meta.textContent = `${item.formType} \xb7 ${item.formKey}`;
 			meta.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 			// Active toggle
@@ -120,26 +125,99 @@ export class PortalFormsPane extends ViewPane {
 			toggle.title = item.active ? 'Active' : 'Inactive';
 			toggle.style.cssText = 'cursor:pointer;';
 			toggle.addEventListener('change', async () => {
-				await this.apiService.fetch(`/api/portal/config/forms/${item.id}/toggle?active=${toggle.checked}`, { method: 'PATCH' });
-				this._load();
+				try {
+					await this.apiService.fetch(`/api/portal/config/forms/${item.id}/toggle?active=${toggle.checked}`, { method: 'PATCH' });
+					this._load();
+				} catch {
+					this.notificationService.notify({ severity: Severity.Error, message: 'Failed to toggle form status' });
+				}
+			});
+
+			// Delete button
+			const delBtn = DOM.append(row, DOM.$('button'));
+			delBtn.textContent = '\u2715';
+			delBtn.title = 'Delete form';
+			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;color:var(--vscode-descriptionForeground);opacity:0.5;';
+			delBtn.addEventListener('mouseenter', () => { delBtn.style.opacity = '1'; delBtn.style.color = '#ef4444'; });
+			delBtn.addEventListener('mouseleave', () => { delBtn.style.opacity = '0.5'; delBtn.style.color = 'var(--vscode-descriptionForeground)'; });
+			delBtn.addEventListener('click', async () => {
+				const confirmed = await new Promise<boolean>(resolve => {
+					const picker = this.quickInputService.createQuickPick<IQuickPickItem>();
+					picker.title = `Delete form "${item.title}"?`;
+					picker.placeholder = 'Type "delete" to confirm';
+					picker.onDidAccept(() => {
+						resolve(picker.value.toLowerCase() === 'delete');
+						picker.dispose();
+					});
+					picker.onDidHide(() => { resolve(false); picker.dispose(); });
+					picker.show();
+				});
+				if (confirmed) {
+					try {
+						await this.apiService.fetch(`/api/portal/config/forms/${item.id}`, { method: 'DELETE' });
+						this.notificationService.notify({ severity: Severity.Info, message: `Form "${item.title}" deleted` });
+						this._load();
+					} catch {
+						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete form' });
+					}
+				}
 			});
 		}
 	}
 
 	private async _createForm(): Promise<void> {
-		const title = prompt('Form title:');
+		// Step 1: Get form title
+		const title = await new Promise<string | undefined>(resolve => {
+			const inputBox = this.quickInputService.createInputBox();
+			inputBox.title = 'Create New Portal Form';
+			inputBox.prompt = 'Enter form title';
+			inputBox.placeholder = 'e.g., Patient Intake Form';
+			inputBox.onDidAccept(() => { resolve(inputBox.value.trim() || undefined); inputBox.dispose(); });
+			inputBox.onDidHide(() => { resolve(undefined); inputBox.dispose(); });
+			inputBox.show();
+		});
 		if (!title) { return; }
-		const formType = prompt('Form type (intake/consent/custom):', 'intake');
+
+		// Step 2: Pick form type
+		const formType = await new Promise<string | undefined>(resolve => {
+			const picker = this.quickInputService.createQuickPick<IQuickPickItem>();
+			picker.title = 'Select Form Type';
+			picker.placeholder = 'Choose the type of form';
+			picker.items = [
+				{ label: 'Intake', description: 'Patient intake / onboarding form' },
+				{ label: 'Consent', description: 'Consent and authorization form' },
+				{ label: 'Custom', description: 'Custom form' },
+			];
+			picker.onDidAccept(() => {
+				const selected = picker.selectedItems[0];
+				resolve(selected ? selected.label.toLowerCase() : undefined);
+				picker.dispose();
+			});
+			picker.onDidHide(() => { resolve(undefined); picker.dispose(); });
+			picker.show();
+		});
 		if (!formType) { return; }
 
 		try {
-			await this.apiService.fetch('/api/portal/config/forms', {
+			const res = await this.apiService.fetch('/api/portal/config/forms', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title, formType, formKey: title.toLowerCase().replace(/\s+/g, '-'), active: true }),
+				body: JSON.stringify({
+					title,
+					formType,
+					formKey: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+					active: true,
+				}),
 			});
-			this._load();
-		} catch { /* */ }
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: `Form "${title}" created` });
+				this._load();
+			} else {
+				const err = await res.text().catch(() => 'Unknown error');
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create form: ${err}` });
+			}
+		} catch {
+			this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create form' });
+		}
 	}
 
 	protected override layoutBody(height: number, width: number): void {
