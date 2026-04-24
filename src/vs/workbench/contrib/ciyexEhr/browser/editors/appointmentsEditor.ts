@@ -241,7 +241,7 @@ export class AppointmentsEditor extends EditorPane {
 
 	// Auto-refresh
 	private refreshInterval = 30000;
-	private _refreshTimer: ReturnType<typeof setInterval> | null = null;
+	private _refreshTimer: number | null = null;
 
 	// Inline editing
 	private editingStatusId: number | null = null;
