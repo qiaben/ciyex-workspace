@@ -55,9 +55,12 @@ import { IHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegate.
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { safeIntl } from '../../../../base/common/date.js';
 import { IsCompactTitleBarContext, TitleBarVisibleContext } from '../../../common/contextkeys.js';
-import { EhrTitlebarControls } from '../../contrib/ciyexEhr/browser/ehrTitlebarControls.js';
-import '../../contrib/ciyexEhr/browser/media/ehrTitlebar.css';
-import { ICiyexApiService } from '../../contrib/ciyexEhr/browser/ciyexApiService.js';
+// eslint-disable-next-line local/code-import-patterns
+import { EhrTitlebarControls } from '../../../contrib/ciyexEhr/browser/ehrTitlebarControls.js';
+// eslint-disable-next-line local/code-import-patterns
+import '../../../contrib/ciyexEhr/browser/media/ehrTitlebar.css';
+// eslint-disable-next-line local/code-import-patterns
+import { ICiyexApiService } from '../../../contrib/ciyexEhr/browser/ciyexApiService.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 
 export interface ITitleVariable {
