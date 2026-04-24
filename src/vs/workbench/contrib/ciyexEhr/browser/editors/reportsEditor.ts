@@ -124,7 +124,7 @@ export class ReportsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		printBtn.textContent = '🖨️ Print';
 		printBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:11px;';
-		printBtn.addEventListener('click', () => DOM.getActiveWindow().print());
+		printBtn.addEventListener('click', () => this._printReport(input.reportLabel));
 
 		// allow-any-unicode-next-line
 		// ─── Filters ───
@@ -196,8 +196,48 @@ export class ReportsEditor extends EditorPane {
 			if (!res.ok) { this.items = []; return; }
 			const json = await res.json();
 			const raw = json?.data?.content || json?.data || json?.content || json || [];
-			this.items = (Array.isArray(raw) ? raw : []) as Record<string, string>[];
+			const arr = Array.isArray(raw) ? raw : [];
+			// Normalize backend field-name variants so report columns always have data to display.
+			this.items = arr.map((r: Record<string, unknown>) => this._normalizeRow(r)) as Record<string, string>[];
 		} catch { this.items = []; }
+	}
+
+	private _normalizeRow(r: Record<string, unknown>): Record<string, string> {
+		const s = (v: unknown): string => {
+			if (v === null || v === undefined) { return ''; }
+			if (Array.isArray(v)) {
+				// Java LocalDate/LocalDateTime arrays [y,m,d,...] → ISO date string
+				if (v.length >= 3 && typeof v[0] === 'number' && typeof v[1] === 'number') {
+					const [y, m, d] = v as number[];
+					return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+				}
+				return v.map(x => s(x)).filter(Boolean).join(', ');
+			}
+			if (typeof v === 'object') {
+				const o = v as Record<string, unknown>;
+				return String(o.text || o.display || (o.coding as Array<Record<string, string>>)?.[0]?.display || JSON.stringify(o).substring(0, 60));
+			}
+			return String(v);
+		};
+
+		const out: Record<string, string> = {};
+		for (const [k, v] of Object.entries(r)) { out[k] = s(v); }
+
+		// Derived aliases so report columns match whatever the backend returns
+		const firstName = out['firstName'] || out['given'] || '';
+		const lastName = out['lastName'] || out['family'] || '';
+		if (!out['name']) { out['name'] = `${firstName} ${lastName}`.trim() || out['displayName'] || out['fullName'] || ''; }
+		if (!out['phone']) { out['phone'] = out['phoneNumber'] || out['phoneHome'] || out['phoneMobile'] || out['mobile'] || ''; }
+		if (!out['birthDate']) { out['birthDate'] = out['dateOfBirth'] || out['dob'] || ''; }
+		if (!out['gender']) { out['gender'] = out['sex'] || ''; }
+		if (out['active'] === 'true' || out['active'] === true as unknown as string) { out['active'] = 'Active'; }
+		else if (out['active'] === 'false' || out['active'] === false as unknown as string) { out['active'] = 'Inactive'; }
+		if (!out['active']) { out['active'] = out['status'] || ''; }
+		if (!out['patientName']) { out['patientName'] = out['patientDisplay'] || out['patientRefDisplay'] || ''; }
+		if (!out['providerName']) { out['providerName'] = out['providerDisplay'] || out['practitionerName'] || ''; }
+		if (!out['patientDisplay']) { out['patientDisplay'] = out['patientName'] || out['patientRefDisplay'] || ''; }
+		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = out['patientDisplay'] || out['patientName'] || ''; }
+		return out;
 	}
 
 	private _applyFiltersAndRender(): void {
@@ -343,6 +383,38 @@ export class ReportsEditor extends EditorPane {
 			more.style.cssText = 'padding:8px 12px;text-align:center;color:var(--vscode-descriptionForeground);font-size:11px;';
 			more.textContent = `Showing ${pageSize} of ${filtered.length} records`;
 		}
+	}
+
+	private _printReport(reportName: string): void {
+		const cols = this.reportDef.columns;
+		const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', '\'': '&#39;' }[c] || c));
+		let rows = '';
+		for (const item of this.items) {
+			rows += '<tr>' + cols.map(c => `<td>${esc(String(item[c.key] || ''))}</td>`).join('') + '</tr>';
+		}
+		const html = `<!DOCTYPE html><html><head><title>${esc(reportName)}</title><style>
+			body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;margin:20px;color:#000;}
+			h1{font-size:18px;margin:0 0 4px;}
+			.meta{color:#666;font-size:11px;margin-bottom:14px;}
+			table{width:100%;border-collapse:collapse;}
+			th,td{padding:6px 8px;text-align:left;border:1px solid #ddd;}
+			th{background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:10px;}
+			@media print{@page{size:landscape;margin:12mm;}}
+		</style></head><body>
+			<h1>${esc(reportName)}</h1>
+			<div class="meta">Generated ${new Date().toLocaleString()} • ${this.items.length} records</div>
+			<table><thead><tr>${cols.map(c => `<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+		</body></html>`;
+
+		const w = DOM.getActiveWindow().open('', '_blank');
+		if (!w) { return; }
+		w.document.open();
+		w.document.write(html);
+		w.document.close();
+		// Wait for rendering before invoking print, otherwise sandboxed windows print blank
+		w.onload = () => { try { w.focus(); w.print(); } catch { /* ignore */ } };
+		// Fallback in case onload doesn't fire (already-loaded docs)
+		w.setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
 	}
 
 	private _exportCsv(reportName: string): void {

@@ -22,9 +22,9 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
-interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[] }
+interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string> }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -49,14 +49,14 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: true, display: 'custom', panel: 'main', fhirResources: [] },
 			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
 			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
-			{ key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Observation'] },
+			{ key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals' },
 			{ key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'] },
 			{ key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'] },
 		],
 	},
 	{
 		key: 'clinical', label: 'Clinical', position: 1, tabs: [
-			{ key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/cds/alerts' },
 			{ key: 'medications', label: 'Medications', icon: 'Pill', emoji: '\u{1F48A}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['MedicationRequest'] },
 			{ key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'] },
 			{ key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Immunization'] },
@@ -76,16 +76,16 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'billing', label: 'Billing', position: 3, tabs: [
 			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
-			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
+			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
+			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
+			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
+			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/transactions' },
 		],
 	},
 	{
 		key: 'financial', label: 'Financial', position: 4, tabs: [
-			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/ledger' },
+			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/plans' },
 		],
 	},
 	{
@@ -103,14 +103,538 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'general', label: 'General', position: 7, tabs: [
 			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
 			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
-			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
+			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/patient-messages' },
+			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
+			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/locations' },
 		],
 	},
 ];
 
 const SIDEBAR_COLLAPSED_KEY = 'ciyex.patientChart.sidebarCollapsed';
 const LAST_TAB_KEY_PREFIX = 'ciyex.patientChart.lastTab.';
+
+// Built-in field configs for tabs with a standard structure. Users can still override by dropping
+// a file at ~/.ciyex/fields/{tabKey}.json — that takes precedence.
+const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
+	demographics: {
+		tabKey: 'demographics',
+		sections: [
+			{
+				key: 'personal', title: 'Personal Information', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'firstName', label: 'First Name', type: 'text', required: true },
+					{ key: 'lastName', label: 'Last Name', type: 'text', required: true },
+					{ key: 'middleName', label: 'Middle Name', type: 'text' },
+					{ key: 'suffix', label: 'Suffix', type: 'text' },
+					{ key: 'preferredName', label: 'Preferred Name', type: 'text' },
+					{ key: 'previousName', label: 'Previous / Maiden Name', type: 'text' },
+					{ key: 'dateOfBirth', label: 'Date of Birth', type: 'date', required: true },
+					{ key: 'gender', label: 'Sex at Birth', type: 'select', required: true, options: [{ label: 'Male', value: 'Male' }, { label: 'Female', value: 'Female' }, { label: 'Other', value: 'Other' }, { label: 'Unknown', value: 'Unknown' }] },
+					{ key: 'genderIdentity', label: 'Gender Identity', type: 'text' },
+					{ key: 'pronouns', label: 'Pronouns', type: 'text' },
+					{ key: 'sexualOrientation', label: 'Sexual Orientation', type: 'text' },
+					{ key: 'mrn', label: 'Medical Record Number', type: 'text' },
+					{ key: 'ssn', label: 'SSN', type: 'text' },
+					{ key: 'maritalStatus', label: 'Marital Status', type: 'select', options: [{ label: 'Single', value: 'Single' }, { label: 'Married', value: 'Married' }, { label: 'Divorced', value: 'Divorced' }, { label: 'Widowed', value: 'Widowed' }, { label: 'Separated', value: 'Separated' }] },
+					{ key: 'race', label: 'Race', type: 'text' },
+					{ key: 'ethnicity', label: 'Ethnicity', type: 'text' },
+					{ key: 'preferredLanguage', label: 'Preferred Language', type: 'text' },
+					{ key: 'interpreterNeeded', label: 'Interpreter Needed', type: 'boolean' },
+					{ key: 'tribalAffiliation', label: 'Tribal Affiliation', type: 'text' },
+					{ key: 'religion', label: 'Religion', type: 'text' },
+					{ key: 'veteranStatus', label: 'Veteran Status', type: 'text' },
+					{ key: 'disabilityStatus', label: 'Disability Status', type: 'text' },
+					{ key: 'multipleBirth', label: 'Multiple Birth', type: 'boolean' },
+					{ key: 'dateOfDeath', label: 'Date of Death', type: 'date' },
+				],
+			},
+			{
+				key: 'contact', title: 'Contact Information', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'phoneNumber', label: 'Mobile Phone', type: 'phone', required: true },
+					{ key: 'homePhone', label: 'Home Phone', type: 'phone' },
+					{ key: 'workPhone', label: 'Work Phone', type: 'phone' },
+					{ key: 'email', label: 'Email Address', type: 'email' },
+					{ key: 'preferredContactMethod', label: 'Preferred Contact Method', type: 'select', options: [{ label: 'Phone', value: 'Phone' }, { label: 'Email', value: 'Email' }, { label: 'SMS', value: 'SMS' }, { label: 'Mail', value: 'Mail' }] },
+					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 3 },
+				],
+			},
+			{
+				key: 'consent', title: 'Communication Consent', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'allowSms', label: 'Allow SMS / Text Messages', type: 'boolean' },
+					{ key: 'allowEmail', label: 'Allow Email Communication', type: 'boolean' },
+					{ key: 'allowVoicemail', label: 'Allow Voicemail', type: 'boolean' },
+					{ key: 'allowPostalMail', label: 'Allow Postal Mail', type: 'boolean' },
+					{ key: 'allowPatientPortal', label: 'Allow Patient Portal', type: 'boolean' },
+					{ key: 'hipaaNoticeReceived', label: 'HIPAA Notice Received', type: 'boolean' },
+					{ key: 'allowHealthInfoExchange', label: 'Allow Health Info Exchange', type: 'boolean' },
+					{ key: 'allowImmunizationRegistry', label: 'Allow Immunization Registry', type: 'boolean' },
+					{ key: 'medicationHistoryConsent', label: 'Medication History Consent', type: 'boolean' },
+				],
+			},
+			{
+				key: 'emergency', title: 'Emergency Contact', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'emergencyContactName', label: 'Contact Name', type: 'text' },
+					{ key: 'emergencyContactRelationship', label: 'Relationship', type: 'text' },
+					{ key: 'emergencyContactPhone', label: 'Phone', type: 'phone' },
+				],
+			},
+			{
+				key: 'guardian', title: 'Guardian Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'guardianName', label: 'Guardian Name', type: 'text' },
+					{ key: 'guardianRelationship', label: 'Relationship', type: 'text' },
+					{ key: 'guardianPhone', label: 'Phone', type: 'phone' },
+					{ key: 'guardianEmail', label: 'Email', type: 'email' },
+					{ key: 'guardianAddress', label: 'Address', type: 'textarea' },
+					// allow-any-unicode-next-line
+					{ key: 'motherName', label: 'Mother’s Name', type: 'text' },
+				],
+			},
+			{
+				key: 'guarantor', title: 'Guarantor / Billing Responsible Party', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'guarantorFirstName', label: 'First Name', type: 'text' },
+					{ key: 'guarantorLastName', label: 'Last Name', type: 'text' },
+					{ key: 'guarantorRelationship', label: 'Relationship to Patient', type: 'text' },
+					{ key: 'guarantorDob', label: 'Date of Birth', type: 'date' },
+					{ key: 'guarantorSsn', label: 'SSN', type: 'text' },
+					{ key: 'guarantorPhone', label: 'Phone', type: 'phone' },
+				],
+			},
+			{
+				key: 'pharmacy', title: 'Preferred Pharmacy', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'pharmacyName', label: 'Pharmacy Name', type: 'text' },
+					{ key: 'pharmacyPhone', label: 'Phone', type: 'phone' },
+					{ key: 'pharmacyFax', label: 'Fax', type: 'phone' },
+					{ key: 'pharmacyAddress', label: 'Address', type: 'textarea', colSpan: 2 },
+					{ key: 'mailOrderPharmacy', label: 'Mail-Order Pharmacy', type: 'text' },
+				],
+			},
+			{
+				key: 'advance', title: 'Advance Directives', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'advanceDirectiveOnFile', label: 'Advance Directive on File', type: 'boolean' },
+					{ key: 'directiveType', label: 'Directive Type', type: 'text' },
+					{ key: 'directiveReviewDate', label: 'Review Date', type: 'date' },
+					{ key: 'healthcareProxyName', label: 'Healthcare Proxy / POA Name', type: 'text' },
+					{ key: 'healthcareProxyPhone', label: 'Healthcare Proxy Phone', type: 'phone' },
+					{ key: 'organDonor', label: 'Organ Donor', type: 'boolean' },
+				],
+			},
+			{
+				key: 'provider', title: 'Provider & Practice', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'assignedProvider', label: 'Assigned Provider', type: 'text' },
+					{ key: 'referringProvider', label: 'Referring Provider', type: 'text' },
+					{ key: 'primaryCarePhysician', label: 'Primary Care Physician', type: 'text' },
+					{ key: 'status', label: 'Patient Status', type: 'select', required: true, options: [{ label: 'Active', value: 'Active' }, { label: 'Inactive', value: 'Inactive' }, { label: 'Deceased', value: 'Deceased' }] },
+					{ key: 'referralSource', label: 'Referral Source', type: 'text' },
+					{ key: 'patientSince', label: 'Patient Since', type: 'date' },
+				],
+			},
+			{
+				key: 'employer', title: 'Employer Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'occupation', label: 'Occupation', type: 'text' },
+					{ key: 'industry', label: 'Industry', type: 'text' },
+					{ key: 'employerName', label: 'Employer Name', type: 'text' },
+					{ key: 'employerPhone', label: 'Employer Phone', type: 'phone' },
+					{ key: 'employerAddress', label: 'Employer Address', type: 'textarea', colSpan: 2 },
+				],
+			},
+			{
+				key: 'identifiers', title: 'Additional Identifiers', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					// allow-any-unicode-next-line
+					{ key: 'driversLicense', label: 'Driver’s License #', type: 'text' },
+					{ key: 'driversLicenseState', label: 'DL State', type: 'text' },
+					{ key: 'medicaidId', label: 'Medicaid ID', type: 'text' },
+					{ key: 'medicareBeneficiaryId', label: 'Medicare Beneficiary ID', type: 'text' },
+					{ key: 'registrationDate', label: 'Registration Date', type: 'date' },
+				],
+			},
+		],
+	},
+	allergies: {
+		tabKey: 'allergies',
+		sections: [
+			{
+				key: 'details', title: 'Allergy Details', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'allergyName', label: 'Allergy', type: 'text', required: true, placeholder: 'e.g., Drug Allergy, Food Allergy' },
+					{ key: 'allergen', label: 'Allergen', type: 'text', placeholder: 'e.g., Penicillin, Peanuts, Dust' },
+					{
+						key: 'clinicalStatus', label: 'Clinical Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Inactive', value: 'inactive' },
+							{ label: 'Resolved', value: 'resolved' },
+						]
+					},
+					{
+						key: 'severity', label: 'Severity', type: 'select', options: [
+							{ label: 'Mild', value: 'mild' },
+							{ label: 'Moderate', value: 'moderate' },
+							{ label: 'Severe', value: 'severe' },
+						]
+					},
+					{ key: 'reaction', label: 'Reaction', type: 'textarea', placeholder: 'Describe reaction', colSpan: 2 },
+					{ key: 'onsetDate', label: 'Onset Date', type: 'date' },
+					{ key: 'endDate', label: 'End Date', type: 'date' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 2 },
+				],
+			},
+		],
+	},
+	problems: {
+		tabKey: 'problems',
+		sections: [
+			{
+				key: 'details', title: 'Problem Details', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'condition', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'text', placeholder: 'Search ICD10-CM codes...' },
+					{
+						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Inactive', value: 'inactive' },
+							{ label: 'Resolved', value: 'resolved' },
+						]
+					},
+					{
+						key: 'severity', label: 'Severity', type: 'select', options: [
+							{ label: 'Mild', value: 'mild' },
+							{ label: 'Moderate', value: 'moderate' },
+							{ label: 'Severe', value: 'severe' },
+						]
+					},
+					{ key: 'onsetDate', label: 'Onset Date', type: 'date', required: true },
+					{ key: 'resolvedDate', label: 'Resolved Date', type: 'date' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 3 },
+				],
+			},
+		],
+	},
+	vitals: {
+		tabKey: 'vitals',
+		sections: [
+			{
+				key: 'measurements', title: 'Vital Signs', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'weightKg', label: 'Weight (kg)', type: 'number', required: true, placeholder: '0.0' },
+					{ key: 'heightCm', label: 'Height (cm)', type: 'number', required: true, placeholder: '0.0' },
+					// allow-any-unicode-next-line
+					{ key: 'bmi', label: 'BMI (kg/m²)', type: 'number', placeholder: 'Auto-calculated' },
+					{ key: 'bpSystolic', label: 'BP Systolic (mmHg)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'bpDiastolic', label: 'BP Diastolic (mmHg)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'pulse', label: 'Pulse (/min)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'respiration', label: 'Respiration (breaths/min)', type: 'number', required: true, placeholder: '0' },
+					// allow-any-unicode-next-line
+					{ key: 'temperatureC', label: 'Temperature (°C)', type: 'number', required: true, placeholder: '0.0' },
+					{ key: 'oxygenSaturation', label: 'O\u{2082} Saturation (%)', type: 'number', required: true, placeholder: '0' },
+				],
+			},
+			{
+				key: 'notes', title: 'Notes', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes' },
+				],
+			},
+		],
+	},
+	insurance: {
+		tabKey: 'insurance',
+		sections: [
+			{
+				key: 'policy-info', title: 'Policy Information', columns: 3, visible: true, collapsible: false, fields: [
+					{
+						key: 'insuranceType', label: 'Insurance Tier', type: 'select', required: true, options: [
+							{ label: 'Primary', value: 'primary' },
+							{ label: 'Secondary', value: 'secondary' },
+							{ label: 'Tertiary', value: 'tertiary' },
+						]
+					},
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+						]
+					},
+					{
+						key: 'payerName', label: 'Insurance Company / Payer', type: 'select', required: true, options: [
+							{ label: 'Aetna', value: 'Aetna' },
+							{ label: 'Anthem Blue Cross', value: 'Anthem Blue Cross' },
+							{ label: 'Blue Cross Blue Shield', value: 'Blue Cross Blue Shield' },
+							{ label: 'Cigna', value: 'Cigna' },
+							{ label: 'Humana', value: 'Humana' },
+							{ label: 'Kaiser Permanente', value: 'Kaiser Permanente' },
+							{ label: 'Medicaid', value: 'Medicaid' },
+							{ label: 'Medicare', value: 'Medicare' },
+							{ label: 'Molina Healthcare', value: 'Molina Healthcare' },
+							{ label: 'Oscar Health', value: 'Oscar Health' },
+							{ label: 'UnitedHealthcare', value: 'UnitedHealthcare' },
+							{ label: 'Tricare', value: 'Tricare' },
+							{ label: 'Centene', value: 'Centene' },
+							{ label: 'Wellcare', value: 'Wellcare' },
+							{ label: 'Ambetter', value: 'Ambetter' },
+							{ label: 'Bright Health', value: 'Bright Health' },
+							{ label: 'Clover Health', value: 'Clover Health' },
+							{ label: 'Friday Health Plans', value: 'Friday Health Plans' },
+							{ label: 'WellPoint', value: 'WellPoint' },
+						]
+					},
+					{ key: 'planName', label: 'Plan Name', type: 'text', placeholder: 'e.g. Blue Cross PPO Gold' },
+					{
+						key: 'policyType', label: 'Plan Type', type: 'select', options: [
+							{ label: 'HMO', value: 'HMO' },
+							{ label: 'PPO', value: 'PPO' },
+							{ label: 'EPO', value: 'EPO' },
+							{ label: 'POS', value: 'POS' },
+							{ label: 'HDHP', value: 'HDHP' },
+							{ label: 'Medicare', value: 'Medicare' },
+							{ label: 'Medicaid', value: 'Medicaid' },
+							{ label: 'TRICARE', value: 'Tricare' },
+							// allow-any-unicode-next-line
+							{ label: 'Workers’ Comp', value: 'Workers-Comp' },
+							{ label: 'Other', value: 'Other' },
+						]
+					},
+					{ key: 'policyNumber', label: 'Policy / Member ID', type: 'text', required: true, placeholder: 'Member ID' },
+					{ key: 'groupNumber', label: 'Group Number', type: 'text', placeholder: 'Group #' },
+					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
+					{ key: 'policyEffectiveDate', label: 'Effective Date', type: 'date' },
+					{ key: 'policyEndDate', label: 'End Date', type: 'date' },
+				],
+			},
+			{
+				key: 'subscriber-info', title: 'Subscriber Information', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{
+						key: 'subscriberRelationship', label: 'Relationship to Patient', type: 'select', required: true, options: [
+							{ label: 'Self (Patient is Subscriber)', value: 'self' },
+							{ label: 'Spouse', value: 'spouse' },
+							{ label: 'Child', value: 'child' },
+							{ label: 'Parent', value: 'parent' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{ key: 'subscriberFirstName', label: 'Subscriber First Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberLastName', label: 'Subscriber Last Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberDOB', label: 'Subscriber Date of Birth', type: 'date', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{
+						key: 'subscriberGender', label: 'Subscriber Sex', type: 'select', options: [
+							{ label: 'Male', value: 'male' },
+							{ label: 'Female', value: 'female' },
+							{ label: 'Other', value: 'other' },
+						], showWhen: { field: 'subscriberRelationship', notEquals: 'self' }
+					},
+					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+				],
+			},
+		],
+	},
+	documents: {
+		tabKey: 'documents',
+		sections: [
+			{
+				key: 'details', title: 'Document Details', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'description', label: 'Document Name', type: 'text', required: true, placeholder: 'e.g., Lab Report, Consent Form' },
+					{
+						key: 'type', label: 'Document Type', type: 'select', required: true, options: [
+							{ label: 'Clinical Note', value: 'clinical-note' },
+							{ label: 'Lab Report', value: 'lab-report' },
+							{ label: 'Imaging Report', value: 'imaging-report' },
+							{ label: 'Referral', value: 'referral' },
+							{ label: 'Prescription', value: 'prescription' },
+							{ label: 'Discharge Summary', value: 'discharge-summary' },
+							{ label: 'Consent Form', value: 'consent-form' },
+							{ label: 'Insurance Card', value: 'insurance-card' },
+							{ label: 'ID Document', value: 'id-document' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{
+						key: 'category', label: 'Category', type: 'select', options: [
+							{ label: 'Clinical', value: 'clinical' },
+							{ label: 'Administrative', value: 'administrative' },
+							{ label: 'Insurance', value: 'insurance' },
+							{ label: 'Legal', value: 'legal' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{ key: 'date', label: 'Document Date', type: 'date', required: true },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Current', value: 'current' },
+							{ label: 'Superseded', value: 'superseded' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+						]
+					},
+					{ key: 'authorName', label: 'Author / Provider', type: 'text', placeholder: 'Author name' },
+					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
+					{ key: 'fileUrl', label: 'File URL', type: 'text', placeholder: 'https://... or storage key', colSpan: 2 },
+					{
+						key: 'contentType', label: 'Content Type', type: 'select', options: [
+							{ label: 'PDF', value: 'application/pdf' },
+							{ label: 'Image (PNG)', value: 'image/png' },
+							{ label: 'Image (JPEG)', value: 'image/jpeg' },
+							{ label: 'Word', value: 'application/msword' },
+							{ label: 'Text', value: 'text/plain' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 3 },
+				],
+			},
+		],
+	},
+	education: {
+		tabKey: 'education',
+		sections: [
+			{
+				key: 'details', title: 'Education Assignment', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'materialTitle', label: 'Material Title', type: 'text', required: true, placeholder: 'e.g., Diabetes Self-Care' },
+					{
+						key: 'materialCategory', label: 'Category', type: 'select', options: [
+							{ label: 'Disease Management', value: 'disease-management' },
+							{ label: 'Medication', value: 'medication' },
+							{ label: 'Procedure', value: 'procedure' },
+							{ label: 'Wellness', value: 'wellness' },
+							{ label: 'Nutrition', value: 'nutrition' },
+							{ label: 'Post-Op Care', value: 'post-op' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{
+						key: 'materialContentType', label: 'Content Type', type: 'select', options: [
+							{ label: 'Article', value: 'article' },
+							{ label: 'Video', value: 'video' },
+							{ label: 'PDF', value: 'pdf' },
+							{ label: 'Handout', value: 'handout' },
+							{ label: 'Link', value: 'link' },
+						]
+					},
+					{ key: 'assignedBy', label: 'Assigned By', type: 'text', placeholder: 'Provider name' },
+					{ key: 'assignedDate', label: 'Assigned Date', type: 'date', required: true },
+					{ key: 'dueDate', label: 'Due Date', type: 'date' },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Assigned', value: 'assigned' },
+							{ label: 'Viewed', value: 'viewed' },
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Dismissed', value: 'dismissed' },
+						]
+					},
+					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Notes', colSpan: 3 },
+					{ key: 'patientFeedback', label: 'Patient Feedback', type: 'textarea', placeholder: 'Feedback from the patient', colSpan: 3 },
+				],
+			},
+		],
+	},
+	messaging: {
+		tabKey: 'messaging',
+		sections: [
+			{
+				key: 'details', title: 'Message', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Message subject' },
+					{ key: 'recipientName', label: 'To', type: 'text', required: true, placeholder: 'Recipient name or role' },
+					{ key: 'senderName', label: 'From', type: 'text', placeholder: 'Sender name' },
+					{
+						key: 'priority', label: 'Priority', type: 'select', options: [
+							{ label: 'Normal', value: 'normal' },
+							{ label: 'High', value: 'high' },
+							{ label: 'Urgent', value: 'urgent' },
+						]
+					},
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Sent', value: 'sent' },
+							{ label: 'Read', value: 'read' },
+							{ label: 'Archived', value: 'archived' },
+						]
+					},
+					{ key: 'sentAt', label: 'Sent At', type: 'date' },
+					{ key: 'content', label: 'Message', type: 'textarea', required: true, placeholder: 'Enter your message', colSpan: 2 },
+				],
+			},
+		],
+	},
+	relationships: {
+		tabKey: 'relationships',
+		sections: [
+			{
+				key: 'details', title: 'Related Person', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'firstName', label: 'First Name', type: 'text', required: true, placeholder: 'First name' },
+					{ key: 'lastName', label: 'Last Name', type: 'text', required: true, placeholder: 'Last name' },
+					{
+						key: 'relationship', label: 'Relationship', type: 'select', required: true, options: [
+							{ label: 'Spouse', value: 'spouse' },
+							{ label: 'Parent', value: 'parent' },
+							{ label: 'Child', value: 'child' },
+							{ label: 'Sibling', value: 'sibling' },
+							{ label: 'Guardian', value: 'guardian' },
+							{ label: 'Domestic Partner', value: 'partner' },
+							{ label: 'Grandparent', value: 'grandparent' },
+							{ label: 'Grandchild', value: 'grandchild' },
+							{ label: 'Friend', value: 'friend' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{
+						key: 'gender', label: 'Gender', type: 'select', options: [
+							{ label: 'Male', value: 'Male' },
+							{ label: 'Female', value: 'Female' },
+							{ label: 'Other', value: 'Other' },
+							{ label: 'Unknown', value: 'Unknown' },
+						]
+					},
+					{ key: 'birthDate', label: 'Date of Birth', type: 'date' },
+					{ key: 'phoneNumber', label: 'Phone', type: 'phone' },
+					{ key: 'email', label: 'Email', type: 'email' },
+					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
+					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
+					{ key: 'active', label: 'Active', type: 'boolean' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes', colSpan: 3 },
+				],
+			},
+		],
+	},
+	facility: {
+		tabKey: 'facility',
+		sections: [
+			{
+				key: 'details', title: 'Facility / Location', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'name', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g., Main Clinic, Hospital East Wing' },
+					{
+						key: 'type', label: 'Facility Type', type: 'select', required: true, options: [
+							{ label: 'Clinic', value: 'clinic' },
+							{ label: 'Hospital', value: 'hospital' },
+							{ label: 'Laboratory', value: 'laboratory' },
+							{ label: 'Imaging Center', value: 'imaging' },
+							{ label: 'Pharmacy', value: 'pharmacy' },
+							{ label: 'Urgent Care', value: 'urgent-care' },
+							{ label: 'Specialty', value: 'specialty' },
+							{ label: 'Home Health', value: 'home-health' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Inactive', value: 'inactive' },
+							{ label: 'Suspended', value: 'suspended' },
+						]
+					},
+					{ key: 'phone', label: 'Phone', type: 'phone' },
+					{ key: 'fax', label: 'Fax', type: 'phone' },
+					{ key: 'email', label: 'Email', type: 'email' },
+					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
+					{ key: 'zipCode', label: 'ZIP Code', type: 'text' },
+					{ key: 'city', label: 'City', type: 'text' },
+					{ key: 'state', label: 'State', type: 'text' },
+					{ key: 'country', label: 'Country', type: 'text' },
+					{ key: 'primaryContactName', label: 'Primary Contact', type: 'text' },
+					{ key: 'npi', label: 'NPI', type: 'text', placeholder: 'National Provider Identifier' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 3 },
+				],
+			},
+		],
+	},
+};
 
 export class PatientChartEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexPatientChart';
@@ -230,6 +754,23 @@ export class PatientChartEditor extends EditorPane {
 		} catch { /* */ }
 	}
 
+	private _tabEndpoint(tab: ChartTab): string | null {
+		if (tab.apiPath) { return tab.apiPath; }
+		if (tab.fhirResources.length > 0) {
+			const res = tab.fhirResources[0];
+			return FHIR_MAP[res] || `/api/fhir-resource/${res.toLowerCase()}s`;
+		}
+		return null;
+	}
+
+	// Some endpoints aren't patient-scoped (e.g. /api/locations) — don't append /patient/{id}.
+	private _isPatientScoped(tab: ChartTab): boolean {
+		// Tabs that pull from org-level collections
+		const orgLevelTabs = new Set(['facility']);
+		if (orgLevelTabs.has(tab.key)) { return false; }
+		return true;
+	}
+
 	private async _loadTabData(tab: ChartTab): Promise<{ config: FieldConfig | null; data: Record<string, unknown>[] }> {
 		const cached = this._tabDataCache.get(tab.key);
 		if (cached) { return cached; }
@@ -239,6 +780,35 @@ export class PatientChartEditor extends EditorPane {
 			const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'fields', `${tab.key}.json`));
 			config = JSON.parse(file.value.toString());
 		} catch { /* */ }
+		// Fall back to built-in defaults (e.g. Demographics) if no user config exists
+		if (!config && DEFAULT_FIELD_CONFIGS[tab.key]) {
+			config = DEFAULT_FIELD_CONFIGS[tab.key];
+		}
+
+		// apiPath override (e.g. /api/cds/alerts, /api/payments/transactions) — query string safe.
+		// If apiPath contains {patientId}, substitute; otherwise append /patient/{id} for patient-scoped endpoints.
+		// Non-patient-scoped endpoints (facility/locations) should use {patientId}-free path as-is.
+		if (tab.apiPath) {
+			let url: string;
+			if (tab.apiPath.includes('{patientId}')) {
+				url = tab.apiPath.replace('{patientId}', this.patientId);
+				url += (url.includes('?') ? '&' : '?') + 'page=0&size=100';
+			} else if (this._isPatientScoped(tab)) {
+				const [base, query] = tab.apiPath.split('?');
+				url = `${base}/patient/${this.patientId}${query ? `?${query}&page=0&size=100` : '?page=0&size=100'}`;
+			} else {
+				url = tab.apiPath + (tab.apiPath.includes('?') ? '&' : '?') + 'page=0&size=100';
+			}
+			try {
+				const res = await this.apiService.fetch(url);
+				if (res.ok) {
+					const json = await res.json();
+					const items = json?.data?.content || json?.content || (json?.data && !Array.isArray(json.data) ? [json.data] : (Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : []));
+					data = data.concat(items);
+				}
+			} catch { /* */ }
+		}
+
 		for (const resource of tab.fhirResources) {
 			try {
 				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
@@ -266,9 +836,18 @@ export class PatientChartEditor extends EditorPane {
 				return typeof count === 'number' ? count : null;
 			} catch { return null; }
 		};
+		const fetchVitalsCount = async (): Promise<number | null> => {
+			try {
+				const res = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`);
+				if (!res.ok) { return null; }
+				const json = await res.json();
+				const count = json?.data?.totalElements ?? json?.totalElements ?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
+				return typeof count === 'number' ? count : null;
+			} catch { return null; }
+		};
 		const [allergies, problems, history, vitals] = await Promise.all([
 			fetchCount('AllergyIntolerance'), fetchCount('Condition'),
-			fetchCount('FamilyMemberHistory'), fetchCount('Observation'),
+			fetchCount('FamilyMemberHistory'), fetchVitalsCount(),
 		]);
 		this.quickInfo = {
 			allergies: allergies === null ? '—' : allergies === 0 ? 'NKA' : String(allergies),
@@ -726,6 +1305,8 @@ export class PatientChartEditor extends EditorPane {
 
 	// --- Generic tab (list or form) ---
 
+	private _formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+
 	private async _renderGenericTab(tab: ChartTab): Promise<void> {
 		// Section card header
 		const card = DOM.append(this.mainEl, DOM.$('div'));
@@ -749,10 +1330,6 @@ export class PatientChartEditor extends EditorPane {
 
 		const actionSlot = DOM.append(hdr, DOM.$('div'));
 		actionSlot.style.cssText = 'display:flex;gap:6px;';
-		const addBtn = DOM.append(actionSlot, DOM.$('button'));
-		addBtn.textContent = `+ Add`;
-		addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-		addBtn.addEventListener('click', () => this.notificationService.info(`New ${tab.label} — coming soon`));
 
 		const content = DOM.append(card, DOM.$('div'));
 		content.style.cssText = 'padding:14px 16px;';
@@ -760,8 +1337,8 @@ export class PatientChartEditor extends EditorPane {
 		loading.textContent = 'Loading...';
 		loading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
 
-		// Empty-data tab with no FHIR resources → show placeholder
-		if (tab.fhirResources.length === 0) {
+		// Tab with no endpoint (neither FHIR resource nor apiPath) → show placeholder, no Add button
+		if (!this._tabEndpoint(tab)) {
 			DOM.clearNode(content);
 			const placeholder = DOM.append(content, DOM.$('div'));
 			placeholder.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);';
@@ -769,7 +1346,7 @@ export class PatientChartEditor extends EditorPane {
 			icon.textContent = tab.emoji || '\u{1F4CB}';
 			icon.style.cssText = 'font-size:32px;margin-bottom:8px;';
 			const msg = DOM.append(placeholder, DOM.$('div'));
-			msg.textContent = `${tab.label} — coming soon`;
+			msg.textContent = `No ${tab.label.toLowerCase()} data source configured`;
 			msg.style.cssText = 'font-size:13px;';
 			return;
 		}
@@ -783,13 +1360,462 @@ export class PatientChartEditor extends EditorPane {
 
 		const isForm = tab.display === 'form';
 		if (config?.sections && isForm) {
-			this._renderForm(content, config.sections, data.length > 0 ? data : [{}]);
-		} else if (data.length > 0) {
-			this._listAuto(content, tab, data);
+			// Form tab (e.g. Demographics): read-only by default; click Edit to unlock, then Save/Cancel.
+			this._formInputs.clear();
+			const initialRecord = data.length > 0 ? data : [{}];
+			this._renderForm(content, config.sections, initialRecord);
+
+			const primaryBtnStyle = 'padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+			const secondaryBtnStyle = 'padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
+
+			const setReadOnly = (readOnly: boolean) => {
+				for (const el of this._formInputs.values()) {
+					if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
+						el.disabled = readOnly;
+					} else if (el.tagName === 'SELECT') {
+						(el as HTMLSelectElement).disabled = readOnly;
+					} else {
+						(el as HTMLInputElement | HTMLTextAreaElement).readOnly = readOnly;
+					}
+					el.style.opacity = readOnly ? '0.75' : '1';
+					el.style.cursor = readOnly ? 'not-allowed' : '';
+				}
+			};
+
+			// Snapshot values so Cancel can revert
+			const snapshot = () => {
+				const snap = new Map<string, string | boolean>();
+				for (const [k, el] of this._formInputs) {
+					if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { snap.set(k, el.checked); }
+					else { snap.set(k, el.value); }
+				}
+				return snap;
+			};
+			const restore = (snap: Map<string, string | boolean>) => {
+				for (const [k, el] of this._formInputs) {
+					const v = snap.get(k);
+					if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { el.checked = !!v; }
+					else { el.value = String(v ?? ''); }
+				}
+			};
+
+			setReadOnly(true);
+
+			const editBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
+			editBtn.textContent = '\u{270F}\u{FE0F} Edit';
+			editBtn.style.cssText = primaryBtnStyle;
+
+			const saveBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
+			saveBtn.textContent = '\u{1F4BE} Save';
+			saveBtn.style.cssText = primaryBtnStyle;
+			saveBtn.style.display = 'none';
+
+			const cancelBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
+			cancelBtn.textContent = 'Cancel';
+			cancelBtn.style.cssText = secondaryBtnStyle;
+			cancelBtn.style.display = 'none';
+
+			let snap: Map<string, string | boolean> | null = null;
+
+			editBtn.addEventListener('click', () => {
+				snap = snapshot();
+				setReadOnly(false);
+				editBtn.style.display = 'none';
+				saveBtn.style.display = '';
+				cancelBtn.style.display = '';
+			});
+
+			cancelBtn.addEventListener('click', () => {
+				if (snap) { restore(snap); }
+				setReadOnly(true);
+				editBtn.style.display = '';
+				saveBtn.style.display = 'none';
+				cancelBtn.style.display = 'none';
+			});
+
+			saveBtn.addEventListener('click', async () => {
+				await this._saveFormTab(tab, saveBtn);
+				setReadOnly(true);
+				editBtn.style.display = '';
+				saveBtn.style.display = 'none';
+				cancelBtn.style.display = 'none';
+			});
 		} else {
-			const empty = DOM.append(content, DOM.$('div'));
-			empty.textContent = `No ${tab.label.toLowerCase()} records`;
-			empty.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+			// List tab: show "+ Add" that opens an inline create form (if config available)
+			const addBtn = DOM.append(actionSlot, DOM.$('button'));
+			addBtn.textContent = '+ Add';
+			addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+			addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+
+			this._renderListWithFilters(content, tab, config, data);
+		}
+	}
+
+	// Status filter options per tab — different resources use different status vocabularies.
+	private _statusFilterOptions(tab: ChartTab): Array<{ label: string; value: string }> {
+		switch (tab.key) {
+			case 'documents':
+			case 'visit-notes':
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Current', value: 'current' },
+					{ label: 'Superseded', value: 'superseded' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+				];
+			case 'appointments':
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Scheduled', value: 'scheduled' },
+					{ label: 'Confirmed', value: 'confirmed' },
+					{ label: 'Checked-in', value: 'checked-in' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'No Show', value: 'no show' },
+				];
+			case 'medications':
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'On Hold', value: 'on-hold' },
+					{ label: 'Stopped', value: 'stopped' },
+					{ label: 'Completed', value: 'completed' },
+				];
+			case 'billing':
+			case 'claims':
+			case 'denials':
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Draft', value: 'draft' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Paid', value: 'paid' },
+					{ label: 'Denied', value: 'denied' },
+				];
+			default:
+				return [
+					{ label: 'All Clinical Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+					{ label: 'Resolved', value: 'resolved' },
+				];
+		}
+	}
+
+	// List tab render: search + clinical-status filter + table, all applied client-side.
+	private _renderListWithFilters(container: HTMLElement, tab: ChartTab, config: FieldConfig | null, data: Record<string, unknown>[]): void {
+		const inputStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+
+		const filterBar = DOM.append(container, DOM.$('div'));
+		filterBar.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;';
+
+		const searchInput = DOM.append(filterBar, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = `Search by ${tab.label}...`;
+		searchInput.style.cssText = inputStyle + 'flex:1;min-width:200px;max-width:320px;';
+
+		const statusSel = DOM.append(filterBar, DOM.$('select')) as HTMLSelectElement;
+		statusSel.style.cssText = inputStyle + 'cursor:pointer;min-width:180px;';
+		// Status options differ by tab; fall back to clinical values for everything else
+		const filterOpts = this._statusFilterOptions(tab);
+		for (const opt of filterOpts) {
+			const o = DOM.append(statusSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = opt.value; o.textContent = opt.label;
+		}
+
+		const countBadge = DOM.append(filterBar, DOM.$('span'));
+		countBadge.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-left:6px;';
+
+		const tableWrap = DOM.append(container, DOM.$('div'));
+
+		const matches = (item: Record<string, unknown>, q: string): boolean => {
+			if (!q) { return true; }
+			const hay = Object.values(item).map(v => {
+				if (v === null || v === undefined) { return ''; }
+				if (typeof v === 'object') { try { return JSON.stringify(v); } catch { return ''; } }
+				return String(v);
+			}).join(' ').toLowerCase();
+			return hay.includes(q.toLowerCase());
+		};
+
+		const statusOf = (item: Record<string, unknown>): string => {
+			const cs = item.clinicalStatus as unknown;
+			if (typeof cs === 'string') { return cs.toLowerCase(); }
+			if (cs && typeof cs === 'object') {
+				const obj = cs as Record<string, unknown>;
+				const val = obj.code || obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.code || '';
+				return String(val).toLowerCase();
+			}
+			const s = item.status;
+			return typeof s === 'string' ? s.toLowerCase() : '';
+		};
+
+		const applyFilters = () => {
+			const q = searchInput.value.trim();
+			const st = statusSel.value;
+			const filtered = data.filter(it => matches(it, q) && (!st || statusOf(it) === st));
+			DOM.clearNode(tableWrap);
+			countBadge.textContent = `${filtered.length} record${filtered.length === 1 ? '' : 's'}`;
+			if (filtered.length > 0) {
+				this._listAuto(tableWrap, tab, filtered, config);
+			} else {
+				const empty = DOM.append(tableWrap, DOM.$('div'));
+				empty.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+				const msg = DOM.append(empty, DOM.$('div'));
+				msg.textContent = data.length === 0 ? `No ${tab.label.toLowerCase()} records` : 'No records match your filters';
+				msg.style.cssText = 'margin-bottom:8px;';
+				if (data.length === 0) {
+					const link = DOM.append(empty, DOM.$('a'));
+					link.textContent = 'Create your first record';
+					link.style.cssText = 'color:var(--vscode-textLink-foreground);cursor:pointer;text-decoration:none;font-size:12px;';
+					link.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+				}
+			}
+		};
+
+		let searchTimer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (searchTimer) { clearTimeout(searchTimer); }
+			searchTimer = setTimeout(applyFilters, 150);
+		});
+		statusSel.addEventListener('change', applyFilters);
+		applyFilters();
+	}
+
+	private async _saveFormTab(tab: ChartTab, btn: HTMLButtonElement): Promise<void> {
+		const payload: Record<string, unknown> = {};
+		for (const [key, el] of this._formInputs) {
+			if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
+				payload[key] = el.checked;
+			} else {
+				const v = el.value;
+				if (v !== '') { payload[key] = v; }
+			}
+		}
+		if (Object.keys(payload).length === 0) {
+			this.notificationService.info('No changes to save');
+			return;
+		}
+
+		btn.disabled = true;
+		const prev = btn.textContent;
+		btn.textContent = 'Saving...';
+		try {
+			// Demographics → /api/patients/{id}, others → endpoint update (apiPath or FHIR)
+			const isDemographics = tab.fhirResources.includes('Patient');
+			const ep = this._tabEndpoint(tab);
+			const path = isDemographics
+				? `/api/patients/${this.patientId}`
+				: `${(ep || '').split('?')[0]}/${this.patientId}`;
+			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(payload) });
+			if (res.ok) {
+				this.notificationService.info(`${tab.label} saved`);
+				this._tabDataCache.delete(tab.key);
+				if (isDemographics) {
+					await this._loadPatient();
+					this._renderHeader();
+				}
+				this._renderMain();
+			} else {
+				const err = await res.text().catch(() => 'Unknown error');
+				this.notificationService.error(`Save failed: ${err.substring(0, 200)}`);
+			}
+		} catch (e) {
+			this.notificationService.error(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			btn.disabled = false;
+			btn.textContent = prev;
+		}
+	}
+
+	private _openAddRecordDialog(tab: ChartTab, config: FieldConfig | null): void {
+		this._openRecordDialog(tab, config, null);
+	}
+
+	private _openRecordDialog(tab: ChartTab, config: FieldConfig | null, existing: Record<string, unknown> | null): void {
+		const isEdit = !!existing;
+		const recordId = existing ? String(existing.id || existing.fhirId || '') : '';
+
+		// Overlay + panel
+		const overlay = DOM.append(this.root, DOM.$('div'));
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;display:flex;justify-content:flex-end;';
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.addEventListener('click', () => overlay.remove());
+
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'position:relative;width:540px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;';
+
+		const hdrRow = DOM.append(panel, DOM.$('div'));
+		hdrRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
+		const hdrTitle = DOM.append(hdrRow, DOM.$('h3'));
+		hdrTitle.textContent = isEdit ? `Edit ${tab.label}` : `New ${tab.label}`;
+		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const formContainer = DOM.append(panel, DOM.$('div'));
+
+		// Save inputs to a local map (avoid clobbering the form-tab map)
+		const saved = this._formInputs;
+		this._formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+
+		if (config?.sections && config.sections.length > 0) {
+			this._renderForm(formContainer, config.sections, [existing || {}]);
+		} else {
+			// Fallback: auto-generate editable fields from the record keys (edit) or show note (new)
+			if (existing) {
+				this._renderAutoEditForm(formContainer, existing);
+			} else {
+				const note = DOM.append(formContainer, DOM.$('div'));
+				note.textContent = `No field configuration for ${tab.label}. Set up in Settings → Field Config.`;
+				note.style.cssText = 'padding:20px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+			}
+		}
+
+		const dialogInputs = this._formInputs;
+		this._formInputs = saved;
+
+		const btnRow = DOM.append(panel, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
+
+		// Delete (edit only)
+		if (isEdit && recordId) {
+			const delBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+			delBtn.textContent = 'Delete';
+			delBtn.style.cssText = 'padding:8px 20px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-size:13px;margin-right:auto;';
+			delBtn.addEventListener('click', async () => {
+				const ep = (this._tabEndpoint(tab) || '').split('?')[0];
+				if (!ep) { return; }
+				try {
+					const delUrl = tab.key === 'vitals'
+						? `${ep}/patient/${this.patientId}/${recordId}`
+						: `${ep}/${recordId}`;
+					const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
+					if (res.ok) {
+						this.notificationService.info(`${tab.label} record deleted`);
+						this._tabDataCache.delete(tab.key);
+						overlay.remove();
+						this._renderMain();
+						void this._loadQuickInfo();
+					} else {
+						const err = await res.text().catch(() => 'Unknown error');
+						this.notificationService.error(`Delete failed: ${err.substring(0, 200)}`);
+					}
+				} catch (e) {
+					this.notificationService.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+				}
+			});
+		}
+
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+
+		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
+		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+		saveBtn.disabled = dialogInputs.size === 0;
+		saveBtn.addEventListener('click', async () => {
+			const payload: Record<string, unknown> = isEdit ? {} : { patientId: this.patientId };
+			for (const [key, el] of dialogInputs) {
+				if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
+					payload[key] = el.checked;
+				} else {
+					const v = el.value?.trim?.() ?? el.value;
+					if (v === '' || v === null || v === undefined) { continue; }
+					if (DOM.isHTMLInputElement(el) && el.type === 'number') {
+						const n = parseFloat(v);
+						if (!isNaN(n)) { payload[key] = n; }
+					} else {
+						payload[key] = v;
+					}
+				}
+			}
+
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving...';
+			try {
+				const ep = (this._tabEndpoint(tab) || '').split('?')[0];
+				if (!ep) { throw new Error('No endpoint for this tab'); }
+				const isVitals = tab.key === 'vitals';
+				if (isVitals && !isEdit) {
+					// Vitals POST expects recordedAt and no patientId in body; patient is in URL path
+					delete (payload as Record<string, unknown>).patientId;
+					if (!payload.recordedAt) { payload.recordedAt = new Date().toISOString(); }
+				}
+				const url = isVitals
+					? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
+					: (isEdit ? `${ep}/${recordId}` : ep);
+				const method = isEdit ? 'PUT' : 'POST';
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (res.ok) {
+					this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
+					this._tabDataCache.delete(tab.key);
+					overlay.remove();
+					this._renderMain();
+					void this._loadQuickInfo();
+				} else {
+					const err = await res.text().catch(() => 'Unknown error');
+					this.notificationService.error(`Save failed: ${err.substring(0, 200)}`);
+					saveBtn.disabled = false;
+					saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
+				}
+			} catch (e) {
+				this.notificationService.error(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+				saveBtn.disabled = false;
+				saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
+			}
+		});
+	}
+
+	// Generates editable inputs from the record's own keys when no FieldConfig exists.
+	private _renderAutoEditForm(container: HTMLElement, record: Record<string, unknown>): void {
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		const skip = new Set(['id', 'fhirId', 'patient', 'patientId', 'resourceType', 'meta', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy']);
+
+		const grid = DOM.append(container, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;';
+
+		for (const [key, raw] of Object.entries(record)) {
+			if (skip.has(key) || key.startsWith('_')) { continue; }
+
+			const cell = DOM.append(grid, DOM.$('div'));
+			cell.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+			const lbl = DOM.append(cell, DOM.$('label'));
+			lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+			lbl.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;';
+
+			// Skip non-primitive values (object/array) — show read-only display
+			if (raw !== null && typeof raw === 'object') {
+				const ro = DOM.append(cell, DOM.$('div'));
+				const obj = raw as Record<string, unknown>;
+				ro.textContent = String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || JSON.stringify(raw).substring(0, 60));
+				ro.style.cssText = inputStyle + 'opacity:0.7;font-style:italic;';
+				continue;
+			}
+
+			if (typeof raw === 'boolean') {
+				const wrap = DOM.append(cell, DOM.$('div'));
+				wrap.style.cssText = 'display:flex;align-items:center;gap:8px;height:32px;';
+				const cb = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				cb.type = 'checkbox'; cb.checked = raw;
+				cb.style.cssText = 'width:18px;height:18px;cursor:pointer;accent-color:var(--vscode-focusBorder,#007acc);';
+				this._formInputs.set(key, cb);
+				continue;
+			}
+
+			const val = raw === null || raw === undefined ? '' : String(raw);
+			const isDate = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(raw);
+			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
+			inp.type = isDate ? 'date' : (typeof raw === 'number' ? 'number' : 'text');
+			inp.value = isDate ? val.split('T')[0] : val;
+			inp.style.cssText = inputStyle;
+			this._formInputs.set(key, inp);
 		}
 	}
 
@@ -798,17 +1824,42 @@ export class PatientChartEditor extends EditorPane {
 	private _renderForm(container: HTMLElement, sections: FieldSection[], data: Record<string, unknown>[]): void {
 		const record = ((data[0] as Record<string, unknown>)?.data as Record<string, unknown>) || data[0] || {};
 
+		// Track cells for fields with showWhen, so we can hide/show them based on another field's value.
+		const conditionalFields: Array<{ field: FieldDef; cell: HTMLElement }> = [];
+
 		for (const sec of sections) {
 			if (!sec.visible) { continue; }
 			const cols = Math.min(sec.columns || 3, 4);
+			const isCollapsible = sec.collapsible !== false; // default collapsible
 
-			const subHeader = DOM.append(container, DOM.$('div'));
-			subHeader.textContent = sec.title;
-			subHeader.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:14px 0 6px;padding-top:8px;border-top:1px solid var(--vscode-editorWidget-border);';
-			if (sections.indexOf(sec) === 0) { subHeader.style.borderTop = 'none'; subHeader.style.marginTop = '0'; }
+			// Section card — rounded bordered block, matches the web UI's expandable panels
+			const card = DOM.append(container, DOM.$('div'));
+			card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin:0 0 12px;overflow:hidden;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
 
-			const gridBody = DOM.append(container, DOM.$('div'));
-			gridBody.style.cssText = `display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:4px 16px;margin-bottom:4px;`;
+			const subHeader = DOM.append(card, DOM.$('div'));
+			subHeader.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-size:13px;font-weight:600;color:var(--vscode-foreground);background:rgba(0,122,204,0.04);${isCollapsible ? 'cursor:pointer;' : ''}`;
+			const titleSpan = DOM.append(subHeader, DOM.$('span'));
+			titleSpan.textContent = sec.title;
+			const chevron = DOM.append(subHeader, DOM.$('span'));
+			chevron.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);transition:transform 0.15s;';
+
+			const gridBody = DOM.append(card, DOM.$('div'));
+			gridBody.style.cssText = `display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:10px 16px;padding:14px 16px;`;
+
+			const applyCollapsed = (collapsed: boolean) => {
+				gridBody.style.display = collapsed ? 'none' : 'grid';
+				// allow-any-unicode-next-line
+				chevron.textContent = collapsed ? '▸' : '▾';
+			};
+			applyCollapsed(!!sec.collapsed);
+			if (isCollapsible) {
+				subHeader.addEventListener('click', () => {
+					sec.collapsed = !sec.collapsed;
+					applyCollapsed(!!sec.collapsed);
+				});
+			} else {
+				chevron.style.display = 'none';
+			}
 
 			for (const f of sec.fields) {
 				const val = (record as Record<string, unknown>)[f.key] ?? '';
@@ -835,6 +1886,7 @@ export class PatientChartEditor extends EditorPane {
 						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
 					}
+					this._formInputs.set(f.key, sel);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const wrap = DOM.append(cell, DOM.$('div'));
 					wrap.style.cssText = 'display:flex;align-items:center;gap:8px;height:32px;';
@@ -844,30 +1896,63 @@ export class PatientChartEditor extends EditorPane {
 					const cbLabel = DOM.append(wrap, DOM.$('span'));
 					cbLabel.textContent = val ? 'Yes' : 'No';
 					cb.addEventListener('change', () => { cbLabel.textContent = cb.checked ? 'Yes' : 'No'; });
+					this._formInputs.set(f.key, cb);
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
+					this._formInputs.set(f.key, ta);
 				} else if (f.type === 'date') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'date'; inp.value = String(val).split('T')[0]; inp.style.cssText = inputStyle;
+					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
+					this._formInputs.set(f.key, inp);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
 					inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					inp.style.cssText = inputStyle;
+					this._formInputs.set(f.key, inp);
 				}
+
+				if (f.showWhen) { conditionalFields.push({ field: f, cell }); }
 			}
+		}
+
+		// Apply showWhen conditions and attach listeners to controlling fields
+		if (conditionalFields.length > 0) {
+			const applyVisibility = () => {
+				for (const { field, cell } of conditionalFields) {
+					const when = field.showWhen!;
+					const ctrl = this._formInputs.get(when.field);
+					const ctrlVal = DOM.isHTMLInputElement(ctrl) && ctrl.type === 'checkbox'
+						? (ctrl.checked ? 'true' : 'false')
+						: (ctrl?.value ?? '');
+					let show = true;
+					if (when.equals !== undefined) { show = ctrlVal === when.equals; }
+					if (when.notEquals !== undefined) { show = ctrlVal !== when.notEquals; }
+					cell.style.display = show ? '' : 'none';
+				}
+			};
+			const listeners = new Set<string>();
+			for (const { field } of conditionalFields) {
+				const ctrlKey = field.showWhen!.field;
+				if (listeners.has(ctrlKey)) { continue; }
+				listeners.add(ctrlKey);
+				const ctrl = this._formInputs.get(ctrlKey);
+				if (ctrl) { ctrl.addEventListener('change', applyVisibility); }
+			}
+			applyVisibility();
 		}
 	}
 
 	// --- List renderer (FHIR auto-columns) ---
 
-	private _listAuto(c: HTMLElement, tab: ChartTab, data: Record<string, unknown>[]): void {
+	private _listAuto(c: HTMLElement, tab: ChartTab, data: Record<string, unknown>[], config: FieldConfig | null): void {
 		const sample = data[0] || {};
 		const allKeys = Object.keys(sample);
 
@@ -889,6 +1974,7 @@ export class PatientChartEditor extends EditorPane {
 		}
 
 		const cols = usedKeys.map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()));
+		cols.push(''); // Actions column
 
 		const rows = data.slice(0, 50).map(item => {
 			const cells = usedKeys.map(k => {
@@ -903,12 +1989,17 @@ export class PatientChartEditor extends EditorPane {
 				}
 				return String(v).substring(0, 40);
 			});
+			// Pencil icon as final cell — clicking the row (or the pencil) opens the dialog
+			// allow-any-unicode-next-line
+			cells.push('✏️ Edit');
 
 			const isEncounter = tab.fhirResources.includes('Encounter');
-			const onClick = isEncounter ? () => {
-				const id = String(item.id || item.fhirId || '');
-				this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, id, this.patientName, `Encounter ${id}`), {}, SIDE_GROUP);
-			} : undefined;
+			const onClick = isEncounter
+				? () => {
+					const id = String(item.id || item.fhirId || '');
+					this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, id, this.patientName, `Encounter ${id}`), {}, SIDE_GROUP);
+				}
+				: () => this._openRecordDialog(tab, config, item);
 
 			return { cells, onClick };
 		});

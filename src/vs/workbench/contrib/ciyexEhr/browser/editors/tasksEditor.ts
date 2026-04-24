@@ -80,6 +80,7 @@ export class TasksEditor extends EditorPane {
 	private totalPages = 0;
 	private totalElements = 0;
 	private formOverlay: HTMLElement | null = null;
+	private searchInputEl: HTMLInputElement | null = null;
 
 	constructor(
 		group: IEditorGroup,
@@ -128,19 +129,37 @@ export class TasksEditor extends EditorPane {
 			if (this.filterPriority) { url += `&priority=${this.filterPriority}`; }
 			if (this.filterType) { url += `&taskType=${this.filterType}`; }
 			const res = await this.apiService.fetch(url);
-			if (!res.ok) { return; }
-			const data = await res.json();
-			const page = data?.data || data || {};
-			this.tasks = (page.content || []) as Task[];
-			this.totalPages = page.totalPages || 1;
-			this.totalElements = page.totalElements || this.tasks.length;
-			this._render();
+			if (res.ok) {
+				const data = await res.json();
+				const page = data?.data || data || {};
+				this.tasks = (page.content || []) as Task[];
+				this.totalPages = page.totalPages || 1;
+				this.totalElements = page.totalElements || this.tasks.length;
+			} else {
+				this.tasks = [];
+				this.totalPages = 0;
+				this.totalElements = 0;
+			}
 		} catch {
-			this.contentEl.textContent = 'Waiting for login...';
+			this.tasks = [];
+			this.totalPages = 0;
+			this.totalElements = 0;
 		}
+		// Always render so the toolbar (incl. search) is interactive even on empty/error
+		this._render();
 	}
 
 	private _render(): void {
+		// Preserve search-input focus across re-renders (the whole subtree is replaced,
+		// so a plain render would blur the input after each keystroke).
+		const win = DOM.getActiveWindow();
+		const active = win.document.activeElement;
+		const activeInput = DOM.isHTMLInputElement(active) ? active : null;
+		const wasSearchFocused = !!(activeInput && activeInput.type === 'text'
+			&& activeInput.placeholder === 'Search tasks...');
+		const selStart = wasSearchFocused && activeInput ? activeInput.selectionStart : null;
+		const selEnd = wasSearchFocused && activeInput ? activeInput.selectionEnd : null;
+
 		DOM.clearNode(this.contentEl);
 
 		// Stats cards
@@ -157,6 +176,13 @@ export class TasksEditor extends EditorPane {
 
 		// Pagination
 		this._renderPagination();
+
+		if (wasSearchFocused && this.searchInputEl) {
+			this.searchInputEl.focus();
+			if (selStart !== null && selEnd !== null) {
+				try { this.searchInputEl.setSelectionRange(selStart, selEnd); } catch { /* ignore */ }
+			}
+		}
 	}
 
 	private _renderStats(): void {
@@ -197,6 +223,7 @@ export class TasksEditor extends EditorPane {
 		search.placeholder = 'Search tasks...';
 		search.value = this.searchQuery;
 		search.style.cssText = inputStyle + 'flex:1;min-width:180px;';
+		this.searchInputEl = search;
 		let searchTimer: ReturnType<typeof setTimeout> | undefined;
 		search.addEventListener('input', () => {
 			if (searchTimer) { clearTimeout(searchTimer); }

@@ -17,6 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
+// allow-any-unicode-next-line
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface AppointmentDTO {
@@ -54,8 +55,8 @@ interface StatusOption {
 	order?: number;
 }
 
-interface Provider { id: number; name: string; }
-interface Location { id: number; name: string; }
+interface Provider { id: number; name: string }
+interface Location { id: number; name: string }
 
 const FALLBACK_STATUS_OPTIONS: StatusOption[] = [
 	{ value: 'Scheduled', label: 'Scheduled', color: '#3b82f6', order: 0, nextStatus: 'Confirmed' },
@@ -84,6 +85,7 @@ const REFRESH_OPTIONS = [
 	{ label: '60s', value: 60000 },
 ];
 
+// allow-any-unicode-next-line
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
 const pad2 = (n: number) => n.toString().padStart(2, '0');
@@ -202,6 +204,7 @@ function formatWaitTime(startDate: string, startTime: string): { text: string; c
 	return { text: hrs > 0 ? `${hrs}h ${mins}m` : `${diff}m`, color: '#ef4444' };
 }
 
+// allow-any-unicode-next-line
 // ─── Editor ─────────────────────────────────────────────────────────────────
 
 export class AppointmentsEditor extends EditorPane {
@@ -224,7 +227,7 @@ export class AppointmentsEditor extends EditorPane {
 	private visitTypes: string[] = [];
 
 	// Filters
-	private datePreset = 'today';
+	private datePreset = 'all_time';
 	private patientSearch = '';
 	private providerFilter = '';
 	private locationFilter = '';
@@ -275,6 +278,7 @@ export class AppointmentsEditor extends EditorPane {
 		super.dispose();
 	}
 
+	// allow-any-unicode-next-line
 	// ─── Data Loading ──────────────────────────────────────────────────────
 
 	private async _loadReferenceData(): Promise<void> {
@@ -378,19 +382,21 @@ export class AppointmentsEditor extends EditorPane {
 		}
 	}
 
+	// allow-any-unicode-next-line
 	// ─── Auto-refresh ──────────────────────────────────────────────────────
 
 	private _startAutoRefresh(): void {
 		this._stopAutoRefresh();
 		if (this.refreshInterval > 0) {
-			this._refreshTimer = setInterval(() => this._loadAppointments(), this.refreshInterval);
+			this._refreshTimer = DOM.getActiveWindow().setInterval(() => this._loadAppointments(), this.refreshInterval);
 		}
 	}
 
 	private _stopAutoRefresh(): void {
-		if (this._refreshTimer) { clearInterval(this._refreshTimer); this._refreshTimer = null; }
+		if (this._refreshTimer) { DOM.getActiveWindow().clearInterval(this._refreshTimer); this._refreshTimer = null; }
 	}
 
+	// allow-any-unicode-next-line
 	// ─── Filtering ─────────────────────────────────────────────────────────
 
 	private _getFilteredRows(): AppointmentDTO[] {
@@ -412,6 +418,7 @@ export class AppointmentsEditor extends EditorPane {
 		});
 	}
 
+	// allow-any-unicode-next-line
 	// ─── Actions ────────────────────────────────────────────────────────────
 
 	private async _updateStatus(id: number, newStatus: string): Promise<void> {
@@ -458,8 +465,14 @@ export class AppointmentsEditor extends EditorPane {
 			html += `<tr><td>${formatToDisplay(r.appointmentStartDate)}</td><td>${formatTimeTo12h(r.appointmentStartTime)}</td><td>${r.patientName || ''}</td><td>${r.providerName || ''}</td><td>${r.locationName || ''}</td><td>${r.visitType || ''}</td><td>${so?.label || r.status}</td><td>${r.room || ''}</td></tr>`;
 		}
 		html += '</tbody></table></body></html>';
-		const w = window.open('', '_blank');
-		if (w) { w.document.write(html); w.document.close(); w.print(); }
+		const w = DOM.getActiveWindow().open('', '_blank');
+		if (!w) { return; }
+		w.document.open();
+		w.document.write(html);
+		w.document.close();
+		// Wait for rendering before invoking print; sandboxed windows often print blank otherwise
+		w.onload = () => { try { w.focus(); w.print(); } catch { /* ignore */ } };
+		w.setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
 	}
 
 	private _exportToCSV(): void {
@@ -488,6 +501,7 @@ export class AppointmentsEditor extends EditorPane {
 		URL.revokeObjectURL(url);
 	}
 
+	// allow-any-unicode-next-line
 	// ─── Render ─────────────────────────────────────────────────────────────
 
 	private _renderError(msg: string): void {
@@ -504,6 +518,7 @@ export class AppointmentsEditor extends EditorPane {
 		const selectStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;cursor:pointer;outline:none;';
 		const inputStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;outline:none;min-width:150px;';
 		const btnStyle = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		// allow-any-unicode-next-line
 		// ─── Header ────────────────────────────────────────────────────────
 		const header = DOM.append(this.contentEl, DOM.$('div'));
 		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;';
@@ -526,6 +541,7 @@ export class AppointmentsEditor extends EditorPane {
 		const refreshWrap = DOM.append(actionGroup, DOM.$('div'));
 		refreshWrap.style.cssText = 'display:flex;align-items:center;gap:4px;';
 		const refreshIcon = DOM.append(refreshWrap, DOM.$('span'));
+		// allow-any-unicode-next-line
 		refreshIcon.textContent = '⟳';
 		refreshIcon.style.cssText = 'font-size:14px;color:var(--vscode-descriptionForeground);';
 		const refreshSel = DOM.append(refreshWrap, DOM.$('select')) as HTMLSelectElement;
@@ -543,28 +559,64 @@ export class AppointmentsEditor extends EditorPane {
 		// Print
 		const printBtn = DOM.append(actionGroup, DOM.$('button'));
 		printBtn.style.cssText = btnStyle;
+		// allow-any-unicode-next-line
 		printBtn.textContent = '🖨 Print';
 		printBtn.addEventListener('click', () => this._printTable());
 
 		// Export
 		const exportBtn = DOM.append(actionGroup, DOM.$('button'));
 		exportBtn.style.cssText = btnStyle;
+		// allow-any-unicode-next-line
 		exportBtn.textContent = '⬇ Export';
 		exportBtn.addEventListener('click', () => this._exportToCSV());
 
-		// TV Display
-		const tvBtn = DOM.append(actionGroup, DOM.$('button'));
+		// TV Display — dropdown with Staff TV Board / Waiting Room
+		const tvWrap = DOM.append(actionGroup, DOM.$('div'));
+		tvWrap.style.cssText = 'position:relative;';
+		const tvBtn = DOM.append(tvWrap, DOM.$('button')) as HTMLButtonElement;
 		tvBtn.style.cssText = btnStyle;
-		tvBtn.textContent = '🖥 TV Display';
-		tvBtn.addEventListener('click', () => {
-			// Open TV display in a new window (or could be a command)
+		// allow-any-unicode-next-line
+		tvBtn.textContent = '🖥 TV Display ▾';
+		const tvMenu = DOM.append(tvWrap, DOM.$('div'));
+		tvMenu.style.cssText = 'position:absolute;top:calc(100% + 4px);right:0;min-width:180px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:20;display:none;overflow:hidden;';
+
+		const openTv = (mode: 'staff' | 'waiting') => {
+			tvMenu.style.display = 'none';
 			try {
 				const apiUrl = this.apiService.apiUrl;
-				const base = apiUrl.replace('/api', '').replace('api-dev', 'app-dev');
-				window.open(`${base}/appointments/tv?mode=staff`, '_blank');
+				const base = apiUrl.replace('/api', '').replace('api-dev', 'app-dev').replace(/\/$/, '');
+				const win = DOM.getActiveWindow();
+				win.open(`${base}/appointments/tv?mode=${mode}`, '_blank');
 			} catch { /* */ }
-		});
+		};
 
+		const mkTvItem = (icon: string, label: string, onClick: () => void) => {
+			const it = DOM.append(tvMenu, DOM.$('button')) as HTMLButtonElement;
+			it.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;background:transparent;border:none;color:var(--vscode-foreground);font-size:12px;text-align:left;cursor:pointer;';
+			it.addEventListener('mouseenter', () => { it.style.background = 'var(--vscode-list-hoverBackground)'; });
+			it.addEventListener('mouseleave', () => { it.style.background = 'transparent'; });
+			const ic = DOM.append(it, DOM.$('span'));
+			ic.textContent = icon;
+			const lb = DOM.append(it, DOM.$('span'));
+			lb.textContent = label;
+			it.addEventListener('click', onClick);
+		};
+		// allow-any-unicode-next-line
+		mkTvItem('🖥', 'Staff TV Board', () => openTv('staff'));
+		// allow-any-unicode-next-line
+		mkTvItem('📺', 'Waiting Room', () => openTv('waiting'));
+
+		tvBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			tvMenu.style.display = tvMenu.style.display === 'none' ? 'block' : 'none';
+		});
+		// Dismiss on outside click
+		const dismiss = (ev: Event) => {
+			if (!tvWrap.contains(ev.target as Node)) { tvMenu.style.display = 'none'; }
+		};
+		DOM.getActiveWindow().document.addEventListener('click', dismiss, { once: false });
+
+		// allow-any-unicode-next-line
 		// ─── Filters ───────────────────────────────────────────────────────
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
 		filters.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;padding:12px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
@@ -650,6 +702,7 @@ export class AppointmentsEditor extends EditorPane {
 			this._loadAppointments();
 		});
 
+		// allow-any-unicode-next-line
 		// ─── Table ─────────────────────────────────────────────────────────
 		const tableWrap = DOM.append(this.contentEl, DOM.$('div'));
 		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow:hidden;';
@@ -670,6 +723,7 @@ export class AppointmentsEditor extends EditorPane {
 		this.tableBody = DOM.append(table, DOM.$('tbody'));
 		this._renderTableBody(filtered);
 
+		// allow-any-unicode-next-line
 		// ─── Pagination ────────────────────────────────────────────────────
 		const pagBar = DOM.append(this.contentEl, DOM.$('div'));
 		pagBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 0;margin-top:8px;';
@@ -870,6 +924,7 @@ export class AppointmentsEditor extends EditorPane {
 
 			// Open chart
 			const chartBtn = DOM.append(tdActions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			chartBtn.textContent = '📋';
 			chartBtn.title = 'Open Patient Chart';
 			chartBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:2px;';

@@ -56,7 +56,10 @@ export class PatientListDataProvider extends Disposable implements ITreeViewData
 
 			const response = await this.apiService.fetch(url);
 			if (!response.ok) {
-				return [this._errorItem('Failed to load patients')];
+				if (response.status === 401 || response.status === 403) {
+					return [this._infoItem('Waiting for login...')];
+				}
+				return [this._errorItem(`Failed to load patients (HTTP ${response.status})`)];
 			}
 
 			const data = await response.json();
@@ -69,6 +72,10 @@ export class PatientListDataProvider extends Disposable implements ITreeViewData
 
 			return this._patients.map(p => this._toTreeItem(p));
 		} catch (err) {
+			// Distinguish "no auth token yet" (common on fresh launch) from actual network errors
+			if (String(err).includes('Not authenticated')) {
+				return [this._infoItem('Waiting for login...')];
+			}
 			return [this._errorItem('Unable to connect to server')];
 		}
 	}
