@@ -1,0 +1,370 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* --- EHR Titlebar Controls Container --- */
+.ehr-titlebar-controls {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-right: 4px;
+	z-index: 2500;
+	-webkit-app-region: no-drag;
+	flex-shrink: 0;
+}
+
+/* --- Search Bar --- */
+.ehr-search-container {
+	position: relative;
+	display: flex;
+	align-items: center;
+	background: var(--vscode-input-background, #3c3c3c);
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 6px;
+	padding: 0 8px;
+	height: 26px;
+	min-width: 220px;
+	max-width: 340px;
+}
+
+.ehr-search-container:focus-within {
+	border-color: var(--vscode-focusBorder, #007fd4);
+	outline: none;
+}
+
+.ehr-search-icon {
+	color: var(--vscode-input-placeholderForeground, #888);
+	font-size: 14px;
+	margin-right: 6px;
+	flex-shrink: 0;
+}
+
+.ehr-search-input {
+	background: transparent;
+	border: none;
+	outline: none;
+	color: var(--vscode-input-foreground, #ccc);
+	font-size: 12px;
+	flex: 1;
+	min-width: 0;
+	font-family: inherit;
+}
+
+.ehr-search-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, #888);
+}
+
+.ehr-kbd-hint {
+	color: var(--vscode-input-placeholderForeground, #888);
+	font-size: 10px;
+	padding: 1px 4px;
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 3px;
+	flex-shrink: 0;
+	margin-left: 4px;
+}
+
+/* --- Search Dropdown --- */
+.ehr-search-dropdown {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	margin-top: 4px;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 6px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	z-index: 10000;
+	max-height: 300px;
+	overflow-y: auto;
+	min-width: 300px;
+}
+
+.ehr-search-item {
+	padding: 8px 12px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, #3c3c3c);
+}
+
+.ehr-search-item:last-child {
+	border-bottom: none;
+}
+
+.ehr-search-item:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.ehr-search-name {
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--vscode-editor-foreground, #ccc);
+}
+
+.ehr-search-dob {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground, #888);
+	margin-top: 2px;
+}
+
+.ehr-search-empty {
+	padding: 12px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground, #888);
+	font-size: 12px;
+}
+
+/* --- Action Buttons (+Patient, +Appointment) --- */
+.ehr-action-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	background: var(--vscode-button-secondaryBackground, rgba(90, 93, 110, 0.4));
+	color: var(--vscode-button-secondaryForeground, #ccc);
+	border: none;
+	font-size: 12px;
+	height: 24px;
+	transition: background 0.15s;
+	-webkit-app-region: no-drag;
+}
+
+.ehr-action-btn:hover {
+	background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 110, 0.6));
+}
+
+/* --- Overlay (Patient Form / Appointment Form) --- */
+.ehr-overlay {
+	position: fixed;
+	z-index: 10000;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+	padding: 20px;
+	width: 480px;
+	max-height: 80vh;
+	overflow-y: auto;
+	font-size: 13px;
+	color: var(--vscode-editor-foreground, #ccc);
+	scrollbar-width: thin;
+}
+
+.ehr-overlay.ehr-overlay-wide {
+	width: 560px;
+}
+
+.ehr-overlay-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 4px;
+}
+
+.ehr-overlay-header h3 {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--vscode-editor-foreground, #fff);
+}
+
+.ehr-overlay-close {
+	font-size: 20px;
+	cursor: pointer;
+	color: var(--vscode-descriptionForeground, #888);
+	padding: 0 4px;
+	line-height: 1;
+}
+
+.ehr-overlay-close:hover {
+	color: var(--vscode-editor-foreground, #ccc);
+}
+
+.ehr-overlay-subtitle {
+	margin: 0 0 16px 0;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground, #888);
+}
+
+/* --- Form Elements --- */
+.ehr-overlay-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.ehr-form-row {
+	display: flex;
+	gap: 12px;
+}
+
+.ehr-form-row-2 > .ehr-form-group {
+	flex: 1;
+}
+
+.ehr-form-row-3 > .ehr-form-group {
+	flex: 1;
+}
+
+.ehr-form-group {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.ehr-form-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-editor-foreground, #ccc);
+}
+
+.ehr-required-star {
+	color: #e53e3e;
+	margin-right: 2px;
+}
+
+.ehr-required-badge {
+	display: inline-block;
+	font-size: 10px;
+	font-weight: 500;
+	color: #e53e3e;
+	background: rgba(229, 62, 62, 0.12);
+	padding: 1px 6px;
+	border-radius: 4px;
+	margin-left: 6px;
+}
+
+.ehr-form-input,
+.ehr-form-select,
+.ehr-form-textarea {
+	background: var(--vscode-input-background, #3c3c3c);
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 4px;
+	color: var(--vscode-input-foreground, #ccc);
+	font-size: 13px;
+	padding: 6px 8px;
+	font-family: inherit;
+	outline: none;
+}
+
+.ehr-form-input:focus,
+.ehr-form-select:focus,
+.ehr-form-textarea:focus {
+	border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.ehr-form-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, #888);
+}
+
+.ehr-form-textarea {
+	resize: vertical;
+	min-height: 50px;
+}
+
+.ehr-form-select {
+	cursor: pointer;
+	appearance: auto;
+}
+
+.ehr-form-error {
+	color: #f48771;
+	font-size: 12px;
+	padding: 6px 10px;
+	background: rgba(244, 135, 113, 0.1);
+	border-radius: 4px;
+	border: 1px solid rgba(244, 135, 113, 0.3);
+}
+
+.ehr-duration-display {
+	padding: 6px 8px;
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground, #888);
+	background: var(--vscode-input-background, #3c3c3c);
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 4px;
+}
+
+/* --- Consent Checkboxes --- */
+.ehr-consent-row {
+	display: flex;
+	gap: 16px;
+}
+
+.ehr-checkbox-wrapper {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+.ehr-checkbox-wrapper input[type="checkbox"] {
+	accent-color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* --- Patient Search in Appointment Form --- */
+.ehr-patient-search-container {
+	position: relative;
+}
+
+.ehr-patient-dropdown {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	margin-top: 2px;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 4px;
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+	z-index: 10001;
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+/* --- Form Buttons --- */
+.ehr-form-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.ehr-btn-cancel {
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-button-secondaryForeground, #ccc);
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 4px;
+	padding: 6px 16px;
+	font-size: 13px;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.ehr-btn-cancel:hover {
+	background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.ehr-btn-save {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+	border: none;
+	border-radius: 4px;
+	padding: 6px 16px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.ehr-btn-save:hover {
+	background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.ehr-btn-save[disabled] {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
