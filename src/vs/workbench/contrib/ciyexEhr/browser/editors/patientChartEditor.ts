@@ -754,11 +754,24 @@ export class PatientChartEditor extends EditorPane {
 		} catch { /* */ }
 	}
 
+	// Map workspace chart-tab keys to the backend's tab_field_config.tab_key.
+	// The backend's GenericFhirResourceController routes /api/fhir-resource/{tabKey}/...
+	// and looks up tab_field_config by tabKey to resolve the FHIR resource type for
+	// scope enforcement. If our key differs from the backend's, write/scope checks fail.
+	private static readonly TAB_API_SLUG: Record<string, string> = {
+		'problems': 'medicalproblems',
+		'appointments': 'appointment-detail',
+		'submissions': 'claim-submissions',
+		'denials': 'claim-denials',
+		'visit-notes': 'clinical-notes',
+		'facility': 'facilities',
+	};
+
 	private _tabEndpoint(tab: ChartTab): string | null {
 		if (tab.apiPath) { return tab.apiPath; }
 		if (tab.fhirResources.length > 0) {
-			const res = tab.fhirResources[0];
-			return FHIR_MAP[res] || `/api/fhir-resource/${res.toLowerCase()}s`;
+			const slug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
+			return `/api/fhir-resource/${slug}`;
 		}
 		return null;
 	}
@@ -809,10 +822,12 @@ export class PatientChartEditor extends EditorPane {
 			} catch { /* */ }
 		}
 
-		for (const resource of tab.fhirResources) {
+		// FHIR-backed list: hit /api/fhir-resource/{tabKey}/patient/{id}. Backend resolves
+		// the resource type from tab_field_config keyed by tabKey.
+		if (tab.fhirResources.length > 0 && !tab.apiPath) {
+			const slug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
 			try {
-				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
-				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=100`);
+				const res = await this.apiService.fetch(`/api/fhir-resource/${slug}/patient/${this.patientId}?page=0&size=100`);
 				if (res.ok) {
 					const json = await res.json();
 					const items = json?.data?.content || json?.content || (json?.data && !Array.isArray(json.data) ? [json.data] : (Array.isArray(json?.data) ? json.data : []));
@@ -1600,12 +1615,12 @@ export class PatientChartEditor extends EditorPane {
 		const prev = btn.textContent;
 		btn.textContent = 'Saving...';
 		try {
-			// Demographics → /api/patients/{id}, others → endpoint update (apiPath or FHIR)
+			// Demographics → /api/patients/{id}, others → FHIR generic endpoint
 			const isDemographics = tab.fhirResources.includes('Patient');
 			const ep = this._tabEndpoint(tab);
 			const path = isDemographics
 				? `/api/patients/${this.patientId}`
-				: `${(ep || '').split('?')[0]}/${this.patientId}`;
+				: `${(ep || '').split('?')[0]}/patient/${this.patientId}`;
 			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(payload) });
 			if (res.ok) {
 				this.notificationService.info(`${tab.label} saved`);
@@ -1690,7 +1705,10 @@ export class PatientChartEditor extends EditorPane {
 				const ep = (this._tabEndpoint(tab) || '').split('?')[0];
 				if (!ep) { return; }
 				try {
-					const delUrl = tab.key === 'vitals'
+					// FHIR generic controller: /api/fhir-resource/{tabKey}/patient/{id}/{recordId}
+					// apiPath endpoints (non-FHIR): /{ep}/{recordId}
+					const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
+					const delUrl = isFhir
 						? `${ep}/patient/${this.patientId}/${recordId}`
 						: `${ep}/${recordId}`;
 					const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
@@ -1720,7 +1738,10 @@ export class PatientChartEditor extends EditorPane {
 		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
 		saveBtn.disabled = dialogInputs.size === 0;
 		saveBtn.addEventListener('click', async () => {
-			const payload: Record<string, unknown> = isEdit ? {} : { patientId: this.patientId };
+			const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
+			// FHIR endpoints take patientId from the URL path, not the body.
+			// apiPath endpoints (e.g. /api/cds/alerts) still need patientId in the body.
+			const payload: Record<string, unknown> = isFhir || isEdit ? {} : { patientId: this.patientId };
 			for (const [key, el] of dialogInputs) {
 				if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
 					payload[key] = el.checked;
@@ -1741,13 +1762,10 @@ export class PatientChartEditor extends EditorPane {
 			try {
 				const ep = (this._tabEndpoint(tab) || '').split('?')[0];
 				if (!ep) { throw new Error('No endpoint for this tab'); }
-				const isVitals = tab.key === 'vitals';
-				if (isVitals && !isEdit) {
-					// Vitals POST expects recordedAt and no patientId in body; patient is in URL path
-					delete (payload as Record<string, unknown>).patientId;
-					if (!payload.recordedAt) { payload.recordedAt = new Date().toISOString(); }
+				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
+					payload.recordedAt = new Date().toISOString();
 				}
-				const url = isVitals
+				const url = isFhir
 					? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
 					: (isEdit ? `${ep}/${recordId}` : ep);
 				const method = isEdit ? 'PUT' : 'POST';
