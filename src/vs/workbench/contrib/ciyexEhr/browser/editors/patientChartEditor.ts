@@ -789,11 +789,33 @@ export class PatientChartEditor extends EditorPane {
 		if (cached) { return cached; }
 		let config: FieldConfig | null = null;
 		let data: Record<string, unknown>[] = [];
+
+		// Field config priority:
+		// 1. Backend /api/tab-field-config/{tabKey} (authoritative — matches EHR-UI behavior, ensures
+		//    form keys map to the same FHIR paths the backend's create/update use).
+		// 2. ~/.ciyex/fields/{tabKey}.json (user override).
+		// 3. Built-in DEFAULT_FIELD_CONFIGS (offline fallback).
+		const backendSlug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
 		try {
-			const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'fields', `${tab.key}.json`));
-			config = JSON.parse(file.value.toString());
-		} catch { /* */ }
-		// Fall back to built-in defaults (e.g. Demographics) if no user config exists
+			const res = await this.apiService.fetch(`/api/tab-field-config/${backendSlug}`);
+			if (res.ok) {
+				const json = await res.json();
+				const cfg = json?.data || json;
+				if (cfg && cfg.fieldConfig) {
+					const fieldConfig = typeof cfg.fieldConfig === 'string' ? JSON.parse(cfg.fieldConfig) : cfg.fieldConfig;
+					if (fieldConfig?.sections) {
+						config = { tabKey: tab.key, sections: fieldConfig.sections };
+					}
+				}
+			}
+		} catch { /* fall through to local config */ }
+
+		if (!config) {
+			try {
+				const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'fields', `${tab.key}.json`));
+				config = JSON.parse(file.value.toString());
+			} catch { /* */ }
+		}
 		if (!config && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
 		}
