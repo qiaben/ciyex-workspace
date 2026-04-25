@@ -238,6 +238,17 @@ export class EhrTitlebarControls extends Disposable {
 		// Row 2: Phone, Gender
 		const row2 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const phone = this._createField(row2, 'Phone Number', 'tel', true, 'phoneNumber') as HTMLInputElement;
+		// US phone: 10 digits, formatted as (xxx) xxx-xxxx
+		phone.setAttribute('inputmode', 'numeric');
+		phone.maxLength = 14;
+		this._register(DOM.addDisposableListener(phone, 'input', () => {
+			const digits = phone.value.replace(/\D/g, '').slice(0, 10);
+			let formatted = digits;
+			if (digits.length > 6) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`; }
+			else if (digits.length > 3) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
+			else if (digits.length > 0) { formatted = `(${digits}`; }
+			phone.value = formatted;
+		}));
 		const gender = this._createSelectField(row2, 'Gender', true, 'gender', [
 			{ value: '', label: 'Select gender' },
 			{ value: 'male', label: 'Male' },
@@ -248,6 +259,12 @@ export class EhrTitlebarControls extends Disposable {
 		// Row 3: DOB, Email
 		const row3 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const dob = this._createField(row3, 'Date of Birth', 'date', true, 'dateOfBirth') as HTMLInputElement;
+		// DOB cannot be in the future
+		const todayIso = new Date().toISOString().slice(0, 10);
+		dob.max = todayIso;
+		this._register(DOM.addDisposableListener(dob, 'change', () => {
+			if (dob.value && dob.value > todayIso) { dob.value = todayIso; }
+		}));
 		const email = this._createField(row3, 'Email', 'email', true, 'email') as HTMLInputElement;
 
 		// Communication Consent
@@ -289,12 +306,23 @@ export class EhrTitlebarControls extends Disposable {
 				errorEl.style.display = '';
 				return;
 			}
+			const phoneDigits = phoneVal.replace(/\D/g, '');
+			if (phoneDigits.length !== 10) {
+				errorEl.textContent = 'Phone number must be exactly 10 digits (US format).';
+				errorEl.style.display = '';
+				return;
+			}
+			if (dobVal > new Date().toISOString().slice(0, 10)) {
+				errorEl.textContent = 'Date of birth cannot be in the future.';
+				errorEl.style.display = '';
+				return;
+			}
 
 			const body = {
 				firstName: fName,
 				middleName: mName || undefined,
 				lastName: lName,
-				phoneNumber: phoneVal,
+				phoneNumber: phoneDigits,
 				gender: genderVal,
 				dateOfBirth: dobVal,
 				email: emailVal,

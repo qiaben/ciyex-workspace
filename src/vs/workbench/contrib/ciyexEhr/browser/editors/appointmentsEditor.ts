@@ -263,6 +263,9 @@ export class AppointmentsEditor extends EditorPane {
 		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'max-width:1400px;margin:0 auto;padding:20px 24px;';
+
+		// Mark body so titlebar search + editor split/layout actions hide on this view
+		DOM.getActiveWindow().document.body.classList.add('ehr-on-calendar');
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -275,6 +278,7 @@ export class AppointmentsEditor extends EditorPane {
 
 	override dispose(): void {
 		this._stopAutoRefresh();
+		DOM.getActiveWindow().document.body.classList.remove('ehr-on-calendar');
 		super.dispose();
 	}
 
@@ -673,14 +677,18 @@ export class AppointmentsEditor extends EditorPane {
 			this._renderTableBody(this._getFilteredRows());
 		});
 
-		// Type filter
+		// Type filter — fall back to a static list when no rows have loaded yet
 		const typeSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
 		typeSel.style.cssText = selectStyle;
 		const typeAll = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 		typeAll.value = ''; typeAll.textContent = 'All Types';
-		for (const t of this.visitTypes) {
+		const typeOptions = this.visitTypes.length > 0
+			? this.visitTypes
+			: ['Consultation', 'New Patient', 'Follow-Up', 'Sick Visit', 'Annual Physical', 'Telehealth', 'Procedure', 'Lab Only'];
+		for (const t of typeOptions) {
 			const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = t; o.textContent = t;
+			if (t === this.typeFilter) { o.selected = true; }
 		}
 		typeSel.addEventListener('change', () => {
 			this.typeFilter = typeSel.value;
@@ -801,24 +809,45 @@ export class AppointmentsEditor extends EditorPane {
 			tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--vscode-list-hoverBackground)'; });
 			tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
 
-			// DATE
+			// DATE: date, start-end time, and duration
 			const tdDate = DOM.append(tr, DOM.$('td'));
 			tdDate.style.cssText = cellStyle;
 			const dateStr = formatToDisplay(row.appointmentStartDate);
-			const timeStr = formatTimeTo12h(row.appointmentStartTime);
+			const startStr = formatTimeTo12h(row.appointmentStartTime);
+			const endStr = formatTimeTo12h(row.appointmentEndTime);
 			const dateLine = DOM.append(tdDate, DOM.$('div'));
 			dateLine.textContent = dateStr;
 			const timeLine = DOM.append(tdDate, DOM.$('div'));
-			timeLine.textContent = timeStr;
+			// allow-any-unicode-next-line
+			timeLine.textContent = endStr ? `${startStr || '—'} – ${endStr}` : (startStr || '—');
 			timeLine.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+			// Duration in minutes
+			if (row.appointmentStartTime && row.appointmentEndTime) {
+				const [sh, sm] = row.appointmentStartTime.split(':').map(Number);
+				const [eh, em] = row.appointmentEndTime.split(':').map(Number);
+				const mins = (eh * 60 + em) - (sh * 60 + sm);
+				if (mins > 0) {
+					const durLine = DOM.append(tdDate, DOM.$('div'));
+					durLine.textContent = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins} min`;
+					durLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);opacity:0.8;';
+				}
+			}
 
-			// PATIENT
+			// PATIENT — name (link), MRN, phone
 			const tdPatient = DOM.append(tr, DOM.$('td'));
 			tdPatient.style.cssText = cellStyle;
-			const patientLink = DOM.append(tdPatient, DOM.$('span'));
+			const patientLink = DOM.append(tdPatient, DOM.$('div'));
 			patientLink.textContent = row.patientName || `Patient #${row.patientId}`;
-			patientLink.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground,#3794ff);';
+			patientLink.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground,#3794ff);font-weight:500;';
 			patientLink.addEventListener('click', () => this._openPatientChart(row.patientId, row.patientName || ''));
+			const mrnLine = DOM.append(tdPatient, DOM.$('div'));
+			mrnLine.textContent = `MRN: ${row.patientId}`;
+			mrnLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+			if (row.patientPhone) {
+				const phoneLine = DOM.append(tdPatient, DOM.$('div'));
+				phoneLine.textContent = row.patientPhone;
+				phoneLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+			}
 
 			// PROVIDER
 			const tdProv = DOM.append(tr, DOM.$('td'));

@@ -368,3 +368,36 @@
 	opacity: 0.6;
 	cursor: not-allowed;
 }
+
+/* --- Calendar editor: hide native scrollbars (vertical + horizontal) --- */
+.ciyex-calendar-editor .calendar-grid {
+	scrollbar-width: none;
+}
+.ciyex-calendar-editor .calendar-grid::-webkit-scrollbar {
+	display: none;
+}
+
+/* --- Patient overlay: kill horizontal scrollbar, allow vertical only --- */
+.ehr-overlay {
+	overflow-x: hidden;
+}
+.ehr-overlay::-webkit-scrollbar {
+	width: 6px;
+}
+.ehr-overlay::-webkit-scrollbar-thumb {
+	background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
+	border-radius: 3px;
+}
+
+/* --- Hide global EHR titlebar search bar when on calendar context.
+ * Toggled by adding .ehr-on-calendar to <body> in titlebar logic. --- */
+body.ehr-on-calendar .ehr-titlebar-controls .ehr-search-container {
+	display: none;
+}
+
+/* --- Hide split-editor / layout-editor (top-right) icons on calendar/appointments.
+ * The .editor-actions toolbar in the editor group title holds split editor + more
+ * actions (which contains layout group commands); hide it for our custom editors. --- */
+body.ehr-on-calendar .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {
+	display: none !important;
+}

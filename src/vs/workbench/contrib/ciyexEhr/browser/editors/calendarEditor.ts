@@ -101,13 +101,16 @@ export class CalendarEditor extends EditorPane {
 		this.root = DOM.append(parent, DOM.$('.ciyex-calendar-editor'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 
+		// Mark body so titlebar search hides on calendar (CSS rule in ehrTitlebar.css)
+		DOM.getActiveWindow().document.body.classList.add('ehr-on-calendar');
+
 		// Header bar
 		this.headerBar = DOM.append(this.root, DOM.$('.calendar-header'));
 		this.headerBar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
 
-		// Grid container
+		// Grid container — scroll without showing native scrollbars
 		this.gridContainer = DOM.append(this.root, DOM.$('.calendar-grid'));
-		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;';
+		this.gridContainer.style.cssText = 'flex:1;overflow:auto;position:relative;scrollbar-width:none;';
 
 		// Render full UI skeleton immediately
 		this._renderHeader();
@@ -315,18 +318,23 @@ export class CalendarEditor extends EditorPane {
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
 
-		// Nav buttons
+		// Nav buttons — Today | [Prev|Next] | Date (no longer between arrows)
 		const rerender = () => { this._headerRendered = false; this._renderHeader(); this._renderGrid(); };
-		const prevBtn = this._btn(this.headerBar, '\u25C0', () => { this._navigate(-1); });
-		prevBtn.title = 'Previous';
 		const todayBtn = this._btn(this.headerBar, 'Today', () => { this.currentDate = new Date(); rerender(); });
 		todayBtn.style.fontWeight = '600';
-		const nextBtn = this._btn(this.headerBar, '\u25B6', () => { this._navigate(1); });
+		const navGroup = DOM.append(this.headerBar, DOM.$('.cal-nav-group'));
+		navGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
+		const prevBtn = this._btn(navGroup, '\u25C0', () => { this._navigate(-1); });
+		prevBtn.title = 'Previous';
+		prevBtn.style.borderRadius = '0';
+		prevBtn.style.borderRight = '1px solid var(--vscode-editorWidget-border)';
+		const nextBtn = this._btn(navGroup, '\u25B6', () => { this._navigate(1); });
 		nextBtn.title = 'Next';
+		nextBtn.style.borderRadius = '0';
 
-		// Date label
+		// Date label — left-aligned, no longer between arrows
 		const label = DOM.append(this.headerBar, DOM.$('span'));
-		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;text-align:center;';
+		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;';
 		if (this.viewMode === 'day') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 		} else if (this.viewMode === 'month') {
@@ -348,27 +356,15 @@ export class CalendarEditor extends EditorPane {
 			btn.addEventListener('click', () => { this.viewMode = mode; this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
-		// Provider filter
-		const provSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
-		provSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:180px;';
-		const provAll = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
-		provAll.value = ''; provAll.textContent = 'All Providers';
-		for (const p of this.providers) {
-			const opt = DOM.append(provSelect, DOM.$('option')) as HTMLOptionElement;
-			opt.value = p.id; opt.textContent = p.name; opt.selected = p.id === this.providerFilter;
-		}
-		provSelect.addEventListener('change', () => { this.providerFilter = provSelect.value; this._updateHeaderCount(); this._renderGrid(); });
+		// Provider filter — searchable dropdown
+		this._buildSearchableFilter(this.headerBar, 'All Providers', this.providers, this.providerFilter, (val) => {
+			this.providerFilter = val; this._updateHeaderCount(); this._renderGrid();
+		});
 
-		// Location filter
-		const locSelect = DOM.append(this.headerBar, DOM.$('select')) as HTMLSelectElement;
-		locSelect.style.cssText = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;max-width:180px;';
-		const locAll = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
-		locAll.value = ''; locAll.textContent = 'All Locations';
-		for (const l of this.locations) {
-			const opt = DOM.append(locSelect, DOM.$('option')) as HTMLOptionElement;
-			opt.value = l.id; opt.textContent = l.name; opt.selected = l.id === this.locationFilter;
-		}
-		locSelect.addEventListener('change', () => { this.locationFilter = locSelect.value; this._updateHeaderCount(); this._renderGrid(); });
+		// Location filter — searchable dropdown
+		this._buildSearchableFilter(this.headerBar, 'All Locations', this.locations, this.locationFilter, (val) => {
+			this.locationFilter = val; this._updateHeaderCount(); this._renderGrid();
+		});
 
 		// Right-side action icons group
 		const actionsGroup = DOM.append(this.headerBar, DOM.$('.actions-group'));
@@ -442,9 +438,9 @@ export class CalendarEditor extends EditorPane {
 			return;
 		}
 
-		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 8;
-		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
-		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
+		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
+		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
+		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 30;
 		const slotHeight = 20; // px per slot
 		// hourHeight = (60 / slotDuration) * slotHeight — used for time indicator positioning
 
@@ -566,9 +562,9 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private _renderProviderGrid(): void {
-		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 8;
-		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 18;
-		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 15;
+		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
+		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
+		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 30;
 		const slotHeight = 20;
 		const dateStr = localDateStr(this.currentDate);
 
@@ -1412,8 +1408,89 @@ export class CalendarEditor extends EditorPane {
 		return btn;
 	}
 
+	/** Searchable single-select dropdown — replacement for plain <select>.
+	 *  Empty value selects the "all" item. */
+	private _buildSearchableFilter(
+		parent: HTMLElement,
+		allLabel: string,
+		items: Array<{ id: string; name: string }>,
+		current: string,
+		onChange: (val: string) => void,
+	): void {
+		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
+		wrap.style.cssText = 'position:relative;max-width:180px;';
+
+		const inputStyle = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
+		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+		trigger.style.cssText = inputStyle + 'text-align:left;';
+		const chosen = items.find(i => i.id === current);
+		trigger.textContent = chosen ? chosen.name : allLabel;
+
+		const panel = DOM.append(wrap, DOM.$('.cal-filter-panel'));
+		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:30;display:none;min-width:200px;';
+
+		const search = DOM.append(panel, DOM.$('input')) as HTMLInputElement;
+		search.placeholder = 'Search...';
+		search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;background:var(--vscode-input-background);border:none;border-bottom:1px solid var(--vscode-editorWidget-border);color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+
+		const list = DOM.append(panel, DOM.$('.cal-filter-list'));
+		list.style.cssText = 'max-height:240px;overflow-y:auto;';
+
+		const renderList = () => {
+			DOM.clearNode(list);
+			const q = search.value.trim().toLowerCase();
+			const allRow = DOM.append(list, DOM.$('.cal-filter-item')) as HTMLElement;
+			allRow.textContent = allLabel;
+			allRow.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;';
+			allRow.addEventListener('mouseenter', () => { allRow.style.background = 'var(--vscode-list-hoverBackground)'; });
+			allRow.addEventListener('mouseleave', () => { allRow.style.background = ''; });
+			allRow.addEventListener('click', () => {
+				trigger.textContent = allLabel;
+				panel.style.display = 'none';
+				onChange('');
+			});
+			for (const it of items) {
+				if (q && !it.name.toLowerCase().includes(q)) { continue; }
+				const row = DOM.append(list, DOM.$('.cal-filter-item')) as HTMLElement;
+				row.textContent = it.name;
+				row.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;${it.id === current ? 'background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground);' : ''}`;
+				row.addEventListener('mouseenter', () => { if (it.id !== current) { row.style.background = 'var(--vscode-list-hoverBackground)'; } });
+				row.addEventListener('mouseleave', () => { if (it.id !== current) { row.style.background = ''; } });
+				row.addEventListener('click', () => {
+					trigger.textContent = it.name;
+					panel.style.display = 'none';
+					onChange(it.id);
+				});
+			}
+		};
+
+		trigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const open = panel.style.display !== 'none';
+			panel.style.display = open ? 'none' : 'block';
+			if (!open) {
+				renderList();
+				search.value = '';
+				search.focus();
+			}
+		});
+		search.addEventListener('input', renderList);
+		search.addEventListener('click', (e) => { e.stopPropagation(); });
+
+		// Dismiss on outside click
+		const dismiss = (ev: Event) => {
+			if (!wrap.contains(ev.target as Node)) { panel.style.display = 'none'; }
+		};
+		DOM.getActiveWindow().document.addEventListener('click', dismiss);
+	}
+
 	override layout(dimension: DOM.Dimension): void {
 		this.root.style.height = `${dimension.height}px`;
 		this.root.style.width = `${dimension.width}px`;
+	}
+
+	override dispose(): void {
+		DOM.getActiveWindow().document.body.classList.remove('ehr-on-calendar');
+		super.dispose();
 	}
 }
