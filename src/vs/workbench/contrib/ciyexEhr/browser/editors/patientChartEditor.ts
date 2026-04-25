@@ -249,15 +249,17 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Field keys MUST match backend tab_field_config (V5 migration) so reads/writes
+	// hit the same FHIR paths. Used as the offline fallback only — we prefer the
+	// backend config from /api/tab-field-config/{tabKey} which is always authoritative.
 	allergies: {
 		tabKey: 'allergies',
 		sections: [
 			{
-				key: 'details', title: 'Allergy Details', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'allergyName', label: 'Allergy', type: 'text', required: true, placeholder: 'e.g., Drug Allergy, Food Allergy' },
-					{ key: 'allergen', label: 'Allergen', type: 'text', placeholder: 'e.g., Penicillin, Peanuts, Dust' },
+				key: 'details', title: 'Allergy Details', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'allergyName', label: 'Allergen', type: 'text', required: true, placeholder: 'Allergen name' },
 					{
-						key: 'clinicalStatus', label: 'Clinical Status', type: 'select', required: true, options: [
+						key: 'status', label: 'Clinical Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
 							{ label: 'Inactive', value: 'inactive' },
 							{ label: 'Resolved', value: 'resolved' },
@@ -270,10 +272,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Severe', value: 'severe' },
 						]
 					},
-					{ key: 'reaction', label: 'Reaction', type: 'textarea', placeholder: 'Describe reaction', colSpan: 2 },
-					{ key: 'onsetDate', label: 'Onset Date', type: 'date' },
+					{ key: 'reaction', label: 'Reaction', type: 'text', placeholder: 'Describe reaction' },
+					{ key: 'startDate', label: 'Onset Date', type: 'date' },
 					{ key: 'endDate', label: 'End Date', type: 'date' },
-					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 2 },
+					{ key: 'comments', label: 'Notes', type: 'textarea', placeholder: 'Notes', colSpan: 3 },
 				],
 			},
 		],
@@ -673,7 +675,8 @@ export class PatientChartEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.ciyex-patient-chart'));
-		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
+		// position:relative so absolute-positioned overlays (record dialog) anchor to this pane
+		this.root.style.cssText = 'position:relative;height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 
 		// Header bar
 		this.headerBar = DOM.append(this.root, DOM.$('.chart-header'));
@@ -759,12 +762,23 @@ export class PatientChartEditor extends EditorPane {
 	// and looks up tab_field_config by tabKey to resolve the FHIR resource type for
 	// scope enforcement. If our key differs from the backend's, write/scope checks fail.
 	private static readonly TAB_API_SLUG: Record<string, string> = {
+		// Workspace conventions → backend tab_field_config.tab_key
 		'problems': 'medicalproblems',
 		'appointments': 'appointment-detail',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
 		'visit-notes': 'clinical-notes',
 		'facility': 'facilities',
+		// FHIR collection slugs → backend tab keys (common chart-layout.json typos)
+		'related-persons': 'relationships',
+		'allergy-intolerances': 'allergies',
+		'medication-requests': 'medications',
+		'diagnostic-reports': 'labs',
+		'document-references': 'documents',
+		'family-member-histories': 'history',
+		'service-requests': 'referrals',
+		'care-plans': 'care-plan',
+		'payment-reconciliations': 'transactions',
 	};
 
 	private _tabEndpoint(tab: ChartTab): string | null {
@@ -848,14 +862,20 @@ export class PatientChartEditor extends EditorPane {
 		// the resource type from tab_field_config keyed by tabKey.
 		if (tab.fhirResources.length > 0 && !tab.apiPath) {
 			const slug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
+			const url = `/api/fhir-resource/${slug}/patient/${this.patientId}?page=0&size=100`;
 			try {
-				const res = await this.apiService.fetch(`/api/fhir-resource/${slug}/patient/${this.patientId}?page=0&size=100`);
+				const res = await this.apiService.fetch(url);
 				if (res.ok) {
 					const json = await res.json();
 					const items = json?.data?.content || json?.content || (json?.data && !Array.isArray(json.data) ? [json.data] : (Array.isArray(json?.data) ? json.data : []));
+					console.log(`[patientChart] ${tab.key} GET ${url} → ${items.length} record(s)`, items);
 					data = data.concat(items);
+				} else {
+					console.warn(`[patientChart] ${tab.key} GET ${url} failed: ${res.status}`);
 				}
-			} catch { /* */ }
+			} catch (e) {
+				console.error(`[patientChart] ${tab.key} GET ${url} threw:`, e);
+			}
 		}
 		const result = { config, data };
 		this._tabDataCache.set(tab.key, result);
@@ -1699,16 +1719,32 @@ export class PatientChartEditor extends EditorPane {
 		const saved = this._formInputs;
 		this._formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 
-		if (config?.sections && config.sections.length > 0) {
-			this._renderForm(formContainer, config.sections, [existing || {}]);
-		} else {
-			// Fallback: auto-generate editable fields from the record keys (edit) or show note (new)
-			if (existing) {
+		try {
+			if (config?.sections && config.sections.length > 0) {
+				this._renderForm(formContainer, config.sections, [existing || {}]);
+			} else if (existing) {
+				// No field config but we have data — auto-generate editable fields from record keys
 				this._renderAutoEditForm(formContainer, existing);
 			} else {
 				const note = DOM.append(formContainer, DOM.$('div'));
 				note.textContent = `No field configuration for ${tab.label}. Set up in Settings → Field Config.`;
 				note.style.cssText = 'padding:20px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+			}
+		} catch (e) {
+			// Don't let form-render errors prevent the dialog from showing — the user still
+			// needs Save/Cancel/Delete controls. Surface the error inline so it's diagnosable.
+			DOM.clearNode(formContainer);
+			const errBox = DOM.append(formContainer, DOM.$('div'));
+			errBox.style.cssText = 'padding:14px;border:1px solid var(--vscode-editorError-border,#ef4444);border-radius:6px;background:rgba(239,68,68,0.08);color:var(--vscode-foreground);font-size:12px;';
+			const title = DOM.append(errBox, DOM.$('div'));
+			title.textContent = 'Could not render form fields';
+			title.style.cssText = 'font-weight:600;margin-bottom:6px;';
+			const detail = DOM.append(errBox, DOM.$('div'));
+			detail.textContent = e instanceof Error ? e.message : String(e);
+			detail.style.cssText = 'font-family:monospace;font-size:11px;color:var(--vscode-descriptionForeground);';
+			// Still allow auto-edit if we have a record so user has something to work with
+			if (existing) {
+				try { this._renderAutoEditForm(formContainer, existing); } catch { /* */ }
 			}
 		}
 
@@ -1794,9 +1830,19 @@ export class PatientChartEditor extends EditorPane {
 				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
 				if (res.ok) {
 					this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
-					this._tabDataCache.delete(tab.key);
 					overlay.remove();
-					this._renderMain();
+
+					// Hard-refresh the tab: clear cache, re-fetch from server, re-render. We do
+					// this in a tight loop with a couple of delayed retries because HAPI FHIR's
+					// search index can lag a few hundred ms behind the write.
+					const refresh = async () => {
+						this._tabDataCache.delete(tab.key);
+						if (this.activeTab === tab.key) { this._renderMain(); }
+					};
+					await refresh();
+					DOM.getActiveWindow().setTimeout(() => { void refresh(); }, 600);
+					DOM.getActiveWindow().setTimeout(() => { void refresh(); }, 1500);
+
 					void this._loadQuickInfo();
 				} else {
 					const err = await res.text().catch(() => 'Unknown error');
@@ -1868,7 +1914,8 @@ export class PatientChartEditor extends EditorPane {
 		const conditionalFields: Array<{ field: FieldDef; cell: HTMLElement }> = [];
 
 		for (const sec of sections) {
-			if (!sec.visible) { continue; }
+			// Default to visible when not explicitly set (backend tab_field_config seeds omit `visible`)
+			if (sec.visible === false) { continue; }
 			const cols = Math.min(sec.columns || 3, 4);
 			const isCollapsible = sec.collapsible !== false; // default collapsible
 
