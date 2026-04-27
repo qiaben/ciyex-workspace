@@ -220,9 +220,6 @@ export class EhrTitlebarControls extends Disposable {
 		closeBtn.textContent = '\u00D7';
 		this._register(DOM.addDisposableListener(closeBtn, 'click', () => this._closePatientOverlay()));
 
-		const subtitle = DOM.append(this.patientOverlay, DOM.$('p.ehr-overlay-subtitle'));
-		subtitle.textContent = 'Fill out the patient details below.';
-
 		const form = DOM.append(this.patientOverlay, DOM.$('.ehr-overlay-form'));
 
 		const errorEl = DOM.append(form, DOM.$('.ehr-form-error'));
@@ -240,14 +237,24 @@ export class EhrTitlebarControls extends Disposable {
 		const phone = this._createField(row2, 'Phone Number', 'tel', true, 'phoneNumber') as HTMLInputElement;
 		// US phone: 10 digits, formatted as (xxx) xxx-xxxx
 		phone.setAttribute('inputmode', 'numeric');
+		phone.setAttribute('autocomplete', 'tel-national');
 		phone.maxLength = 14;
-		this._register(DOM.addDisposableListener(phone, 'input', () => {
+		phone.placeholder = '(555) 555-5555';
+		const formatPhone = () => {
 			const digits = phone.value.replace(/\D/g, '').slice(0, 10);
 			let formatted = digits;
 			if (digits.length > 6) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`; }
 			else if (digits.length > 3) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
 			else if (digits.length > 0) { formatted = `(${digits}`; }
 			phone.value = formatted;
+		};
+		this._register(DOM.addDisposableListener(phone, 'input', formatPhone));
+		this._register(DOM.addDisposableListener(phone, 'paste', () => setTimeout(formatPhone, 0)));
+		// Block any keystroke that's not a digit, formatting char, or navigation key
+		this._register(DOM.addDisposableListener(phone, 'keydown', (e: KeyboardEvent) => {
+			const nav = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+			if (nav.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
+			if (!/^[0-9]$/.test(e.key)) { e.preventDefault(); }
 		}));
 		const gender = this._createSelectField(row2, 'Gender', true, 'gender', [
 			{ value: '', label: 'Select gender' },
@@ -259,12 +266,14 @@ export class EhrTitlebarControls extends Disposable {
 		// Row 3: DOB, Email
 		const row3 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const dob = this._createField(row3, 'Date of Birth', 'date', true, 'dateOfBirth') as HTMLInputElement;
-		// DOB cannot be in the future
-		const todayIso = new Date().toISOString().slice(0, 10);
+		// DOB cannot be in the future — use *local* date (toISOString() gives UTC which can drift)
+		const _today = new Date();
+		const todayIso = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
 		dob.max = todayIso;
-		this._register(DOM.addDisposableListener(dob, 'change', () => {
-			if (dob.value && dob.value > todayIso) { dob.value = todayIso; }
-		}));
+		const clampDob = () => { if (dob.value && dob.value > todayIso) { dob.value = todayIso; } };
+		this._register(DOM.addDisposableListener(dob, 'change', clampDob));
+		this._register(DOM.addDisposableListener(dob, 'input', clampDob));
+		this._register(DOM.addDisposableListener(dob, 'blur', clampDob));
 		const email = this._createField(row3, 'Email', 'email', true, 'email') as HTMLInputElement;
 
 		// Communication Consent

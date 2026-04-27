@@ -64,6 +64,8 @@ export class PortalEditorInput extends BaseCiyexInput {
 export class CalendarEditorInput extends BaseCiyexInput {
 	static readonly ID = 'workbench.input.ciyexCalendar';
 	override get typeId(): string { return CalendarEditorInput.ID; }
+	// Use a virtual resource so VS Code does not show the on-disk path in breadcrumbs / title.
+	override get resource(): URI { return URI.from({ scheme: 'ciyex-calendar', path: '/calendar' }); }
 }
 
 // allow-any-unicode-next-line

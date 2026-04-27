@@ -20,8 +20,8 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; [k: string]: unknown }
-interface SectionDef { key: string; title: string; columns?: number; visible?: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[]; sectionComponent?: string; [k: string]: unknown }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number;[k: string]: unknown }
+interface SectionDef { key: string; title: string; columns?: number; visible?: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[]; sectionComponent?: string;[k: string]: unknown }
 interface EncounterConfig { tabKey: string; source: string; sections: SectionDef[] }
 
 export class EncounterEditor extends EditorPane {
@@ -60,8 +60,81 @@ export class EncounterEditor extends EditorPane {
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		try { const c = await this.fileService.readFile(input.fileUri); this.config = JSON.parse(c.value.toString()); } catch { /* defaults */ }
+		try { const c = await this.fileService.readFile(input.fileUri); this.config = JSON.parse(c.value.toString()); } catch { /* file missing — fall through to defaults */ }
+		// Seed with default sections when the file is absent / empty so the page is not blank
+		if (!this.config || !Array.isArray(this.config.sections) || this.config.sections.length === 0) {
+			this.config = { tabKey: 'encounter-form', source: 'UNIVERSAL_DEFAULT', sections: EncounterEditor._defaultSections() };
+			this._dirty = true;
+		}
 		if (!token.isCancellationRequested) { this._render(); }
+	}
+
+	private static _defaultSections(): SectionDef[] {
+		return [
+			{
+				key: 'cc', title: 'Chief Complaint', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'chiefComplaint', label: 'Chief Complaint', type: 'textarea', required: true },
+				]
+			},
+			{
+				key: 'hpi', title: 'History of Present Illness', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'hpi_onset', label: 'Onset', type: 'text' },
+					{ key: 'hpi_location', label: 'Location', type: 'text' },
+					{ key: 'hpi_duration', label: 'Duration', type: 'text' },
+					{ key: 'hpi_severity', label: 'Severity', type: 'select' },
+					{ key: 'hpi_narrative', label: 'HPI Narrative', type: 'textarea', colSpan: 2 },
+				]
+			},
+			{
+				key: 'ros', title: 'Review of Systems', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'ros_data', label: 'Review of Systems', type: 'ros-grid' },
+				]
+			},
+			{
+				key: 'vitals', title: 'Vitals', columns: 4, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'vitals_bp_systolic', label: 'BP Systolic', type: 'number' },
+					{ key: 'vitals_bp_diastolic', label: 'BP Diastolic', type: 'number' },
+					{ key: 'vitals_heart_rate', label: 'Heart Rate', type: 'number' },
+					{ key: 'vitals_temperature', label: 'Temperature', type: 'number' },
+					{ key: 'vitals_spo2', label: 'SpO2', type: 'number' },
+					{ key: 'vitals_respiratory_rate', label: 'Respiratory Rate', type: 'number' },
+					{ key: 'vitals_weight', label: 'Weight', type: 'number' },
+					{ key: 'vitals_height', label: 'Height', type: 'number' },
+				]
+			},
+			{
+				key: 'pe', title: 'Physical Exam', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'pe_data', label: 'Physical Exam', type: 'exam-grid' },
+				]
+			},
+			{
+				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'pmh_conditions', label: 'Medical Conditions', type: 'textarea' },
+					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea' },
+					{ key: 'pmh_allergies', label: 'Allergies', type: 'textarea' },
+					{ key: 'pmh_medications', label: 'Current Medications', type: 'textarea' },
+				]
+			},
+			{
+				key: 'assessment', title: 'Assessment', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'assessment_diagnoses', label: 'Diagnoses', type: 'diagnosis-list' },
+					{ key: 'assessment_notes', label: 'Notes', type: 'textarea' },
+				]
+			},
+			{
+				key: 'plan', title: 'Plan', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'plan_items', label: 'Plan Items', type: 'plan-items' },
+					{ key: 'plan_notes', label: 'Notes', type: 'textarea' },
+				]
+			},
+			{
+				key: 'signoff', title: 'Sign-off', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'sign_attestation', label: 'Attestation', type: 'textarea', colSpan: 2 },
+					{ key: 'sign_provider', label: 'Provider', type: 'text' },
+					{ key: 'sign_date', label: 'Sign Date', type: 'date' },
+				]
+			},
+		];
 	}
 
 	private _render(): void {

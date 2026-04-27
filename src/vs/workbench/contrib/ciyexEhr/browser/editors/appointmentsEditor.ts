@@ -15,6 +15,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { AppointmentsEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 // allow-any-unicode-next-line
@@ -254,6 +255,7 @@ export class AppointmentsEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(AppointmentsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -416,7 +418,10 @@ export class AppointmentsEditor extends EditorPane {
 				if (String(r.locationId) !== this.locationFilter && (r.locationName || '') !== this.locationFilter) { return false; }
 			}
 			if (this.typeFilter) {
-				if (r.visitType !== this.typeFilter) { return false; }
+				const tf = this.typeFilter.trim().toLowerCase();
+				const vt = String(r.visitType || '').trim().toLowerCase();
+				const at = String((r as Record<string, unknown>).appointmentType || '').trim().toLowerCase();
+				if (vt !== tf && at !== tf && !vt.includes(tf) && !at.includes(tf)) { return false; }
 			}
 			return true;
 		});
@@ -470,7 +475,10 @@ export class AppointmentsEditor extends EditorPane {
 		}
 		html += '</tbody></table></body></html>';
 		const w = DOM.getActiveWindow().open('', '_blank');
-		if (!w) { return; }
+		if (!w) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: popup was blocked. Allow popups for this page and try again.' });
+			return;
+		}
 		w.document.open();
 		w.document.write(html);
 		w.document.close();
@@ -565,7 +573,10 @@ export class AppointmentsEditor extends EditorPane {
 		printBtn.style.cssText = btnStyle;
 		// allow-any-unicode-next-line
 		printBtn.textContent = '🖨 Print';
-		printBtn.addEventListener('click', () => this._printTable());
+		printBtn.addEventListener('click', () => {
+			try { this._printTable(); }
+			catch (err) { this.notificationService.notify({ severity: Severity.Error, message: `Print failed: ${String(err)}` }); }
+		});
 
 		// Export
 		const exportBtn = DOM.append(actionGroup, DOM.$('button'));
@@ -587,11 +598,19 @@ export class AppointmentsEditor extends EditorPane {
 		const openTv = (mode: 'staff' | 'waiting') => {
 			tvMenu.style.display = 'none';
 			try {
-				const apiUrl = this.apiService.apiUrl;
-				const base = apiUrl.replace('/api', '').replace('api-dev', 'app-dev').replace(/\/$/, '');
-				const win = DOM.getActiveWindow();
-				win.open(`${base}/appointments/tv?mode=${mode}`, '_blank');
-			} catch { /* */ }
+				const apiUrl = this.apiService.apiUrl || '';
+				// Strip trailing /api and convert *api-dev* host to *app-dev* if present
+				let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+				base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
+				if (!base) { base = DOM.getActiveWindow().location.origin; }
+				const url = `${base}/appointments/tv?mode=${mode}`;
+				const win = DOM.getActiveWindow().open(url, '_blank');
+				if (!win) {
+					this.notificationService.notify({ severity: Severity.Warning, message: 'TV Display popup was blocked. Allow popups for this page and try again.' });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
+			}
 		};
 
 		const mkTvItem = (icon: string, label: string, onClick: () => void) => {
@@ -624,20 +643,6 @@ export class AppointmentsEditor extends EditorPane {
 		// ─── Filters ───────────────────────────────────────────────────────
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
 		filters.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;padding:12px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
-
-		// Date preset
-		const dateSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
-		dateSel.style.cssText = selectStyle;
-		for (const p of DATE_PRESETS) {
-			const o = DOM.append(dateSel, DOM.$('option')) as HTMLOptionElement;
-			o.value = p.value; o.textContent = p.label;
-			if (p.value === this.datePreset) { o.selected = true; }
-		}
-		dateSel.addEventListener('change', () => {
-			this.datePreset = dateSel.value;
-			this.currentPage = 1;
-			this._loadAppointments();
-		});
 
 		// Patient search
 		const patientInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
@@ -706,6 +711,24 @@ export class AppointmentsEditor extends EditorPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this.statusFilter = statusSel.value;
+			this.currentPage = 1;
+			this._loadAppointments();
+		});
+
+		// Spacer pushes the date preset to the far right
+		const spacer = DOM.append(filters, DOM.$('span'));
+		spacer.style.cssText = 'flex:1;';
+
+		// Date preset (monthly filter) — placed to the right of "All Status"
+		const dateSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
+		dateSel.style.cssText = selectStyle;
+		for (const p of DATE_PRESETS) {
+			const o = DOM.append(dateSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = p.value; o.textContent = p.label;
+			if (p.value === this.datePreset) { o.selected = true; }
+		}
+		dateSel.addEventListener('change', () => {
+			this.datePreset = dateSel.value;
 			this.currentPage = 1;
 			this._loadAppointments();
 		});
@@ -916,8 +939,13 @@ export class AppointmentsEditor extends EditorPane {
 				}
 			} else {
 				const roomSpan = DOM.append(tdRoom, DOM.$('span'));
-				roomSpan.textContent = row.room || '—';
-				roomSpan.style.cssText = 'cursor:pointer;color:var(--vscode-descriptionForeground);';
+				if (row.room) {
+					roomSpan.textContent = row.room;
+					roomSpan.style.cssText = 'cursor:pointer;color:var(--vscode-foreground);font-weight:500;';
+				} else {
+					roomSpan.textContent = 'Assign';
+					roomSpan.style.cssText = 'cursor:pointer;color:var(--vscode-descriptionForeground);font-style:italic;opacity:0.7;';
+				}
 				roomSpan.addEventListener('click', () => {
 					this.editingRoomId = row.id;
 					this._renderTableBody(this._getFilteredRows());

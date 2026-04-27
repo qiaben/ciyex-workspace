@@ -77,8 +77,10 @@ export class CalendarEditor extends EditorPane {
 	private currentDate = new Date();
 	private viewMode: 'day' | 'week' | 'month' = 'day';
 	private appointments: Appointment[] = [];
-	private providerFilter = '';
-	private locationFilter = '';
+	private providerFilter: Set<string> = new Set();
+	private locationFilter: Set<string> = new Set();
+	private patientNameFilter = '';
+	private _filterWraps: HTMLElement[] = [];
 	private providers: Array<{ id: string; name: string }> = [];
 	private locations: Array<{ id: string; name: string }> = [];
 	private scheduleBlocks: Array<{ providerId?: string; status: string; startTime: string; endTime: string; recurrence?: { frequency: string; byWeekday?: string[] }; serviceType?: string }> = [];
@@ -160,14 +162,11 @@ export class CalendarEditor extends EditorPane {
 
 	private async _loadAppointments(): Promise<void> {
 		try {
-			let provLoc = '';
-			if (this.providerFilter) { provLoc += `&providerId=${this.providerFilter}`; }
-			if (this.locationFilter) { provLoc += `&locationId=${this.locationFilter}`; }
-
-			// Load appointments, providers, and locations in PARALLEL
+			// Load all appointments — provider/location filters apply client-side so the user
+			// can toggle multiple selections without re-fetching.
 			const loadAppts = async () => {
 				try {
-					const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200${provLoc}`);
+					const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200`);
 					if (res.ok) {
 						const data = await res.json();
 						const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
@@ -239,9 +238,10 @@ export class CalendarEditor extends EditorPane {
 			}
 
 			// Load provider schedule blocks (availability) — only when filtered
-			if (this.providerFilter) {
+			if (this.providerFilter.size === 1) {
+				const onlyId = this.providerFilter.values().next().value;
 				try {
-					const res = await this.apiService.fetch(`/api/providers/${this.providerFilter}/availability`);
+					const res = await this.apiService.fetch(`/api/providers/${onlyId}/availability`);
 					if (res.ok) {
 						const data = await res.json();
 						this.scheduleBlocks = data?.data || (Array.isArray(data) ? data : []);
@@ -279,18 +279,27 @@ export class CalendarEditor extends EditorPane {
 	/** Return appointments filtered by the current provider/location dropdown selections */
 	private _getViewFilteredAppointments(): Appointment[] {
 		let filtered = this.appointments;
-		if (this.providerFilter) {
+		if (this.providerFilter.size > 0) {
+			const sel = this.providerFilter;
 			filtered = filtered.filter(a =>
-				a.providerId === this.providerFilter ||
-				a.providerName === this.providerFilter ||
-				a.practitionerName === this.providerFilter
+				(a.providerId && sel.has(a.providerId)) ||
+				(a.providerName && sel.has(a.providerName)) ||
+				(a.practitionerName && sel.has(a.practitionerName))
 			);
 		}
-		if (this.locationFilter) {
+		if (this.locationFilter.size > 0) {
+			const sel = this.locationFilter;
 			filtered = filtered.filter(a =>
-				a.locationId === this.locationFilter ||
-				a.locationName === this.locationFilter
+				(a.locationId && sel.has(a.locationId)) ||
+				(a.locationName && sel.has(a.locationName))
 			);
+		}
+		if (this.patientNameFilter) {
+			const q = this.patientNameFilter.toLowerCase();
+			filtered = filtered.filter(a => {
+				const full = `${a.patientFirstName || ''} ${a.patientLastName || ''} ${a.patientName || ''}`.toLowerCase();
+				return full.includes(q);
+			});
 		}
 		return filtered;
 	}
@@ -317,24 +326,21 @@ export class CalendarEditor extends EditorPane {
 
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
+		this._filterWraps = [];
 
-		// Nav buttons — Today | [Prev|Next] | Date (no longer between arrows)
-		const rerender = () => { this._headerRendered = false; this._renderHeader(); this._renderGrid(); };
-		const todayBtn = this._btn(this.headerBar, 'Today', () => { this.currentDate = new Date(); rerender(); });
-		todayBtn.style.fontWeight = '600';
+		// Nav group: [Prev | Date (click jumps to today) | Next] — no separate "Today" button
 		const navGroup = DOM.append(this.headerBar, DOM.$('.cal-nav-group'));
-		navGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
+		navGroup.style.cssText = 'display:flex;align-items:stretch;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
 		const prevBtn = this._btn(navGroup, '\u25C0', () => { this._navigate(-1); });
 		prevBtn.title = 'Previous';
 		prevBtn.style.borderRadius = '0';
 		prevBtn.style.borderRight = '1px solid var(--vscode-editorWidget-border)';
-		const nextBtn = this._btn(navGroup, '\u25B6', () => { this._navigate(1); });
-		nextBtn.title = 'Next';
-		nextBtn.style.borderRadius = '0';
 
-		// Date label — left-aligned, no longer between arrows
-		const label = DOM.append(this.headerBar, DOM.$('span'));
-		label.style.cssText = 'font-size:15px;font-weight:600;flex:1;';
+		// Inline date label between prev and next; clicking it jumps to today
+		const label = DOM.append(navGroup, DOM.$('button')) as HTMLButtonElement;
+		label.title = 'Click to jump to today';
+		label.style.cssText = 'padding:3px 16px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border-right:1px solid var(--vscode-editorWidget-border);min-width:220px;text-align:center;';
+		label.addEventListener('click', () => { this.currentDate = new Date(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		if (this.viewMode === 'day') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 		} else if (this.viewMode === 'month') {
@@ -346,6 +352,24 @@ export class CalendarEditor extends EditorPane {
 			label.textContent = `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} \u2013 ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 		}
 
+		const nextBtn = this._btn(navGroup, '\u25B6', () => { this._navigate(1); });
+		nextBtn.title = 'Next';
+		nextBtn.style.borderRadius = '0';
+
+		// Centered patient search (filters appointments by patient name)
+		const searchWrap = DOM.append(this.headerBar, DOM.$('.cal-patient-search'));
+		searchWrap.style.cssText = 'flex:1;display:flex;justify-content:center;';
+		const patientSearchInput = DOM.append(searchWrap, DOM.$('input.cal-patient-search-input')) as HTMLInputElement;
+		patientSearchInput.type = 'text';
+		patientSearchInput.placeholder = 'Search patient by name...';
+		patientSearchInput.value = this.patientNameFilter;
+		patientSearchInput.style.cssText = 'width:280px;max-width:60%;padding:4px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+		patientSearchInput.addEventListener('input', () => {
+			this.patientNameFilter = patientSearchInput.value.trim();
+			this._updateHeaderCount();
+			this._renderGrid();
+		});
+
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
 		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
@@ -356,14 +380,14 @@ export class CalendarEditor extends EditorPane {
 			btn.addEventListener('click', () => { this.viewMode = mode; this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
-		// Provider filter — searchable dropdown
-		this._buildSearchableFilter(this.headerBar, 'All Providers', this.providers, this.providerFilter, (val) => {
-			this.providerFilter = val; this._updateHeaderCount(); this._renderGrid();
+		// Provider filter — multi-select checkbox dropdown
+		this._buildCheckboxFilter(this.headerBar, 'All Providers', this.providers, this.providerFilter, () => {
+			this._updateHeaderCount(); this._renderGrid();
 		});
 
-		// Location filter — searchable dropdown
-		this._buildSearchableFilter(this.headerBar, 'All Locations', this.locations, this.locationFilter, (val) => {
-			this.locationFilter = val; this._updateHeaderCount(); this._renderGrid();
+		// Location filter — multi-select checkbox dropdown
+		this._buildCheckboxFilter(this.headerBar, 'All Locations', this.locations, this.locationFilter, () => {
+			this._updateHeaderCount(); this._renderGrid();
 		});
 
 		// Right-side action icons group
@@ -386,15 +410,6 @@ export class CalendarEditor extends EditorPane {
 			const today = localDateStr(this.currentDate);
 			await this._createAppointment(today, '09:00');
 		});
-
-		// Calendar (Find Slot)
-		iconBtn(actionsGroup, '\u{1F4C5}', 'Find Available Slot', false, () => { this._findAvailableSlot(); });
-
-		// TV Display (Flow Board)
-		iconBtn(actionsGroup, '\u{1F4FA}', 'TV Display (Flow Board)', false, () => { this._openFlowBoard(); });
-
-		// Stats
-		iconBtn(actionsGroup, '\u{1F4CA}', 'Stats', false, () => { this._showStats(); });
 
 		// Refresh
 		iconBtn(actionsGroup, '\u21BB', 'Refresh', false, () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); });
@@ -438,9 +453,10 @@ export class CalendarEditor extends EditorPane {
 			return;
 		}
 
-		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
-		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
-		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 30;
+		// Time grid: full 24h in 30-minute slots (12:00 AM through 11:30 PM)
+		const startHour = 0;
+		const endHour = 24;
+		const slotDuration = 30;
 		const slotHeight = 20; // px per slot
 		// hourHeight = (60 / slotDuration) * slotHeight — used for time indicator positioning
 
@@ -562,20 +578,21 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private _renderProviderGrid(): void {
-		const startHour = this.configService.getValue<number>('ciyex.calendar.startHour') ?? 0;
-		const endHour = this.configService.getValue<number>('ciyex.calendar.endHour') ?? 24;
-		const slotDuration = this.configService.getValue<number>('ciyex.calendar.slotDuration') ?? 30;
+		// Time grid: full 24h in 30-minute slots (12:00 AM through 11:30 PM)
+		const startHour = 0;
+		const endHour = 24;
+		const slotDuration = 30;
 		const slotHeight = 20;
 		const dateStr = localDateStr(this.currentDate);
 
 		let activeProviders = this.providers.length > 0 ? [...this.providers] : [];
-		if (this.providerFilter) {
-			activeProviders = activeProviders.filter(p => p.id === this.providerFilter);
+		if (this.providerFilter.size > 0) {
+			activeProviders = activeProviders.filter(p => this.providerFilter.has(p.id) || this.providerFilter.has(p.name));
 		}
 		if (activeProviders.length === 0) {
 			const empty = DOM.append(this.gridContainer, DOM.$('div'));
 			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
-			empty.textContent = this.providerFilter ? 'No matching provider found.' : 'No providers loaded. Click Refresh to load provider data.';
+			empty.textContent = this.providerFilter.size > 0 ? 'No matching provider found.' : 'No providers loaded. Click Refresh to load provider data.';
 			return;
 		}
 
@@ -896,26 +913,30 @@ export class CalendarEditor extends EditorPane {
 			searchTimer = setTimeout(async () => {
 				try {
 					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
-					if (res.ok) {
-						const data = await res.json();
-						const patients = data?.data?.content || data?.content || [];
-						DOM.clearNode(patResults);
-						for (const p of patients) {
-							const item = DOM.append(patResults, DOM.$('div'));
-							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							item.textContent = `${p.firstName || ''} ${p.lastName || ''} — DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`;
-							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-							item.addEventListener('mouseleave', () => { item.style.background = ''; });
-							item.addEventListener('click', () => {
-								patInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
-								patIdHidden.value = p.id || '';
-								patResults.style.display = 'none';
-							});
-						}
-						patResults.style.display = patients.length > 0 ? 'block' : 'none';
+					if (!res.ok) { return; }
+					const data = await res.json();
+					// Handle {data:[...]}, {data:{content:[...]}}, {content:[...]}, or bare array
+					let patients: Array<Record<string, string>> = [];
+					if (Array.isArray(data?.data?.content)) { patients = data.data.content; }
+					else if (Array.isArray(data?.data)) { patients = data.data; }
+					else if (Array.isArray(data?.content)) { patients = data.content; }
+					else if (Array.isArray(data)) { patients = data as Array<Record<string, string>>; }
+					DOM.clearNode(patResults);
+					for (const p of patients) {
+						const item = DOM.append(patResults, DOM.$('div'));
+						item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+						item.textContent = `${p.firstName || ''} ${p.lastName || ''} — DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`;
+						item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+						item.addEventListener('mouseleave', () => { item.style.background = ''; });
+						item.addEventListener('click', () => {
+							patInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+							patIdHidden.value = p.id || '';
+							patResults.style.display = 'none';
+						});
 					}
-				} catch { /* */ }
-			}, 300);
+					patResults.style.display = patients.length > 0 ? 'block' : 'none';
+				} catch (err) { console.error('Patient search failed', err); }
+			}, 250);
 		});
 
 		// Visit Type
@@ -1410,65 +1431,91 @@ export class CalendarEditor extends EditorPane {
 
 	/** Searchable single-select dropdown — replacement for plain <select>.
 	 *  Empty value selects the "all" item. */
-	private _buildSearchableFilter(
+	private _buildCheckboxFilter(
 		parent: HTMLElement,
 		allLabel: string,
 		items: Array<{ id: string; name: string }>,
-		current: string,
-		onChange: (val: string) => void,
+		selected: Set<string>,
+		onChange: () => void,
 	): void {
 		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
-		wrap.style.cssText = 'position:relative;max-width:180px;';
+		wrap.style.cssText = 'position:relative;max-width:200px;';
+		this._filterWraps.push(wrap);
 
-		const inputStyle = 'padding:2px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
+		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
 		trigger.style.cssText = inputStyle + 'text-align:left;';
-		const chosen = items.find(i => i.id === current);
-		trigger.textContent = chosen ? chosen.name : allLabel;
+		const describe = () => {
+			if (selected.size === 0) { return allLabel; }
+			if (selected.size === 1) {
+				const id = selected.values().next().value;
+				const it = items.find(i => i.id === id);
+				return it?.name || String(id);
+			}
+			return `${selected.size} selected`;
+		};
+		trigger.textContent = describe();
 
 		const panel = DOM.append(wrap, DOM.$('.cal-filter-panel'));
-		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:30;display:none;min-width:200px;';
+		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:30;display:none;min-width:240px;';
 
 		const search = DOM.append(panel, DOM.$('input')) as HTMLInputElement;
 		search.placeholder = 'Search...';
 		search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;background:var(--vscode-input-background);border:none;border-bottom:1px solid var(--vscode-editorWidget-border);color:var(--vscode-input-foreground);font-size:12px;outline:none;';
 
 		const list = DOM.append(panel, DOM.$('.cal-filter-list'));
-		list.style.cssText = 'max-height:240px;overflow-y:auto;';
+		list.style.cssText = 'max-height:280px;overflow-y:auto;';
 
 		const renderList = () => {
 			DOM.clearNode(list);
 			const q = search.value.trim().toLowerCase();
+			const rowStyle = 'display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px;';
+
+			// "All <label>" row — checked when no individual selection
 			const allRow = DOM.append(list, DOM.$('.cal-filter-item')) as HTMLElement;
-			allRow.textContent = allLabel;
-			allRow.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;';
-			allRow.addEventListener('mouseenter', () => { allRow.style.background = 'var(--vscode-list-hoverBackground)'; });
-			allRow.addEventListener('mouseleave', () => { allRow.style.background = ''; });
-			allRow.addEventListener('click', () => {
-				trigger.textContent = allLabel;
-				panel.style.display = 'none';
-				onChange('');
-			});
+			allRow.style.cssText = rowStyle;
+			const allCb = DOM.append(allRow, DOM.$('input')) as HTMLInputElement;
+			allCb.type = 'checkbox';
+			allCb.checked = selected.size === 0;
+			const allLbl = DOM.append(allRow, DOM.$('span'));
+			allLbl.textContent = allLabel;
+			allLbl.style.fontWeight = '600';
+			const pickAll = () => {
+				selected.clear();
+				trigger.textContent = describe();
+				onChange();
+				renderList();
+			};
+			allRow.addEventListener('click', (e) => { e.stopPropagation(); pickAll(); });
+
 			for (const it of items) {
 				if (q && !it.name.toLowerCase().includes(q)) { continue; }
 				const row = DOM.append(list, DOM.$('.cal-filter-item')) as HTMLElement;
-				row.textContent = it.name;
-				row.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;${it.id === current ? 'background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground);' : ''}`;
-				row.addEventListener('mouseenter', () => { if (it.id !== current) { row.style.background = 'var(--vscode-list-hoverBackground)'; } });
-				row.addEventListener('mouseleave', () => { if (it.id !== current) { row.style.background = ''; } });
-				row.addEventListener('click', () => {
-					trigger.textContent = it.name;
-					panel.style.display = 'none';
-					onChange(it.id);
-				});
+				row.style.cssText = rowStyle;
+				const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				cb.type = 'checkbox';
+				cb.checked = selected.has(it.id);
+				const lbl = DOM.append(row, DOM.$('span'));
+				lbl.textContent = it.name;
+				const toggle = () => {
+					if (selected.has(it.id)) { selected.delete(it.id); }
+					else { selected.add(it.id); }
+					cb.checked = selected.has(it.id);
+					trigger.textContent = describe();
+					onChange();
+				};
+				row.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+				cb.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+				row.addEventListener('mouseleave', () => { row.style.background = ''; });
 			}
 		};
 
 		trigger.addEventListener('click', (e) => {
 			e.stopPropagation();
-			const open = panel.style.display !== 'none';
-			panel.style.display = open ? 'none' : 'block';
-			if (!open) {
+			const isOpen = panel.style.display !== 'none';
+			panel.style.display = isOpen ? 'none' : 'block';
+			if (!isOpen) {
 				renderList();
 				search.value = '';
 				search.focus();
@@ -1477,9 +1524,13 @@ export class CalendarEditor extends EditorPane {
 		search.addEventListener('input', renderList);
 		search.addEventListener('click', (e) => { e.stopPropagation(); });
 
-		// Dismiss on outside click
+		// Dismiss only when clicking outside ALL filter panels — so both can stay open at once.
 		const dismiss = (ev: Event) => {
-			if (!wrap.contains(ev.target as Node)) { panel.style.display = 'none'; }
+			const target = ev.target as Node;
+			for (const w of this._filterWraps) {
+				if (w.contains(target)) { return; }
+			}
+			panel.style.display = 'none';
 		};
 		DOM.getActiveWindow().document.addEventListener('click', dismiss);
 	}

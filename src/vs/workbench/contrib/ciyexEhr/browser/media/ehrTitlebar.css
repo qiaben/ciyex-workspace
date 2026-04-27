@@ -398,6 +398,21 @@ body.ehr-on-calendar .ehr-titlebar-controls .ehr-search-container {
 /* --- Hide split-editor / layout-editor (top-right) icons on calendar/appointments.
  * The .editor-actions toolbar in the editor group title holds split editor + more
  * actions (which contains layout group commands); hide it for our custom editors. --- */
-body.ehr-on-calendar .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {
+body.ehr-on-calendar .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions,
+body.ehr-on-calendar .editor-actions {
 	display: none !important;
+}
+
+/* --- Hide native scrollbars inside the calendar grid (vertical and horizontal).
+ * `scrollbar-width:none` is set inline, but webkit-based environments need this rule. --- */
+.ciyex-calendar-editor .calendar-grid::-webkit-scrollbar,
+.ciyex-calendar-editor .calendar-grid::-webkit-scrollbar-thumb,
+.ciyex-calendar-editor .calendar-grid::-webkit-scrollbar-track,
+.ciyex-calendar-editor .appt-form::-webkit-scrollbar,
+.ciyex-calendar-editor .appt-form::-webkit-scrollbar-thumb,
+.ciyex-calendar-editor .appt-form::-webkit-scrollbar-track {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
+	background: transparent !important;
 }
