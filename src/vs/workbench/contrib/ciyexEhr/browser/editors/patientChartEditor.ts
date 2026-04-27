@@ -286,7 +286,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'details', title: 'Problem Details', columns: 3, visible: true, collapsible: false, fields: [
 					{ key: 'condition', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
-					{ key: 'icdCode', label: 'ICD-10 Code', type: 'text', placeholder: 'Search ICD10-CM codes...' },
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' } },
 					{
 						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
@@ -329,6 +329,123 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'notes', title: 'Notes', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes' },
+				],
+			},
+		],
+	},
+	'clinical-alerts': {
+		tabKey: 'clinical-alerts',
+		sections: [
+			{
+				key: 'alert', title: 'Clinical Alert', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'alert', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary' },
+					{
+						key: 'severity', label: 'Severity', type: 'select', options: [
+							{ label: 'Low', value: 'low' },
+							{ label: 'Medium', value: 'medium' },
+							{ label: 'High', value: 'high' },
+							{ label: 'Critical', value: 'critical' },
+						]
+					},
+					{ key: 'identifiedDate', label: 'Identified Date', type: 'date', required: true },
+					{ key: 'authorId', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
+					{ key: 'description', label: 'Description', type: 'textarea', colSpan: 2, placeholder: 'Detailed description' },
+				],
+			},
+		],
+	},
+	medications: {
+		tabKey: 'medications',
+		sections: [
+			{
+				key: 'med', title: 'Medication', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'Drug name' },
+					{ key: 'dosage', label: 'Dosage', type: 'text', required: true, placeholder: 'e.g., 500 mg' },
+					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., Oral' },
+					{ key: 'frequency', label: 'Frequency', type: 'text', placeholder: 'e.g., Twice daily' },
+					{ key: 'startDate', label: 'Start Date', type: 'date' },
+					{ key: 'endDate', label: 'End Date', type: 'date' },
+					{ key: 'prescriberId', label: 'Prescriber', type: 'practitioner-search', placeholder: 'Search Prescriber' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'On Hold', value: 'on-hold' },
+							{ label: 'Stopped', value: 'stopped' },
+							{ label: 'Completed', value: 'completed' },
+						]
+					},
+					{ key: 'instructions', label: 'Instructions', type: 'textarea', colSpan: 2, placeholder: 'Patient instructions' },
+				],
+			},
+		],
+	},
+	labs: {
+		tabKey: 'labs',
+		sections: [
+			{
+				key: 'lab', title: 'Lab Order / Result', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'Test name' },
+					{ key: 'testCode', label: 'Test Code (LOINC)', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' } },
+					{ key: 'collectionDate', label: 'Collection Date', type: 'date' },
+					{ key: 'resultDate', label: 'Result Date', type: 'date' },
+					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Ordered', value: 'ordered' },
+							{ label: 'In Progress', value: 'in-progress' },
+							{ label: 'Final', value: 'final' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{ key: 'result', label: 'Result', type: 'text', placeholder: 'Result value' },
+					{ key: 'units', label: 'Units', type: 'text', placeholder: 'e.g., mg/dL' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	immunizations: {
+		tabKey: 'immunizations',
+		sections: [
+			{
+				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Vaccine name' },
+					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
+					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
+					{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #' },
+					{ key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL' },
+					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
+					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
+					{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+							{ label: 'Not Done', value: 'not-done' },
+						]
+					},
+				],
+			},
+		],
+	},
+	procedures: {
+		tabKey: 'procedures',
+		sections: [
+			{
+				key: 'proc', title: 'Procedure', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'procedureName', label: 'Procedure Name', type: 'text', required: true, placeholder: 'Procedure name' },
+					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT code', lookupConfig: { system: 'CPT' } },
+					{ key: 'datePerformed', label: 'Date Performed', type: 'date', required: true },
+					{ key: 'performerId', label: 'Performer', type: 'practitioner-search', placeholder: 'Search Performer' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'In Progress', value: 'in-progress' },
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{ key: 'reason', label: 'Reason', type: 'text', placeholder: 'Reason for procedure' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 		],
@@ -1833,10 +1950,11 @@ export class PatientChartEditor extends EditorPane {
 		backdrop.addEventListener('click', () => overlay.remove());
 
 		const panel = DOM.append(overlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:540px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;';
+		// Flex column so the footer (Save/Cancel) stays pinned at the bottom even when the form is tall.
+		panel.style.cssText = 'position:relative;width:540px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;';
 
 		const hdrRow = DOM.append(panel, DOM.$('div'));
-		hdrRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
+		hdrRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 20px 12px;flex-shrink:0;';
 		const hdrTitle = DOM.append(hdrRow, DOM.$('h3'));
 		hdrTitle.textContent = isEdit ? `Edit ${tab.label}` : `New ${tab.label}`;
 		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
@@ -1846,7 +1964,9 @@ export class PatientChartEditor extends EditorPane {
 		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);';
 		closeBtn.addEventListener('click', () => overlay.remove());
 
+		// Scrollable form area — only the form scrolls; the footer buttons stay visible.
 		const formContainer = DOM.append(panel, DOM.$('div'));
+		formContainer.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:0 20px 12px;scrollbar-width:none;';
 
 		// Save inputs to a local map (avoid clobbering the form-tab map)
 		const saved = this._formInputs;
@@ -1885,7 +2005,8 @@ export class PatientChartEditor extends EditorPane {
 		this._formInputs = saved;
 
 		const btnRow = DOM.append(panel, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
+		// Sticky footer — flex-shrink:0 so it never collapses when the form is tall.
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;padding:14px 20px 18px;background:var(--vscode-editorWidget-background,#252526);border-top:1px solid var(--vscode-editorWidget-border);';
 
 		// Delete (edit only)
 		if (isEdit && recordId) {
@@ -2132,6 +2253,8 @@ export class PatientChartEditor extends EditorPane {
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
 					this._formInputs.set(f.key, inp);
+				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search') {
+					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
@@ -2198,6 +2321,129 @@ export class PatientChartEditor extends EditorPane {
 				if (ctrl) { ctrl.addEventListener('change', applyVisibility); }
 			}
 			applyVisibility();
+		}
+	}
+
+	/**
+	 * Build a searchable dropdown that hits a lookup API, shows matching items,
+	 * and stores the selected value in this._formInputs (visible label in the
+	 * input; the underlying code/id stored in a hidden sibling we register as
+	 * the form input). Used for ICD/CPT/LOINC/CVX codes and practitioner pickers.
+	 */
+	private _buildSearchInput(cell: HTMLElement, f: FieldDef, currentValue: string, inputStyle: string): void {
+		const wrap = DOM.append(cell, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;';
+
+		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		input.type = 'text';
+		input.placeholder = f.placeholder || `Search ${f.label}...`;
+		input.style.cssText = inputStyle;
+		input.value = currentValue;
+
+		// Hidden field that gets registered with _formInputs so the saved value is the
+		// chosen code/id rather than free text — falls back to the typed text if nothing
+		// is picked.
+		const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		hidden.type = 'hidden';
+		hidden.value = currentValue;
+		this._formInputs.set(f.key, hidden);
+		// Keep hidden in sync with raw typing so non-selected codes/names still save.
+		input.addEventListener('input', () => { hidden.value = input.value; });
+
+		const dropdown = DOM.append(wrap, DOM.$('div'));
+		dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 8px rgba(0,0,0,0.3);z-index:10001;max-height:240px;overflow-y:auto;display:none;';
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const search = (q: string) => {
+			if (timer) { clearTimeout(timer); }
+			if (q.trim().length < 2) { dropdown.style.display = 'none'; return; }
+			timer = setTimeout(async () => {
+				try {
+					const url = this._buildSearchUrl(f, q.trim());
+					if (!url) { return; }
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { return; }
+					const data = await res.json();
+					const items = this._extractSearchItems(f, data);
+					DOM.clearNode(dropdown);
+					if (items.length === 0) {
+						const empty = DOM.append(dropdown, DOM.$('div'));
+						empty.textContent = 'No matches';
+						empty.style.cssText = 'padding:8px 12px;color:var(--vscode-descriptionForeground);font-size:12px;';
+					} else {
+						for (const it of items) {
+							const row = DOM.append(dropdown, DOM.$('div'));
+							row.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+							const codeEl = DOM.append(row, DOM.$('span'));
+							codeEl.textContent = it.code;
+							codeEl.style.cssText = 'font-weight:600;margin-right:6px;color:var(--vscode-textLink-foreground);';
+							const labelEl = DOM.append(row, DOM.$('span'));
+							labelEl.textContent = it.label;
+							labelEl.style.cssText = 'color:var(--vscode-foreground);';
+							row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+							row.addEventListener('mouseleave', () => { row.style.background = ''; });
+							row.addEventListener('click', () => {
+								input.value = `${it.code} - ${it.label}`;
+								hidden.value = it.code;
+								dropdown.style.display = 'none';
+							});
+						}
+					}
+					dropdown.style.display = 'block';
+				} catch { /* ignore */ }
+			}, 300);
+		};
+		input.addEventListener('input', () => search(input.value));
+		input.addEventListener('focus', () => { if (input.value.trim().length >= 2) { search(input.value); } });
+		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+	}
+
+	private _buildSearchUrl(f: FieldDef, q: string): string | null {
+		const enc = encodeURIComponent(q);
+		switch (f.type) {
+			case 'code-search': {
+				// ciyex-codes service: GET /api/codes/{system}/search?q=...&page=0&size=20
+				// system uses the CodeSystem enum (ICD10_CM, CPT, HCPCS, LOINC, CVX, ...).
+				const raw = (f.lookupConfig?.system || 'ICD10_CM').toUpperCase();
+				return `/api/codes/${raw}/search?q=${enc}&page=0&size=20`;
+			}
+			case 'practitioner-search':
+				return `/api/providers?search=${enc}&page=0&size=20`;
+			case 'patient-search':
+				return `/api/patients?search=${enc}&page=0&size=20`;
+			default:
+				return null;
+		}
+	}
+
+	private _extractSearchItems(f: FieldDef, payload: unknown): Array<{ code: string; label: string }> {
+		const data = (payload as Record<string, unknown>);
+		const list = (data?.data as Record<string, unknown>)?.content
+			|| (data?.data as unknown[])
+			|| (data?.content as unknown[])
+			|| (Array.isArray(payload) ? payload as unknown[] : []);
+		const arr = Array.isArray(list) ? list as Record<string, unknown>[] : [];
+		switch (f.type) {
+			case 'code-search':
+				// MedicalCode entity returns: { code, shortDescription, longDescription, ... }
+				return arr.map(it => ({
+					code: String(it.code || ''),
+					label: String(it.shortDescription || it.longDescription || it.description || ''),
+				})).filter(it => it.code);
+			case 'practitioner-search':
+				return arr.map(it => {
+					const fn = String((it as Record<string, unknown>)['identification.firstName'] || it.firstName || '');
+					const ln = String((it as Record<string, unknown>)['identification.lastName'] || it.lastName || '');
+					const name = `${fn} ${ln}`.trim() || String(it.name || it.fullName || it.username || '');
+					return { code: String(it.id || it.fhirId || ''), label: name };
+				}).filter(it => it.code);
+			case 'patient-search':
+				return arr.map(it => ({
+					code: String(it.id || it.fhirId || ''),
+					label: `${String(it.firstName || '')} ${String(it.lastName || '')}`.trim() || String(it.name || ''),
+				})).filter(it => it.code);
+			default:
+				return [];
 		}
 	}
 
