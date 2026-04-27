@@ -22,7 +22,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
-interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string }
+interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string }> }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
@@ -50,8 +50,27 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
 			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
 			{ key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals' },
-			{ key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'] },
-			{ key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'] },
+			{
+				key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'],
+				columns: [
+					{ key: 'allergyName', label: 'Allergen' },
+					{ key: 'reaction', label: 'Reaction' },
+					{ key: 'severity', label: 'Severity' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'startDate', label: 'Start Date' },
+				],
+			},
+			{
+				key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'],
+				columns: [
+					{ key: 'condition', label: 'Condition' },
+					{ key: 'icdCode', label: 'ICD-10 Code' },
+					{ key: 'severity', label: 'Severity' },
+					{ key: 'clinicalStatus', label: 'Status' },
+					{ key: 'onsetDate', label: 'Onset Date' },
+					{ key: 'resolvedDate', label: 'Resolved Date' },
+				],
+			},
 		],
 	},
 	{
@@ -71,20 +90,114 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 	},
 	{
 		key: 'clinical', label: 'Clinical', position: 3, tabs: [
-			{ key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/cds/alerts' },
-			{ key: 'medications', label: 'Medications', icon: 'Pill', emoji: '\u{1F48A}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['MedicationRequest'] },
-			{ key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'] },
-			{ key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Immunization'] },
-			{ key: 'procedures', label: 'Procedures', icon: 'Scissors', emoji: '\u{2702}\u{FE0F}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['Procedure'] },
-			{ key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'] },
+			{
+				key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/cds/alerts',
+				columns: [
+					{ key: 'alert', label: 'Alert' },
+					{ key: 'severity', label: 'Severity' },
+					{ key: 'identifiedDate', label: 'Identified Date' },
+					{ key: 'authorName', label: 'Author' },
+				],
+			},
+			{
+				key: 'medications', label: 'Medications', icon: 'Pill', emoji: '\u{1F48A}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['MedicationRequest'],
+				columns: [
+					{ key: 'medicationName', label: 'Medication Name' },
+					{ key: 'dosage', label: 'Dosage' },
+					{ key: 'frequency', label: 'Frequency' },
+					{ key: 'startDate', label: 'Start Date' },
+					{ key: 'prescriberName', label: 'Prescriber' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'],
+				columns: [
+					{ key: 'testName', label: 'Test Name' },
+					{ key: 'testCode', label: 'Test Code' },
+					{ key: 'collectionDate', label: 'Collection Date' },
+					{ key: 'resultDate', label: 'Result Date' },
+					{ key: 'providerName', label: 'Provider' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Immunization'],
+				columns: [
+					{ key: 'vaccineName', label: 'Vaccine' },
+					{ key: 'cvxCode', label: 'CVX Code' },
+					{ key: 'administeredDate', label: 'Date Administered' },
+					{ key: 'lotNumber', label: 'Lot Number' },
+					{ key: 'dose', label: 'Dose' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'procedures', label: 'Procedures', icon: 'Scissors', emoji: '\u{2702}\u{FE0F}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['Procedure'],
+				columns: [
+					{ key: 'procedureName', label: 'Procedure' },
+					{ key: 'cptCode', label: 'CPT Code' },
+					{ key: 'datePerformed', label: 'Date Performed' },
+					{ key: 'performerName', label: 'Performer' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
+				columns: [
+					{ key: 'relationship', label: 'Relationship' },
+					{ key: 'condition', label: 'Condition' },
+					{ key: 'ageOfOnset', label: 'Age of Onset' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'notes', label: 'Notes' },
+				],
+			},
 		],
 	},
 	{
 		key: 'encounters', label: 'Encounters', position: 4, tabs: [
-			{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', emoji: '\u{1F4CB}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Encounter'] },
-			{ key: 'appointments', label: 'Appointments', icon: 'Calendar', emoji: '\u{1F4C5}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Appointment'] },
-			{ key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
-			{ key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'] },
+			{
+				key: 'encounters', label: 'Encounters', icon: 'ClipboardList', emoji: '\u{1F4CB}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Encounter'],
+				columns: [
+					{ key: 'visitType', label: 'Visit Type' },
+					{ key: 'providerName', label: 'Provider' },
+					{ key: 'patientName', label: 'Patient' },
+					{ key: 'startDate', label: 'Start Date' },
+					{ key: 'endDate', label: 'End Date' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'appointments', label: 'Appointments', icon: 'Calendar', emoji: '\u{1F4C5}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Appointment'],
+				columns: [
+					{ key: 'appointmentType', label: 'Visit Type' },
+					{ key: 'start', label: 'Start' },
+					{ key: 'end', label: 'End' },
+					{ key: 'providerName', label: 'Provider' },
+					{ key: 'locationName', label: 'Location' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'],
+				columns: [
+					{ key: 'type', label: 'Note Type' },
+					{ key: 'date', label: 'Visit Date' },
+					{ key: 'authorName', label: 'Author' },
+					{ key: 'subject', label: 'Subject' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
+				columns: [
+					{ key: 'referralType', label: 'Referral Type' },
+					{ key: 'specialty', label: 'Specialty' },
+					{ key: 'referredTo', label: 'Referred To' },
+					{ key: 'date', label: 'Date' },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 		],
 	},
 	{
@@ -1456,34 +1569,100 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	private async _loadRecentActivity(parent: HTMLElement): Promise<void> {
-		interface ActivityItem { title: string; description: string; timestamp: string; status: string; emoji: string }
+		interface ActivityItem { title: string; description: string; timestamp: string; sortKey: number; status: string; emoji: string }
 		const acts: ActivityItem[] = [];
-		try {
-			const res = await this.apiService.fetch(`${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=5`);
-			if (res.ok) {
+
+		// Fetch the most recent N records from each resource in parallel.
+		// We merge them into a single timeline, sorted newest-first.
+		const sources: Array<{ ep: string; emoji: string; build: (it: Record<string, unknown>) => ActivityItem | null }> = [
+			{
+				ep: `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=5`,
+				emoji: '\u{1F4C5}',
+				build: (a) => ({
+					title: `Appointment: ${String(a.visitType || a.appointmentType || 'Visit')}`,
+					description: String(a.appointmentStartTime || this._formatDate(a.appointmentStartDate) || ''),
+					timestamp: this._formatDate(a.appointmentStartDate) || '',
+					sortKey: this._toEpoch(a.appointmentStartDate),
+					status: String(a.status || 'scheduled'),
+					emoji: '\u{1F4C5}',
+				}),
+			},
+			{
+				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=5`,
+				emoji: '\u{1F4CB}',
+				build: (e) => ({
+					title: `Encounter: ${String(e.visitType || e.type || 'Visit')}`,
+					description: String(e.providerName || e.practitionerName || ''),
+					timestamp: this._formatDate(e.startDate || e.start) || '',
+					sortKey: this._toEpoch(e.startDate || e.start),
+					status: String(e.status || ''),
+					emoji: '\u{1F4CB}',
+				}),
+			},
+			{
+				ep: `${FHIR_MAP['AllergyIntolerance']}/patient/${this.patientId}?page=0&size=5`,
+				emoji: '\u{1F6A8}',
+				build: (a) => ({
+					title: `Allergy: ${String(a.allergyName || '')}`,
+					description: String(a.reaction || a.severity || ''),
+					timestamp: this._formatDate(a.startDate || a.recordedDate) || '',
+					sortKey: this._toEpoch(a.startDate || a.recordedDate),
+					status: String(a.status || 'active'),
+					emoji: '\u{1F6A8}',
+				}),
+			},
+			{
+				ep: `${FHIR_MAP['Condition']}/patient/${this.patientId}?page=0&size=5`,
+				emoji: '\u{26A0}\u{FE0F}',
+				build: (c) => ({
+					title: `Problem: ${String(c.condition || c.code || '')}`,
+					description: String(c.severity || ''),
+					timestamp: this._formatDate(c.onsetDate || c.recordedDate) || '',
+					sortKey: this._toEpoch(c.onsetDate || c.recordedDate),
+					status: String(c.clinicalStatus || c.status || ''),
+					emoji: '\u{26A0}\u{FE0F}',
+				}),
+			},
+			{
+				ep: `${FHIR_MAP['MedicationRequest']}/patient/${this.patientId}?page=0&size=5`,
+				emoji: '\u{1F48A}',
+				build: (m) => ({
+					title: `Medication: ${String(m.medicationName || '')}`,
+					description: String(m.dosage || ''),
+					timestamp: this._formatDate(m.startDate || m.authoredOn) || '',
+					sortKey: this._toEpoch(m.startDate || m.authoredOn),
+					status: String(m.status || ''),
+					emoji: '\u{1F48A}',
+				}),
+			},
+		];
+
+		await Promise.all(sources.map(async (src) => {
+			try {
+				const res = await this.apiService.fetch(src.ep);
+				if (!res.ok) { return; }
 				const json = await res.json();
-				const items = json?.data?.content || json?.content || [];
-				for (const a of items) {
-					acts.push({
-						title: `Appointment: ${a.visitType || a.appointmentType || 'Visit'}`,
-						description: `With Provider at ${a.appointmentStartTime || this._formatDate(a.appointmentStartDate) || ''}`,
-						timestamp: this._formatDate(a.appointmentStartDate) || '',
-						status: String(a.status || 'scheduled'),
-						emoji: '\u{1F4C5}',
-					});
+				const items = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+				for (const it of items) {
+					const act = src.build(it);
+					if (act && act.title.trim()) { acts.push(act); }
 				}
-			}
-		} catch { /* */ }
+			} catch { /* ignore source */ }
+		}));
+
+		// Newest first; up to 8 rows.
+		acts.sort((a, b) => b.sortKey - a.sortKey);
+		const top = acts.slice(0, 8);
 
 		DOM.clearNode(parent);
-		if (acts.length === 0) {
+		if (top.length === 0) {
 			const empty = DOM.append(parent, DOM.$('div'));
 			empty.textContent = 'No recent activity';
 			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
 			return;
 		}
 
-		for (const act of acts) {
+		for (const act of top) {
 			const row = DOM.append(parent, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);';
 
@@ -2050,6 +2229,28 @@ export class PatientChartEditor extends EditorPane {
 		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
 		saveBtn.disabled = dialogInputs.size === 0;
 		saveBtn.addEventListener('click', async () => {
+			// Validate required fields against the field config so the form catches
+			// the "negative test cases" the test team flagged (empty / whitespace-only
+			// inputs in required columns).
+			const requiredKeys: Array<{ key: string; label: string }> = [];
+			for (const sec of (config?.sections || [])) {
+				for (const f of (sec.fields || [])) {
+					if (f.required) { requiredKeys.push({ key: f.key, label: f.label }); }
+				}
+			}
+			const missing: string[] = [];
+			for (const r of requiredKeys) {
+				const el = dialogInputs.get(r.key);
+				if (!el) { continue; }
+				if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { continue; }
+				const v = String(el.value ?? '').trim();
+				if (!v) { missing.push(r.label); }
+			}
+			if (missing.length > 0) {
+				this.notificationService.warn(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`);
+				return;
+			}
+
 			const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
 			// FHIR endpoints take patientId from the URL path, not the body.
 			// apiPath endpoints (e.g. /api/cds/alerts) still need patientId in the body.
@@ -2453,27 +2654,35 @@ export class PatientChartEditor extends EditorPane {
 		const sample = data[0] || {};
 		const allKeys = Object.keys(sample);
 
-		const priorityKeys = ['start', 'date', 'period', 'effectiveDateTime', 'recordedDate', 'authoredOn',
-			'appointmentType', 'type', 'visitType', 'class', 'serviceType', 'code', 'medicationCodeableConcept',
-			'providerName', 'providerDisplay', 'practitionerName', 'patientName', 'patientDisplay',
-			'status', 'clinicalStatus', 'verificationStatus', 'category', 'severity', 'criticality',
-			'reason', 'note', 'description', 'text'];
+		// Honor explicit per-tab column override when provided. Otherwise auto-pick
+		// up to 6 priority keys from the record sample.
+		let usedKeys: string[];
+		let cols: string[];
+		if (tab.columns && tab.columns.length > 0) {
+			usedKeys = tab.columns.map(c => c.key);
+			cols = tab.columns.map(c => c.label);
+		} else {
+			const priorityKeys = ['start', 'date', 'period', 'effectiveDateTime', 'recordedDate', 'authoredOn',
+				'appointmentType', 'type', 'visitType', 'class', 'serviceType', 'code', 'medicationCodeableConcept',
+				'providerName', 'providerDisplay', 'practitionerName', 'patientName', 'patientDisplay',
+				'status', 'clinicalStatus', 'verificationStatus', 'category', 'severity', 'criticality',
+				'reason', 'note', 'description', 'text'];
 
-		const usedKeys: string[] = [];
-		for (const pk of priorityKeys) {
-			if (allKeys.includes(pk) && usedKeys.length < 6) { usedKeys.push(pk); }
-		}
-		for (const k of allKeys) {
-			if (usedKeys.length >= 6) { break; }
-			if (!usedKeys.includes(k) && !k.startsWith('_') && k !== 'id' && k !== 'fhirId' && k !== 'patient' && k !== 'provider' && k !== 'location') {
-				usedKeys.push(k);
+			usedKeys = [];
+			for (const pk of priorityKeys) {
+				if (allKeys.includes(pk) && usedKeys.length < 6) { usedKeys.push(pk); }
 			}
-		}
-
-		const cols = usedKeys.map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()));
-		// Rename "Abatement" -> "Resolved Date" so the Problems table matches the spec.
-		for (let i = 0; i < cols.length; i++) {
-			if (/^abatement/i.test(cols[i])) { cols[i] = 'Resolved Date'; }
+			for (const k of allKeys) {
+				if (usedKeys.length >= 6) { break; }
+				if (!usedKeys.includes(k) && !k.startsWith('_') && k !== 'id' && k !== 'fhirId' && k !== 'patient' && k !== 'provider' && k !== 'location') {
+					usedKeys.push(k);
+				}
+			}
+			cols = usedKeys.map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()));
+			// Rename "Abatement" -> "Resolved Date" so the Problems table matches the spec.
+			for (let i = 0; i < cols.length; i++) {
+				if (/^abatement/i.test(cols[i])) { cols[i] = 'Resolved Date'; }
+			}
 		}
 		cols.push('Actions');
 
@@ -2628,6 +2837,20 @@ export class PatientChartEditor extends EditorPane {
 		}
 		try { return new Date(String(raw)).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); }
 		catch { return String(raw); }
+	}
+
+	/** Convert a date value (string/number/array) to a sortable epoch ms. */
+	private _toEpoch(raw: unknown): number {
+		if (!raw) { return 0; }
+		if (Array.isArray(raw)) {
+			const [y, m, d] = raw;
+			if (typeof y === 'number' && typeof m === 'number' && typeof d === 'number') {
+				return new Date(y, m - 1, d).getTime();
+			}
+			return 0;
+		}
+		const t = new Date(String(raw)).getTime();
+		return isNaN(t) ? 0 : t;
 	}
 
 	private _calculateAge(raw: unknown): string {
