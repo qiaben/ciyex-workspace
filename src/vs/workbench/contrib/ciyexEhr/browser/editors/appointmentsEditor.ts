@@ -420,7 +420,7 @@ export class AppointmentsEditor extends EditorPane {
 			if (this.typeFilter) {
 				const tf = this.typeFilter.trim().toLowerCase();
 				const vt = String(r.visitType || '').trim().toLowerCase();
-				const at = String((r as Record<string, unknown>).appointmentType || '').trim().toLowerCase();
+				const at = String((r as unknown as Record<string, unknown>).appointmentType || '').trim().toLowerCase();
 				if (vt !== tf && at !== tf && !vt.includes(tf) && !at.includes(tf)) { return false; }
 			}
 			return true;
