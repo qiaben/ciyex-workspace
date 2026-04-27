@@ -417,20 +417,97 @@ body.ehr-on-calendar .editor-actions {
 	background: transparent !important;
 }
 
-/* --- Patient chart: hide native scrollbars across all scrollable areas. --- */
+/* --- Hide native scrollbars across every Ciyex EHR contribution.
+ * Covers all custom editors (patient chart, calendar, appointments, encounter
+ * form, settings, config list) and contribution panes (templates, reports,
+ * channel list, access requests, etc.). `scrollbar-width:none` for Firefox;
+ * `::-webkit-scrollbar` for Chromium-based runtimes (Electron / desktop).
+ * Scrolling still works — only the bars are hidden. --- */
 .ciyex-patient-chart,
-.ciyex-patient-chart .chart-sidebar,
-.ciyex-patient-chart .chart-main,
-.ciyex-patient-chart .chart-body,
-.ciyex-patient-chart * {
+.ciyex-calendar-editor,
+.ciyex-encounter-form,
+.ciyex-config-list,
+.ciyex-settings-editor,
+.appointments-editor,
+.tasks-editor,
+.kiosk-editor,
+.messaging-editor,
+.reports-editor,
+.notifications-editor,
+.templates-pane,
+.reports-pane,
+.channel-list-pane,
+.access-request-pane,
+.clinical-menu-pane,
+.clinical-list-editor,
+.ehr-overlay,
+.schedule-sidebar,
+.ehr-search-dropdown,
+.ehr-patient-dropdown,
+.ciyex-patient-chart *,
+.ciyex-calendar-editor *,
+.ciyex-encounter-form *,
+.ciyex-config-list *,
+.ciyex-settings-editor *,
+.appointments-editor *,
+.tasks-editor *,
+.kiosk-editor *,
+.messaging-editor *,
+.reports-editor *,
+.notifications-editor *,
+.templates-pane *,
+.reports-pane *,
+.channel-list-pane *,
+.access-request-pane *,
+.clinical-menu-pane *,
+.clinical-list-editor *,
+.ehr-overlay *,
+.schedule-sidebar * {
 	scrollbar-width: none;
+	-ms-overflow-style: none;
 }
 .ciyex-patient-chart::-webkit-scrollbar,
-.ciyex-patient-chart .chart-sidebar::-webkit-scrollbar,
-.ciyex-patient-chart .chart-main::-webkit-scrollbar,
-.ciyex-patient-chart .chart-body::-webkit-scrollbar,
-.ciyex-patient-chart *::-webkit-scrollbar {
-	display: none;
-	width: 0;
-	height: 0;
+.ciyex-calendar-editor::-webkit-scrollbar,
+.ciyex-encounter-form::-webkit-scrollbar,
+.ciyex-config-list::-webkit-scrollbar,
+.ciyex-settings-editor::-webkit-scrollbar,
+.appointments-editor::-webkit-scrollbar,
+.tasks-editor::-webkit-scrollbar,
+.kiosk-editor::-webkit-scrollbar,
+.messaging-editor::-webkit-scrollbar,
+.reports-editor::-webkit-scrollbar,
+.notifications-editor::-webkit-scrollbar,
+.templates-pane::-webkit-scrollbar,
+.reports-pane::-webkit-scrollbar,
+.channel-list-pane::-webkit-scrollbar,
+.access-request-pane::-webkit-scrollbar,
+.clinical-menu-pane::-webkit-scrollbar,
+.clinical-list-editor::-webkit-scrollbar,
+.ehr-overlay::-webkit-scrollbar,
+.schedule-sidebar::-webkit-scrollbar,
+.ehr-search-dropdown::-webkit-scrollbar,
+.ehr-patient-dropdown::-webkit-scrollbar,
+.ciyex-patient-chart *::-webkit-scrollbar,
+.ciyex-calendar-editor *::-webkit-scrollbar,
+.ciyex-encounter-form *::-webkit-scrollbar,
+.ciyex-config-list *::-webkit-scrollbar,
+.ciyex-settings-editor *::-webkit-scrollbar,
+.appointments-editor *::-webkit-scrollbar,
+.tasks-editor *::-webkit-scrollbar,
+.kiosk-editor *::-webkit-scrollbar,
+.messaging-editor *::-webkit-scrollbar,
+.reports-editor *::-webkit-scrollbar,
+.notifications-editor *::-webkit-scrollbar,
+.templates-pane *::-webkit-scrollbar,
+.reports-pane *::-webkit-scrollbar,
+.channel-list-pane *::-webkit-scrollbar,
+.access-request-pane *::-webkit-scrollbar,
+.clinical-menu-pane *::-webkit-scrollbar,
+.clinical-list-editor *::-webkit-scrollbar,
+.ehr-overlay *::-webkit-scrollbar,
+.schedule-sidebar *::-webkit-scrollbar {
+	display: none !important;
+	width: 0 !important;
+	height: 0 !important;
+	background: transparent !important;
 }
