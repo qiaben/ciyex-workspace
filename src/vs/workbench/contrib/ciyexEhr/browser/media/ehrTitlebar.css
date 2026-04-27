@@ -416,3 +416,21 @@ body.ehr-on-calendar .editor-actions {
 	display: none !important;
 	background: transparent !important;
 }
+
+/* --- Patient chart: hide native scrollbars across all scrollable areas. --- */
+.ciyex-patient-chart,
+.ciyex-patient-chart .chart-sidebar,
+.ciyex-patient-chart .chart-main,
+.ciyex-patient-chart .chart-body,
+.ciyex-patient-chart * {
+	scrollbar-width: none;
+}
+.ciyex-patient-chart::-webkit-scrollbar,
+.ciyex-patient-chart .chart-sidebar::-webkit-scrollbar,
+.ciyex-patient-chart .chart-main::-webkit-scrollbar,
+.ciyex-patient-chart .chart-body::-webkit-scrollbar,
+.ciyex-patient-chart *::-webkit-scrollbar {
+	display: none;
+	width: 0;
+	height: 0;
+}

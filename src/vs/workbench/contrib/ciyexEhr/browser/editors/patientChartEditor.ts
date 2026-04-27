@@ -41,8 +41,8 @@ const FHIR_MAP: Record<string, string> = {
 	'RelatedPerson': '/api/fhir-resource/related-persons', 'Organization': '/api/fhir-resource/organizations',
 };
 
-// Default chart layout matching the screenshots. Merged with user's chart-layout.json
-// so admins can still customize; defaults fill any gaps.
+// Default chart layout. Order is fixed per the test team spec:
+// Overview, Portal, General, Clinical, Encounters, Claims, Financial, Others.
 const DEFAULT_CATEGORIES: ChartCategory[] = [
 	{
 		key: 'overview', label: 'Overview', position: 0, tabs: [
@@ -55,7 +55,22 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		],
 	},
 	{
-		key: 'clinical', label: 'Clinical', position: 1, tabs: [
+		key: 'portal', label: 'Portal', position: 1, tabs: [
+			{ key: 'portal-demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		],
+	},
+	{
+		key: 'general', label: 'General', position: 2, tabs: [
+			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
+			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
+			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/patient-messages' },
+			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
+			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/locations' },
+		],
+	},
+	{
+		key: 'clinical', label: 'Clinical', position: 3, tabs: [
 			{ key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/cds/alerts' },
 			{ key: 'medications', label: 'Medications', icon: 'Pill', emoji: '\u{1F48A}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['MedicationRequest'] },
 			{ key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'] },
@@ -65,7 +80,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		],
 	},
 	{
-		key: 'encounters', label: 'Encounters', position: 2, tabs: [
+		key: 'encounters', label: 'Encounters', position: 4, tabs: [
 			{ key: 'encounters', label: 'Encounters', icon: 'ClipboardList', emoji: '\u{1F4CB}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Encounter'] },
 			{ key: 'appointments', label: 'Appointments', icon: 'Calendar', emoji: '\u{1F4C5}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Appointment'] },
 			{ key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
@@ -73,7 +88,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		],
 	},
 	{
-		key: 'billing', label: 'Billing', position: 3, tabs: [
+		key: 'claims', label: 'Claims', position: 5, tabs: [
 			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
@@ -83,30 +98,15 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		],
 	},
 	{
-		key: 'financial', label: 'Financial', position: 4, tabs: [
+		key: 'financial', label: 'Financial', position: 6, tabs: [
 			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/ledger' },
 			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/plans' },
 		],
 	},
 	{
-		key: 'other', label: 'Other', position: 5, tabs: [
+		key: 'others', label: 'Others', position: 7, tabs: [
 			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
 			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-		],
-	},
-	{
-		key: 'portal', label: 'Portal', position: 6, tabs: [
-			{ key: 'portal-demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-		],
-	},
-	{
-		key: 'general', label: 'General', position: 7, tabs: [
-			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
-			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
-			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
-			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/patient-messages' },
-			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
-			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/locations' },
 		],
 	},
 ];
@@ -595,6 +595,78 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	appointments: {
+		tabKey: 'appointments',
+		sections: [
+			{
+				key: 'appt', title: 'Appointment Details', columns: 2, visible: true, collapsible: false, fields: [
+					{
+						key: 'appointmentType', label: 'Visit Type', type: 'select', required: true, options: [
+							{ label: 'Consultation', value: 'Consultation' },
+							{ label: 'New Patient', value: 'New Patient' },
+							{ label: 'Follow-Up', value: 'Follow-Up' },
+							{ label: 'Annual Physical', value: 'Annual Physical' },
+							{ label: 'Sick Visit', value: 'Sick Visit' },
+							{ label: 'Telehealth', value: 'Telehealth' },
+							{ label: 'Procedure', value: 'Procedure' },
+							{ label: 'Lab Work', value: 'Lab Work' },
+						]
+					},
+					{
+						key: 'priority', label: 'Priority', type: 'select', options: [
+							{ label: 'Routine', value: 'Routine' },
+							{ label: 'Urgent', value: 'Urgent' },
+						]
+					},
+					{ key: 'start', label: 'Start Date/Time', type: 'datetime', required: true },
+					{ key: 'end', label: 'End Date/Time', type: 'datetime', required: true },
+					{ key: 'providerId', label: 'Provider', type: 'text', placeholder: 'Search Provider', required: true },
+					{ key: 'locationId', label: 'Location', type: 'text', placeholder: 'Search Location', required: true },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Scheduled', value: 'Scheduled' },
+							{ label: 'Confirmed', value: 'Confirmed' },
+							{ label: 'Checked-in', value: 'Checked-in' },
+							{ label: 'Completed', value: 'Completed' },
+							{ label: 'Re-Scheduled', value: 'Re-Scheduled' },
+							{ label: 'No Show', value: 'No Show' },
+							{ label: 'Cancelled', value: 'Cancelled' },
+						]
+					},
+					{ key: 'reason', label: 'Reason / Chief Complaint', type: 'textarea', colSpan: 2, placeholder: 'e.g., chest discomfort for 2 days' },
+				],
+			},
+		],
+	},
+	'visit-notes': {
+		tabKey: 'visit-notes',
+		sections: [
+			{
+				key: 'note', title: 'Visit Note', columns: 2, visible: true, collapsible: false, fields: [
+					{
+						key: 'type', label: 'Note Type', type: 'select', required: true, options: [
+							{ label: 'Progress Note', value: 'progress-note' },
+							{ label: 'Consult Note', value: 'consult-note' },
+							{ label: 'Discharge Summary', value: 'discharge-summary' },
+							{ label: 'History & Physical', value: 'history-and-physical' },
+							{ label: 'Procedure Note', value: 'procedure-note' },
+						]
+					},
+					{ key: 'date', label: 'Visit Date', type: 'date', required: true },
+					{ key: 'authorName', label: 'Author', type: 'text', placeholder: 'Search Author' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Current', value: 'current' },
+							{ label: 'Superseded', value: 'superseded' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+						]
+					},
+					{ key: 'subject', label: 'Subject / Title', type: 'text', colSpan: 2, placeholder: 'Brief subject line' },
+					{ key: 'content', label: 'Note Content', type: 'textarea', colSpan: 2, placeholder: 'Enter the visit note...' },
+				],
+			},
+		],
+	},
 	facility: {
 		tabKey: 'facility',
 		sections: [
@@ -655,6 +727,8 @@ export class PatientChartEditor extends EditorPane {
 	private readonly _configHome: URI;
 	private readonly _tabDataCache = new Map<string, { config: FieldConfig | null; data: Record<string, unknown>[] }>();
 	private readonly _tabNavMap = new Map<string, HTMLElement>();
+	private readonly _tabCountEls = new Map<string, HTMLElement>();
+	private readonly _tabCounts = new Map<string, number>();
 	private readonly _quickInfoValEls = new Map<string, HTMLElement>();
 
 	constructor(
@@ -687,10 +761,10 @@ export class PatientChartEditor extends EditorPane {
 		body.style.cssText = 'flex:1;display:flex;overflow:hidden;min-height:0;';
 
 		this.sidebarEl = DOM.append(body, DOM.$('.chart-sidebar'));
-		this.sidebarEl.style.cssText = 'width:240px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background, var(--vscode-editor-background));';
+		this.sidebarEl.style.cssText = 'width:240px;flex-shrink:0;overflow-y:auto;scrollbar-width:none;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background, var(--vscode-editor-background));';
 
 		this.mainEl = DOM.append(body, DOM.$('.chart-main'));
-		this.mainEl.style.cssText = 'flex:1;min-width:0;overflow-y:auto;padding:20px 24px;';
+		this.mainEl.style.cssText = 'flex:1;min-width:0;overflow-y:auto;scrollbar-width:none;padding:20px 24px;';
 	}
 
 	override async setInput(input: PatientChartEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -994,6 +1068,7 @@ export class PatientChartEditor extends EditorPane {
 	private _renderSidebar(): void {
 		DOM.clearNode(this.sidebarEl);
 		this._tabNavMap.clear();
+		this._tabCountEls.clear();
 		this._quickInfoValEls.clear();
 
 		// CHART heading with collapse button
@@ -1051,6 +1126,14 @@ export class PatientChartEditor extends EditorPane {
 				lbl.textContent = tab.label;
 				lbl.style.cssText = 'flex:1;';
 
+				// Record count badge — populated by _refreshTabCounts()
+				const cnt = DOM.append(item, DOM.$('span'));
+				const cached = this._tabCounts.get(tab.key);
+				cnt.textContent = cached !== undefined && cached > 0 ? String(cached) : '';
+				cnt.style.cssText = 'font-size:10px;font-weight:600;min-width:18px;height:16px;padding:0 5px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
+				cnt.style.visibility = cnt.textContent ? 'visible' : 'hidden';
+				this._tabCountEls.set(tab.key, cnt);
+
 				item.addEventListener('mouseenter', () => {
 					if (this.activeTab !== tab.key) { item.style.background = 'var(--vscode-list-hoverBackground)'; }
 				});
@@ -1062,6 +1145,56 @@ export class PatientChartEditor extends EditorPane {
 			}
 		}
 		this._highlightActiveTab();
+		// Kick off background count fetch (non-blocking)
+		this._refreshTabCounts();
+	}
+
+	/** Fetch record counts for every list-style tab and update the sidebar badges. */
+	private async _refreshTabCounts(): Promise<void> {
+		const fetches: Array<Promise<void>> = [];
+		for (const cat of this.categories) {
+			for (const tab of cat.tabs) {
+				if (tab.display === 'form' || tab.display === 'custom') { continue; }
+				const ep = this._tabEndpoint(tab);
+				if (!ep) { continue; }
+				const url = this._buildCountUrl(tab, ep);
+				if (!url) { continue; }
+				fetches.push((async () => {
+					try {
+						const res = await this.apiService.fetch(url);
+						if (!res.ok) { return; }
+						const json = await res.json();
+						const total = json?.data?.totalElements ?? json?.totalElements
+							?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
+						const count = typeof total === 'number' ? total : 0;
+						this._tabCounts.set(tab.key, count);
+						const el = this._tabCountEls.get(tab.key);
+						if (el) {
+							el.textContent = count > 0 ? String(count) : '';
+							el.style.visibility = count > 0 ? 'visible' : 'hidden';
+						}
+					} catch { /* ignore */ }
+				})());
+			}
+		}
+		await Promise.all(fetches);
+	}
+
+	/** Mirror the URL shape used by _loadTabData so counts match what the list shows. */
+	private _buildCountUrl(tab: ChartTab, ep: string): string | null {
+		if (tab.apiPath) {
+			if (tab.apiPath.includes('{patientId}')) {
+				const base = tab.apiPath.replace('{patientId}', this.patientId);
+				return base + (base.includes('?') ? '&' : '?') + 'page=0&size=1';
+			}
+			if (this._isPatientScoped(tab)) {
+				const [base, query] = tab.apiPath.split('?');
+				return `${base}/patient/${this.patientId}${query ? `?${query}&page=0&size=1` : '?page=0&size=1'}`;
+			}
+			return tab.apiPath + (tab.apiPath.includes('?') ? '&' : '?') + 'page=0&size=1';
+		}
+		// FHIR resource path: /api/fhir-resource/<plural>/patient/{id}
+		return `${ep}/patient/${this.patientId}?page=0&size=1`;
 	}
 
 	private _renderQuickInfoRow(parent: HTMLElement, key: string, icon: string, label: string, value: string): void {
@@ -1844,6 +1977,7 @@ export class PatientChartEditor extends EditorPane {
 					DOM.getActiveWindow().setTimeout(() => { void refresh(); }, 1500);
 
 					void this._loadQuickInfo();
+					void this._refreshTabCounts();
 				} else {
 					const err = await res.text().catch(() => 'Unknown error');
 					this.notificationService.error(`Save failed: ${err.substring(0, 200)}`);
@@ -2010,6 +2144,36 @@ export class PatientChartEditor extends EditorPane {
 			}
 		}
 
+		// Vitals: auto-calculate BMI = weight(kg) / (height(m))^2 whenever weight or height changes.
+		const weightInput = this._formInputs.get('weightKg') as HTMLInputElement | undefined;
+		const heightInput = this._formInputs.get('heightCm') as HTMLInputElement | undefined;
+		const bmiInput = this._formInputs.get('bmi') as HTMLInputElement | undefined;
+		if (weightInput && heightInput && bmiInput) {
+			bmiInput.readOnly = true;
+			bmiInput.style.background = 'rgba(128,128,128,0.06)';
+			bmiInput.placeholder = 'Auto-calculated';
+			const recalc = () => {
+				const w = parseFloat(weightInput.value);
+				const hCm = parseFloat(heightInput.value);
+				if (!isNaN(w) && !isNaN(hCm) && hCm > 0) {
+					const m = hCm / 100;
+					bmiInput.value = (w / (m * m)).toFixed(1);
+				} else {
+					bmiInput.value = '';
+				}
+			};
+			weightInput.addEventListener('input', recalc);
+			heightInput.addEventListener('input', recalc);
+			// Run once on render so editing an existing record refreshes a stale BMI.
+			recalc();
+		}
+
+		// Clinical Alerts: default the Identified Date to today on a fresh form.
+		const identifiedInput = this._formInputs.get('identifiedDate') as HTMLInputElement | undefined;
+		if (identifiedInput && identifiedInput.type === 'date' && !identifiedInput.value) {
+			identifiedInput.value = new Date().toISOString().slice(0, 10);
+		}
+
 		// Apply showWhen conditions and attach listeners to controlling fields
 		if (conditionalFields.length > 0) {
 			const applyVisibility = () => {
@@ -2061,7 +2225,13 @@ export class PatientChartEditor extends EditorPane {
 		}
 
 		const cols = usedKeys.map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()));
-		cols.push(''); // Actions column
+		// Rename "Abatement" -> "Resolved Date" so the Problems table matches the spec.
+		for (let i = 0; i < cols.length; i++) {
+			if (/^abatement/i.test(cols[i])) { cols[i] = 'Resolved Date'; }
+		}
+		cols.push('Actions');
+
+		const isEncounter = tab.fhirResources.includes('Encounter');
 
 		const rows = data.slice(0, 50).map(item => {
 			const cells = usedKeys.map(k => {
@@ -2072,15 +2242,13 @@ export class PatientChartEditor extends EditorPane {
 					return String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || '');
 				}
 				if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
-					try { return new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { /* */ }
+					try { return new Date(v).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { /* */ }
 				}
 				return String(v).substring(0, 40);
 			});
-			// Pencil icon as final cell — clicking the row (or the pencil) opens the dialog
-			// allow-any-unicode-next-line
-			cells.push('✏️ Edit');
+			// Final cell text is set by _table when onDelete is provided.
+			cells.push('');
 
-			const isEncounter = tab.fhirResources.includes('Encounter');
 			const onClick = isEncounter
 				? () => {
 					const id = String(item.id || item.fhirId || '');
@@ -2088,15 +2256,46 @@ export class PatientChartEditor extends EditorPane {
 				}
 				: () => this._openRecordDialog(tab, config, item);
 
-			return { cells, onClick };
+			const recordId = String(item.id || item.fhirId || '');
+			const onDelete = isEncounter || !recordId
+				? undefined
+				: () => this._deleteListRecord(tab, recordId);
+
+			return { cells, onClick, onDelete };
 		});
 
 		this._table(c, cols, rows);
 	}
 
-	private _table(container: HTMLElement, columns: string[], rows: Array<{ cells: string[]; onClick?: () => void }>): void {
+	/** Delete a record from a list tab, then refresh the view + counts + Quick Info. */
+	private async _deleteListRecord(tab: ChartTab, recordId: string): Promise<void> {
+		const ok = DOM.getActiveWindow().confirm(`Delete this ${tab.label.toLowerCase()} record?`);
+		if (!ok) { return; }
+		try {
+			const ep = (this._tabEndpoint(tab) || '').split('?')[0];
+			if (!ep) { return; }
+			const url = tab.key === 'vitals'
+				? `${ep}/patient/${this.patientId}/${recordId}`
+				: `${ep}/${recordId}`;
+			const res = await this.apiService.fetch(url, { method: 'DELETE' });
+			if (res.ok) {
+				this.notificationService.info(`${tab.label} record deleted`);
+				this._tabDataCache.delete(tab.key);
+				this._renderMain();
+				void this._loadQuickInfo();
+				void this._refreshTabCounts();
+			} else {
+				const err = await res.text().catch(() => 'Unknown error');
+				this.notificationService.error(`Delete failed: ${err.substring(0, 200)}`);
+			}
+		} catch (e) {
+			this.notificationService.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	private _table(container: HTMLElement, columns: string[], rows: Array<{ cells: string[]; onClick?: () => void; onDelete?: () => void }>): void {
 		const wrap = DOM.append(container, DOM.$('div'));
-		wrap.style.cssText = 'overflow-x:auto;';
+		wrap.style.cssText = 'overflow-x:auto;scrollbar-width:none;';
 		const table = DOM.append(wrap, DOM.$('table'));
 		table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
 
@@ -2109,18 +2308,50 @@ export class PatientChartEditor extends EditorPane {
 		}
 
 		const tbody = DOM.append(table, DOM.$('tbody'));
+		const lastCol = columns.length - 1;
+		const lastIsActions = columns[lastCol] === 'Actions';
+
 		for (const row of rows) {
 			const tr = DOM.append(tbody, DOM.$('tr'));
 			tr.style.cssText = `cursor:${row.onClick ? 'pointer' : 'default'};`;
 			tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--vscode-list-hoverBackground)'; });
 			tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
-			if (row.onClick) { tr.addEventListener('click', row.onClick); }
+			if (row.onClick) {
+				tr.addEventListener('click', (e) => {
+					// Don't bubble through Action buttons
+					if ((e.target as HTMLElement).closest?.('.row-action')) { return; }
+					row.onClick!();
+				});
+			}
 
 			for (let i = 0; i < row.cells.length; i++) {
 				const td = DOM.append(tr, DOM.$('td'));
 				td.style.cssText = 'padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.08);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;';
 
-				if (i === row.cells.length - 1 && columns[i] === 'Status') {
+				const isActionsCell = lastIsActions && i === lastCol;
+				if (isActionsCell) {
+					td.style.maxWidth = 'none';
+					td.style.textOverflow = 'clip';
+					const wrap = DOM.append(td, DOM.$('div.row-action'));
+					wrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+					if (row.onClick) {
+						const editBtn = DOM.append(wrap, DOM.$('button'));
+						editBtn.title = 'Edit';
+						// allow-any-unicode-next-line
+						editBtn.textContent = '✏️';
+						editBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:14px;padding:2px 4px;border-radius:3px;';
+						editBtn.addEventListener('click', (e) => { e.stopPropagation(); row.onClick!(); });
+					}
+					if (row.onDelete) {
+						const delBtn = DOM.append(wrap, DOM.$('button'));
+						delBtn.title = 'Delete';
+						// allow-any-unicode-next-line
+						delBtn.textContent = '🗑️';
+						delBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:14px;padding:2px 4px;border-radius:3px;color:#ef4444;';
+						delBtn.addEventListener('click', (e) => { e.stopPropagation(); row.onDelete!(); });
+					}
+				} else if (columns[i] === 'Status') {
 					const badge = DOM.append(td, DOM.$('span'));
 					badge.textContent = row.cells[i];
 					badge.style.cssText = 'font-size:10px;padding:2px 7px;border-radius:3px;background:rgba(59,130,246,0.12);color:#3b82f6;text-transform:capitalize;';
