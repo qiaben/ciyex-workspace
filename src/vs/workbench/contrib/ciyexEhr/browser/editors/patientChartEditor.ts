@@ -22,7 +22,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
-interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string }> }
+interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string }>; readOnly?: boolean }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
@@ -206,20 +206,20 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
 			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
-			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
-			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/transactions' },
+			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'], readOnly: true },
+			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/transactions', readOnly: true },
 		],
 	},
 	{
 		key: 'financial', label: 'Financial', position: 6, tabs: [
-			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/ledger' },
-			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/plans' },
+			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/ledger', readOnly: true },
+			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/plans', readOnly: true },
 		],
 	},
 	{
 		key: 'others', label: 'Others', position: 7, tabs: [
-			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
-			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
+			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
 		],
 	},
 ];
@@ -1066,23 +1066,27 @@ export class PatientChartEditor extends EditorPane {
 	// and looks up tab_field_config by tabKey to resolve the FHIR resource type for
 	// scope enforcement. If our key differs from the backend's, write/scope checks fail.
 	private static readonly TAB_API_SLUG: Record<string, string> = {
-		// Workspace conventions → backend tab_field_config.tab_key
-		'problems': 'medicalproblems',
-		'appointments': 'appointment-detail',
+		// Workspace tab.key → backend tab_field_config.tab_key.
+		// Verified against ciyex/src/main/resources/db/migration/V17,V19,V42,V107.
+		// Removed wrong mappings that caused "Cannot determine resource type" save errors:
+		//   appointments → was 'appointment-detail' (backend has 'appointments')
+		//   visit-notes  → was 'clinical-notes'    (backend has 'visit-notes')
+		//   problems     → was 'medicalproblems'   (backend has 'problem-list')
+		// Identity mappings are no-ops; only list real overrides.
+		'problems': 'problem-list',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
-		'visit-notes': 'clinical-notes',
-		'facility': 'facilities',
+		'labs': 'lab-results',
+		'payment': 'payments',
 		// FHIR collection slugs → backend tab keys (common chart-layout.json typos)
 		'related-persons': 'relationships',
 		'allergy-intolerances': 'allergies',
 		'medication-requests': 'medications',
-		'diagnostic-reports': 'labs',
+		'diagnostic-reports': 'lab-results',
 		'document-references': 'documents',
 		'family-member-histories': 'history',
 		'service-requests': 'referrals',
 		'care-plans': 'care-plan',
-		'payment-reconciliations': 'transactions',
 	};
 
 	private _tabEndpoint(tab: ChartTab): string | null {
@@ -1927,11 +1931,13 @@ export class PatientChartEditor extends EditorPane {
 				cancelBtn.style.display = 'none';
 			});
 		} else {
-			// List tab: show "+ Add" that opens an inline create form (if config available)
-			const addBtn = DOM.append(actionSlot, DOM.$('button'));
-			addBtn.textContent = '+ Add';
-			addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-			addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+			// List tab: show "+ Add" unless the tab is read-only (ledgers, system reports, etc.).
+			if (!tab.readOnly) {
+				const addBtn = DOM.append(actionSlot, DOM.$('button'));
+				addBtn.textContent = '+ Add';
+				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+				addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+			}
 
 			this._renderListWithFilters(content, tab, config, data);
 		}
@@ -2454,7 +2460,7 @@ export class PatientChartEditor extends EditorPane {
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
 					this._formInputs.set(f.key, inp);
-				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search') {
+				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup') {
 					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
@@ -2612,6 +2618,15 @@ export class PatientChartEditor extends EditorPane {
 				return `/api/providers?search=${enc}&page=0&size=20`;
 			case 'patient-search':
 				return `/api/patients?search=${enc}&page=0&size=20`;
+			case 'lookup': {
+				// Backend tab_field_config emits fields like:
+				//   { type: "lookup", lookupConfig: { endpoint: "/api/providers", searchable: true } }
+				// Forward the search through the configured endpoint.
+				const ep = f.lookupConfig?.endpoint;
+				if (!ep) { return null; }
+				const sep = ep.includes('?') ? '&' : '?';
+				return `${ep}${sep}search=${enc}&page=0&size=20`;
+			}
 			default:
 				return null;
 		}
@@ -2643,6 +2658,17 @@ export class PatientChartEditor extends EditorPane {
 					code: String(it.id || it.fhirId || ''),
 					label: `${String(it.firstName || '')} ${String(it.lastName || '')}`.trim() || String(it.name || ''),
 				})).filter(it => it.code);
+			case 'lookup': {
+				// Honor lookupConfig.displayField / valueField when the backend specifies them;
+				// fall back to common name/id keys otherwise.
+				const valueField = f.lookupConfig?.valueField || 'id';
+				const displayField = f.lookupConfig?.displayField || 'name';
+				return arr.map(it => {
+					const codeVal = String(it[valueField] ?? it.id ?? it.fhirId ?? '');
+					const labelVal = String(it[displayField] ?? it.name ?? it.fullName ?? '');
+					return { code: codeVal, label: labelVal || codeVal };
+				}).filter(it => it.code);
+			}
 			default:
 				return [];
 		}
@@ -2712,7 +2738,7 @@ export class PatientChartEditor extends EditorPane {
 				: () => this._openRecordDialog(tab, config, item);
 
 			const recordId = String(item.id || item.fhirId || '');
-			const onDelete = isEncounter || !recordId
+			const onDelete = isEncounter || !recordId || tab.readOnly
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
