@@ -979,14 +979,38 @@ export class AppointmentsEditor extends EditorPane {
 				advBtn.addEventListener('click', () => this._updateStatus(row.id, so.nextStatus!));
 			}
 
-			// Open chart
-			const chartBtn = DOM.append(tdActions, DOM.$('button'));
+			const iconBtn = (icon: string, title: string, onClick: () => void) => {
+				const b = DOM.append(tdActions, DOM.$('button')) as HTMLButtonElement;
+				b.textContent = icon;
+				b.title = title;
+				b.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:2px;';
+				b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+				return b;
+			};
+
 			// allow-any-unicode-next-line
-			chartBtn.textContent = '📋';
-			chartBtn.title = 'Open Patient Chart';
-			chartBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:2px;';
-			chartBtn.addEventListener('click', () => this._openPatientChart(row.patientId, row.patientName || ''));
+			iconBtn('📋', 'Open Patient Chart', () => this._openPatientChart(row.patientId, row.patientName || ''));
+			// allow-any-unicode-next-line
+			iconBtn('❤', 'Record Vitals — opens chart on Vitals tab', () => this._openPatientChartTab(row.patientId, row.patientName || '', 'vitals'));
+			// allow-any-unicode-next-line
+			iconBtn('🗒', 'Visit Summary — opens encounter summary', () => this._openVisitSummary(row));
 		}
+	}
+
+	/** Opens the patient chart with a specific initial tab pre-selected
+	 *  (used by "Record Vitals" → vitals tab, etc.). */
+	private _openPatientChartTab(patientId: number, patientName: string, tabKey: string): void {
+		this.commandService.executeCommand('ciyex.openPatientChart', String(patientId), patientName, tabKey);
+	}
+
+	/** "Visit Summary": if the appointment has a linked encounterId, open the
+	 *  encounter form; otherwise fall back to opening the chart on Encounters. */
+	private _openVisitSummary(row: AppointmentDTO): void {
+		if (row.encounterId) {
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '');
+			return;
+		}
+		this._openPatientChartTab(row.patientId, row.patientName || '', 'encounters');
 	}
 
 	override layout(dimension: DOM.Dimension): void {

@@ -67,7 +67,7 @@ registerAction2(class extends Action2 {
 		});
 	}
 
-	async run(accessor: ServicesAccessor, patientId?: string, patientName?: string): Promise<void> {
+	async run(accessor: ServicesAccessor, patientId?: string, patientName?: string, initialTab?: string): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 
 		// If no patientId, search for a patient
@@ -89,7 +89,7 @@ registerAction2(class extends Action2 {
 			if (!patientId) { return; }
 		}
 
-		const input = new PatientChartEditorInput(patientId, patientName || `Patient ${patientId}`);
+		const input = new PatientChartEditorInput(patientId, patientName || `Patient ${patientId}`, initialTab);
 		await editorService.openEditor(input, { pinned: true });
 	}
 });

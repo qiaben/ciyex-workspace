@@ -22,7 +22,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
-interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string }>; readOnly?: boolean }
+interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string; aliases?: string[] }>; readOnly?: boolean }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
@@ -53,22 +53,22 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{
 				key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'],
 				columns: [
-					{ key: 'allergyName', label: 'Allergen' },
-					{ key: 'reaction', label: 'Reaction' },
+					{ key: 'allergyName', label: 'Allergen', aliases: ['allergyName', 'name', 'code'] },
+					{ key: 'reaction', label: 'Reaction', aliases: ['reaction', 'manifestation'] },
 					{ key: 'severity', label: 'Severity' },
-					{ key: 'status', label: 'Status' },
-					{ key: 'startDate', label: 'Start Date' },
+					{ key: 'status', label: 'Status', aliases: ['status', 'clinicalStatus'] },
+					{ key: 'startDate', label: 'Start Date', aliases: ['startDate', 'recordedDate', 'onsetDate', 'onsetDateTime'] },
 				],
 			},
 			{
 				key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'],
 				columns: [
-					{ key: 'condition', label: 'Condition' },
-					{ key: 'icdCode', label: 'ICD-10 Code' },
+					{ key: 'condition', label: 'Condition', aliases: ['condition', 'name', 'code', 'display'] },
+					{ key: 'icdCode', label: 'ICD-10 Code', aliases: ['icdCode', 'icd10Code', 'code'] },
 					{ key: 'severity', label: 'Severity' },
-					{ key: 'clinicalStatus', label: 'Status' },
-					{ key: 'onsetDate', label: 'Onset Date' },
-					{ key: 'resolvedDate', label: 'Resolved Date' },
+					{ key: 'clinicalStatus', label: 'Status', aliases: ['clinicalStatus', 'status'] },
+					{ key: 'onsetDate', label: 'Onset Date', aliases: ['onsetDate', 'onsetDateTime', 'recordedDate'] },
+					{ key: 'resolvedDate', label: 'Resolved Date', aliases: ['resolvedDate', 'abatementDate', 'abatementDateTime'] },
 				],
 			},
 		],
@@ -159,22 +159,21 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{
 				key: 'encounters', label: 'Encounters', icon: 'ClipboardList', emoji: '\u{1F4CB}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Encounter'],
 				columns: [
-					{ key: 'visitType', label: 'Visit Type' },
-					{ key: 'providerName', label: 'Provider' },
-					{ key: 'patientName', label: 'Patient' },
-					{ key: 'startDate', label: 'Start Date' },
-					{ key: 'endDate', label: 'End Date' },
+					{ key: 'visitCategory', label: 'Visit Type', aliases: ['visitCategory', 'type', 'encounterType', 'serviceType', 'class', 'visitType'] },
+					{ key: 'encounterProvider', label: 'Provider', aliases: ['encounterProvider', 'providerDisplay', 'providerName', 'practitionerName', 'performerDisplay'] },
+					{ key: 'encounterDate', label: 'Date', aliases: ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'created', 'createdAt', '_lastUpdated'] },
+					{ key: 'endDate', label: 'End Date', aliases: ['endDate', 'end', 'periodEnd'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
 			{
 				key: 'appointments', label: 'Appointments', icon: 'Calendar', emoji: '\u{1F4C5}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Appointment'],
 				columns: [
-					{ key: 'appointmentType', label: 'Visit Type' },
-					{ key: 'start', label: 'Start' },
-					{ key: 'end', label: 'End' },
-					{ key: 'providerName', label: 'Provider' },
-					{ key: 'locationName', label: 'Location' },
+					{ key: 'appointmentType', label: 'Visit Type', aliases: ['appointmentType', 'visitType', 'type'] },
+					{ key: 'start', label: 'Start', aliases: ['start', 'startDate', 'appointmentStartDate'] },
+					{ key: 'end', label: 'End', aliases: ['end', 'endDate', 'appointmentEndDate'] },
+					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName'] },
+					{ key: 'locationName', label: 'Location', aliases: ['locationName', 'locationDisplay'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -959,6 +958,8 @@ export class PatientChartEditor extends EditorPane {
 	private readonly _tabNavMap = new Map<string, HTMLElement>();
 	private readonly _tabCountEls = new Map<string, HTMLElement>();
 	private readonly _tabCounts = new Map<string, number>();
+	/** Page index per list-tab; persists across renders so filter changes feel stable. */
+	private readonly _listPage = new Map<string, number>();
 	private readonly _quickInfoValEls = new Map<string, HTMLElement>();
 
 	constructor(
@@ -1004,7 +1005,10 @@ export class PatientChartEditor extends EditorPane {
 		this._tabDataCache.clear();
 		this._tabNavMap.clear();
 		this._quickInfoValEls.clear();
-		this.activeTab = this.storageSvc.get(LAST_TAB_KEY_PREFIX + this.patientId, StorageScope.PROFILE, 'dashboard');
+		// Initial-tab override (e.g. appointment row "Record Vitals" lands on the
+		// vitals tab) takes precedence over the persisted last-visited tab.
+		this.activeTab = input.initialTab
+			|| this.storageSvc.get(LAST_TAB_KEY_PREFIX + this.patientId, StorageScope.PROFILE, 'dashboard');
 
 		await Promise.all([this._loadLayout(), this._loadPatient()]);
 		if (token.isCancellationRequested) { return; }
@@ -2684,9 +2688,14 @@ export class PatientChartEditor extends EditorPane {
 		// up to 6 priority keys from the record sample.
 		let usedKeys: string[];
 		let cols: string[];
+		// Per-column fallback aliases for resilient value extraction. Backend
+		// resource shapes vary (e.g. encounter: encounterDate / startDate / start)
+		// so a single primary key can leave the cell blank when the data is fine.
+		let usedAliases: string[][] = [];
 		if (tab.columns && tab.columns.length > 0) {
 			usedKeys = tab.columns.map(c => c.key);
 			cols = tab.columns.map(c => c.label);
+			usedAliases = tab.columns.map(c => [c.key, ...(c.aliases || [])]);
 		} else {
 			const priorityKeys = ['start', 'date', 'period', 'effectiveDateTime', 'recordedDate', 'authoredOn',
 				'appointmentType', 'type', 'visitType', 'class', 'serviceType', 'code', 'medicationCodeableConcept',
@@ -2714,10 +2723,27 @@ export class PatientChartEditor extends EditorPane {
 
 		const isEncounter = tab.fhirResources.includes('Encounter');
 
-		const rows = data.slice(0, 50).map(item => {
-			const cells = usedKeys.map(k => {
-				const v = item[k];
-				if (v === null || v === undefined) { return ''; }
+		// Local pagination state per-tab; reset to page 0 each time the data set changes.
+		const pageSize = 20;
+		const cachedPage = this._listPage.get(tab.key) || 0;
+		const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+		const page = Math.min(cachedPage, totalPages - 1);
+		const start = page * pageSize;
+		const pageItems = data.slice(start, start + pageSize);
+
+		const rows = pageItems.map(item => {
+			const cells = usedKeys.map((k, idx) => {
+				// Walk the alias chain: first non-empty value wins.
+				const tryKeys = usedAliases[idx] && usedAliases[idx].length > 0 ? usedAliases[idx] : [k];
+				let v: unknown = '';
+				for (const tk of tryKeys) {
+					const candidate = item[tk];
+					if (candidate !== null && candidate !== undefined && candidate !== '') {
+						v = candidate;
+						break;
+					}
+				}
+				if (v === null || v === undefined || v === '') { return ''; }
 				if (typeof v === 'object') {
 					const obj = v as Record<string, unknown>;
 					return String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || '');
@@ -2746,6 +2772,37 @@ export class PatientChartEditor extends EditorPane {
 		});
 
 		this._table(c, cols, rows);
+
+		// Pagination footer: only show when there's more than one page.
+		if (totalPages > 1) {
+			const bar = DOM.append(c, DOM.$('div'));
+			bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 4px 0;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+			const info = DOM.append(bar, DOM.$('span'));
+			const fromN = start + 1;
+			const toN = Math.min(start + pageSize, data.length);
+			info.textContent = `${fromN}-${toN} of ${data.length}`;
+			info.style.flex = '1';
+
+			const btn = (label: string, disabled: boolean, onClick: () => void) => {
+				const b = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+				b.textContent = label;
+				b.disabled = disabled;
+				b.style.cssText = `padding:4px 10px;border-radius:4px;cursor:${disabled ? 'default' : 'pointer'};font-size:11px;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);opacity:${disabled ? '0.4' : '1'};`;
+				b.addEventListener('click', onClick);
+				return b;
+			};
+			btn('Prev', page <= 0, () => {
+				this._listPage.set(tab.key, page - 1);
+				this._renderMain();
+			});
+			const pageInfo = DOM.append(bar, DOM.$('span'));
+			pageInfo.textContent = `Page ${page + 1} of ${totalPages}`;
+			btn('Next', page >= totalPages - 1, () => {
+				this._listPage.set(tab.key, page + 1);
+				this._renderMain();
+			});
+		}
 	}
 
 	/** Delete a record from a list tab, then refresh the view + counts + Quick Info. */

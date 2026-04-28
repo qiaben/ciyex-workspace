@@ -81,6 +81,9 @@ export class CalendarEditor extends EditorPane {
 	private locationFilter: Set<string> = new Set();
 	private patientNameFilter = '';
 	private _filterWraps: HTMLElement[] = [];
+	/** Parallel to _filterWraps; holds the panel element for each filter so we
+	 *  can close peers without querySelector lookups. */
+	private _filterPanels: HTMLElement[] = [];
 	private providers: Array<{ id: string; name: string }> = [];
 	private locations: Array<{ id: string; name: string }> = [];
 	private scheduleBlocks: Array<{ providerId?: string; status: string; startTime: string; endTime: string; recurrence?: { frequency: string; byWeekday?: string[] }; serviceType?: string }> = [];
@@ -327,6 +330,7 @@ export class CalendarEditor extends EditorPane {
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
 		this._filterWraps = [];
+		this._filterPanels = [];
 
 		// Nav group: [Prev | Date (click jumps to today) | Next] — no separate "Today" button
 		const navGroup = DOM.append(this.headerBar, DOM.$('.cal-nav-group'));
@@ -1229,6 +1233,7 @@ export class CalendarEditor extends EditorPane {
 		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
 		wrap.style.cssText = 'position:relative;max-width:200px;';
 		this._filterWraps.push(wrap);
+		this._filterPanels.push(panel);
 
 		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
@@ -1302,6 +1307,11 @@ export class CalendarEditor extends EditorPane {
 		trigger.addEventListener('click', (e) => {
 			e.stopPropagation();
 			const isOpen = panel.style.display !== 'none';
+			// Opening one filter closes any other filter that is currently open —
+			// so the All Providers / All Locations dropdowns no longer overlap.
+			for (const otherPanel of this._filterPanels) {
+				if (otherPanel !== panel) { otherPanel.style.display = 'none'; }
+			}
 			panel.style.display = isOpen ? 'none' : 'block';
 			if (!isOpen) {
 				renderList();

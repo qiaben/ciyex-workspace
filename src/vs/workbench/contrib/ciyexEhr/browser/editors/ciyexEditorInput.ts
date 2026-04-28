@@ -78,6 +78,9 @@ export class PatientChartEditorInput extends EditorInput {
 	constructor(
 		readonly patientId: string,
 		readonly patientName: string,
+		/** Optional initial tab key (e.g. 'vitals', 'encounters'). Used by
+		 *  appointment row actions to land on a specific section. */
+		readonly initialTab?: string,
 	) { super(); }
 
 	override getName(): string { return this.patientName || 'Patient Chart'; }
