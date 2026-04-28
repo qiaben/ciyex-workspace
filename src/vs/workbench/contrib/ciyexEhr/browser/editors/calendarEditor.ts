@@ -1233,7 +1233,6 @@ export class CalendarEditor extends EditorPane {
 		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
 		wrap.style.cssText = 'position:relative;max-width:200px;';
 		this._filterWraps.push(wrap);
-		this._filterPanels.push(panel);
 
 		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
@@ -1251,6 +1250,7 @@ export class CalendarEditor extends EditorPane {
 
 		const panel = DOM.append(wrap, DOM.$('.cal-filter-panel'));
 		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:30;display:none;min-width:240px;';
+		this._filterPanels.push(panel);
 
 		const search = DOM.append(panel, DOM.$('input')) as HTMLInputElement;
 		search.placeholder = 'Search...';
