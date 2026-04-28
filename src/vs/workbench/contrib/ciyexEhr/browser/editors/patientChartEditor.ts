@@ -1840,9 +1840,14 @@ export class PatientChartEditor extends EditorPane {
 
 		const content = DOM.append(card, DOM.$('div'));
 		content.style.cssText = 'padding:14px 16px;';
-		const loading = DOM.append(content, DOM.$('div'));
-		loading.textContent = 'Loading...';
-		loading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+		// Skip the "Loading…" flash when the cache is already warm — happens after
+		// an optimistic save reconciliation and on tab re-renders. Cold cache
+		// hits still show the spinner so the user knows a fetch is in flight.
+		if (!this._tabDataCache.has(tab.key)) {
+			const loading = DOM.append(content, DOM.$('div'));
+			loading.textContent = 'Loading...';
+			loading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+		}
 
 		// Tab with no endpoint (neither FHIR resource nor apiPath) → show placeholder, no Add button
 		if (!this._tabEndpoint(tab)) {
@@ -2310,16 +2315,45 @@ export class PatientChartEditor extends EditorPane {
 					this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
 					overlay.remove();
 
-					// Hard-refresh the tab: clear cache, re-fetch from server, re-render. We do
-					// this in a tight loop with a couple of delayed retries because HAPI FHIR's
-					// search index can lag a few hundred ms behind the write.
-					const refresh = async () => {
+					// Optimistic update: read the create/update response and inject the
+					// saved record into the in-memory cache so the table repaints with
+					// the new row immediately — no "Loading…" flash, no waiting on the
+					// FHIR search index. A single silent background re-fetch follows at
+					// 1.5s to reconcile any server-side derived fields.
+					let savedRecord: Record<string, unknown> | null = null;
+					try {
+						const respJson = await res.json();
+						const candidate = (respJson?.data ?? respJson) as Record<string, unknown> | null;
+						if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+							savedRecord = candidate;
+						}
+					} catch { /* response not JSON — skip optimistic merge */ }
+
+					const cached = this._tabDataCache.get(tab.key);
+					if (cached) {
+						const merged: Record<string, unknown> = { ...payload, ...(savedRecord || {}) };
+						if (isEdit && recordId) {
+							cached.data = cached.data.map(r => {
+								const id = String(r.id ?? r.fhirId ?? '');
+								return id === String(recordId) ? { ...r, ...merged } : r;
+							});
+						} else {
+							// Ensure the optimistic row has *some* id so row-action handlers
+							// don't break before the silent refresh lands.
+							if (!merged.id && !merged.fhirId) { merged.id = `tmp-${Date.now()}`; }
+							cached.data = [merged, ...cached.data];
+						}
+						this._tabDataCache.set(tab.key, cached);
+					}
+					if (this.activeTab === tab.key) { this._renderMain(); }
+
+					// Silent reconciliation: clear the cache once, re-render. The
+					// refreshed render hits a cold cache, fetches fresh data, then
+					// repaints with whatever the server has (now indexed).
+					DOM.getActiveWindow().setTimeout(() => {
 						this._tabDataCache.delete(tab.key);
 						if (this.activeTab === tab.key) { this._renderMain(); }
-					};
-					await refresh();
-					DOM.getActiveWindow().setTimeout(() => { void refresh(); }, 600);
-					DOM.getActiveWindow().setTimeout(() => { void refresh(); }, 1500);
+					}, 1500);
 
 					void this._loadQuickInfo();
 					void this._refreshTabCounts();

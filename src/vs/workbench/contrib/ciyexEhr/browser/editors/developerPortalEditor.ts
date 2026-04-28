@@ -878,7 +878,7 @@ export class DeveloperPortalEditor extends EditorPane {
 					let val = String(item[c.key] ?? '');
 					// Format dates
 					if ((c.key.endsWith('At') || c.key.endsWith('Date')) && val && !isNaN(Date.parse(val))) {
-						try { val = new Date(val).toLocaleDateString(); } catch { /* */ }
+						try { val = new Date(val).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { /* */ }
 					}
 					// Format arrays
 					if (val.startsWith('[')) {

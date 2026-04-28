@@ -748,10 +748,13 @@ export class AppointmentsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Table ─────────────────────────────────────────────────────────
 		const tableWrap = DOM.append(this.contentEl, DOM.$('div'));
-		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow:hidden;';
+		// `overflow-x:auto` keeps the ACTIONS column reachable on narrow viewports
+		// (it was clipped under `overflow:hidden`); `min-width` on the inner table
+		// makes the row keep its 9 columns instead of squeezing them invisibly.
+		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
 
 		const table = DOM.append(tableWrap, DOM.$('table'));
-		table.style.cssText = 'width:100%;border-collapse:collapse;';
+		table.style.cssText = 'width:100%;min-width:1100px;border-collapse:collapse;';
 
 		const thead = DOM.append(table, DOM.$('thead'));
 		const headRow = DOM.append(thead, DOM.$('tr'));
