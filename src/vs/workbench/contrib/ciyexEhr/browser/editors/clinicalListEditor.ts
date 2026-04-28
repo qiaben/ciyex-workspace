@@ -43,8 +43,19 @@ export interface FormFieldDef {
 	relatedField?: string;
 	/** For 'search' type: fields from API response to display in dropdown */
 	relatedDisplayFields?: string[];
-	/** Default value for new records */
-	defaultValue?: string | number;
+	/**
+	 * For 'search' type: map of additional form-field keys to fill from a selected result.
+	 * Key is the form field to fill, value is the property key on the result object.
+	 * Example: { patientLastName: 'lastName', patientPhone: 'phone' }
+	 */
+	relatedFieldsMap?: Record<string, string>;
+	/**
+	 * When populating an edit form, if `key` is missing/empty on the record, try these
+	 * alternate keys in order. Supports dot paths for nested objects (e.g. `category.id`).
+	 */
+	aliases?: string[];
+	/** Default value for new records (or a factory function for dynamic values like timestamps). */
+	defaultValue?: string | number | (() => string | number);
 	/** Width hint */
 	width?: string;
 }
@@ -84,6 +95,22 @@ export interface ClinicalEditorConfig {
 	mergeOnEdit?: boolean;
 	/** Custom dialog title for edit. Default: `Edit ${title without trailing s}`. */
 	editTitle?: (item: Record<string, unknown>) => string;
+	/**
+	 * When true, on Edit click the editor refetches `${apiPath}/${id}` and merges the
+	 * response onto the row before opening the form. Use when list responses are
+	 * partial (missing relational fields like provider name, code system, etc).
+	 */
+	refetchOnEdit?: boolean;
+	/**
+	 * Extra default values applied to every create payload (POST). Useful when the
+	 * backend requires fields not surfaced in the form (e.g. CDS `appliesTo: 'all'`).
+	 */
+	createDefaults?: Record<string, unknown>;
+	/**
+	 * Optional payload transformer: rewrites the request body before save.
+	 * Receives the merged form values and returns the final payload.
+	 */
+	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean) => Record<string, unknown>;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -434,17 +461,25 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	}
 
 	// Apply search + status + priority filters in memory when clientSideFilter is set.
-	// Status filters use the configured filterKey (default 'status').
+	// Status filters use the configured filterKey (default 'status') and fall back to
+	// common alternate keys (state, paymentStatus, etc) so backend naming differences
+	// don't silently produce an empty filtered view.
 	private _visibleItems(): Record<string, unknown>[] {
 		const cfg = this.config;
 		if (!cfg.clientSideFilter) { return this.items; }
 		const q = this.searchValue.trim().toLowerCase();
 		const fk = cfg.filterKey || 'status';
-		const statusF = this.statusFilter.toLowerCase();
-		const priF = this.priorityFilter.toLowerCase();
+		const fallbackKeys = ['state', 'paymentStatus', 'orderStatus', 'currentStatus'];
+		const statusF = this.statusFilter.toLowerCase().replace(/[-_\s]/g, '');
+		const priF = this.priorityFilter.toLowerCase().replace(/[-_\s]/g, '');
+		const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/[-_\s]/g, '');
 		return this.items.filter(item => {
-			if (statusF && String(item[fk] ?? '').toLowerCase() !== statusF) { return false; }
-			if (priF && String(item['priority'] ?? '').toLowerCase() !== priF) { return false; }
+			if (statusF) {
+				const candidates = [item[fk], ...fallbackKeys.map(k => item[k])];
+				const match = candidates.some(c => norm(c) === statusF);
+				if (!match) { return false; }
+			}
+			if (priF && norm(item['priority']) !== priF) { return false; }
 			if (q) {
 				const hit = cfg.clientSideFilter!.some(field => String(item[field] ?? '').toLowerCase().includes(q));
 				if (!hit) { return false; }
@@ -456,10 +491,42 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	// allow-any-unicode-next-line
 	// ─── Form Dialog ───
 
-	private _openForm(item: Record<string, unknown> | null): void {
+	private async _openForm(item: Record<string, unknown> | null): Promise<void> {
 		if (!this.config.formFields) { return; }
+		// Optionally refetch full record by ID so the edit form has all relational fields.
+		if (item && this.config.refetchOnEdit && item.id !== undefined && item.id !== null) {
+			try {
+				const res = await this.apiService.fetch(`${this.config.apiPath}/${item.id}`);
+				if (res.ok) {
+					const json = await res.json().catch(() => null);
+					const full = (json && (json.data ?? json)) as Record<string, unknown> | null;
+					if (full && typeof full === 'object') {
+						item = { ...item, ...full };
+					}
+				}
+			} catch { /* fall through with row data */ }
+		}
 		this.editingItem = item;
 		this._renderForm();
+	}
+
+	/** Resolve a (possibly dot-pathed) key against the editing record. */
+	private _readFieldValue(field: FormFieldDef): unknown {
+		const item = this.editingItem;
+		if (!item) { return undefined; }
+		const direct = (item as Record<string, unknown>)[field.key];
+		if (direct !== undefined && direct !== null && direct !== '') { return direct; }
+		if (!field.aliases) { return direct; }
+		for (const alias of field.aliases) {
+			const v = alias.includes('.')
+				? alias.split('.').reduce<unknown>((acc, part) => {
+					if (acc && typeof acc === 'object') { return (acc as Record<string, unknown>)[part]; }
+					return undefined;
+				}, item)
+				: (item as Record<string, unknown>)[alias];
+			if (v !== undefined && v !== null && v !== '') { return v; }
+		}
+		return direct;
 	}
 
 	private _renderForm(): void {
@@ -600,6 +667,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 											relatedInput.value = String(result[valueField] ?? '');
 										}
 									}
+									// Auto-fill additional related fields from the result (e.g. patientLastName, phone)
+									if (field.relatedFieldsMap) {
+										for (const [formKey, resultKey] of Object.entries(field.relatedFieldsMap)) {
+											const relatedInput = inputs.get(formKey);
+											if (relatedInput) {
+												const v = (result as Record<string, unknown>)[resultKey];
+												relatedInput.value = String(v ?? '');
+											}
+										}
+									}
 								});
 							}
 							dropdown.style.display = 'block';
@@ -623,8 +700,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.placeholder = field.placeholder || '';
 			}
 
-			// Set value from editing item or default
-			const val = isEdit && this.editingItem ? String(this.editingItem[field.key] ?? '') : String(field.defaultValue ?? '');
+			// Set value from editing item (with alias lookup) or default
+			let val: string;
+			if (isEdit) {
+				const resolved = this._readFieldValue(field);
+				val = resolved === undefined || resolved === null ? '' : String(resolved);
+			} else {
+				const dv = field.defaultValue;
+				val = typeof dv === 'function' ? String((dv as () => string | number)()) : String(dv ?? '');
+			}
 			inputEl.value = val;
 
 			inputs.set(field.key, inputEl);
@@ -693,6 +777,18 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				payload = formValues;
 			}
 
+			// Apply create-time defaults for fields the form doesn't surface.
+			if (!isEdit && cfg.createDefaults) {
+				for (const [k, v] of Object.entries(cfg.createDefaults)) {
+					if (payload[k] === undefined || payload[k] === null || payload[k] === '') {
+						payload[k] = v;
+					}
+				}
+			}
+			if (cfg.beforeSave) {
+				payload = cfg.beforeSave(payload, isEdit);
+			}
+
 			saveBtn.disabled = true;
 			saveBtn.textContent = 'Saving...';
 
@@ -709,8 +805,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					if (cfg.statsPath) { this._loadStats(); }
 					this._loadData();
 				} else {
-					const errData = await res.json().catch(() => null);
-					errorEl.textContent = (errData as Record<string, string>)?.message || `Error: ${res.status}`;
+					const errData = await res.json().catch(() => null) as Record<string, unknown> | null;
+					const msg = (errData?.['message'] as string)
+						|| (errData?.['error'] as string)
+						|| (Array.isArray(errData?.['errors']) ? (errData!['errors'] as string[]).join('; ') : '')
+						|| `Error: ${res.status}`;
+					errorEl.textContent = String(msg);
 					errorEl.style.display = 'block';
 				}
 			} catch (err) {

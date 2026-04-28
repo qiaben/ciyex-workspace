@@ -24,6 +24,8 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient, medication, pharmacy...',
 		clientSideFilter: ['patientName', 'medicationName', 'sig', 'pharmacyName', 'prescriberName', 'status', 'priority', 'id'],
 		editable: true,
+		refetchOnEdit: true,
+		createDefaults: { intent: 'order' },
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'medicationName', label: 'Medication' },
 			{ key: 'sig', label: 'SIG' }, { key: 'quantity', label: 'Qty', width: '60px' },
@@ -42,11 +44,16 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', placeholder: '10-digit NPI' },
+			{
+				key: 'prescriberName', label: 'Prescriber', type: 'search', placeholder: 'Search prescriber...',
+				apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'],
+				relatedFieldsMap: { prescriberNpi: 'npi' },
+				aliases: ['providerName', 'prescribingDoctor', 'prescriber', 'renderingProvider'],
+			},
+			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'] },
 			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg' },
 			{
-				key: 'codeSystem', label: 'Code System', type: 'select', options: [
+				key: 'codeSystem', label: 'Code System', type: 'select', aliases: ['medicationSystem', 'system'], options: [
 					{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
 				]
 			},
@@ -134,6 +141,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient, test, order number...',
 		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'resultStatus', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientFirstName', label: 'Patient' }, { key: 'orderNumber', label: 'Order #', width: '100px' },
 			{ key: 'orderName', label: 'Test', width: '1.5fr' }, { key: 'physicianName', label: 'Provider' },
@@ -149,12 +157,27 @@ export class LabsEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			// Patient Information
-			{ key: 'patientFirstName', label: 'Patient', type: 'search', required: true, placeholder: 'Search patient by name, MRN or ID...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{
+				key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient by name, MRN or ID...',
+				apiPath: '/api/patients', relatedField: 'patientId',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				relatedFieldsMap: { patientLastName: 'lastName' },
+			},
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled' },
+			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search' },
 			// Order Meta
 			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
-			{ key: 'orderNumber', label: 'Order Number', type: 'text', required: true, placeholder: 'ORD-2026-0001 (auto-generated)' },
+			{
+				key: 'orderNumber', label: 'Order Number', type: 'text', required: true,
+				placeholder: 'Auto-generated',
+				defaultValue: () => {
+					const d = new Date();
+					const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+					const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+					return `LAB-${ymd}-${rand}`;
+				},
+			},
 			{ key: 'orderName', label: 'Order Name', type: 'text', placeholder: 'Order name' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 			// Test Details
@@ -174,8 +197,12 @@ export class LabsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'orderDate', label: 'Order Date', type: 'date' },
 			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)' },
-			{ key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'orderingProvider', label: 'Physician Name', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{
+				key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true,
+				placeholder: 'Search provider...', apiPath: '/api/providers',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				aliases: ['orderingProvider', 'providerName', 'renderingProvider', 'prescribingDoctor'],
+			},
 			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
 			{
 				key: 'resultStatus', label: 'Result Status', type: 'select', options: [
@@ -202,6 +229,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 		title: 'Immunizations', apiPath: '/api/immunizations', searchPlaceholder: 'Search by patient, vaccine...',
 		clientSideFilter: ['patientName', 'vaccineName', 'cvxCode', 'site', 'route', 'provider', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine', width: '1.5fr' },
 			{ key: 'cvxCode', label: 'CVX', width: '60px' }, { key: 'doseNumber', label: 'Dose', width: '50px' },
@@ -272,8 +300,18 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1' },
 			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: '1 of 3 or booster' },
 			// Provider Information
-			{ key: 'provider', label: 'Administered By', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'orderingProvider', label: 'Ordering Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{
+				key: 'provider', label: 'Administered By', type: 'search', required: true,
+				placeholder: 'Search provider...', apiPath: '/api/providers',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				aliases: ['administeredBy', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
+			},
+			{
+				key: 'orderingProvider', label: 'Ordering Provider', type: 'search',
+				placeholder: 'Search provider...', apiPath: '/api/providers',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				aliases: ['orderedBy', 'orderingProviderName'],
+			},
 			// Status & Notes
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
@@ -360,7 +398,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'insuranceName', label: 'Insurance Name', type: 'text' },
 			{ key: 'insuranceId', label: 'Insurance ID', type: 'text', placeholder: 'Member/policy ID' },
-			{ key: 'authorizationNumber', label: 'Auth Number', type: 'text' },
+			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text' },
 			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
 			{ key: 'appointmentDate', label: 'Appointment Date', type: 'date' },
 			{ key: 'appointmentNotes', label: 'Appointment Notes', type: 'textarea', placeholder: 'Scheduling notes...' },
@@ -369,14 +407,28 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Send', icon: '📤', handler: async (item, api, reload) => {
-					if (item.status === 'draft') {
-						await api.fetch(`/api/referrals/${item.id}/status`, {
+				label: 'Send', icon: '📤', handler: async (item, api, reload, dlg) => {
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'sent' || current === 'acknowledged' || current === 'completed') {
+						await dlg.info(`Referral is already ${current}.`);
+						return;
+					}
+					const r = await dlg.confirm({ message: 'Send this referral?', type: 'question' });
+					if (!r.confirmed) { return; }
+					// Try the dedicated send endpoint first, fall back to the status transition.
+					let res = await api.fetch(`/api/referrals/${item.id}/send`, { method: 'POST' });
+					if (!res.ok) {
+						res = await api.fetch(`/api/referrals/${item.id}/status`, {
 							method: 'PUT', headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ status: 'sent' }),
 						});
-						reload();
 					}
+					if (!res.ok) {
+						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || 'Failed to send referral'));
+						return;
+					}
+					reload();
 				}
 			},
 			// allow-any-unicode-next-line
@@ -442,6 +494,31 @@ export class CdsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by rule name...',
 		clientSideFilter: ['name', 'type', 'description', 'severity', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
+		// Backend DTO commonly requires ruleType / actionType / appliesTo / isActive / conditions
+		// even when the form doesn't surface them. Provide safe defaults so create succeeds.
+		createDefaults: {
+			ruleType: 'custom',
+			actionType: 'alert',
+			appliesTo: 'all',
+			isActive: true,
+			conditions: [],
+		},
+		beforeSave: (payload, isEdit) => {
+			// Drop nullish/empty optional fields that can cause backend validation errors.
+			const out: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(payload)) {
+				if (v === '' || v === null || v === undefined) { continue; }
+				out[k] = v;
+			}
+			// Map "type" to "ruleType" if backend expects ruleType but form sends type.
+			if (out.type && !out.ruleType) { out.ruleType = out.type; }
+			// Mirror status -> isActive boolean.
+			if (typeof out.status === 'string') {
+				out.isActive = out.status === 'active';
+			}
+			return out;
+		},
 		columns: [
 			{ key: 'name', label: 'Rule Name', width: '1.5fr' }, { key: 'type', label: 'Type', width: '120px' },
 			{ key: 'description', label: 'Description', width: '2fr' },
@@ -497,13 +574,14 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Prior Authorizations', apiPath: '/api/prior-auth', statsPath: '/api/prior-auth/stats',
 		searchPlaceholder: 'Search by auth#, patient, procedure, insurance...',
-		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authNumber', 'priority', 'status', 'id'],
+		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authorizationNumber', 'priority', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'insuranceName', label: 'Insurance' }, { key: 'procedureCode', label: 'CPT', width: '70px' },
 			{ key: 'procedureDescription', label: 'Procedure' },
-			{ key: 'authNumber', label: 'Auth #', width: '100px' },
+			{ key: 'authorizationNumber', label: 'Authorization #', width: '120px' },
 			{ key: 'priority', label: 'Priority', width: '70px' }, { key: 'status', label: 'Status', width: '80px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
 		],
@@ -584,6 +662,8 @@ export class EducationEditor extends ClinicalListEditorBase {
 		title: 'Patient Education', apiPath: '/api/patient-education',
 		searchPlaceholder: 'Search by topic, category...',
 		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
+		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'materialTitle', label: 'Topic', width: '1.5fr' },
 			{ key: 'patientName', label: 'Patient' },
@@ -595,6 +675,39 @@ export class EducationEditor extends ClinicalListEditorBase {
 		statusTabs: [
 			{ label: 'Assigned', value: 'assigned' }, { label: 'Viewed', value: 'viewed' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Dismissed', value: 'dismissed' },
+		],
+		formFields: [
+			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'materialTitle', label: 'Topic / Material', type: 'text', required: true, placeholder: 'e.g. Diabetes Management' },
+			{
+				key: 'category', label: 'Category', type: 'select', options: [
+					{ label: 'Disease Management', value: 'disease_management' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' },
+					{ label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Other', value: 'other' },
+				]
+			},
+			{
+				key: 'priority', label: 'Priority', type: 'select', options: [
+					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' },
+				], defaultValue: 'routine'
+			},
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Assigned', value: 'assigned' }, { label: 'Viewed', value: 'viewed' },
+					{ label: 'Completed', value: 'completed' }, { label: 'Dismissed', value: 'dismissed' },
+				], defaultValue: 'assigned'
+			},
+			{ key: 'dueDate', label: 'Due Date', type: 'date' },
+			{ key: 'assignedBy', label: 'Assigned By', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Instructions for the patient...' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this assignment?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/patient-education/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(EducationEditor.ID, group, t, th, s, a, d); }
@@ -625,17 +738,34 @@ export class RecallEditor extends ClinicalListEditorBase {
 			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', required: true },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true },
-			{ key: 'patientPhone', label: 'Phone', type: 'text' },
-			{ key: 'patientEmail', label: 'Email', type: 'text' },
+			{
+				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
+				placeholder: 'Search patient...', apiPath: '/api/patients',
+				relatedField: 'patientId',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				relatedFieldsMap: { patientPhone: 'phone', patientEmail: 'email' },
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
+			{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
 			{ key: 'recallTypeName', label: 'Recall Type', type: 'text', required: true, placeholder: 'e.g. Annual Physical' },
-			{ key: 'providerName', label: 'Provider', type: 'text' },
+			{
+				key: 'providerName', label: 'Provider', type: 'search',
+				placeholder: 'Search provider...', apiPath: '/api/providers',
+				relatedDisplayFields: ['firstName', 'lastName'],
+			},
 			{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Normal', value: 'NORMAL' }, { label: 'High', value: 'HIGH' }, { label: 'Urgent', value: 'URGENT' },
 				], defaultValue: 'NORMAL'
+			},
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
+					{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
+					{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
+				], defaultValue: 'PENDING'
 			},
 			{
 				key: 'preferredContact', label: 'Preferred Contact', type: 'select', options: [
@@ -674,6 +804,8 @@ export class CodesEditor extends ClinicalListEditorBase {
 		// "Status tabs" here are actually code-type categories, so filter on codeType.
 		filterKey: 'codeType',
 		clientSideFilter: ['code', 'codeType', 'shortDescription', 'category', 'id'],
+		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'code', label: 'Code', width: '100px' }, { key: 'codeType', label: 'Type', width: '80px' },
 			{ key: 'shortDescription', label: 'Description', width: '2fr' },
@@ -716,6 +848,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['name', 'sku', 'barcode', 'description', 'categoryName', 'locationName', 'manufacturer', 'unit', 'status', 'id'],
 		editable: true,
 		mergeOnEdit: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'name', label: 'Item Name', width: '1.5fr' },
 			{ key: 'sku', label: 'SKU', width: '100px' },
@@ -764,9 +897,9 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'Average', value: 'avg' },
 				], defaultValue: 'fifo'
 			},
-			{ key: 'categoryId', label: 'Category ID', type: 'number' },
-			{ key: 'locationId', label: 'Location ID', type: 'number' },
-			{ key: 'supplierId', label: 'Supplier ID', type: 'number' },
+			{ key: 'categoryId', label: 'Category ID', type: 'number', aliases: ['category.id'] },
+			{ key: 'locationId', label: 'Location ID', type: 'number', aliases: ['location.id'] },
+			{ key: 'supplierId', label: 'Supplier ID', type: 'number', aliases: ['supplier.id'] },
 		],
 		actions: [
 			{
@@ -890,13 +1023,40 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			{ label: 'Denied', value: 'denied' }, { label: 'Paid', value: 'paid' },
 		],
 		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'text', placeholder: 'Patient name' },
-			{ key: 'provider', label: 'Provider', type: 'text', placeholder: 'Provider' },
+			{
+				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
+				placeholder: 'Search patient...', apiPath: '/api/patients',
+				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'text', placeholder: 'Auto-filled from patient search' },
+			{
+				key: 'provider', label: 'Provider', type: 'search', required: true,
+				placeholder: 'Search provider...', apiPath: '/api/providers',
+				relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'],
+				aliases: ['providerName', 'renderingProvider'],
+			},
+			{ key: 'providerId', label: 'Provider ID', type: 'text', placeholder: 'Auto-filled from provider search' },
 			{ key: 'payerName', label: 'Payer Name', type: 'text', placeholder: 'Insurance payer' },
 			{ key: 'diagnosisCode', label: 'Diagnosis Code', type: 'text', placeholder: 'e.g. Z00.00' },
+			{ key: 'diagnosisDescription', label: 'Diagnosis Description', type: 'text' },
 			{ key: 'policyNumber', label: 'Policy Number', type: 'text', placeholder: 'Policy number' },
 			{ key: 'planName', label: 'Plan Name', type: 'text', placeholder: 'Plan name' },
-			{ key: 'type', label: 'Type', type: 'text', placeholder: 'e.g. professional, institutional' },
+			{
+				key: 'type', label: 'Type', type: 'select', options: [
+					{ label: 'Professional', value: 'professional' },
+					{ label: 'Institutional', value: 'institutional' },
+					{ label: 'Dental', value: 'dental' },
+					{ label: 'Pharmacy', value: 'pharmacy' },
+				], defaultValue: 'professional'
+			},
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
+					{ label: 'Pending', value: 'pending' }, { label: 'Approved', value: 'approved' },
+					{ label: 'Denied', value: 'denied' }, { label: 'Paid', value: 'paid' },
+				], defaultValue: 'draft'
+			},
+			{ key: 'totalAmount', label: 'Total Amount ($)', type: 'number' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 		],
 		actions: [
