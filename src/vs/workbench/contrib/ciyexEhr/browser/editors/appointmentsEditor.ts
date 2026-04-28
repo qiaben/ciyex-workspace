@@ -55,6 +55,10 @@ interface StatusOption {
 	terminal?: boolean;
 	nextStatus?: string;
 	order?: number;
+	/** Optional default encounter note text the backend attaches when this status fires
+	 *  an encounter (e.g. Checked-in → "Patient arrived"). Backend record at
+	 *  AppointmentEncounterService.StatusOption.encounterNote. */
+	encounterNote?: string;
 }
 
 interface Provider { id: number; name: string }
