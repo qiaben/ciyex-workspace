@@ -102,8 +102,15 @@ export class EncounterFormEditor extends EditorPane {
 			if (res.ok) {
 				const data = await res.json();
 				const cfg = data?.data || data || {};
-				const sections = cfg?.field_config?.sections || cfg?.fieldConfig?.sections || cfg?.sections || [];
-				if (sections.length > 0) {
+				let fieldConfig: { sections?: FieldSection[] } | undefined;
+				const raw = cfg?.field_config ?? cfg?.fieldConfig;
+				if (typeof raw === 'string') {
+					try { fieldConfig = JSON.parse(raw); } catch { fieldConfig = undefined; }
+				} else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+					fieldConfig = raw;
+				}
+				const sections = fieldConfig?.sections || cfg?.sections || [];
+				if (Array.isArray(sections) && sections.length > 0) {
 					this.formSections = sections;
 					return;
 				}
@@ -557,7 +564,7 @@ export class EncounterFormEditor extends EditorPane {
 		heading.style.cssText = 'padding:4px 14px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
 
 		for (const sec of this.formSections) {
-			if (!sec.visible) { continue; }
+			if (sec.visible === false) { continue; }
 			const secIcon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
 
 			const item = DOM.append(this.tocNav, DOM.$('div'));
@@ -639,7 +646,7 @@ export class EncounterFormEditor extends EditorPane {
 		const readOnly = this._isSigned;
 
 		for (const sec of this.formSections) {
-			if (!sec.visible) { continue; }
+			if (sec.visible === false) { continue; }
 
 			const cols = Math.min(sec.columns || 1, 4);
 

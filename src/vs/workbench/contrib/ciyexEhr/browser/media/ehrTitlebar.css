@@ -444,6 +444,11 @@ body.ehr-on-calendar .editor-actions {
 .schedule-sidebar,
 .ehr-search-dropdown,
 .ehr-patient-dropdown,
+.encounter-list-pane,
+.developer-portal-editor,
+.portal-settings-editor,
+.user-mgmt-editor,
+.roles-perms-editor,
 .ciyex-patient-chart *,
 .ciyex-calendar-editor *,
 .ciyex-encounter-form *,
@@ -462,7 +467,12 @@ body.ehr-on-calendar .editor-actions {
 .clinical-menu-pane *,
 .clinical-list-editor *,
 .ehr-overlay *,
-.schedule-sidebar * {
+.schedule-sidebar *,
+.encounter-list-pane *,
+.developer-portal-editor *,
+.portal-settings-editor *,
+.user-mgmt-editor *,
+.roles-perms-editor * {
 	scrollbar-width: none;
 	-ms-overflow-style: none;
 }
@@ -487,6 +497,11 @@ body.ehr-on-calendar .editor-actions {
 .schedule-sidebar::-webkit-scrollbar,
 .ehr-search-dropdown::-webkit-scrollbar,
 .ehr-patient-dropdown::-webkit-scrollbar,
+.encounter-list-pane::-webkit-scrollbar,
+.developer-portal-editor::-webkit-scrollbar,
+.portal-settings-editor::-webkit-scrollbar,
+.user-mgmt-editor::-webkit-scrollbar,
+.roles-perms-editor::-webkit-scrollbar,
 .ciyex-patient-chart *::-webkit-scrollbar,
 .ciyex-calendar-editor *::-webkit-scrollbar,
 .ciyex-encounter-form *::-webkit-scrollbar,
@@ -505,7 +520,12 @@ body.ehr-on-calendar .editor-actions {
 .clinical-menu-pane *::-webkit-scrollbar,
 .clinical-list-editor *::-webkit-scrollbar,
 .ehr-overlay *::-webkit-scrollbar,
-.schedule-sidebar *::-webkit-scrollbar {
+.schedule-sidebar *::-webkit-scrollbar,
+.encounter-list-pane *::-webkit-scrollbar,
+.developer-portal-editor *::-webkit-scrollbar,
+.portal-settings-editor *::-webkit-scrollbar,
+.user-mgmt-editor *::-webkit-scrollbar,
+.roles-perms-editor *::-webkit-scrollbar {
 	display: none !important;
 	width: 0 !important;
 	height: 0 !important;
