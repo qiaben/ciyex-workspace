@@ -26,7 +26,7 @@ interface ChartTab { key: string; label: string; icon: string; emoji?: string; c
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
-interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
+interface QuickInfo { allergies: string; problems: string; medications: string; history: string; vitals: string }
 
 const FHIR_MAP: Record<string, string> = {
 	'Patient': '/api/fhir-resource/demographics', 'Encounter': '/api/fhir-resource/encounters',
@@ -952,7 +952,7 @@ export class PatientChartEditor extends EditorPane {
 	private categories: ChartCategory[] = [];
 	private activeTab = 'dashboard';
 	private sidebarCollapsed = false;
-	private quickInfo: QuickInfo = { allergies: '—', problems: '—', history: '—', vitals: '—' };
+	private quickInfo: QuickInfo = { allergies: '…', problems: '…', medications: '…', history: '…', vitals: '…' };
 	private readonly _configHome: URI;
 	private readonly _tabDataCache = new Map<string, { config: FieldConfig | null; data: Record<string, unknown>[] }>();
 	private readonly _tabNavMap = new Map<string, HTMLElement>();
@@ -1010,13 +1010,19 @@ export class PatientChartEditor extends EditorPane {
 		this.activeTab = input.initialTab
 			|| this.storageSvc.get(LAST_TAB_KEY_PREFIX + this.patientId, StorageScope.PROFILE, 'dashboard');
 
+		// Kick off Quick Info immediately — its 5 fetches run in parallel with
+		// the layout/patient loads below, and each row updates its DOM cell
+		// independently as soon as its own response lands.
+		const quickInfoPromise = this._loadQuickInfo();
+
 		await Promise.all([this._loadLayout(), this._loadPatient()]);
 		if (token.isCancellationRequested) { return; }
 
 		this._renderHeader();
 		this._renderSidebar();
 		this._renderMain();
-		void this._loadQuickInfo();
+		// Tie the quick-info promise back so a re-entrant setInput awaits it.
+		void quickInfoPromise;
 	}
 
 	override clearInput(): void {
@@ -1195,36 +1201,43 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	private async _loadQuickInfo(): Promise<void> {
-		const fetchCount = async (resource: string): Promise<number | null> => {
-			try {
-				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
-				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=1`);
-				if (!res.ok) { return null; }
-				const json = await res.json();
-				const count = json?.data?.totalElements ?? json?.totalElements ?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
-				return typeof count === 'number' ? count : null;
-			} catch { return null; }
+		// Each Quick Info row updates as soon as its own fetch returns — we don't
+		// wait on Promise.all because a single slow endpoint must not freeze the
+		// whole strip. Endpoints + response shapes mirror ehr-ui's ClinicalSidebar
+		// (legacy /api/allergy-intolerances and /api/medical-problems return
+		// {data:{allergiesList|problemsList:[…]}}; FHIR resource endpoints return
+		// {data:{content:[…], totalElements:N}}).
+		const extractCount = (json: unknown, listKey?: string): number | null => {
+			const j = json as { data?: Record<string, unknown> } | null;
+			const d = (j?.data ?? json) as Record<string, unknown> | undefined;
+			if (!d) { return null; }
+			if (listKey && Array.isArray(d[listKey])) { return (d[listKey] as unknown[]).length; }
+			if (typeof d.totalElements === 'number') { return d.totalElements; }
+			if (Array.isArray(d.content)) { return (d.content as unknown[]).length; }
+			if (Array.isArray(d)) { return d.length; }
+			return null;
 		};
-		const fetchVitalsCount = async (): Promise<number | null> => {
-			try {
-				const res = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`);
-				if (!res.ok) { return null; }
-				const json = await res.json();
-				const count = json?.data?.totalElements ?? json?.totalElements ?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
-				return typeof count === 'number' ? count : null;
-			} catch { return null; }
+		const update = (key: keyof QuickInfo, value: string): void => {
+			this.quickInfo[key] = value;
+			const el = this._quickInfoValEls.get(key);
+			if (el) { el.textContent = value; }
 		};
-		const [allergies, problems, history, vitals] = await Promise.all([
-			fetchCount('AllergyIntolerance'), fetchCount('Condition'),
-			fetchCount('FamilyMemberHistory'), fetchVitalsCount(),
-		]);
-		this.quickInfo = {
-			allergies: allergies === null ? '—' : allergies === 0 ? 'NKA' : String(allergies),
-			problems: problems === null ? '—' : problems === 0 ? 'None' : String(problems),
-			history: history === null ? '—' : history === 0 ? 'No records' : String(history),
-			vitals: vitals === null ? '—' : vitals === 0 ? 'No recorded vitals' : String(vitals),
+		const run = (key: keyof QuickInfo, url: string, listKey: string | undefined, empty: string): void => {
+			void (async () => {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { update(key, '—'); return; }
+					const json = await res.json();
+					const n = extractCount(json, listKey);
+					update(key, n === null ? '—' : n === 0 ? empty : String(n));
+				} catch { update(key, '—'); }
+			})();
 		};
-		this._refreshQuickInfoDom();
+		run('allergies', `/api/allergy-intolerances/${this.patientId}`, 'allergiesList', 'NKA');
+		run('problems', `/api/medical-problems/${this.patientId}`, 'problemsList', 'None');
+		run('medications', `/api/fhir-resource/medications/patient/${this.patientId}?page=0&size=1`, undefined, 'None');
+		run('history', `/api/fhir-resource/history/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
+		run('vitals', `/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`, undefined, 'No recorded vitals');
 	}
 
 	// --- Header ---
@@ -1338,6 +1351,7 @@ export class PatientChartEditor extends EditorPane {
 		qiBlock.style.cssText = 'padding:0 10px 12px;display:flex;flex-direction:column;gap:4px;';
 		this._renderQuickInfoRow(qiBlock, 'allergies', '\u{1F6A8}', 'Allergies', this.quickInfo.allergies);
 		this._renderQuickInfoRow(qiBlock, 'problems', '\u{1F90D}', 'Problems', this.quickInfo.problems);
+		this._renderQuickInfoRow(qiBlock, 'medications', '\u{1F48A}', 'Medications', this.quickInfo.medications);
 		this._renderQuickInfoRow(qiBlock, 'history', '\u{1F4DC}', 'History', this.quickInfo.history);
 		this._renderQuickInfoRow(qiBlock, 'vitals', '\u{1FAC0}', 'Vitals', this.quickInfo.vitals);
 
@@ -1453,16 +1467,6 @@ export class PatientChartEditor extends EditorPane {
 		this._quickInfoValEls.set(key, val);
 	}
 
-	private _refreshQuickInfoDom(): void {
-		const map: Record<string, string> = {
-			allergies: this.quickInfo.allergies, problems: this.quickInfo.problems,
-			history: this.quickInfo.history, vitals: this.quickInfo.vitals,
-		};
-		for (const [key, val] of Object.entries(map)) {
-			const el = this._quickInfoValEls.get(key);
-			if (el) { el.textContent = val; }
-		}
-	}
 
 	private _highlightActiveTab(): void {
 		this._tabNavMap.forEach((el, key) => {
@@ -1645,32 +1649,7 @@ export class PatientChartEditor extends EditorPane {
 			},
 		];
 
-		await Promise.all(sources.map(async (src) => {
-			try {
-				const res = await this.apiService.fetch(src.ep);
-				if (!res.ok) { return; }
-				const json = await res.json();
-				const items = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
-				for (const it of items) {
-					const act = src.build(it);
-					if (act && act.title.trim()) { acts.push(act); }
-				}
-			} catch { /* ignore source */ }
-		}));
-
-		// Newest first; up to 8 rows.
-		acts.sort((a, b) => b.sortKey - a.sortKey);
-		const top = acts.slice(0, 8);
-
-		DOM.clearNode(parent);
-		if (top.length === 0) {
-			const empty = DOM.append(parent, DOM.$('div'));
-			empty.textContent = 'No recent activity';
-			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
-			return;
-		}
-
-		for (const act of top) {
+		const renderRow = (act: ActivityItem): void => {
 			const row = DOM.append(parent, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);';
 
@@ -1697,6 +1676,40 @@ export class PatientChartEditor extends EditorPane {
 			const time = DOM.append(content, DOM.$('div'));
 			time.textContent = act.timestamp;
 			time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+		};
+
+		const repaint = (): void => {
+			DOM.clearNode(parent);
+			acts.sort((a, b) => b.sortKey - a.sortKey);
+			const top = acts.slice(0, 8);
+			if (top.length === 0) { return; }
+			for (const act of top) { renderRow(act); }
+		};
+
+		// Each source paints its rows as soon as its fetch returns; we no longer
+		// block the whole "Recent Activity" section on the slowest endpoint.
+		const tasks = sources.map(async (src) => {
+			try {
+				const res = await this.apiService.fetch(src.ep);
+				if (!res.ok) { return; }
+				const json = await res.json();
+				const items = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+				let added = false;
+				for (const it of items) {
+					const act = src.build(it);
+					if (act && act.title.trim()) { acts.push(act); added = true; }
+				}
+				if (added) { repaint(); }
+			} catch { /* ignore source */ }
+		});
+
+		await Promise.allSettled(tasks);
+		// Final repaint: if every source returned 0 items, show the empty state.
+		if (acts.length === 0) {
+			DOM.clearNode(parent);
+			const empty = DOM.append(parent, DOM.$('div'));
+			empty.textContent = 'No recent activity';
+			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
 		}
 	}
 

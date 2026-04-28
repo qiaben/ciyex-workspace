@@ -22,6 +22,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface AppointmentDTO {
+	locationDisplay?: string;
 	id: number;
 	visitType: string;
 	patientId: number;
@@ -320,7 +321,9 @@ export class AppointmentsEditor extends EditorPane {
 		try {
 			const range = getDateRange(this.datePreset);
 			let url = `/api/appointments?page=${this.currentPage - 1}&size=${this.pageSize}`;
-			url += `&dateFrom=${range.from}T00:00:00&dateTo=${range.to}T23:59:59`;
+			// Use date-only params (matches ehr-ui's AppointmentPage.tsx); the
+			// backend treats `dateFrom`/`dateTo` as inclusive date boundaries.
+			url += `&dateFrom=${range.from}&dateTo=${range.to}`;
 			if (this.statusFilter) { url += `&status=${this.statusFilter}`; }
 
 			const res = await this.apiService.fetch(url);
@@ -381,9 +384,14 @@ export class AppointmentsEditor extends EditorPane {
 				const prov = this.providers.find(p => p.id === row.providerId);
 				if (prov) { row.providerName = prov.name; }
 			}
-			if (!row.locationName && row.locationId) {
-				const loc = this.locations.find(l => l.id === row.locationId);
-				if (loc) { row.locationName = loc.name; }
+			if (!row.locationName) {
+				if (row.locationDisplay) {
+					row.locationName = row.locationDisplay;
+				} else if (row.locationId !== undefined && row.locationId !== null) {
+					// Match either int or string-typed id (FHIR refs sometimes return string ids).
+					const loc = this.locations.find(l => String(l.id) === String(row.locationId));
+					if (loc) { row.locationName = loc.name; }
+				}
 			}
 		}
 	}
@@ -880,7 +888,7 @@ export class AppointmentsEditor extends EditorPane {
 			// LOCATION
 			const tdLoc = DOM.append(tr, DOM.$('td'));
 			tdLoc.style.cssText = cellStyle;
-			tdLoc.textContent = row.locationName || '';
+			tdLoc.textContent = row.locationName || row.locationDisplay || '';
 
 			// TYPE
 			const tdType = DOM.append(tr, DOM.$('td'));
