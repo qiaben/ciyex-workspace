@@ -65,7 +65,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{
 				key: 'problems', label: 'Problems', icon: 'AlertCircle', emoji: '\u{26A0}\u{FE0F}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'],
 				columns: [
-					{ key: 'condition', label: 'Condition', aliases: ['condition', 'name', 'code', 'display'] },
+					{ key: 'conditionName', label: 'Condition', aliases: ['conditionName', 'condition', 'name', 'code', 'display'] },
 					{ key: 'icdCode', label: 'ICD-10 Code', aliases: ['icdCode', 'icd10Code', 'code'] },
 					{ key: 'severity', label: 'Severity' },
 					{ key: 'clinicalStatus', label: 'Status', aliases: ['clinicalStatus', 'status'] },
@@ -211,7 +211,11 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
 			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
 			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'], readOnly: true },
-			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/transactions', readOnly: true },
+			// Transactions writes go through FHIR Invoice (same backend tab_field_config
+			// as the Payment tab — Invoice covers both ledger entries and statements).
+			// Was previously read-only with apiPath:/api/payments/transactions which has
+			// no POST handler, so users couldn't create records.
+			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'] },
 		],
 	},
 	{
@@ -408,7 +412,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Problem Details', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'condition', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
+					// Field key MUST be `conditionName` to match the backend tab_field_config
+					// (V5 / V18 / V20 — `code.text` mapping). Sending `condition` saves no
+					// value to the FHIR Condition resource so the row can't be reloaded.
+					{ key: 'conditionName', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
 					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' } },
 					{
 						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
@@ -1100,13 +1107,16 @@ export class PatientChartEditor extends EditorPane {
 		'problems': 'problem-list',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
-		'labs': 'lab-results',
+		// V18 renamed 'lab-results' → 'labs', so the desktop's tab.key 'labs' already
+		// matches the backend tab_field_config — no override needed. The previous
+		// override pointed to the defunct 'lab-results' key and caused "data null"
+		// save responses when the backend couldn't find a matching field config.
 		'payment': 'payments',
 		// FHIR collection slugs → backend tab keys (common chart-layout.json typos)
 		'related-persons': 'relationships',
 		'allergy-intolerances': 'allergies',
 		'medication-requests': 'medications',
-		'diagnostic-reports': 'lab-results',
+		'diagnostic-reports': 'labs',
 		'document-references': 'documents',
 		'family-member-histories': 'history',
 		'service-requests': 'referrals',
@@ -1157,6 +1167,35 @@ export class PatientChartEditor extends EditorPane {
 						// the form too tall to fit the chart pane.
 						if (tab.key === 'vitals') {
 							sections = sections.filter(s => s.key !== 'vitals-meta' && !/recording info/i.test(s.title || ''));
+						}
+						// Per-field overlays: backend tab_field_config sometimes omits the
+						// search placeholder or uses a generic 'text' input where the test
+						// team has explicitly asked for a code search. Re-apply the local
+						// fallback hints so CVX/CPT/LOINC/ICD codes consistently render as
+						// searchable, with the right "Search ___ codes" placeholder.
+						const localOverrides = DEFAULT_FIELD_CONFIGS[tab.key];
+						if (localOverrides) {
+							const overrideMap = new Map<string, FieldDef>();
+							for (const sec of localOverrides.sections) {
+								for (const f of sec.fields) { overrideMap.set(f.key, f); }
+							}
+							sections = sections.map(sec => ({
+								...sec,
+								fields: sec.fields.map(f => {
+									const ov = overrideMap.get(f.key);
+									if (!ov) { return f; }
+									// Promote to code-search / practitioner-search if the local
+									// fallback says so. Keep the backend's required + label
+									// (those are intentional content choices).
+									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup';
+									return {
+										...f,
+										type: isSearchType ? ov.type : f.type,
+										placeholder: f.placeholder || ov.placeholder,
+										lookupConfig: f.lookupConfig || ov.lookupConfig,
+									};
+								}),
+							}));
 						}
 						config = { tabKey: tab.key, sections };
 					}
@@ -2174,31 +2213,39 @@ export class PatientChartEditor extends EditorPane {
 		const isEdit = !!existing;
 		const recordId = existing ? String(existing.id || existing.fhirId || '') : '';
 
-		// Overlay + panel
+		// Full-page form (matches the web UI which routes to a dedicated /new or /edit page).
+		// Replaces the previous 540px right-side overlay so the create/edit experience
+		// feels like a real page, not a modal — the test team flagged this as the
+		// "major difference with ciyex UI".
 		const overlay = DOM.append(this.root, DOM.$('div'));
-		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;display:flex;justify-content:flex-end;';
-		const backdrop = DOM.append(overlay, DOM.$('div'));
-		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
-		backdrop.addEventListener('click', () => overlay.remove());
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;background:var(--vscode-editor-background,#1e1e1e);display:flex;flex-direction:column;';
 
 		const panel = DOM.append(overlay, DOM.$('div'));
-		// Flex column so the footer (Save/Cancel) stays pinned at the bottom even when the form is tall.
-		panel.style.cssText = 'position:relative;width:540px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;';
+		panel.style.cssText = 'position:relative;width:100%;height:100%;background:var(--vscode-editor-background,#1e1e1e);display:flex;flex-direction:column;z-index:1;';
 
 		const hdrRow = DOM.append(panel, DOM.$('div'));
-		hdrRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 20px 12px;flex-shrink:0;';
-		const hdrTitle = DOM.append(hdrRow, DOM.$('h3'));
+		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 32px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const backBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		backBtn.textContent = '← Back';
+		backBtn.title = `Back to ${tab.label}`;
+		backBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
+		backBtn.addEventListener('click', () => overlay.remove());
+		const hdrTitle = DOM.append(hdrRow, DOM.$('h2'));
 		hdrTitle.textContent = isEdit ? `Edit ${tab.label}` : `New ${tab.label}`;
-		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		hdrTitle.style.cssText = 'margin:0;font-size:18px;font-weight:600;flex:1;';
 		const closeBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
 		// allow-any-unicode-next-line
 		closeBtn.textContent = '✕';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:18px;cursor:pointer;color:var(--vscode-descriptionForeground);padding:4px 10px;';
 		closeBtn.addEventListener('click', () => overlay.remove());
 
-		// Scrollable form area — only the form scrolls; the footer buttons stay visible.
-		const formContainer = DOM.append(panel, DOM.$('div'));
-		formContainer.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:0 20px 12px;scrollbar-width:none;';
+		// Centered, max-width form area so wide chart panes don't stretch fields edge-to-edge.
+		const scrollArea = DOM.append(panel, DOM.$('div'));
+		scrollArea.style.cssText = 'flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;';
+		const formContainer = DOM.append(scrollArea, DOM.$('div'));
+		formContainer.style.cssText = 'max-width:1100px;margin:0 auto;padding:24px 32px;';
 
 		// Save inputs to a local map (avoid clobbering the form-tab map)
 		const saved = this._formInputs;
@@ -2241,8 +2288,13 @@ export class PatientChartEditor extends EditorPane {
 		this._formCells = savedCells;
 
 		const btnRow = DOM.append(panel, DOM.$('div'));
-		// Sticky footer — flex-shrink:0 so it never collapses when the form is tall.
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;padding:14px 20px 18px;background:var(--vscode-editorWidget-background,#252526);border-top:1px solid var(--vscode-editorWidget-border);';
+		// Sticky footer with the same centered max-width as the form area so the
+		// Save/Cancel buttons line up with the right edge of the form fields.
+		btnRow.style.cssText = 'display:flex;flex-shrink:0;background:var(--vscode-editor-background,#1e1e1e);border-top:1px solid var(--vscode-editorWidget-border);';
+		const btnRowInner = DOM.append(btnRow, DOM.$('div'));
+		btnRowInner.style.cssText = 'max-width:1100px;width:100%;margin:0 auto;display:flex;gap:8px;justify-content:flex-end;padding:14px 32px 18px;';
+		// All footer buttons get appended to btnRowInner; the outer btnRow is just a
+		// full-width wrapper so the border spans the page edge-to-edge.
 
 		// Tabs whose backend only supports create/read — no PUT/DELETE.
 		// Treat them as effectively read-only on the edit dialog so we don't
@@ -2251,7 +2303,7 @@ export class PatientChartEditor extends EditorPane {
 
 		// Delete (edit only, and never for read-only tabs like ledgers/system reports)
 		if (isEdit && recordId && !tab.readOnly && !writeOnce) {
-			const delBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+			const delBtn = DOM.append(btnRowInner, DOM.$('button')) as HTMLButtonElement;
 			delBtn.textContent = 'Delete';
 			delBtn.style.cssText = 'padding:8px 20px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-size:13px;margin-right:auto;';
 			delBtn.addEventListener('click', async () => {
@@ -2281,12 +2333,12 @@ export class PatientChartEditor extends EditorPane {
 			});
 		}
 
-		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		const cancelBtn = DOM.append(btnRowInner, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
 		cancelBtn.addEventListener('click', () => overlay.remove());
 
-		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		const saveBtn = DOM.append(btnRowInner, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
 		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
 		// Read-only tabs (ledger/transactions/system reports) are view-only.
@@ -2323,7 +2375,44 @@ export class PatientChartEditor extends EditorPane {
 				const v = String(el.value ?? '').trim();
 				if (!v) { missing.push({ key: r.key, label: r.label, el }); }
 			}
-			if (missing.length > 0) {
+			// Pattern validation. Negative test cases the team flagged: name/title fields
+			// were accepting numbers and special characters, lot-number / dose fields were
+			// accepting special characters. Block them here with the same inline-error UX.
+			// Letters + spaces + hyphens + apostrophes — for fields that should be a
+			// proper name (allergen, medication, vaccine, procedure, condition, alert,
+			// test, document title).
+			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
+			// Alphanumerics + spaces + a small set of clinical units — for lot # / dose.
+			const codeishPattern = /^[A-Za-z0-9][A-Za-z0-9\s\-./%]*$/;
+			const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
+				allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				vaccineName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				procedureName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				alert: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				description: { rx: namePattern, msg: 'No special characters allowed' },
+				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
+				subject: { rx: namePattern, msg: 'No special characters allowed' },
+				lotNumber: { rx: codeishPattern, msg: 'Letters and numbers only — no special characters' },
+				dose: { rx: codeishPattern, msg: 'Numbers + units only — no special characters' },
+			};
+			const invalidPattern: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
+			for (const sec of (config?.sections || [])) {
+				for (const f of (sec.fields || [])) {
+					const rule = fieldPatterns[f.key];
+					if (!rule) { continue; }
+					const el = dialogInputs.get(f.key);
+					if (!el) { continue; }
+					const v = String(el.value ?? '').trim();
+					if (v && !rule.rx.test(v)) {
+						invalidPattern.push({ key: f.key, label: f.label, el, msg: rule.msg });
+					}
+				}
+			}
+			if (missing.length > 0 || invalidPattern.length > 0) {
 				for (const m of missing) {
 					m.el.style.borderColor = '#ef4444';
 					const cell = dialogCells.get(m.key);
@@ -2333,10 +2422,23 @@ export class PatientChartEditor extends EditorPane {
 						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
 					}
 				}
-				const firstEl = missing[0].el;
+				for (const p of invalidPattern) {
+					p.el.style.borderColor = '#ef4444';
+					const cell = dialogCells.get(p.key);
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = `${p.label}: ${p.msg}`;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+				}
+				const firstEl = (missing[0]?.el ?? invalidPattern[0]?.el) as HTMLElement;
 				firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-				if (typeof (firstEl as HTMLElement).focus === 'function') { (firstEl as HTMLElement).focus(); }
-				this.notificationService.warn(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.map(m => m.label).join(', ')}`);
+				if (typeof firstEl.focus === 'function') { firstEl.focus(); }
+				const summary = [
+					missing.length > 0 ? `Missing: ${missing.map(m => m.label).join(', ')}` : '',
+					invalidPattern.length > 0 ? `Invalid: ${invalidPattern.map(p => p.label).join(', ')}` : '',
+				].filter(Boolean).join('. ');
+				this.notificationService.warn(summary);
 				return;
 			}
 
