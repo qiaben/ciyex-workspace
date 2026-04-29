@@ -72,6 +72,13 @@ export interface ClinicalEditorConfig {
 	formFields?: FormFieldDef[];
 	/** Label for the create button. Default: "+ New" */
 	createLabel?: string;
+	/**
+	 * Whether new records can be created via this editor (shows the "+ New" button).
+	 * Defaults to `true` when formFields is set. Use `false` for editors that share
+	 * a form schema with edit but where the backend doesn't support direct creation
+	 * (e.g. claims, which are derived from invoices/encounters).
+	 */
+	creatable?: boolean;
 	/** Whether editing existing items is supported */
 	editable?: boolean;
 	/** Custom render for a cell value */
@@ -111,6 +118,25 @@ export interface ClinicalEditorConfig {
 	 * Receives the merged form values and returns the final payload.
 	 */
 	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean) => Record<string, unknown>;
+	/**
+	 * URL builder for GET-by-id (refetch on edit) and PUT (update). Use when the
+	 * backend isn't a flat REST resource (e.g. patient-scoped /api/lab-order/{patientId}/{orderId}).
+	 * Defaults to `${apiPath}/${item.id}`.
+	 */
+	buildItemUrl?: (item: Record<string, unknown>) => string;
+	/**
+	 * URL builder for POST (create). Same use-case as buildItemUrl.
+	 * Defaults to `apiPath`.
+	 */
+	buildCreateUrl?: (payload: Record<string, unknown>) => string;
+	/**
+	 * Maps stats-card keys to status-filter values. Keys present in the map are
+	 * clickable filters; keys NOT in the map render as info-only (e.g. aggregates
+	 * like totals/sums). When unset, every stats key is clickable and uses the
+	 * raw key as its filter (legacy behavior — works only if stats keys match
+	 * status values directly).
+	 */
+	statsFilterMap?: Record<string, string>;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -269,7 +295,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		h.textContent = cfg.title;
 		h.style.cssText = 'font-size:20px;font-weight:600;margin:0;';
 
-		if (cfg.formFields && cfg.formFields.length > 0) {
+		if (cfg.formFields && cfg.formFields.length > 0 && cfg.creatable !== false) {
 			const createBtn = DOM.append(titleBar, DOM.$('button'));
 			createBtn.textContent = cfg.createLabel || `+ New ${cfg.title.replace(/s$/, '')}`;
 			createBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
@@ -285,12 +311,19 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			row.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;';
 			for (const [k, v] of Object.entries(this.stats)) {
 				if (typeof v !== 'number') { continue; }
+				// If statsFilterMap is set, only mapped keys are clickable filters; the
+				// rest are info-only aggregates (e.g. total counts, sums). Without a
+				// map, fall back to the legacy behavior of using the raw key.
+				const filterValue = cfg.statsFilterMap ? cfg.statsFilterMap[k] : k;
+				const clickable = filterValue !== undefined;
 				const c = DOM.append(row, DOM.$('div'));
-				const isActive = this.statusFilter === k;
-				c.style.cssText = `padding:8px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:6px;text-align:center;cursor:pointer;min-width:70px;background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s;`;
-				c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
-				c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
-				c.addEventListener('click', () => { this.statusFilter = this.statusFilter === k ? '' : k; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
+				const isActive = clickable && this.statusFilter === filterValue;
+				c.style.cssText = `padding:8px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:6px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};min-width:70px;background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s;${clickable ? '' : 'opacity:0.85;'}`;
+				if (clickable) {
+					c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
+					c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
+					c.addEventListener('click', () => { this.statusFilter = this.statusFilter === filterValue ? '' : filterValue!; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
+				}
 				const numEl = DOM.append(c, DOM.$('div'));
 				numEl.textContent = String(v);
 				numEl.style.cssText = `font-size:18px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};`;
@@ -365,7 +398,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const tbl = DOM.append(this.contentEl, DOM.$('div'));
 		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 		const colWidths = cfg.columns.map(c => c.width || '1fr').join(' ');
-		const cols = colWidths + (cfg.actions || cfg.editable ? ' auto' : '');
+		// Fixed actions-column width so header and data rows align (each row is its own
+		// grid; `auto` would size independently per row and shift columns left/right).
+		const actionCount = (cfg.actions?.length || 0) + (cfg.editable && cfg.formFields ? 1 : 0);
+		const cols = colWidths + (actionCount > 0 ? ` ${Math.max(80, actionCount * 26 + 8)}px` : '');
 
 		// Header
 		const hr = DOM.append(tbl, DOM.$('div'));
@@ -496,7 +532,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Optionally refetch full record by ID so the edit form has all relational fields.
 		if (item && this.config.refetchOnEdit && item.id !== undefined && item.id !== null) {
 			try {
-				const res = await this.apiService.fetch(`${this.config.apiPath}/${item.id}`);
+				const itemUrl = this.config.buildItemUrl ? this.config.buildItemUrl(item) : `${this.config.apiPath}/${item.id}`;
+				const res = await this.apiService.fetch(itemUrl);
 				if (res.ok) {
 					const json = await res.json().catch(() => null);
 					const full = (json && (json.data ?? json)) as Record<string, unknown> | null;
@@ -793,7 +830,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			saveBtn.textContent = 'Saving...';
 
 			try {
-				const url = isEdit ? `${cfg.apiPath}/${this.editingItem!.id}` : cfg.apiPath;
+				let url: string;
+				if (isEdit) {
+					// Use the original record's identifiers for the URL — the resource being
+					// updated is identified by its DB-side IDs (patientId, id), which are
+					// immutable post-create. Form-edited values go in the body, not the path.
+					url = cfg.buildItemUrl
+						? cfg.buildItemUrl(this.editingItem!)
+						: `${cfg.apiPath}/${this.editingItem!.id}`;
+				} else {
+					url = cfg.buildCreateUrl ? cfg.buildCreateUrl(payload) : cfg.apiPath;
+				}
 				const method = isEdit ? 'PUT' : 'POST';
 				const res = await this.apiService.fetch(url, {
 					method,

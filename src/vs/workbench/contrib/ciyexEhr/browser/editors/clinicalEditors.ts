@@ -53,7 +53,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'] },
 			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg' },
 			{
-				key: 'codeSystem', label: 'Code System', type: 'select', aliases: ['medicationSystem', 'system'], options: [
+				key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system'], options: [
 					{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
 				]
 			},
@@ -139,13 +139,16 @@ export class LabsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Lab Orders', apiPath: '/api/lab-order/search', statsPath: undefined,
 		searchPlaceholder: 'Search by patient, test, order number...',
-		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'resultStatus', 'id'],
+		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'result', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Backend is patient-scoped: POST /api/lab-order/{patientId}, PUT/GET/DELETE /api/lab-order/{patientId}/{orderId}.
+		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
+		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
 		columns: [
 			{ key: 'patientFirstName', label: 'Patient' }, { key: 'orderNumber', label: 'Order #', width: '100px' },
 			{ key: 'orderName', label: 'Test', width: '1.5fr' }, { key: 'physicianName', label: 'Provider' },
-			{ key: 'priority', label: 'Priority', width: '80px' }, { key: 'resultStatus', label: 'Results', width: '80px' },
+			{ key: 'priority', label: 'Priority', width: '80px' }, { key: 'result', label: 'Results', width: '80px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
@@ -205,7 +208,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
 			{
-				key: 'resultStatus', label: 'Result Status', type: 'select', options: [
+				key: 'result', label: 'Result Status', type: 'select', aliases: ['resultStatus'], options: [
 					{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
 					{ label: 'Partial', value: 'Partial' }, { label: 'Final', value: 'Final' },
 					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
@@ -227,14 +230,14 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexImmunizations';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Immunizations', apiPath: '/api/immunizations', searchPlaceholder: 'Search by patient, vaccine...',
-		clientSideFilter: ['patientName', 'vaccineName', 'cvxCode', 'site', 'route', 'provider', 'status', 'id'],
+		clientSideFilter: ['patientName', 'vaccineName', 'cvxCode', 'site', 'route', 'administeredBy', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine', width: '1.5fr' },
 			{ key: 'cvxCode', label: 'CVX', width: '60px' }, { key: 'doseNumber', label: 'Dose', width: '50px' },
 			{ key: 'site', label: 'Site', width: '80px' }, { key: 'route', label: 'Route', width: '70px' },
-			{ key: 'administrationDate', label: 'Date', width: '90px' }, { key: 'provider', label: 'Administered By' },
+			{ key: 'administrationDate', label: 'Date', width: '90px' }, { key: 'administeredBy', label: 'Administered By' },
 			{ key: 'status', label: 'Status', width: '80px' },
 		],
 		statusTabs: [{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' }, { label: 'Entered in Error', value: 'entered_in_error' }],
@@ -278,7 +281,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				]
 			},
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-			{ key: 'lot', label: 'Lot Number', type: 'text', placeholder: 'ABC123' },
+			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'] },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 			// Administration Details
 			{ key: 'administrationDate', label: 'Administration Date', type: 'date', required: true },
@@ -301,10 +304,10 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: '1 of 3 or booster' },
 			// Provider Information
 			{
-				key: 'provider', label: 'Administered By', type: 'search', required: true,
+				key: 'administeredBy', label: 'Administered By', type: 'search', required: true,
 				placeholder: 'Search provider...', apiPath: '/api/providers',
 				relatedDisplayFields: ['firstName', 'lastName'],
-				aliases: ['administeredBy', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
+				aliases: ['provider', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
 			},
 			{
 				key: 'orderingProvider', label: 'Ordering Provider', type: 'search',
@@ -581,7 +584,6 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'insuranceName', label: 'Insurance' }, { key: 'procedureCode', label: 'CPT', width: '70px' },
 			{ key: 'procedureDescription', label: 'Procedure' },
-			{ key: 'authorizationNumber', label: 'Authorization #', width: '120px' },
 			{ key: 'priority', label: 'Priority', width: '70px' }, { key: 'status', label: 'Status', width: '80px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
 		],
@@ -659,7 +661,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 export class EducationEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexEducation';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Patient Education', apiPath: '/api/patient-education',
+		title: 'Patient Education', apiPath: '/api/education/assignments',
 		searchPlaceholder: 'Search by topic, category...',
 		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
 		editable: true,
@@ -679,7 +681,15 @@ export class EducationEditor extends ClinicalListEditorBase {
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'materialTitle', label: 'Topic / Material', type: 'text', required: true, placeholder: 'e.g. Diabetes Management' },
+			{
+				key: 'materialTitle', label: 'Topic / Material', type: 'search', required: true,
+				placeholder: 'Search education material...',
+				apiPath: '/api/education/materials',
+				relatedField: 'materialId',
+				searchDisplayField: 'title',
+				relatedFieldsMap: { category: 'category' },
+			},
+			{ key: 'materialId', label: 'Material ID', type: 'text', required: true, placeholder: 'Auto-filled from material search' },
 			{
 				key: 'category', label: 'Category', type: 'select', options: [
 					{ label: 'Disease Management', value: 'disease_management' },
@@ -707,7 +717,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this assignment?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/patient-education/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this assignment?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/education/assignments/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(EducationEditor.ID, group, t, th, s, a, d); }
@@ -939,6 +949,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient, transaction...',
 		// Backend doesn't filter on status= / q=, so do it client-side.
 		clientSideFilter: ['patientId', 'patientName', 'transactionType', 'paymentMethodType', 'description', 'status', 'transactionId', 'id'],
+		// Backend `transactionStats()` returns 9 keys; only the *Count ones map to a
+		// `status` filter. Totals, today*, and month* are aggregates → info-only.
+		statsFilterMap: {
+			pendingCount: 'pending',
+			completedCount: 'completed',
+			failedCount: 'failed',
+			refundedCount: 'refunded',
+		},
 		columns: [
 			{ key: 'patientId', label: 'Patient ID' },
 			{ key: 'amount', label: 'Amount', width: '80px' },
@@ -1003,19 +1021,23 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		title: 'Claims Management', apiPath: '/api/all-claims',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
 		editable: true,
+		// Claims are derived from invoices/encounters — backend has no POST handler.
+		// Status updates and Send work via the actions; manual creation is disabled.
+		creatable: false,
 		// /api/all-claims doesn't support server-side q=/status= — filter client-side
 		// across the fields the user searches by (matches ciyex-ehr-ui behavior).
-		clientSideFilter: ['patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'claimId', 'id'],
+		clientSideFilter: ['patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'id'],
 		mergeOnEdit: true,
-		editTitle: (item) => `Edit Claim #${String(item.claimId || item.id || '')}`,
+		editTitle: (item) => `Edit Claim #${String(item.id || '')}`,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'diagnosisCode', label: 'Dx Code', width: '80px' },
-			{ key: 'diagnosisDescription', label: 'Diagnosis' },
-			{ key: 'type', label: 'Type', width: '90px' },
+			{ key: 'payerName', label: 'Payer' },
+			{ key: 'type', label: 'Type', width: '110px' },
 			{ key: 'planName', label: 'Plan' },
 			{ key: 'provider', label: 'Provider' },
-			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'policyNumber', label: 'Policy #', width: '110px' },
+			{ key: 'status', label: 'Status', width: '100px' },
 		],
 		statusTabs: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
