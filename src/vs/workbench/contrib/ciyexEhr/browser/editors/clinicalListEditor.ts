@@ -607,6 +607,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		body.style.cssText = 'padding:16px;display:grid;gap:12px;';
 
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+		// For date fields we hold direct refs to the visible mm/dd/yyyy input and the
+		// picker so we can seed them when editing — `inputs` only carries the hidden
+		// ISO field so save logic stays type-uniform.
+		const dateRefs = new Map<string, { visible: HTMLInputElement; picker: HTMLInputElement }>();
 
 		for (const field of fields) {
 			const group = DOM.append(body, DOM.$('div'));
@@ -730,6 +734,43 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.addEventListener('focus', () => {
 					if (dropdown.childElementCount > 0) { dropdown.style.display = 'block'; }
 				});
+			} else if (field.type === 'date') {
+				// mm/dd/yyyy text + native calendar trigger. Native `<input type="date">`
+				// renders in OS-locale order on Linux Electron (yyyy-mm-dd), so we render
+				// the US format ourselves and keep a hidden ISO field for the API value.
+				const wrap = DOM.append(group, DOM.$('div'));
+				wrap.style.cssText = 'position:relative;display:flex;align-items:center;gap:6px;';
+				const isoToUs = (iso: string): string => {
+					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+					return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+				};
+				const usToIso = (us: string): string => {
+					const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
+					if (!m) { return ''; }
+					return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+				};
+				const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				visible.type = 'text';
+				visible.placeholder = 'mm/dd/yyyy';
+				visible.style.cssText = inputStyle + 'flex:1;';
+				visible.maxLength = 10;
+				const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				hidden.type = 'hidden';
+				visible.addEventListener('input', () => {
+					const iso = usToIso(visible.value);
+					hidden.value = iso;
+					visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				});
+				const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				picker.type = 'date';
+				picker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
+				picker.title = 'Open calendar';
+				picker.addEventListener('change', () => {
+					visible.value = isoToUs(picker.value);
+					hidden.value = picker.value;
+				});
+				dateRefs.set(field.key, { visible, picker });
+				inputEl = hidden;
 			} else {
 				inputEl = DOM.append(group, DOM.$('input')) as HTMLInputElement;
 				inputEl.type = field.type;
@@ -747,6 +788,18 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				val = typeof dv === 'function' ? String((dv as () => string | number)()) : String(dv ?? '');
 			}
 			inputEl.value = val;
+			// For date fields the registered input is the hidden ISO field — also seed
+			// the visible mm/dd/yyyy text and the picker so the user sees the current
+			// value when editing.
+			if (field.type === 'date' && val) {
+				const iso = val.split('T')[0];
+				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+				const refs = dateRefs.get(field.key);
+				if (m && refs) {
+					refs.visible.value = `${m[2]}/${m[3]}/${m[1]}`;
+					refs.picker.value = iso;
+				}
+			}
 
 			inputs.set(field.key, inputEl);
 		}

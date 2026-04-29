@@ -338,7 +338,7 @@ export class TasksEditor extends EditorPane {
 			if (task.dueDate) {
 				try {
 					const d = new Date(task.dueDate + 'T00:00:00');
-					due.textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+					due.textContent = d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
 					if (d < new Date() && task.status !== 'completed' && task.status !== 'cancelled') {
 						due.style.color = '#ef4444';
 						due.textContent += ' \u26A0';
@@ -535,6 +535,43 @@ export class TasksEditor extends EditorPane {
 			() => addField('Patient Name', 'patientName', 'text', { required: true, placeholder: 'Search patient by name...' }),
 			() => addField('Patient ID', 'patientId', 'text', { placeholder: 'Auto-filled from search', readonly: true }),
 		);
+
+		// Provider search autocomplete on assignedTo
+		const assignedToInput = fields.get('assignedTo') as HTMLInputElement;
+		if (assignedToInput) {
+			const provDropdown = DOM.append(assignedToInput.parentElement!, DOM.$('div'));
+			provDropdown.style.cssText = 'position:absolute;left:0;right:0;max-height:150px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;z-index:10;display:none;';
+			let provTimer: ReturnType<typeof setTimeout> | undefined;
+			assignedToInput.addEventListener('input', () => {
+				if (provTimer) { clearTimeout(provTimer); }
+				const q = assignedToInput.value.trim();
+				if (q.length < 2) { provDropdown.style.display = 'none'; return; }
+				provTimer = setTimeout(async () => {
+					try {
+						const res = await this.apiService.fetch(`/api/providers?search=${encodeURIComponent(q)}&page=0&size=10`);
+						if (!res.ok) { return; }
+						const data = await res.json();
+						const list = data?.data?.content || data?.content || data?.data || [];
+						DOM.clearNode(provDropdown);
+						for (const p of list) {
+							const item = DOM.append(provDropdown, DOM.$('div'));
+							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+							const fn = String(p.firstName || p['identification.firstName'] || '');
+							const ln = String(p.lastName || p['identification.lastName'] || '');
+							item.textContent = `${fn} ${ln}`.trim() || String(p.name || p.username || p.id || '');
+							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+							item.addEventListener('mouseleave', () => { item.style.background = ''; });
+							item.addEventListener('click', () => {
+								assignedToInput.value = item.textContent || '';
+								provDropdown.style.display = 'none';
+							});
+						}
+						provDropdown.style.display = list.length > 0 ? 'block' : 'none';
+					} catch { /* ignore */ }
+				}, 250);
+			});
+			assignedToInput.addEventListener('blur', () => { setTimeout(() => { provDropdown.style.display = 'none'; }, 150); });
+		}
 
 		// Patient search autocomplete
 		const patNameInput = fields.get('patientName') as HTMLInputElement;

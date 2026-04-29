@@ -50,7 +50,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 				relatedFieldsMap: { prescriberNpi: 'npi' },
 				aliases: ['providerName', 'prescribingDoctor', 'prescriber', 'renderingProvider'],
 			},
-			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'] },
+			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', required: true, placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'] },
 			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg' },
 			{
 				key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system'], options: [
@@ -76,8 +76,8 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 					{ label: 'Schedule IV', value: 'IV' }, { label: 'Schedule V', value: 'V' },
 				]
 			},
-			{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', placeholder: 'Pharmacy name' },
-			{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', placeholder: 'e.g. (555) 123-4567' },
+			{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', required: true, placeholder: 'Pharmacy name' },
+			{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: 'e.g. (555) 123-4567' },
 			{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
@@ -198,8 +198,8 @@ export class LabsEditor extends ClinicalListEditorBase {
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
 			},
-			{ key: 'orderDate', label: 'Order Date', type: 'date' },
-			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)' },
+			{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)', defaultValue: () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } },
 			{
 				key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true,
 				placeholder: 'Search provider...', apiPath: '/api/providers',
@@ -214,9 +214,9 @@ export class LabsEditor extends ClinicalListEditorBase {
 					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
 				], defaultValue: 'Pending'
 			},
-			// Diagnosis
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'e.g. Z00.00, E11.9' },
-			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'text', placeholder: 'e.g. 99213' },
+			// Diagnosis — backed by ciyex-codes search so users can pick valid codes.
+			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', placeholder: 'Search ICD-10 codes', apiPath: '/api/codes/ICD10_CM/search', relatedDisplayFields: ['code', 'shortDescription'] },
+			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', placeholder: 'Search CPT codes', apiPath: '/api/codes/CPT/search', relatedDisplayFields: ['code', 'shortDescription'] },
 		],
 		actions: [
 			// allow-any-unicode-next-line

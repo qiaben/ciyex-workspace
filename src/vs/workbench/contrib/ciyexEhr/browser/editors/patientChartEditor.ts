@@ -39,6 +39,8 @@ const FHIR_MAP: Record<string, string> = {
 	'Consent': '/api/fhir-resource/consents', 'FamilyMemberHistory': '/api/fhir-resource/family-member-histories',
 	'Claim': '/api/fhir-resource/claims', 'PaymentReconciliation': '/api/fhir-resource/payment-reconciliations',
 	'RelatedPerson': '/api/fhir-resource/related-persons', 'Organization': '/api/fhir-resource/organizations',
+	'Communication': '/api/fhir-resource/messaging', 'Invoice': '/api/fhir-resource/payments',
+	'PaymentNotice': '/api/fhir-resource/statements',
 };
 
 // Default chart layout. Order is fixed per the test team spec:
@@ -83,7 +85,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
 			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
 			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
-			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/patient-messages' },
+			// Messaging uses the FHIR Communication resource via the generic FHIR controller
+			// — same backend `tab_field_config` + scope enforcement as the rest of the chart,
+			// and no separate patient-messages controller required.
+			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Communication'] },
 			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
 			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/locations' },
 		],
@@ -211,14 +216,20 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 	},
 	{
 		key: 'financial', label: 'Financial', position: 6, tabs: [
-			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/ledger', readOnly: true },
-			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/payments/plans', readOnly: true },
+			// Payment + Statements both flow through FHIR (Invoice / PaymentNotice) so the
+			// fields, columns, and edit form match what tab_field_config defines — same
+			// source of truth as the web UI's PaymentPostingTab / StatementsTab.
+			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'] },
+			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentNotice'] },
 		],
 	},
 	{
 		key: 'others', label: 'Others', position: 7, tabs: [
-			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
-			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
+			// Issues view rolls up Condition+AllergyIntolerance+MedicationRequest per V64;
+			// the backend tab_field_config 'issues' is the source of truth for fields.
+			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'], readOnly: true },
+			// Report = clinical reports (DiagnosticReport).
+			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport'], readOnly: true },
 		],
 	},
 ];
@@ -716,7 +727,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Education Assignment', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'materialTitle', label: 'Material Title', type: 'text', required: true, placeholder: 'e.g., Diabetes Self-Care' },
+					// materialId picks an existing material from the catalog. The backend's
+					// PatientEducationService.assign requires it (else "id must not be null").
+					{ key: 'materialId', label: 'Education Material', type: 'lookup', required: true, placeholder: 'Search materials…', lookupConfig: { endpoint: '/api/education/materials', displayField: 'title', valueField: 'id' } },
+					{ key: 'materialTitle', label: 'Material Title', type: 'text', required: false, placeholder: 'Auto-filled from material' },
 					{
 						key: 'materialCategory', label: 'Category', type: 'select', options: [
 							{ label: 'Disease Management', value: 'disease-management' },
@@ -1136,7 +1150,15 @@ export class PatientChartEditor extends EditorPane {
 				if (cfg && cfg.fieldConfig) {
 					const fieldConfig = typeof cfg.fieldConfig === 'string' ? JSON.parse(cfg.fieldConfig) : cfg.fieldConfig;
 					if (fieldConfig?.sections) {
-						config = { tabKey: tab.key, sections: fieldConfig.sections };
+						let sections = fieldConfig.sections as FieldSection[];
+						// Vitals: drop the backend's "Recording Info" / vitals-meta section.
+						// recordedAt is auto-set on save, the e-signed flag is unused, and
+						// notes already appears under measurements — the section just makes
+						// the form too tall to fit the chart pane.
+						if (tab.key === 'vitals') {
+							sections = sections.filter(s => s.key !== 'vitals-meta' && !/recording info/i.test(s.title || ''));
+						}
+						config = { tabKey: tab.key, sections };
 					}
 				}
 			}
@@ -1813,6 +1835,9 @@ export class PatientChartEditor extends EditorPane {
 	// --- Generic tab (list or form) ---
 
 	private _formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+	// Parallel map of field cell containers, keyed the same way as `_formInputs`.
+	// Used for inline validation (red-border + per-field error message).
+	private _formCells = new Map<string, HTMLElement>();
 
 	private async _renderGenericTab(tab: ChartTab): Promise<void> {
 		// Section card header
@@ -2177,7 +2202,9 @@ export class PatientChartEditor extends EditorPane {
 
 		// Save inputs to a local map (avoid clobbering the form-tab map)
 		const saved = this._formInputs;
+		const savedCells = this._formCells;
 		this._formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+		this._formCells = new Map<string, HTMLElement>();
 
 		try {
 			if (config?.sections && config.sections.length > 0) {
@@ -2209,14 +2236,21 @@ export class PatientChartEditor extends EditorPane {
 		}
 
 		const dialogInputs = this._formInputs;
+		const dialogCells = this._formCells;
 		this._formInputs = saved;
+		this._formCells = savedCells;
 
 		const btnRow = DOM.append(panel, DOM.$('div'));
 		// Sticky footer — flex-shrink:0 so it never collapses when the form is tall.
 		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;padding:14px 20px 18px;background:var(--vscode-editorWidget-background,#252526);border-top:1px solid var(--vscode-editorWidget-border);';
 
-		// Delete (edit only)
-		if (isEdit && recordId) {
+		// Tabs whose backend only supports create/read — no PUT/DELETE.
+		// Treat them as effectively read-only on the edit dialog so we don't
+		// surface buttons that lead to 405s.
+		const writeOnce = new Set(['clinical-alerts']).has(tab.key);
+
+		// Delete (edit only, and never for read-only tabs like ledgers/system reports)
+		if (isEdit && recordId && !tab.readOnly && !writeOnce) {
 			const delBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
 			delBtn.textContent = 'Delete';
 			delBtn.style.cssText = 'padding:8px 20px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-size:13px;margin-right:auto;';
@@ -2255,27 +2289,54 @@ export class PatientChartEditor extends EditorPane {
 		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
 		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+		// Read-only tabs (ledger/transactions/system reports) are view-only.
+		// Hide Save so users can't trigger 405 errors against endpoints that
+		// don't accept POST/PUT. Same applies to write-once tabs on edit
+		// (clinical-alerts: backend has POST but no PUT).
+		if (tab.readOnly || (writeOnce && isEdit)) { saveBtn.style.display = 'none'; }
 		saveBtn.disabled = dialogInputs.size === 0;
 		saveBtn.addEventListener('click', async () => {
 			// Validate required fields against the field config so the form catches
 			// the "negative test cases" the test team flagged (empty / whitespace-only
-			// inputs in required columns).
+			// inputs in required columns). Highlight the offending fields inline so
+			// the user sees exactly what's missing — a toast alone wasn't enough.
 			const requiredKeys: Array<{ key: string; label: string }> = [];
 			for (const sec of (config?.sections || [])) {
 				for (const f of (sec.fields || [])) {
 					if (f.required) { requiredKeys.push({ key: f.key, label: f.label }); }
 				}
 			}
-			const missing: string[] = [];
+			// Clear any previous error state from a prior submit attempt.
+			for (const [key, el] of dialogInputs) {
+				const cell = dialogCells.get(key);
+				if (cell) {
+					const prevErr = cell.lastElementChild as HTMLElement | null;
+					if (prevErr && prevErr.classList.contains('field-error')) { prevErr.remove(); }
+				}
+				el.style.borderColor = '';
+			}
+			const missing: Array<{ key: string; label: string; el: HTMLElement }> = [];
 			for (const r of requiredKeys) {
 				const el = dialogInputs.get(r.key);
 				if (!el) { continue; }
 				if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { continue; }
 				const v = String(el.value ?? '').trim();
-				if (!v) { missing.push(r.label); }
+				if (!v) { missing.push({ key: r.key, label: r.label, el }); }
 			}
 			if (missing.length > 0) {
-				this.notificationService.warn(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`);
+				for (const m of missing) {
+					m.el.style.borderColor = '#ef4444';
+					const cell = dialogCells.get(m.key);
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = `${m.label} is required`;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+				}
+				const firstEl = missing[0].el;
+				firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				if (typeof (firstEl as HTMLElement).focus === 'function') { (firstEl as HTMLElement).focus(); }
+				this.notificationService.warn(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.map(m => m.label).join(', ')}`);
 				return;
 			}
 
@@ -2466,6 +2527,7 @@ export class PatientChartEditor extends EditorPane {
 
 				const cell = DOM.append(gridBody, DOM.$('div'));
 				cell.style.cssText = `grid-column:span ${Math.min(f.colSpan || 1, cols)};padding:4px 0;`;
+				this._formCells.set(f.key, cell);
 
 				const lbl = DOM.append(cell, DOM.$('label'));
 				lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.3px;';
@@ -2502,16 +2564,14 @@ export class PatientChartEditor extends EditorPane {
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
 					this._formInputs.set(f.key, ta);
-				} else if (f.type === 'date') {
-					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
-					inp.type = 'date'; inp.value = String(val).split('T')[0]; inp.style.cssText = inputStyle;
-					this._formInputs.set(f.key, inp);
+				} else if (f.type === 'date' || f.type === 'datetime') {
+					this._buildDateInput(cell, f, String(val).split('T')[0], inputStyle);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
 					this._formInputs.set(f.key, inp);
-				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup') {
+				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded') {
 					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
@@ -2580,6 +2640,66 @@ export class PatientChartEditor extends EditorPane {
 			}
 			applyVisibility();
 		}
+	}
+
+	/**
+	 * Build an mm/dd/yyyy text input with a calendar picker. The visible field
+	 * shows the US-formatted date; a hidden ISO sibling holds the yyyy-mm-dd
+	 * value the API expects. We can't trust the OS locale on `<input type="date">`
+	 * (Linux Electron builds often render yyyy-mm-dd), so we render the US format
+	 * ourselves.
+	 */
+	private _buildDateInput(cell: HTMLElement, f: FieldDef, isoValue: string, inputStyle: string): void {
+		const wrap = DOM.append(cell, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;display:flex;align-items:center;gap:6px;';
+
+		const isoToUs = (iso: string): string => {
+			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+		};
+		const usToIso = (us: string): string => {
+			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
+			if (!m) { return ''; }
+			const mm = m[1].padStart(2, '0');
+			const dd = m[2].padStart(2, '0');
+			return `${m[3]}-${mm}-${dd}`;
+		};
+
+		const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		visible.type = 'text';
+		visible.placeholder = 'mm/dd/yyyy';
+		visible.value = isoToUs(isoValue);
+		visible.style.cssText = inputStyle + 'flex:1;';
+		visible.setAttribute('inputmode', 'numeric');
+		visible.maxLength = 10;
+
+		// Hidden ISO field that gets registered with _formInputs so the saved
+		// value is yyyy-mm-dd regardless of what the user typed.
+		const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		hidden.type = 'hidden';
+		hidden.value = isoValue || '';
+		this._formInputs.set(f.key, hidden);
+
+		const sync = () => {
+			const iso = usToIso(visible.value);
+			hidden.value = iso;
+			visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+		};
+		visible.addEventListener('input', sync);
+		visible.addEventListener('blur', sync);
+
+		// Native date picker as the calendar trigger. We hide its text part and
+		// keep only the picker indicator visible — clicking opens a real
+		// calendar popover that writes back to the visible mm/dd/yyyy field.
+		const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		picker.type = 'date';
+		picker.value = isoValue || '';
+		picker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
+		picker.title = 'Open calendar';
+		picker.addEventListener('change', () => {
+			visible.value = isoToUs(picker.value);
+			hidden.value = picker.value;
+		});
 	}
 
 	/**
@@ -2659,10 +2779,24 @@ export class PatientChartEditor extends EditorPane {
 	private _buildSearchUrl(f: FieldDef, q: string): string | null {
 		const enc = encodeURIComponent(q);
 		switch (f.type) {
+			case 'coded':
 			case 'code-search': {
 				// ciyex-codes service: GET /api/codes/{system}/search?q=...&page=0&size=20
 				// system uses the CodeSystem enum (ICD10_CM, CPT, HCPCS, LOINC, CVX, ...).
-				const raw = (f.lookupConfig?.system || 'ICD10_CM').toUpperCase();
+				// `coded` fields from tab_field_config carry the system in fhirMapping.system as a URL —
+				// map the well-known URLs to the ciyex-codes enum so the search hits the right table.
+				let raw = (f.lookupConfig?.system || '').toUpperCase();
+				if (!raw) {
+					const fhirSystem = (f as unknown as { fhirMapping?: { system?: string } }).fhirMapping?.system || '';
+					if (/icd-10-cm/i.test(fhirSystem)) { raw = 'ICD10_CM'; }
+					else if (/icd-9/i.test(fhirSystem)) { raw = 'ICD9_CM'; }
+					else if (/ama-assn.*cpt|cpt-?4/i.test(fhirSystem)) { raw = 'CPT'; }
+					else if (/loinc/i.test(fhirSystem)) { raw = 'LOINC'; }
+					else if (/cvx/i.test(fhirSystem)) { raw = 'CVX'; }
+					else if (/hcpcs/i.test(fhirSystem)) { raw = 'HCPCS'; }
+					else if (/snomed/i.test(fhirSystem)) { raw = 'SNOMED'; }
+					else { raw = 'ICD10_CM'; }
+				}
 				return `/api/codes/${raw}/search?q=${enc}&page=0&size=20`;
 			}
 			case 'practitioner-search':
@@ -2691,6 +2825,7 @@ export class PatientChartEditor extends EditorPane {
 			|| (Array.isArray(payload) ? payload as unknown[] : []);
 		const arr = Array.isArray(list) ? list as Record<string, unknown>[] : [];
 		switch (f.type) {
+			case 'coded':
 			case 'code-search':
 				// MedicalCode entity returns: { code, shortDescription, longDescription, ... }
 				return arr.map(it => ({
@@ -2811,7 +2946,11 @@ export class PatientChartEditor extends EditorPane {
 				: () => this._openRecordDialog(tab, config, item);
 
 			const recordId = String(item.id || item.fhirId || '');
-			const onDelete = isEncounter || !recordId || tab.readOnly
+			// Tabs whose backend only supports create/read — no PUT or DELETE — must
+			// suppress the row delete handler so users don't hit 405s. Currently:
+			// clinical-alerts (CDS alerts can be acknowledged but not modified/removed).
+			const writeOnceTabs = new Set(['clinical-alerts']);
+			const onDelete = isEncounter || !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
