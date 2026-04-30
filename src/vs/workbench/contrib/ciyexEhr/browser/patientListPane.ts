@@ -32,6 +32,9 @@ export class PatientListPane extends ViewPane {
 	private _listEl: HTMLElement | undefined;
 	private _patients: IPatientRow[] = [];
 	private _loaded = false;
+	private _searchQuery = '';
+	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
+	private _genderFilter: 'all' | 'male' | 'female' | 'other' = 'all';
 
 	constructor(
 		options: IViewPaneOptions,
@@ -52,7 +55,63 @@ export class PatientListPane extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
-		container.style.overflow = 'auto';
+		container.style.display = 'flex';
+		container.style.flexDirection = 'column';
+		container.style.height = '100%';
+		container.style.overflow = 'hidden';
+
+		// Filter bar — search + status + gender. Match the EHR-UI patient page so
+		// the desktop workspace exposes the same filters per the test report.
+		const filterBar = document.createElement('div');
+		filterBar.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+
+		const searchInput = document.createElement('input');
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search by name or DOB (MM/DD/YYYY)...';
+		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;outline:none;';
+		searchInput.addEventListener('input', () => {
+			this._searchQuery = searchInput.value.trim();
+			this._renderList();
+		});
+		filterBar.appendChild(searchInput);
+
+		const filterRow = document.createElement('div');
+		filterRow.style.cssText = 'display:flex;gap:4px;';
+
+		const selStyle = 'flex:1;padding:3px 4px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;cursor:pointer;outline:none;';
+
+		const statusSel = document.createElement('select');
+		statusSel.style.cssText = selStyle;
+		statusSel.title = 'Status filter';
+		for (const [val, label] of [['all', 'All Status'], ['active', 'Active'], ['inactive', 'Inactive']] as const) {
+			const o = document.createElement('option');
+			o.value = val; o.textContent = label;
+			if (val === this._statusFilter) { o.selected = true; }
+			statusSel.appendChild(o);
+		}
+		statusSel.addEventListener('change', () => {
+			this._statusFilter = statusSel.value as 'all' | 'active' | 'inactive';
+			this._renderList();
+		});
+		filterRow.appendChild(statusSel);
+
+		const genderSel = document.createElement('select');
+		genderSel.style.cssText = selStyle;
+		genderSel.title = 'Gender filter';
+		for (const [val, label] of [['all', 'All Gender'], ['male', 'Male'], ['female', 'Female'], ['other', 'Other']] as const) {
+			const o = document.createElement('option');
+			o.value = val; o.textContent = label;
+			if (val === this._genderFilter) { o.selected = true; }
+			genderSel.appendChild(o);
+		}
+		genderSel.addEventListener('change', () => {
+			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'other';
+			this._renderList();
+		});
+		filterRow.appendChild(genderSel);
+
+		filterBar.appendChild(filterRow);
+		container.appendChild(filterBar);
 
 		// Loading message
 		const loadingEl = document.createElement('div');
@@ -60,14 +119,49 @@ export class PatientListPane extends ViewPane {
 		loadingEl.style.color = 'var(--vscode-descriptionForeground)';
 		loadingEl.style.fontSize = '12px';
 		loadingEl.textContent = 'Loading patients...';
-		container.appendChild(loadingEl);
+
+		const listWrap = document.createElement('div');
+		listWrap.style.cssText = 'flex:1;overflow-y:auto;';
+		listWrap.appendChild(loadingEl);
 
 		this._listEl = document.createElement('div');
-		container.appendChild(this._listEl);
+		listWrap.appendChild(this._listEl);
+		container.appendChild(listWrap);
 
 		// Load data
 		this._loadPatients().then(() => {
 			loadingEl.remove();
+		});
+	}
+
+	private _filteredPatients(): IPatientRow[] {
+		const q = this._searchQuery.toLowerCase();
+		// Convert "12/31/1990" → "1990-12-31" so MM/DD/YYYY queries match the ISO DOB
+		const usDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(this._searchQuery);
+		const isoFromUs = usDate ? `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}` : '';
+		return this._patients.filter(p => {
+			if (this._statusFilter !== 'all') {
+				const s = (p.status || 'active').toLowerCase();
+				const isActive = s === 'active' || s === '' || s === 'true';
+				if (this._statusFilter === 'active' && !isActive) { return false; }
+				if (this._statusFilter === 'inactive' && isActive) { return false; }
+			}
+			if (this._genderFilter !== 'all') {
+				const g = (p.gender || '').toLowerCase();
+				if (this._genderFilter === 'other') {
+					if (g === 'male' || g === 'female') { return false; }
+				} else if (g !== this._genderFilter) {
+					return false;
+				}
+			}
+			if (q) {
+				const fullName = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
+				const dobMatch = isoFromUs && p.dateOfBirth && p.dateOfBirth.startsWith(isoFromUs);
+				if (!fullName.includes(q) && !(p.dateOfBirth || '').includes(q) && !dobMatch) {
+					return false;
+				}
+			}
+			return true;
 		});
 	}
 
@@ -108,7 +202,13 @@ export class PatientListPane extends ViewPane {
 			return;
 		}
 
-		for (const patient of this._patients) {
+		const rows = this._filteredPatients();
+		if (rows.length === 0) {
+			this._showMessage('No matches');
+			return;
+		}
+
+		for (const patient of rows) {
 			const row = document.createElement('div');
 			Object.assign(row.style, {
 				padding: '6px 16px',
@@ -127,10 +227,13 @@ export class PatientListPane extends ViewPane {
 				row.style.background = '';
 			});
 
-			// Avatar circle with initials
+			// Avatar circle with initials. Guard against missing first/last name —
+			// `charCodeAt` returns NaN on an empty string and breaks the hue calc.
 			const avatar = document.createElement('span');
-			const initials = `${(patient.firstName || '')[0] || ''}${(patient.lastName || '')[0] || ''}`.toUpperCase();
-			const hue = (patient.firstName.charCodeAt(0) * 7 + patient.lastName.charCodeAt(0) * 13) % 360;
+			const initials = `${(patient.firstName || '')[0] || ''}${(patient.lastName || '')[0] || ''}`.toUpperCase() || '?';
+			const fnCode = (patient.firstName || '?').charCodeAt(0) || 65;
+			const lnCode = (patient.lastName || '?').charCodeAt(0) || 65;
+			const hue = (fnCode * 7 + lnCode * 13) % 360;
 			Object.assign(avatar.style, {
 				width: '24px', height: '24px', borderRadius: '50%',
 				display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

@@ -239,6 +239,9 @@ export class AppointmentsEditor extends EditorPane {
 	private locationFilter = '';
 	private typeFilter = '';
 	private statusFilter = '';
+	// Custom date range (only used when datePreset === 'all_time')
+	private dateFromCustom = '';
+	private dateToCustom = '';
 
 	// Pagination
 	private currentPage = 1;
@@ -267,13 +270,15 @@ export class AppointmentsEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.appointments-editor'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
+		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);';
+		// Scrollable content area — pagination is rendered as a sibling and pinned
+		// to the bottom (see _render). Keeps the toolbar/table scrollable while the
+		// pagination bar stays visible per the EHR-UI parity requirement.
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
-		this.contentEl.style.cssText = 'max-width:1400px;margin:0 auto;padding:20px 24px;';
-
-		// Mark body so titlebar search + editor split/layout actions hide on this view
-		DOM.getActiveWindow().document.body.classList.add('ehr-on-calendar');
+		this.contentEl.style.cssText = 'flex:1;overflow-y:auto;padding:20px 24px;';
 	}
+
+	private _pagBarEl: HTMLElement | null = null;
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
@@ -285,7 +290,6 @@ export class AppointmentsEditor extends EditorPane {
 
 	override dispose(): void {
 		this._stopAutoRefresh();
-		DOM.getActiveWindow().document.body.classList.remove('ehr-on-calendar');
 		super.dispose();
 	}
 
@@ -324,10 +328,19 @@ export class AppointmentsEditor extends EditorPane {
 	private async _loadAppointments(): Promise<void> {
 		try {
 			const range = getDateRange(this.datePreset);
+			// When "All Time" is selected and the user has filled the custom from/to
+			// pickers, narrow the request to that range. Otherwise the preset's
+			// implicit range (2020-2030 for all_time) applies.
+			let from = range.from;
+			let to = range.to;
+			if (this.datePreset === 'all_time') {
+				if (this.dateFromCustom) { from = this.dateFromCustom; }
+				if (this.dateToCustom) { to = this.dateToCustom; }
+			}
 			let url = `/api/appointments?page=${this.currentPage - 1}&size=${this.pageSize}`;
 			// Use date-only params (matches ehr-ui's AppointmentPage.tsx); the
 			// backend treats `dateFrom`/`dateTo` as inclusive date boundaries.
-			url += `&dateFrom=${range.from}&dateTo=${range.to}`;
+			url += `&dateFrom=${from}&dateTo=${to}`;
 			if (this.statusFilter) { url += `&status=${this.statusFilter}`; }
 
 			const res = await this.apiService.fetch(url);
@@ -530,6 +543,12 @@ export class AppointmentsEditor extends EditorPane {
 
 	private _renderError(msg: string): void {
 		DOM.clearNode(this.contentEl);
+		// Pagination is rendered as a sibling of contentEl — clear it on error
+		// so the empty state isn't shown alongside stale pagination buttons.
+		if (this._pagBarEl && this._pagBarEl.parentElement) {
+			this._pagBarEl.parentElement.removeChild(this._pagBarEl);
+			this._pagBarEl = null;
+		}
 		const el = DOM.append(this.contentEl, DOM.$('div'));
 		el.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 		el.textContent = msg;
@@ -561,15 +580,23 @@ export class AppointmentsEditor extends EditorPane {
 		const actionGroup = DOM.append(header, DOM.$('div'));
 		actionGroup.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
 
-		// Auto-refresh
+		// Manual refresh — clicking immediately reloads the table
+		const refreshBtn = DOM.append(actionGroup, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.style.cssText = btnStyle;
+		// allow-any-unicode-next-line
+		refreshBtn.textContent = '⟳ Refresh';
+		refreshBtn.title = 'Refresh appointments now';
+		refreshBtn.addEventListener('click', () => { void this._loadAppointments(); });
+
+		// Auto-refresh interval picker (Off / 15s / 30s / 60s)
 		const refreshWrap = DOM.append(actionGroup, DOM.$('div'));
 		refreshWrap.style.cssText = 'display:flex;align-items:center;gap:4px;';
-		const refreshIcon = DOM.append(refreshWrap, DOM.$('span'));
-		// allow-any-unicode-next-line
-		refreshIcon.textContent = '⟳';
-		refreshIcon.style.cssText = 'font-size:14px;color:var(--vscode-descriptionForeground);';
+		const autoLabel = DOM.append(refreshWrap, DOM.$('span'));
+		autoLabel.textContent = 'Auto:';
+		autoLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		const refreshSel = DOM.append(refreshWrap, DOM.$('select')) as HTMLSelectElement;
 		refreshSel.style.cssText = selectStyle;
+		refreshSel.title = 'Auto-refresh interval';
 		for (const opt of REFRESH_OPTIONS) {
 			const o = DOM.append(refreshSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = String(opt.value); o.textContent = opt.label;
@@ -727,20 +754,76 @@ export class AppointmentsEditor extends EditorPane {
 			this._loadAppointments();
 		});
 
-		// Spacer pushes the date preset to the far right
-		const spacer = DOM.append(filters, DOM.$('span'));
-		spacer.style.cssText = 'flex:1;';
+		// allow-any-unicode-next-line
+		// ─── Date Filter Row ──────────────────────────────────────────────
+		// Per the EHR-UI parity spec: the date preset selector sits above the
+		// DATE column on the left, and the date-range pickers (visible when the
+		// preset is "All Time") sit above the ACTIONS column on the right.
+		const dateRow = DOM.append(this.contentEl, DOM.$('div'));
+		dateRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding:8px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
 
-		// Date preset (monthly filter) — placed to the right of "All Status"
-		const dateSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
+		const dateLeft = DOM.append(dateRow, DOM.$('div'));
+		dateLeft.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		const dateLeftLabel = DOM.append(dateLeft, DOM.$('span'));
+		dateLeftLabel.textContent = 'Date:';
+		dateLeftLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
+		const dateSel = DOM.append(dateLeft, DOM.$('select')) as HTMLSelectElement;
 		dateSel.style.cssText = selectStyle;
 		for (const p of DATE_PRESETS) {
 			const o = DOM.append(dateSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = p.value; o.textContent = p.label;
 			if (p.value === this.datePreset) { o.selected = true; }
 		}
+
+		const dateRight = DOM.append(dateRow, DOM.$('div'));
+		dateRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		const rangeLabel = DOM.append(dateRight, DOM.$('span'));
+		rangeLabel.textContent = 'Range:';
+		rangeLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
+		const dateInputStyle = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+		const fromInput = DOM.append(dateRight, DOM.$('input')) as HTMLInputElement;
+		fromInput.type = 'date';
+		fromInput.value = this.dateFromCustom;
+		fromInput.style.cssText = dateInputStyle;
+		fromInput.title = 'From date';
+		const toLbl = DOM.append(dateRight, DOM.$('span'));
+		toLbl.textContent = 'to';
+		toLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		const toInput = DOM.append(dateRight, DOM.$('input')) as HTMLInputElement;
+		toInput.type = 'date';
+		toInput.value = this.dateToCustom;
+		toInput.style.cssText = dateInputStyle;
+		toInput.title = 'To date';
+		const clearRangeBtn = DOM.append(dateRight, DOM.$('button')) as HTMLButtonElement;
+		clearRangeBtn.textContent = 'Clear';
+		clearRangeBtn.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-descriptionForeground);font-size:11px;cursor:pointer;';
+		clearRangeBtn.addEventListener('click', () => {
+			this.dateFromCustom = '';
+			this.dateToCustom = '';
+			this.currentPage = 1;
+			this._loadAppointments();
+		});
+
+		// Range row visible only when "All Time" is the active preset; other
+		// presets define their own implicit range so the inputs would be ignored.
+		const updateRangeVisibility = () => {
+			dateRight.style.visibility = this.datePreset === 'all_time' ? 'visible' : 'hidden';
+		};
+		updateRangeVisibility();
+
 		dateSel.addEventListener('change', () => {
 			this.datePreset = dateSel.value;
+			this.currentPage = 1;
+			updateRangeVisibility();
+			this._loadAppointments();
+		});
+		fromInput.addEventListener('change', () => {
+			this.dateFromCustom = fromInput.value;
+			this.currentPage = 1;
+			this._loadAppointments();
+		});
+		toInput.addEventListener('change', () => {
+			this.dateToCustom = toInput.value;
 			this.currentPage = 1;
 			this._loadAppointments();
 		});
@@ -771,8 +854,15 @@ export class AppointmentsEditor extends EditorPane {
 
 		// allow-any-unicode-next-line
 		// ─── Pagination ────────────────────────────────────────────────────
-		const pagBar = DOM.append(this.contentEl, DOM.$('div'));
-		pagBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 0;margin-top:8px;';
+		// Render the pagination bar as a sibling of `contentEl` (i.e. directly
+		// under `root`) so it stays pinned at the bottom and doesn't scroll with
+		// the table — matches the EHR-UI layout per the test report.
+		if (this._pagBarEl && this._pagBarEl.parentElement) {
+			this._pagBarEl.parentElement.removeChild(this._pagBarEl);
+		}
+		const pagBar = DOM.append(this.root, DOM.$('div'));
+		this._pagBarEl = pagBar;
+		pagBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 24px;border-top:1px solid var(--vscode-editorWidget-border,#3c3c3c);background:var(--vscode-editor-background);flex-shrink:0;';
 
 		const pagLeft = DOM.append(pagBar, DOM.$('div'));
 		pagLeft.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -980,36 +1070,49 @@ export class AppointmentsEditor extends EditorPane {
 				tdWait.style.color = 'var(--vscode-descriptionForeground)';
 			}
 
-			// ACTIONS
+			// ACTIONS — Open Chart / Record Vitals / Visit Summary, matching EHR-UI
 			const tdActions = DOM.append(tr, DOM.$('td'));
-			tdActions.style.cssText = cellStyle + 'display:flex;gap:4px;';
+			tdActions.style.cssText = cellStyle + 'display:flex;gap:6px;align-items:center;';
 
-			// Quick status advance button
-			if (so?.nextStatus && !so?.terminal) {
-				const advBtn = DOM.append(tdActions, DOM.$('button'));
-				const nextSo = this.statusOptions.find(s => s.value === so.nextStatus);
-				advBtn.textContent = `→ ${nextSo?.label || so.nextStatus}`;
-				advBtn.title = `Move to ${nextSo?.label || so.nextStatus}`;
-				advBtn.style.cssText = `padding:3px 8px;font-size:10px;border:none;border-radius:4px;cursor:pointer;background:${nextSo?.color || '#0e639c'};color:#fff;white-space:nowrap;`;
-				advBtn.addEventListener('click', () => this._updateStatus(row.id, so.nextStatus!));
-			}
-
-			const iconBtn = (icon: string, title: string, onClick: () => void) => {
+			const iconBtn = (icon: string, title: string, color: string, onClick: () => void) => {
 				const b = DOM.append(tdActions, DOM.$('button')) as HTMLButtonElement;
 				b.textContent = icon;
 				b.title = title;
-				b.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:2px;';
+				b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:4px;color:${color};`;
+				b.addEventListener('mouseenter', () => { b.style.background = `${color}20`; });
+				b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
 				b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 				return b;
 			};
 
 			// allow-any-unicode-next-line
-			iconBtn('📋', 'Open Patient Chart', () => this._openPatientChart(row.patientId, row.patientName || ''));
+			iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
 			// allow-any-unicode-next-line
-			iconBtn('❤', 'Record Vitals — opens chart on Vitals tab', () => this._openPatientChartTab(row.patientId, row.patientName || '', 'vitals'));
+			iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
 			// allow-any-unicode-next-line
-			iconBtn('🗒', 'Visit Summary — opens encounter summary', () => this._openVisitSummary(row));
+			iconBtn('🗒', 'Visit Summary', '#f59e0b', () => this._openVisitSummary(row));
 		}
+	}
+
+	/** "Open Chart" — for an appointment row, opens the encounter form (parity
+	 *  with EHR-UI). Falls back to the patient chart when no encounter is linked
+	 *  yet (e.g. status is still Scheduled and an encounter hasn't been created). */
+	private _openVisitChart(row: AppointmentDTO): void {
+		if (row.encounterId) {
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '');
+			return;
+		}
+		this._openPatientChart(row.patientId, row.patientName || '');
+	}
+
+	/** "Record Vitals" — opens the encounter on the vitals section. Without an
+	 *  encounter, falls back to the patient chart's Vitals tab. */
+	private _openVitalsForRow(row: AppointmentDTO): void {
+		if (row.encounterId) {
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', 'vitals');
+			return;
+		}
+		this._openPatientChartTab(row.patientId, row.patientName || '', 'vitals');
 	}
 
 	/** Opens the patient chart with a specific initial tab pre-selected

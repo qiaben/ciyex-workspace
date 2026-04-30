@@ -106,9 +106,6 @@ export class CalendarEditor extends EditorPane {
 		this.root = DOM.append(parent, DOM.$('.ciyex-calendar-editor'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 
-		// Mark body so titlebar search hides on calendar (CSS rule in ehrTitlebar.css)
-		DOM.getActiveWindow().document.body.classList.add('ehr-on-calendar');
-
 		// Header bar
 		this.headerBar = DOM.append(this.root, DOM.$('.calendar-header'));
 		this.headerBar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
@@ -360,19 +357,10 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Centered patient search (filters appointments by patient name)
-		const searchWrap = DOM.append(this.headerBar, DOM.$('.cal-patient-search'));
-		searchWrap.style.cssText = 'flex:1;display:flex;justify-content:center;';
-		const patientSearchInput = DOM.append(searchWrap, DOM.$('input.cal-patient-search-input')) as HTMLInputElement;
-		patientSearchInput.type = 'text';
-		patientSearchInput.placeholder = 'Search patient by name...';
-		patientSearchInput.value = this.patientNameFilter;
-		patientSearchInput.style.cssText = 'width:280px;max-width:60%;padding:4px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
-		patientSearchInput.addEventListener('input', () => {
-			this.patientNameFilter = patientSearchInput.value.trim();
-			this._updateHeaderCount();
-			this._renderGrid();
-		});
+		// Spacer between nav and view toggles. Patient search is provided by the
+		// titlebar (Search by name or DOB) — no duplicate search inside the calendar.
+		const spacer = DOM.append(this.headerBar, DOM.$('span'));
+		spacer.style.cssText = 'flex:1;';
 
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
@@ -1339,7 +1327,6 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	override dispose(): void {
-		DOM.getActiveWindow().document.body.classList.remove('ehr-on-calendar');
 		super.dispose();
 	}
 }

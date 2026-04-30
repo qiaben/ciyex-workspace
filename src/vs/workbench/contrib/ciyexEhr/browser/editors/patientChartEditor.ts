@@ -26,7 +26,7 @@ interface ChartTab { key: string; label: string; icon: string; emoji?: string; c
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number) }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
-interface QuickInfo { allergies: string; problems: string; medications: string; history: string; vitals: string }
+interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
 const FHIR_MAP: Record<string, string> = {
 	'Patient': '/api/fhir-resource/demographics', 'Encounter': '/api/fhir-resource/encounters',
@@ -272,6 +272,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 
 const SIDEBAR_COLLAPSED_KEY = 'ciyex.patientChart.sidebarCollapsed';
 const LAST_TAB_KEY_PREFIX = 'ciyex.patientChart.lastTab.';
+// Collapse state for each category section in the sidebar — persisted across
+// chart opens. Click a category heading to toggle. Quick Info is always visible.
+const CATEGORY_COLLAPSED_KEY_PREFIX = 'ciyex.patientChart.catCollapsed.';
 
 // Built-in field configs for tabs with a standard structure. Users can still override by dropping
 // a file at ~/.ciyex/fields/{tabKey}.json — that takes precedence.
@@ -1010,7 +1013,7 @@ export class PatientChartEditor extends EditorPane {
 	private categories: ChartCategory[] = [];
 	private activeTab = 'dashboard';
 	private sidebarCollapsed = false;
-	private quickInfo: QuickInfo = { allergies: '…', problems: '…', medications: '…', history: '…', vitals: '…' };
+	private quickInfo: QuickInfo = { allergies: '…', problems: '…', history: '…', vitals: '…' };
 	private readonly _configHome: URI;
 	private readonly _tabDataCache = new Map<string, { config: FieldConfig | null; data: Record<string, unknown>[] }>();
 	private readonly _tabNavMap = new Map<string, HTMLElement>();
@@ -1333,7 +1336,6 @@ export class PatientChartEditor extends EditorPane {
 		};
 		run('allergies', `/api/allergy-intolerances/${this.patientId}`, 'allergiesList', 'NKA');
 		run('problems', `/api/medical-problems/${this.patientId}`, 'problemsList', 'None');
-		run('medications', `/api/fhir-resource/medications/patient/${this.patientId}?page=0&size=1`, undefined, 'None');
 		run('history', `/api/fhir-resource/history/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
 		run('vitals', `/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`, undefined, 'No recorded vitals');
 	}
@@ -1447,24 +1449,54 @@ export class PatientChartEditor extends EditorPane {
 
 		const qiBlock = DOM.append(this.sidebarEl, DOM.$('div'));
 		qiBlock.style.cssText = 'padding:0 10px 12px;display:flex;flex-direction:column;gap:4px;';
+		// Quick Info rows: Allergy, Problems, History, Vitals (no Medications —
+		// per the test report request to remove medication from Quick Info).
 		this._renderQuickInfoRow(qiBlock, 'allergies', '\u{1F6A8}', 'Allergies', this.quickInfo.allergies);
 		this._renderQuickInfoRow(qiBlock, 'problems', '\u{1F90D}', 'Problems', this.quickInfo.problems);
-		this._renderQuickInfoRow(qiBlock, 'medications', '\u{1F48A}', 'Medications', this.quickInfo.medications);
 		this._renderQuickInfoRow(qiBlock, 'history', '\u{1F4DC}', 'History', this.quickInfo.history);
 		this._renderQuickInfoRow(qiBlock, 'vitals', '\u{1FAC0}', 'Vitals', this.quickInfo.vitals);
 
-		// Category tabs
+		// Category tabs — each category heading is a clickable dropdown. Clicking
+		// toggles its tab list visible / hidden. Default state: every category
+		// is collapsed; only the category that contains the active tab opens
+		// automatically so the user sees where they are.
 		for (const cat of this.categories) {
 			if (cat.tabs.length === 0) { continue; }
 
+			const catKey = `${CATEGORY_COLLAPSED_KEY_PREFIX}${cat.key}`;
+			const containsActive = cat.tabs.some(t => t.key === this.activeTab);
+			// Default: collapsed (true) unless this category contains the active tab.
+			const stored = this.storageSvc.get(catKey, StorageScope.PROFILE);
+			const collapsed = stored === undefined ? !containsActive : stored === 'true';
+
 			const catHdr = DOM.append(this.sidebarEl, DOM.$('div'));
-			catHdr.textContent = cat.label.toUpperCase();
-			catHdr.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);padding:14px 14px 6px;';
+			catHdr.style.cssText = 'display:flex;align-items:center;gap:6px;padding:14px 14px 6px;cursor:pointer;user-select:none;';
+			catHdr.title = 'Click to expand/collapse';
+
+			const arrow = DOM.append(catHdr, DOM.$('span'));
+			// allow-any-unicode-next-line
+			arrow.textContent = collapsed ? '▸' : '▾';
+			arrow.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);width:10px;flex-shrink:0;';
+
+			const label = DOM.append(catHdr, DOM.$('span'));
+			label.textContent = cat.label.toUpperCase();
+			label.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);flex:1;';
+
+			const tabsContainer = DOM.append(this.sidebarEl, DOM.$('div'));
+			tabsContainer.style.display = collapsed ? 'none' : '';
+
+			catHdr.addEventListener('click', () => {
+				const isHidden = tabsContainer.style.display === 'none';
+				tabsContainer.style.display = isHidden ? '' : 'none';
+				// allow-any-unicode-next-line
+				arrow.textContent = isHidden ? '▾' : '▸';
+				this.storageSvc.store(catKey, isHidden ? 'false' : 'true', StorageScope.PROFILE, StorageTarget.USER);
+			});
 
 			for (const tab of cat.tabs) {
-				const item = DOM.append(this.sidebarEl, DOM.$('div'));
+				const item = DOM.append(tabsContainer, DOM.$('div'));
 				item.setAttribute('data-tab', tab.key);
-				item.style.cssText = 'padding:6px 14px 6px 20px;cursor:pointer;color:var(--vscode-foreground);display:flex;align-items:center;gap:8px;font-size:13px;border-left:2px solid transparent;';
+				item.style.cssText = 'padding:6px 14px 6px 28px;cursor:pointer;color:var(--vscode-foreground);display:flex;align-items:center;gap:8px;font-size:13px;border-left:2px solid transparent;';
 
 				if (tab.emoji) {
 					const ic = DOM.append(item, DOM.$('span'));

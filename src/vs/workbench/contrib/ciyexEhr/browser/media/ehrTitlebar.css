@@ -115,25 +115,55 @@
 	font-size: 12px;
 }
 
-/* --- Action Buttons (+Patient, +Appointment) --- */
+/* --- Action Buttons (+Patient, +Appointment) ---
+ * Distinct colors per action so they're easy to spot next to the
+ * editor split / layout actions in the titlebar. */
 .ehr-action-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 2px;
-	padding: 3px 8px;
+	gap: 4px;
+	padding: 3px 10px;
 	border-radius: 6px;
 	cursor: pointer;
-	background: var(--vscode-button-secondaryBackground, rgba(90, 93, 110, 0.4));
-	color: var(--vscode-button-secondaryForeground, #ccc);
+	color: #fff;
 	border: none;
 	font-size: 12px;
+	font-weight: 600;
 	height: 24px;
-	transition: background 0.15s;
+	transition: filter 0.15s, transform 0.05s;
 	-webkit-app-region: no-drag;
+	margin-left: 4px;
+}
+
+.ehr-action-btn .ehr-action-label {
+	font-size: 11px;
+	letter-spacing: 0.2px;
 }
 
 .ehr-action-btn:hover {
-	background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 110, 0.6));
+	filter: brightness(1.12);
+}
+
+.ehr-action-btn:active {
+	transform: translateY(1px);
+}
+
+/* +Patient — teal/emerald */
+.ehr-action-btn-patient {
+	background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+}
+
+.ehr-action-btn-patient:hover {
+	background: linear-gradient(180deg, #14c997 0%, #06a974 100%);
+}
+
+/* +Appointment — indigo */
+.ehr-action-btn-appointment {
+	background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+}
+
+.ehr-action-btn-appointment:hover {
+	background: linear-gradient(180deg, #7177f4 0%, #5851ea 100%);
 }
 
 /* --- Overlay (Patient Form / Appointment Form) --- */
@@ -387,20 +417,6 @@
 .ehr-overlay::-webkit-scrollbar-thumb {
 	background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
 	border-radius: 3px;
-}
-
-/* --- Hide global EHR titlebar search bar when on calendar context.
- * Toggled by adding .ehr-on-calendar to <body> in titlebar logic. --- */
-body.ehr-on-calendar .ehr-titlebar-controls .ehr-search-container {
-	display: none;
-}
-
-/* --- Hide split-editor / layout-editor (top-right) icons on calendar/appointments.
- * The .editor-actions toolbar in the editor group title holds split editor + more
- * actions (which contains layout group commands); hide it for our custom editors. --- */
-body.ehr-on-calendar .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions,
-body.ehr-on-calendar .editor-actions {
-	display: none !important;
 }
 
 /* --- Hide native scrollbars inside the calendar grid (vertical and horizontal).
