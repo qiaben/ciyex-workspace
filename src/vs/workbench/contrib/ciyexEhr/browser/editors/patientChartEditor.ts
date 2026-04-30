@@ -24,7 +24,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
 interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string; aliases?: string[] }>; readOnly?: boolean }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: Record<string, string>; showWhen?: { field: string; equals?: string; notEquals?: string } }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number) }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; medications: string; history: string; vitals: string }
 
@@ -51,7 +51,22 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: true, display: 'custom', panel: 'main', fhirResources: [] },
 			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
 			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
-			{ key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals' },
+			{
+				key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals',
+				columns: [
+					{ key: 'recordedAt', label: 'Recorded', aliases: ['recordedAt', 'effectiveDateTime', 'recordedDate', 'dateRecorded'] },
+					{ key: 'bpSystolic', label: 'BP Sys', aliases: ['bpSystolic', 'systolicBP', 'systolic'] },
+					{ key: 'bpDiastolic', label: 'BP Dia', aliases: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
+					{ key: 'pulse', label: 'Pulse', aliases: ['pulse', 'heartRate', 'hr'] },
+					{ key: 'respiration', label: 'Resp', aliases: ['respiration', 'respiratoryRate', 'rr'] },
+					// allow-any-unicode-next-line
+					{ key: 'temperatureC', label: 'Temp (°C)', aliases: ['temperatureC', 'temperature', 'temp'] },
+					{ key: 'oxygenSaturation', label: 'SpO2', aliases: ['oxygenSaturation', 'spo2', 'o2sat'] },
+					{ key: 'weightKg', label: 'Wt (kg)', aliases: ['weightKg', 'weight'] },
+					{ key: 'heightCm', label: 'Ht (cm)', aliases: ['heightCm', 'height'] },
+					{ key: 'bmi', label: 'BMI' },
+				],
+			},
 			{
 				key: 'allergies', label: 'Allergies', icon: 'AlertTriangle', emoji: '\u{1F6A8}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['AllergyIntolerance'],
 				columns: [
@@ -231,9 +246,26 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'others', label: 'Others', position: 7, tabs: [
 			// Issues view rolls up Condition+AllergyIntolerance+MedicationRequest per V64;
 			// the backend tab_field_config 'issues' is the source of truth for fields.
-			{ key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'], readOnly: true },
+			{
+				key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'], apiPath: '/api/fhir-resource/conditions',
+				columns: [
+					{ key: 'conditionName', label: 'Issue', aliases: ['conditionName', 'name', 'code', 'display'] },
+					{ key: 'severity', label: 'Severity' },
+					{ key: 'clinicalStatus', label: 'Status', aliases: ['clinicalStatus', 'status'] },
+					{ key: 'onsetDate', label: 'Onset Date', aliases: ['onsetDate', 'onsetDateTime', 'recordedDate'] },
+				],
+			},
 			// Report = clinical reports (DiagnosticReport).
-			{ key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport'], readOnly: true },
+			{
+				key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport'], apiPath: '/api/fhir-resource/diagnostic-reports',
+				columns: [
+					{ key: 'testName', label: 'Report Name', aliases: ['testName', 'code', 'name'] },
+					{ key: 'category', label: 'Category' },
+					{ key: 'effectiveDate', label: 'Effective Date', aliases: ['effectiveDate', 'effectiveDateTime', 'date'] },
+					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'performerDisplay'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 		],
 	},
 ];
@@ -468,7 +500,11 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'alert', title: 'Clinical Alert', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'alert', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary' },
+					{
+						key: 'alert', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary',
+						validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\'!?:;]{3,256}$',
+						validationMessage: 'Alert must be 3-256 characters and contain only letters, numbers, and common punctuation',
+					},
 					{
 						key: 'severity', label: 'Severity', type: 'select', options: [
 							{ label: 'Low', value: 'low' },
@@ -477,7 +513,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Critical', value: 'critical' },
 						]
 					},
-					{ key: 'identifiedDate', label: 'Identified Date', type: 'date', required: true },
+					{ key: 'identifiedDate', label: 'Identified Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{ key: 'authorId', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
 					{ key: 'description', label: 'Description', type: 'textarea', colSpan: 2, placeholder: 'Detailed description' },
 				],
@@ -870,8 +906,9 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'start', label: 'Start Date/Time', type: 'datetime', required: true },
 					{ key: 'end', label: 'End Date/Time', type: 'datetime', required: true },
-					{ key: 'providerId', label: 'Provider', type: 'text', placeholder: 'Search Provider', required: true },
-					{ key: 'locationId', label: 'Location', type: 'text', placeholder: 'Search Location', required: true },
+					{ key: 'duration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end' },
+					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
+					{ key: 'locationId', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Scheduled', value: 'Scheduled' },
@@ -2243,7 +2280,11 @@ export class PatientChartEditor extends EditorPane {
 
 		// Centered, max-width form area so wide chart panes don't stretch fields edge-to-edge.
 		const scrollArea = DOM.append(panel, DOM.$('div'));
-		scrollArea.style.cssText = 'flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;';
+		// Hide vertical scrollbar to match the web UI's no-bar look. Content still
+		// scrolls; it's just visually less noisy on the create/edit form pages
+		// (referral, denials, relationship etc).
+		scrollArea.style.cssText = 'flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;';
+		scrollArea.classList.add('ehr-no-scrollbar');
 		const formContainer = DOM.append(scrollArea, DOM.$('div'));
 		formContainer.style.cssText = 'max-width:1100px;margin:0 auto;padding:24px 32px;';
 
@@ -2717,6 +2758,30 @@ export class PatientChartEditor extends EditorPane {
 			identifiedInput.value = new Date().toISOString().slice(0, 10);
 		}
 
+		// Appointments: auto-calculate duration (minutes) from start/end datetime.
+		const startInput = this._formInputs.get('start') as HTMLInputElement | undefined;
+		const endInput = this._formInputs.get('end') as HTMLInputElement | undefined;
+		const durationInput = this._formInputs.get('duration') as HTMLInputElement | undefined;
+		if (startInput && endInput && durationInput) {
+			durationInput.readOnly = true;
+			durationInput.style.background = 'rgba(128,128,128,0.06)';
+			durationInput.placeholder = 'Auto-calculated';
+			const recalcDuration = () => {
+				const s = startInput.value ? new Date(startInput.value).getTime() : NaN;
+				const e = endInput.value ? new Date(endInput.value).getTime() : NaN;
+				if (!isNaN(s) && !isNaN(e) && e > s) {
+					durationInput.value = String(Math.round((e - s) / 60000));
+				} else {
+					durationInput.value = '';
+				}
+			};
+			startInput.addEventListener('input', recalcDuration);
+			startInput.addEventListener('change', recalcDuration);
+			endInput.addEventListener('input', recalcDuration);
+			endInput.addEventListener('change', recalcDuration);
+			recalcDuration();
+		}
+
 		// Apply showWhen conditions and attach listeners to controlling fields
 		if (conditionalFields.length > 0) {
 			const applyVisibility = () => {
@@ -2899,7 +2964,7 @@ export class PatientChartEditor extends EditorPane {
 					else if (/snomed/i.test(fhirSystem)) { raw = 'SNOMED'; }
 					else { raw = 'ICD10_CM'; }
 				}
-				return `/api/codes/${raw}/search?q=${enc}&page=0&size=20`;
+				return `/api/app-proxy/ciyex-codes/api/codes/${raw}/search?q=${enc}&page=0&size=20`;
 			}
 			case 'practitioner-search':
 				return `/api/providers?search=${enc}&page=0&size=20`;
@@ -2949,8 +3014,10 @@ export class PatientChartEditor extends EditorPane {
 			case 'lookup': {
 				// Honor lookupConfig.displayField / valueField when the backend specifies them;
 				// fall back to common name/id keys otherwise.
-				const valueField = f.lookupConfig?.valueField || 'id';
-				const displayField = f.lookupConfig?.displayField || 'name';
+				const vfRaw = f.lookupConfig?.valueField;
+				const dfRaw = f.lookupConfig?.displayField;
+				const valueField = typeof vfRaw === 'string' ? vfRaw : 'id';
+				const displayField = typeof dfRaw === 'string' ? dfRaw : 'name';
 				return arr.map(it => {
 					const codeVal = String(it[valueField] ?? it.id ?? it.fhirId ?? '');
 					const labelVal = String(it[displayField] ?? it.name ?? it.fullName ?? '');
@@ -3049,9 +3116,8 @@ export class PatientChartEditor extends EditorPane {
 
 			const recordId = String(item.id || item.fhirId || '');
 			// Tabs whose backend only supports create/read — no PUT or DELETE — must
-			// suppress the row delete handler so users don't hit 405s. Currently:
-			// clinical-alerts (CDS alerts can be acknowledged but not modified/removed).
-			const writeOnceTabs = new Set(['clinical-alerts']);
+			// suppress the row delete handler so users don't hit 405s.
+			const writeOnceTabs = new Set<string>();
 			const onDelete = isEncounter || !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);

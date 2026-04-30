@@ -538,9 +538,14 @@ export class TasksEditor extends EditorPane {
 
 		// Provider search autocomplete on assignedTo
 		const assignedToInput = fields.get('assignedTo') as HTMLInputElement;
-		if (assignedToInput) {
-			const provDropdown = DOM.append(assignedToInput.parentElement!, DOM.$('div'));
-			provDropdown.style.cssText = 'position:absolute;left:0;right:0;max-height:150px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;z-index:10;display:none;';
+		if (assignedToInput && assignedToInput.parentElement) {
+			// Ensure parent positions the dropdown correctly. Without `position:relative`
+			// on the parent, the dropdown's `position:absolute` resolves to the nearest
+			// positioned ancestor — causing it to render above the input or outside the
+			// form, which the test team flagged as "search provider is not working".
+			assignedToInput.parentElement.style.position = 'relative';
+			const provDropdown = DOM.append(assignedToInput.parentElement, DOM.$('div'));
+			provDropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 			let provTimer: ReturnType<typeof setTimeout> | undefined;
 			assignedToInput.addEventListener('input', () => {
 				if (provTimer) { clearTimeout(provTimer); }
@@ -577,10 +582,11 @@ export class TasksEditor extends EditorPane {
 		const patNameInput = fields.get('patientName') as HTMLInputElement;
 		const patIdInput = fields.get('patientId') as HTMLInputElement;
 		if (patNameInput && patIdInput) {
-			const resultsDiv = DOM.append(patNameInput.parentElement!, DOM.$('div'));
-			resultsDiv.style.cssText = 'position:relative;';
-			const dropdown = DOM.append(resultsDiv, DOM.$('div'));
-			dropdown.style.cssText = 'position:absolute;top:0;left:0;right:0;max-height:150px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;z-index:10;display:none;';
+			if (patNameInput.parentElement) {
+				patNameInput.parentElement.style.position = 'relative';
+			}
+			const dropdown = DOM.append(patNameInput.parentElement!, DOM.$('div'));
+			dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			patNameInput.addEventListener('input', () => {

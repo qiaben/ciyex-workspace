@@ -43,6 +43,15 @@ export interface FormFieldDef {
 	relatedField?: string;
 	/** For 'search' type: fields from API response to display in dropdown */
 	relatedDisplayFields?: string[];
+	/** For 'search' type: query parameter name for live search. Defaults to 'search'.
+	 * ciyex-codes uses 'q', most other backends use 'search'. */
+	searchParam?: string;
+	/** For 'search' type: regex pattern of acceptable input values (e.g. for negative-case validation). */
+	pattern?: string;
+	/** Validation pattern for non-search inputs (regex source). When set, save fails if value doesn't match. */
+	validationPattern?: string;
+	/** Error message for validationPattern mismatch. */
+	validationMessage?: string;
 	/**
 	 * For 'search' type: map of additional form-field keys to fill from a selected result.
 	 * Key is the form field to fill, value is the property key on the result object.
@@ -667,7 +676,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					}
 					this.searchDebounceTimers.set(timerKey, setTimeout(async () => {
 						try {
-							const res = await this.apiService.fetch(`${searchEndpoint}?search=${encodeURIComponent(query)}`);
+							const param = field.searchParam || 'search';
+							const sep = searchEndpoint.includes('?') ? '&' : '?';
+							const res = await this.apiService.fetch(`${searchEndpoint}${sep}${param}=${encodeURIComponent(query)}`);
 							if (!res.ok) { return; }
 							const data = await res.json();
 							const wrapper = data?.data || data;
@@ -827,6 +838,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					const input = inputs.get(field.key);
 					if (!input || !input.value.trim()) {
 						errorEl.textContent = `${field.label} is required`;
+						errorEl.style.display = 'block';
+						input?.focus();
+						return;
+					}
+				}
+				if (field.validationPattern) {
+					const input = inputs.get(field.key);
+					const v = input?.value.trim() || '';
+					if (v && !new RegExp(field.validationPattern).test(v)) {
+						errorEl.textContent = field.validationMessage || `${field.label} format is invalid`;
 						errorEl.style.display = 'block';
 						input?.focus();
 						return;

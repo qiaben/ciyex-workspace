@@ -265,15 +265,52 @@ export class EhrTitlebarControls extends Disposable {
 
 		// Row 3: DOB, Email
 		const row3 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
-		const dob = this._createField(row3, 'Date of Birth', 'date', true, 'dateOfBirth') as HTMLInputElement;
-		// DOB cannot be in the future — use *local* date (toISOString() gives UTC which can drift)
+		// DOB rendered as mm/dd/yyyy (US format) with a calendar picker. Native
+		// `<input type="date">` renders in OS-locale order on Linux Electron
+		// (yyyy-mm-dd) so we render the US format ourselves; `dob.value` (the
+		// hidden field used at save) still carries the ISO date.
 		const _today = new Date();
 		const todayIso = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
-		dob.max = todayIso;
-		const clampDob = () => { if (dob.value && dob.value > todayIso) { dob.value = todayIso; } };
-		this._register(DOM.addDisposableListener(dob, 'change', clampDob));
-		this._register(DOM.addDisposableListener(dob, 'input', clampDob));
-		this._register(DOM.addDisposableListener(dob, 'blur', clampDob));
+		const dobGroup = DOM.append(row3, DOM.$('.ehr-form-group'));
+		const dobLabelEl = DOM.append(dobGroup, DOM.$('label.ehr-form-label'));
+		const dobStar = DOM.append(dobLabelEl, DOM.$('span.ehr-required-star'));
+		dobStar.textContent = '*';
+		dobLabelEl.append(' Date of Birth');
+		const dobWrap = DOM.append(dobGroup, DOM.$('div'));
+		dobWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		const dobVisible = DOM.append(dobWrap, DOM.$('input.ehr-form-input')) as HTMLInputElement;
+		dobVisible.type = 'text';
+		dobVisible.placeholder = 'mm/dd/yyyy';
+		dobVisible.maxLength = 10;
+		dobVisible.style.flex = '1';
+		const dob = DOM.append(dobWrap, DOM.$('input')) as HTMLInputElement;
+		dob.type = 'hidden';
+		dob.name = 'dateOfBirth';
+		const dobPicker = DOM.append(dobWrap, DOM.$('input')) as HTMLInputElement;
+		dobPicker.type = 'date';
+		dobPicker.max = todayIso;
+		dobPicker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
+		dobPicker.title = 'Open calendar';
+		const usToIso = (us: string): string => {
+			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
+			if (!m) { return ''; }
+			return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+		};
+		const isoToUs = (iso: string): string => {
+			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+		};
+		this._register(DOM.addDisposableListener(dobVisible, 'input', () => {
+			const iso = usToIso(dobVisible.value);
+			dob.value = iso && iso <= todayIso ? iso : (iso > todayIso ? todayIso : '');
+			dobVisible.style.borderColor = dobVisible.value && !iso ? '#ef4444' : '';
+		}));
+		this._register(DOM.addDisposableListener(dobPicker, 'change', () => {
+			const v = dobPicker.value > todayIso ? todayIso : dobPicker.value;
+			dob.value = v;
+			dobVisible.value = isoToUs(v);
+			dobVisible.style.borderColor = '';
+		}));
 		const email = this._createField(row3, 'Email', 'email', true, 'email') as HTMLInputElement;
 
 		// Communication Consent
@@ -323,6 +360,13 @@ export class EhrTitlebarControls extends Disposable {
 			}
 			if (dobVal > new Date().toISOString().slice(0, 10)) {
 				errorEl.textContent = 'Date of birth cannot be in the future.';
+				errorEl.style.display = '';
+				return;
+			}
+			// Email validation — RFC 5322-ish: local@domain.tld with at least one dot in domain
+			const emailRe = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+			if (!emailRe.test(emailVal)) {
+				errorEl.textContent = 'Please enter a valid email address (e.g. name@example.com).';
 				errorEl.style.display = '';
 				return;
 			}
