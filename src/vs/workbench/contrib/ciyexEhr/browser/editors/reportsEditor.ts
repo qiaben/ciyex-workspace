@@ -33,7 +33,7 @@ function getReportDef(key: string): ReportDef {
 	switch (key) {
 		case 'patient-demographics': return { apiPath: '/api/fhir-resource/patients?page=0&size=500', columns: [{ key: 'name', label: 'Name' }, { key: 'gender', label: 'Gender' }, { key: 'birthDate', label: 'DOB' }, { key: 'active', label: 'Status' }, { key: 'phone', label: 'Phone' }], chartType: 'pie', chartGroupKey: 'gender', chartLabel: 'Gender Distribution' };
 		case 'encounter-summary': return { apiPath: '/api/fhir-resource/encounters?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'type', label: 'Type' }, { key: 'status', label: 'Status' }, { key: 'providerDisplay', label: 'Provider' }, { key: 'startDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'type', chartLabel: 'Encounters by Type' };
-		case 'lab-orders---results': return { apiPath: '/api/lab-results?page=0&size=500', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'testName', label: 'Test' }, { key: 'value', label: 'Value' }, { key: 'units', label: 'Units' }, { key: 'status', label: 'Status' }, { key: 'abnormalFlag', label: 'Flag' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Results by Status' };
+		case 'lab-orders---results': return { apiPath: '/api/lab-order/search?q=', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'orderName', label: 'Order' }, { key: 'testDisplay', label: 'Test' }, { key: 'status', label: 'Status' }, { key: 'priority', label: 'Priority' }, { key: 'orderDate', label: 'Order Date' }, { key: 'orderingProvider', label: 'Provider' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Orders by Status' };
 		case 'medication---prescriptions': return { apiPath: '/api/prescriptions?page=0&size=500', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'medicationName', label: 'Medication' }, { key: 'sig', label: 'SIG' }, { key: 'prescriberName', label: 'Prescriber' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Prescriptions by Status' };
 		case 'referral-tracking': return { apiPath: '/api/referrals?page=0&size=500', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'specialistName', label: 'Specialist' }, { key: 'specialty', label: 'Specialty' }, { key: 'urgency', label: 'Urgency' }, { key: 'status', label: 'Status' }, { key: 'referralDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Referrals by Status' };
 		case 'immunizations': return { apiPath: '/api/immunizations?page=0&size=500', columns: [{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine' }, { key: 'cvxCode', label: 'CVX' }, { key: 'route', label: 'Route' }, { key: 'status', label: 'Status' }, { key: 'administrationDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'vaccineName', chartLabel: 'By Vaccine' };
@@ -45,8 +45,8 @@ function getReportDef(key: string): ReportDef {
 		case 'revenue-overview': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }, { key: 'serviceDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'Claims by Status' };
 		case 'payer-mix': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }], chartType: 'pie', chartGroupKey: 'payerDisplay', chartLabel: 'Claims by Payer' };
 		case 'ar-aging': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }, { key: 'serviceDate', label: 'Service Date' }], chartType: 'bar', chartGroupKey: 'status', chartLabel: 'AR by Status' };
-		case 'audit-log': return { apiPath: '/api/admin/audit-log?page=0&size=200', columns: [{ key: 'user', label: 'User' }, { key: 'action', label: 'Action' }, { key: 'resourceType', label: 'Resource' }, { key: 'timestamp', label: 'Timestamp' }], chartType: 'bar', chartGroupKey: 'action', chartLabel: 'Actions by Type' };
-		case 'portal-usage': return { apiPath: '/api/portal/notifications/my?page=0&size=200', columns: [{ key: 'title', label: 'Title' }, { key: 'type', label: 'Type' }, { key: 'createdAt', label: 'Date' }], chartType: 'bar', chartGroupKey: 'type', chartLabel: 'Notifications by Type' };
+		case 'audit-log': return { apiPath: '/api/audit-log?page=0&size=200', columns: [{ key: 'userName', label: 'User' }, { key: 'action', label: 'Action' }, { key: 'resourceType', label: 'Resource' }, { key: 'resourceName', label: 'Resource Name' }, { key: 'patientName', label: 'Patient' }, { key: 'createdAt', label: 'Timestamp' }], chartType: 'bar', chartGroupKey: 'action', chartLabel: 'Actions by Type' };
+		case 'portal-usage': return { apiPath: '/api/notifications/log?page=0&size=200', columns: [{ key: 'channelType', label: 'Channel' }, { key: 'recipientName', label: 'Recipient' }, { key: 'patientName', label: 'Patient' }, { key: 'subject', label: 'Subject' }, { key: 'status', label: 'Status' }, { key: 'sentAt', label: 'Sent' }], chartType: 'bar', chartGroupKey: 'channelType', chartLabel: 'Notifications by Channel' };
 		case 'denial-management': return { apiPath: '/api/fhir-resource/claims?page=0&size=500&status=denied', columns: [{ key: 'patientRefDisplay', label: 'Patient' }, { key: 'payerDisplay', label: 'Payer' }, { key: 'denialReason', label: 'Denial Reason' }, { key: 'totalAmount', label: 'Amount' }, { key: 'status', label: 'Status' }, { key: 'serviceDate', label: 'Service Date' }], chartType: 'bar', chartGroupKey: 'denialReason', chartLabel: 'Denials by Reason' };
 		case 'cpt-utilization': return { apiPath: '/api/fhir-resource/claims?page=0&size=500', columns: [{ key: 'procedureCode', label: 'CPT Code' }, { key: 'procedureDisplay', label: 'Procedure' }, { key: 'patientRefDisplay', label: 'Patient' }, { key: 'providerDisplay', label: 'Provider' }, { key: 'totalAmount', label: 'Charge' }, { key: 'serviceDate', label: 'Date' }], chartType: 'bar', chartGroupKey: 'procedureCode', chartLabel: 'Top CPT Codes' };
 		case 'scheduling-utilization': return { apiPath: '/api/fhir-resource/appointments?page=0&size=500', columns: [{ key: 'patientDisplay', label: 'Patient' }, { key: 'appointmentType', label: 'Type' }, { key: 'providerName', label: 'Provider' }, { key: 'status', label: 'Status' }, { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }], chartType: 'bar', chartGroupKey: 'providerName', chartLabel: 'Slots by Provider' };
@@ -203,6 +203,9 @@ export class ReportsEditor extends EditorPane {
 	}
 
 	private _normalizeRow(r: Record<string, unknown>): Record<string, string> {
+		const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+			v !== null && typeof v === 'object' && !Array.isArray(v);
+
 		const s = (v: unknown): string => {
 			if (v === null || v === undefined) { return ''; }
 			if (Array.isArray(v)) {
@@ -221,40 +224,114 @@ export class ReportsEditor extends EditorPane {
 		};
 
 		const out: Record<string, string> = {};
-		for (const [k, v] of Object.entries(r)) { out[k] = s(v); }
+		// Flatten the row: write primitive leaves as both dot-notation paths and (when not taken) bare leaf names.
+		// Patient records from /api/fhir-resource/patients are nested under identification.*, audit.*, contact.*, etc.
+		const walk = (val: unknown, prefix: string): void => {
+			if (!isPlainObject(val)) { return; }
+			for (const [k, v] of Object.entries(val)) {
+				const dotKey = prefix ? `${prefix}.${k}` : k;
+				if (isPlainObject(v)) {
+					// Store FHIR-style {text,display,coding} as a single string and recurse for additional fields
+					out[dotKey] = s(v);
+					walk(v, dotKey);
+					if (!out[k]) { out[k] = s(v); }
+				} else {
+					const str = s(v);
+					out[dotKey] = str;
+					// Bare leaf alias (e.g. identification.firstName → firstName) when no top-level value exists
+					if (!out[k] || out[k] === '[object Object]') { out[k] = str; }
+				}
+			}
+		};
+		walk(r, '');
 
 		// Derived aliases so report columns match whatever the backend returns
-		const firstName = out['firstName'] || out['given'] || '';
-		const lastName = out['lastName'] || out['family'] || '';
-		if (!out['name']) { out['name'] = `${firstName} ${lastName}`.trim() || out['displayName'] || out['fullName'] || ''; }
-		if (!out['phone']) { out['phone'] = out['phoneNumber'] || out['phoneHome'] || out['phoneMobile'] || out['mobile'] || ''; }
-		if (!out['birthDate']) { out['birthDate'] = out['dateOfBirth'] || out['dob'] || ''; }
-		if (!out['gender']) { out['gender'] = out['sex'] || ''; }
+		const pickFirst = (...vals: string[]): string => { for (const v of vals) { if (v) { return v; } } return ''; };
+
+		const firstName = pickFirst(out['firstName'], out['given']);
+		const lastName = pickFirst(out['lastName'], out['family']);
+		if (!out['name']) { out['name'] = `${firstName} ${lastName}`.trim() || pickFirst(out['displayName'], out['fullName']); }
+		if (!out['phone']) { out['phone'] = pickFirst(out['phoneNumber'], out['phoneHome'], out['phoneMobile'], out['mobile'], out['contact.phone'], out['contact.phoneNumber']); }
+		if (!out['birthDate']) { out['birthDate'] = pickFirst(out['dateOfBirth'], out['dob']); }
+		if (!out['gender']) { out['gender'] = pickFirst(out['sex']); }
 		if (out['active'] === 'true' || out['active'] === true as unknown as string) { out['active'] = 'Active'; }
 		else if (out['active'] === 'false' || out['active'] === false as unknown as string) { out['active'] = 'Inactive'; }
-		if (!out['active']) { out['active'] = out['status'] || ''; }
-		if (!out['patientName']) { out['patientName'] = out['patientDisplay'] || out['patientRefDisplay'] || ''; }
-		if (!out['providerName']) { out['providerName'] = out['providerDisplay'] || out['practitionerName'] || ''; }
-		if (!out['patientDisplay']) { out['patientDisplay'] = out['patientName'] || out['patientRefDisplay'] || ''; }
-		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = out['patientDisplay'] || out['patientName'] || ''; }
+		if (!out['active']) { out['active'] = pickFirst(out['status']); }
+
+		// Patient name: combine first/last variants from multiple endpoints
+		if (!out['patientName']) {
+			const pFirst = pickFirst(out['patientFirstName'], out['patient.firstName']);
+			const pLast = pickFirst(out['patientLastName'], out['patient.lastName']);
+			out['patientName'] = `${pFirst} ${pLast}`.trim() || pickFirst(out['patientDisplay'], out['patientRefDisplay'], out['subjectDisplay'], out['patient.name'], out['patient']);
+		}
+		// Cross-fill patient display variants (FHIR resources use these interchangeably)
+		if (!out['patientDisplay']) { out['patientDisplay'] = pickFirst(out['patientName'], out['patientRefDisplay'], out['subjectDisplay']); }
+		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = pickFirst(out['patientDisplay'], out['patientName'], out['subjectDisplay']); }
+		if (!out['subjectDisplay']) { out['subjectDisplay'] = pickFirst(out['patientDisplay'], out['patientName'], out['patientRefDisplay']); }
+
+		// Provider name: cover prescription/lab-order/encounter/appointment variants
+		if (!out['providerName']) { out['providerName'] = pickFirst(out['providerDisplay'], out['practitionerName'], out['orderingProvider'], out['physicianName'], out['prescriberName'], out['referringProvider'], out['provider']); }
+		if (!out['providerDisplay']) { out['providerDisplay'] = pickFirst(out['providerName'], out['practitionerName'], out['prescriberName']); }
+		if (!out['prescriberName']) { out['prescriberName'] = pickFirst(out['providerName'], out['providerDisplay'], out['practitionerName']); }
+		if (!out['orderingProvider']) { out['orderingProvider'] = pickFirst(out['providerName'], out['providerDisplay']); }
+
+		// Payer / insurer (claims, coverage, referrals)
+		if (!out['payerDisplay']) { out['payerDisplay'] = pickFirst(out['insurerName'], out['insuranceName'], out['organizationDisplay'], out['payerName'], out['payor.display']); }
+
+		// Specialist / specialty (referrals)
+		if (!out['specialistName']) { out['specialistName'] = pickFirst(out['specialist'], out['providerName'], out['referredTo']); }
+
+		// Audit-log: surface user
+		if (!out['user']) { out['user'] = pickFirst(out['userName'], out['userId']); }
+		if (!out['userName']) { out['userName'] = pickFirst(out['user'], out['userId']); }
+
+		// Code / clinical fields (FHIR Condition/Encounter/etc — codeable concepts)
+		if (!out['code']) { out['code'] = pickFirst(out['display'], out['text'], out['diagnosisCode'], out['icdCode'], out['conditionCode']); }
+		if (!out['type']) { out['type'] = pickFirst(out['typeDisplay'], out['encounterType'], out['visitCategory'], out['serviceType'], out['appointmentType']); }
+		if (!out['appointmentType']) { out['appointmentType'] = pickFirst(out['type'], out['serviceType'], out['encounterType']); }
+		if (!out['clinicalStatus']) { out['clinicalStatus'] = pickFirst(out['conditionStatus'], out['status']); }
+		if (!out['verificationStatus']) { out['verificationStatus'] = pickFirst(out['verification']); }
+
+		// Note status / document completion
+		if (!out['noteStatus']) { out['noteStatus'] = pickFirst(out['signedStatus'], out['encounterNoteStatus']); }
+
+		// Cost / amount / monetary fields
+		if (!out['totalAmount']) { out['totalAmount'] = pickFirst(out['amount'], out['totalGross'], out['totalNet'], out['total']); }
+		if (!out['cost']) { out['cost'] = pickFirst(out['totalCost'], out['amount']); }
+
+		// Date fields: surface a generic createdAt for date filtering
+		if (!out['createdAt']) { out['createdAt'] = pickFirst(out['audit.createdDate'], out['createdDate'], out['registrationDate'], out['_lastUpdated'], out['timestamp']); }
+		if (!out['startDate']) { out['startDate'] = pickFirst(out['start'], out['period.start'], out['effectiveDate']); }
+		if (!out['serviceDate']) { out['serviceDate'] = pickFirst(out['serviced'], out['servicedDate'], out['period.start'], out['date']); }
+		if (!out['recordedDate']) { out['recordedDate'] = pickFirst(out['recorded'], out['createdAt']); }
+		if (!out['onsetDate']) { out['onsetDate'] = pickFirst(out['onsetDateTime'], out['onset']); }
+
+		// Title / measure / plan (care plans, quality)
+		if (!out['title']) { out['title'] = pickFirst(out['name'], out['planName'], out['measure'], out['display']); }
+		if (!out['category']) { out['category'] = pickFirst(out['categoryDisplay'], out['categoryText'], out['type']); }
+		if (!out['period']) { out['period'] = pickFirst(out['periodStart'], out['period.start'], out['effectivePeriod']); }
 		return out;
 	}
 
 	private _applyFiltersAndRender(): void {
 		let filtered = this.items;
 
-		// Date filter
+		// Date filter — pick the most relevant date field on each row
+		const rowDate = (i: Record<string, string>): string =>
+			i.startDate || i.start || i.referralDate || i.administrationDate || i.serviceDate
+			|| i.orderDate || i.orderDateTime || i.collectedDate || i.reportedDate
+			|| i.recordedDate || i.onsetDate || i.sentAt || i.timestamp || i.createdAt || '';
 		if (this.dateFrom) {
 			const from = new Date(this.dateFrom).getTime();
 			filtered = filtered.filter(i => {
-				const d = i.startDate || i.start || i.referralDate || i.administrationDate || i.serviceDate || i.createdAt || '';
+				const d = rowDate(i);
 				return d ? new Date(d).getTime() >= from : true;
 			});
 		}
 		if (this.dateTo) {
 			const to = new Date(this.dateTo + 'T23:59:59').getTime();
 			filtered = filtered.filter(i => {
-				const d = i.startDate || i.start || i.referralDate || i.administrationDate || i.serviceDate || i.createdAt || '';
+				const d = rowDate(i);
 				return d ? new Date(d).getTime() <= to : true;
 			});
 		}
