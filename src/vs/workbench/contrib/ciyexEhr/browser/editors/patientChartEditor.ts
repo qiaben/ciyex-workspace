@@ -97,8 +97,28 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 	},
 	{
 		key: 'general', label: 'General', position: 2, tabs: [
-			{ key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'] },
-			{ key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{
+				key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'],
+				columns: [
+					{ key: 'payerName', label: 'Payer', aliases: ['payerName', 'insurerName', 'organizationDisplay', 'payor.display', 'name'] },
+					{ key: 'planName', label: 'Plan', aliases: ['planName', 'plan', 'productName'] },
+					{ key: 'policyNumber', label: 'Member ID', aliases: ['policyNumber', 'memberId', 'subscriberId', 'identifier'] },
+					{ key: 'groupNumber', label: 'Group #', aliases: ['groupNumber', 'group'] },
+					{ key: 'insuranceType', label: 'Tier', aliases: ['insuranceType', 'tier'] },
+					{ key: 'policyEffectiveDate', label: 'Effective', aliases: ['policyEffectiveDate', 'periodStart', 'period.start', 'effectiveDate'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'documents', label: 'Documents', icon: 'FileText', emoji: '\u{1F4C4}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'],
+				columns: [
+					{ key: 'description', label: 'Document Name', aliases: ['description', 'title', 'name'] },
+					{ key: 'type', label: 'Type', aliases: ['type', 'documentType', 'category'] },
+					{ key: 'date', label: 'Date', aliases: ['date', 'documentDate', 'created', 'createdAt'] },
+					{ key: 'authorName', label: 'Author', aliases: ['authorName', 'author', 'providerName'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
 			// Messaging uses the FHIR Communication resource via the generic FHIR controller
 			// — same backend `tab_field_config` + scope enforcement as the rest of the chart,
@@ -233,7 +253,17 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// as the Payment tab — Invoice covers both ledger entries and statements).
 			// Was previously read-only with apiPath:/api/payments/transactions which has
 			// no POST handler, so users couldn't create records.
-			{ key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'] },
+			{
+				key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'],
+				columns: [
+					{ key: 'transactionDate', label: 'Date', aliases: ['transactionDate', 'date', 'serviceDate', 'period.start', 'created', 'createdAt'] },
+					{ key: 'transactionType', label: 'Type', aliases: ['transactionType', 'type'] },
+					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value', 'totalGross.value'] },
+					{ key: 'referenceNumber', label: 'Reference', aliases: ['referenceNumber', 'identifier', 'reference'] },
+					{ key: 'description', label: 'Description', aliases: ['description', 'note'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 		],
 	},
 	{
@@ -241,8 +271,28 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// Payment + Statements both flow through FHIR (Invoice / PaymentNotice) so the
 			// fields, columns, and edit form match what tab_field_config defines — same
 			// source of truth as the web UI's PaymentPostingTab / StatementsTab.
-			{ key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'] },
-			{ key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentNotice'] },
+			{
+				key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'],
+				columns: [
+					{ key: 'paymentDate', label: 'Payment Date', aliases: ['paymentDate', 'date', 'transactionDate', 'created'] },
+					{ key: 'paymentMethod', label: 'Method', aliases: ['paymentMethod', 'method', 'type'] },
+					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value', 'totalGross.value'] },
+					{ key: 'referenceNumber', label: 'Reference', aliases: ['referenceNumber', 'identifier', 'checkNumber'] },
+					{ key: 'claimId', label: 'Claim', aliases: ['claimId', 'claim', 'claimReference'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentNotice'],
+				columns: [
+					{ key: 'statementDate', label: 'Statement Date', aliases: ['statementDate', 'date', 'created', 'createdAt'] },
+					{ key: 'dueDate', label: 'Due Date', aliases: ['dueDate', 'paymentDate'] },
+					{ key: 'totalCharges', label: 'Charges', aliases: ['totalCharges', 'totalGross.value'] },
+					{ key: 'totalPayments', label: 'Payments', aliases: ['totalPayments', 'amount.value'] },
+					{ key: 'balance', label: 'Balance', aliases: ['balance', 'totalNet.value'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 		],
 	},
 	{
@@ -3289,8 +3339,35 @@ export class PatientChartEditor extends EditorPane {
 		// Keep hidden in sync with raw typing so non-selected codes/names still save.
 		input.addEventListener('input', () => { hidden.value = input.value; });
 
-		const dropdown = DOM.append(wrap, DOM.$('div'));
-		dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 8px rgba(0,0,0,0.3);z-index:10001;max-height:240px;overflow-y:auto;display:none;';
+		// Append dropdown to <body> with position:fixed so it isn't clipped by the
+		// overlay's overflow-x:hidden / overflow-y:auto, which previously cut off
+		// the right edge inside narrow 2-3 column form cells (claims facility,
+		// quaternary diagnosis, claim submission billing-provider, appointment
+		// patient/provider/location lookups).
+		const dropdown = DOM.append(DOM.getActiveWindow().document.body, DOM.$('div'));
+		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 8px rgba(0,0,0,0.3);z-index:10010;max-height:240px;overflow-y:auto;display:none;';
+		const positionDropdown = (): void => {
+			const rect = input.getBoundingClientRect();
+			dropdown.style.top = `${rect.bottom + 2}px`;
+			dropdown.style.left = `${rect.left}px`;
+			dropdown.style.minWidth = `${rect.width}px`;
+			dropdown.style.maxWidth = `${Math.max(rect.width, 360)}px`;
+		};
+		// Recompute on overlay/window scroll & resize so the dropdown tracks the input.
+		const win = DOM.getActiveWindow();
+		const onScrollOrResize = (): void => { if (dropdown.style.display !== 'none') { positionDropdown(); } };
+		win.addEventListener('scroll', onScrollOrResize, true);
+		win.addEventListener('resize', onScrollOrResize);
+		// Clean up the body-level dropdown when the overlay closes (input is removed).
+		const cleanupObserver = new MutationObserver(() => {
+			if (!input.isConnected) {
+				dropdown.remove();
+				win.removeEventListener('scroll', onScrollOrResize, true);
+				win.removeEventListener('resize', onScrollOrResize);
+				cleanupObserver.disconnect();
+			}
+		});
+		cleanupObserver.observe(win.document.body, { childList: true, subtree: true });
 
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const search = (q: string) => {
@@ -3328,6 +3405,7 @@ export class PatientChartEditor extends EditorPane {
 							});
 						}
 					}
+					positionDropdown();
 					dropdown.style.display = 'block';
 				} catch { /* ignore */ }
 			}, 300);
@@ -3510,9 +3588,11 @@ export class PatientChartEditor extends EditorPane {
 
 			const recordId = String(item.id || item.fhirId || '');
 			// Tabs whose backend only supports create/read — no PUT or DELETE — must
-			// suppress the row delete handler so users don't hit 405s.
+			// suppress the row delete handler so users don't hit 405s. Encounters do
+			// support DELETE via /api/fhir-resource/encounters/{id} even though their
+			// row click opens a side editor instead of the inline overlay.
 			const writeOnceTabs = new Set<string>();
-			const onDelete = isEncounter || !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
+			const onDelete = !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
