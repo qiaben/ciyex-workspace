@@ -180,7 +180,10 @@
 	overflow-y: auto;
 	font-size: 13px;
 	color: var(--vscode-editor-foreground, #ccc);
-	scrollbar-width: thin;
+	/* Test team asked for the visible scrollbar on add-new forms (denials,
+	 * relationships) to be removed. Scrolling still works via wheel/trackpad
+	 * — only the visual scrollbar is hidden. */
+	scrollbar-width: none;
 }
 
 .ehr-overlay.ehr-overlay-wide {
@@ -407,16 +410,18 @@
 	display: none;
 }
 
-/* --- Patient overlay: kill horizontal scrollbar, allow vertical only --- */
+/* --- Patient overlay: kill horizontal scrollbar AND hide the vertical one
+ *     visually (scrolling still works via wheel/trackpad). --- */
 .ehr-overlay {
 	overflow-x: hidden;
 }
-.ehr-overlay::-webkit-scrollbar {
-	width: 6px;
-}
-.ehr-overlay::-webkit-scrollbar-thumb {
-	background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
-	border-radius: 3px;
+.ehr-overlay::-webkit-scrollbar,
+.ehr-overlay::-webkit-scrollbar-thumb,
+.ehr-overlay::-webkit-scrollbar-track {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
+	background: transparent !important;
 }
 
 /* --- Hide native scrollbars inside the calendar grid (vertical and horizontal).

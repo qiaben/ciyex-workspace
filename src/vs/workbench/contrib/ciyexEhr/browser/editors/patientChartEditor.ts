@@ -225,7 +225,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
 			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
-			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'], readOnly: true },
+			// readOnly was true for a long time; the test team needs the Add New
+			// button to manually post a remittance entry until the 835 ingestion
+			// pipeline is wired up. PaymentReconciliation is FHIR-write capable.
+			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
 			// Transactions writes go through FHIR Invoice (same backend tab_field_config
 			// as the Payment tab — Invoice covers both ledger entries and statements).
 			// Was previously read-only with apiPath:/api/payments/transactions which has
@@ -532,10 +535,26 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'med', title: 'Medication', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'Drug name' },
-					{ key: 'dosage', label: 'Dosage', type: 'text', required: true, placeholder: 'e.g., 500 mg' },
-					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., Oral' },
-					{ key: 'frequency', label: 'Frequency', type: 'text', placeholder: 'e.g., Twice daily' },
+					{
+						key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'Drug name',
+						validationPattern: '^[A-Za-z0-9 ,.\\-/()+&\']{2,120}$',
+						validationMessage: 'Medication name must be 2-120 characters and contain only letters, numbers, and common punctuation',
+					},
+					{
+						key: 'dosage', label: 'Dosage', type: 'text', required: true, placeholder: 'e.g., 500 mg',
+						validationPattern: '^\\d+(\\.\\d+)?\\s*(mg|mcg|g|mL|ml|L|IU|units?|tablets?|capsules?|drops?|puffs?|sprays?|patches?|%)?(\\s*/.+)?$',
+						validationMessage: 'Dosage should be a number followed by a unit (e.g. "500 mg", "10 mL", "2 tablets")',
+					},
+					{
+						key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., Oral',
+						validationPattern: '^[A-Za-z ,.\\-/()]{2,40}$',
+						validationMessage: 'Route should be a short text (e.g. "Oral", "IV")',
+					},
+					{
+						key: 'frequency', label: 'Frequency', type: 'text', placeholder: 'e.g., Twice daily',
+						validationPattern: '^[A-Za-z0-9 ,.\\-/()]{2,60}$',
+						validationMessage: 'Frequency should be a short text (e.g. "Twice daily", "Q4H PRN")',
+					},
 					{ key: 'startDate', label: 'Start Date', type: 'date' },
 					{ key: 'endDate', label: 'End Date', type: 'date' },
 					{ key: 'prescriberId', label: 'Prescriber', type: 'practitioner-search', placeholder: 'Search Prescriber' },
@@ -582,11 +601,23 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Vaccine name' },
+					{
+						key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Vaccine name',
+						validationPattern: '^[A-Za-z0-9 ,.\\-/()+&]{2,120}$',
+						validationMessage: 'Vaccine name must be 2-120 characters',
+					},
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
-					{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #' },
-					{ key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL' },
+					{
+						key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #',
+						validationPattern: '^[A-Za-z0-9\\-]{1,30}$',
+						validationMessage: 'Lot number must be alphanumeric (dashes allowed), max 30 chars',
+					},
+					{
+						key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL',
+						validationPattern: '^\\d+(\\.\\d+)?\\s*(mL|ml|cc|mg|mcg|units?|IU)$',
+						validationMessage: 'Dose should be a number followed by a unit (mL, mg, mcg, units, IU)',
+					},
 					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
 					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
 					{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
@@ -853,8 +884,16 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Related Person', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'firstName', label: 'First Name', type: 'text', required: true, placeholder: 'First name' },
-					{ key: 'lastName', label: 'Last Name', type: 'text', required: true, placeholder: 'Last name' },
+					{
+						key: 'firstName', label: 'First Name', type: 'text', required: true, placeholder: 'First name',
+						validationPattern: '^[A-Za-z][A-Za-z\'\\- ]{0,49}$',
+						validationMessage: 'First name must start with a letter and contain only letters, spaces, apostrophes or hyphens',
+					},
+					{
+						key: 'lastName', label: 'Last Name', type: 'text', required: true, placeholder: 'Last name',
+						validationPattern: '^[A-Za-z][A-Za-z\'\\- ]{0,49}$',
+						validationMessage: 'Last name must start with a letter and contain only letters, spaces, apostrophes or hyphens',
+					},
 					{
 						key: 'relationship', label: 'Relationship', type: 'select', required: true, options: [
 							{ label: 'Spouse', value: 'spouse' },
@@ -878,8 +917,16 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'birthDate', label: 'Date of Birth', type: 'date' },
-					{ key: 'phoneNumber', label: 'Phone', type: 'phone' },
-					{ key: 'email', label: 'Email', type: 'email' },
+					{
+						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
+						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
+						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
+					},
+					{
+						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
+						validationPattern: '^[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$',
+						validationMessage: 'Enter a valid email address',
+					},
 					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
 					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{ key: 'active', label: 'Active', type: 'boolean' },
@@ -947,7 +994,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'date', label: 'Visit Date', type: 'date', required: true },
-					{ key: 'authorName', label: 'Author', type: 'text', placeholder: 'Search Author' },
+					{ key: 'authorId', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Current', value: 'current' },
@@ -987,9 +1034,21 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Suspended', value: 'suspended' },
 						]
 					},
-					{ key: 'phone', label: 'Phone', type: 'phone' },
-					{ key: 'fax', label: 'Fax', type: 'phone' },
-					{ key: 'email', label: 'Email', type: 'email' },
+					{
+						key: 'phone', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
+						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
+						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
+					},
+					{
+						key: 'fax', label: 'Fax', type: 'phone', placeholder: '(555) 123-4567',
+						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
+						validationMessage: 'Enter a valid fax number',
+					},
+					{
+						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
+						validationPattern: '^[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$',
+						validationMessage: 'Enter a valid email address',
+					},
 					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
 					{ key: 'zipCode', label: 'ZIP Code', type: 'text' },
 					{ key: 'city', label: 'City', type: 'text' },
@@ -998,6 +1057,286 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'primaryContactName', label: 'Primary Contact', type: 'text' },
 					{ key: 'npi', label: 'NPI', type: 'text', placeholder: 'National Provider Identifier' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter your message', colSpan: 3 },
+				],
+			},
+		],
+	},
+	issues: {
+		tabKey: 'issues',
+		sections: [
+			{
+				key: 'issue', title: 'Issue', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'conditionName', label: 'Issue', type: 'text', required: true, placeholder: 'Issue name' },
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{
+						key: 'severity', label: 'Severity', type: 'select', options: [
+							{ label: 'Mild', value: 'mild' },
+							{ label: 'Moderate', value: 'moderate' },
+							{ label: 'Severe', value: 'severe' },
+						]
+					},
+					{
+						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Recurrence', value: 'recurrence' },
+							{ label: 'Relapse', value: 'relapse' },
+							{ label: 'Inactive', value: 'inactive' },
+							{ label: 'Resolved', value: 'resolved' },
+						]
+					},
+					{ key: 'onsetDate', label: 'Onset Date', type: 'date' },
+					{ key: 'recordedDate', label: 'Recorded Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	report: {
+		tabKey: 'report',
+		sections: [
+			{
+				key: 'report', title: 'Diagnostic Report', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'testName', label: 'Report Name', type: 'text', required: true, placeholder: 'Report title' },
+					{ key: 'category', label: 'Category', type: 'text', placeholder: 'e.g. Radiology' },
+					{ key: 'effectiveDate', label: 'Effective Date', type: 'date', required: true },
+					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Registered', value: 'registered' },
+							{ label: 'Partial', value: 'partial' },
+							{ label: 'Preliminary', value: 'preliminary' },
+							{ label: 'Final', value: 'final' },
+							{ label: 'Amended', value: 'amended' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{ key: 'conclusion', label: 'Conclusion', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	payment: {
+		tabKey: 'payment',
+		sections: [
+			{
+				key: 'payment', title: 'Payment', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{
+						key: 'paymentMethod', label: 'Payment Method', type: 'select', required: true, options: [
+							{ label: 'Cash', value: 'cash' },
+							{ label: 'Check', value: 'check' },
+							{ label: 'Credit Card', value: 'credit-card' },
+							{ label: 'Debit Card', value: 'debit-card' },
+							{ label: 'ACH', value: 'ach' },
+							{ label: 'Insurance', value: 'insurance' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{ key: 'totalAmount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'referenceNumber', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
+					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Posted', value: 'posted' },
+							{ label: 'Pending', value: 'pending' },
+							{ label: 'Voided', value: 'voided' },
+						]
+					},
+					{ key: 'note', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	statements: {
+		tabKey: 'statements',
+		sections: [
+			{
+				key: 'statement', title: 'Statement', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'statementDate', label: 'Statement Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'dueDate', label: 'Due Date', type: 'date' },
+					{ key: 'totalCharges', label: 'Total Charges', type: 'number', placeholder: '0.00' },
+					{ key: 'totalPayments', label: 'Total Payments', type: 'number', placeholder: '0.00' },
+					{ key: 'balance', label: 'Balance Due', type: 'number', placeholder: '0.00' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Sent', value: 'sent' },
+							{ label: 'Paid', value: 'paid' },
+							{ label: 'Overdue', value: 'overdue' },
+							{ label: 'Voided', value: 'voided' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	transactions: {
+		tabKey: 'transactions',
+		sections: [
+			{
+				key: 'tx', title: 'Transaction', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'transactionDate', label: 'Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{
+						key: 'transactionType', label: 'Type', type: 'select', required: true, options: [
+							{ label: 'Charge', value: 'charge' },
+							{ label: 'Payment', value: 'payment' },
+							{ label: 'Adjustment', value: 'adjustment' },
+							{ label: 'Refund', value: 'refund' },
+							{ label: 'Write-off', value: 'write-off' },
+						]
+					},
+					{ key: 'totalAmount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'referenceNumber', label: 'Reference', type: 'text', placeholder: 'Optional' },
+					{ key: 'description', label: 'Description', type: 'text', placeholder: 'Short description' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Posted', value: 'posted' },
+							{ label: 'Pending', value: 'pending' },
+							{ label: 'Voided', value: 'voided' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	billing: {
+		tabKey: 'billing',
+		sections: [
+			{
+				key: 'billing', title: 'Billing', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'serviceDate', label: 'Service Date', type: 'date', required: true },
+					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT codes', lookupConfig: { system: 'CPT' } },
+					{ key: 'icdCode', label: 'Diagnosis (ICD-10)', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'totalAmount', label: 'Charge Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+						]
+					},
+				],
+			},
+		],
+	},
+	claims: {
+		tabKey: 'claims',
+		sections: [
+			{
+				key: 'claim-info', title: 'Claim Information', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'identifier', label: 'Claim Number', type: 'text', placeholder: 'Auto-assigned if blank' },
+					{ key: 'serviceDate', label: 'Service Date', type: 'date', required: true },
+					{
+						key: 'type', label: 'Type', type: 'select', options: [
+							{ label: 'Institutional', value: 'institutional' },
+							{ label: 'Professional', value: 'professional' },
+							{ label: 'Pharmacy', value: 'pharmacy' },
+							{ label: 'Vision', value: 'vision' },
+							{ label: 'Oral', value: 'oral' },
+						]
+					},
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Submitted', value: 'submitted' },
+							{ label: 'Paid', value: 'paid' },
+							{ label: 'Denied', value: 'denied' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{ key: 'totalAmount', label: 'Total Charge', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'providerId', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
+					{ key: 'facilityId', label: 'Facility', type: 'lookup', placeholder: 'Search facility', lookupConfig: { endpoint: '/api/locations', searchable: true } },
+					{ key: 'payerId', label: 'Payer / Insurer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
+				],
+			},
+			{
+				key: 'diagnosis', title: 'Diagnosis', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'primaryDiagnosis', label: 'Primary Diagnosis', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'secondaryDiagnosis', label: 'Secondary', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'tertiaryDiagnosis', label: 'Tertiary', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'quaternaryDiagnosis', label: 'Quaternary', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+				],
+			},
+		],
+	},
+	denials: {
+		tabKey: 'denials',
+		sections: [
+			{
+				key: 'denial', title: 'Denial', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'identifier', label: 'Claim Number', type: 'text', required: true, placeholder: 'Original claim #' },
+					{ key: 'serviceDate', label: 'Service Date', type: 'date' },
+					{ key: 'denialDate', label: 'Denial Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'denialReason', label: 'Denial Reason', type: 'text', required: true, placeholder: 'CARC / RARC code or text' },
+					{ key: 'totalAmount', label: 'Denied Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'payerId', label: 'Payer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
+					{
+						key: 'appealStatus', label: 'Appeal Status', type: 'select', options: [
+							{ label: 'Not Appealed', value: 'not-appealed' },
+							{ label: 'Appeal Pending', value: 'appeal-pending' },
+							{ label: 'Appeal Approved', value: 'appeal-approved' },
+							{ label: 'Appeal Denied', value: 'appeal-denied' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	'era-remittance': {
+		tabKey: 'era-remittance',
+		sections: [
+			{
+				key: 'era', title: 'ERA / Remittance', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'paymentAmount', label: 'Payment Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'payerId', label: 'Payer', type: 'lookup', required: true, placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
+					{ key: 'referenceNumber', label: 'Check / EFT #', type: 'text', placeholder: 'Trace number' },
+					{
+						key: 'paymentMethod', label: 'Method', type: 'select', options: [
+							{ label: 'Check', value: 'check' },
+							{ label: 'EFT', value: 'eft' },
+							{ label: 'Credit Card', value: 'credit-card' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	submissions: {
+		tabKey: 'submissions',
+		sections: [
+			{
+				key: 'submission', title: 'Claim Submission', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'identifier', label: 'Submission ID', type: 'text', placeholder: 'Auto-assigned if blank' },
+					{ key: 'submissionDate', label: 'Submission Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'providerId', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
+					{ key: 'payerId', label: 'Payer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
+					{ key: 'totalAmount', label: 'Total', type: 'number', placeholder: '0.00' },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Pending', value: 'pending' },
+							{ label: 'Submitted', value: 'submitted' },
+							{ label: 'Accepted', value: 'accepted' },
+							{ label: 'Rejected', value: 'rejected' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 		],
@@ -1213,11 +1552,10 @@ export class PatientChartEditor extends EditorPane {
 						if (tab.key === 'vitals') {
 							sections = sections.filter(s => s.key !== 'vitals-meta' && !/recording info/i.test(s.title || ''));
 						}
-						// Per-field overlays: backend tab_field_config sometimes omits the
-						// search placeholder or uses a generic 'text' input where the test
-						// team has explicitly asked for a code search. Re-apply the local
-						// fallback hints so CVX/CPT/LOINC/ICD codes consistently render as
-						// searchable, with the right "Search ___ codes" placeholder.
+						// Per-field overlays: backend tab_field_config often omits the
+						// search type, placeholder, validation pattern, default value, or
+						// select options that the local fallback specifies. Carry those
+						// through so the form behaves the same as the web UI.
 						const localOverrides = DEFAULT_FIELD_CONFIGS[tab.key];
 						if (localOverrides) {
 							const overrideMap = new Map<string, FieldDef>();
@@ -1229,18 +1567,37 @@ export class PatientChartEditor extends EditorPane {
 								fields: sec.fields.map(f => {
 									const ov = overrideMap.get(f.key);
 									if (!ov) { return f; }
-									// Promote to code-search / practitioner-search if the local
-									// fallback says so. Keep the backend's required + label
+									// Promote to code-search / practitioner-search / patient-search / lookup
+									// if the local fallback says so. Keep the backend's required + label
 									// (those are intentional content choices).
 									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup';
+									const backendOpts = f.options;
+									const hasBackendOptions = Array.isArray(backendOpts) && backendOpts.length > 0;
 									return {
 										...f,
 										type: isSearchType ? ov.type : f.type,
 										placeholder: f.placeholder || ov.placeholder,
 										lookupConfig: f.lookupConfig || ov.lookupConfig,
+										validationPattern: f.validationPattern || ov.validationPattern,
+										validationMessage: f.validationMessage || ov.validationMessage,
+										defaultValue: f.defaultValue ?? ov.defaultValue,
+										// Only fall back to local options if backend left them empty.
+										options: hasBackendOptions ? backendOpts : ov.options,
 									};
 								}),
 							}));
+							// Append any local fields the backend config omitted entirely
+							// (e.g. appointments.duration, clinical-alerts.identifiedDate)
+							// so the auto-calc / default-value handlers have inputs to wire.
+							const presentKeys = new Set<string>();
+							for (const sec of sections) { for (const f of sec.fields) { presentKeys.add(f.key); } }
+							for (const sec of localOverrides.sections) {
+								const missing = sec.fields.filter(f => !presentKeys.has(f.key));
+								if (missing.length === 0) { continue; }
+								const target = sections.find(s => s.key === sec.key);
+								if (target) { target.fields = [...target.fields, ...missing]; }
+								else { sections.push({ ...sec, fields: missing }); }
+							}
 						}
 						config = { tabKey: tab.key, sections };
 					}
