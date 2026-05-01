@@ -246,8 +246,12 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'others', label: 'Others', position: 7, tabs: [
 			// Issues view rolls up Condition+AllergyIntolerance+MedicationRequest per V64;
 			// the backend tab_field_config 'issues' is the source of truth for fields.
+			// No apiPath override — let _tabEndpoint derive '/api/fhir-resource/issues'
+			// so save-scope lookup matches the tab_key 'issues'. The previous override
+			// pointed to '/conditions' which has no tab_field_config row → "Cannot
+			// determine resource type for tab 'conditions' — write access denied".
 			{
-				key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'], apiPath: '/api/fhir-resource/conditions',
+				key: 'issues', label: 'Issues', icon: 'CircleAlert', emoji: '\u{2757}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Condition'],
 				columns: [
 					{ key: 'conditionName', label: 'Issue', aliases: ['conditionName', 'name', 'code', 'display'] },
 					{ key: 'severity', label: 'Severity' },
@@ -1142,9 +1146,10 @@ export class PatientChartEditor extends EditorPane {
 		// Removed wrong mappings that caused "Cannot determine resource type" save errors:
 		//   appointments → was 'appointment-detail' (backend has 'appointments')
 		//   visit-notes  → was 'clinical-notes'    (backend has 'visit-notes')
-		//   problems     → was 'medicalproblems'   (backend has 'problem-list')
+		// V20 renamed problem-list → medicalproblems in tab_field_config, so the
+		// frontend slug must also be 'medicalproblems' for save-scope checks to pass.
 		// Identity mappings are no-ops; only list real overrides.
-		'problems': 'problem-list',
+		'problems': 'medicalproblems',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
 		// V18 renamed 'lab-results' → 'labs', so the desktop's tab.key 'labs' already
