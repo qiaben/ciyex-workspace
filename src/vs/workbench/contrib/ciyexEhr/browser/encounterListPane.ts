@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import * as DOM from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 
 export class EncounterListPane extends ViewPane {
 	static readonly ID = 'ciyex.encounters.view';
@@ -91,23 +92,41 @@ export class EncounterListPane extends ViewPane {
 		dateRow.style.cssText = 'display:flex;gap:4px;padding:4px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;align-items:center;';
 		const dateInputStyle = 'padding:2px 4px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;height:24px;box-sizing:border-box;flex:1;min-width:0;';
 
+		const buildIconDateInput = (parent: HTMLElement, isoValue: string, onChange: (iso: string) => void): void => {
+			const wrap = DOM.append(parent, DOM.$('div'));
+			wrap.style.cssText = 'position:relative;display:inline-flex;flex:1;min-width:0;';
+			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			visible.type = 'text';
+			visible.placeholder = 'MM/DD/YYYY';
+			visible.maxLength = 10;
+			visible.value = isoToUs(isoValue);
+			visible.style.cssText = dateInputStyle + 'padding-right:24px;';
+			visible.addEventListener('input', () => {
+				const iso = usToIso(visible.value);
+				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				onChange(iso);
+			});
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue || '';
+			picker.style.cssText = 'position:absolute;top:0;right:0;width:24px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
+			picker.addEventListener('change', () => { visible.value = isoToUs(picker.value); onChange(picker.value); });
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+		};
+
 		const fromLabel = DOM.append(dateRow, DOM.$('span'));
 		fromLabel.textContent = 'From';
 		fromLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0;';
-		const fromInput = DOM.append(dateRow, DOM.$('input')) as HTMLInputElement;
-		fromInput.type = 'date';
-		fromInput.value = this.dateFrom;
-		fromInput.style.cssText = dateInputStyle;
-		fromInput.addEventListener('change', () => { this.dateFrom = fromInput.value; this.currentPage = 0; this._renderList(search.value); });
+		buildIconDateInput(dateRow, this.dateFrom, (iso) => { this.dateFrom = iso; this.currentPage = 0; this._renderList(search.value); });
 
 		const toLabel = DOM.append(dateRow, DOM.$('span'));
 		toLabel.textContent = 'To';
 		toLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0;';
-		const toInput = DOM.append(dateRow, DOM.$('input')) as HTMLInputElement;
-		toInput.type = 'date';
-		toInput.value = this.dateTo;
-		toInput.style.cssText = dateInputStyle;
-		toInput.addEventListener('change', () => { this.dateTo = toInput.value; this.currentPage = 0; this._renderList(search.value); });
+		buildIconDateInput(dateRow, this.dateTo, (iso) => { this.dateTo = iso; this.currentPage = 0; this._renderList(search.value); });
 
 		// List
 		this.listEl = DOM.append(this.container, DOM.$('div'));
@@ -115,8 +134,8 @@ export class EncounterListPane extends ViewPane {
 		this.listEl.textContent = 'Loading...';
 
 		this._loadData();
-		const retry = setInterval(() => {
-			if (this.loaded) { clearInterval(retry); return; }
+		const retry = mainWindow.setInterval(() => {
+			if (this.loaded) { mainWindow.clearInterval(retry); return; }
 			this._loadData();
 		}, 2000);
 	}
@@ -147,9 +166,9 @@ export class EncounterListPane extends ViewPane {
 			};
 			for (const item of this.allItems) {
 				const t = String(item.type || '');
-				if (t in EncounterListPane.TYPE_MAP) { item.type = EncounterListPane.TYPE_MAP[t]; }
+				if (Object.prototype.hasOwnProperty.call(EncounterListPane.TYPE_MAP, t)) { item.type = EncounterListPane.TYPE_MAP[t]; }
 				const s = String(item.status || '');
-				if (s in statusMap) { item.status = statusMap[s]; }
+				if (Object.prototype.hasOwnProperty.call(statusMap, s)) { item.status = statusMap[s]; }
 				else if (!['SIGNED', 'UNSIGNED', 'INCOMPLETE'].includes(s)) { item.status = 'UNSIGNED'; }
 			}
 			// Sort by latest date first

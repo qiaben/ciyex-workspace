@@ -15,6 +15,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface ColumnDef { key: string; label: string; width?: string }
 interface StatusTab { label: string; value: string }
@@ -585,13 +586,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const fields = cfg.formFields!;
 		const isEdit = this.editingItem !== null;
 
-		// Overlay
-		this.formOverlay = DOM.append(this.root, DOM.$('div'));
-		this.formOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:40px;overflow-y:auto;';
+		// Overlay — fixed to viewport so the dialog always centers on screen and
+		// is never affected by editor scroll position. Append to <body> so the
+		// overlay sits above the entire workbench (sidebar, status bar, etc).
+		this.formOverlay = DOM.append(mainWindow.document.body, DOM.$('div'));
+		this.formOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:60px;overflow-y:auto;';
 
 		// Dialog
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
-		dialog.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:560px;max-height:calc(100vh - 100px);overflow-y:auto;';
+		dialog.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 100px);overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
@@ -746,11 +749,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					if (dropdown.childElementCount > 0) { dropdown.style.display = 'block'; }
 				});
 			} else if (field.type === 'date') {
-				// mm/dd/yyyy text + native calendar trigger. Native `<input type="date">`
+				// mm/dd/yyyy text + calendar icon inside the field. Native `<input type="date">`
 				// renders in OS-locale order on Linux Electron (yyyy-mm-dd), so we render
-				// the US format ourselves and keep a hidden ISO field for the API value.
+				// the US format ourselves and overlay a hidden picker that opens via the icon.
 				const wrap = DOM.append(group, DOM.$('div'));
-				wrap.style.cssText = 'position:relative;display:flex;align-items:center;gap:6px;';
+				wrap.style.cssText = 'position:relative;display:block;';
 				const isoToUs = (iso: string): string => {
 					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 					return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
@@ -762,8 +765,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				};
 				const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				visible.type = 'text';
-				visible.placeholder = 'mm/dd/yyyy';
-				visible.style.cssText = inputStyle + 'flex:1;';
+				visible.placeholder = 'MM/DD/YYYY';
+				// Reserve right padding so the icon doesn't overlap typed text.
+				visible.style.cssText = inputStyle + 'padding-right:30px;';
 				visible.maxLength = 10;
 				const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				hidden.type = 'hidden';
@@ -772,14 +776,22 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					hidden.value = iso;
 					visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
 				});
+				// Native picker — fully overlaid on top of the icon area so clicking
+				// the icon opens the calendar. We hide the native chrome via opacity:0.
 				const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				picker.type = 'date';
-				picker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
 				picker.title = 'Open calendar';
+				picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 				picker.addEventListener('change', () => {
 					visible.value = isoToUs(picker.value);
 					hidden.value = picker.value;
 				});
+				// Visible icon (decorative) — sits behind the transparent picker so
+				// clicks fall through to the picker. pointer-events:none keeps the
+				// real input click target on the underlying picker.
+				const icon = DOM.append(wrap, DOM.$('span'));
+				icon.textContent = '\u{1F4C5}';
+				icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
 				dateRefs.set(field.key, { visible, picker });
 				inputEl = hidden;
 			} else {
