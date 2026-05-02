@@ -52,8 +52,9 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', required: true, placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'], validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
 			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg', validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,128}$', validationMessage: 'Medication Name must be 2-128 characters and contain only letters, numbers, and common punctuation' },
+			{ key: 'medicationCode', label: 'Medication Code', type: 'text', placeholder: 'e.g. NDC or RxNorm code', aliases: ['code', 'ndcCode', 'rxNormCode', 'medCode'] },
 			{
-				key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system'], options: [
+				key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system', 'code_system'], options: [
 					{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
 				]
 			},
@@ -145,6 +146,19 @@ export class LabsEditor extends ClinicalListEditorBase {
 		// Backend is patient-scoped: POST /api/lab-order/{patientId}, PUT/GET/DELETE /api/lab-order/{patientId}/{orderId}.
 		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
 		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
+		// Render the Patient column as full name. Backends sometimes only fill patientFirstName,
+		// or store full name in a single field — fall back across common shapes.
+		cellRenderer: (key, _value, item) => {
+			if (key === 'patientFirstName') {
+				const fn = String(item.patientFirstName || '').trim();
+				const ln = String(item.patientLastName || '').trim();
+				const full = `${fn} ${ln}`.trim();
+				if (full) { return full; }
+				const alt = item.patientName || item.patientFullName || item.patient || '';
+				return String(alt || (item.patientId ? `Patient #${item.patientId}` : ''));
+			}
+			return String(_value ?? '');
+		},
 		columns: [
 			{ key: 'patientFirstName', label: 'Patient' }, { key: 'orderNumber', label: 'Order #', width: '100px' },
 			{ key: 'orderName', label: 'Test', width: '1.5fr' }, { key: 'physicianName', label: 'Provider' },
@@ -165,10 +179,13 @@ export class LabsEditor extends ClinicalListEditorBase {
 				placeholder: 'Search patient by name, MRN or ID...',
 				apiPath: '/api/patients', relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
-				relatedFieldsMap: { patientLastName: 'lastName' },
+				// Overwrite this field with just firstName after the search displayText
+				// is shown, and fill patientLastName separately so the payload is correct.
+				relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
+				aliases: ['firstName', 'patientFirst', 'patient.firstName'],
 			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search' },
+			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
+			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
 			// Order Meta
 			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
 			{
@@ -505,8 +522,12 @@ export class CdsEditor extends ClinicalListEditorBase {
 				if (v === '' || v === null || v === undefined) { continue; }
 				out[k] = v;
 			}
-			// Map "type" to "ruleType" if backend expects ruleType but form sends type.
-			if (out.type && !out.ruleType) { out.ruleType = out.type; }
+			// Backend expects "ruleType" — always rename "type" so save and edit are
+			// symmetric. The aliases on the type field handle reading "ruleType" back.
+			if (out.type) {
+				out.ruleType = out.type;
+				delete out.type;
+			}
 			// Mirror status -> isActive boolean.
 			if (typeof out.status === 'string') {
 				out.isActive = out.status === 'active';
@@ -524,9 +545,11 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ label: 'Draft', value: 'draft' },
 		],
 		formFields: [
-			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'Enter alert/rule name' },
+			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'Enter alert/rule name', aliases: ['ruleName'] },
 			{
-				key: 'type', label: 'Type', type: 'select', required: true, options: [
+				key: 'type', label: 'Type', type: 'select', required: true,
+				aliases: ['ruleType', 'rule_type', 'kind'],
+				options: [
 					{ label: 'Drug Interaction', value: 'drug_interaction' },
 					{ label: 'Allergy Alert', value: 'allergy_alert' },
 					{ label: 'Duplicate Order', value: 'duplicate_order' },
@@ -554,8 +577,27 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ key: 'condition', label: 'Condition Expression', type: 'textarea', placeholder: 'Rule condition (e.g. age > 50 AND diagnosis contains "diabetes")' },
 		],
 		actions: [
-			// allow-any-unicode-next-line
-			{ label: 'Toggle', icon: '⏻', handler: async (item, api, reload) => { await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' }); reload(); } },
+			{
+				// allow-any-unicode-next-line
+				label: 'Toggle', icon: '⏻', handler: async (item, api, reload, dlg) => {
+					// Try the dedicated toggle endpoint; if the backend doesn't expose it,
+					// fall back to PUT /api/cds/rules/{id} flipping isActive.
+					let res = await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' });
+					if (!res.ok) {
+						const next = !(item.isActive === true || item.status === 'active');
+						res = await api.fetch(`/api/cds/rules/${item.id}`, {
+							method: 'PUT', headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ ...item, isActive: next, status: next ? 'active' : 'inactive' }),
+						});
+					}
+					if (!res.ok) {
+						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to toggle rule (HTTP ${res.status})`));
+						return;
+					}
+					reload();
+				}
+			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
@@ -1032,9 +1074,9 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		title: 'Claims Management', apiPath: '/api/all-claims',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
 		editable: true,
-		// Claims are derived from invoices/encounters — backend has no POST handler.
-		// Status updates and Send work via the actions; manual creation is disabled.
-		creatable: false,
+		// Allow manual creation in addition to invoice-derived claims.
+		creatable: true,
+		createDefaults: { status: 'draft', type: 'professional' },
 		// /api/all-claims doesn't support server-side q=/status= — filter client-side
 		// across the fields the user searches by (matches ciyex-ehr-ui behavior).
 		clientSideFilter: ['patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'id'],

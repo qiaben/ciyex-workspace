@@ -131,23 +131,44 @@ export class ReportsEditor extends EditorPane {
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
 		filters.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:rgba(0,122,204,0.03);';
 
+		const buildIconDateInput = (parent: HTMLElement, isoValue: string, onChange: (iso: string) => void): void => {
+			const wrap = DOM.append(parent, DOM.$('div'));
+			wrap.style.cssText = 'position:relative;display:inline-block;';
+			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			visible.type = 'text';
+			visible.placeholder = 'MM/DD/YYYY';
+			visible.maxLength = 10;
+			visible.value = isoToUs(isoValue);
+			visible.style.cssText = INPUT_STYLE + 'padding-right:30px;width:130px;';
+			visible.addEventListener('input', () => {
+				const iso = usToIso(visible.value);
+				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				onChange(iso);
+			});
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue || '';
+			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
+			picker.addEventListener('change', () => {
+				visible.value = isoToUs(picker.value);
+				onChange(picker.value);
+			});
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+		};
+
 		const fromLabel = DOM.append(filters, DOM.$('label'));
 		fromLabel.textContent = 'From';
 		fromLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		const fromInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
-		fromInput.type = 'date';
-		fromInput.value = this.dateFrom;
-		fromInput.style.cssText = INPUT_STYLE;
-		fromInput.addEventListener('change', () => { this.dateFrom = fromInput.value; });
+		buildIconDateInput(filters, this.dateFrom, (iso) => { this.dateFrom = iso; this._applyFiltersAndRender(); });
 
 		const toLabel = DOM.append(filters, DOM.$('label'));
 		toLabel.textContent = 'To';
 		toLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		const toInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
-		toInput.type = 'date';
-		toInput.value = this.dateTo;
-		toInput.style.cssText = INPUT_STYLE;
-		toInput.addEventListener('change', () => { this.dateTo = toInput.value; });
+		buildIconDateInput(filters, this.dateTo, (iso) => { this.dateTo = iso; this._applyFiltersAndRender(); });
 
 		const statusSelect = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
 		statusSelect.style.cssText = INPUT_STYLE + 'cursor:pointer;';
@@ -156,11 +177,21 @@ export class ReportsEditor extends EditorPane {
 		statusSelect.addEventListener('change', () => { this.statusFilter = statusSelect.value; this._applyFiltersAndRender(); });
 
 		DOM.append(filters, DOM.$('span')).style.flex = '1';
+		// Clear filters button
+		const clearBtn = DOM.append(filters, DOM.$('button'));
+		clearBtn.textContent = 'Clear Filters';
+		clearBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
+		clearBtn.addEventListener('click', () => {
+			this.dateFrom = '';
+			this.dateTo = '';
+			this.statusFilter = '';
+			this._loadAndRender(input);
+		});
 		const runBtn = DOM.append(filters, DOM.$('button'));
 		// allow-any-unicode-next-line
-		runBtn.textContent = '▶ Run Report';
+		runBtn.textContent = '▶ Refresh';
 		runBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
-		runBtn.addEventListener('click', () => this._loadAndRender(input));
+		runBtn.addEventListener('click', async () => { await this._loadData(); this._applyFiltersAndRender(); });
 
 		// allow-any-unicode-next-line
 		// ─── KPI cards ───

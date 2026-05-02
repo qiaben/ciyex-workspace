@@ -495,13 +495,13 @@ export class CalendarEditor extends EditorPane {
 				const minute = slot * slotDuration;
 				const isHourStart = minute === 0;
 
-				// Time label
+				// Time label — show on every 30-min slot (e.g. 9:00, 9:30, 10:00)
 				const timeCell = DOM.append(table, DOM.$('.cal-time'));
-				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}`;
-				if (isHourStart) {
-					const h = hour > 12 ? hour - 12 : hour;
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}`;
+				{
+					const h12 = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
 					const ampm = hour >= 12 ? 'PM' : 'AM';
-					timeCell.textContent = `${h}${ampm}`;
+					timeCell.textContent = isHourStart ? `${h12}:00 ${ampm}` : `${h12}:${String(minute).padStart(2, '0')}`;
 				}
 
 				// Day cells
@@ -639,11 +639,11 @@ export class CalendarEditor extends EditorPane {
 				const isHourStart = minute === 0;
 
 				const timeCell = DOM.append(table, DOM.$('.cal-time'));
-				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}`;
-				if (isHourStart) {
-					const h = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}`;
+				{
+					const h12 = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
 					const ampm = hour >= 12 ? 'PM' : 'AM';
-					timeCell.textContent = `${h}${ampm}`;
+					timeCell.textContent = isHourStart ? `${h12}:00 ${ampm}` : `${h12}:${String(minute).padStart(2, '0')}`;
 				}
 
 				// Provider cells

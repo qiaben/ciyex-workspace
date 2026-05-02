@@ -3262,7 +3262,7 @@ export class PatientChartEditor extends EditorPane {
 	 */
 	private _buildDateInput(cell: HTMLElement, f: FieldDef, isoValue: string, inputStyle: string): void {
 		const wrap = DOM.append(cell, DOM.$('div'));
-		wrap.style.cssText = 'position:relative;display:flex;align-items:center;gap:6px;';
+		wrap.style.cssText = 'position:relative;display:block;';
 
 		const isoToUs = (iso: string): string => {
 			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -3278,9 +3278,10 @@ export class PatientChartEditor extends EditorPane {
 
 		const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		visible.type = 'text';
-		visible.placeholder = 'mm/dd/yyyy';
+		visible.placeholder = 'MM/DD/YYYY';
 		visible.value = isoToUs(isoValue);
-		visible.style.cssText = inputStyle + 'flex:1;';
+		// Reserve right padding so the icon doesn't overlap typed text.
+		visible.style.cssText = inputStyle + 'padding-right:30px;';
 		visible.setAttribute('inputmode', 'numeric');
 		visible.maxLength = 10;
 
@@ -3299,18 +3300,24 @@ export class PatientChartEditor extends EditorPane {
 		visible.addEventListener('input', sync);
 		visible.addEventListener('blur', sync);
 
-		// Native date picker as the calendar trigger. We hide its text part and
-		// keep only the picker indicator visible — clicking opens a real
-		// calendar popover that writes back to the visible mm/dd/yyyy field.
+		// Native date picker overlaid on the right edge — opens the calendar
+		// popover when the icon area is clicked. Made transparent so the visible
+		// MM/DD/YYYY text input shows through.
 		const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		picker.type = 'date';
 		picker.value = isoValue || '';
-		picker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
 		picker.title = 'Open calendar';
+		picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 		picker.addEventListener('change', () => {
 			visible.value = isoToUs(picker.value);
 			hidden.value = picker.value;
 		});
+
+		// Visible decorative icon — pointer-events:none so clicks fall through
+		// to the underlying transparent picker.
+		const icon = DOM.append(wrap, DOM.$('span'));
+		icon.textContent = '\u{1F4C5}';
+		icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
 	}
 
 	/**

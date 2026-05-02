@@ -283,20 +283,24 @@ export class EhrTitlebarControls extends Disposable {
 		dobStar.textContent = '*';
 		dobLabelEl.append(' Date of Birth');
 		const dobWrap = DOM.append(dobGroup, DOM.$('div'));
-		dobWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		dobWrap.style.cssText = 'position:relative;display:block;';
 		const dobVisible = DOM.append(dobWrap, DOM.$('input.ehr-form-input')) as HTMLInputElement;
 		dobVisible.type = 'text';
-		dobVisible.placeholder = 'mm/dd/yyyy';
+		dobVisible.placeholder = 'MM/DD/YYYY';
 		dobVisible.maxLength = 10;
-		dobVisible.style.flex = '1';
+		dobVisible.style.paddingRight = '30px';
+		dobVisible.style.width = '100%';
 		const dob = DOM.append(dobWrap, DOM.$('input')) as HTMLInputElement;
 		dob.type = 'hidden';
 		dob.name = 'dateOfBirth';
 		const dobPicker = DOM.append(dobWrap, DOM.$('input')) as HTMLInputElement;
 		dobPicker.type = 'date';
 		dobPicker.max = todayIso;
-		dobPicker.style.cssText = 'width:28px;height:32px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
+		dobPicker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 		dobPicker.title = 'Open calendar';
+		const dobIcon = DOM.append(dobWrap, DOM.$('span'));
+		dobIcon.textContent = '\u{1F4C5}';
+		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
 		const usToIso = (us: string): string => {
 			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
 			if (!m) { return ''; }

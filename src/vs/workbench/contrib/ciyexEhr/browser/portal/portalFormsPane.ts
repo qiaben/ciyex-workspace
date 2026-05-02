@@ -199,13 +199,19 @@ export class PortalFormsPane extends ViewPane {
 		if (!formType) { return; }
 
 		try {
+			// Position must be a number — null/undefined breaks the backend's
+			// Jackson deserializer ("Cannot map `null` into type `int`"). Default
+			// to "append at end" of the existing list.
+			const nextPosition = (this.items?.length || 0) + 1;
 			const res = await this.apiService.fetch('/api/portal/config/forms', {
 				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					title,
 					formType,
 					formKey: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
 					active: true,
+					position: nextPosition,
 				}),
 			});
 			if (res.ok) {

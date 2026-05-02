@@ -780,20 +780,48 @@ export class AppointmentsEditor extends EditorPane {
 		const rangeLabel = DOM.append(dateRight, DOM.$('span'));
 		rangeLabel.textContent = 'Range:';
 		rangeLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
-		const dateInputStyle = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
-		const fromInput = DOM.append(dateRight, DOM.$('input')) as HTMLInputElement;
-		fromInput.type = 'date';
-		fromInput.value = this.dateFromCustom;
-		fromInput.style.cssText = dateInputStyle;
-		fromInput.title = 'From date';
+		const dateInputStyle = 'padding:5px 30px 5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;outline:none;width:120px;';
+		const buildRangeDateInput = (parent: HTMLElement, isoValue: string, titleText: string): HTMLInputElement => {
+			const wrap = DOM.append(parent, DOM.$('div'));
+			wrap.style.cssText = 'position:relative;display:inline-block;';
+			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			visible.type = 'text';
+			visible.placeholder = 'MM/DD/YYYY';
+			visible.maxLength = 10;
+			visible.value = isoToUs(isoValue);
+			visible.style.cssText = dateInputStyle;
+			visible.title = titleText;
+			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			hidden.type = 'hidden';
+			hidden.value = isoValue || '';
+			visible.addEventListener('input', () => {
+				const iso = usToIso(visible.value);
+				hidden.value = iso;
+				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				visible.dispatchEvent(new CustomEvent('iso-change', { detail: iso }));
+			});
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue || '';
+			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
+			picker.title = titleText;
+			picker.addEventListener('change', () => {
+				visible.value = isoToUs(picker.value);
+				hidden.value = picker.value;
+				visible.dispatchEvent(new CustomEvent('iso-change', { detail: picker.value }));
+			});
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+			return hidden;
+		};
+		const fromInput = buildRangeDateInput(dateRight, this.dateFromCustom, 'From date');
 		const toLbl = DOM.append(dateRight, DOM.$('span'));
 		toLbl.textContent = 'to';
 		toLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		const toInput = DOM.append(dateRight, DOM.$('input')) as HTMLInputElement;
-		toInput.type = 'date';
-		toInput.value = this.dateToCustom;
-		toInput.style.cssText = dateInputStyle;
-		toInput.title = 'To date';
+		const toInput = buildRangeDateInput(dateRight, this.dateToCustom, 'To date');
 		const clearRangeBtn = DOM.append(dateRight, DOM.$('button')) as HTMLButtonElement;
 		clearRangeBtn.textContent = 'Clear';
 		clearRangeBtn.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-descriptionForeground);font-size:11px;cursor:pointer;';
@@ -817,12 +845,12 @@ export class AppointmentsEditor extends EditorPane {
 			updateRangeVisibility();
 			this._loadAppointments();
 		});
-		fromInput.addEventListener('change', () => {
+		(fromInput.previousElementSibling as HTMLInputElement | null)?.addEventListener('iso-change', () => {
 			this.dateFromCustom = fromInput.value;
 			this.currentPage = 1;
 			this._loadAppointments();
 		});
-		toInput.addEventListener('change', () => {
+		(toInput.previousElementSibling as HTMLInputElement | null)?.addEventListener('iso-change', () => {
 			this.dateToCustom = toInput.value;
 			this.currentPage = 1;
 			this._loadAppointments();
@@ -837,7 +865,18 @@ export class AppointmentsEditor extends EditorPane {
 		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
 
 		const table = DOM.append(tableWrap, DOM.$('table'));
-		table.style.cssText = 'width:100%;min-width:1100px;border-collapse:collapse;';
+		// `table-layout:fixed` honours the column widths set via <colgroup> so all
+		// rows stay aligned even when individual cells contain multi-line content.
+		table.style.cssText = 'width:100%;min-width:1100px;border-collapse:collapse;table-layout:fixed;';
+
+		// Column widths — matched between <colgroup> and the renderTableBody
+		// cell order (DATE, PATIENT, PROVIDER, LOCATION, TYPE, STATUS, ROOM, WAIT, ACTIONS).
+		const colgroup = DOM.append(table, DOM.$('colgroup'));
+		const colWidths = ['140px', '200px', '160px', '140px', '120px', '120px', '90px', '90px', '140px'];
+		for (const w of colWidths) {
+			const col = DOM.append(colgroup, DOM.$('col')) as HTMLTableColElement;
+			col.style.width = w;
+		}
 
 		const thead = DOM.append(table, DOM.$('thead'));
 		const headRow = DOM.append(thead, DOM.$('tr'));
@@ -929,7 +968,7 @@ export class AppointmentsEditor extends EditorPane {
 			return;
 		}
 
-		const cellStyle = 'padding:10px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);font-size:12px;white-space:nowrap;';
+		const cellStyle = 'padding:10px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);font-size:12px;vertical-align:top;overflow:hidden;text-overflow:ellipsis;';
 
 		for (const row of filtered) {
 			const tr = DOM.append(this.tableBody, DOM.$('tr'));
@@ -1070,12 +1109,16 @@ export class AppointmentsEditor extends EditorPane {
 				tdWait.style.color = 'var(--vscode-descriptionForeground)';
 			}
 
-			// ACTIONS — Open Chart / Record Vitals / Visit Summary, matching EHR-UI
+			// ACTIONS — Open Chart / Record Vitals / Visit Summary, matching EHR-UI.
+			// `display:flex` on the td itself breaks the native table layout, so the
+			// flex container is an inner div and the cell keeps its standard table-cell box.
 			const tdActions = DOM.append(tr, DOM.$('td'));
-			tdActions.style.cssText = cellStyle + 'display:flex;gap:6px;align-items:center;';
+			tdActions.style.cssText = cellStyle;
+			const actionsWrap = DOM.append(tdActions, DOM.$('div'));
+			actionsWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
 
 			const iconBtn = (icon: string, title: string, color: string, onClick: () => void) => {
-				const b = DOM.append(tdActions, DOM.$('button')) as HTMLButtonElement;
+				const b = DOM.append(actionsWrap, DOM.$('button')) as HTMLButtonElement;
 				b.textContent = icon;
 				b.title = title;
 				b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:4px;color:${color};`;
