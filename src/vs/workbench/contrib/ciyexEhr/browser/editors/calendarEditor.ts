@@ -834,6 +834,58 @@ export class CalendarEditor extends EditorPane {
 		// Map to store form field references (avoids querySelector)
 		const formFields = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 
+		// Build a US-formatted (mm/dd/yyyy) date input. Linux Electron renders
+		// native `<input type="date">` as yyyy-mm-dd; the test team requires the
+		// US format. We render a visible mm/dd/yyyy text box plus a small native
+		// date picker (calendar pop-up) — the hidden sibling registered in
+		// formFields keeps the value as yyyy-mm-dd so the save payload stays the
+		// same regardless of how the user types.
+		const buildDateField = (parent: HTMLElement, id: string, isoValue: string): void => {
+			const wrap = DOM.append(parent, DOM.$('div'));
+			wrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+			const isoToUs = (iso: string): string => {
+				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+				return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+			};
+			const usToIso = (us: string): string => {
+				const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
+				if (!m) { return ''; }
+				return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+			};
+
+			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			visible.type = 'text';
+			visible.placeholder = 'mm/dd/yyyy';
+			visible.maxLength = 10;
+			visible.value = isoToUs(isoValue);
+			visible.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+
+			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			hidden.type = 'hidden';
+			hidden.id = id;
+			hidden.value = isoValue;
+			formFields.set(id, hidden);
+
+			const sync = () => {
+				const iso = usToIso(visible.value);
+				hidden.value = iso;
+				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+			};
+			visible.addEventListener('input', sync);
+			visible.addEventListener('blur', sync);
+
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue;
+			picker.title = 'Open calendar';
+			picker.style.cssText = 'width:28px;height:30px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
+			picker.addEventListener('change', () => {
+				visible.value = isoToUs(picker.value);
+				hidden.value = picker.value;
+			});
+		};
+
 		// Helper: create form field
 		const field = (label: string, id: string, type: string, value: string, required: boolean, options?: Array<{ value: string; label: string }>): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement => {
 			const group = DOM.append(form, DOM.$('.form-group'));
@@ -854,6 +906,9 @@ export class CalendarEditor extends EditorPane {
 				ta.id = id; ta.value = value; ta.rows = 3; ta.style.cssText = inputStyle + 'resize:vertical;';
 				formFields.set(id, ta);
 				return ta;
+			} else if (type === 'date') {
+				buildDateField(group, id, value);
+				return formFields.get(id) as HTMLInputElement;
 			} else {
 				const inp = DOM.append(group, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value; inp.style.cssText = inputStyle;
@@ -871,6 +926,10 @@ export class CalendarEditor extends EditorPane {
 				const lbl = DOM.append(parent, DOM.$('label'));
 				lbl.textContent = label + (required ? ' *' : '');
 				lbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
+				if (type === 'date') {
+					buildDateField(parent, id, value);
+					return formFields.get(id) as HTMLInputElement;
+				}
 				const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value;
 				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';

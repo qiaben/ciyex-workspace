@@ -645,6 +645,10 @@ export class EncounterFormEditor extends EditorPane {
 
 		const readOnly = this._isSigned;
 
+		// Track inputs by field key so post-render hooks (BMI auto-calc, etc.)
+		// don't have to walk the DOM. Cleared on every re-render.
+		const renderedInputs = new Map<string, HTMLInputElement>();
+
 		for (const sec of this.formSections) {
 			if (sec.visible === false) { continue; }
 
@@ -756,6 +760,7 @@ export class EncounterFormEditor extends EditorPane {
 					inp.style.cssText = inputStyle + 'height:32px;';
 					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
+					renderedInputs.set(f.key, inp);
 				} else if (f.type === 'date' || f.type === 'datetime') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'datetime' ? 'datetime-local' : 'date';
@@ -773,6 +778,31 @@ export class EncounterFormEditor extends EditorPane {
 					addFocus(inp);
 				}
 			}
+		}
+
+		// Vitals BMI auto-calc — same behavior as EHR-UI's encounter form.
+		// Weight in lbs and Height in inches: BMI = (lbs * 703) / (in * in).
+		// Recalc on either input changing; lock the BMI cell so the user can't
+		// type over the derived value.
+		const weightLbs = renderedInputs.get('vitals_weight');
+		const heightIn = renderedInputs.get('vitals_height');
+		const bmi = renderedInputs.get('vitals_bmi');
+		if (weightLbs && heightIn && bmi) {
+			bmi.readOnly = true;
+			bmi.style.background = 'rgba(128,128,128,0.06)';
+			bmi.placeholder = 'Auto-calculated';
+			const recalc = () => {
+				const w = parseFloat(weightLbs.value);
+				const h = parseFloat(heightIn.value);
+				if (!isNaN(w) && !isNaN(h) && h > 0) {
+					bmi.value = ((w * 703) / (h * h)).toFixed(1);
+				} else {
+					bmi.value = '';
+				}
+			};
+			weightLbs.addEventListener('input', recalc);
+			heightIn.addEventListener('input', recalc);
+			recalc();
 		}
 	}
 
@@ -896,8 +926,16 @@ export class EncounterFormEditor extends EditorPane {
 
 		if (readOnly) { return; }
 
+		// Add a labeled Diagnosis input row (the EHR-UI form has an explicit
+		// "Diagnosis" field label above the search box; the desktop was just
+		// rendering the bare input which the test team flagged as missing
+		// the label entirely).
+		const labelEl = DOM.append(parent, DOM.$('label'));
+		labelEl.textContent = 'Diagnosis';
+		labelEl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
+
 		const searchRow = DOM.append(parent, DOM.$('div'));
-		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+		searchRow.style.cssText = 'display:flex;gap:8px;';
 		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
 		searchInput.type = 'text';
 		searchInput.placeholder = 'Search ICD-10 codes...';
@@ -913,12 +951,17 @@ export class EncounterFormEditor extends EditorPane {
 			if (q.length < 2) { results.style.display = 'none'; return; }
 			timer = setTimeout(async () => {
 				try {
-					const res = await this.apiService.fetch(`/api/global_codes?codeType=ICD10&search=${encodeURIComponent(q)}&page=0&size=15`);
+					// GlobalCodeController exposes search at /api/global_codes/search
+					// with `q` as the search param. The previous URL hit the bare
+					// /api/global_codes (getAll) which ignored the search, so the
+					// dropdown never populated.
+					const res = await this.apiService.fetch(`/api/global_codes/search?codeType=ICD10&q=${encodeURIComponent(q)}&page=0&size=15`);
 					if (res.ok) {
 						const data = await res.json();
-						const codes = data?.data?.content || data?.content || [];
+						const codes = data?.data?.content || data?.data || data?.content || [];
 						DOM.clearNode(results);
-						for (const c of codes) {
+						const list = Array.isArray(codes) ? codes : [];
+						for (const c of list) {
 							const item = DOM.append(results, DOM.$('div'));
 							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
 							item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
@@ -931,7 +974,7 @@ export class EncounterFormEditor extends EditorPane {
 								results.style.display = 'none';
 							});
 						}
-						results.style.display = codes.length > 0 ? 'block' : 'none';
+						results.style.display = list.length > 0 ? 'block' : 'none';
 					}
 				} catch { /* */ }
 			}, 300);
@@ -1015,46 +1058,61 @@ export class EncounterFormEditor extends EditorPane {
 
 		if (readOnly) { return; }
 
-		const searchRow = DOM.append(parent, DOM.$('div'));
-		searchRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
-		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
-		searchInput.type = 'text';
-		searchInput.placeholder = 'Search CPT/HCPCS codes...';
-		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		// Two labelled search rows \u2014 one for CPT, one for HCPCS \u2014 so the test
+		// team can tell which code system the search is hitting. The previous
+		// "Search CPT/HCPCS codes..." used a single input that only queried CPT
+		// and used the wrong endpoint path, so HCPCS suggestions never showed
+		// and CPT suggestions returned an unfiltered list.
+		const buildCodeSearch = (label: string, codeType: string, placeholder: string) => {
+			const lbl = DOM.append(parent, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
 
-		const results = DOM.append(parent, DOM.$('div'));
-		results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+			const searchRow = DOM.append(parent, DOM.$('div'));
+			searchRow.style.cssText = 'display:flex;gap:8px;';
+			const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
+			searchInput.type = 'text';
+			searchInput.placeholder = placeholder;
+			searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		searchInput.addEventListener('input', () => {
-			if (timer) { clearTimeout(timer); }
-			const q = searchInput.value;
-			if (q.length < 2) { results.style.display = 'none'; return; }
-			timer = setTimeout(async () => {
-				try {
-					const res = await this.apiService.fetch(`/api/global_codes?codeType=CPT4&search=${encodeURIComponent(q)}&page=0&size=15`);
-					if (res.ok) {
-						const data = await res.json();
-						const codes = data?.data?.content || data?.content || [];
-						DOM.clearNode(results);
-						for (const c of codes) {
-							const item = DOM.append(results, DOM.$('div'));
-							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
-							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-							item.addEventListener('mouseleave', () => { item.style.background = ''; });
-							item.addEventListener('click', () => {
-								procs.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '', units: 1 });
-								renderList();
-								searchInput.value = '';
-								results.style.display = 'none';
-							});
+			const results = DOM.append(parent, DOM.$('div'));
+			results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			searchInput.addEventListener('input', () => {
+				if (timer) { clearTimeout(timer); }
+				const q = searchInput.value;
+				if (q.length < 2) { results.style.display = 'none'; return; }
+				timer = setTimeout(async () => {
+					try {
+						// GlobalCodeController search endpoint: /search?codeType=&q=
+						const res = await this.apiService.fetch(`/api/global_codes/search?codeType=${codeType}&q=${encodeURIComponent(q)}&page=0&size=15`);
+						if (res.ok) {
+							const data = await res.json();
+							const raw = data?.data?.content || data?.data || data?.content || [];
+							const list = Array.isArray(raw) ? raw : [];
+							DOM.clearNode(results);
+							for (const c of list) {
+								const item = DOM.append(results, DOM.$('div'));
+								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+								item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
+								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+								item.addEventListener('mouseleave', () => { item.style.background = ''; });
+								item.addEventListener('click', () => {
+									procs.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '', units: 1 });
+									renderList();
+									searchInput.value = '';
+									results.style.display = 'none';
+								});
+							}
+							results.style.display = list.length > 0 ? 'block' : 'none';
 						}
-						results.style.display = codes.length > 0 ? 'block' : 'none';
-					}
-				} catch { /* */ }
-			}, 300);
-		});
+					} catch { /* */ }
+				}, 300);
+			});
+		};
+		buildCodeSearch('CPT Code', 'CPT4', 'Search CPT codes...');
+		buildCodeSearch('HCPCS Code', 'HCPCS', 'Search HCPCS codes...');
 	}
 
 	override layout(dimension: DOM.Dimension): void {

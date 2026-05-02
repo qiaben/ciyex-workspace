@@ -30,11 +30,16 @@ export class PatientListPane extends ViewPane {
 	static readonly ID = 'ciyex.patients.list';
 
 	private _listEl: HTMLElement | undefined;
+	private _footerEl: HTMLElement | undefined;
 	private _patients: IPatientRow[] = [];
 	private _loaded = false;
 	private _searchQuery = '';
 	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
 	private _genderFilter: 'all' | 'male' | 'female' | 'other' = 'all';
+	// Pagination state — pageSize matches the EHR-UI patient list (20/page).
+	// _page is zero-indexed; the footer renders page-indicator + prev/next.
+	private _page = 0;
+	private readonly _pageSize = 20;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -71,6 +76,7 @@ export class PatientListPane extends ViewPane {
 		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;outline:none;';
 		searchInput.addEventListener('input', () => {
 			this._searchQuery = searchInput.value.trim();
+			this._page = 0;
 			this._renderList();
 		});
 		filterBar.appendChild(searchInput);
@@ -91,6 +97,7 @@ export class PatientListPane extends ViewPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this._statusFilter = statusSel.value as 'all' | 'active' | 'inactive';
+			this._page = 0;
 			this._renderList();
 		});
 		filterRow.appendChild(statusSel);
@@ -106,6 +113,7 @@ export class PatientListPane extends ViewPane {
 		}
 		genderSel.addEventListener('change', () => {
 			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'other';
+			this._page = 0;
 			this._renderList();
 		});
 		filterRow.appendChild(genderSel);
@@ -128,10 +136,62 @@ export class PatientListPane extends ViewPane {
 		listWrap.appendChild(this._listEl);
 		container.appendChild(listWrap);
 
+		// Pagination footer — fixed at the bottom of the pane, mirrors the
+		// EHR-UI patient table pagination (Page X of Y, prev/next, total count).
+		this._footerEl = document.createElement('div');
+		this._footerEl.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-top:1px solid var(--vscode-editorWidget-border);background:var(--vscode-editorWidget-background,var(--vscode-editor-background));font-size:11px;flex-shrink:0;';
+		container.appendChild(this._footerEl);
+
 		// Load data
 		this._loadPatients().then(() => {
 			loadingEl.remove();
 		});
+	}
+
+	private _renderFooter(filteredTotal: number): void {
+		if (!this._footerEl) { return; }
+		while (this._footerEl.firstChild) {
+			this._footerEl.removeChild(this._footerEl.firstChild);
+		}
+		const totalPages = Math.max(1, Math.ceil(filteredTotal / this._pageSize));
+		if (this._page >= totalPages) { this._page = totalPages - 1; }
+		if (this._page < 0) { this._page = 0; }
+
+		const info = document.createElement('span');
+		info.style.color = 'var(--vscode-descriptionForeground)';
+		info.textContent = filteredTotal === 0
+			? 'No patients'
+			// allow-any-unicode-next-line
+			: `Page ${this._page + 1} of ${totalPages} · ${filteredTotal} total`;
+		this._footerEl.appendChild(info);
+
+		const nav = document.createElement('div');
+		nav.style.cssText = 'display:flex;gap:4px;align-items:center;';
+		const btnStyle = 'padding:2px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;cursor:pointer;font-size:11px;';
+
+		const prev = document.createElement('button');
+		// allow-any-unicode-next-line
+		prev.textContent = '‹';
+		prev.title = 'Previous page';
+		prev.style.cssText = btnStyle;
+		prev.disabled = this._page === 0;
+		prev.style.opacity = prev.disabled ? '0.5' : '1';
+		prev.style.cursor = prev.disabled ? 'not-allowed' : 'pointer';
+		prev.addEventListener('click', () => { if (this._page > 0) { this._page--; this._renderList(); } });
+		nav.appendChild(prev);
+
+		const next = document.createElement('button');
+		// allow-any-unicode-next-line
+		next.textContent = '›';
+		next.title = 'Next page';
+		next.style.cssText = btnStyle;
+		next.disabled = this._page >= totalPages - 1;
+		next.style.opacity = next.disabled ? '0.5' : '1';
+		next.style.cursor = next.disabled ? 'not-allowed' : 'pointer';
+		next.addEventListener('click', () => { if (this._page < totalPages - 1) { this._page++; this._renderList(); } });
+		nav.appendChild(next);
+
+		this._footerEl.appendChild(nav);
 	}
 
 	private _filteredPatients(): IPatientRow[] {
@@ -199,16 +259,23 @@ export class PatientListPane extends ViewPane {
 
 		if (this._patients.length === 0) {
 			this._showMessage('No patients found');
+			this._renderFooter(0);
 			return;
 		}
 
 		const rows = this._filteredPatients();
 		if (rows.length === 0) {
 			this._showMessage('No matches');
+			this._renderFooter(0);
 			return;
 		}
 
-		for (const patient of rows) {
+		// Apply pagination — render only the current page slice. The footer is
+		// updated below with the unfiltered total + page count.
+		const start = this._page * this._pageSize;
+		const pageRows = rows.slice(start, start + this._pageSize);
+		this._renderFooter(rows.length);
+		for (const patient of pageRows) {
 			const row = document.createElement('div');
 			Object.assign(row.style, {
 				padding: '6px 16px',

@@ -188,9 +188,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
-			// History tab hidden — not in the 02.05.26 spec's clinical sub-pages.
+			// History tab visible per the 02.05.26 *workspace* test report
+			// (Clinical sub-pages must include History after Procedures).
 			{
-				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: false, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
+				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
 				columns: [
 					{ key: 'relationship', label: 'Relationship' },
 					{ key: 'condition', label: 'Condition' },
@@ -234,9 +235,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
-			// Referrals tab hidden — not in the 02.05.26 spec's encounters sub-pages.
+			// Referrals visible per the 02.05.26 *workspace* test report
+			// (Encounters sub-pages must include Referrals after Visit Notes).
 			{
-				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: false, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
+				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
 				columns: [
 					{ key: 'referralType', label: 'Referral Type' },
 					{ key: 'specialty', label: 'Specialty' },
@@ -2015,7 +2017,14 @@ export class PatientChartEditor extends EditorPane {
 
 	private _renderQuickInfoRow(parent: HTMLElement, key: string, icon: string, label: string, value: string): void {
 		const row = DOM.append(parent, DOM.$('div'));
-		row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;font-size:12px;';
+		row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;font-size:12px;cursor:pointer;';
+		// Quick Info rows are navigation shortcuts — clicking Allergies / Problems
+		// / History / Vitals jumps the chart to that tab. Mirrors the EHR-UI
+		// ClinicalSidebar behaviour the test team flagged as missing.
+		row.title = `Open ${label}`;
+		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+		row.addEventListener('mouseleave', () => { row.style.background = ''; });
+		row.addEventListener('click', () => this._navigate(key));
 
 		const ic = DOM.append(row, DOM.$('span'));
 		ic.textContent = icon;
