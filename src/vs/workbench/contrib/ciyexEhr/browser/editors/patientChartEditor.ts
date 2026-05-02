@@ -43,14 +43,19 @@ const FHIR_MAP: Record<string, string> = {
 	'PaymentNotice': '/api/fhir-resource/statements',
 };
 
-// Default chart layout. Order is fixed per the test team spec:
-// Overview, Portal, General, Clinical, Encounters, Claims, Financial, Others.
+// Default chart layout. Order is fixed per the 02.05.26 test team spec:
+// Overview, General, Clinical, Encounters, Claims, Financial, Others.
+// Dashboard/Forms (Overview), the Portal section, History (Clinical), and
+// Referrals (Encounters) are kept in the array for chart-layout.json overrides
+// but hidden by default because they're not in the spec's section list.
+// Demographics + Allergies stay because they are baseline EHR data — the test
+// spec only enumerated the user-visible *list* tabs (Vitals, Problems).
 const DEFAULT_CATEGORIES: ChartCategory[] = [
 	{
 		key: 'overview', label: 'Overview', position: 0, tabs: [
-			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: true, display: 'custom', panel: 'main', fhirResources: [] },
+			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: false, display: 'custom', panel: 'main', fhirResources: [] },
 			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
-			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: false, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
 			{
 				key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals',
 				columns: [
@@ -90,9 +95,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			},
 		],
 	},
+	// Portal section hidden — not in the 02.05.26 test spec's expected sections.
 	{
-		key: 'portal', label: 'Portal', position: 1, tabs: [
-			{ key: 'portal-demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [] },
+		key: 'portal', label: 'Portal', position: 1, hideFromChart: true, tabs: [
+			{ key: 'portal-demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 0, visible: false, display: 'list', panel: 'main', fhirResources: [] },
 		],
 	},
 	{
@@ -182,8 +188,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
+			// History tab hidden — not in the 02.05.26 spec's clinical sub-pages.
 			{
-				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
+				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: false, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
 				columns: [
 					{ key: 'relationship', label: 'Relationship' },
 					{ key: 'condition', label: 'Condition' },
@@ -227,8 +234,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
+			// Referrals tab hidden — not in the 02.05.26 spec's encounters sub-pages.
 			{
-				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
+				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: false, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
 				columns: [
 					{ key: 'referralType', label: 'Referral Type' },
 					{ key: 'specialty', label: 'Specialty' },
@@ -900,31 +908,36 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Field keys must match the backend tab_field_config (V107) Communication
+	// FHIR mapping exactly: subject / message / sender / recipient / sent /
+	// priority / status. The previous local config used recipientName, senderName,
+	// sentAt and content, which the backend's FhirPathMapper couldn't resolve —
+	// the create silently dropped those values, leaving HAPI to reject the empty
+	// Communication with a "given id must not be null" error from the missing
+	// subject/payload references.
 	messaging: {
 		tabKey: 'messaging',
 		sections: [
 			{
 				key: 'details', title: 'Message', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Message subject' },
-					{ key: 'recipientName', label: 'To', type: 'text', required: true, placeholder: 'Recipient name or role' },
-					{ key: 'senderName', label: 'From', type: 'text', placeholder: 'Sender name' },
+					{ key: 'subject', label: 'Subject', type: 'text', required: true, colSpan: 2, placeholder: 'Message subject' },
+					{ key: 'message', label: 'Message', type: 'textarea', required: true, placeholder: 'Enter your message', colSpan: 2 },
+					{ key: 'sender', label: 'From', type: 'text', placeholder: 'Sender name' },
+					{ key: 'recipient', label: 'To', type: 'text', placeholder: 'Recipient name or role' },
+					{ key: 'sent', label: 'Sent Date', type: 'date' },
 					{
 						key: 'priority', label: 'Priority', type: 'select', options: [
-							{ label: 'Normal', value: 'normal' },
-							{ label: 'High', value: 'high' },
+							{ label: 'Routine', value: 'routine' },
 							{ label: 'Urgent', value: 'urgent' },
 						]
 					},
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Draft', value: 'draft' },
-							{ label: 'Sent', value: 'sent' },
-							{ label: 'Read', value: 'read' },
-							{ label: 'Archived', value: 'archived' },
+							{ label: 'Draft', value: 'preparation' },
+							{ label: 'In Progress', value: 'in-progress' },
+							{ label: 'Completed', value: 'completed' },
 						]
 					},
-					{ key: 'sentAt', label: 'Sent At', type: 'date' },
-					{ key: 'content', label: 'Message', type: 'textarea', required: true, placeholder: 'Enter your message', colSpan: 2 },
 				],
 			},
 		],
@@ -967,10 +980,14 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'birthDate', label: 'Date of Birth', type: 'date' },
+					// Emergency Contact toggle moved before Phone (per the test
+					// team spec) — it's the most common reason to capture a
+					// related person's number, so the toggle reads first.
+					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{
-						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
+						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(xxx) xxx-xxxx',
 						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
-						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
+						validationMessage: 'Enter a valid US phone number e.g. (xxx) xxx-xxxx',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -978,7 +995,6 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationMessage: 'Enter a valid email address',
 					},
 					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
-					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{ key: 'active', label: 'Active', type: 'boolean' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes', colSpan: 3 },
 				],
@@ -1541,6 +1557,12 @@ export class PatientChartEditor extends EditorPane {
 		'problems': 'medicalproblems',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
+		// V19 only label-touched the 'report' tab_field_config row — it has no
+		// FHIR mapping for DiagnosticReport. The 'labs' row is the only seeded
+		// tab key with a complete DiagnosticReport mapping, so route Report
+		// saves through it. Without this, Save POSTs return "Cannot determine
+		// resource type for tab '...' — write access denied".
+		'report': 'labs',
 		// V18 renamed 'lab-results' → 'labs', so the desktop's tab.key 'labs' already
 		// matches the backend tab_field_config — no override needed. The previous
 		// override pointed to the defunct 'lab-results' key and caused "data null"
@@ -3336,15 +3358,26 @@ export class PatientChartEditor extends EditorPane {
 		input.style.cssText = inputStyle;
 		input.value = currentValue;
 
-		// Hidden field that gets registered with _formInputs so the saved value is the
-		// chosen code/id rather than free text — falls back to the typed text if nothing
-		// is picked.
+		// Hidden field that gets registered with _formInputs so the saved value
+		// is the chosen code/id rather than free text.
 		const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		hidden.type = 'hidden';
 		hidden.value = currentValue;
 		this._formInputs.set(f.key, hidden);
-		// Keep hidden in sync with raw typing so non-selected codes/names still save.
-		input.addEventListener('input', () => { hidden.value = input.value; });
+		// `lookup` fields whose key is an id (numeric / UUID) MUST come from a
+		// dropdown selection — free text deserializes to null on the server and
+		// trips "id must not be null" (Education materialId, Appointment
+		// locationId, etc.). For those, clear the hidden whenever the user
+		// types so required-validation and the save payload stay correct.
+		// Code-search / practitioner-search keep "store-typed-text" behavior
+		// because their values are codes / names, not foreign keys.
+		const isIdLookup = f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key);
+		if (isIdLookup) {
+			input.addEventListener('input', () => { hidden.value = ''; });
+		} else {
+			// Keep hidden in sync with raw typing so non-selected codes / names still save.
+			input.addEventListener('input', () => { hidden.value = input.value; });
+		}
 
 		// Append dropdown to <body> with position:fixed so it isn't clipped by the
 		// overlay's overflow-x:hidden / overflow-y:auto, which previously cut off
