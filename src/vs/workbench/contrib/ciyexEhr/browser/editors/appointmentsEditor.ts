@@ -16,6 +16,8 @@ import { AppointmentsEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 // allow-any-unicode-next-line
@@ -264,6 +266,7 @@ export class AppointmentsEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super(AppointmentsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -499,17 +502,27 @@ export class AppointmentsEditor extends EditorPane {
 			html += `<tr><td>${formatToDisplay(r.appointmentStartDate)}</td><td>${formatTimeTo12h(r.appointmentStartTime)}</td><td>${r.patientName || ''}</td><td>${r.providerName || ''}</td><td>${r.locationName || ''}</td><td>${r.visitType || ''}</td><td>${so?.label || r.status}</td><td>${r.room || ''}</td></tr>`;
 		}
 		html += '</tbody></table></body></html>';
-		const w = DOM.getActiveWindow().open('', '_blank');
-		if (!w) {
-			this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: popup was blocked. Allow popups for this page and try again.' });
+
+		// Use an in-page hidden iframe rather than window.open — the latter is
+		// blocked by Electron's BrowserWindow window-open handler, so the Print
+		// button silently failed.
+		const doc = DOM.getActiveWindow().document;
+		const iframe = doc.createElement('iframe');
+		iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+		doc.body.appendChild(iframe);
+		const idoc = iframe.contentWindow?.document;
+		if (!idoc) {
+			doc.body.removeChild(iframe);
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: unable to create print frame.' });
 			return;
 		}
-		w.document.open();
-		w.document.write(html);
-		w.document.close();
-		// Wait for rendering before invoking print; sandboxed windows often print blank otherwise
-		w.onload = () => { try { w.focus(); w.print(); } catch { /* ignore */ } };
-		w.setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
+		idoc.open();
+		idoc.write(html);
+		idoc.close();
+		iframe.onload = () => {
+			try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); }
+			finally { DOM.getActiveWindow().setTimeout(() => { try { doc.body.removeChild(iframe); } catch { /* ignore */ } }, 1000); }
+		};
 	}
 
 	private _exportToCSV(): void {
@@ -605,6 +618,9 @@ export class AppointmentsEditor extends EditorPane {
 		refreshSel.addEventListener('change', () => {
 			this.refreshInterval = parseInt(refreshSel.value, 10);
 			this._startAutoRefresh();
+			// Immediate reload on selection so the user sees the action take
+			// effect — otherwise picking "30s" looks broken until the timer fires.
+			if (this.refreshInterval > 0) { void this._loadAppointments(); }
 		});
 
 		// Print
@@ -643,10 +659,10 @@ export class AppointmentsEditor extends EditorPane {
 				base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
 				if (!base) { base = DOM.getActiveWindow().location.origin; }
 				const url = `${base}/appointments/tv?mode=${mode}`;
-				const win = DOM.getActiveWindow().open(url, '_blank');
-				if (!win) {
-					this.notificationService.notify({ severity: Severity.Warning, message: 'TV Display popup was blocked. Allow popups for this page and try again.' });
-				}
+				// Use openerService so the URL opens in the system browser —
+				// window.open() is denied by Electron's window-open handler and
+				// silently fails.
+				void this.openerService.open(URI.parse(url), { openExternal: true });
 			} catch (err) {
 				this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
 			}

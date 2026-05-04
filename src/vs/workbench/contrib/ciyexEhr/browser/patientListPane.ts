@@ -129,7 +129,7 @@ export class PatientListPane extends ViewPane {
 		loadingEl.textContent = 'Loading patients...';
 
 		const listWrap = document.createElement('div');
-		listWrap.style.cssText = 'flex:1;overflow-y:auto;';
+		listWrap.style.cssText = 'flex:1;overflow-y:hidden;';
 		listWrap.appendChild(loadingEl);
 
 		this._listEl = document.createElement('div');

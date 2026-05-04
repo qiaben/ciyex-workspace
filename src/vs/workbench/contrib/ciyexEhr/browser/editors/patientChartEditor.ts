@@ -24,7 +24,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
 interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string; aliases?: string[] }>; readOnly?: boolean }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number) }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -556,11 +556,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// allow-any-unicode-next-line
 					{ key: 'temperatureC', label: 'Temperature (°C)', type: 'number', required: true, placeholder: '0.0' },
 					{ key: 'oxygenSaturation', label: 'O\u{2082} Saturation (%)', type: 'number', required: true, placeholder: '0' },
-				],
-			},
-			{
-				key: 'notes', title: 'Notes', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes', colSpan: 3 },
 				],
 			},
 		],
@@ -2771,7 +2767,21 @@ export class PatientChartEditor extends EditorPane {
 
 		try {
 			if (config?.sections && config.sections.length > 0) {
-				this._renderForm(formContainer, config.sections, [existing || {}]);
+				// Add/edit forms must render as one container per the test report.
+				// Flatten any sub-sections (e.g. vitals → Vital Signs + Notes,
+				// insurance → Policy + Subscriber, claims → Claim + Diagnosis) into
+				// the first section. Demographics is the one exception — its 11
+				// sub-sections (Personal, Contact, Emergency, Guardian, etc.) stay
+				// separate because collapsing them into one card would be unwieldy.
+				const sectionsToRender = tab.key !== 'demographics' && config.sections.length > 1
+					? [{
+						...config.sections[0],
+						collapsible: false,
+						collapsed: false,
+						fields: config.sections.flatMap(s => s.fields || []),
+					}]
+					: config.sections;
+				this._renderForm(formContainer, sectionsToRender, [existing || {}]);
 			} else if (existing) {
 				// No field config but we have data — auto-generate editable fields from record keys
 				this._renderAutoEditForm(formContainer, existing);
@@ -3556,15 +3566,74 @@ export class PatientChartEditor extends EditorPane {
 		const sample = data[0] || {};
 		const allKeys = Object.keys(sample);
 
-		// Honor explicit per-tab column override when provided. Otherwise auto-pick
-		// up to 6 priority keys from the record sample.
+		// Column resolution mirrors the web's GenericFhirTab.listColumns() so the
+		// workspace and EHR-UI tables show the same columns (the backend's
+		// tab_field_config is the source of truth):
+		//   1. Fields with showInTable=true (max 8)
+		//   2. Else first 6 non-group/computed/textarea/address/hidden fields
+		//   3. Else SECTIONS_CONFIG.columns hardcoded override (backwards compat)
+		//   4. Else auto-discover from sample data
 		let usedKeys: string[];
 		let cols: string[];
 		// Per-column fallback aliases for resilient value extraction. Backend
 		// resource shapes vary (e.g. encounter: encounterDate / startDate / start)
 		// so a single primary key can leave the cell blank when the data is fine.
 		let usedAliases: string[][] = [];
-		if (tab.columns && tab.columns.length > 0) {
+
+		const fromConfig = ((): { keys: string[]; labels: string[] } | null => {
+			if (!config?.sections?.length) { return null; }
+			const marked: { key: string; label: string }[] = [];
+			for (const section of config.sections) {
+				if (!Array.isArray(section?.fields)) { continue; }
+				for (const field of section.fields) {
+					if (!field) { continue; }
+					if (field.showInTable) { marked.push({ key: field.key, label: field.label }); }
+				}
+			}
+			let picked = marked.slice(0, 8);
+			if (picked.length === 0) {
+				// Fallback: first 6 non-group fields (matches web behaviour)
+				const fallback: { key: string; label: string }[] = [];
+				outer: for (const section of config.sections) {
+					if (!Array.isArray(section?.fields)) { continue; }
+					for (const field of section.fields) {
+						if (!field) { continue; }
+						if (field.type === 'group' || field.type === 'computed' || field.type === 'textarea' || field.type === 'address' || field.type === 'hidden') { continue; }
+						fallback.push({ key: field.key, label: field.label });
+						if (fallback.length >= 6) { break outer; }
+					}
+				}
+				picked = fallback;
+			}
+			if (picked.length === 0) { return null; }
+			// Allergies special-case: ensure allergen column, drop end-date columns
+			if (tab.key === 'allergies' || tab.key === 'allergy-intolerances') {
+				picked = picked.filter(c => !/^(endDate|end_date|end|abatement|abatementDate)$/i.test(c.key));
+				const hasAllergen = picked.some(c => /^(allergen|substance)$/i.test(c.key));
+				if (!hasAllergen) {
+					for (const section of config.sections) {
+						for (const field of section.fields || []) {
+							if (field && (field.key === 'allergen' || field.key === 'substance')) {
+								picked.splice(Math.min(1, picked.length), 0, { key: field.key, label: field.label || 'Allergen' });
+								break;
+							}
+						}
+						if (picked.some(c => /^(allergen|substance)$/i.test(c.key))) { break; }
+					}
+				}
+			}
+			return { keys: picked.map(c => c.key), labels: picked.map(c => c.label) };
+		})();
+
+		if (fromConfig) {
+			usedKeys = fromConfig.keys;
+			cols = fromConfig.labels;
+			// Pull aliases from any matching SECTIONS_CONFIG entry so value resolution
+			// stays resilient across FHIR field-name variants.
+			const aliasMap = new Map<string, string[]>();
+			for (const c of (tab.columns || [])) { aliasMap.set(c.key, [c.key, ...(c.aliases || [])]); }
+			usedAliases = usedKeys.map(k => aliasMap.get(k) || [k]);
+		} else if (tab.columns && tab.columns.length > 0) {
 			usedKeys = tab.columns.map(c => c.key);
 			cols = tab.columns.map(c => c.label);
 			usedAliases = tab.columns.map(c => [c.key, ...(c.aliases || [])]);
