@@ -253,7 +253,13 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'claims', label: 'Claims', position: 5, tabs: [
 			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
-			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/portal/form-submissions' },
+			// Submissions: route through the FHIR generic controller via the
+			// `claim-submissions` tab_field_config row (FHIR Claim resource).
+			// The legacy /api/portal/form-submissions endpoint required a
+			// PortalFormSubmission shape (form_id / form_key / form_title) that
+			// the generic add/edit form doesn't supply, which was producing the
+			// "null value in column form_id" save error on every retest.
+			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
 			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
 			// readOnly was true for a long time; the test team needs the Add New
 			// button to manually post a remittance entry until the 835 ingestion
@@ -999,13 +1005,21 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Appointment field keys align with the V16 backend tab_field_config:
+	// type / provider / location / status / reason / date. The previous
+	// local keys (appointmentType / providerId / locationId / start) didn't
+	// match the backend, so the overlay logic appended them as duplicates,
+	// which is why the test team saw "visit type drop down not showing"
+	// (the backend's plain text `type` was rendering instead of the local
+	// select). `priority`, `endDate`, `duration` are local-only additions
+	// that the overlay appends — they don't exist in the backend.
 	appointments: {
 		tabKey: 'appointments',
 		sections: [
 			{
 				key: 'appt', title: 'Appointment Details', columns: 2, visible: true, collapsible: false, fields: [
 					{
-						key: 'appointmentType', label: 'Visit Type', type: 'select', required: true, options: [
+						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
 							{ label: 'Consultation', value: 'Consultation' },
 							{ label: 'New Patient', value: 'New Patient' },
 							{ label: 'Follow-Up', value: 'Follow-Up' },
@@ -1022,11 +1036,11 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Urgent', value: 'Urgent' },
 						]
 					},
-					{ key: 'start', label: 'Start Date/Time', type: 'datetime', required: true },
-					{ key: 'end', label: 'End Date/Time', type: 'datetime', required: true },
+					{ key: 'date', label: 'Start Date/Time', type: 'datetime', required: true },
+					{ key: 'endDate', label: 'End Date/Time', type: 'datetime', required: true },
 					{ key: 'duration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end' },
-					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
-					{ key: 'locationId', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
+					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
+					{ key: 'location', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Scheduled', value: 'Scheduled' },
@@ -1058,7 +1072,11 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'date', label: 'Visit Date', type: 'date', required: true },
-					{ key: 'authorId', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
+					// Field key matches the backend visit-notes tab_field_config
+					// (`author`). The previous local key `authorId` never matched
+					// the overlay map, so the backend's plain text input was used
+					// and the test team flagged the search as not working.
+					{ key: 'author', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Current', value: 'current' },
@@ -1382,16 +1400,19 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Submissions: keys match the backend `claim-submissions` tab_field_config
+	// (V16: submissionDate / status / clearinghouse / trackingNumber /
+	// totalCharge / insurer). The previous keys (providerId, payerId,
+	// totalAmount) didn't match the backend, so the overlay appended them as
+	// extra duplicate fields and the save body had nothing the FhirPathMapper
+	// could place on the Claim resource. Billing Provider stays as a local
+	// addition so the test team's "Search Billing Provider" UX is preserved.
 	submissions: {
 		tabKey: 'submissions',
 		sections: [
 			{
 				key: 'submission', title: 'Claim Submission', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'identifier', label: 'Submission ID', type: 'text', placeholder: 'Auto-assigned if blank' },
 					{ key: 'submissionDate', label: 'Submission Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'providerId', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
-					{ key: 'payerId', label: 'Payer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
-					{ key: 'totalAmount', label: 'Total', type: 'number', placeholder: '0.00' },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Pending', value: 'pending' },
@@ -1400,6 +1421,52 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Rejected', value: 'rejected' },
 						]
 					},
+					{ key: 'clearinghouse', label: 'Clearinghouse', type: 'text', placeholder: 'e.g., Change Healthcare' },
+					{ key: 'trackingNumber', label: 'Tracking #', type: 'text', placeholder: 'Tracking number' },
+					{ key: 'totalCharge', label: 'Total Charge', type: 'number', placeholder: '0.00' },
+					{ key: 'insurer', label: 'Insurer / Payer', type: 'lookup', placeholder: 'Search Payer', lookupConfig: { endpoint: '/api/organizations', displayField: 'name', valueField: 'id', searchable: true } },
+					{ key: 'billingProvider', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	// Encounter create/edit. Adds a labelled `patient` patient-search picker
+	// (the backend tab_field_config doesn't ship one because the patient is
+	// resolved from the URL, but the test team explicitly asked for a
+	// "Search Patient" placeholder + working search inside the form). The
+	// overlay logic appends local-only fields to the backend section, so this
+	// shows up regardless of what the backend returns.
+	encounters: {
+		tabKey: 'encounters',
+		sections: [
+			{
+				key: 'enc', title: 'Encounter', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'patient', label: 'Patient', type: 'patient-search', placeholder: 'Search Patient', required: true },
+					{
+						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
+							{ label: 'Ambulatory', value: 'AMB' },
+							{ label: 'Emergency', value: 'EMER' },
+							{ label: 'Home Health', value: 'HH' },
+							{ label: 'Inpatient', value: 'IMP' },
+							{ label: 'Observation', value: 'OBSENC' },
+							{ label: 'Short Stay', value: 'SS' },
+							{ label: 'Virtual', value: 'VR' },
+						]
+					},
+					{ key: 'reason', label: 'Reason', type: 'text', placeholder: 'Reason for visit' },
+					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Planned', value: 'planned' },
+							{ label: 'Arrived', value: 'arrived' },
+							{ label: 'In Progress', value: 'in-progress' },
+							{ label: 'Finished', value: 'finished' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{ key: 'startDate', label: 'Start Date', type: 'datetime', required: true },
+					{ key: 'endDate', label: 'End Date', type: 'datetime' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
@@ -3243,9 +3310,13 @@ export class PatientChartEditor extends EditorPane {
 			identifiedInput.value = new Date().toISOString().slice(0, 10);
 		}
 
-		// Appointments: auto-calculate duration (minutes) from start/end datetime.
-		const startInput = this._formInputs.get('start') as HTMLInputElement | undefined;
-		const endInput = this._formInputs.get('end') as HTMLInputElement | undefined;
+		// Appointments: auto-calculate duration (minutes) from start/end
+		// datetime. Field keys aligned with the backend tab_field_config —
+		// `date` is the start datetime (was `start`), `endDate` is the end
+		// (was `end`). Falls back to legacy keys so older saved data still
+		// drives the recalc.
+		const startInput = (this._formInputs.get('date') || this._formInputs.get('start')) as HTMLInputElement | undefined;
+		const endInput = (this._formInputs.get('endDate') || this._formInputs.get('end')) as HTMLInputElement | undefined;
 		const durationInput = this._formInputs.get('duration') as HTMLInputElement | undefined;
 		if (startInput && endInput && durationInput) {
 			durationInput.readOnly = true;
