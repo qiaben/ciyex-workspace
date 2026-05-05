@@ -1743,18 +1743,15 @@ export class PatientChartEditor extends EditorPane {
 									};
 								}),
 							}));
-							// Append any local fields the backend config omitted entirely
-							// (e.g. appointments.duration, clinical-alerts.identifiedDate)
-							// so the auto-calc / default-value handlers have inputs to wire.
-							const presentKeys = new Set<string>();
-							for (const sec of sections) { for (const f of sec.fields) { presentKeys.add(f.key); } }
-							for (const sec of localOverrides.sections) {
-								const missing = sec.fields.filter(f => !presentKeys.has(f.key));
-								if (missing.length === 0) { continue; }
-								const target = sections.find(s => s.key === sec.key);
-								if (target) { target.fields = [...target.fields, ...missing]; }
-								else { sections.push({ ...sec, fields: missing }); }
-							}
+							// NOTE: We deliberately do NOT append local-only fields here.
+							// Appending caused duplicate fields when the backend's key for
+							// a conceptually-equivalent field (e.g. backend `type` vs local
+							// `appointmentType`, backend `provider` vs local `providerId`)
+							// didn't match: both would render side-by-side, e.g. two Visit
+							// Type dropdowns in the appointment form. The backend
+							// tab_field_config is the single source of truth for which
+							// fields render — same as the EHR-UI's GenericFhirTab — and
+							// the test team explicitly requested no extras.
 						}
 						config = { tabKey: tab.key, sections };
 					}
