@@ -857,9 +857,14 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
-					{ key: 'authorName', label: 'Author / Provider', type: 'text', placeholder: 'Author name' },
+					{ key: 'authorName', label: 'Author / Provider', type: 'text', placeholder: 'Search Author' },
 					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
-					{ key: 'fileUrl', label: 'File URL', type: 'text', placeholder: 'https://... or storage key', colSpan: 2 },
+					// Local file picker — reads the selected file as a base64 data URL
+					// and stores it in the `attachment` field. The backend's
+					// DocumentReference create accepts either fileUrl (link) or
+					// attachment (inline content). Either is fine; both render.
+					{ key: 'attachment', label: 'Attachment', type: 'file', placeholder: 'Choose file to upload', colSpan: 3 },
+					{ key: 'fileUrl', label: 'Or paste a File URL', type: 'text', placeholder: 'https://... or storage key', colSpan: 3 },
 					{
 						key: 'contentType', label: 'Content Type', type: 'select', options: [
 							{ label: 'PDF', value: 'application/pdf' },
@@ -904,8 +909,14 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'assignedBy', label: 'Assigned By', type: 'text', placeholder: 'Provider name' },
-					{ key: 'assignedDate', label: 'Assigned Date', type: 'date', required: true },
+					// Default Assigned Date to today so the form satisfies its
+					// required validator without the user clicking the date picker.
+					{ key: 'assignedDate', label: 'Assigned Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{ key: 'dueDate', label: 'Due Date', type: 'date' },
+					// URL link is required for "Link" content type — the EHR-UI
+					// shows it on the assignment form. Stored alongside the
+					// existing materialContentType select.
+					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://...', colSpan: 3 },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Assigned', value: 'assigned' },
@@ -936,7 +947,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'subject', label: 'Subject', type: 'text', required: true, colSpan: 2, placeholder: 'Message subject' },
 					{ key: 'message', label: 'Message', type: 'textarea', required: true, placeholder: 'Enter your message', colSpan: 2 },
 					{ key: 'sender', label: 'From', type: 'text', placeholder: 'Sender name' },
-					{ key: 'recipient', label: 'To', type: 'text', placeholder: 'Recipient name or role' },
+					// To: defaults to the current patient's name on a fresh form
+					// (see _seedMessagingRecipient hook in _renderForm). Fixes the
+					// test team's "To patient field is default which is login" ask.
+					{ key: 'recipient', label: 'To (Patient)', type: 'text', placeholder: 'Recipient name' },
 					{ key: 'sent', label: 'Sent Date', type: 'date' },
 					{
 						key: 'priority', label: 'Priority', type: 'select', options: [
@@ -949,6 +963,16 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Draft', value: 'preparation' },
 							{ label: 'In Progress', value: 'in-progress' },
 							{ label: 'Completed', value: 'completed' },
+						]
+					},
+					// Channel mirrors the EHR-UI's "Send Via" footer (in-app /
+					// email / SMS) so the workspace can drive the same dispatch
+					// flow once the backend hooks the medium field.
+					{
+						key: 'medium', label: 'Send Via', type: 'select', colSpan: 2, options: [
+							{ label: 'In-App Message', value: 'app' },
+							{ label: 'Email', value: 'email' },
+							{ label: 'SMS / Text', value: 'sms' },
 						]
 					},
 				],
@@ -1686,7 +1710,12 @@ export class PatientChartEditor extends EditorPane {
 		//    form keys map to the same FHIR paths the backend's create/update use).
 		// 2. ~/.ciyex/fields/{tabKey}.json (user override).
 		// 3. Built-in DEFAULT_FIELD_CONFIGS (offline fallback).
-		const backendSlug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
+		// We fetch field-config by tab.key (NOT the TAB_API_SLUG remap) so tabs
+		// that share a save slug still get their own fields. e.g. `report` and
+		// `labs` both save through the labs slug (DiagnosticReport mapping) but
+		// `report` has its own Diagnostic Report fields in DEFAULT_FIELD_CONFIGS
+		// that the test team wants to see — not Lab Order columns.
+		const backendSlug = tab.key;
 		try {
 			const res = await this.apiService.fetch(`/api/tab-field-config/${backendSlug}`);
 			if (res.ok) {
@@ -3310,6 +3339,33 @@ export class PatientChartEditor extends EditorPane {
 					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded') {
 					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
+				} else if (f.type === 'file') {
+					// File picker — reads the selected file as base64 data URL and
+					// stores it on the hidden input so the save payload picks it up.
+					// Lets users attach a document directly from disk on the
+					// Documents add/edit form.
+					const wrap = DOM.append(cell, DOM.$('div'));
+					wrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+					const fileInp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+					fileInp.type = 'file';
+					fileInp.style.cssText = inputStyle + 'flex:1;height:auto;padding:4px 8px;cursor:pointer;';
+					const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+					hidden.type = 'hidden';
+					hidden.value = String(val ?? '');
+					this._formInputs.set(f.key, hidden);
+					const status = DOM.append(wrap, DOM.$('span'));
+					status.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+					if (hidden.value) { status.textContent = 'attached'; }
+					fileInp.addEventListener('change', () => {
+						const file = fileInp.files && fileInp.files[0];
+						if (!file) { hidden.value = ''; status.textContent = ''; return; }
+						const reader = new FileReader();
+						reader.onload = () => {
+							hidden.value = String(reader.result || '');
+							status.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+						};
+						reader.readAsDataURL(file);
+					});
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
@@ -3350,6 +3406,14 @@ export class PatientChartEditor extends EditorPane {
 		const identifiedInput = this._formInputs.get('identifiedDate') as HTMLInputElement | undefined;
 		if (identifiedInput && identifiedInput.type === 'date' && !identifiedInput.value) {
 			identifiedInput.value = new Date().toISOString().slice(0, 10);
+		}
+
+		// Messaging: default the "To (Patient)" field to the current chart's
+		// patient name on a fresh form (the test team asked for the patient to
+		// be pre-filled rather than left blank).
+		const messagingRecipient = this._formInputs.get('recipient') as HTMLInputElement | undefined;
+		if (messagingRecipient && !messagingRecipient.value && this.patientName) {
+			messagingRecipient.value = this.patientName;
 		}
 
 		// Appointments: auto-calculate duration (minutes) from start/end
@@ -3775,7 +3839,10 @@ export class PatientChartEditor extends EditorPane {
 		}
 		cols.push('Actions');
 
-		const isEncounter = tab.fhirResources.includes('Encounter');
+		// Encounter row click no longer redirects to the side EncounterFormEditor.
+		// The test team wants the same edit-dialog UX as every other tab — full
+		// chart-side encounter editing is still reachable through the calendar's
+		// "Open Chart" action when there's a linked appointment.
 
 		// Local pagination state per-tab; reset to page 0 each time the data set changes.
 		const pageSize = 20;
@@ -3810,12 +3877,7 @@ export class PatientChartEditor extends EditorPane {
 			// Final cell text is set by _table when onDelete is provided.
 			cells.push('');
 
-			const onClick = isEncounter
-				? () => {
-					const id = String(item.id || item.fhirId || '');
-					this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, id, this.patientName, `Encounter ${id}`), {}, SIDE_GROUP);
-				}
-				: () => this._openRecordDialog(tab, config, item);
+			const onClick = () => this._openRecordDialog(tab, config, item);
 
 			const recordId = String(item.id || item.fhirId || '');
 			// Tabs whose backend only supports create/read — no PUT or DELETE — must
