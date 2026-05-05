@@ -43,19 +43,17 @@ const FHIR_MAP: Record<string, string> = {
 	'PaymentNotice': '/api/fhir-resource/statements',
 };
 
-// Default chart layout. Order is fixed per the 02.05.26 test team spec:
-// Overview, General, Clinical, Encounters, Claims, Financial, Others.
-// Dashboard/Forms (Overview), the Portal section, History (Clinical), and
-// Referrals (Encounters) are kept in the array for chart-layout.json overrides
-// but hidden by default because they're not in the spec's section list.
-// Demographics + Allergies stay because they are baseline EHR data — the test
-// spec only enumerated the user-visible *list* tabs (Vitals, Problems).
+// Default chart layout per the 05.05.26 workspace test report:
+// Overview (Dashboard, Demographics, Forms, Vitals, Allergies, Problems),
+// General, Clinical (..., History), Encounters (..., Referrals), Claims,
+// Financial, Others. Only the Portal section stays hidden — the test report
+// explicitly enumerated all the others as required dropdowns.
 const DEFAULT_CATEGORIES: ChartCategory[] = [
 	{
 		key: 'overview', label: 'Overview', position: 0, tabs: [
-			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: false, display: 'custom', panel: 'main', fhirResources: [] },
+			{ key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', emoji: '\u{1F4CA}', position: 0, visible: true, display: 'custom', panel: 'main', fhirResources: [] },
 			{ key: 'demographics', label: 'Demographics', icon: 'User', emoji: '\u{1F464}', position: 1, visible: true, display: 'form', panel: 'main', fhirResources: ['Patient'] },
-			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: false, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
+			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
 			{
 				key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals',
 				columns: [
@@ -328,9 +326,16 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'onsetDate', label: 'Onset Date', aliases: ['onsetDate', 'onsetDateTime', 'recordedDate'] },
 				],
 			},
-			// Report = clinical reports (DiagnosticReport).
+			// Report = clinical reports (DiagnosticReport). No apiPath so the
+			// generic FHIR routing picks up the TAB_API_SLUG 'report' → 'labs'
+			// mapping (the only seeded tab_field_config row with a complete
+			// DiagnosticReport FHIR mapping). With apiPath set, save POSTs were
+			// hitting /api/fhir-resource/diagnostic-reports with no patient
+			// path and the backend was picking up the wrong tab key, returning
+			// "Cannot determine resource type for tab 'conditions' — write
+			// access denied".
 			{
-				key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport'], apiPath: '/api/fhir-resource/diagnostic-reports',
+				key: 'report', label: 'Report', icon: 'FileBarChart', emoji: '\u{1F4C8}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport'],
 				columns: [
 					{ key: 'testName', label: 'Report Name', aliases: ['testName', 'code', 'name'] },
 					{ key: 'category', label: 'Category' },
@@ -1936,7 +1941,32 @@ export class PatientChartEditor extends EditorPane {
 		collapseBtn.addEventListener('click', () => this._toggleSidebar());
 
 		if (this.sidebarCollapsed) {
-			this.sidebarEl.style.width = '48px';
+			// Icon-only collapsed mode — every visible tab from every category
+			// renders as a small emoji button so the user can still navigate
+			// without expanding. Mirrors the EHR-UI ClinicalSidebar collapsed
+			// view that the test team flagged as missing.
+			this.sidebarEl.style.width = '52px';
+			const collapsedList = DOM.append(this.sidebarEl, DOM.$('div'));
+			collapsedList.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;';
+			for (const cat of this.categories) {
+				for (const tab of cat.tabs) {
+					if (tab.visible === false) { continue; }
+					const item = DOM.append(collapsedList, DOM.$('div'));
+					item.setAttribute('data-tab', tab.key);
+					item.style.cssText = 'width:36px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:5px;font-size:16px;border-left:2px solid transparent;';
+					item.textContent = tab.emoji || '\u{1F4CB}';
+					item.title = `${cat.label}: ${tab.label}`;
+					item.addEventListener('mouseenter', () => {
+						if (this.activeTab !== tab.key) { item.style.background = 'var(--vscode-list-hoverBackground)'; }
+					});
+					item.addEventListener('mouseleave', () => {
+						if (this.activeTab !== tab.key) { item.style.background = ''; }
+					});
+					item.addEventListener('click', () => this._navigate(tab.key));
+					this._tabNavMap.set(tab.key, item);
+				}
+			}
+			this._highlightActiveTab();
 			return;
 		}
 		this.sidebarEl.style.width = '240px';

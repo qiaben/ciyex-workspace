@@ -357,10 +357,26 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Spacer between nav and view toggles. Patient search is provided by the
-		// titlebar (Search by name or DOB) — no duplicate search inside the calendar.
-		const spacer = DOM.append(this.headerBar, DOM.$('span'));
-		spacer.style.cssText = 'flex:1;';
+		// Centered patient-search bar. Filters the visible appointments by
+		// patient first/last/full name. Replaces the previous empty spacer per
+		// the test team's "remove the quick access bar from the top and place
+		// the patient search bar in the center" request.
+		const searchWrap = DOM.append(this.headerBar, DOM.$('div'));
+		searchWrap.style.cssText = 'flex:1;display:flex;justify-content:center;';
+		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search Patient by name';
+		searchInput.value = this.patientNameFilter;
+		searchInput.style.cssText = 'width:280px;max-width:50%;padding:5px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+		let searchTimer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (searchTimer) { clearTimeout(searchTimer); }
+			searchTimer = setTimeout(() => {
+				this.patientNameFilter = searchInput.value.trim();
+				this._updateHeaderCount();
+				this._renderGrid();
+			}, 150);
+		});
 
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
