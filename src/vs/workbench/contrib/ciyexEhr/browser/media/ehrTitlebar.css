@@ -273,6 +273,9 @@
 .ehr-form-input,
 .ehr-form-select,
 .ehr-form-textarea {
+	width: 100%;
+	box-sizing: border-box;
+	min-width: 0;
 	background: var(--vscode-input-background, #3c3c3c);
 	border: 1px solid var(--vscode-input-border, #555);
 	border-radius: 4px;

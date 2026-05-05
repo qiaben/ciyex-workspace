@@ -609,8 +609,12 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{
 						key: 'dosage', label: 'Dosage', type: 'text', required: true, placeholder: 'e.g., 500 mg',
-						validationPattern: '^\\d+(\\.\\d+)?\\s*(mg|mcg|g|mL|ml|L|IU|units?|tablets?|capsules?|drops?|puffs?|sprays?|patches?|%)?(\\s*/.+)?$',
-						validationMessage: 'Dosage should be a number followed by a unit (e.g. "500 mg", "10 mL", "2 tablets")',
+						// Unit is REQUIRED (no trailing `?` on the unit group) so plain
+						// numbers / pure-letter / special-char inputs all fail validation.
+						// The previous pattern accepted "500" alone, which the test team
+						// flagged as a false positive in the negative-test cases.
+						validationPattern: '^\\d+(\\.\\d+)?\\s*(mg|mcg|g|mL|ml|L|IU|units?|tablets?|tabs?|capsules?|caps?|drops?|gtt|puffs?|sprays?|patches?|%)(\\s*/\\s*\\d+(\\.\\d+)?\\s*(mL|ml|L)?)?$',
+						validationMessage: 'Dosage must be a number followed by a unit (e.g. "500 mg", "10 mL", "2 tablets")',
 					},
 					{
 						key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., Oral',
@@ -1202,6 +1206,11 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Payment field keys match the V107 backend `payments` tab_field_config
+	// (payment / amount / method / reference / status / note). The previous
+	// keys (paymentMethod / totalAmount / referenceNumber) didn't match and
+	// the overlay appended them as duplicates while leaving the backend's
+	// plain text inputs in place.
 	payment: {
 		tabKey: 'payment',
 		sections: [
@@ -1209,7 +1218,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'payment', title: 'Payment', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{
-						key: 'paymentMethod', label: 'Payment Method', type: 'select', required: true, options: [
+						key: 'method', label: 'Payment Method', type: 'select', required: true, options: [
 							{ label: 'Cash', value: 'cash' },
 							{ label: 'Check', value: 'check' },
 							{ label: 'Credit Card', value: 'credit-card' },
@@ -1219,8 +1228,8 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'totalAmount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
-					{ key: 'referenceNumber', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
+					{ key: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
 					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
@@ -1710,8 +1719,9 @@ export class PatientChartEditor extends EditorPane {
 									const ov = overrideMap.get(f.key);
 									if (!ov) { return f; }
 									// Promote to code-search / practitioner-search / patient-search / lookup
-									// if the local fallback says so. Keep the backend's required + label
-									// (those are intentional content choices).
+									// if the local fallback says so. Backend label wins (it's a content
+									// choice); local provides UX hints (placeholder, validation, options)
+									// and `required` when backend left the flag unset.
 									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup';
 									const backendOpts = f.options;
 									const hasBackendOptions = Array.isArray(backendOpts) && backendOpts.length > 0;
@@ -1723,6 +1733,11 @@ export class PatientChartEditor extends EditorPane {
 										validationPattern: f.validationPattern || ov.validationPattern,
 										validationMessage: f.validationMessage || ov.validationMessage,
 										defaultValue: f.defaultValue ?? ov.defaultValue,
+										// `required` falls back to the local config when the backend
+										// row omits it (Education materialId, Messaging subject, etc.).
+										// Without this, "given id must not be null" save errors slipped
+										// through because validation didn't flag the empty field.
+										required: f.required ?? ov.required,
 										// Only fall back to local options if backend left them empty.
 										options: hasBackendOptions ? backendOpts : ov.options,
 									};
