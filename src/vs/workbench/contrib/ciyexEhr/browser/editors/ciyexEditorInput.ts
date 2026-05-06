@@ -216,7 +216,7 @@ export class SettingsHubEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexSettingsHub';
 	override get typeId(): string { return SettingsHubEditorInput.ID; }
 
-	constructor() { super(); }
+	constructor(readonly initialTab: string = '') { super(); }
 
 	override getName(): string { return 'Settings'; }
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('settings-gear'); }

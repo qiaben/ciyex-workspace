@@ -551,8 +551,8 @@ registerAction2(class extends Action2 {
 		});
 	}
 
-	async run(accessor: ServicesAccessor): Promise<void> {
-		await accessor.get(IEditorService).openEditor(new SettingsHubEditorInput(), { pinned: true });
+	async run(accessor: ServicesAccessor, tabKey?: string): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new SettingsHubEditorInput(tabKey || ''), { pinned: true });
 	}
 });
 

@@ -144,6 +144,9 @@ export class SettingsHubEditor extends EditorPane {
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		if (!(input instanceof SettingsHubEditorInput)) { return; }
+		if (input.initialTab) {
+			this.activeKey = input.initialTab;
+		}
 		await this._loadSidebar();
 	}
 
