@@ -129,18 +129,34 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// and no separate patient-messages controller required.
 			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Communication'] },
 			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
-			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/locations' },
+			// Facility now routes through the FHIR Location resource so CRUD
+			// (PUT / DELETE) works. The legacy /api/locations endpoint is
+			// read-only — that's why the test team's "delete, update option is
+			// not working" was 405-ing every time. Backend tab_field_config
+			// `facility` (V107) drives the form and column shape.
+			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Location'] },
 		],
 	},
 	{
 		key: 'clinical', label: 'Clinical', position: 3, tabs: [
+			// Clinical Alerts now routes through the FHIR Flag resource (V144
+			// tab_field_config — fields: alertName, status, category, severity,
+			// identifiedDate, endDate, author, notes). The legacy
+			// `apiPath: '/api/cds/alerts'` pointed at the rule-execution log
+			// (CdsAlertLogDto: ruleId / alertType / message / actedBy ...) which
+			// has no overlap with the patient-chart alert fields, so saves
+			// silently dropped every value the form collected. Save URL is now
+			// /api/fhir-resource/clinical-alerts/patient/{id} — Flag resource
+			// supports POST + PUT + DELETE for the test team's update/delete ask.
 			{
-				key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/cds/alerts',
+				key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Flag'],
 				columns: [
-					{ key: 'alert', label: 'Alert' },
+					{ key: 'alertName', label: 'Alert', aliases: ['alertName', 'alert', 'name', 'title', 'code'] },
+					{ key: 'status', label: 'Status' },
+					{ key: 'category', label: 'Category' },
 					{ key: 'severity', label: 'Severity' },
-					{ key: 'identifiedDate', label: 'Identified Date' },
-					{ key: 'authorName', label: 'Author' },
+					{ key: 'identifiedDate', label: 'Identified Date', aliases: ['identifiedDate', 'date', 'period.start'] },
+					{ key: 'author', label: 'Author', aliases: ['author', 'authorDisplay', 'authorName'] },
 				],
 			},
 			{
@@ -572,27 +588,22 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Local overrides for the V144 Flag tab_field_config row. Field keys MUST
+	// match the backend so the overlay map applies (otherwise the backend's
+	// plain text inputs render with no validation / search).
 	'clinical-alerts': {
 		tabKey: 'clinical-alerts',
 		sections: [
 			{
-				key: 'alert', title: 'Clinical Alert', columns: 2, visible: true, collapsible: false, fields: [
+				key: 'alert-info', title: 'Clinical Alert', columns: 2, visible: true, collapsible: false, fields: [
 					{
-						key: 'alert', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary',
+						key: 'alertName', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary',
 						validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\'!?:;]{3,256}$',
 						validationMessage: 'Alert must be 3-256 characters and contain only letters, numbers, and common punctuation',
 					},
-					{
-						key: 'severity', label: 'Severity', type: 'select', options: [
-							{ label: 'Low', value: 'low' },
-							{ label: 'Medium', value: 'medium' },
-							{ label: 'High', value: 'high' },
-							{ label: 'Critical', value: 'critical' },
-						]
-					},
-					{ key: 'identifiedDate', label: 'Identified Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'authorId', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
-					{ key: 'description', label: 'Description', type: 'textarea', colSpan: 2, placeholder: 'Detailed description' },
+					{ key: 'identifiedDate', label: 'Identified Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'author', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
+					{ key: 'notes', label: 'Description', type: 'textarea', colSpan: 2, placeholder: 'Detailed description' },
 				],
 			},
 		],
@@ -1822,11 +1833,14 @@ export class PatientChartEditor extends EditorPane {
 			} catch { /* */ }
 		}
 
-		// FHIR-backed list: hit /api/fhir-resource/{tabKey}/patient/{id}. Backend resolves
-		// the resource type from tab_field_config keyed by tabKey.
+		// FHIR-backed list: hit /api/fhir-resource/{tabKey}/patient/{id} for
+		// patient-scoped resources, or /api/fhir-resource/{tabKey} for
+		// org-level (Facility / Location). Backend resolves the resource type
+		// from tab_field_config keyed by tabKey.
 		if (tab.fhirResources.length > 0 && !tab.apiPath) {
 			const slug = PatientChartEditor.TAB_API_SLUG[tab.key] || tab.key;
-			const url = `/api/fhir-resource/${slug}/patient/${this.patientId}?page=0&size=100`;
+			const patientPath = this._isPatientScoped(tab) ? `/patient/${this.patientId}` : '';
+			const url = `/api/fhir-resource/${slug}${patientPath}?page=0&size=100`;
 			try {
 				const res = await this.apiService.fetch(url);
 				if (res.ok) {
@@ -2963,7 +2977,11 @@ export class PatientChartEditor extends EditorPane {
 		// Tabs whose backend only supports create/read — no PUT/DELETE.
 		// Treat them as effectively read-only on the edit dialog so we don't
 		// surface buttons that lead to 405s.
-		const writeOnce = new Set(['clinical-alerts']).has(tab.key);
+		// Clinical Alerts is no longer write-once — moving to FHIR Flag means
+		// the generic FHIR controller handles POST + PUT + DELETE through
+		// /api/fhir-resource/clinical-alerts/patient/{id}/{recordId}, so the
+		// edit dialog can show the standard Save / Delete buttons.
+		const writeOnce = new Set<string>().has(tab.key);
 
 		// Delete (edit only, and never for read-only tabs like ledgers/system reports)
 		if (isEdit && recordId && !tab.readOnly && !writeOnce) {
@@ -2975,10 +2993,13 @@ export class PatientChartEditor extends EditorPane {
 				if (!ep) { return; }
 				try {
 					// FHIR generic controller: /api/fhir-resource/{tabKey}/patient/{id}/{recordId}
+					// for patient-scoped resources, /api/fhir-resource/{tabKey}/{recordId}
+					// for org-level (Facility / Location).
 					// apiPath endpoints (non-FHIR): /{ep}/{recordId}
 					const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
+					const fhirPatient = isFhir && this._isPatientScoped(tab);
 					const delUrl = isFhir
-						? `${ep}/patient/${this.patientId}/${recordId}`
+						? (fhirPatient ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/${recordId}`)
 						: `${ep}/${recordId}`;
 					const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
 					if (res.ok) {
@@ -3133,8 +3154,13 @@ export class PatientChartEditor extends EditorPane {
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
+				// Org-level FHIR resources (Facility / Location) skip the
+				// /patient/{id} prefix — they are not patient-scoped.
+				const fhirPatient = isFhir && this._isPatientScoped(tab);
 				const url = isFhir
-					? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
+					? (fhirPatient
+						? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
+						: (isEdit ? `${ep}/${recordId}` : ep))
 					: (isEdit ? `${ep}/${recordId}` : ep);
 				const method = isEdit ? 'PUT' : 'POST';
 				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
