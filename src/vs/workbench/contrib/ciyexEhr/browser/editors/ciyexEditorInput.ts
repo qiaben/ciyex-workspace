@@ -174,6 +174,42 @@ export class PortalSettingsEditorInput extends EditorInput {
 }
 
 // allow-any-unicode-next-line
+// ─── Practice/General Settings EditorInput ───
+
+export class PracticeSettingsEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexPracticeSettings';
+	override get typeId(): string { return PracticeSettingsEditorInput.ID; }
+
+	constructor() { super(); }
+
+	override getName(): string { return 'General'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('organization'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/practice' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof PracticeSettingsEditorInput;
+	}
+}
+
+// allow-any-unicode-next-line
+// ─── Layout Settings EditorInput (API-driven Tab Manager + Field Configuration) ───
+
+export class LayoutSettingsEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexLayoutSettings';
+	override get typeId(): string { return LayoutSettingsEditorInput.ID; }
+
+	constructor() { super(); }
+
+	override getName(): string { return 'Layout'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('layout'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/layout' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof LayoutSettingsEditorInput;
+	}
+}
+
+// allow-any-unicode-next-line
 // ─── Settings EditorInputs (singleton, no params) ───
 
 export class UserManagementEditorInput extends EditorInput {

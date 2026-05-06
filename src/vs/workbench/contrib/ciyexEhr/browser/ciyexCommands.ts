@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -495,6 +495,42 @@ registerAction2(class extends Action2 {
 		const editorService = accessor.get(IEditorService);
 		const input = new PortalSettingsEditorInput();
 		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Practice Settings (General settings page).
+ * Loads practice information, contact info, and logo from the API.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openPracticeSettings',
+			title: localize2('openPracticeSettings', "Open General Settings"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new PracticeSettingsEditorInput(), { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Layout Settings (Tab Manager + Field Configuration).
+ * API-driven editor for /api/tab-field-config/layout.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openLayoutSettings',
+			title: localize2('openLayoutSettings', "Open Layout Settings"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new LayoutSettingsEditorInput(), { pinned: true });
 	}
 });
 

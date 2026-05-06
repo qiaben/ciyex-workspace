@@ -40,8 +40,12 @@ interface ConfigItem {
 }
 
 const CONFIG_ITEMS: ConfigItem[] = [
+	// API-driven settings (match the EHR Web UI screens)
+	{ label: 'General (Practice)', icon: 'codicon-organization', commandId: 'ciyex.openPracticeSettings', description: 'Practice info, contact, logo' },
+	{ label: 'Layout (Tab Manager)', icon: 'codicon-layout', commandId: 'ciyex.openLayoutSettings', description: 'Patient chart tabs and field config' },
+	{ label: 'Portal Configuration', icon: 'codicon-globe', commandId: 'ciyex.openPortalSettings', description: 'Patient portal: features, forms, navigation' },
 	// Ciyex Settings excluded — already in VS Code Settings (Cmd+,), search "@ciyex"
-	{ label: 'Chart Layout', icon: 'codicon-preview', commandId: 'ciyex.openChartLayout', description: 'Tabs and categories' },
+	{ label: 'Chart Layout (File)', icon: 'codicon-preview', commandId: 'ciyex.openChartLayout', description: 'Local JSON layout' },
 	{ label: 'Encounter Form', icon: 'codicon-note', commandId: 'ciyex.openEncounterConfig', description: '17 sections, ROS, PE' },
 	{ label: 'Menu Configuration', icon: 'codicon-list-tree', commandId: 'ciyex.openMenuConfig', description: 'Sidebar navigation' },
 	// Calendar Colors, Patient Portal, Roles & Permissions moved to VS Code Settings (Cmd+,)

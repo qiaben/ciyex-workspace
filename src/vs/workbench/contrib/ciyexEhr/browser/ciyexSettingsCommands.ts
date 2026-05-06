@@ -22,8 +22,10 @@ MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openMenuCo
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openChartLayout', title: 'Chart Layout' }, group: 'layout', order: 4 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openEncounterConfig', title: 'Encounter Form' }, group: 'layout', order: 5 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openCalendarColors', title: 'Calendar Colors' }, group: 'settings', order: 6 });
-MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openPortalConfig', title: 'Patient Portal' }, group: 'settings', order: 7 });
-MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openSettings', title: 'Settings' }, group: 'practice', order: 8 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openPortalSettings', title: 'Portal Configuration' }, group: 'settings', order: 7 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openLayoutSettings', title: 'Layout (Tab Manager)' }, group: 'layout', order: 6 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openPracticeSettings', title: 'General (Practice)' }, group: 'practice', order: 7 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openSettings', title: 'Settings (JSON)' }, group: 'practice', order: 8 });
 
 // Helpers
 function ciyexUri(env: IEnvironmentService, path: string): URI {

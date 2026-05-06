@@ -24,6 +24,8 @@ import {
 	ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput,
 	// Developer Portal
 	DeveloperPortalEditorInput,
+	// Practice / Layout settings (API-driven)
+	PracticeSettingsEditorInput, LayoutSettingsEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -36,6 +38,8 @@ import { PatientChartEditor } from './patientChartEditor.js';
 import { EncounterFormEditor } from './encounterFormEditor.js';
 import { MessagingEditor } from './messagingEditor.js';
 import { PortalSettingsEditor } from './portalSettingsEditor.js';
+import { PracticeSettingsEditor } from './practiceSettingsEditor.js';
+import { LayoutSettingsEditor } from './layoutSettingsEditor.js';
 import { UserManagementEditor } from './userManagementEditor.js';
 import { RolesPermissionsEditor } from './rolesPermissionsEditor.js';
 import { TasksEditor } from './tasksEditor.js';
@@ -72,6 +76,8 @@ reg.registerEditorPane(EditorPaneDescriptor.create(PatientChartEditor, PatientCh
 reg.registerEditorPane(EditorPaneDescriptor.create(EncounterFormEditor, EncounterFormEditor.ID, localize('encounterForm', "Encounter")), [new SyncDescriptor(EncounterFormEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(MessagingEditor, MessagingEditor.ID, localize('messaging', "Messages")), [new SyncDescriptor(MessagingEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(PortalSettingsEditor, PortalSettingsEditor.ID, localize('portalSettings', "Portal Settings")), [new SyncDescriptor(PortalSettingsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(PracticeSettingsEditor, PracticeSettingsEditor.ID, localize('practiceSettings', "General")), [new SyncDescriptor(PracticeSettingsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(LayoutSettingsEditor, LayoutSettingsEditor.ID, localize('layoutSettings', "Layout")), [new SyncDescriptor(LayoutSettingsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(UserManagementEditor, UserManagementEditor.ID, localize('userMgmt', "User Management")), [new SyncDescriptor(UserManagementEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(RolesPermissionsEditor, RolesPermissionsEditor.ID, localize('rolesPerms', "Roles & Permissions")), [new SyncDescriptor(RolesEditorInput2)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(TasksEditor, TasksEditor.ID, localize('tasks', "Tasks")), [new SyncDescriptor(TasksEditorInput)]);
