@@ -24,6 +24,8 @@ MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openEncoun
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openCalendarColors', title: 'Calendar Colors' }, group: 'settings', order: 6 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openPortalSettings', title: 'Portal Configuration' }, group: 'settings', order: 7 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openLayoutSettings', title: 'Layout (Tab Manager)' }, group: 'layout', order: 6 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openLayoutHub', title: 'Layout Settings (Hub)' }, group: 'layout', order: 7 });
+MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openSettingsHub', title: 'Settings' }, group: 'practice', order: 0 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openPracticeSettings', title: 'General (Practice)' }, group: 'practice', order: 7 });
 MenuRegistry.appendMenuItem(MenubarAdminMenu, { command: { id: 'ciyex.openSettings', title: 'Settings (JSON)' }, group: 'practice', order: 8 });
 

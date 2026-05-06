@@ -210,6 +210,42 @@ export class LayoutSettingsEditorInput extends EditorInput {
 }
 
 // allow-any-unicode-next-line
+// ─── Settings Hub EditorInput (sidebar matches EHR /settings page) ───
+
+export class SettingsHubEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexSettingsHub';
+	override get typeId(): string { return SettingsHubEditorInput.ID; }
+
+	constructor() { super(); }
+
+	override getName(): string { return 'Settings'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('settings-gear'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/hub' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof SettingsHubEditorInput;
+	}
+}
+
+// allow-any-unicode-next-line
+// ─── Layout Hub EditorInput (sidebar matches EHR /settings/layout-settings page) ───
+
+export class LayoutHubEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexLayoutHub';
+	override get typeId(): string { return LayoutHubEditorInput.ID; }
+
+	constructor() { super(); }
+
+	override getName(): string { return 'Layout Settings'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('layout'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/layout-hub' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		return other instanceof LayoutHubEditorInput;
+	}
+}
+
+// allow-any-unicode-next-line
 // ─── Settings EditorInputs (singleton, no params) ───
 
 export class UserManagementEditorInput extends EditorInput {

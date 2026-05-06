@@ -10,7 +10,7 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -531,6 +531,47 @@ registerAction2(class extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await accessor.get(IEditorService).openEditor(new LayoutSettingsEditorInput(), { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Settings Hub.
+ * Mirrors the EHR `/settings` page — sidebar with all FHIR resource settings
+ * (Practice / Facilities / Providers / Insurance / Referral Practices /
+ * Referral Providers / Codes / Services / Template Documents) plus admin
+ * pages (Users / Roles & Permissions) and built-ins (Form Options /
+ * Display / Calendar Colors).
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openSettingsHub',
+			title: localize2('openSettingsHub', "Open Settings"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new SettingsHubEditorInput(), { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Layout Hub.
+ * Mirrors the EHR `/settings/layout-settings` sidebar — Chart / Menu /
+ * Encounter / Portal / Settings.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openLayoutHub',
+			title: localize2('openLayoutHub', "Open Layout Settings Hub"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new LayoutHubEditorInput(), { pinned: true });
 	}
 });
 
