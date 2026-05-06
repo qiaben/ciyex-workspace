@@ -3330,8 +3330,23 @@ export class PatientChartEditor extends EditorPane {
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
 					this._formInputs.set(f.key, ta);
-				} else if (f.type === 'date' || f.type === 'datetime') {
+				} else if (f.type === 'date') {
+					// Date-only field: mm/dd/yyyy text + native picker; hidden ISO for save.
 					this._buildDateInput(cell, f, String(val).split('T')[0], inputStyle);
+				} else if (f.type === 'datetime') {
+					// Datetime field: native datetime-local input so the user can
+					// pick BOTH the date and the time. Stripping the time (as the
+					// date-only picker did) was breaking encounter save — backend
+					// requires a real datetime on Encounter.period.start.
+					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
+					inp.type = 'datetime-local';
+					// Backend ISO can be `yyyy-mm-ddThh:mm:ss[.sss]Z` — trim to
+					// the `yyyy-mm-ddThh:mm` shape the input element expects.
+					const raw = String(val ?? '');
+					inp.value = raw && raw.length >= 16 ? raw.slice(0, 16) : raw;
+					inp.placeholder = f.placeholder || '';
+					inp.style.cssText = inputStyle;
+					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
@@ -3416,14 +3431,31 @@ export class PatientChartEditor extends EditorPane {
 			messagingRecipient.value = this.patientName;
 		}
 
-		// Appointments: auto-calculate duration (minutes) from start/end
-		// datetime. Field keys aligned with the backend tab_field_config —
-		// `date` is the start datetime (was `start`), `endDate` is the end
-		// (was `end`). Falls back to legacy keys so older saved data still
-		// drives the recalc.
-		const startInput = (this._formInputs.get('date') || this._formInputs.get('start')) as HTMLInputElement | undefined;
+		// Appointments + Encounters: auto-calculate duration (minutes) from
+		// start/end datetime + seed sensible defaults on a fresh form.
+		// Field keys aligned with the backend tab_field_config — `date` is the
+		// start datetime (was `start`), `endDate` is the end (was `end`).
+		// Falls back to legacy keys so older saved data still drives the recalc.
+		// Also covers encounters' `startDate`/`endDate`.
+		const startInput = (this._formInputs.get('date') || this._formInputs.get('start') || this._formInputs.get('startDate')) as HTMLInputElement | undefined;
 		const endInput = (this._formInputs.get('endDate') || this._formInputs.get('end')) as HTMLInputElement | undefined;
 		const durationInput = this._formInputs.get('duration') as HTMLInputElement | undefined;
+
+		// Default start/end on a fresh form — start = now (rounded to next 5min),
+		// end = start + 30min. Reads existing record values via the hidden ISO
+		// field's value so it doesn't clobber an in-progress edit.
+		if (startInput && !startInput.value) {
+			const now = new Date();
+			now.setSeconds(0, 0);
+			now.setMinutes(now.getMinutes() + (5 - (now.getMinutes() % 5 || 5)));
+			const iso = now.toISOString().slice(0, 16);
+			startInput.value = iso;
+			if (endInput && !endInput.value) {
+				const e = new Date(now.getTime() + 30 * 60 * 1000);
+				endInput.value = e.toISOString().slice(0, 16);
+			}
+		}
+
 		if (startInput && endInput && durationInput) {
 			durationInput.readOnly = true;
 			durationInput.style.background = 'rgba(128,128,128,0.06)';
@@ -3442,6 +3474,16 @@ export class PatientChartEditor extends EditorPane {
 			endInput.addEventListener('input', recalcDuration);
 			endInput.addEventListener('change', recalcDuration);
 			recalcDuration();
+		}
+
+		// Appointments: pre-fill the patient field with the current chart's
+		// patient on a fresh form. Backend tab_field_config typically doesn't
+		// ship a patient picker because the URL carries patientId — but if
+		// the form does have one, default it to the chart's patient name so
+		// users don't have to retype it.
+		const patientInput = this._formInputs.get('patient') as HTMLInputElement | undefined;
+		if (patientInput && !patientInput.value && this.patientName) {
+			patientInput.value = this.patientName;
 		}
 
 		// Apply showWhen conditions and attach listeners to controlling fields

@@ -132,7 +132,16 @@ export class EhrTitlebarControls extends Disposable {
 				if (this.searchCts.token.isCancellationRequested) { return; }
 				if (res.ok) {
 					const data = await res.json();
-					const patients: PatientResult[] = data?.data?.content || data?.content || [];
+					// Handle every response shape the backend may emit:
+					//   {data:{content:[…]}} (paginated wrapper)
+					//   {data:[…]}            (unwrapped page)
+					//   {content:[…]}         (raw page)
+					//   […]                   (bare array)
+					const candidate = data?.data?.content
+						|| (Array.isArray(data?.data) ? data.data : null)
+						|| data?.content
+						|| (Array.isArray(data) ? data : null);
+					const patients: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
 					this._renderSearchResults(patients);
 				}
 			} catch {
