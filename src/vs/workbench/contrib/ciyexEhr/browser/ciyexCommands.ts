@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
-import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
@@ -606,26 +605,21 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/**
- * Override the built-in VS Code "open settings" command IDs so that the
- * gear menu, Ctrl+, keybinding, and any other code path that wants to show
- * "Settings" lands on the Ciyex Settings Hub (which mirrors the EHR Web UI
- * /settings page) instead of VS Code's native Settings editor.
- *
- * `CommandsRegistry.registerCommand` adds to the head of a linked list per
- * command id, so the latest registration wins for `executeCommand`.
- */
-const openSettingsHub = (accessor: ServicesAccessor, arg?: unknown): Promise<unknown> => {
-	const tab = typeof arg === 'string' ? arg : '';
-	return accessor.get(IEditorService).openEditor(new SettingsHubEditorInput(tab), { pinned: true });
-};
-
-CommandsRegistry.registerCommand('workbench.action.openSettings', openSettingsHub);
-CommandsRegistry.registerCommand('workbench.action.openSettings2', openSettingsHub);
-CommandsRegistry.registerCommand('workbench.action.openGlobalSettings', openSettingsHub);
-CommandsRegistry.registerCommand('workbench.action.openWorkspaceSettings', openSettingsHub);
-CommandsRegistry.registerCommand('workbench.action.openFolderSettings', openSettingsHub);
-CommandsRegistry.registerCommand('workbench.action.openApplicationSettings', openSettingsHub);
+// REMOVED: native workbench.action.openSettings* command overrides.
+//
+// They were causing the workbench to render with a blank content area on
+// some startup paths because VS Code's `openSettings` command is invoked
+// during early layout / restored-editors initialization (before the
+// auth gate has had a chance to mount). Replacing the handler routed those
+// internal calls into SettingsHubEditor.setInput, which queues an
+// authenticated /api/tab-field-config/all fetch — and on a fresh launch
+// the request resolves to "waiting for login" while the layout pass has
+// already painted nothing into the editor area, producing the empty
+// dark window the test team reported on Build 71.
+//
+// Users still reach the Settings Hub via the dedicated `ciyex.openSettings`
+// command (registered above), the Ciyex titlebar gear, and the Activity
+// Bar entry — none of which fire during workbench startup.
 
 // Note: ciyex.openUserManagement already registered in ciyexSettingsCommands.ts
 
