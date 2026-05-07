@@ -24,7 +24,11 @@ import * as DOM from '../../../../../base/browser/dom.js';
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
 interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string; aliases?: string[] }>; readOnly?: boolean }
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean }
+// `localOnly: true` means the field is appended even when the backend
+// tab_field_config doesn't ship it — used for UX extras like priority,
+// duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
+// keyless-collision duplicates don't sneak back in.
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -575,7 +579,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'weightKg', label: 'Weight (kg)', type: 'number', required: true, placeholder: '0.0' },
 					{ key: 'heightCm', label: 'Height (cm)', type: 'number', required: true, placeholder: '0.0' },
 					// allow-any-unicode-next-line
-					{ key: 'bmi', label: 'BMI (kg/m²)', type: 'number', placeholder: 'Auto-calculated' },
+					{ key: 'bmi', label: 'BMI (kg/m²)', type: 'number', placeholder: 'Auto-calculated', localOnly: true },
 					{ key: 'bpSystolic', label: 'BP Systolic (mmHg)', type: 'number', required: true, placeholder: '0' },
 					{ key: 'bpDiastolic', label: 'BP Diastolic (mmHg)', type: 'number', required: true, placeholder: '0' },
 					{ key: 'pulse', label: 'Pulse (/min)', type: 'number', required: true, placeholder: '0' },
@@ -874,7 +878,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// and stores it in the `attachment` field. The backend's
 					// DocumentReference create accepts either fileUrl (link) or
 					// attachment (inline content). Either is fine; both render.
-					{ key: 'attachment', label: 'Attachment', type: 'file', placeholder: 'Choose file to upload', colSpan: 3 },
+					{ key: 'attachment', label: 'Attachment', type: 'file', placeholder: 'Choose file to upload', colSpan: 3, localOnly: true },
 					{ key: 'fileUrl', label: 'Or paste a File URL', type: 'text', placeholder: 'https://... or storage key', colSpan: 3 },
 					{
 						key: 'contentType', label: 'Content Type', type: 'select', options: [
@@ -927,7 +931,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// URL link is required for "Link" content type — the EHR-UI
 					// shows it on the assignment form. Stored alongside the
 					// existing materialContentType select.
-					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://...', colSpan: 3 },
+					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://...', colSpan: 3, localOnly: true },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Assigned', value: 'assigned' },
@@ -980,7 +984,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// email / SMS) so the workspace can drive the same dispatch
 					// flow once the backend hooks the medium field.
 					{
-						key: 'medium', label: 'Send Via', type: 'select', colSpan: 2, options: [
+						key: 'medium', label: 'Send Via', type: 'select', colSpan: 2, localOnly: true, options: [
 							{ label: 'In-App Message', value: 'app' },
 							{ label: 'Email', value: 'email' },
 							{ label: 'SMS / Text', value: 'sms' },
@@ -1075,14 +1079,14 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'priority', label: 'Priority', type: 'select', options: [
+						key: 'priority', label: 'Priority', type: 'select', localOnly: true, options: [
 							{ label: 'Routine', value: 'Routine' },
 							{ label: 'Urgent', value: 'Urgent' },
 						]
 					},
 					{ key: 'date', label: 'Start Date/Time', type: 'datetime', required: true },
-					{ key: 'endDate', label: 'End Date/Time', type: 'datetime', required: true },
-					{ key: 'duration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end' },
+					{ key: 'endDate', label: 'End Date/Time', type: 'datetime', required: true, localOnly: true },
+					{ key: 'duration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end', localOnly: true },
 					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
 					{ key: 'location', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
@@ -1490,8 +1494,14 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		tabKey: 'encounters',
 		sections: [
 			{
-				key: 'enc', title: 'Encounter', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'patient', label: 'Patient', type: 'patient-search', placeholder: 'Search Patient', required: true },
+				key: 'encounter-details', title: 'Encounter', columns: 2, visible: true, collapsible: false, fields: [
+					// Local-only patient picker — backend tab_field_config doesn't
+					// ship one (the FHIR controller resolves the patient from the
+					// URL path) but the test team explicitly asked for a "Search
+					// Patient" field on the form. localOnly:true so the overlay
+					// always appends it; not `required` because save still works
+					// when only the URL patientId is set.
+					{ key: 'patient', label: 'Patient', type: 'patient-search', placeholder: 'Search Patient', localOnly: true },
 					{
 						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
 							{ label: 'Ambulatory', value: 'AMB' },
@@ -1516,7 +1526,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'startDate', label: 'Start Date', type: 'datetime', required: true },
 					{ key: 'endDate', label: 'End Date', type: 'datetime' },
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, localOnly: true },
 				],
 			},
 		],
@@ -1783,15 +1793,26 @@ export class PatientChartEditor extends EditorPane {
 									};
 								}),
 							}));
-							// NOTE: We deliberately do NOT append local-only fields here.
-							// Appending caused duplicate fields when the backend's key for
-							// a conceptually-equivalent field (e.g. backend `type` vs local
-							// `appointmentType`, backend `provider` vs local `providerId`)
-							// didn't match: both would render side-by-side, e.g. two Visit
-							// Type dropdowns in the appointment form. The backend
-							// tab_field_config is the single source of truth for which
-							// fields render — same as the EHR-UI's GenericFhirTab — and
-							// the test team explicitly requested no extras.
+							// SELECTIVE APPEND: only append local fields explicitly
+							// flagged `localOnly: true`. Used for UX-only inputs that
+							// the backend doesn't ship and that we know don't collide
+							// with any backend key — appointment priority/duration/
+							// endDate, vitals BMI, education URL, documents
+							// attachment, messaging "Send Via" medium. The earlier
+							// "append everything missing" was the source of the
+							// duplicate-field complaint (backend `type` rendered
+							// alongside local `appointmentType`); the FieldDef key
+							// alignment work + this allow-list together avoid the
+							// duplicates while still surfacing the local extras.
+							const presentKeys = new Set<string>();
+							for (const sec of sections) { for (const f of sec.fields) { presentKeys.add(f.key); } }
+							for (const sec of localOverrides.sections) {
+								const extras = sec.fields.filter(f => f.localOnly && !presentKeys.has(f.key));
+								if (extras.length === 0) { continue; }
+								const target = sections.find(s => s.key === sec.key);
+								if (target) { target.fields = [...target.fields, ...extras]; }
+								else { sections.push({ ...sec, fields: extras }); }
+							}
 						}
 						config = { tabKey: tab.key, sections };
 					}
