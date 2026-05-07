@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
@@ -574,6 +575,27 @@ registerAction2(class extends Action2 {
 		await accessor.get(IEditorService).openEditor(new LayoutHubEditorInput(), { pinned: true });
 	}
 });
+
+/**
+ * Override the built-in VS Code "open settings" command IDs so that the
+ * gear menu, Ctrl+, keybinding, and any other code path that wants to show
+ * "Settings" lands on the Ciyex Settings Hub (which mirrors the EHR Web UI
+ * /settings page) instead of VS Code's native Settings editor.
+ *
+ * `CommandsRegistry.registerCommand` adds to the head of a linked list per
+ * command id, so the latest registration wins for `executeCommand`.
+ */
+const openSettingsHub = (accessor: ServicesAccessor, arg?: unknown): Promise<unknown> => {
+	const tab = typeof arg === 'string' ? arg : '';
+	return accessor.get(IEditorService).openEditor(new SettingsHubEditorInput(tab), { pinned: true });
+};
+
+CommandsRegistry.registerCommand('workbench.action.openSettings', openSettingsHub);
+CommandsRegistry.registerCommand('workbench.action.openSettings2', openSettingsHub);
+CommandsRegistry.registerCommand('workbench.action.openGlobalSettings', openSettingsHub);
+CommandsRegistry.registerCommand('workbench.action.openWorkspaceSettings', openSettingsHub);
+CommandsRegistry.registerCommand('workbench.action.openFolderSettings', openSettingsHub);
+CommandsRegistry.registerCommand('workbench.action.openApplicationSettings', openSettingsHub);
 
 // Note: ciyex.openUserManagement already registered in ciyexSettingsCommands.ts
 
