@@ -11,9 +11,11 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, MenuEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 
 /**
  * Build dark-themed HTML wrapper for webview content.
@@ -573,6 +575,34 @@ registerAction2(class extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await accessor.get(IEditorService).openEditor(new LayoutHubEditorInput(), { pinned: true });
+	}
+});
+
+/**
+ * Command: Open Menu Configuration. Mirrors the EHR
+ * `/settings/menu-configuration` page; surfaced from the Settings Hub
+ * sidebar so the desktop matches the web's settings nav 1:1.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openMenuConfig',
+			title: localize2('openMenuConfig', "Open Menu Configuration"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		// MenuEditorInput edits the menu config JSON file; the Layout Hub's
+		// "Menu" item opens it the same way. Going through the file service
+		// keeps the implementation consistent with the existing menu editor.
+		const editorService = accessor.get(IEditorService);
+		const env = accessor.get(IEnvironmentService);
+		const fileSvc = accessor.get(IFileService);
+		const uri = URI.joinPath(env.userRoamingDataHome, '.ciyex', 'menu-config.json');
+		try { await fileSvc.stat(uri); } catch { await fileSvc.writeFile(uri, VSBuffer.fromString('{}')); }
+		const inst = accessor.get(IInstantiationService);
+		await editorService.openEditor(inst.createInstance(MenuEditorInput, 'menu-config', uri, 'Menu Configuration', ThemeIcon.fromId('menu')), { pinned: true });
 	}
 });
 

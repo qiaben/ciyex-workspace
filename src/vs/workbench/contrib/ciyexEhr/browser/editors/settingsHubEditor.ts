@@ -11,6 +11,7 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -54,7 +55,8 @@ interface SidebarItem {
 	key: string;
 	label: string;
 	icon: string;
-	kind: 'fhir' | 'admin' | 'builtin';
+	kind: 'fhir' | 'admin' | 'builtin' | 'command';
+	commandId?: string;
 }
 
 const ADMIN_ITEMS: SidebarItem[] = [
@@ -62,10 +64,21 @@ const ADMIN_ITEMS: SidebarItem[] = [
 	{ key: '__roles__', label: 'Roles & Permissions', icon: '\u{1F6E1}', kind: 'admin' },
 ];
 
+// Mirror the Ciyex web /settings sidebar: every item that has its own
+// dedicated editor in the workspace shows up as a navigation row that runs
+// the matching command. That keeps the sidebar 1:1 with the EHR-UI even
+// though each click opens a dedicated editor (instead of swapping the hub's
+// right pane). Command IDs are the same ones the gear menu / Ctrl+, used to
+// expose individually before the Settings Hub redirect.
 const BUILTIN_ITEMS: SidebarItem[] = [
 	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin' },
 	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin' },
 	{ key: '__calendar-colors__', label: 'Calendar Colors', icon: '\u{1F3A8}', kind: 'builtin' },
+	{ key: '__layout-settings__', label: 'Layout Settings', icon: '\u{1F9F1}', kind: 'command', commandId: 'ciyex.openLayoutSettings' },
+	{ key: '__layout-hub__', label: 'Layout Configuration', icon: '\u{1F4D0}', kind: 'command', commandId: 'ciyex.openLayoutHub' },
+	{ key: '__menu-config__', label: 'Menu Configuration', icon: '\u{1F4DC}', kind: 'command', commandId: 'ciyex.openMenuConfig' },
+	{ key: '__portal-settings__', label: 'Portal Settings', icon: '\u{1F310}', kind: 'command', commandId: 'ciyex.openPortalSettings' },
+	{ key: '__practice-settings__', label: 'Practice Settings', icon: '\u{1F3E2}', kind: 'command', commandId: 'ciyex.openPracticeSettings' },
 ];
 
 const ICON_MAP: Record<string, string> = {
@@ -126,6 +139,7 @@ export class SettingsHubEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(SettingsHubEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -236,7 +250,17 @@ export class SettingsHubEditor extends EditorPane {
 		label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		btn.addEventListener('mouseenter', () => { if (!isActive) { btn.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; } });
 		btn.addEventListener('mouseleave', () => { if (!isActive) { btn.style.background = 'transparent'; } });
-		btn.addEventListener('click', () => { this._onSidebarClick(item.key); });
+		btn.addEventListener('click', () => {
+			// Command-kind items run their registered command (which opens
+			// the dedicated editor for Layout Settings / Portal Settings /
+			// Practice Settings / Menu Configuration / Layout Hub) instead
+			// of swapping the hub's right pane.
+			if (item.kind === 'command' && item.commandId) {
+				void this.commandService.executeCommand(item.commandId);
+				return;
+			}
+			this._onSidebarClick(item.key);
+		});
 	}
 
 	private _onSidebarClick(key: string): void {
