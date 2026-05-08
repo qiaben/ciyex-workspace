@@ -1746,11 +1746,23 @@ export class PatientChartEditor extends EditorPane {
 						if (tab.key === 'vitals') {
 							sections = sections.filter(s => s.key !== 'vitals-meta' && !/recording info/i.test(s.title || ''));
 						}
-						// Encounter: drop any backend-shipped `patient` reference field —
-						// the patient is already resolved from the chart's URL path, and the
-						// extra picker showed up as a duplicate in the test team's "Add
-						// New Encounter" page.
-						if (tab.key === 'encounters') {
+						// Encounter / appointment / visit-note / messaging / etc. forms
+						// already resolve the patient from the chart's URL path, so any
+						// backend-shipped `patient` / `patientId` / `subject` reference
+						// field shows up as a redundant manual picker. The test team
+						// flagged the duplicate Patient field on the encounter "Add New"
+						// page (issue 4) and the appointment "patient should be
+						// auto-fetched" remark on issue 5 — drop these consistently for
+						// every patient-scoped tab so the user never has to re-enter
+						// the same patient twice.
+						const patientScopedTabs = new Set([
+							'encounters', 'appointments', 'visit-notes', 'medications', 'labs',
+							'immunizations', 'procedures', 'clinical-alerts', 'allergies', 'problems',
+							'documents', 'education', 'messaging', 'history', 'referrals',
+							'billing', 'claims', 'submissions', 'denials', 'era-remittance',
+							'transactions', 'payment', 'statements', 'issues', 'report',
+						]);
+						if (patientScopedTabs.has(tab.key)) {
 							sections = sections.map(s => ({
 								...s,
 								fields: s.fields.filter(f => f.key !== 'patient' && f.key !== 'patientId' && f.key !== 'subject'),
@@ -3161,11 +3173,33 @@ export class PatientChartEditor extends EditorPane {
 			const invalidPattern: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
 			for (const sec of (config?.sections || [])) {
 				for (const f of (sec.fields || [])) {
-					const rule = fieldPatterns[f.key];
-					if (!rule) { continue; }
 					const el = dialogInputs.get(f.key);
 					if (!el) { continue; }
 					const v = String(el.value ?? '').trim();
+					// Per-field validationPattern (declared in DEFAULT_FIELD_CONFIGS or
+					// shipped from backend tab_field_config) takes precedence — this is
+					// where US phone formats / email / lot-number / dosage etc.
+					// negative tests get caught. Without applying it here, those
+					// patterns were just decoration and the negative-test inputs
+					// reached the server.
+					if (v && f.validationPattern) {
+						let matched = true;
+						try {
+							const rx = new RegExp(f.validationPattern);
+							matched = rx.test(v);
+						} catch { /* malformed regex — skip */ }
+						if (!matched) {
+							invalidPattern.push({
+								key: f.key,
+								label: f.label,
+								el,
+								msg: f.validationMessage || 'Invalid format',
+							});
+							continue;
+						}
+					}
+					const rule = fieldPatterns[f.key];
+					if (!rule) { continue; }
 					if (v && !rule.rx.test(v)) {
 						invalidPattern.push({ key: f.key, label: f.label, el, msg: rule.msg });
 					}

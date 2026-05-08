@@ -591,7 +591,18 @@ export class EncounterFormEditor extends EditorPane {
 			item.addEventListener('mouseleave', () => { if (!item.classList.contains('active')) { item.style.background = ''; } });
 			item.addEventListener('click', () => {
 				const el = this.sectionCards.get(sec.key);
-				if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+				if (!el) { return; }
+				// Auto-expand the section before scrolling — sections like
+				// "Procedures & Coding" default to collapsed, so a TOC click
+				// previously appeared to do nothing because the body
+				// (display:none) was still hidden after scrolling. Click the
+				// header to flip the collapse state when the body is hidden.
+				const body = el.children[1] as HTMLElement | undefined;
+				const header = el.children[0] as HTMLElement | undefined;
+				if (body && header && body.style.display === 'none') {
+					header.click();
+				}
+				el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			});
 
 			this.tocItems.push({ key: sec.key, el: item });
