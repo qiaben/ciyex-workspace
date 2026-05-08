@@ -3168,16 +3168,18 @@ export class PatientChartEditor extends EditorPane {
 				const v = String(el.value ?? '').trim();
 				if (!v) { missing.push({ key: r.key, label: r.label, el }); }
 			}
-			// ID-lookup fields (materialId, payerId, locationId, ...) MUST come
-			// from a dropdown selection — backends look these up by FK, so a
-			// typed-but-not-selected value is functionally empty and would
-			// otherwise produce the "given id must not be null" save error the
-			// test team flagged on the Education page. Catch them up front
-			// regardless of the `required` flag.
+			// ID-lookup fields MUST come from a dropdown selection — backends
+			// look these up by FK, so a typed-but-not-selected value is
+			// functionally empty and would otherwise produce the "given id
+			// must not be null" save error the test team flagged on the
+			// Education page. Same goes for patient/practitioner pickers.
+			// Catch them up front regardless of the `required` flag.
 			const idLookupRx = /(^|[A-Za-z])(materialId|locationId|providerId|formId|payerId|encounterId|organizationId|insurerId)$/;
 			for (const sec of (config?.sections || [])) {
 				for (const f of (sec.fields || [])) {
-					if (f.type !== 'lookup' || !idLookupRx.test(f.key)) { continue; }
+					const isFkRef = f.type === 'patient-search' || f.type === 'practitioner-search'
+						|| (f.type === 'lookup' && idLookupRx.test(f.key));
+					if (!isFkRef) { continue; }
 					const el = dialogInputs.get(f.key);
 					if (!el) { continue; }
 					const v = String(el.value ?? '').trim();
@@ -3790,11 +3792,27 @@ export class PatientChartEditor extends EditorPane {
 		const wrap = DOM.append(cell, DOM.$('div'));
 		wrap.style.cssText = 'position:relative;';
 
+		// Name-search fields (patient / provider / lookup-by-name) only need
+		// to display the chosen name in the input and the dropdown — the
+		// underlying ID isn't useful to the user. Medical-code searches
+		// (ICD-10 / CPT / HCPCS / LOINC / CVX) keep the code visible because
+		// the code itself IS the value the clinician picks. Same EHR-UI
+		// styling the test team referenced (clean name-only rows for
+		// patient picker, code-prefixed rows for code search).
+		const isCodeSearch = f.type === 'code-search' || f.type === 'coded';
+
 		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		input.type = 'text';
 		input.placeholder = f.placeholder || `Search ${f.label}...`;
-		input.style.cssText = inputStyle;
+		// Reserve right padding for the magnifying-glass icon.
+		input.style.cssText = inputStyle + 'padding-right:30px;';
 		input.value = currentValue;
+
+		// Decorative search icon on the right edge of the input.
+		const searchIcon = DOM.append(wrap, DOM.$('span'));
+		searchIcon.classList.add('codicon');
+		searchIcon.classList.add('codicon-search');
+		searchIcon.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-input-placeholderForeground,#888);pointer-events:none;line-height:1;';
 
 		// Hidden field that gets registered with _formInputs so the saved value
 		// is the chosen code/id rather than free text.
@@ -3802,18 +3820,20 @@ export class PatientChartEditor extends EditorPane {
 		hidden.type = 'hidden';
 		hidden.value = currentValue;
 		this._formInputs.set(f.key, hidden);
-		// `lookup` fields whose key is an id (numeric / UUID) MUST come from a
-		// dropdown selection — free text deserializes to null on the server and
-		// trips "id must not be null" (Education materialId, Appointment
-		// locationId, etc.). For those, clear the hidden whenever the user
-		// types so required-validation and the save payload stay correct.
-		// Code-search / practitioner-search keep "store-typed-text" behavior
-		// because their values are codes / names, not foreign keys.
-		const isIdLookup = f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key);
+		// Foreign-key references — patient / practitioner pickers and
+		// `lookup` fields whose key is an id (numeric / UUID) — MUST come
+		// from a dropdown selection. Free text deserialises to null on
+		// the server and trips "id must not be null" (Education
+		// materialId, Appointment locationId, etc.). Clear the hidden
+		// whenever the user types so required-validation and the save
+		// payload stay correct. Code-search keeps "store-typed-text"
+		// because the value IS the code, not a foreign key.
+		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
+			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key));
 		if (isIdLookup) {
 			input.addEventListener('input', () => { hidden.value = ''; });
 		} else {
-			// Keep hidden in sync with raw typing so non-selected codes / names still save.
+			// Keep hidden in sync with raw typing so non-selected codes still save.
 			input.addEventListener('input', () => { hidden.value = input.value; });
 		}
 
@@ -3827,10 +3847,10 @@ export class PatientChartEditor extends EditorPane {
 		// test team was reporting overlap because the previous translucent
 		// look made it hard to tell where the dropdown ended.
 		const dropdown = DOM.append(DOM.getActiveWindow().document.body, DOM.$('div'));
-		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:260px;overflow-y:auto;display:none;';
+		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:280px;overflow-y:auto;display:none;padding:4px 0;';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
-			dropdown.style.top = `${rect.bottom + 2}px`;
+			dropdown.style.top = `${rect.bottom + 4}px`;
 			dropdown.style.left = `${rect.left}px`;
 			dropdown.style.minWidth = `${rect.width}px`;
 			dropdown.style.maxWidth = `${Math.max(rect.width, 360)}px`;
@@ -3851,6 +3871,27 @@ export class PatientChartEditor extends EditorPane {
 		});
 		cleanupObserver.observe(win.document.body, { childList: true, subtree: true });
 
+		// Track currently-highlighted row index for keyboard navigation
+		// (ArrowDown / ArrowUp / Enter). The first row is auto-highlighted
+		// when the dropdown opens — same EHR-UI behaviour the test team's
+		// screenshot showed (Joseph Lopez highlighted for "jo" query).
+		let highlightedIdx = -1;
+		const rows: HTMLElement[] = [];
+		const setHighlight = (idx: number): void => {
+			for (let i = 0; i < rows.length; i++) {
+				const row = rows[i];
+				if (i === idx) {
+					row.style.background = 'var(--vscode-list-activeSelectionBackground,rgba(0,120,212,0.18))';
+					row.style.borderLeftColor = 'var(--vscode-focusBorder,#007acc)';
+					row.scrollIntoView({ block: 'nearest' });
+				} else {
+					row.style.background = '';
+					row.style.borderLeftColor = 'transparent';
+				}
+			}
+			highlightedIdx = idx;
+		};
+
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const search = (q: string) => {
 			if (timer) { clearTimeout(timer); }
@@ -3864,28 +3905,47 @@ export class PatientChartEditor extends EditorPane {
 					const data = await res.json();
 					const items = this._extractSearchItems(f, data);
 					DOM.clearNode(dropdown);
+					rows.length = 0;
 					if (items.length === 0) {
 						const empty = DOM.append(dropdown, DOM.$('div'));
 						empty.textContent = 'No matches';
-						empty.style.cssText = 'padding:10px 12px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+						empty.style.cssText = 'padding:10px 14px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
 					} else {
 						for (const it of items) {
 							const row = DOM.append(dropdown, DOM.$('div'));
-							row.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
-							const codeEl = DOM.append(row, DOM.$('span'));
-							codeEl.textContent = it.code;
-							codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:64px;font-family:var(--vscode-editor-font-family,monospace);flex-shrink:0;';
-							const labelEl = DOM.append(row, DOM.$('span'));
-							labelEl.textContent = it.label;
-							labelEl.style.cssText = 'color:var(--vscode-foreground);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-							row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-							row.addEventListener('mouseleave', () => { row.style.background = ''; });
+							// Name-search rows are taller and show the label
+							// alone — code rows are tighter and show the
+							// code in monospace alongside the description.
+							if (isCodeSearch) {
+								row.style.cssText = 'padding:8px 14px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:10px;border-left:3px solid transparent;';
+								const codeEl = DOM.append(row, DOM.$('span'));
+								codeEl.textContent = it.code;
+								codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:64px;font-family:var(--vscode-editor-font-family,monospace);flex-shrink:0;';
+								const labelEl = DOM.append(row, DOM.$('span'));
+								labelEl.textContent = it.label;
+								labelEl.style.cssText = 'color:var(--vscode-foreground);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+							} else {
+								row.style.cssText = 'padding:10px 16px;cursor:pointer;font-size:14px;color:var(--vscode-foreground);border-left:3px solid transparent;';
+								row.textContent = it.label || it.code;
+							}
+							rows.push(row);
+							const idx = rows.length - 1;
+							row.addEventListener('mouseenter', () => setHighlight(idx));
 							row.addEventListener('click', () => {
-								input.value = `${it.code} - ${it.label}`;
-								hidden.value = it.code;
+								if (isCodeSearch) {
+									input.value = `${it.code} - ${it.label}`;
+									hidden.value = it.code;
+								} else {
+									// Show the chosen name in the visible
+									// input; persist the underlying ID for
+									// the save payload.
+									input.value = it.label || it.code;
+									hidden.value = it.code;
+								}
 								dropdown.style.display = 'none';
 							});
 						}
+						setHighlight(0);
 					}
 					positionDropdown();
 					dropdown.style.display = 'block';
@@ -3895,6 +3955,23 @@ export class PatientChartEditor extends EditorPane {
 		input.addEventListener('input', () => search(input.value));
 		input.addEventListener('focus', () => { if (input.value.trim().length >= 2) { search(input.value); } });
 		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+		input.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (dropdown.style.display === 'none' || rows.length === 0) { return; }
+			if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				setHighlight(Math.min(highlightedIdx + 1, rows.length - 1));
+			} else if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				setHighlight(Math.max(highlightedIdx - 1, 0));
+			} else if (e.key === 'Enter') {
+				if (highlightedIdx >= 0) {
+					e.preventDefault();
+					rows[highlightedIdx].click();
+				}
+			} else if (e.key === 'Escape') {
+				dropdown.style.display = 'none';
+			}
+		});
 	}
 
 	private _buildSearchUrl(f: FieldDef, q: string): string | null {
