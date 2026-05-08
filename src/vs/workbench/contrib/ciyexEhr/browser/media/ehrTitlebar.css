@@ -166,20 +166,26 @@
 	background: linear-gradient(180deg, #7177f4 0%, #5851ea 100%);
 }
 
-/* --- Overlay (Patient Form / Appointment Form) --- */
+/* --- Overlay (Patient Form / Appointment Form) ---
+ * Right-side slide-in panel — matches the Tasks "+ New Task" pattern so every
+ * create/edit form across the EHR uses the same shape. */
 .ehr-overlay {
 	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
 	z-index: 10000;
 	background: var(--vscode-editorWidget-background, #252526);
-	border: 1px solid var(--vscode-editorWidget-border, #454545);
-	border-radius: 8px;
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+	border-left: 1px solid var(--vscode-editorWidget-border, #454545);
+	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3);
 	padding: 20px;
-	width: 480px;
-	max-height: 80vh;
+	width: 560px;
+	max-width: 95vw;
+	height: 100vh;
 	overflow-y: auto;
 	font-size: 13px;
 	color: var(--vscode-editor-foreground, #ccc);
+	box-sizing: border-box;
 	/* Test team asked for the visible scrollbar on add-new forms (denials,
 	 * relationships) to be removed. Scrolling still works via wheel/trackpad
 	 * — only the visual scrollbar is hidden. */
@@ -187,7 +193,14 @@
 }
 
 .ehr-overlay.ehr-overlay-wide {
-	width: 560px;
+	width: 620px;
+}
+
+.ehr-overlay-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	background: rgba(0, 0, 0, 0.4);
 }
 
 .ehr-overlay-header {

@@ -51,6 +51,7 @@ export class EhrTitlebarControls extends Disposable {
 	private searchDropdown!: HTMLElement;
 	private patientOverlay!: HTMLElement;
 	private appointmentOverlay!: HTMLElement;
+	private overlayBackdrop!: HTMLElement;
 
 	private searchCts: CancellationTokenSource | undefined;
 	private searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -223,7 +224,16 @@ export class EhrTitlebarControls extends Disposable {
 
 	// --- Patient Creation Overlay ---
 
+	private _ensureOverlayBackdrop(): void {
+		if (this.overlayBackdrop) { return; }
+		this.overlayBackdrop = DOM.$('.ehr-overlay-backdrop');
+		this.overlayBackdrop.style.display = 'none';
+		DOM.getActiveWindow().document.body.appendChild(this.overlayBackdrop);
+		this._register(DOM.addDisposableListener(this.overlayBackdrop, 'click', () => this._closeAllOverlays()));
+	}
+
 	private _buildPatientOverlay(): void {
+		this._ensureOverlayBackdrop();
 		this.patientOverlay = DOM.$('.ehr-overlay');
 		this.patientOverlay.style.display = 'none';
 		DOM.getActiveWindow().document.body.appendChild(this.patientOverlay);
@@ -443,6 +453,7 @@ export class EhrTitlebarControls extends Disposable {
 	private locations: LocationResult[] = [];
 
 	private _buildAppointmentOverlay(): void {
+		this._ensureOverlayBackdrop();
 		this.appointmentOverlay = DOM.$('.ehr-overlay.ehr-overlay-wide');
 		this.appointmentOverlay.style.display = 'none';
 		DOM.getActiveWindow().document.body.appendChild(this.appointmentOverlay);
@@ -786,7 +797,7 @@ export class EhrTitlebarControls extends Disposable {
 		this._closeAllOverlays();
 		if (!isOpen) {
 			this.patientOverlay.style.display = '';
-			this._positionOverlay(this.patientOverlay);
+			this._showBackdrop();
 		}
 	}
 
@@ -795,30 +806,39 @@ export class EhrTitlebarControls extends Disposable {
 		this._closeAllOverlays();
 		if (!isOpen) {
 			this.appointmentOverlay.style.display = '';
-			this._positionOverlay(this.appointmentOverlay);
+			this._showBackdrop();
 			this._loadProvidersAndLocations();
 		}
 	}
 
 	private _closePatientOverlay(): void {
 		this.patientOverlay.style.display = 'none';
+		this._hideBackdropIfIdle();
 	}
 
 	private _closeAppointmentOverlay(): void {
 		this.appointmentOverlay.style.display = 'none';
+		this._hideBackdropIfIdle();
 	}
 
 	private _closeAllOverlays(): void {
 		this.searchDropdown.style.display = 'none';
 		this.patientOverlay.style.display = 'none';
 		this.appointmentOverlay.style.display = 'none';
+		this._hideBackdropIfIdle();
 	}
 
-	private _positionOverlay(overlay: HTMLElement): void {
-		const rect = this.element.getBoundingClientRect();
-		overlay.style.top = `${rect.bottom}px`;
-		const win = DOM.getActiveWindow();
-		overlay.style.right = `${win.innerWidth - rect.right}px`;
+	private _showBackdrop(): void {
+		if (this.overlayBackdrop) { this.overlayBackdrop.style.display = ''; }
+	}
+
+	private _hideBackdropIfIdle(): void {
+		if (!this.overlayBackdrop) { return; }
+		const patientOpen = this.patientOverlay && this.patientOverlay.style.display !== 'none';
+		const apptOpen = this.appointmentOverlay && this.appointmentOverlay.style.display !== 'none';
+		if (!patientOpen && !apptOpen) {
+			this.overlayBackdrop.style.display = 'none';
+		}
 	}
 
 	// --- Form Helpers ---
