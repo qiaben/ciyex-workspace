@@ -183,24 +183,37 @@ export class CalendarEditor extends EditorPane {
 			// Load all appointments — provider/location filters apply client-side so the user
 			// can toggle multiple selections without re-fetching.
 			const loadAppts = async () => {
-				try {
-					const res = await this.apiService.fetch(`/api/fhir-resource/appointments?page=0&size=200`);
-					if (res.ok) {
+				const { startDate, endDate } = this._getDateRange();
+				const normalize = (raw: Record<string, unknown>[]) => raw.map((a: Record<string, unknown>) => ({
+					...a,
+					patientName: a.patientName || a.patientDisplay || '',
+					providerName: a.providerName || a.providerDisplay || '',
+					practitionerName: a.practitionerName || a.providerDisplay || '',
+					providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
+					locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
+					locationName: a.locationName || a.locationDisplay || '',
+					status: a.status || 'Scheduled',
+				})) as Appointment[];
+
+				// Try FHIR endpoint first, fall back to REST endpoint
+				const urls = [
+					`/api/fhir-resource/appointments?page=0&size=500&dateFrom=${startDate}&dateTo=${endDate}`,
+					`/api/fhir-resource/appointments?page=0&size=500`,
+					`/api/appointments?page=0&size=500&dateFrom=${startDate}&dateTo=${endDate}`,
+					`/api/appointments?page=0&size=500`,
+				];
+				for (const url of urls) {
+					try {
+						const res = await this.apiService.fetch(url);
+						if (!res.ok) { continue; }
 						const data = await res.json();
-						const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-						// Normalize FHIR field names
-						this.appointments = raw.map((a: Record<string, unknown>) => ({
-							...a,
-							patientName: a.patientName || a.patientDisplay || '',
-							providerName: a.providerName || a.providerDisplay || '',
-							practitionerName: a.practitionerName || a.providerDisplay || '',
-							providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
-							locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
-							locationName: a.locationName || a.locationDisplay || '',
-							status: a.status || 'Scheduled',
-						})) as Appointment[];
-					}
-				} catch { /* */ }
+						const raw: Record<string, unknown>[] = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+						if (raw.length > 0) {
+							this.appointments = normalize(raw);
+							break;
+						}
+					} catch { /* try next */ }
+				}
 				if (!this.appointments) { this.appointments = []; }
 			};
 
@@ -575,14 +588,25 @@ export class CalendarEditor extends EditorPane {
 					// O(1) lookup from pre-built index
 					const slotAppts = weekIndex.get(`${dayStr}|${hour}|${minute}`) || [];
 
-					for (const apt of slotAppts) {
+					for (let ai = 0; ai < slotAppts.length; ai++) {
+						const apt = slotAppts[ai];
 						const dur = apt.duration || 30;
-						const slots = Math.max(1, Math.ceil(dur / slotDuration));
-						const block = DOM.append(cell, DOM.$('.apt-block'));
 						const typeColor = TYPE_COLORS[(getAppointmentType(apt) || '').toLowerCase()] || '#607D8B';
 						const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
 
-						block.style.cssText = `position:absolute;left:2px;right:2px;top:0;height:${slots * slotHeight - 2}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						// Precise sub-slot positioning: offset by the fractional minute within the 30-min slot
+						const aptDate = this._parseAptDate(apt);
+						const minuteInSlot = aptDate ? aptDate.getMinutes() % slotDuration : 0;
+						const topOffset = Math.round((minuteInSlot / slotDuration) * slotHeight);
+						const pixelH = Math.max(slotHeight - 2, Math.round((dur / slotDuration) * slotHeight) - 2);
+
+						// Side-by-side when multiple appointments share the same slot
+						const colW = slotAppts.length > 1 ? Math.floor(100 / slotAppts.length) : 100;
+						const leftPct = ai * colW;
+						const rightPct = 100 - (ai + 1) * colW;
+
+						const block = DOM.append(cell, DOM.$('.apt-block'));
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
 						block.addEventListener('mouseenter', () => { block.style.background = `${typeColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${typeColor}20`; });
 						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
@@ -707,12 +731,24 @@ export class CalendarEditor extends EditorPane {
 						...(prov.id !== prov.name ? (apptIndex.get(`${prov.name}|${hour}|${minute}`) || []) : []),
 					];
 
-					for (const apt of slotAppts) {
+					for (let ai = 0; ai < slotAppts.length; ai++) {
+						const apt = slotAppts[ai];
 						const dur = apt.duration || 30;
-						const slots = Math.max(1, Math.ceil(dur / slotDuration));
 						const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
+
+						// Precise sub-slot positioning
+						const aptDate = this._parseAptDate(apt);
+						const minuteInSlot = aptDate ? aptDate.getMinutes() % slotDuration : 0;
+						const topOffset = Math.round((minuteInSlot / slotDuration) * slotHeight);
+						const pixelH = Math.max(slotHeight - 2, Math.round((dur / slotDuration) * slotHeight) - 2);
+
+						// Side-by-side when multiple appointments share the same provider slot
+						const colW = slotAppts.length > 1 ? Math.floor(100 / slotAppts.length) : 100;
+						const leftPct = ai * colW;
+						const rightPct = 100 - (ai + 1) * colW;
+
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						block.style.cssText = `position:absolute;left:2px;right:2px;top:0;height:${slots * slotHeight - 2}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
 						block.addEventListener('mouseenter', () => { block.style.background = `${provColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${provColor}20`; });
 						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
@@ -848,6 +884,9 @@ export class CalendarEditor extends EditorPane {
 		this._headerRendered = false;
 		this._renderHeader();
 		this._renderGrid();
+		// Reload appointments for the new date range in the background
+		this.appointments = [];
+		this._loadAppointments().then(() => this._renderGrid());
 	}
 
 	private async _refresh(): Promise<void> {

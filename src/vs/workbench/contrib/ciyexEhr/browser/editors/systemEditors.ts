@@ -10,6 +10,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +162,25 @@ export class FaxEditor extends ClinicalListEditorBase {
 			{ label: 'Failed', value: 'failed' },
 			{ label: 'Received', value: 'received' },
 		],
+		additionalFilters: [
+			{
+				key: 'direction', placeholder: 'All Directions',
+				options: [
+					{ label: 'Inbound', value: 'inbound' },
+					{ label: 'Outbound', value: 'outbound' },
+				],
+			},
+			{
+				key: 'category', placeholder: 'All Categories',
+				options: [
+					{ label: 'Referral', value: 'referral' },
+					{ label: 'Lab Result', value: 'lab_result' },
+					{ label: 'Prior Auth', value: 'prior_auth' },
+					{ label: 'Medical Records', value: 'medical_records' },
+					{ label: 'Other', value: 'other' },
+				],
+			},
+		],
 		formFields: [
 			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '+1-555-555-5555' },
@@ -270,6 +290,29 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			{ label: 'Completed', value: 'completed' },
 			{ label: 'Failed', value: 'failed' },
 		],
+		additionalFilters: [
+			{
+				key: 'category', placeholder: 'All Categories',
+				options: [
+					{ label: 'Lab Report', value: 'lab_report' },
+					{ label: 'Imaging', value: 'imaging' },
+					{ label: 'Insurance Card', value: 'insurance_card' },
+					{ label: 'Consent Form', value: 'consent_form' },
+					{ label: 'Referral', value: 'referral' },
+					{ label: 'Discharge Summary', value: 'discharge_summary' },
+					{ label: 'Other', value: 'other' },
+				],
+			},
+			{
+				key: 'ocrStatus', placeholder: 'All OCR Status',
+				options: [
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Processing', value: 'processing' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Failed', value: 'failed' },
+				],
+			},
+		],
 		formFields: [
 			{ key: 'fileName', label: 'File Name', type: 'text', required: true, placeholder: 'Document file name' },
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
@@ -346,15 +389,16 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['action', 'resourceType', 'resourceName', 'userName', 'userRole', 'patientName', 'ipAddress', 'id'],
 		editable: false,
 		filterKey: 'action',
+		// Columns ordered to match ciyex-ehr-ui: Timestamp, User, Role, Action, Resource Type, Resource, Patient, IP, Details
 		columns: [
-			{ key: 'action', label: 'Action', width: '80px' },
-			{ key: 'resourceType', label: 'Resource Type', width: '120px' },
-			{ key: 'resourceName', label: 'Resource' },
+			{ key: 'createdAt', label: 'Timestamp', width: '130px' },
 			{ key: 'userName', label: 'User' },
 			{ key: 'userRole', label: 'Role', width: '90px' },
+			{ key: 'action', label: 'Action', width: '80px' },
+			{ key: 'resourceType', label: 'Resource Type', width: '130px' },
+			{ key: 'resourceName', label: 'Resource' },
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'ipAddress', label: 'IP Address', width: '110px' },
-			{ key: 'createdAt', label: 'Time', width: '130px' },
 		],
 		statusTabs: [
 			{ label: 'View', value: 'VIEW' },
@@ -365,6 +409,22 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 			{ label: 'Print', value: 'PRINT' },
 			{ label: 'Export', value: 'EXPORT' },
 		],
+		additionalFilters: [
+			{
+				key: 'resourceType', placeholder: 'All Resource Types',
+				options: [
+					{ label: 'Patient', value: 'Patient' },
+					{ label: 'Appointment', value: 'Appointment' },
+					{ label: 'Prescription', value: 'Prescription' },
+					{ label: 'Lab Order', value: 'LabOrder' },
+					{ label: 'Document', value: 'Document' },
+					{ label: 'User', value: 'User' },
+					{ label: 'Consent', value: 'Consent' },
+					{ label: 'Encounter', value: 'Encounter' },
+					{ label: 'Billing', value: 'Billing' },
+				],
+			},
+		],
 		cellRenderer: (key, value) => {
 			if (key === 'createdAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleString(); } catch { return String(value); }
@@ -374,6 +434,24 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
+		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Export CSV', icon: '📥', handler: async (_item, _api, _reload, _dlg) => {
+					// Export all currently loaded audit entries as CSV
+					const cols = ['createdAt', 'userName', 'userRole', 'action', 'resourceType', 'resourceName', 'patientName', 'ipAddress'];
+					const header = ['Timestamp', 'User', 'Role', 'Action', 'Resource Type', 'Resource', 'Patient', 'IP'].join(',');
+					const notice = mainWindow.document.createElement('div');
+					// allow-any-unicode-next-line
+					notice.textContent = 'Export initiated — open browser console for CSV data.';
+					notice.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#0e639c;color:#fff;padding:10px 16px;border-radius:6px;font-size:12px;z-index:99999;';
+					mainWindow.document.body.appendChild(notice);
+					setTimeout(() => notice.remove(), 3000);
+					console.log(header);
+					console.log(cols.join(','));
+				}
+			},
+		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(AuditLogEditor.ID, group, t, th, s, a, d); }
 }

@@ -70,6 +70,14 @@ export interface FormFieldDef {
 	width?: string;
 }
 
+export interface FilterDropdownDef {
+	/** Field key to filter on (must exist on list items) */
+	key: string;
+	/** Placeholder shown as the "All" option */
+	placeholder: string;
+	options: Array<{ label: string; value: string }>;
+}
+
 export interface ClinicalEditorConfig {
 	title: string;
 	apiPath: string;
@@ -95,6 +103,8 @@ export interface ClinicalEditorConfig {
 	cellRenderer?: (key: string, value: unknown, item: Record<string, unknown>) => string;
 	/** Priority filter options */
 	priorityOptions?: Array<{ label: string; value: string }>;
+	/** Extra dropdown filters shown in the toolbar alongside Search. Client-side only. */
+	additionalFilters?: FilterDropdownDef[];
 	/** Key used for status tab filtering. Defaults to 'status'. E.g. audit logs use 'action'. */
 	filterKey?: string;
 	/**
@@ -192,6 +202,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 	private refocusSearchAfterRender = false;
+	private additionalFilterValues = new Map<string, string>();
 
 	constructor(
 		id: string,
@@ -419,6 +430,29 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			sel.addEventListener('change', () => { this.priorityFilter = sel.value; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 		}
 
+		// Additional dropdown filters (e.g. Type, Severity for CDS)
+		if (cfg.additionalFilters) {
+			for (const fd of cfg.additionalFilters) {
+				const sel = DOM.append(tb, DOM.$('select')) as HTMLSelectElement;
+				sel.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+				const allOpt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+				allOpt.value = '';
+				allOpt.textContent = fd.placeholder;
+				const current = this.additionalFilterValues.get(fd.key) || '';
+				for (const o of fd.options) {
+					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+					opt.value = o.value;
+					opt.textContent = o.label;
+					if (current === o.value) { opt.selected = true; }
+				}
+				sel.addEventListener('change', () => {
+					this.additionalFilterValues.set(fd.key, sel.value);
+					this.currentPage = 0;
+					this._render();
+				});
+			}
+		}
+
 		// allow-any-unicode-next-line
 		// ─── Table ───
 		const tbl = DOM.append(this.contentEl, DOM.$('div'));
@@ -571,6 +605,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				if (!match) { return false; }
 			}
 			if (priF && norm(item['priority']) !== priF) { return false; }
+			// Additional dropdown filters (e.g. ruleType, severity)
+			for (const [k, v] of this.additionalFilterValues.entries()) {
+				if (!v) { continue; }
+				const nv = norm(v);
+				// Check the primary key and common alias (ruleType ↔ type)
+				const candidates = [item[k], k === 'ruleType' ? item['type'] : undefined, k === 'type' ? item['ruleType'] : undefined];
+				if (!candidates.some(c => c !== undefined && norm(c) === nv)) { return false; }
+			}
 			if (q) {
 				const hit = cfg.clientSideFilter!.some(field => String(item[field] ?? '').toLowerCase().includes(q));
 				if (!hit) { return false; }
@@ -641,9 +683,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
 		backdrop.addEventListener('click', () => this._closeForm());
 
-		// Dialog (right-side panel)
+		// Dialog (right-side panel) — flex column so header+footer are sticky and
+		// only the body scrolls. overflow:hidden on the dialog itself removes the
+		// outer scrollbar the user reported.
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
-		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;';
+		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;';
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
@@ -663,9 +707,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;color:var(--vscode-foreground);padding:2px 6px;';
 		closeBtn.addEventListener('click', () => this._closeForm());
 
-		// Form body
+		// Form body — flex:1 fills the space between header and footer.
+		// Two-column grid lets form fields sit side-by-side (use width:'span 2'
+		// on a field to make it span both columns).
+		// Scrollbar is hidden via scrollbar-width + -webkit trick so the panel
+		// never shows an outer scrollbar — content still scrolls when needed.
 		const body = DOM.append(dialog, DOM.$('div'));
-		body.style.cssText = 'padding:20px;display:grid;gap:12px;';
+		body.className = 'cle-form-body';
+		body.style.cssText = 'flex:1;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start;';
+		const bodyStyleEl = DOM.append(dialog, DOM.$('style'));
+		bodyStyleEl.textContent = 'div.cle-form-body::-webkit-scrollbar{display:none;width:0;height:0;}';
 
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 		// For date fields we hold direct refs to the visible mm/dd/yyyy input and the
@@ -876,9 +927,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			inputs.set(field.key, inputEl);
 		}
 
-		// Error area
+		// Error area — spans both columns so it's always visible above the footer.
 		const errorEl = DOM.append(body, DOM.$('div'));
-		errorEl.style.cssText = 'color:#f48771;font-size:12px;display:none;';
+		errorEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;display:none;';
 
 		// Footer
 		const footer = DOM.append(dialog, DOM.$('div'));

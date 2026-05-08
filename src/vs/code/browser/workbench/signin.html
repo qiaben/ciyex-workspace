@@ -1,0 +1,317 @@
+<!-- Copyright (C) Ciyex Inc. All rights reserved. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+	<title>Ciyex EHR - Sign In</title>
+	<style>
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+			height: 100vh;
+			display: flex;
+			overflow: hidden;
+		}
+
+		/* -- Left panel -- */
+		.left {
+			flex: 0 0 50%;
+			background: linear-gradient(145deg, #5B5FEE 0%, #3730C8 55%, #2B27A8 100%);
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			padding: 48px 56px;
+			color: #fff;
+		}
+
+		.logo {
+			width: 80px;
+			height: auto;
+			margin-bottom: 20px;
+			filter: drop-shadow(0 4px 16px rgba(0,0,0,0.25));
+		}
+
+		.brand-title {
+			font-size: 32px;
+			font-weight: 700;
+			letter-spacing: -0.5px;
+			margin-bottom: 8px;
+		}
+
+		.brand-subtitle {
+			font-size: 15px;
+			font-weight: 400;
+			opacity: 0.82;
+			margin-bottom: 44px;
+			text-align: center;
+		}
+
+		.features {
+			display: flex;
+			flex-direction: column;
+			gap: 14px;
+			width: 100%;
+			max-width: 380px;
+		}
+
+		.feature-item {
+			display: flex;
+			align-items: center;
+			gap: 14px;
+			background: rgba(255, 255, 255, 0.13);
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			border-radius: 10px;
+			padding: 13px 18px;
+			font-size: 14px;
+			font-weight: 500;
+			backdrop-filter: blur(4px);
+		}
+
+		.feature-icon {
+			flex-shrink: 0;
+			width: 20px;
+			height: 20px;
+			opacity: 0.92;
+		}
+
+		/* -- Right panel -- */
+		.right {
+			flex: 1;
+			background: #F4F5F7;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 48px 32px;
+			position: relative;
+		}
+
+		.card {
+			background: #fff;
+			border-radius: 16px;
+			box-shadow: 0 4px 32px rgba(0,0,0,0.08);
+			padding: 48px 44px 40px;
+			width: 100%;
+			max-width: 400px;
+		}
+
+		.card h1 {
+			font-size: 24px;
+			font-weight: 700;
+			color: #111827;
+			text-align: center;
+			margin-bottom: 6px;
+		}
+
+		.card .tagline {
+			font-size: 14px;
+			color: #6B7280;
+			text-align: center;
+			margin-bottom: 32px;
+		}
+
+		.field label {
+			display: block;
+			font-size: 13px;
+			font-weight: 600;
+			color: #374151;
+			margin-bottom: 8px;
+		}
+
+		.field input {
+			width: 100%;
+			padding: 11px 14px;
+			border: 1.5px solid #D1D5DB;
+			border-radius: 8px;
+			font-size: 14px;
+			color: #111827;
+			outline: none;
+			transition: border-color 0.15s;
+		}
+
+		.field input:focus {
+			border-color: #4F46E5;
+			box-shadow: 0 0 0 3px rgba(79,70,229,0.12);
+		}
+
+		.field input::placeholder {
+			color: #9CA3AF;
+		}
+
+		.btn-continue {
+			display: block;
+			width: 100%;
+			margin-top: 20px;
+			padding: 13px;
+			background: #4F6AF0;
+			color: #fff;
+			font-size: 15px;
+			font-weight: 600;
+			border: none;
+			border-radius: 8px;
+			cursor: pointer;
+			transition: background 0.15s, transform 0.1s;
+		}
+
+		.btn-continue:hover { background: #3D58E0; }
+		.btn-continue:active { transform: scale(0.98); }
+
+		.register-link {
+			display: block;
+			text-align: center;
+			margin-top: 22px;
+			font-size: 14px;
+			color: #4F6AF0;
+			font-weight: 500;
+			text-decoration: none;
+		}
+
+		.register-link:hover { text-decoration: underline; }
+
+		.legal {
+			margin-top: 14px;
+			text-align: center;
+			font-size: 12px;
+			color: #9CA3AF;
+		}
+
+		.legal a {
+			color: #4F6AF0;
+			text-decoration: none;
+		}
+
+		.legal a:hover { text-decoration: underline; }
+
+		/* -- Dark mode toggle -- */
+		.theme-toggle {
+			position: fixed;
+			bottom: 24px;
+			right: 24px;
+			width: 44px;
+			height: 44px;
+			border-radius: 50%;
+			background: #4F46E5;
+			color: #fff;
+			border: none;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			box-shadow: 0 2px 12px rgba(79,70,229,0.35);
+			transition: background 0.2s;
+		}
+
+		.theme-toggle:hover { background: #3D35C8; }
+
+		/* -- Dark mode -- */
+		body.dark { background: #111827; }
+		body.dark .right { background: #1F2937; }
+		body.dark .card {
+			background: #111827;
+			box-shadow: 0 4px 32px rgba(0,0,0,0.4);
+		}
+		body.dark .card h1 { color: #F9FAFB; }
+		body.dark .card .tagline { color: #9CA3AF; }
+		body.dark .field label { color: #D1D5DB; }
+		body.dark .field input {
+			background: #1F2937;
+			border-color: #374151;
+			color: #F9FAFB;
+		}
+		body.dark .field input:focus { border-color: #6366F1; }
+		body.dark .legal { color: #6B7280; }
+
+		/* -- Responsive -- */
+		@media (max-width: 768px) {
+			.left { display: none; }
+			.right { background: #fff; padding: 32px 16px; }
+			body.dark .right { background: #111827; }
+		}
+	</style>
+</head>
+<body>
+
+<!-- Left brand panel -->
+<div class="left">
+	<img class="logo" src="data:image/png;base64,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" alt="Ciyex Logo" />
+	<h2 class="brand-title">Ciyex EHR</h2>
+	<p class="brand-subtitle">Open Source Public Health Infrastructure</p>
+	<div class="features">
+		<div class="feature-item">
+			<svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+			</svg>
+			HIPAA-compliant with enterprise-grade security
+		</div>
+		<div class="feature-item">
+			<svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+			</svg>
+			FHIR R4 interoperable health data exchange
+		</div>
+		<div class="feature-item">
+			<svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+			</svg>
+			Patient charting, scheduling &amp; e-prescribing
+		</div>
+		<div class="feature-item">
+			<svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+			</svg>
+			Cloud-native with self-hosting option
+		</div>
+	</div>
+</div>
+
+<!-- Right sign-in panel -->
+<div class="right">
+	<div class="card">
+		<h1>Sign In</h1>
+		<p class="tagline">Enter your email to continue</p>
+		<form id="signinForm">
+			<div class="field">
+				<label for="email">Email</label>
+				<input type="email" id="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+			</div>
+			<button type="submit" class="btn-continue">Continue</button>
+		</form>
+		<a id="registerLink" href="#register" class="register-link">Register a new practice</a>
+		<p class="legal">
+			By signing in, you agree to our <a href="#terms">Terms</a> &amp; <a href="#privacy">Privacy Policy</a>.
+		</p>
+	</div>
+</div>
+
+<!-- Dark mode toggle -->
+<button class="theme-toggle" id="themeToggle" title="Toggle dark mode">
+	<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+		<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+	</svg>
+</button>
+
+<script>
+	(function () {
+		const saved = localStorage.getItem('ciyex-theme');
+		if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+			document.body.classList.add('dark');
+		}
+
+		document.getElementById('themeToggle').addEventListener('click', function () {
+			document.body.classList.toggle('dark');
+			localStorage.setItem('ciyex-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+		});
+
+		document.getElementById('signinForm').addEventListener('submit', function (e) {
+			e.preventDefault();
+			const email = document.getElementById('email').value.trim();
+			if (email) {
+				window.location.href = '/?email=' + encodeURIComponent(email);
+			}
+		});
+	})();
+</script>
+</body>
+</html>

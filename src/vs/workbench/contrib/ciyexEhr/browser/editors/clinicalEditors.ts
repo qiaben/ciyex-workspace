@@ -41,6 +41,18 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
+		additionalFilters: [
+			{
+				key: 'prescriberName', placeholder: 'All Prescribers',
+				options: [
+					{ label: 'Dr. Brian Wilson', value: 'Brian Wilson' },
+					{ label: 'Dr. Robert Kumar', value: 'Robert Kumar' },
+					{ label: 'Dr. Emily Taylor', value: 'Emily Taylor' },
+					{ label: 'Dr. Jessica Patel', value: 'Jessica Patel' },
+					{ label: 'Dr. Sarah Williams', value: 'Sarah Williams' },
+				],
+			},
+		],
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
@@ -159,18 +171,36 @@ export class LabsEditor extends ClinicalListEditorBase {
 			}
 			return String(_value ?? '');
 		},
+		// Columns ordered to match ciyex-ehr-ui: Patient, Order#, Test, Provider, Priority, Result, Status, Date
 		columns: [
-			{ key: 'patientFirstName', label: 'Patient' }, { key: 'orderNumber', label: 'Order #', width: '100px' },
-			{ key: 'orderName', label: 'Test', width: '1.5fr' }, { key: 'physicianName', label: 'Provider' },
-			{ key: 'priority', label: 'Priority', width: '80px' }, { key: 'result', label: 'Results', width: '80px' },
+			{ key: 'patientFirstName', label: 'Patient' },
+			{ key: 'orderNumber', label: 'Order #', width: '110px' },
+			{ key: 'orderName', label: 'Test', width: '1.5fr' },
+			{ key: 'physicianName', label: 'Provider' },
+			{ key: 'priority', label: 'Priority', width: '80px' },
+			{ key: 'result', label: 'Result', width: '90px' },
 			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'orderDate', label: 'Date', width: '90px' },
 		],
 		statusTabs: [
+			{ label: 'Lab Orders', value: '' },
 			{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
 		],
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
+		],
+		additionalFilters: [
+			{
+				key: 'result', placeholder: 'All Results',
+				options: [
+					{ label: 'Pending', value: 'Pending' },
+					{ label: 'Preliminary', value: 'Preliminary' },
+					{ label: 'Final', value: 'Final' },
+					{ label: 'Corrected', value: 'Corrected' },
+					{ label: 'Amended', value: 'Amended' },
+				],
+			},
 		],
 		formFields: [
 			// Patient Information
@@ -276,17 +306,71 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			// Vaccine Information
 			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Influenza, inactivated' },
 			{
-				key: 'cvxCode', label: 'CVX Code', type: 'search', required: true,
-				placeholder: 'Search CVX vaccine code...',
-				apiPath: '/api/app-proxy/ciyex-codes/api/codes/CVX/search',
-				searchParam: 'q',
-				searchDisplayField: 'shortDescription',
-				searchValueField: 'code',
-				relatedField: 'cvxCodeId',
-				relatedDisplayFields: ['code', 'shortDescription'],
-				relatedFieldsMap: { vaccineName: 'shortDescription' },
-				validationPattern: '^[0-9]{1,4}$',
-				validationMessage: 'CVX code must be 1-4 digits',
+				key: 'cvxCode', label: 'CVX Code', type: 'select', required: true,
+				aliases: ['cvx', 'vaccineCode', 'cvxCodeId'],
+				options: [
+					{ label: '20 — DTaP', value: '20' },
+					{ label: '21 — Varicella', value: '21' },
+					{ label: '33 — Pneumococcal', value: '33' },
+					{ label: '43 — Hep B (adult)', value: '43' },
+					{ label: '45 — Hep B (pediatric)', value: '45' },
+					{ label: '48 — Hib (PRP-T)', value: '48' },
+					{ label: '49 — Hib (HbOC)', value: '49' },
+					{ label: '52 — Hep A (adult)', value: '52' },
+					{ label: '83 — Hep A (pediatric)', value: '83' },
+					{ label: '85 — Hep A-Hep B', value: '85' },
+					{ label: '94 — MMR-Varicella', value: '94' },
+					{ label: '100 — Pneumococcal (PCV7)', value: '100' },
+					{ label: '103 — Meningococcal', value: '103' },
+					{ label: '106 — DTaP-Hep B-IPV', value: '106' },
+					{ label: '107 — DTaP-Hib-IPV', value: '107' },
+					{ label: '108 — Meningococcal MPSV4', value: '108' },
+					{ label: '110 — DTaP-IPV-Hib', value: '110' },
+					{ label: '111 — Influenza (live intnasal)', value: '111' },
+					{ label: '113 — Td (adult)', value: '113' },
+					{ label: '114 — Meningococcal MCV4P', value: '114' },
+					{ label: '115 — Tdap', value: '115' },
+					{ label: '116 — Rotavirus (monovalent)', value: '116' },
+					{ label: '119 — Rotavirus (pentavalent)', value: '119' },
+					{ label: '120 — DTaP-IPV-Hib-HepB', value: '120' },
+					{ label: '121 — Zoster (live)', value: '121' },
+					{ label: '130 — DTaP-IPV', value: '130' },
+					{ label: '133 — PCV13', value: '133' },
+					{ label: '135 — Influenza (H1N1)', value: '135' },
+					{ label: '136 — Meningococcal MCV4O', value: '136' },
+					{ label: '140 — Influenza (seasonal)', value: '140' },
+					{ label: '141 — Influenza (split, 0.5mL)', value: '141' },
+					{ label: '143 — Adenovirus type 4', value: '143' },
+					{ label: '144 — Influenza (high-dose)', value: '144' },
+					{ label: '146 — DTaP-IPV-Hib-HepB', value: '146' },
+					{ label: '147 — Meningococcal B', value: '147' },
+					{ label: '149 — Influenza (recombinant)', value: '149' },
+					{ label: '150 — Influenza (adjuvanted)', value: '150' },
+					{ label: '152 — Pneumococcal PPSV23', value: '152' },
+					{ label: '153 — Influenza (Afluria quad)', value: '153' },
+					{ label: '155 — Influenza (Flucellex quad)', value: '155' },
+					{ label: '158 — Influenza (Fluzone quad)', value: '158' },
+					{ label: '160 — Influenza (LAIV4)', value: '160' },
+					{ label: '161 — Influenza (Fluarix quad)', value: '161' },
+					{ label: '162 — Meningococcal B (Bexsero)', value: '162' },
+					{ label: '163 — Meningococcal B (Trumenba)', value: '163' },
+					{ label: '165 — HPV9', value: '165' },
+					{ label: '166 — PCV15', value: '166' },
+					{ label: '167 — PCV20', value: '167' },
+					{ label: '168 — Influenza (Fluzone HD quad)', value: '168' },
+					{ label: '171 — Influenza (mRNA)', value: '171' },
+					{ label: '174 — COVID-19 (Moderna)', value: '174' },
+					{ label: '175 — COVID-19 (Pfizer-BioNTech)', value: '175' },
+					{ label: '176 — COVID-19 (Janssen)', value: '176' },
+					{ label: '185 — Zoster (recombinant)', value: '185' },
+					{ label: '187 — Zoster (subunit)', value: '187' },
+					{ label: '189 — COVID-19 (Novavax)', value: '189' },
+					{ label: '196 — COVID-19 bivalent (Pfizer)', value: '196' },
+					{ label: '207 — COVID-19 bivalent (Moderna)', value: '207' },
+					{ label: '213 — COVID-19 (Pfizer 2024-25)', value: '213' },
+					{ label: '217 — COVID-19 (Moderna 2024-25)', value: '217' },
+					{ label: '999 — Unknown', value: '999' },
+				],
 			},
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
 			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9\\-]{2,32}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters' },
@@ -362,6 +446,16 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Denied', value: 'denied' },
 			{ label: 'Cancelled', value: 'cancelled' },
+		],
+		additionalFilters: [
+			{
+				key: 'urgency', placeholder: 'All Urgency',
+				options: [
+					{ label: 'Routine', value: 'routine' },
+					{ label: 'Urgent', value: 'urgent' },
+					{ label: 'STAT', value: 'stat' },
+				],
+			},
 		],
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
@@ -509,13 +603,37 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'startDate', label: 'Start Date', type: 'date' },
 			{ key: 'endDate', label: 'End Date', type: 'date' },
-			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...' },
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...', width: 'span 2' },
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
 					{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
 					{ label: 'On Hold', value: 'on_hold' }, { label: 'Completed', value: 'completed' },
 				], defaultValue: 'draft'
+			},
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
+			// Goals section (matching ciyex-ehr-ui care plan goals)
+			{ key: 'goal1Title', label: 'Goal 1 — Title', type: 'text', placeholder: 'e.g. Reduce HbA1c below 7%', aliases: ['goals[0].title', 'goal1'], width: 'span 2' },
+			{ key: 'goal1Description', label: 'Goal 1 — Description', type: 'textarea', placeholder: 'Describe the goal and how to achieve it...', aliases: ['goals[0].description'], width: 'span 2' },
+			{ key: 'goal1TargetDate', label: 'Goal 1 — Target Date', type: 'date', aliases: ['goals[0].targetDate'] },
+			{ key: 'goal2Title', label: 'Goal 2 — Title', type: 'text', placeholder: 'Second goal (optional)', aliases: ['goals[1].title', 'goal2'], width: 'span 2' },
+			{ key: 'goal2TargetDate', label: 'Goal 2 — Target Date', type: 'date', aliases: ['goals[1].targetDate'] },
+			// Interventions section
+			{ key: 'intervention1', label: 'Intervention 1', type: 'text', placeholder: 'e.g. Monthly A1C testing', aliases: ['interventions[0]', 'interventions[0].title'], width: 'span 2' },
+			{ key: 'intervention2', label: 'Intervention 2', type: 'text', placeholder: 'e.g. Dietary counseling', aliases: ['interventions[1]', 'interventions[1].title'], width: 'span 2' },
+			{ key: 'intervention3', label: 'Intervention 3', type: 'text', placeholder: 'e.g. Exercise program', aliases: ['interventions[2]', 'interventions[2].title'], width: 'span 2' },
+		],
+		additionalFilters: [
+			{
+				key: 'category', placeholder: 'All Categories',
+				options: [
+					{ label: 'Chronic Disease', value: 'chronic_disease' },
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Post-Surgical', value: 'post_surgical' },
+					{ label: 'Behavioral', value: 'behavioral' },
+					{ label: 'Rehabilitation', value: 'rehabilitation' },
+					{ label: 'Palliative', value: 'palliative' },
+					{ label: 'Other', value: 'other' },
+				],
 			},
 		],
 		actions: [
@@ -530,86 +648,177 @@ export class CdsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexCds';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Clinical Decision Support', apiPath: '/api/cds/rules',
-		searchPlaceholder: 'Search by rule name...',
-		clientSideFilter: ['name', 'type', 'description', 'severity', 'status', 'id'],
+		statsPath: '/api/cds/stats',
+		searchPlaceholder: 'Search rules...',
+		clientSideFilter: ['name', 'ruleType', 'type', 'description', 'severity', 'triggerEvent', 'actionType', 'message', 'id'],
 		editable: true,
 		refetchOnEdit: true,
-		// Backend DTO commonly requires ruleType / actionType / appliesTo / isActive / conditions
-		// even when the form doesn't surface them. Provide safe defaults so create succeeds.
+		mergeOnEdit: true,
 		createDefaults: {
 			ruleType: 'custom',
 			actionType: 'alert',
 			appliesTo: 'all',
 			isActive: true,
 			conditions: [],
+			snoozeDays: 0,
 		},
-		beforeSave: (payload, isEdit) => {
-			// Drop nullish/empty optional fields that can cause backend validation errors.
+		beforeSave: (payload, _isEdit) => {
 			const out: Record<string, unknown> = {};
 			for (const [k, v] of Object.entries(payload)) {
 				if (v === '' || v === null || v === undefined) { continue; }
 				out[k] = v;
 			}
-			// Backend expects "ruleType" — always rename "type" so save and edit are
-			// symmetric. The aliases on the type field handle reading "ruleType" back.
-			if (out.type) {
-				out.ruleType = out.type;
-				delete out.type;
+			// Rename form key "ruleType" → backend field "ruleType" (already correct).
+			// If form sent "type" alias, normalise to "ruleType".
+			if (out['type'] && !out['ruleType']) { out['ruleType'] = out['type']; }
+			delete out['type'];
+			// snoozeDays must be a number.
+			if (out['snoozeDays'] !== undefined) { out['snoozeDays'] = Number(out['snoozeDays']) || 0; }
+			// Mirror isActive ↔ status.
+			if (out['isActive'] !== undefined) {
+				// isActive was set by the toggle field — derive status from it.
+				out['status'] = out['isActive'] ? 'active' : 'inactive';
+			} else if (typeof out['status'] === 'string') {
+				out['isActive'] = (out['status'] as string) === 'active';
 			}
-			// Mirror status -> isActive boolean.
-			if (typeof out.status === 'string') {
-				out.isActive = out.status === 'active';
-			}
+			// conditions must always be present.
+			if (out['conditions'] === undefined) { out['conditions'] = []; }
 			return out;
 		},
 		columns: [
-			{ key: 'name', label: 'Rule Name', width: '1.5fr' }, { key: 'type', label: 'Type', width: '120px' },
-			{ key: 'description', label: 'Description', width: '2fr' },
-			{ key: 'severity', label: 'Severity', width: '80px' }, { key: 'status', label: 'Status', width: '70px' },
+			{ key: 'name', label: 'Rule Name', width: '1.5fr' },
+			{ key: 'ruleType', label: 'Type', width: '130px' },
+			{ key: 'triggerEvent', label: 'Trigger', width: '120px' },
+			{ key: 'severity', label: 'Severity', width: '90px' },
+			{ key: 'actionType', label: 'Action', width: '100px' },
+			{ key: 'isActive', label: 'Status', width: '80px' },
 		],
 		statusTabs: [
 			{ label: 'Active', value: 'active' },
 			{ label: 'Inactive', value: 'inactive' },
-			{ label: 'Draft', value: 'draft' },
 		],
-		formFields: [
-			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'Enter alert/rule name', aliases: ['ruleName'] },
+		additionalFilters: [
 			{
-				key: 'type', label: 'Type', type: 'select', required: true,
-				aliases: ['ruleType', 'rule_type', 'kind'],
+				key: 'ruleType', placeholder: 'All Types',
 				options: [
-					{ label: 'Drug Interaction', value: 'drug_interaction' },
-					{ label: 'Allergy Alert', value: 'allergy_alert' },
+					{ label: 'Preventive Screening', value: 'preventive_screening' },
+					{ label: 'Drug-Allergy', value: 'drug_allergy' },
+					{ label: 'Drug-Drug', value: 'drug_drug' },
 					{ label: 'Duplicate Order', value: 'duplicate_order' },
 					{ label: 'Age-Based', value: 'age_based' },
+					{ label: 'Condition-Based', value: 'condition_based' },
 					{ label: 'Lab Value', value: 'lab_value' },
-					{ label: 'Preventive Care', value: 'preventive_care' },
 					{ label: 'Custom', value: 'custom' },
-				]
+				],
 			},
-			{ key: 'description', label: 'Description', type: 'textarea', required: true, placeholder: 'Describe the clinical rule or alert...' },
 			{
-				key: 'severity', label: 'Severity', type: 'select', required: true, options: [
+				key: 'severity', placeholder: 'All Severity',
+				options: [
 					{ label: 'Info', value: 'info' },
 					{ label: 'Warning', value: 'warning' },
 					{ label: 'Critical', value: 'critical' },
-				], defaultValue: 'warning'
+				],
+			},
+		],
+		// Cell renderer — show isActive as Active/Inactive badge, show ruleType readable.
+		cellRenderer: (key, value) => {
+			if (key === 'isActive') { return value ? 'Active' : 'Inactive'; }
+			if (key === 'ruleType' || key === 'type') {
+				return String(value ?? '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			if (key === 'triggerEvent') {
+				return String(value ?? '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			if (key === 'actionType') {
+				return String(value ?? '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+		statsFilterMap: { active: 'active', inactive: 'inactive', critical: 'critical' },
+		formFields: [
+			// Row 1: full-width name
+			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'e.g., Diabetes A1C Screening', aliases: ['ruleName'], width: 'span 2' },
+			// Row 2: full-width description
+			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Brief description of this rule...', width: 'span 2' },
+			// Row 3: ruleType + category
+			{
+				key: 'ruleType', label: 'Rule Type', type: 'select', required: true,
+				aliases: ['rule_type', 'type', 'kind'],
+				options: [
+					{ label: 'Preventive Screening', value: 'preventive_screening' },
+					{ label: 'Drug-Allergy', value: 'drug_allergy' },
+					{ label: 'Drug-Drug', value: 'drug_drug' },
+					{ label: 'Duplicate Order', value: 'duplicate_order' },
+					{ label: 'Age-Based', value: 'age_based' },
+					{ label: 'Condition-Based', value: 'condition_based' },
+					{ label: 'Lab Value', value: 'lab_value' },
+					{ label: 'Custom', value: 'custom' },
+				],
 			},
 			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'active' },
-					{ label: 'Inactive', value: 'inactive' },
-					{ label: 'Draft', value: 'draft' },
-				], defaultValue: 'draft'
+				key: 'category', label: 'Category', type: 'select',
+				options: [
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Medication Safety', value: 'medication_safety' },
+					{ label: 'Order Entry', value: 'order_entry' },
+					{ label: 'Chronic Disease', value: 'chronic_disease' },
+				],
 			},
-			{ key: 'condition', label: 'Condition Expression', type: 'textarea', placeholder: 'Rule condition (e.g. age > 50 AND diagnosis contains "diabetes")' },
+			// Row 4: triggerEvent + actionType
+			{
+				key: 'triggerEvent', label: 'Trigger Event', type: 'select',
+				aliases: ['trigger_event', 'trigger'],
+				options: [
+					{ label: 'Encounter Open', value: 'encounter_open' },
+					{ label: 'Order Entry', value: 'order_entry' },
+					{ label: 'Medication Prescribe', value: 'medication_prescribe' },
+					{ label: 'Lab Result', value: 'lab_result' },
+					{ label: 'Manual', value: 'manual' },
+				],
+			},
+			{
+				key: 'actionType', label: 'Action Type', type: 'select',
+				aliases: ['action_type'],
+				options: [
+					{ label: 'Alert', value: 'alert' },
+					{ label: 'Reminder', value: 'reminder' },
+					{ label: 'Suggestion', value: 'suggestion' },
+					{ label: 'Hard Stop', value: 'hard_stop' },
+				],
+				defaultValue: 'alert',
+			},
+			// Row 5: severity + appliesTo
+			{
+				key: 'severity', label: 'Severity', type: 'select', required: true,
+				options: [
+					{ label: 'Info', value: 'info' },
+					{ label: 'Warning', value: 'warning' },
+					{ label: 'Critical', value: 'critical' },
+				],
+				defaultValue: 'warning',
+			},
+			{
+				key: 'appliesTo', label: 'Applies To', type: 'select',
+				options: [
+					{ label: 'All Users', value: 'all' },
+					{ label: 'Provider', value: 'provider' },
+					{ label: 'Nurse', value: 'nurse' },
+					{ label: 'Medical Assistant', value: 'ma' },
+				],
+				defaultValue: 'all',
+			},
+			// Row 6: full-width alert message (required)
+			{ key: 'message', label: 'Alert Message', type: 'textarea', required: true, placeholder: 'Message shown to the provider when this rule fires...', width: 'span 2' },
+			// Row 7: full-width recommendation
+			{ key: 'recommendation', label: 'Recommendation', type: 'textarea', placeholder: 'Recommended action for the provider...', width: 'span 2' },
+			// Row 8: referenceUrl + snoozeDays
+			{ key: 'referenceUrl', label: 'Reference URL', type: 'text', placeholder: 'https://...', aliases: ['reference_url', 'refUrl'], validationPattern: '^(https?://.*)?$', validationMessage: 'Must be a valid https:// URL' },
+			{ key: 'snoozeDays', label: 'Snooze (days)', type: 'number', placeholder: 'Leave empty for no snooze', aliases: ['snooze_days'] },
 		],
 		actions: [
 			{
 				// allow-any-unicode-next-line
 				label: 'Toggle', icon: '⏻', handler: async (item, api, reload, dlg) => {
-					// Try the dedicated toggle endpoint; if the backend doesn't expose it,
-					// fall back to PUT /api/cds/rules/{id} flipping isActive.
 					let res = await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' });
 					if (!res.ok) {
 						const next = !(item.isActive === true || item.status === 'active');
@@ -624,7 +833,7 @@ export class CdsEditor extends ClinicalListEditorBase {
 						return;
 					}
 					reload();
-				}
+				},
 			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -641,23 +850,23 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authorizationNumber', 'priority', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Columns matching ciyex-ehr-ui: Patient, Insurance, Procedure, Diagnosis, Auth#, Units, Expiry, Status
+		// Priority filter removed per QA request (issue #13).
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'insuranceName', label: 'Insurance' },
-			// Renamed from "CPT" → "Diagnosis"; backed by diagnosisCode (ICD-10) per QA report.
-			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
 			{ key: 'procedureDescription', label: 'Procedure' },
-			{ key: 'priority', label: 'Priority', width: '70px' }, { key: 'status', label: 'Status', width: '80px' },
+			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
+			{ key: 'authorizationNumber', label: 'Auth #', width: '120px' },
+			{ key: 'approvedUnits', label: 'Units', width: '70px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
+			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' }, { label: 'Submitted', value: 'submitted' },
 			{ label: 'Approved', value: 'approved' }, { label: 'Denied', value: 'denied' },
 			{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
 			{ label: 'Cancelled', value: 'cancelled' },
-		],
-		priorityOptions: [
-			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
@@ -745,7 +954,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 export class EducationEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexEducation';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Patient Education', apiPath: '/api/education/assignments',
+		title: 'Patient Education', apiPath: '/api/patient-education',
 		searchPlaceholder: 'Search by topic, category...',
 		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
 		editable: true,
@@ -761,6 +970,19 @@ export class EducationEditor extends ClinicalListEditorBase {
 		statusTabs: [
 			{ label: 'Assigned', value: 'assigned' }, { label: 'Viewed', value: 'viewed' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Dismissed', value: 'dismissed' },
+		],
+		additionalFilters: [
+			{
+				key: 'category', placeholder: 'All Categories',
+				options: [
+					{ label: 'Disease Management', value: 'disease_management' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' },
+					{ label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Other', value: 'other' },
+				],
+			},
 		],
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
@@ -831,6 +1053,41 @@ export class RecallEditor extends ClinicalListEditorBase {
 			{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
 			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
 		],
+		additionalFilters: [
+			{
+				key: 'recallTypeName', placeholder: 'All Types',
+				options: [
+					{ label: 'Annual Physical', value: 'Annual Physical' },
+					{ label: 'Preventive Care', value: 'Preventive Care' },
+					{ label: 'Follow-Up', value: 'Follow-Up' },
+					{ label: 'Chronic Disease Management', value: 'Chronic Disease Management' },
+					{ label: 'Immunization', value: 'Immunization' },
+					{ label: 'Lab Review', value: 'Lab Review' },
+					{ label: 'Specialist Follow-Up', value: 'Specialist Follow-Up' },
+					{ label: 'Other', value: 'Other' },
+				],
+			},
+			{
+				key: 'providerName', placeholder: 'All Providers',
+				options: [
+					{ label: 'Dr. Brian Wilson', value: 'Brian Wilson' },
+					{ label: 'Dr. Robert Kumar', value: 'Robert Kumar' },
+					{ label: 'Dr. Emily Taylor', value: 'Emily Taylor' },
+					{ label: 'Dr. Jessica Patel', value: 'Jessica Patel' },
+					{ label: 'Dr. Sarah Williams', value: 'Sarah Williams' },
+				],
+			},
+			{
+				key: 'dueDateRange', placeholder: 'All Dates',
+				options: [
+					{ label: 'Today', value: 'today' },
+					{ label: 'This Week', value: 'this_week' },
+					{ label: 'This Month', value: 'this_month' },
+					{ label: 'Overdue', value: 'overdue' },
+					{ label: 'Next 30 Days', value: 'next_30' },
+				],
+			},
+		],
 		formFields: [
 			{
 				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
@@ -842,7 +1099,20 @@ export class RecallEditor extends ClinicalListEditorBase {
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
 			{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
-			{ key: 'recallTypeName', label: 'Recall Type', type: 'text', required: true, placeholder: 'e.g. Annual Physical' },
+			{
+				key: 'recallTypeName', label: 'Recall Type', type: 'select', required: true,
+				aliases: ['recallType', 'type'],
+				options: [
+					{ label: 'Annual Physical', value: 'Annual Physical' },
+					{ label: 'Preventive Care', value: 'Preventive Care' },
+					{ label: 'Follow-Up', value: 'Follow-Up' },
+					{ label: 'Chronic Disease Management', value: 'Chronic Disease Management' },
+					{ label: 'Immunization', value: 'Immunization' },
+					{ label: 'Lab Review', value: 'Lab Review' },
+					{ label: 'Specialist Follow-Up', value: 'Specialist Follow-Up' },
+					{ label: 'Other', value: 'Other' },
+				],
+			},
 			{
 				key: 'providerName', label: 'Provider', type: 'search',
 				placeholder: 'Search provider...', apiPath: '/api/providers',
@@ -913,18 +1183,36 @@ export class CodesEditor extends ClinicalListEditorBase {
 			{ label: 'NDC', value: 'NDC' }, { label: 'CVX', value: 'CVX' },
 			{ label: 'Custom', value: 'CUSTOM' },
 		],
+		additionalFilters: [
+			{
+				key: 'active', placeholder: 'All Status',
+				options: [
+					{ label: 'Active', value: 'true' },
+					{ label: 'Inactive', value: 'false' },
+				],
+			},
+		],
 		formFields: [
 			{ key: 'code', label: 'Code', type: 'text', required: true, placeholder: 'e.g. 99213' },
 			{
 				key: 'codeType', label: 'Code Type', type: 'select', required: true, options: [
 					{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
 					{ label: 'HCPCS', value: 'HCPCS' }, { label: 'CDT', value: 'CDT' },
-					{ label: 'CUSTOM', value: 'CUSTOM' },
+					{ label: 'SNOMED', value: 'SNOMED' }, { label: 'LOINC', value: 'LOINC' },
+					{ label: 'NDC', value: 'NDC' }, { label: 'CVX', value: 'CVX' },
+					{ label: 'Custom', value: 'CUSTOM' },
 				]
 			},
 			{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
 			{ key: 'category', label: 'Category', type: 'text' },
-			{ key: 'feeStandard', label: 'Fee ($)', type: 'number' },
+			{ key: 'modifier', label: 'Modifier', type: 'text', placeholder: 'e.g. 25, 59, GT' },
+			{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
+			{
+				key: 'active', label: 'Active', type: 'select', options: [
+					{ label: 'Active', value: 'true' },
+					{ label: 'Inactive', value: 'false' },
+				], defaultValue: 'true'
+			},
 		],
 		actions: [
 			// allow-any-unicode-next-line
@@ -957,6 +1245,25 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			{ label: 'Active', value: 'active' },
 			{ label: 'Inactive', value: 'inactive' },
 		],
+		additionalFilters: [
+			{
+				key: 'itemType', placeholder: 'All Types',
+				options: [
+					{ label: 'Consumable', value: 'consumable' },
+					{ label: 'Durable', value: 'durable' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Equipment', value: 'equipment' },
+				],
+			},
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'costPerUnit' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
+			if (key === 'stockOnHand' && typeof value === 'number') {
+				// colour-hint via text prefix matching ciyex-ehr-ui
+				return String(value);
+			}
+			return String(value ?? '');
+		},
 		formFields: [
 			{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Latex Gloves Medium' },
 			{ key: 'sku', label: 'SKU', type: 'text', required: true, placeholder: 'e.g. GLV-M-001' },
@@ -1042,22 +1349,43 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			refundedCount: 'refunded',
 		},
 		columns: [
-			{ key: 'patientId', label: 'Patient ID' },
-			{ key: 'amount', label: 'Amount', width: '80px' },
-			{ key: 'transactionType', label: 'Type', width: '90px' },
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'amount', label: 'Amount', width: '90px' },
+			{ key: 'transactionType', label: 'Type', width: '100px' },
 			{ key: 'paymentMethodType', label: 'Method', width: '100px' },
 			{ key: 'description', label: 'Description' },
 			{ key: 'status', label: 'Status', width: '90px' },
-			{ key: 'collectedAt', label: 'Date', width: '100px' },
+			{ key: 'collectedAt', label: 'Date', width: '110px' },
 		],
 		statusTabs: [
 			{ label: 'Completed', value: 'completed' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Processing', value: 'processing' }, { label: 'Failed', value: 'failed' },
 			{ label: 'Refunded', value: 'refunded' }, { label: 'Voided', value: 'voided' },
 		],
-		// "+ New Payment" → matches the "Collect Payment" flow in ciyex-ehr-ui.
 		createLabel: '+ Collect Payment',
 		creatable: true,
+		additionalFilters: [
+			{
+				key: 'transactionType', placeholder: 'All Types',
+				options: [
+					{ label: 'Payment', value: 'payment' },
+					{ label: 'Copay', value: 'copay' },
+					{ label: 'Deductible', value: 'deductible' },
+					{ label: 'Coinsurance', value: 'coinsurance' },
+					{ label: 'Self-Pay', value: 'self_pay' },
+				],
+			},
+			{
+				key: 'paymentMethodType', placeholder: 'All Methods',
+				options: [
+					{ label: 'Credit Card', value: 'credit_card' },
+					{ label: 'Debit Card', value: 'debit_card' },
+					{ label: 'Cash', value: 'cash' },
+					{ label: 'Check', value: 'check' },
+					{ label: 'ACH', value: 'ach' },
+				],
+			},
+		],
 		formFields: [
 			{
 				key: 'patientName', label: 'Patient', type: 'search', required: true,
@@ -1096,9 +1424,20 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				], defaultValue: 'completed'
 			},
 		],
-		cellRenderer: (key: string, value: unknown): string => {
-			if (key === 'amount' && typeof value === 'number') {
-				return `$${value.toFixed(2)}`;
+		cellRenderer: (key: string, value: unknown, item: Record<string, unknown>): string => {
+			if (key === 'amount' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
+			if (key === 'collectedAt' && typeof value === 'string') {
+				try { return new Date(value).toLocaleString(); } catch { return String(value); }
+			}
+			if (key === 'patientName' && !value) {
+				// Fall back to patientId if name not set
+				return item['patientId'] ? `Patient #${item['patientId']}` : '';
+			}
+			if (key === 'transactionType' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			if (key === 'paymentMethodType' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 			}
 			return String(value ?? '');
 		},
@@ -1143,7 +1482,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 export class ClaimsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexClaims';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Claims Management', apiPath: '/api/all-claims',
+		title: 'Claims Management', apiPath: '/api/all-claims', statsPath: '/api/all-claims/stats',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
 		editable: true,
 		// Claims are derived from invoices created via the patient flow — the Claims
@@ -1155,6 +1494,17 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['claimNumber', 'patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'id'],
 		mergeOnEdit: true,
 		editTitle: (item) => `Edit Claim #${String(item.id || '')}`,
+		additionalFilters: [
+			{
+				key: 'type', placeholder: 'All Types',
+				options: [
+					{ label: 'Professional', value: 'professional' },
+					{ label: 'Institutional', value: 'institutional' },
+					{ label: 'Dental', value: 'dental' },
+					{ label: 'Pharmacy', value: 'pharmacy' },
+				],
+			},
+		],
 		columns: [
 			{ key: 'claimNumber', label: 'Claim #', width: '110px' },
 			{ key: 'patientName', label: 'Patient' },

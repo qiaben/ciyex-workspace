@@ -113,6 +113,7 @@ const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
 
 const STATIC_PATH = `/static`;
 const CALLBACK_PATH = `/callback`;
+const SIGNIN_PATH = `/signin`;
 const WEB_EXTENSION_PATH = `/web-extension-resource`;
 
 export class WebClientServer {
@@ -150,6 +151,10 @@ export class WebClientServer {
 			if (pathname === CALLBACK_PATH) {
 				// callback support
 				return this._handleCallback(res);
+			}
+			if (pathname === SIGNIN_PATH) {
+				// sign-in page
+				return this._handleSignin(res);
 			}
 			if (pathname.startsWith(WEB_EXTENSION_PATH) && pathname.charCodeAt(WEB_EXTENSION_PATH.length) === CharCode.Slash) {
 				// extension resource support
@@ -499,6 +504,28 @@ export class WebClientServer {
 	 */
 	private async _handleCallback(res: http.ServerResponse): Promise<void> {
 		const filePath = FileAccess.asFileUri('vs/code/browser/workbench/callback.html').fsPath;
+		const data = (await promises.readFile(filePath)).toString();
+		const cspDirectives = [
+			'default-src \'self\';',
+			'img-src \'self\' https: data: blob:;',
+			'media-src \'none\';',
+			`script-src 'self' ${this._getScriptCspHashes(data).join(' ')};`,
+			'style-src \'self\' \'unsafe-inline\';',
+			'font-src \'self\' blob:;'
+		].join(' ');
+
+		res.writeHead(200, {
+			'Content-Type': 'text/html',
+			'Content-Security-Policy': cspDirectives
+		});
+		return void res.end(data);
+	}
+
+	/**
+	 * Handle HTTP requests for /signin
+	 */
+	private async _handleSignin(res: http.ServerResponse): Promise<void> {
+		const filePath = FileAccess.asFileUri('vs/code/browser/workbench/signin.html').fsPath;
 		const data = (await promises.readFile(filePath)).toString();
 		const cspDirectives = [
 			'default-src \'self\';',
