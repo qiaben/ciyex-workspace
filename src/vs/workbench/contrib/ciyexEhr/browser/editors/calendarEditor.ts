@@ -844,17 +844,30 @@ export class CalendarEditor extends EditorPane {
 		const endM = (m + 30) % 60;
 		const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-		// Build form overlay
+		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
+		// so every create/edit dialog across the EHR uses the same shape.
 		const overlay = DOM.append(this.root, DOM.$('.appt-form-overlay'));
-		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;';
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:100;display:flex;justify-content:flex-end;';
+
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.addEventListener('click', () => overlay.remove());
 
 		const form = DOM.append(overlay, DOM.$('.appt-form'));
-		form.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto;overflow-x:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4);scrollbar-width:none;';
+		form.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);padding:20px;overflow-y:auto;overflow-x:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);scrollbar-width:none;z-index:1;box-sizing:border-box;';
 
-		// Title
-		const title = DOM.append(form, DOM.$('h3'));
+		// Header (title + close)
+		const headerRow = DOM.append(form, DOM.$('div'));
+		headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:0 0 16px;';
+		const title = DOM.append(headerRow, DOM.$('h3'));
 		title.textContent = 'Schedule Appointment';
-		title.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		title.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(headerRow, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
 
 		// Map to store form field references (avoids querySelector)
 		const formFields = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
@@ -1074,7 +1087,7 @@ export class CalendarEditor extends EditorPane {
 
 		// Buttons
 		const btnRow = DOM.append(form, DOM.$('.btn-row'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
 
 		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';

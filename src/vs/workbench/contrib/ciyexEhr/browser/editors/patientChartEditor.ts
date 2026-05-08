@@ -2976,43 +2976,35 @@ export class PatientChartEditor extends EditorPane {
 		const isEdit = !!existing;
 		const recordId = existing ? String(existing.id || existing.fhirId || '') : '';
 
-		// Full-page form (matches the web UI which routes to a dedicated /new or /edit page).
-		// Replaces the previous 540px right-side overlay so the create/edit experience
-		// feels like a real page, not a modal — the test team flagged this as the
-		// "major difference with ciyex UI".
+		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
+		// so every create/edit dialog across the EHR uses the same shape.
 		const overlay = DOM.append(this.root, DOM.$('div'));
-		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;background:var(--vscode-editor-background,#1e1e1e);display:flex;flex-direction:column;';
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;display:flex;justify-content:flex-end;';
+
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.addEventListener('click', () => overlay.remove());
 
 		const panel = DOM.append(overlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:100%;height:100%;background:var(--vscode-editor-background,#1e1e1e);display:flex;flex-direction:column;z-index:1;';
+		panel.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;box-shadow:-8px 0 24px rgba(0,0,0,0.3);';
 
 		const hdrRow = DOM.append(panel, DOM.$('div'));
-		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 32px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		const backBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
-		// allow-any-unicode-next-line
-		backBtn.textContent = '← Back';
-		backBtn.title = `Back to ${tab.label}`;
-		backBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
-		backBtn.addEventListener('click', () => overlay.remove());
+		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 20px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
 		const hdrTitle = DOM.append(hdrRow, DOM.$('h2'));
 		hdrTitle.textContent = isEdit ? `Edit ${tab.label}` : `New ${tab.label}`;
-		hdrTitle.style.cssText = 'margin:0;font-size:18px;font-weight:600;flex:1;';
+		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;flex:1;';
 		const closeBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
 		// allow-any-unicode-next-line
 		closeBtn.textContent = '✕';
 		closeBtn.title = 'Close';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:18px;cursor:pointer;color:var(--vscode-descriptionForeground);padding:4px 10px;';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);padding:4px 8px;';
 		closeBtn.addEventListener('click', () => overlay.remove());
 
-		// Centered, max-width form area so wide chart panes don't stretch fields edge-to-edge.
 		const scrollArea = DOM.append(panel, DOM.$('div'));
-		// Hide vertical scrollbar to match the web UI's no-bar look. Content still
-		// scrolls; it's just visually less noisy on the create/edit form pages
-		// (referral, denials, relationship etc).
 		scrollArea.style.cssText = 'flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;';
 		scrollArea.classList.add('ehr-no-scrollbar');
 		const formContainer = DOM.append(scrollArea, DOM.$('div'));
-		formContainer.style.cssText = 'max-width:1100px;margin:0 auto;padding:24px 32px;';
+		formContainer.style.cssText = 'padding:20px;';
 
 		// Save inputs to a local map (avoid clobbering the form-tab map)
 		const saved = this._formInputs;
@@ -3028,14 +3020,17 @@ export class PatientChartEditor extends EditorPane {
 				// the first section. Demographics is the one exception — its 11
 				// sub-sections (Personal, Contact, Emergency, Guardian, etc.) stay
 				// separate because collapsing them into one card would be unwieldy.
+				// In the right-side slide-in panel (~560px), 3+ columns cram fields too
+				// tightly. Cap at 2 columns to keep inputs readable.
+				const capCols = (s: FieldSection): FieldSection => ({ ...s, columns: Math.min(s.columns ?? 2, 2) });
 				const sectionsToRender = tab.key !== 'demographics' && config.sections.length > 1
-					? [{
+					? [capCols({
 						...config.sections[0],
 						collapsible: false,
 						collapsed: false,
 						fields: config.sections.flatMap(s => s.fields || []),
-					}]
-					: config.sections;
+					})]
+					: config.sections.map(capCols);
 				// Merge prefill values into the seed record so the Add dialog
 				// can pre-select fields when launched from a context-aware
 				// button (e.g. Payment tab's "Post Payment" / "Collect
@@ -3074,13 +3069,9 @@ export class PatientChartEditor extends EditorPane {
 		this._formCells = savedCells;
 
 		const btnRow = DOM.append(panel, DOM.$('div'));
-		// Sticky footer with the same centered max-width as the form area so the
-		// Save/Cancel buttons line up with the right edge of the form fields.
-		btnRow.style.cssText = 'display:flex;flex-shrink:0;background:var(--vscode-editor-background,#1e1e1e);border-top:1px solid var(--vscode-editorWidget-border);';
+		btnRow.style.cssText = 'display:flex;flex-shrink:0;background:var(--vscode-editorWidget-background,#252526);border-top:1px solid var(--vscode-editorWidget-border);';
 		const btnRowInner = DOM.append(btnRow, DOM.$('div'));
-		btnRowInner.style.cssText = 'max-width:1100px;width:100%;margin:0 auto;display:flex;gap:8px;justify-content:flex-end;padding:14px 32px 18px;';
-		// All footer buttons get appended to btnRowInner; the outer btnRow is just a
-		// full-width wrapper so the border spans the page edge-to-edge.
+		btnRowInner.style.cssText = 'width:100%;display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;';
 
 		// Tabs whose backend only supports create/read — no PUT/DELETE.
 		// Treat them as effectively read-only on the edit dialog so we don't

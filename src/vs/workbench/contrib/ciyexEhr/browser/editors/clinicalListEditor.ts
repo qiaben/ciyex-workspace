@@ -586,19 +586,23 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const fields = cfg.formFields!;
 		const isEdit = this.editingItem !== null;
 
-		// Overlay — fixed to viewport so the dialog always centers on screen and
-		// is never affected by editor scroll position. Append to <body> so the
-		// overlay sits above the entire workbench (sidebar, status bar, etc).
+		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
+		// so every create/edit dialog across the EHR uses the same shape. Append
+		// to <body> so the panel sits above the entire workbench.
 		this.formOverlay = DOM.append(mainWindow.document.body, DOM.$('div'));
-		this.formOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:60px;overflow-y:auto;';
+		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;';
 
-		// Dialog
+		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.addEventListener('click', () => this._closeForm());
+
+		// Dialog (right-side panel)
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
-		dialog.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 100px);overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;';
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,#252526);z-index:2;';
 
 		const title = DOM.append(header, DOM.$('h3'));
 		if (isEdit && cfg.editTitle && this.editingItem) {
@@ -606,7 +610,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		} else {
 			title.textContent = isEdit ? `Edit ${cfg.title.replace(/s$/, '')}` : `New ${cfg.title.replace(/s$/, '')}`;
 		}
-		title.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+		title.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
 
 		const closeBtn = DOM.append(header, DOM.$('button'));
 		// allow-any-unicode-next-line
@@ -616,7 +620,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Form body
 		const body = DOM.append(dialog, DOM.$('div'));
-		body.style.cssText = 'padding:16px;display:grid;gap:12px;';
+		body.style.cssText = 'padding:20px;display:grid;gap:12px;';
 
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 		// For date fields we hold direct refs to the visible mm/dd/yyyy input and the
@@ -833,7 +837,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Footer
 		const footer = DOM.append(dialog, DOM.$('div'));
-		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--vscode-editorWidget-border);';
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-editorWidget-background,#252526);z-index:2;';
 
 		const cancelBtn = DOM.append(footer, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
