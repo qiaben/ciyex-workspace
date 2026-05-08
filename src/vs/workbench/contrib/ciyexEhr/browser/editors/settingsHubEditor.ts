@@ -750,22 +750,30 @@ export class SettingsHubEditor extends EditorPane {
 
 		const header = DOM.append(root, DOM.$('div'));
 		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
-		const title = DOM.append(header, DOM.$('h1'));
+		const titleCol = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(titleCol, DOM.$('h1'));
 		title.textContent = 'Users';
-		title.style.cssText = 'margin:0;font-size:22px;font-weight:600;';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(titleCol, DOM.$('p'));
+		sub.textContent = 'Manage user accounts, roles, and access \u2014 backed by /api/admin/users.';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:12px;';
 
 		const loading = DOM.append(root, DOM.$('div'));
 		loading.textContent = 'Loading users\u2026';
 		loading.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 
 		try {
-			const res = await this.apiService.fetch('/api/users');
+			const res = await this.apiService.fetch('/api/admin/users?page=0&size=50');
 			if (!res.ok) {
-				loading.textContent = `Failed to load users (${res.status})`;
+				const errText = await res.text().catch(() => '');
+				loading.textContent = `Failed to load users (${res.status}). ${errText.substring(0, 200)}`;
 				return;
 			}
 			const json = await res.json();
-			const list: Array<Record<string, unknown>> = json?.data?.content || json?.data || json?.content || (Array.isArray(json) ? json : []);
+			// Backend returns { success: true, data: UserResponse[] } per /api/admin/users
+			const list: Array<Record<string, unknown>> = Array.isArray(json?.data)
+				? json.data
+				: (json?.data?.content || json?.content || (Array.isArray(json) ? json : []));
 			loading.remove();
 
 			if (list.length === 0) {
@@ -775,6 +783,9 @@ export class SettingsHubEditor extends EditorPane {
 				return;
 			}
 
+			// Filter out keycloak default roles for display
+			const HIDDEN_ROLES = new Set(['default-roles-ciyex', 'offline_access', 'uma_authorization']);
+
 			const tableWrap = DOM.append(root, DOM.$('div'));
 			tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 			const table = DOM.append(tableWrap, DOM.$('table'));
@@ -783,7 +794,7 @@ export class SettingsHubEditor extends EditorPane {
 			const thead = DOM.append(table, DOM.$('thead'));
 			const tr = DOM.append(thead, DOM.$('tr'));
 			tr.style.cssText = 'background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);';
-			for (const col of ['Username', 'Name', 'Email', 'Role', 'Active']) {
+			for (const col of ['Username', 'Name', 'Email', 'Roles', 'NPI', 'Active']) {
 				const th = DOM.append(tr, DOM.$('th'));
 				th.textContent = col;
 				th.style.cssText = 'padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
@@ -791,13 +802,24 @@ export class SettingsHubEditor extends EditorPane {
 
 			const tbody = DOM.append(table, DOM.$('tbody'));
 			for (const u of list) {
-				const user = u as { username?: string; firstName?: string; lastName?: string; email?: string; role?: string; enabled?: boolean };
+				const user = u as {
+					username?: string;
+					firstName?: string;
+					lastName?: string;
+					email?: string;
+					roles?: string[];
+					npi?: string;
+					enabled?: boolean;
+					emailVerified?: boolean;
+				};
 				const row = DOM.append(tbody, DOM.$('tr'));
 				row.style.cssText = 'border-bottom:1px solid rgba(128,128,128,0.1);';
 				this._appendCell(row, user.username || '-');
 				this._appendCell(row, [user.firstName, user.lastName].filter(Boolean).join(' ') || '-');
 				this._appendCell(row, user.email || '-');
-				this._appendCell(row, user.role || '-');
+				const roleList = (user.roles || []).filter(r => !HIDDEN_ROLES.has(r));
+				this._appendCell(row, roleList.length > 0 ? roleList.join(', ') : '-');
+				this._appendCell(row, user.npi || '-');
 				this._appendCell(row, user.enabled === false ? 'No' : 'Yes');
 			}
 		} catch (e) {
@@ -813,21 +835,25 @@ export class SettingsHubEditor extends EditorPane {
 		title.textContent = 'Roles & Permissions';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Manage roles and the FHIR permissions assigned to each.';
+		sub.textContent = 'Manage roles, FHIR permissions, and SMART scopes \u2014 backed by /api/admin/roles.';
 		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
 		const loading = DOM.append(root, DOM.$('div'));
 		loading.textContent = 'Loading roles\u2026';
-		loading.style.cssText = 'color:var(--vscode-descriptionForeground);';
+		loading.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 
 		try {
-			const res = await this.apiService.fetch('/api/roles');
+			const res = await this.apiService.fetch('/api/admin/roles');
 			if (!res.ok) {
-				loading.textContent = `Failed to load roles (${res.status})`;
+				const errText = await res.text().catch(() => '');
+				loading.textContent = `Failed to load roles (${res.status}). ${errText.substring(0, 200)}`;
 				return;
 			}
 			const json = await res.json();
-			const list: Array<Record<string, unknown>> = json?.data || json?.content || (Array.isArray(json) ? json : []);
+			// Backend returns { success: true, data: RolePermission[] }
+			const list: Array<Record<string, unknown>> = Array.isArray(json?.data)
+				? json.data
+				: (json?.content || (Array.isArray(json) ? json : []));
 			loading.remove();
 
 			if (list.length === 0) {
@@ -838,20 +864,50 @@ export class SettingsHubEditor extends EditorPane {
 			}
 
 			const grid = DOM.append(root, DOM.$('div'));
-			grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;';
+			grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;';
 			for (const r of list) {
-				const role = r as { name?: string; description?: string; permissions?: string[] };
+				const role = r as {
+					id?: string | number;
+					roleName?: string;
+					roleLabel?: string;
+					description?: string;
+					permissions?: string[];
+					smartScopes?: string[];
+					isActive?: boolean;
+				};
 				const card = DOM.append(grid, DOM.$('div'));
-				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
-				const n = DOM.append(card, DOM.$('div'));
-				n.textContent = role.name || '(unnamed)';
-				n.style.cssText = 'font-weight:600;font-size:14px;margin-bottom:4px;';
-				const d = DOM.append(card, DOM.$('div'));
-				d.textContent = role.description || '';
-				d.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
-				const perms = DOM.append(card, DOM.$('div'));
-				perms.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-				perms.textContent = `${(role.permissions || []).length} permission${(role.permissions || []).length === 1 ? '' : 's'}`;
+				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);';
+
+				// Header: label + name
+				const headRow = DOM.append(card, DOM.$('div'));
+				headRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+				const lbl = DOM.append(headRow, DOM.$('span'));
+				lbl.textContent = role.roleLabel || role.roleName || '(unnamed)';
+				lbl.style.cssText = 'font-weight:600;font-size:14px;';
+				const code = DOM.append(headRow, DOM.$('code'));
+				code.textContent = role.roleName || '';
+				code.style.cssText = 'font-size:10px;font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground);background:rgba(128,128,128,0.1);padding:1px 5px;border-radius:3px;';
+
+				if (role.isActive === false) {
+					const inactive = DOM.append(headRow, DOM.$('span'));
+					inactive.textContent = 'INACTIVE';
+					inactive.style.cssText = 'font-size:9px;font-weight:600;background:rgba(248,113,113,0.2);color:var(--vscode-errorForeground,#f48771);padding:1px 5px;border-radius:3px;letter-spacing:0.5px;';
+				}
+
+				if (role.description) {
+					const d = DOM.append(card, DOM.$('div'));
+					d.textContent = role.description;
+					d.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:10px;';
+				}
+
+				const stats = DOM.append(card, DOM.$('div'));
+				stats.style.cssText = 'display:flex;gap:14px;font-size:11px;color:var(--vscode-descriptionForeground);';
+				const permCount = (role.permissions || []).length;
+				const scopeCount = (role.smartScopes || []).length;
+				const permEl = DOM.append(stats, DOM.$('span'));
+				permEl.textContent = `${permCount} permission${permCount === 1 ? '' : 's'}`;
+				const scopeEl = DOM.append(stats, DOM.$('span'));
+				scopeEl.textContent = `${scopeCount} FHIR scope${scopeCount === 1 ? '' : 's'}`;
 			}
 		} catch {
 			loading.textContent = 'Waiting for login\u2026';
