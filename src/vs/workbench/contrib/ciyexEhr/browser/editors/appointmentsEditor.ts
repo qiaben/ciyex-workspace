@@ -487,42 +487,93 @@ export class AppointmentsEditor extends EditorPane {
 	}
 
 	private _printTable(): void {
+		// Build the print document with safe DOM APIs (createElement +
+		// textContent / appendChild) instead of an HTML string. The previous
+		// approach used `iframe.contentDocument.write(html)`, which fails in
+		// modern Electron with "TrustedHTML assignment" — Chromium's Trusted
+		// Types policy now blocks raw string injection. This rewrite keeps
+		// the same hidden-iframe + window.print() flow but builds every node
+		// programmatically so no string ever crosses a sink that requires a
+		// TrustedHTML wrapper.
 		const filtered = this._getFilteredRows();
-		let html = `<!DOCTYPE html><html><head><title>Appointments</title><style>
-			body{font-family:sans-serif;font-size:12px;margin:20px;}
-			table{width:100%;border-collapse:collapse;}
-			th,td{padding:8px 10px;text-align:left;border:1px solid #ddd;}
-			th{background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:11px;}
-			@media print{@page{size:landscape;}}
-		</style></head><body>
-		<h2>Appointments — ${this.datePreset}</h2>
-		<table><thead><tr><th>Date</th><th>Time</th><th>Patient</th><th>Provider</th><th>Location</th><th>Type</th><th>Status</th><th>Room</th></tr></thead><tbody>`;
-		for (const r of filtered) {
-			const so = this.statusOptions.find(s => s.value === r.status);
-			html += `<tr><td>${formatToDisplay(r.appointmentStartDate)}</td><td>${formatTimeTo12h(r.appointmentStartTime)}</td><td>${r.patientName || ''}</td><td>${r.providerName || ''}</td><td>${r.locationName || ''}</td><td>${r.visitType || ''}</td><td>${so?.label || r.status}</td><td>${r.room || ''}</td></tr>`;
-		}
-		html += '</tbody></table></body></html>';
-
-		// Use an in-page hidden iframe rather than window.open — the latter is
-		// blocked by Electron's BrowserWindow window-open handler, so the Print
-		// button silently failed.
 		const doc = DOM.getActiveWindow().document;
 		const iframe = doc.createElement('iframe');
 		iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+		// Empty `srcdoc` gives us a same-origin contentDocument we can build
+		// out via DOM APIs without invoking document.write / innerHTML.
+		iframe.setAttribute('srcdoc', '<!DOCTYPE html>');
 		doc.body.appendChild(iframe);
-		const idoc = iframe.contentWindow?.document;
-		if (!idoc) {
-			doc.body.removeChild(iframe);
-			this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: unable to create print frame.' });
-			return;
-		}
-		idoc.open();
-		idoc.write(html);
-		idoc.close();
-		iframe.onload = () => {
+		const buildAndPrint = () => {
+			const idoc = iframe.contentDocument || iframe.contentWindow?.document;
+			if (!idoc) {
+				try { doc.body.removeChild(iframe); } catch { /* ignore */ }
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: unable to create print frame.' });
+				return;
+			}
+			// Title + print stylesheet (DOM only — no innerHTML / write).
+			const head = idoc.head;
+			const titleEl = idoc.createElement('title');
+			titleEl.textContent = 'Appointments';
+			head.appendChild(titleEl);
+			const styleEl = idoc.createElement('style');
+			styleEl.textContent = [
+				'body{font-family:sans-serif;font-size:12px;margin:20px;color:#222;}',
+				'h2{margin:0 0 12px;font-size:16px;}',
+				'table{width:100%;border-collapse:collapse;}',
+				'th,td{padding:8px 10px;text-align:left;border:1px solid #ddd;}',
+				'th{background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:11px;}',
+				'@media print{@page{size:landscape;}}',
+			].join('');
+			head.appendChild(styleEl);
+
+			const body = idoc.body;
+			const heading = idoc.createElement('h2');
+			// allow-any-unicode-next-line
+			heading.textContent = `Appointments — ${this.datePreset}`;
+			body.appendChild(heading);
+			const table = idoc.createElement('table');
+			const thead = idoc.createElement('thead');
+			const headRow = idoc.createElement('tr');
+			for (const label of ['Date', 'Time', 'Patient', 'Provider', 'Location', 'Type', 'Status', 'Room']) {
+				const th = idoc.createElement('th');
+				th.textContent = label;
+				headRow.appendChild(th);
+			}
+			thead.appendChild(headRow);
+			table.appendChild(thead);
+			const tbody = idoc.createElement('tbody');
+			for (const r of filtered) {
+				const so = this.statusOptions.find(s => s.value === r.status);
+				const tr = idoc.createElement('tr');
+				const cells: string[] = [
+					formatToDisplay(r.appointmentStartDate),
+					formatTimeTo12h(r.appointmentStartTime),
+					r.patientName || '',
+					r.providerName || '',
+					r.locationName || '',
+					r.visitType || '',
+					so?.label || r.status || '',
+					r.room || '',
+				];
+				for (const c of cells) {
+					const td = idoc.createElement('td');
+					td.textContent = String(c);
+					tr.appendChild(td);
+				}
+				tbody.appendChild(tr);
+			}
+			table.appendChild(tbody);
+			body.appendChild(table);
+
 			try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); }
 			finally { DOM.getActiveWindow().setTimeout(() => { try { doc.body.removeChild(iframe); } catch { /* ignore */ } }, 1000); }
 		};
+		// Wait for the empty document to be ready before we start appending.
+		if (iframe.contentDocument?.readyState === 'complete') {
+			buildAndPrint();
+		} else {
+			iframe.addEventListener('load', () => buildAndPrint(), { once: true });
+		}
 	}
 
 	private _exportToCSV(): void {

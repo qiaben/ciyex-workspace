@@ -3490,7 +3490,20 @@ export class PatientChartEditor extends EditorPane {
 			}
 
 			for (const f of sec.fields) {
-				const val = (record as Record<string, unknown>)[f.key] ?? '';
+				// Read the value off the record. When the field is empty AND the
+				// FieldDef declared a defaultValue (function or scalar), seed the
+				// input with that default so the form opens with sensible
+				// pre-filled values — Identified Date / Recorded Date / Payment
+				// Date / etc. were rendering blank because this fallback was
+				// missing, leaving "the field is required" failures and the
+				// "auto-fill today's date" complaint from the test report.
+				const recordVal = (record as Record<string, unknown>)[f.key];
+				let val: unknown = recordVal ?? '';
+				if ((val === '' || val === null || val === undefined) && f.defaultValue !== undefined) {
+					try {
+						val = typeof f.defaultValue === 'function' ? (f.defaultValue as () => string | number)() : f.defaultValue;
+					} catch { /* default fn threw — leave blank */ }
+				}
 
 				const cell = DOM.append(gridBody, DOM.$('div'));
 				cell.style.cssText = `grid-column:span ${Math.min(f.colSpan || 1, cols)};padding:4px 0;`;
@@ -4222,7 +4235,23 @@ export class PatientChartEditor extends EditorPane {
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
-			return { cells, onClick, onDelete };
+			// Appointment rows expose the same per-row workflow shortcuts the
+			// EHR-UI offers: Open Chart (jump to the linked encounter when the
+			// appointment has one, else stay on the chart), Record Vitals
+			// (open the chart's Vitals tab), Visit Summary (encounter form).
+			// Test report 02.05.26 round 4 #11 specifically asked for this.
+			const extraActions = tab.key === 'appointments'
+				? [
+					// allow-any-unicode-next-line
+					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: () => this._openAppointmentChart(item) },
+					// allow-any-unicode-next-line
+					{ icon: '❤', title: 'Record Vitals', color: '#a855f7', onClick: () => this._navigate('vitals') },
+					// allow-any-unicode-next-line
+					{ icon: '🗒', title: 'Visit Summary', color: '#f59e0b', onClick: () => this._openAppointmentVisitSummary(item) },
+				]
+				: undefined;
+
+			return { cells, onClick, onDelete, extraActions };
 		});
 
 		this._table(c, cols, rows);
@@ -4285,11 +4314,14 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
-	private _table(container: HTMLElement, columns: string[], rows: Array<{ cells: string[]; onClick?: () => void; onDelete?: () => void }>): void {
+	private _table(container: HTMLElement, columns: string[], rows: Array<{ cells: string[]; onClick?: () => void; onDelete?: () => void; extraActions?: Array<{ icon: string; title: string; color?: string; onClick: () => void }> }>): void {
 		const wrap = DOM.append(container, DOM.$('div'));
-		wrap.style.cssText = 'overflow-x:auto;scrollbar-width:none;';
+		// `overflow-x:auto` keeps the Action column reachable on narrow
+		// chart panes (was clipped under the chart's outer overflow:hidden);
+		// the table sets its own min-width so columns don't squeeze invisibly.
+		wrap.style.cssText = 'overflow-x:auto;overflow-y:visible;scrollbar-width:thin;';
 		const table = DOM.append(wrap, DOM.$('table'));
-		table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
+		table.style.cssText = 'width:100%;min-width:760px;border-collapse:collapse;font-size:13px;';
 
 		const thead = DOM.append(table, DOM.$('thead'));
 		const hrow = DOM.append(thead, DOM.$('tr'));
@@ -4327,6 +4359,21 @@ export class PatientChartEditor extends EditorPane {
 					const wrap = DOM.append(td, DOM.$('div.row-action'));
 					wrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
 
+					// Tab-specific extras (Open Chart / Record Vitals / Visit
+					// Summary on the Appointments tab) come first so they read
+					// before the generic edit / delete pair.
+					if (row.extraActions) {
+						for (const a of row.extraActions) {
+							const b = DOM.append(wrap, DOM.$('button'));
+							b.title = a.title;
+							b.textContent = a.icon;
+							b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:3px;color:${a.color || 'var(--vscode-foreground)'};`;
+							b.addEventListener('mouseenter', () => { b.style.background = `${a.color || '#888'}20`; });
+							b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+							b.addEventListener('click', (e) => { e.stopPropagation(); a.onClick(); });
+						}
+					}
+
 					if (row.onClick) {
 						const editBtn = DOM.append(wrap, DOM.$('button'));
 						editBtn.title = 'Edit';
@@ -4359,6 +4406,30 @@ export class PatientChartEditor extends EditorPane {
 
 	private _openNewEncounter(): void {
 		this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, 'new', this.patientName, 'New Encounter'), {}, SIDE_GROUP);
+	}
+
+	/** "Open Chart" appointment-row action — open the encounter linked to the
+	 *  appointment when one exists, otherwise jump to the chart's Encounters
+	 *  tab so the user can pick one (or create a new encounter). */
+	private _openAppointmentChart(item: Record<string, unknown>): void {
+		const encounterId = String(item.encounterId || '');
+		if (encounterId) {
+			this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, encounterId, this.patientName, 'Encounter'), {});
+			return;
+		}
+		this._navigate('encounters');
+	}
+
+	/** "Visit Summary" appointment-row action — same routing as Open Chart
+	 *  for now (the dedicated summary page lives in EHR-UI; until the desktop
+	 *  workspace ports it, the encounter form is the closest equivalent). */
+	private _openAppointmentVisitSummary(item: Record<string, unknown>): void {
+		const encounterId = String(item.encounterId || '');
+		if (encounterId) {
+			this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, encounterId, this.patientName, 'Visit Summary'), {});
+			return;
+		}
+		this._navigate('encounters');
 	}
 
 	// --- Formatting helpers ---

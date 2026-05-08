@@ -908,7 +908,29 @@ export class EncounterFormEditor extends EditorPane {
 	/** Diagnosis list with ICD-10 search */
 	private _renderDiagnosisList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const diagnoses = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string }>;
+
+		// Order matches the EHR-UI Assessment & Diagnosis layout:
+		//   1. "Diagnosis" label
+		//   2. ICD-10 search input
+		//   3. Search results dropdown (shown while typing)
+		//   4. Selected-diagnoses list
+		// The previous order put the selected list ABOVE the search box, which
+		// pushed the Assessment Notes textarea way down and was the "Assessment
+		// Notes textbox moving below incorrectly" finding in the test report.
+		const labelEl = readOnly ? null : DOM.append(parent, DOM.$('label'));
+		if (labelEl) {
+			labelEl.textContent = 'Diagnosis';
+			labelEl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:0 0 4px;';
+		}
+
+		const searchRow = readOnly ? null : DOM.append(parent, DOM.$('div'));
+		const results = readOnly ? null : DOM.append(parent, DOM.$('div'));
+		if (results) {
+			results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+		}
+
 		const listEl = DOM.append(parent, DOM.$('div'));
+		listEl.style.cssText = 'margin-top:8px;';
 
 		const renderList = () => {
 			DOM.clearNode(listEl);
@@ -935,25 +957,13 @@ export class EncounterFormEditor extends EditorPane {
 		};
 		renderList();
 
-		if (readOnly) { return; }
+		if (readOnly || !searchRow || !results) { return; }
 
-		// Add a labeled Diagnosis input row (the EHR-UI form has an explicit
-		// "Diagnosis" field label above the search box; the desktop was just
-		// rendering the bare input which the test team flagged as missing
-		// the label entirely).
-		const labelEl = DOM.append(parent, DOM.$('label'));
-		labelEl.textContent = 'Diagnosis';
-		labelEl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
-
-		const searchRow = DOM.append(parent, DOM.$('div'));
 		searchRow.style.cssText = 'display:flex;gap:8px;';
 		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
 		searchInput.type = 'text';
 		searchInput.placeholder = 'Search ICD-10 codes...';
 		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
-
-		const results = DOM.append(parent, DOM.$('div'));
-		results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
 
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		searchInput.addEventListener('input', () => {
@@ -1047,7 +1057,16 @@ export class EncounterFormEditor extends EditorPane {
 	/** Procedures & Coding list */
 	private _renderProcedureList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const procs = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string; units: number }>;
+
+		// Container for the CPT/HCPCS code-search rows. Mounted BEFORE the
+		// selected-procedures list so the search inputs sit at the top of the
+		// section and the list grows downward — matches the EHR-UI Procedures
+		// & Coding layout (the previous order rendered the empty list slot
+		// first, which pushed the Procedure Notes textarea below the search
+		// rows even when no procedures were selected).
+		const searchContainer = readOnly ? null : DOM.append(parent, DOM.$('div'));
 		const listEl = DOM.append(parent, DOM.$('div'));
+		listEl.style.cssText = 'margin-top:8px;';
 
 		const renderList = () => {
 			DOM.clearNode(listEl);
@@ -1078,7 +1097,7 @@ export class EncounterFormEditor extends EditorPane {
 		};
 		renderList();
 
-		if (readOnly) { return; }
+		if (readOnly || !searchContainer) { return; }
 
 		// Two labelled search rows \u2014 one for CPT, one for HCPCS \u2014 so the test
 		// team can tell which code system the search is hitting. The previous
@@ -1086,18 +1105,18 @@ export class EncounterFormEditor extends EditorPane {
 		// and used the wrong endpoint path, so HCPCS suggestions never showed
 		// and CPT suggestions returned an unfiltered list.
 		const buildCodeSearch = (label: string, codeType: string, placeholder: string) => {
-			const lbl = DOM.append(parent, DOM.$('label'));
+			const lbl = DOM.append(searchContainer, DOM.$('label'));
 			lbl.textContent = label;
 			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
 
-			const searchRow = DOM.append(parent, DOM.$('div'));
+			const searchRow = DOM.append(searchContainer, DOM.$('div'));
 			searchRow.style.cssText = 'display:flex;gap:8px;';
 			const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
 			searchInput.type = 'text';
 			searchInput.placeholder = placeholder;
 			searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
-			const results = DOM.append(parent, DOM.$('div'));
+			const results = DOM.append(searchContainer, DOM.$('div'));
 			results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
 
 			let timer: ReturnType<typeof setTimeout> | undefined;
