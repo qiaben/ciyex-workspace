@@ -357,10 +357,29 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Plain spacer between nav and view toggles. Patient search lives in
-		// the EHR titlebar (next to "Add Patient") — the test team asked the
-		// centered calendar input we previously added here to be removed so
-		// the calendar header doesn't duplicate the titlebar control.
+		// Calendar-scope patient filter — filters the visible appointments by
+		// patient name (in addition to provider / location filters). The test
+		// team asked for a working search "near the add patient" button on
+		// the calendar page; this is the inline filter that complements the
+		// titlebar's global patient search (which opens charts).
+		const searchWrap = DOM.append(this.headerBar, DOM.$('.cal-patient-search'));
+		searchWrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:12px;';
+		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Filter by patient...';
+		searchInput.value = this.patientNameFilter;
+		searchInput.style.cssText = 'padding:4px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;width:180px;';
+		let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (searchDebounce) { clearTimeout(searchDebounce); }
+			searchDebounce = setTimeout(() => {
+				this.patientNameFilter = searchInput.value.trim();
+				this._updateHeaderCount();
+				this._renderGrid();
+			}, 200);
+		});
+
+		// Plain spacer between filter and view toggles.
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
 		spacer.style.cssText = 'flex:1;';
 

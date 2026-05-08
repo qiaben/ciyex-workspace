@@ -962,24 +962,35 @@ export class EncounterFormEditor extends EditorPane {
 			if (q.length < 2) { results.style.display = 'none'; return; }
 			timer = setTimeout(async () => {
 				try {
-					// GlobalCodeController exposes search at /api/global_codes/search
-					// with `q` as the search param. The previous URL hit the bare
-					// /api/global_codes (getAll) which ignored the search, so the
-					// dropdown never populated.
-					const res = await this.apiService.fetch(`/api/global_codes/search?codeType=ICD10&q=${encodeURIComponent(q)}&page=0&size=15`);
+					// Search the full ICD-10-CM catalog via the ciyex-codes
+					// service (~98K codes). The previous /api/global_codes
+					// endpoint only returned org-level custom codes (FHIR
+					// Basic resource), which is empty by default — that's why
+					// the test team's diagnosis search dropdown was always
+					// blank. Use the same `code-search` endpoint that the
+					// patient chart's _buildSearchInput uses.
+					const res = await this.apiService.fetch(`/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search?q=${encodeURIComponent(q)}&page=0&size=15`);
 					if (res.ok) {
 						const data = await res.json();
-						const codes = data?.data?.content || data?.data || data?.content || [];
+						const codes = data?.data?.content || data?.content || data?.data || [];
 						DOM.clearNode(results);
 						const list = Array.isArray(codes) ? codes : [];
 						for (const c of list) {
 							const item = DOM.append(results, DOM.$('div'));
-							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
+							item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
+							const codeEl = DOM.append(item, DOM.$('span'));
+							codeEl.textContent = String(c.code || c.codeValue || '');
+							codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:60px;font-family:var(--vscode-editor-font-family,monospace);';
+							const descEl = DOM.append(item, DOM.$('span'));
+							descEl.textContent = String(c.shortDescription || c.description || c.longDescription || '');
+							descEl.style.cssText = 'flex:1;color:var(--vscode-foreground);';
 							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
 							item.addEventListener('click', () => {
-								diagnoses.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '' });
+								diagnoses.push({
+									code: String(c.code || c.codeValue || ''),
+									description: String(c.shortDescription || c.description || c.longDescription || ''),
+								});
 								renderList();
 								searchInput.value = '';
 								results.style.display = 'none';
@@ -1096,21 +1107,34 @@ export class EncounterFormEditor extends EditorPane {
 				if (q.length < 2) { results.style.display = 'none'; return; }
 				timer = setTimeout(async () => {
 					try {
-						// GlobalCodeController search endpoint: /search?codeType=&q=
-						const res = await this.apiService.fetch(`/api/global_codes/search?codeType=${codeType}&q=${encodeURIComponent(q)}&page=0&size=15`);
+						// Hit the ciyex-codes catalog (CPT ~10K, HCPCS ~8.3K)
+						// instead of /api/global_codes which only stores org
+						// custom codes (typically empty). The system slug
+						// passed in (CPT or HCPCS) maps directly to the
+						// ciyex-codes CodeSystem enum.
+						const res = await this.apiService.fetch(`/api/app-proxy/ciyex-codes/api/codes/${codeType}/search?q=${encodeURIComponent(q)}&page=0&size=15`);
 						if (res.ok) {
 							const data = await res.json();
-							const raw = data?.data?.content || data?.data || data?.content || [];
+							const raw = data?.data?.content || data?.content || data?.data || [];
 							const list = Array.isArray(raw) ? raw : [];
 							DOM.clearNode(results);
 							for (const c of list) {
 								const item = DOM.append(results, DOM.$('div'));
-								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-								item.textContent = `${c.code || c.codeValue || ''} \u2014 ${c.description || c.shortDescription || ''}`;
+								item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
+								const codeEl = DOM.append(item, DOM.$('span'));
+								codeEl.textContent = String(c.code || c.codeValue || '');
+								codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:60px;font-family:var(--vscode-editor-font-family,monospace);';
+								const descEl = DOM.append(item, DOM.$('span'));
+								descEl.textContent = String(c.shortDescription || c.description || c.longDescription || '');
+								descEl.style.cssText = 'flex:1;color:var(--vscode-foreground);';
 								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 								item.addEventListener('mouseleave', () => { item.style.background = ''; });
 								item.addEventListener('click', () => {
-									procs.push({ code: c.code || c.codeValue || '', description: c.description || c.shortDescription || '', units: 1 });
+									procs.push({
+										code: String(c.code || c.codeValue || ''),
+										description: String(c.shortDescription || c.description || c.longDescription || ''),
+										units: 1,
+									});
 									renderList();
 									searchInput.value = '';
 									results.style.display = 'none';
@@ -1122,7 +1146,9 @@ export class EncounterFormEditor extends EditorPane {
 				}, 300);
 			});
 		};
-		buildCodeSearch('CPT Code', 'CPT4', 'Search CPT codes...');
+		// codeType slug must match the ciyex-codes CodeSystem enum:
+		// CPT (current procedural terminology) and HCPCS.
+		buildCodeSearch('CPT Code', 'CPT', 'Search CPT codes...');
 		buildCodeSearch('HCPCS Code', 'HCPCS', 'Search HCPCS codes...');
 	}
 

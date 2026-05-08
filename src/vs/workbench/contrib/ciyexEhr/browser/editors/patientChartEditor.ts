@@ -874,12 +874,13 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'authorName', label: 'Author / Provider', type: 'practitioner-search', placeholder: 'Search Author' },
 					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
-					// Local file picker — reads the selected file as a base64 data URL
-					// and stores it in the `attachment` field. The backend's
-					// DocumentReference create accepts either fileUrl (link) or
-					// attachment (inline content). Either is fine; both render.
+					// Single attachment input — local file picker reads the file as a
+					// base64 data URL and stores it in `attachment`. The previous form
+					// also exposed a `fileUrl` text box, which the test team flagged as
+					// a duplicate attachment field on the Documents Add New page.
+					// The backend's DocumentReference accepts inline `attachment` content
+					// directly, so the URL fallback isn't needed for the common path.
 					{ key: 'attachment', label: 'Attachment', type: 'file', placeholder: 'Choose file to upload', colSpan: 3, localOnly: true },
-					{ key: 'fileUrl', label: 'Or paste a File URL', type: 'text', placeholder: 'https://... or storage key', colSpan: 3 },
 					{
 						key: 'contentType', label: 'Content Type', type: 'select', options: [
 							{ label: 'PDF', value: 'application/pdf' },
@@ -1037,9 +1038,13 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// related person's number, so the toggle reads first.
 					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{
-						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(xxx) xxx-xxxx',
-						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
-						validationMessage: 'Enter a valid US phone number e.g. (xxx) xxx-xxxx',
+						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(US) (555) 123-4567',
+						// US-only: 10 digits with optional +1 country prefix and any
+						// of "()", "-", ".", or whitespace as separators. Catches the
+						// negative-test cases the team flagged (alpha chars, fewer
+						// than 10 digits, foreign-format numbers).
+						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
+						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -1165,14 +1170,15 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'phone', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
-						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
+						key: 'phone', label: 'Phone', type: 'phone', placeholder: '(US) (555) 123-4567',
+						// US-only: 10 digits with optional +1 prefix and common separators.
+						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
 						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
 					},
 					{
-						key: 'fax', label: 'Fax', type: 'phone', placeholder: '(555) 123-4567',
-						validationPattern: '^[\\+]?[0-9 ()\\-\\.]{7,20}$',
-						validationMessage: 'Enter a valid fax number',
+						key: 'fax', label: 'Fax', type: 'phone', placeholder: '(US) (555) 123-4567',
+						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
+						validationMessage: 'Enter a valid US fax number e.g. (555) 123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -1766,6 +1772,16 @@ export class PatientChartEditor extends EditorPane {
 							sections = sections.map(s => ({
 								...s,
 								fields: s.fields.filter(f => f.key !== 'patient' && f.key !== 'patientId' && f.key !== 'subject'),
+							}));
+						}
+						// Documents: drop the backend's `fileUrl` text input — we
+						// already render an inline file picker (`attachment`),
+						// and the test team flagged the two side-by-side as a
+						// duplicate attachment field.
+						if (tab.key === 'documents') {
+							sections = sections.map(s => ({
+								...s,
+								fields: s.fields.filter(f => f.key !== 'fileUrl'),
 							}));
 						}
 						// Per-field overlays: backend tab_field_config often omits the
@@ -2745,10 +2761,31 @@ export class PatientChartEditor extends EditorPane {
 		} else {
 			// List tab: show "+ Add" unless the tab is read-only (ledgers, system reports, etc.).
 			if (!tab.readOnly) {
-				const addBtn = DOM.append(actionSlot, DOM.$('button'));
-				addBtn.textContent = '+ Add';
-				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-				addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+				// Payment tab gets the EHR-UI's two-button bar — Post Payment
+				// (insurance / ERA payment posting) vs. Collect Payment
+				// (patient-side cash / card collection). Both open the same
+				// add-record form but pre-select the matching `method` so the
+				// downstream invoice category lines up. The test team flagged
+				// the missing two-button posture as "completely different"
+				// from the web UI.
+				if (tab.key === 'payment') {
+					const postBtn = DOM.append(actionSlot, DOM.$('button'));
+					postBtn.textContent = '+ Post Payment';
+					postBtn.title = 'Apply an insurance or ERA payment to a claim';
+					postBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+					postBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config, { method: 'insurance', status: 'posted' }));
+
+					const collectBtn = DOM.append(actionSlot, DOM.$('button'));
+					collectBtn.textContent = '+ Collect Payment';
+					collectBtn.title = 'Record a patient-side cash / card payment';
+					collectBtn.style.cssText = 'padding:4px 10px;margin-left:6px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background);';
+					collectBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config, { method: 'credit-card', status: 'posted' }));
+				} else {
+					const addBtn = DOM.append(actionSlot, DOM.$('button'));
+					addBtn.textContent = '+ Add';
+					addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+					addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+				}
 			}
 
 			this._renderListWithFilters(content, tab, config, data);
@@ -2931,11 +2968,11 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
-	private _openAddRecordDialog(tab: ChartTab, config: FieldConfig | null): void {
-		this._openRecordDialog(tab, config, null);
+	private _openAddRecordDialog(tab: ChartTab, config: FieldConfig | null, prefill?: Record<string, unknown>): void {
+		this._openRecordDialog(tab, config, null, prefill);
 	}
 
-	private _openRecordDialog(tab: ChartTab, config: FieldConfig | null, existing: Record<string, unknown> | null): void {
+	private _openRecordDialog(tab: ChartTab, config: FieldConfig | null, existing: Record<string, unknown> | null, prefill?: Record<string, unknown>): void {
 		const isEdit = !!existing;
 		const recordId = existing ? String(existing.id || existing.fhirId || '') : '';
 
@@ -2999,7 +3036,12 @@ export class PatientChartEditor extends EditorPane {
 						fields: config.sections.flatMap(s => s.fields || []),
 					}]
 					: config.sections;
-				this._renderForm(formContainer, sectionsToRender, [existing || {}]);
+				// Merge prefill values into the seed record so the Add dialog
+				// can pre-select fields when launched from a context-aware
+				// button (e.g. Payment tab's "Post Payment" / "Collect
+				// Payment" pre-set the `method` and `status` fields).
+				const seed = { ...(existing || {}), ...(prefill || {}) };
+				this._renderForm(formContainer, sectionsToRender, [seed]);
 			} else if (existing) {
 				// No field config but we have data — auto-generate editable fields from record keys
 				this._renderAutoEditForm(formContainer, existing);
@@ -3170,6 +3212,14 @@ export class PatientChartEditor extends EditorPane {
 				lotNumber: { rx: codeishPattern, msg: 'Letters and numbers only — no special characters' },
 				dose: { rx: codeishPattern, msg: 'Numbers + units only — no special characters' },
 			};
+			// Implicit format checks for type=phone / type=email when the
+			// field config didn't ship its own validationPattern. Applies
+			// across every patient-form (relationships, facility, demographics,
+			// guardian, employer, pharmacy, ...) so the negative-test cases
+			// the team flagged on phone / email fields get caught even when
+			// the backend tab_field_config doesn't include a regex.
+			const US_PHONE_RX = /^(\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}$/;
+			const EMAIL_RX = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
 			const invalidPattern: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
 			for (const sec of (config?.sections || [])) {
 				for (const f of (sec.fields || [])) {
@@ -3194,6 +3244,22 @@ export class PatientChartEditor extends EditorPane {
 								label: f.label,
 								el,
 								msg: f.validationMessage || 'Invalid format',
+							});
+							continue;
+						}
+					} else if (v && f.type === 'phone') {
+						if (!US_PHONE_RX.test(v)) {
+							invalidPattern.push({
+								key: f.key, label: f.label, el,
+								msg: 'Enter a valid US phone number e.g. (555) 123-4567',
+							});
+							continue;
+						}
+					} else if (v && f.type === 'email') {
+						if (!EMAIL_RX.test(v)) {
+							invalidPattern.push({
+								key: f.key, label: f.label, el,
+								msg: 'Enter a valid email address',
 							});
 							continue;
 						}
@@ -3756,8 +3822,12 @@ export class PatientChartEditor extends EditorPane {
 		// the right edge inside narrow 2-3 column form cells (claims facility,
 		// quaternary diagnosis, claim submission billing-provider, appointment
 		// patient/provider/location lookups).
+		// Stronger background + heavier shadow + opaque inner so the dropdown
+		// reads as a separate floating layer over neighbouring fields — the
+		// test team was reporting overlap because the previous translucent
+		// look made it hard to tell where the dropdown ended.
 		const dropdown = DOM.append(DOM.getActiveWindow().document.body, DOM.$('div'));
-		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 8px rgba(0,0,0,0.3);z-index:10010;max-height:240px;overflow-y:auto;display:none;';
+		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:260px;overflow-y:auto;display:none;';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
 			dropdown.style.top = `${rect.bottom + 2}px`;
@@ -3797,17 +3867,17 @@ export class PatientChartEditor extends EditorPane {
 					if (items.length === 0) {
 						const empty = DOM.append(dropdown, DOM.$('div'));
 						empty.textContent = 'No matches';
-						empty.style.cssText = 'padding:8px 12px;color:var(--vscode-descriptionForeground);font-size:12px;';
+						empty.style.cssText = 'padding:10px 12px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
 					} else {
 						for (const it of items) {
 							const row = DOM.append(dropdown, DOM.$('div'));
-							row.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+							row.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
 							const codeEl = DOM.append(row, DOM.$('span'));
 							codeEl.textContent = it.code;
-							codeEl.style.cssText = 'font-weight:600;margin-right:6px;color:var(--vscode-textLink-foreground);';
+							codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:64px;font-family:var(--vscode-editor-font-family,monospace);flex-shrink:0;';
 							const labelEl = DOM.append(row, DOM.$('span'));
 							labelEl.textContent = it.label;
-							labelEl.style.cssText = 'color:var(--vscode-foreground);';
+							labelEl.style.cssText = 'color:var(--vscode-foreground);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 							row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 							row.addEventListener('mouseleave', () => { row.style.background = ''; });
 							row.addEventListener('click', () => {
