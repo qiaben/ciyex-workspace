@@ -894,7 +894,7 @@ export class CalendarEditor extends EditorPane {
 
 			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			visible.type = 'text';
-			visible.placeholder = 'mm/dd/yyyy';
+			visible.placeholder = 'MM/DD/YYYY';
 			visible.maxLength = 10;
 			visible.value = isoToUs(isoValue);
 			visible.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';

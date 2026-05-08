@@ -28,7 +28,7 @@ interface FieldSection { key: string; title: string; columns: number; visible: b
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -1058,24 +1058,26 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
-	// Appointment field keys align with the V16 backend tab_field_config:
-	// type / provider / location / status / reason / date. The previous
-	// local keys (appointmentType / providerId / locationId / start) didn't
-	// match the backend, so the overlay logic appended them as duplicates,
-	// which is why the test team saw "visit type drop down not showing"
-	// (the backend's plain text `type` was rendering instead of the local
-	// select). `priority`, `endDate`, `duration` are local-only additions
-	// that the overlay appends — they don't exist in the backend.
+	// Appointment field keys align with the V58 backend tab_field_config
+	// (Appointment FHIR mapping): appointmentType / status / room / priority /
+	// start / end / minutesDuration / reason / description / patient /
+	// provider / location. Earlier local keys (type / date / endDate /
+	// duration) didn't match, so the overlay never promoted backend's plain
+	// text inputs to selects — which is why the test team saw "visit type
+	// drop down not working / not listed". `endDate`/`duration` were also
+	// being appended as localOnly duplicates next to backend's start/end/
+	// minutesDuration, producing the "duplicate start time and end time"
+	// complaint.
 	appointments: {
 		tabKey: 'appointments',
 		sections: [
 			{
 				key: 'appt', title: 'Appointment Details', columns: 2, visible: true, collapsible: false, fields: [
 					{
-						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
+						key: 'appointmentType', label: 'Visit Type', type: 'select', required: true, options: [
 							{ label: 'Consultation', value: 'Consultation' },
 							{ label: 'New Patient', value: 'New Patient' },
-							{ label: 'Follow-Up', value: 'Follow-Up' },
+							{ label: 'Follow-Up', value: 'Follow-up' },
 							{ label: 'Annual Physical', value: 'Annual Physical' },
 							{ label: 'Sick Visit', value: 'Sick Visit' },
 							{ label: 'Telehealth', value: 'Telehealth' },
@@ -1084,25 +1086,27 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'priority', label: 'Priority', type: 'select', localOnly: true, options: [
-							{ label: 'Routine', value: 'Routine' },
-							{ label: 'Urgent', value: 'Urgent' },
+						key: 'priority', label: 'Priority', type: 'select', options: [
+							{ label: 'Routine', value: 'routine' },
+							{ label: 'Urgent', value: 'urgent' },
+							{ label: 'ASAP', value: 'asap' },
+							{ label: 'STAT', value: 'stat' },
 						]
 					},
-					{ key: 'date', label: 'Start Date/Time', type: 'datetime', required: true },
-					{ key: 'endDate', label: 'End Date/Time', type: 'datetime', required: true, localOnly: true },
-					{ key: 'duration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end', localOnly: true },
+					{ key: 'start', label: 'Start Date/Time', type: 'datetime', required: true },
+					{ key: 'end', label: 'End Date/Time', type: 'datetime', required: true },
+					{ key: 'minutesDuration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end' },
 					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
 					{ key: 'location', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Scheduled', value: 'Scheduled' },
-							{ label: 'Confirmed', value: 'Confirmed' },
-							{ label: 'Checked-in', value: 'Checked-in' },
-							{ label: 'Completed', value: 'Completed' },
-							{ label: 'Re-Scheduled', value: 'Re-Scheduled' },
-							{ label: 'No Show', value: 'No Show' },
-							{ label: 'Cancelled', value: 'Cancelled' },
+							{ label: 'Scheduled', value: 'booked' },
+							{ label: 'Confirmed', value: 'pending' },
+							{ label: 'Arrived', value: 'arrived' },
+							{ label: 'Checked In', value: 'checked-in' },
+							{ label: 'Fulfilled', value: 'fulfilled' },
+							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'No Show', value: 'noshow' },
 						]
 					},
 					{ key: 'reason', label: 'Reason / Chief Complaint', type: 'textarea', colSpan: 2, placeholder: 'e.g., chest discomfort for 2 days' },
@@ -3198,6 +3202,10 @@ export class PatientChartEditor extends EditorPane {
 				condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				alert: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+				// Backend tab_field_config (V144 Flag) uses key `alertName`. Mirror
+				// the row above so the negative-test inputs (numbers / specials)
+				// fail validation regardless of which key the merged config emits.
+				alertName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				description: { rx: namePattern, msg: 'No special characters allowed' },
 				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
@@ -3503,7 +3511,18 @@ export class PatientChartEditor extends EditorPane {
 				if (f.type === 'select') {
 					const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
 					sel.style.cssText = inputStyle + 'cursor:pointer;';
-					for (const o of [{ label: `Select ${f.label}...`, value: '' }, ...(f.options || [])]) {
+					// Backend tab_field_config sometimes ships option arrays as bare
+					// strings (V58 appointments: ["Consultation","Follow-up",...])
+					// instead of {label,value} objects. Normalize so the dropdown
+					// renders something other than a list of "undefined" rows —
+					// this is what was breaking the Visit Type / Priority pickers
+					// on the patient-chart appointments add page.
+					const rawOpts = f.options || [];
+					const normOpts: Array<{ label: string; value: string }> = rawOpts.map(o => {
+						if (typeof o === 'string') { return { label: o, value: o }; }
+						return o as { label: string; value: string };
+					});
+					for (const o of [{ label: `Select ${f.label}...`, value: '' }, ...normOpts]) {
 						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
 					}
@@ -3626,13 +3645,13 @@ export class PatientChartEditor extends EditorPane {
 
 		// Appointments + Encounters: auto-calculate duration (minutes) from
 		// start/end datetime + seed sensible defaults on a fresh form.
-		// Field keys aligned with the backend tab_field_config — `date` is the
-		// start datetime (was `start`), `endDate` is the end (was `end`).
-		// Falls back to legacy keys so older saved data still drives the recalc.
-		// Also covers encounters' `startDate`/`endDate`.
-		const startInput = (this._formInputs.get('date') || this._formInputs.get('start') || this._formInputs.get('startDate')) as HTMLInputElement | undefined;
-		const endInput = (this._formInputs.get('endDate') || this._formInputs.get('end')) as HTMLInputElement | undefined;
-		const durationInput = this._formInputs.get('duration') as HTMLInputElement | undefined;
+		// Backend tab_field_config field keys: `start` / `end` /
+		// `minutesDuration` (V58 Appointment FHIR mapping). Encounter +
+		// legacy keys (`date`, `endDate`, `startDate`, `duration`) are kept
+		// as fallbacks so older saved data still drives the recalc.
+		const startInput = (this._formInputs.get('start') || this._formInputs.get('date') || this._formInputs.get('startDate')) as HTMLInputElement | undefined;
+		const endInput = (this._formInputs.get('end') || this._formInputs.get('endDate')) as HTMLInputElement | undefined;
+		const durationInput = (this._formInputs.get('minutesDuration') || this._formInputs.get('duration')) as HTMLInputElement | undefined;
 
 		// Default start/end on a fresh form — start = now (rounded to next 5min),
 		// end = start + 30min. Reads existing record values via the hidden ISO
