@@ -186,6 +186,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private priorityFilter = '';
 	private currentPage = 0;
 	private totalPages = 1;
+	private clientPageSize = 20;
 	private formOverlay: HTMLElement | null = null;
 	private editingItem: Record<string, unknown> | null = null;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -206,9 +207,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.clinical-list-editor'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);position:relative;';
+		// Outer container hides scrollbars by default; the inner content scrolls only
+		// when it actually overflows. Matches ciyex-ehr-ui where pages don't double-scroll.
+		this.root.style.cssText = 'height:100%;overflow:auto;background:var(--vscode-editor-background);position:relative;scrollbar-width:none;-ms-overflow-style:none;';
+		// Hide WebKit scrollbar on the root pane
+		const styleEl = DOM.append(this.root, DOM.$('style'));
+		styleEl.textContent = '.clinical-list-editor::-webkit-scrollbar{display:none;width:0;height:0;}';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
-		this.contentEl.style.cssText = 'max-width:1200px;margin:0 auto;padding:20px 24px;';
+		this.contentEl.style.cssText = 'width:100%;padding:20px 24px;box-sizing:border-box;';
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -241,7 +247,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			if (!res.ok) {
 				this.items = [];
 				this.totalPages = 1;
-				this._renderError(`Failed to load data (HTTP ${res.status}). The API endpoint may be unavailable.`);
+				// Try to extract server-supplied error message so users see what really
+				// failed (e.g. "Org alias not present" vs the generic HTTP 500 wrapper).
+				let detail = '';
+				try {
+					const errData = await res.json() as Record<string, unknown> | null;
+					if (errData) {
+						detail = String(errData['message'] || errData['error'] || '');
+					}
+				} catch { /* non-JSON body */ }
+				const base = `Failed to load data (HTTP ${res.status}).`;
+				this._renderError(detail ? `${base} ${detail}` : `${base} The API endpoint may be unavailable.`);
 				return;
 			}
 			const data = await res.json();
@@ -419,13 +435,27 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		for (const c of cfg.columns) { DOM.append(hr, DOM.$('span')).textContent = c.label; }
 		if (cfg.actions || cfg.editable) { DOM.append(hr, DOM.$('span')).textContent = 'Actions'; }
 
-		const visibleItems = this._visibleItems();
+		const filteredItems = this._visibleItems();
+		// Client-side pagination: slice the filtered set into pages so every editor
+		// shows a consistent page-by-page experience even when clientSideFilter loads
+		// the full list. Server-side editors (no clientSideFilter) already paginate
+		// via _loadData, so this branch is skipped for them.
+		const isClientPaginated = !!cfg.clientSideFilter;
+		let pageItems: Record<string, unknown>[] = filteredItems;
+		let clientTotalPages = 1;
+		if (isClientPaginated) {
+			clientTotalPages = Math.max(1, Math.ceil(filteredItems.length / this.clientPageSize));
+			if (this.currentPage >= clientTotalPages) { this.currentPage = clientTotalPages - 1; }
+			const start = this.currentPage * this.clientPageSize;
+			pageItems = filteredItems.slice(start, start + this.clientPageSize);
+		}
+		const visibleItems = pageItems;
 
 		if (visibleItems.length === 0) {
 			const e = DOM.append(tbl, DOM.$('div'));
 			e.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 			e.textContent = 'No records found';
-			return;
+			// Pagination still shown below for empty pages so the user can navigate back.
 		}
 
 		for (const item of visibleItems) {
@@ -476,33 +506,48 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		}
 
 		// allow-any-unicode-next-line
-		// ─── Pagination ─── (skipped in client-side-filter mode — all records loaded at once)
-		if (!cfg.clientSideFilter) {
-			const pg = DOM.append(this.contentEl, DOM.$('div'));
-			pg.style.cssText = 'display:flex;justify-content:center;gap:8px;margin-top:12px;align-items:center;';
-			if (this.currentPage > 0) {
-				const p = DOM.append(pg, DOM.$('button'));
-				// allow-any-unicode-next-line
-				p.textContent = '◀ Previous';
-				p.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-				p.addEventListener('click', () => { this.currentPage--; this._loadData(); });
-			}
+		// ─── Pagination ───
+		const pg = DOM.append(this.contentEl, DOM.$('div'));
+		pg.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;padding:0 4px;';
 
-			const pageInfo = DOM.append(pg, DOM.$('span'));
-			pageInfo.textContent = `Page ${this.currentPage + 1}${this.totalPages > 1 ? ` of ${this.totalPages}` : ''}`;
-			pageInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		const recordsInfo = DOM.append(pg, DOM.$('span'));
+		recordsInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
-			if (this.items.length >= 20) {
-				const n = DOM.append(pg, DOM.$('button'));
-				// allow-any-unicode-next-line
-				n.textContent = 'Next ▶';
-				n.style.cssText = 'padding:4px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-				n.addEventListener('click', () => { this.currentPage++; this._loadData(); });
-			}
+		const navWrap = DOM.append(pg, DOM.$('div'));
+		navWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+		if (isClientPaginated) {
+			const total = filteredItems.length;
+			const start = total === 0 ? 0 : this.currentPage * this.clientPageSize + 1;
+			const end = Math.min(total, (this.currentPage + 1) * this.clientPageSize);
+			recordsInfo.textContent = `Showing ${start}-${end} of ${total} records`;
+
+			const mkBtn = (label: string, disabled: boolean, onClick: () => void) => {
+				const b = DOM.append(navWrap, DOM.$('button'));
+				b.textContent = label;
+				b.style.cssText = `padding:4px 10px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;font-size:12px;background:transparent;color:var(--vscode-foreground);cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? '0.5' : '1'};`;
+				if (!disabled) { b.addEventListener('click', onClick); }
+			};
+			mkBtn('Previous', this.currentPage <= 0, () => { this.currentPage--; this._render(); });
+			const pageInfo = DOM.append(navWrap, DOM.$('span'));
+			pageInfo.textContent = `Page ${this.currentPage + 1} of ${clientTotalPages}`;
+			pageInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);padding:0 4px;';
+			mkBtn('Next', this.currentPage >= clientTotalPages - 1, () => { this.currentPage++; this._render(); });
 		} else {
-			const info = DOM.append(this.contentEl, DOM.$('span'));
-			info.textContent = `${visibleItems.length} of ${this.items.length} records`;
-			info.style.cssText = 'display:block;text-align:center;margin-top:12px;font-size:11px;color:var(--vscode-descriptionForeground);';
+			recordsInfo.textContent = `${this.items.length} record${this.items.length === 1 ? '' : 's'}`;
+
+			const mkBtn = (label: string, disabled: boolean, onClick: () => void) => {
+				const b = DOM.append(navWrap, DOM.$('button'));
+				b.textContent = label;
+				b.style.cssText = `padding:4px 10px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;font-size:12px;background:transparent;color:var(--vscode-foreground);cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? '0.5' : '1'};`;
+				if (!disabled) { b.addEventListener('click', onClick); }
+			};
+			const noNext = this.items.length < 20 && (this.totalPages <= this.currentPage + 1);
+			mkBtn('Previous', this.currentPage <= 0, () => { this.currentPage--; this._loadData(); });
+			const pageInfo = DOM.append(navWrap, DOM.$('span'));
+			pageInfo.textContent = `Page ${this.currentPage + 1}${this.totalPages > 1 ? ` of ${this.totalPages}` : ''}`;
+			pageInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);padding:0 4px;';
+			mkBtn('Next', noNext, () => { this.currentPage++; this._loadData(); });
 		}
 	}
 

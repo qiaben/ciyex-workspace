@@ -442,6 +442,31 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 					reload();
 				}
 			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Cancel', icon: '🚫', handler: async (item, api, reload, dlg) => {
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'cancelled' || current === 'completed') {
+						await dlg.info(`Referral is already ${current}.`);
+						return;
+					}
+					const r = await dlg.confirm({ message: `Cancel referral for ${item.patientName || 'patient'}?`, type: 'warning', primaryButton: 'Cancel Referral' });
+					if (!r.confirmed) { return; }
+					let res = await api.fetch(`/api/referrals/${item.id}/cancel`, { method: 'POST' });
+					if (!res.ok) {
+						res = await api.fetch(`/api/referrals/${item.id}/status`, {
+							method: 'PUT', headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ status: 'cancelled' }),
+						});
+					}
+					if (!res.ok) {
+						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || 'Failed to cancel referral'));
+						return;
+					}
+					reload();
+				}
+			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this referral?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/referrals/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
@@ -454,12 +479,15 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Care Plans', apiPath: '/api/care-plans', statsPath: '/api/care-plans/stats',
 		searchPlaceholder: 'Search by title, patient, author...',
-		clientSideFilter: ['title', 'patientName', 'authorName', 'category', 'status', 'id'],
+		clientSideFilter: ['title', 'patientName', 'authorName', 'category', 'description', 'status', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'title', label: 'Title', width: '1.5fr' }, { key: 'patientName', label: 'Patient' },
 			{ key: 'authorName', label: 'Author' }, { key: 'category', label: 'Category', width: '120px' },
-			{ key: 'startDate', label: 'Start', width: '90px' }, { key: 'status', label: 'Status', width: '80px' },
+			{ key: 'startDate', label: 'Start', width: '90px' },
+			{ key: 'endDate', label: 'End', width: '90px' },
+			{ key: 'description', label: 'Description', width: '1.5fr' },
+			{ key: 'status', label: 'Status', width: '80px' },
 		],
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'Draft', value: 'draft' },
@@ -615,7 +643,9 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
-			{ key: 'insuranceName', label: 'Insurance' }, { key: 'procedureCode', label: 'CPT', width: '70px' },
+			{ key: 'insuranceName', label: 'Insurance' },
+			// Renamed from "CPT" → "Diagnosis"; backed by diagnosisCode (ICD-10) per QA report.
+			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
 			{ key: 'procedureDescription', label: 'Procedure' },
 			{ key: 'priority', label: 'Priority', width: '70px' }, { key: 'status', label: 'Status', width: '80px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
@@ -624,6 +654,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ label: 'Pending', value: 'pending' }, { label: 'Submitted', value: 'submitted' },
 			{ label: 'Approved', value: 'approved' }, { label: 'Denied', value: 'denied' },
 			{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
+			{ label: 'Cancelled', value: 'cancelled' },
 		],
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
@@ -1024,6 +1055,47 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ label: 'Processing', value: 'processing' }, { label: 'Failed', value: 'failed' },
 			{ label: 'Refunded', value: 'refunded' }, { label: 'Voided', value: 'voided' },
 		],
+		// "+ New Payment" → matches the "Collect Payment" flow in ciyex-ehr-ui.
+		createLabel: '+ Collect Payment',
+		creatable: true,
+		formFields: [
+			{
+				key: 'patientName', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient...', apiPath: '/api/patients',
+				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
+			{
+				key: 'transactionType', label: 'Type', type: 'select', options: [
+					{ label: 'Payment', value: 'payment' },
+					{ label: 'Copay', value: 'copay' },
+					{ label: 'Deductible', value: 'deductible' },
+					{ label: 'Coinsurance', value: 'coinsurance' },
+					{ label: 'Self-Pay', value: 'self_pay' },
+				], defaultValue: 'payment'
+			},
+			{
+				key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
+					{ label: 'Credit Card', value: 'credit_card' },
+					{ label: 'Debit Card', value: 'debit_card' },
+					{ label: 'Cash', value: 'cash' },
+					{ label: 'Check', value: 'check' },
+					{ label: 'ACH', value: 'ach' },
+					{ label: 'Other', value: 'other' },
+				]
+			},
+			{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
+			{ key: 'invoiceId', label: 'Invoice ID', type: 'text', placeholder: 'Optional — link to invoice' },
+			{ key: 'transactionId', label: 'External Transaction ID', type: 'text', placeholder: 'Stripe charge id, check #, ...' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Processing', value: 'processing' },
+					{ label: 'Completed', value: 'completed' },
+				], defaultValue: 'completed'
+			},
+		],
 		cellRenderer: (key: string, value: unknown): string => {
 			if (key === 'amount' && typeof value === 'number') {
 				return `$${value.toFixed(2)}`;
@@ -1074,22 +1146,25 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		title: 'Claims Management', apiPath: '/api/all-claims',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
 		editable: true,
-		// Allow manual creation in addition to invoice-derived claims.
-		creatable: true,
+		// Claims are derived from invoices created via the patient flow — the Claims
+		// list only fetches/displays them. QA report 2026-05-08 #20: hide "+ New Claim".
+		creatable: false,
 		createDefaults: { status: 'draft', type: 'professional' },
 		// /api/all-claims doesn't support server-side q=/status= — filter client-side
 		// across the fields the user searches by (matches ciyex-ehr-ui behavior).
-		clientSideFilter: ['patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'id'],
+		clientSideFilter: ['claimNumber', 'patientName', 'provider', 'payerName', 'diagnosisCode', 'policyNumber', 'planName', 'id'],
 		mergeOnEdit: true,
 		editTitle: (item) => `Edit Claim #${String(item.id || '')}`,
 		columns: [
+			{ key: 'claimNumber', label: 'Claim #', width: '110px' },
 			{ key: 'patientName', label: 'Patient' },
-			{ key: 'diagnosisCode', label: 'Dx Code', width: '80px' },
+			{ key: 'diagnosisCode', label: 'Dx Code', width: '90px' },
 			{ key: 'payerName', label: 'Payer' },
 			{ key: 'type', label: 'Type', width: '110px' },
 			{ key: 'planName', label: 'Plan' },
 			{ key: 'provider', label: 'Provider' },
 			{ key: 'policyNumber', label: 'Policy #', width: '110px' },
+			{ key: 'serviceDate', label: 'Date', width: '100px' },
 			{ key: 'status', label: 'Status', width: '100px' },
 		],
 		statusTabs: [

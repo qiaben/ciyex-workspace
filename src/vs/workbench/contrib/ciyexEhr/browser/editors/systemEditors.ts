@@ -28,7 +28,7 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 		apiPath: '/api/consents',
 		statsPath: '/api/consents/stats',
 		searchPlaceholder: 'Search by patient name, consent type...',
-		clientSideFilter: ['patientName', 'consentType', 'status', 'signedBy', 'version', 'id'],
+		clientSideFilter: ['patientName', 'consentType', 'status', 'signedBy', 'id'],
 		editable: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
@@ -37,7 +37,6 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			{ key: 'signedDate', label: 'Signed Date', width: '100px' },
 			{ key: 'expiryDate', label: 'Expiry Date', width: '100px' },
 			{ key: 'signedBy', label: 'Signed By', width: '120px' },
-			{ key: 'version', label: 'Version', width: '60px' },
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' },
@@ -247,8 +246,11 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexDocScanning';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Document Scanning',
-		apiPath: '/api/documents',
-		statsPath: '/api/documents/stats',
+		// Backend exposes /api/document-scanning (DocumentScanningController). The
+		// previous /api/documents path is a different controller (uploads only) and
+		// returned 500 on list. Aligns with ciyex-ehr-ui document-scanning page.
+		apiPath: '/api/document-scanning',
+		statsPath: '/api/document-scanning/stats',
 		searchPlaceholder: 'Search by file name, patient...',
 		clientSideFilter: ['fileName', 'patientName', 'category', 'mimeType', 'ocrStatus', 'id'],
 		editable: true,
