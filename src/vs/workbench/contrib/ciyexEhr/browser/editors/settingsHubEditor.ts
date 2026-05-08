@@ -18,6 +18,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { SettingsHubEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface FieldDef {
 	key: string;
@@ -889,7 +890,7 @@ export class SettingsHubEditor extends EditorPane {
 
 				if (list.length === 0) {
 					const emptyRow = DOM.append(tbody, DOM.$('tr'));
-					const td = DOM.append(emptyRow, DOM.$('td'));
+					const td = DOM.append(emptyRow, DOM.$('td')) as HTMLTableCellElement;
 					td.colSpan = 6;
 					td.textContent = filterTerm ? 'No users match your search.' : 'No users found.';
 					td.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
@@ -1390,10 +1391,10 @@ export class SettingsHubEditor extends EditorPane {
 		};
 
 		const mkSelect = (options: string[], currentVal: string, key: string) => {
-			const sel = DOM.document.createElement('select');
+			const sel = mainWindow.document.createElement('select');
 			sel.style.cssText = 'padding:5px 8px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;cursor:pointer;';
 			for (const opt of options) {
-				const o = DOM.document.createElement('option');
+				const o = mainWindow.document.createElement('option');
 				o.value = opt;
 				o.textContent = opt;
 				if (opt === currentVal) { o.selected = true; }
@@ -1404,12 +1405,12 @@ export class SettingsHubEditor extends EditorPane {
 		};
 
 		const mkToggle = (currentVal: boolean) => {
-			const sw = DOM.document.createElement('button') as HTMLButtonElement;
+			const sw = mainWindow.document.createElement('button') as HTMLButtonElement;
 			let val = currentVal;
 			const update = (v: boolean) => {
 				sw.style.cssText = `position:relative;width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;background:${v ? 'var(--vscode-focusBorder,#0e639c)' : 'rgba(128,128,128,0.4)'};flex-shrink:0;`;
 				DOM.clearNode(sw);
-				const knob = DOM.document.createElement('span');
+				const knob = mainWindow.document.createElement('span');
 				knob.style.cssText = `position:absolute;top:3px;${v ? 'right:3px;' : 'left:3px;'}width:16px;height:16px;border-radius:50%;background:#fff;`;
 				sw.appendChild(knob);
 			};
