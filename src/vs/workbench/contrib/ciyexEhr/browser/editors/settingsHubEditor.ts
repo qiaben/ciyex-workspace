@@ -625,6 +625,75 @@ export class SettingsHubEditor extends EditorPane {
 		const inputStyle = `width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;`;
 
 		const t = field.type || 'text';
+
+		// Special: active/isActive/enabled fields → toggle button
+		const isActiveKey = field.key === 'active' || field.key === 'isActive' || field.key === 'enabled';
+		if (isActiveKey && t !== 'boolean' && t !== 'checkbox' && t !== 'switch') {
+			const isEnabled = value === true || value === 'true' || value === 1 || (value !== false && value !== 'false' && value !== 0 && value !== null && value !== undefined && value !== '');
+			const wrap = DOM.append(cell, DOM.$('div'));
+			wrap.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;';
+			const sw = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+			let swVal = isEnabled;
+			const updateSw = (v: boolean) => {
+				sw.style.cssText = `position:relative;width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;background:${v ? '#22c55e' : 'rgba(128,128,128,0.4)'};transition:background 120ms;flex-shrink:0;`;
+				DOM.clearNode(sw);
+				const knob = DOM.append(sw, DOM.$('span'));
+				knob.style.cssText = `position:absolute;top:3px;${v ? 'right:3px;' : 'left:3px;'}width:16px;height:16px;border-radius:50%;background:#fff;transition:right 120ms,left 120ms;`;
+			};
+			updateSw(swVal);
+			if (!isView && !field.readOnly) {
+				sw.addEventListener('click', () => { swVal = !swVal; updateSw(swVal); this.formData[field.key] = swVal; });
+			} else {
+				sw.disabled = true;
+			}
+			const statusLbl = DOM.append(wrap, DOM.$('span'));
+			statusLbl.textContent = isEnabled ? 'Active' : 'Inactive';
+			statusLbl.style.cssText = `font-size:12px;color:${isEnabled ? '#22c55e' : 'var(--vscode-descriptionForeground)'};font-weight:500;`;
+			if (error) {
+				const e = DOM.append(cell, DOM.$('div'));
+				e.textContent = error;
+				e.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;';
+			}
+			return;
+		}
+
+		// Special: photo/photoUrl fields → file upload with preview
+		const isPhotoKey = field.key === 'photo' || field.key === 'photoUrl' || field.key === 'logo' || field.key === 'logoUrl' || field.key === 'image' || field.key === 'imageUrl';
+		if (isPhotoKey) {
+			const wrap = DOM.append(cell, DOM.$('div'));
+			wrap.style.cssText = 'display:flex;align-items:center;gap:10px;';
+			const photoSrc = (value as string) || '';
+			if (photoSrc) {
+				const img = DOM.append(wrap, DOM.$('img')) as HTMLImageElement;
+				img.src = photoSrc;
+				img.style.cssText = 'width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid var(--vscode-editorWidget-border);';
+				img.onerror = () => { img.style.display = 'none'; };
+			}
+			if (!isView && !field.readOnly) {
+				const fileInput = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				fileInput.type = 'file';
+				fileInput.accept = 'image/*';
+				fileInput.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+				fileInput.addEventListener('change', () => {
+					const file = fileInput.files?.[0];
+					if (!file) { return; }
+					const reader = new FileReader();
+					reader.onload = () => { this.formData[field.key] = reader.result as string; };
+					reader.readAsDataURL(file);
+				});
+			} else {
+				const urlEl = DOM.append(wrap, DOM.$('span'));
+				urlEl.textContent = photoSrc || '-';
+				urlEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);word-break:break-all;';
+			}
+			if (error) {
+				const e = DOM.append(cell, DOM.$('div'));
+				e.textContent = error;
+				e.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;';
+			}
+			return;
+		}
+
 		if (t === 'textarea') {
 			const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 			ta.value = ((value === null || value === undefined) ? '' : String(value));
@@ -755,35 +824,39 @@ export class SettingsHubEditor extends EditorPane {
 		title.textContent = 'Users';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(titleCol, DOM.$('p'));
-		sub.textContent = 'Manage user accounts, roles, and access \u2014 backed by /api/admin/users.';
+		sub.textContent = 'Manage user accounts, roles, and portal access.';
 		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:12px;';
+
+		const headerRight = DOM.append(header, DOM.$('div'));
+		headerRight.style.cssText = 'display:flex;gap:8px;align-items:center;';
+
+		const searchInput = DOM.append(headerRight, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'search';
+		searchInput.placeholder = 'Search users\u2026';
+		searchInput.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;width:200px;outline:none;';
+
+		const addBtn = DOM.append(headerRight, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add User';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		addBtn.addEventListener('click', () => this._showAddUserDialog(root));
 
 		const loading = DOM.append(root, DOM.$('div'));
 		loading.textContent = 'Loading users\u2026';
 		loading.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 
 		try {
-			const res = await this.apiService.fetch('/api/admin/users?page=0&size=50');
+			const res = await this.apiService.fetch('/api/admin/users?page=0&size=100');
 			if (!res.ok) {
 				const errText = await res.text().catch(() => '');
 				loading.textContent = `Failed to load users (${res.status}). ${errText.substring(0, 200)}`;
 				return;
 			}
 			const json = await res.json();
-			// Backend returns { success: true, data: UserResponse[] } per /api/admin/users
-			const list: Array<Record<string, unknown>> = Array.isArray(json?.data)
+			const allList: Array<Record<string, unknown>> = Array.isArray(json?.data)
 				? json.data
 				: (json?.data?.content || json?.content || (Array.isArray(json) ? json : []));
 			loading.remove();
 
-			if (list.length === 0) {
-				const empty = DOM.append(root, DOM.$('div'));
-				empty.textContent = 'No users found.';
-				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
-				return;
-			}
-
-			// Filter out keycloak default roles for display
 			const HIDDEN_ROLES = new Set(['default-roles-ciyex', 'offline_access', 'uma_authorization']);
 
 			const tableWrap = DOM.append(root, DOM.$('div'));
@@ -794,36 +867,231 @@ export class SettingsHubEditor extends EditorPane {
 			const thead = DOM.append(table, DOM.$('thead'));
 			const tr = DOM.append(thead, DOM.$('tr'));
 			tr.style.cssText = 'background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);';
-			for (const col of ['Username', 'Name', 'Email', 'Roles', 'NPI', 'Active']) {
+			for (const col of ['Username', 'Name', 'Email', 'Roles', 'Status', 'Actions']) {
 				const th = DOM.append(tr, DOM.$('th'));
 				th.textContent = col;
 				th.style.cssText = 'padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
 			}
 
 			const tbody = DOM.append(table, DOM.$('tbody'));
-			for (const u of list) {
-				const user = u as {
-					username?: string;
-					firstName?: string;
-					lastName?: string;
-					email?: string;
-					roles?: string[];
-					npi?: string;
-					enabled?: boolean;
-					emailVerified?: boolean;
-				};
-				const row = DOM.append(tbody, DOM.$('tr'));
-				row.style.cssText = 'border-bottom:1px solid rgba(128,128,128,0.1);';
-				this._appendCell(row, user.username || '-');
-				this._appendCell(row, [user.firstName, user.lastName].filter(Boolean).join(' ') || '-');
-				this._appendCell(row, user.email || '-');
-				const roleList = (user.roles || []).filter(r => !HIDDEN_ROLES.has(r));
-				this._appendCell(row, roleList.length > 0 ? roleList.join(', ') : '-');
-				this._appendCell(row, user.npi || '-');
-				this._appendCell(row, user.enabled === false ? 'No' : 'Yes');
+
+			const renderRows = (filterTerm: string) => {
+				DOM.clearNode(tbody);
+				const list = filterTerm
+					? allList.filter(u => {
+						const s = filterTerm.toLowerCase();
+						const user = u as { username?: string; firstName?: string; lastName?: string; email?: string };
+						return (user.username || '').toLowerCase().includes(s)
+							|| (user.email || '').toLowerCase().includes(s)
+							|| ([user.firstName, user.lastName].join(' ')).toLowerCase().includes(s);
+					})
+					: allList;
+
+				if (list.length === 0) {
+					const emptyRow = DOM.append(tbody, DOM.$('tr'));
+					const td = DOM.append(emptyRow, DOM.$('td'));
+					td.colSpan = 6;
+					td.textContent = filterTerm ? 'No users match your search.' : 'No users found.';
+					td.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+					return;
+				}
+
+				for (const u of list) {
+					const user = u as {
+						id?: string;
+						username?: string;
+						firstName?: string;
+						lastName?: string;
+						email?: string;
+						roles?: string[];
+						npi?: string;
+						enabled?: boolean;
+					};
+					const row = DOM.append(tbody, DOM.$('tr'));
+					row.style.cssText = 'border-bottom:1px solid rgba(128,128,128,0.1);';
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.03))'; });
+					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+					this._appendCell(row, user.username || '-');
+					this._appendCell(row, [user.firstName, user.lastName].filter(Boolean).join(' ') || '-');
+					this._appendCell(row, user.email || '-');
+					const roleList = (user.roles || []).filter(r => !HIDDEN_ROLES.has(r));
+					this._appendCell(row, roleList.length > 0 ? roleList.slice(0, 2).join(', ') + (roleList.length > 2 ? ` +${roleList.length - 2}` : '') : '-');
+
+					// Status badge
+					const statusTd = DOM.append(row, DOM.$('td'));
+					statusTd.style.cssText = 'padding:10px 12px;';
+					const isActive = user.enabled !== false;
+					const badge = DOM.append(statusTd, DOM.$('span'));
+					badge.textContent = isActive ? 'Active' : 'Inactive';
+					badge.style.cssText = `display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;background:${isActive ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${isActive ? '#22c55e' : '#ef4444'};`;
+
+					// Actions
+					const actionsTd = DOM.append(row, DOM.$('td'));
+					actionsTd.style.cssText = 'padding:6px 12px;white-space:nowrap;';
+					this._tableAction(actionsTd, '\u270f', 'Edit', () => this._showEditUserDialog(root, user as Record<string, unknown>));
+					this._tableAction(actionsTd, '\u{1F511}', 'Reset Password', () => this._resetUserPassword(user.id || ''));
+					this._tableAction(actionsTd, '\u{1F5D1}', 'Delete', () => this._deleteUser(user.id || '', user.username || ''), 'danger');
+				}
+			};
+
+			renderRows('');
+			searchInput.addEventListener('input', () => renderRows(searchInput.value));
+
+			if (allList.length === 0) {
+				const empty = DOM.append(root, DOM.$('div'));
+				empty.textContent = 'No users found.';
+				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;margin-top:16px;';
+			}
+		} catch {
+			loading.textContent = 'Waiting for login\u2026';
+		}
+	}
+
+	private _showAddUserDialog(root: HTMLElement): void {
+		const overlay = DOM.append(root, DOM.$('.sh-dialog-overlay'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('div'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:420px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+		const t = DOM.append(dialog, DOM.$('h3'));
+		t.textContent = 'Add User';
+		t.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		const fields: Array<[string, string, string]> = [
+			['Username', 'username', ''],
+			['First Name', 'firstName', ''],
+			['Last Name', 'lastName', ''],
+			['Email', 'email', ''],
+			['Password', 'password', ''],
+		];
+		const inputs: Record<string, HTMLInputElement> = {};
+		for (const [label, key, placeholder] of fields) {
+			const wrap = DOM.append(dialog, DOM.$('div'));
+			wrap.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(wrap, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const inp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			inp.type = key === 'password' ? 'password' : 'text';
+			inp.placeholder = placeholder;
+			inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			inputs[key] = inp;
+		}
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Create User';
+		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		saveBtn.addEventListener('click', async () => {
+			const body: Record<string, string> = {};
+			for (const [k, inp] of Object.entries(inputs)) { body[k] = inp.value.trim(); }
+			if (!body.username || !body.email) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Username and email are required.' });
+				return;
+			}
+			try {
+				const res = await this.apiService.fetch('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
+				if (res.ok) {
+					overlay.remove();
+					this.notificationService.notify({ severity: Severity.Info, message: 'User created.' });
+					this._onSidebarClick('__users__');
+				} else {
+					const err = await res.json().catch(() => null);
+					this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Create failed (${res.status})` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Create failed: ${e}` });
+			}
+		});
+		setTimeout(() => inputs['username']?.focus(), 50);
+	}
+
+	private _showEditUserDialog(root: HTMLElement, user: Record<string, unknown>): void {
+		const overlay = DOM.append(root, DOM.$('.sh-dialog-overlay'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('div'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:420px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+		const t = DOM.append(dialog, DOM.$('h3'));
+		t.textContent = 'Edit User';
+		t.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		const fields: Array<[string, string]> = [['First Name', 'firstName'], ['Last Name', 'lastName'], ['Email', 'email']];
+		const inputs: Record<string, HTMLInputElement> = {};
+		for (const [label, key] of fields) {
+			const wrap = DOM.append(dialog, DOM.$('div'));
+			wrap.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(wrap, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const inp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'text';
+			inp.value = (user[key] as string) || '';
+			inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			inputs[key] = inp;
+		}
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Save';
+		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		saveBtn.addEventListener('click', async () => {
+			const body: Record<string, unknown> = { ...user };
+			for (const [k, inp] of Object.entries(inputs)) { body[k] = inp.value.trim(); }
+			const id = user.id as string;
+			try {
+				const res = await this.apiService.fetch(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+				if (res.ok) {
+					overlay.remove();
+					this.notificationService.notify({ severity: Severity.Info, message: 'User updated.' });
+					this._onSidebarClick('__users__');
+				} else {
+					const err = await res.json().catch(() => null);
+					this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Update failed (${res.status})` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Update failed: ${e}` });
+			}
+		});
+	}
+
+	private async _resetUserPassword(userId: string): Promise<void> {
+		if (!userId) { return; }
+		const { confirmed } = await this.dialogService.confirm({ message: 'Send password reset email to this user?' });
+		if (!confirmed) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/admin/users/${userId}/reset-password`, { method: 'POST' });
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'Password reset email sent.' });
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to send reset email (${res.status})` });
 			}
 		} catch (e) {
-			loading.textContent = 'Waiting for login\u2026';
+			this.notificationService.notify({ severity: Severity.Error, message: `Failed: ${e}` });
+		}
+	}
+
+	private async _deleteUser(userId: string, username: string): Promise<void> {
+		if (!userId) { return; }
+		const { confirmed } = await this.dialogService.confirm({ message: `Delete user "${username}"? This cannot be undone.` });
+		if (!confirmed) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'User deleted.' });
+				this._onSidebarClick('__users__');
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status})` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
 		}
 	}
 
@@ -831,11 +1099,18 @@ export class SettingsHubEditor extends EditorPane {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
 
-		const title = DOM.append(root, DOM.$('h1'));
-		title.textContent = 'Roles & Permissions';
-		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
+		const titleEl = DOM.append(header, DOM.$('h1'));
+		titleEl.textContent = 'Roles & Permissions';
+		titleEl.style.cssText = 'margin:0;font-size:22px;font-weight:600;';
+		const newRoleBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+		newRoleBtn.textContent = '+ New Role';
+		newRoleBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		newRoleBtn.addEventListener('click', () => this._showRoleDialog(root, null));
+
 		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Manage roles, FHIR permissions, and SMART scopes \u2014 backed by /api/admin/roles.';
+		sub.textContent = 'Manage roles, FHIR permissions, and SMART scopes.';
 		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
 		const loading = DOM.append(root, DOM.$('div'));
@@ -850,7 +1125,6 @@ export class SettingsHubEditor extends EditorPane {
 				return;
 			}
 			const json = await res.json();
-			// Backend returns { success: true, data: RolePermission[] }
 			const list: Array<Record<string, unknown>> = Array.isArray(json?.data)
 				? json.data
 				: (json?.content || (Array.isArray(json) ? json : []));
@@ -858,7 +1132,7 @@ export class SettingsHubEditor extends EditorPane {
 
 			if (list.length === 0) {
 				const empty = DOM.append(root, DOM.$('div'));
-				empty.textContent = 'No roles configured.';
+				empty.textContent = 'No roles configured. Click "+ New Role" to create one.';
 				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
 				return;
 			}
@@ -876,18 +1150,25 @@ export class SettingsHubEditor extends EditorPane {
 					isActive?: boolean;
 				};
 				const card = DOM.append(grid, DOM.$('div'));
-				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);';
+				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);position:relative;';
+				card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--vscode-focusBorder)'; });
+				card.addEventListener('mouseleave', () => { card.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+
+				// Action buttons top-right
+				const cardActions = DOM.append(card, DOM.$('div'));
+				cardActions.style.cssText = 'position:absolute;top:10px;right:10px;display:flex;gap:4px;';
+				this._tableAction(cardActions, '\u270f', 'Edit', () => this._showRoleDialog(root, r));
+				this._tableAction(cardActions, '\u{1F5D1}', 'Delete', () => this._deleteRole(r.id as string, role.roleName || ''), 'danger');
 
 				// Header: label + name
 				const headRow = DOM.append(card, DOM.$('div'));
-				headRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+				headRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-right:60px;';
 				const lbl = DOM.append(headRow, DOM.$('span'));
 				lbl.textContent = role.roleLabel || role.roleName || '(unnamed)';
 				lbl.style.cssText = 'font-weight:600;font-size:14px;';
 				const code = DOM.append(headRow, DOM.$('code'));
 				code.textContent = role.roleName || '';
 				code.style.cssText = 'font-size:10px;font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground);background:rgba(128,128,128,0.1);padding:1px 5px;border-radius:3px;';
-
 				if (role.isActive === false) {
 					const inactive = DOM.append(headRow, DOM.$('span'));
 					inactive.textContent = 'INACTIVE';
@@ -901,16 +1182,129 @@ export class SettingsHubEditor extends EditorPane {
 				}
 
 				const stats = DOM.append(card, DOM.$('div'));
-				stats.style.cssText = 'display:flex;gap:14px;font-size:11px;color:var(--vscode-descriptionForeground);';
+				stats.style.cssText = 'display:flex;gap:14px;font-size:11px;color:var(--vscode-descriptionForeground);margin-top:8px;';
 				const permCount = (role.permissions || []).length;
 				const scopeCount = (role.smartScopes || []).length;
 				const permEl = DOM.append(stats, DOM.$('span'));
 				permEl.textContent = `${permCount} permission${permCount === 1 ? '' : 's'}`;
 				const scopeEl = DOM.append(stats, DOM.$('span'));
 				scopeEl.textContent = `${scopeCount} FHIR scope${scopeCount === 1 ? '' : 's'}`;
+
+				// Show first few permissions as pills
+				const perms = (role.permissions || []).slice(0, 4);
+				if (perms.length > 0) {
+					const pillRow = DOM.append(card, DOM.$('div'));
+					pillRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;';
+					for (const p of perms) {
+						const pill = DOM.append(pillRow, DOM.$('span'));
+						pill.textContent = p;
+						pill.style.cssText = 'background:rgba(55,148,255,0.1);color:var(--vscode-textLink-foreground,#3794ff);padding:1px 6px;border-radius:3px;font-size:10px;';
+					}
+					if ((role.permissions || []).length > 4) {
+						const more = DOM.append(pillRow, DOM.$('span'));
+						more.textContent = `+${(role.permissions || []).length - 4} more`;
+						more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:1px 6px;';
+					}
+				}
 			}
 		} catch {
 			loading.textContent = 'Waiting for login\u2026';
+		}
+	}
+
+	private _showRoleDialog(root: HTMLElement, role: Record<string, unknown> | null): void {
+		const isEdit = role !== null;
+		const overlay = DOM.append(root, DOM.$('.sh-dialog-overlay'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('div'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:480px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:80vh;overflow-y:auto;';
+		const t = DOM.append(dialog, DOM.$('h3'));
+		t.textContent = isEdit ? 'Edit Role' : 'New Role';
+		t.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+
+		const mkField = (label: string, key: string, val?: string) => {
+			const wrap = DOM.append(dialog, DOM.$('div'));
+			wrap.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(wrap, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const inp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'text';
+			inp.value = val || '';
+			inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			return { inp, key };
+		};
+
+		const nameField = mkField('Role Name (key)', 'roleName', role?.roleName as string);
+		const labelField = mkField('Role Label (display)', 'roleLabel', role?.roleLabel as string);
+		const descField = mkField('Description', 'description', role?.description as string);
+
+		const permWrap = DOM.append(dialog, DOM.$('div'));
+		permWrap.style.cssText = 'margin-bottom:12px;';
+		const permLbl = DOM.append(permWrap, DOM.$('label'));
+		permLbl.textContent = 'Permissions (comma-separated)';
+		permLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const permArea = DOM.append(permWrap, DOM.$('textarea')) as HTMLTextAreaElement;
+		permArea.value = ((role?.permissions || []) as string[]).join(', ');
+		permArea.rows = 3;
+		permArea.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;outline:none;font-family:inherit;resize:vertical;';
+
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? 'Save' : 'Create Role';
+		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		saveBtn.addEventListener('click', async () => {
+			const perms = permArea.value.split(',').map(s => s.trim()).filter(Boolean);
+			const body = {
+				roleName: nameField.inp.value.trim(),
+				roleLabel: labelField.inp.value.trim(),
+				description: descField.inp.value.trim(),
+				permissions: perms,
+				isActive: true,
+			};
+			if (!body.roleName) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Role name is required.' });
+				return;
+			}
+			try {
+				const method = isEdit ? 'PUT' : 'POST';
+				const url = isEdit ? `/api/admin/roles/${role!.id}` : '/api/admin/roles';
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(body) });
+				if (res.ok) {
+					overlay.remove();
+					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Role updated.' : 'Role created.' });
+					this._onSidebarClick('__roles__');
+				} else {
+					const err = await res.json().catch(() => null);
+					this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Save failed (${res.status})` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+			}
+		});
+		setTimeout(() => nameField.inp.focus(), 50);
+	}
+
+	private async _deleteRole(roleId: string, roleName: string): Promise<void> {
+		if (!roleId) { return; }
+		const { confirmed } = await this.dialogService.confirm({ message: `Delete role "${roleName}"? This cannot be undone.` });
+		if (!confirmed) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/admin/roles/${roleId}`, { method: 'DELETE' });
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'Role deleted.' });
+				this._onSidebarClick('__roles__');
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status})` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
 		}
 	}
 
@@ -976,29 +1370,61 @@ export class SettingsHubEditor extends EditorPane {
 		title.textContent = 'Display';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Display preferences are managed in VS Code Settings (Cmd+,) under "Ciyex: Display".';
+		sub.textContent = 'Adjust display preferences for the EHR interface.';
 		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
-		const items: Array<[string, string]> = [
-			['ciyex.display.fontSize', 'Font Size'],
-			['ciyex.display.compactMode', 'Compact Mode'],
-			['ciyex.display.showAvatars', 'Show Avatars'],
-			['ciyex.display.dateFormat', 'Date Format'],
-			['ciyex.display.timeFormat', 'Time Format'],
-			['ciyex.display.theme', 'Theme'],
-		];
-		const list = DOM.append(root, DOM.$('div'));
-		list.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
-		for (const [key, label] of items) {
-			const row = DOM.append(list, DOM.$('div'));
-			row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(128,128,128,0.1);';
-			const lbl = DOM.append(row, DOM.$('span'));
+		const panel = DOM.append(root, DOM.$('div'));
+		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+		const mkRow = (label: string, desc: string, control: HTMLElement) => {
+			const row = DOM.append(panel, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(128,128,128,0.1);';
+			const left = DOM.append(row, DOM.$('div'));
+			const lbl = DOM.append(left, DOM.$('div'));
 			lbl.textContent = label;
-			lbl.style.cssText = 'font-size:13px;';
-			const k = DOM.append(row, DOM.$('code'));
-			k.textContent = key;
-			k.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--vscode-descriptionForeground);';
-		}
+			lbl.style.cssText = 'font-size:13px;font-weight:500;';
+			const d = DOM.append(left, DOM.$('div'));
+			d.textContent = desc;
+			d.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+			row.appendChild(control);
+		};
+
+		const mkSelect = (options: string[], currentVal: string, key: string) => {
+			const sel = DOM.document.createElement('select');
+			sel.style.cssText = 'padding:5px 8px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;cursor:pointer;';
+			for (const opt of options) {
+				const o = DOM.document.createElement('option');
+				o.value = opt;
+				o.textContent = opt;
+				if (opt === currentVal) { o.selected = true; }
+				sel.appendChild(o);
+			}
+			sel.addEventListener('change', () => { /* preference stored in-memory only */ });
+			return sel;
+		};
+
+		const mkToggle = (currentVal: boolean) => {
+			const sw = DOM.document.createElement('button') as HTMLButtonElement;
+			let val = currentVal;
+			const update = (v: boolean) => {
+				sw.style.cssText = `position:relative;width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;background:${v ? 'var(--vscode-focusBorder,#0e639c)' : 'rgba(128,128,128,0.4)'};flex-shrink:0;`;
+				DOM.clearNode(sw);
+				const knob = DOM.document.createElement('span');
+				knob.style.cssText = `position:absolute;top:3px;${v ? 'right:3px;' : 'left:3px;'}width:16px;height:16px;border-radius:50%;background:#fff;`;
+				sw.appendChild(knob);
+			};
+			update(val);
+			sw.addEventListener('click', () => { val = !val; update(val); });
+			return sw;
+		};
+
+		mkRow('Font Size', 'Base font size for all EHR text', mkSelect(['11px', '12px', '13px', '14px', '15px', '16px'], '13px', 'fontSize'));
+		mkRow('Date Format', 'How dates are displayed throughout the app', mkSelect(['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY'], 'MM/DD/YYYY', 'dateFormat'));
+		mkRow('Time Format', 'How times are displayed', mkSelect(['12-hour (AM/PM)', '24-hour'], '12-hour (AM/PM)', 'timeFormat'));
+		mkRow('Compact Mode', 'Reduce padding and margins for denser display', mkToggle(false));
+		mkRow('Show Avatars', 'Display profile photos next to names', mkToggle(true));
+		mkRow('Sidebar Collapsed', 'Start with navigation sidebar collapsed', mkToggle(false));
+		mkRow('Show Record Count', 'Display total record counts in section headers', mkToggle(true));
 	}
 
 	private _renderCalendarColors(): void {
@@ -1008,12 +1434,111 @@ export class SettingsHubEditor extends EditorPane {
 		title.textContent = 'Calendar Colors';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Customize calendar appointment colors by visit type, provider, or location.';
-		sub.style.cssText = 'margin:0 0 16px;color:var(--vscode-descriptionForeground);font-size:13px;';
+		sub.textContent = 'Customize appointment colors by visit type, provider, or location.';
+		sub.style.cssText = 'margin:0 0 20px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
-		const note = DOM.append(root, DOM.$('div'));
-		note.style.cssText = 'padding:12px;background:rgba(0,122,204,0.05);border-left:3px solid var(--vscode-textLink-foreground,#3794ff);border-radius:4px;font-size:12px;';
-		note.textContent = 'Use the dedicated Calendar Colors editor (Command Palette \u2192 "Open Calendar Colors") for the full color picker.';
+		// Tab bar
+		type ColorTab = 'visit-type' | 'provider' | 'location';
+		let activeColorTab: ColorTab = 'visit-type';
+		const tabBar = DOM.append(root, DOM.$('div'));
+		tabBar.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:20px;';
+		const colorTabBody = DOM.append(root, DOM.$('div'));
+
+		const renderColorTab = (tab: ColorTab) => {
+			DOM.clearNode(colorTabBody);
+			DOM.clearNode(tabBar);
+
+			const tabs: Array<[ColorTab, string]> = [['visit-type', 'Visit Types'], ['provider', 'Providers'], ['location', 'Locations']];
+			for (const [key, lbl] of tabs) {
+				const btn = DOM.append(tabBar, DOM.$('button'));
+				btn.textContent = lbl;
+				const isActive = tab === key;
+				btn.style.cssText = `padding:8px 16px;background:transparent;border:none;border-bottom:2px solid ${isActive ? 'var(--vscode-focusBorder)' : 'transparent'};color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;`;
+				btn.addEventListener('click', () => { activeColorTab = key; renderColorTab(key); });
+			}
+
+			const endpoint = tab === 'visit-type' ? '/api/appointment-types' : tab === 'provider' ? '/api/providers?page=0&size=50' : '/api/locations';
+
+			const loading = DOM.append(colorTabBody, DOM.$('div'));
+			loading.textContent = 'Loading\u2026';
+			loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+
+			this.apiService.fetch(endpoint).then(async res => {
+				loading.remove();
+				if (!res.ok) {
+					const msg = DOM.append(colorTabBody, DOM.$('div'));
+					msg.textContent = `Failed to load (${res.status})`;
+					msg.style.cssText = 'padding:24px;color:var(--vscode-descriptionForeground);';
+					return;
+				}
+				const json = await res.json();
+				const items: Array<Record<string, unknown>> = Array.isArray(json?.data?.content)
+					? json.data.content
+					: (Array.isArray(json?.data) ? json.data : (json?.content || (Array.isArray(json) ? json : [])));
+
+				if (items.length === 0) {
+					const empty = DOM.append(colorTabBody, DOM.$('div'));
+					empty.textContent = 'No items found.';
+					empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+					return;
+				}
+
+				const grid = DOM.append(colorTabBody, DOM.$('div'));
+				grid.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+				for (const item of items) {
+					const name = (item.name || item.displayName || item.firstName + ' ' + item.lastName || item.visitTypeName || item.locationName || item.typeName || item.id || '(unnamed)') as string;
+					const currentColor = (item.color || item.calendarColor || '#3b82f6') as string;
+
+					const row = DOM.append(grid, DOM.$('div'));
+					row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;';
+
+					const nameEl = DOM.append(row, DOM.$('span'));
+					nameEl.textContent = name.trim() || String(item.id || '');
+					nameEl.style.cssText = 'font-size:13px;font-weight:500;flex:1;';
+
+					const right = DOM.append(row, DOM.$('div'));
+					right.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+					const swatch = DOM.append(right, DOM.$('div'));
+					swatch.style.cssText = `width:24px;height:24px;border-radius:4px;background:${currentColor};border:1px solid rgba(0,0,0,0.2);`;
+
+					const colorInput = DOM.append(right, DOM.$('input')) as HTMLInputElement;
+					colorInput.type = 'color';
+					colorInput.value = /^#[0-9a-f]{6}$/i.test(currentColor) ? currentColor : '#3b82f6';
+					colorInput.style.cssText = 'width:32px;height:28px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;cursor:pointer;background:transparent;padding:1px;';
+					colorInput.addEventListener('input', () => {
+						swatch.style.background = colorInput.value;
+					});
+
+					const saveColorBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
+					saveColorBtn.textContent = 'Apply';
+					saveColorBtn.style.cssText = 'padding:3px 10px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:11px;';
+					saveColorBtn.addEventListener('click', async () => {
+						const id = item.id as string;
+						if (!id) { return; }
+						const colorEndpoint = tab === 'visit-type' ? `/api/appointment-types/${id}` : tab === 'provider' ? `/api/providers/${id}` : `/api/locations/${id}`;
+						try {
+							const patchRes = await this.apiService.fetch(colorEndpoint, {
+								method: 'PATCH',
+								body: JSON.stringify({ color: colorInput.value }),
+							});
+							if (patchRes.ok) {
+								this.notificationService.notify({ severity: Severity.Info, message: 'Color saved.' });
+							} else {
+								this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${patchRes.status})` });
+							}
+						} catch (e) {
+							this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+						}
+					});
+				}
+			}).catch(() => {
+				loading.textContent = 'Waiting for login\u2026';
+			});
+		};
+
+		renderColorTab(activeColorTab);
 	}
 
 	// allow-any-unicode-next-line

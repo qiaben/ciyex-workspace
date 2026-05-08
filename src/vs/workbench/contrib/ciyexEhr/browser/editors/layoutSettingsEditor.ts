@@ -11,7 +11,6 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -74,7 +73,6 @@ export class LayoutSettingsEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(LayoutSettingsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -186,22 +184,24 @@ export class LayoutSettingsEditor extends EditorPane {
 		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 		saveBtn.addEventListener('click', () => this._saveLayout());
 
-		const addCatBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		addCatBtn.textContent = '+ Category';
-		addCatBtn.style.cssText = 'padding:5px 12px;background:transparent;border:1px solid var(--vscode-button-border,var(--vscode-input-border,#3c3c3c));border-radius:4px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:12px;';
-		addCatBtn.addEventListener('click', () => this._addCategory());
-
 		// Categories list
 		if (this.categories.length === 0) {
 			const empty = DOM.append(this.contentEl, DOM.$('.ls-empty'));
-			empty.textContent = 'No categories configured. Click "+ Category" to start.';
+			empty.textContent = 'No groups configured. Click "Add Group" below to start.';
 			empty.style.cssText = 'padding:40px 0;text-align:center;color:var(--vscode-descriptionForeground);';
-			return;
+		} else {
+			for (let ci = 0; ci < this.categories.length; ci++) {
+				this._renderCategory(ci);
+			}
 		}
 
-		for (let ci = 0; ci < this.categories.length; ci++) {
-			this._renderCategory(ci);
-		}
+		// "Add Group" button at the bottom
+		const addGroupBtn = DOM.append(this.contentEl, DOM.$('button')) as HTMLButtonElement;
+		addGroupBtn.textContent = '+ Add Group';
+		addGroupBtn.style.cssText = 'display:block;width:100%;margin-top:12px;padding:10px;background:transparent;border:2px dashed var(--vscode-editorWidget-border);border-radius:8px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;';
+		addGroupBtn.addEventListener('mouseenter', () => { addGroupBtn.style.background = 'rgba(55,148,255,0.05)'; });
+		addGroupBtn.addEventListener('mouseleave', () => { addGroupBtn.style.background = 'transparent'; });
+		addGroupBtn.addEventListener('click', () => this._addCategory());
 	}
 
 	private _renderCategory(ci: number): void {
@@ -335,6 +335,50 @@ export class LayoutSettingsEditor extends EditorPane {
 		delBtn.addEventListener('click', () => this._deleteTab(ci, ti));
 	}
 
+	private _inlineDialog(title: string, fields: Array<{ label: string; key: string; placeholder?: string; value?: string }>, onConfirm: (values: Record<string, string>) => void): void {
+		const overlay = DOM.append(this.root, DOM.$('.ls-dialog-overlay'));
+		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('.ls-dialog'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;min-width:340px;max-width:480px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+		const titleEl = DOM.append(dialog, DOM.$('h3'));
+		titleEl.textContent = title;
+		titleEl.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		const inputs: Record<string, HTMLInputElement> = {};
+		for (const field of fields) {
+			const wrap = DOM.append(dialog, DOM.$('div'));
+			wrap.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(wrap, DOM.$('label'));
+			lbl.textContent = field.label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			input.type = 'text';
+			input.value = field.value || '';
+			input.placeholder = field.placeholder || '';
+			input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			inputs[field.key] = input;
+		}
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const confirmBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		confirmBtn.textContent = 'OK';
+		confirmBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		const close = () => overlay.remove();
+		cancelBtn.addEventListener('click', close);
+		overlay.addEventListener('click', e => { if (e.target === overlay) { close(); } });
+		confirmBtn.addEventListener('click', () => {
+			const values: Record<string, string> = {};
+			for (const [key, input] of Object.entries(inputs)) { values[key] = input.value.trim(); }
+			close();
+			onConfirm(values);
+		});
+		const inputArr = Object.values(inputs);
+		if (inputArr.length > 0) { setTimeout(() => inputArr[0].focus(), 50); }
+		inputArr[inputArr.length - 1]?.addEventListener('keydown', e => { if (e.key === 'Enter') { confirmBtn.click(); } });
+	}
+
 	private _moveCategory(ci: number, dir: number): void {
 		const newIdx = ci + dir;
 		if (newIdx < 0 || newIdx >= this.categories.length) { return; }
@@ -354,17 +398,19 @@ export class LayoutSettingsEditor extends EditorPane {
 		this._render();
 	}
 
-	private async _addCategory(): Promise<void> {
-		const name = await this.quickInputService.input({ prompt: 'Category name', placeHolder: 'e.g., Clinical' });
-		if (!name) { return; }
-		this.categories.push({
-			key: name.toLowerCase().replace(/\s+/g, '-'),
-			label: name,
-			position: this.categories.length,
-			tabs: [],
+	private _addCategory(): void {
+		this._inlineDialog('Add Group', [
+			{ label: 'Group Name', key: 'name', placeholder: 'e.g., Clinical' },
+		], values => {
+			if (!values.name) { return; }
+			this.categories.push({
+				key: values.name.toLowerCase().replace(/\s+/g, '-'),
+				label: values.name,
+				position: this.categories.length,
+				tabs: [],
+			});
+			this._render();
 		});
-
-		this._render();
 	}
 
 	private async _deleteCategory(ci: number): Promise<void> {
@@ -377,31 +423,33 @@ export class LayoutSettingsEditor extends EditorPane {
 		this._render();
 	}
 
-	private async _addTab(ci: number): Promise<void> {
-		const key = await this.quickInputService.input({ prompt: 'Tab key (e.g., vitals)' });
-		if (!key) { return; }
-		const label = await this.quickInputService.input({ prompt: 'Tab label', value: key.charAt(0).toUpperCase() + key.slice(1) });
-		if (!label) { return; }
-		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR resource type (optional, e.g., Observation)' });
-		const fhirResources = fhirStr ? fhirStr.split(',').map(s => s.trim()).filter(Boolean) : [];
-		this.categories[ci].tabs.push({ key, label, icon: 'FileText', position: this.categories[ci].tabs.length, visible: true, fhirResources });
-
-		this._render();
+	private _addTab(ci: number): void {
+		this._inlineDialog('Add Tab', [
+			{ label: 'Tab Key (e.g., vitals)', key: 'key', placeholder: 'vitals' },
+			{ label: 'Tab Label', key: 'label', placeholder: 'Vitals' },
+			{ label: 'FHIR Resource Type (optional)', key: 'fhir', placeholder: 'Observation' },
+		], values => {
+			if (!values.key) { return; }
+			const label = values.label || (values.key.charAt(0).toUpperCase() + values.key.slice(1));
+			const fhirResources = values.fhir ? values.fhir.split(',').map(s => s.trim()).filter(Boolean) : [];
+			this.categories[ci].tabs.push({ key: values.key, label, icon: 'FileText', position: this.categories[ci].tabs.length, visible: true, fhirResources });
+			this._render();
+		});
 	}
 
-	private async _editTab(ci: number, ti: number): Promise<void> {
+	private _editTab(ci: number, ti: number): void {
 		const tab = this.categories[ci].tabs[ti];
-		const label = await this.quickInputService.input({ prompt: 'Tab label', value: tab.label });
-		if (label) { tab.label = label; }
-		const icon = await this.quickInputService.input({ prompt: 'Icon name', value: tab.icon || '' });
-		if (icon !== undefined) { tab.icon = icon; }
 		const fhirNames = (tab.fhirResources || []).map(r => typeof r === 'string' ? r : (r?.type || '')).filter(Boolean);
-		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR Resources (comma-separated)', value: fhirNames.join(', ') });
-		if (fhirStr !== undefined) {
-			tab.fhirResources = fhirStr.split(',').map(s => s.trim()).filter(Boolean);
-		}
-
-		this._render();
+		this._inlineDialog('Edit Tab', [
+			{ label: 'Tab Label', key: 'label', value: tab.label, placeholder: tab.label },
+			{ label: 'Icon Name', key: 'icon', value: tab.icon || '', placeholder: 'FileText' },
+			{ label: 'FHIR Resources (comma-separated)', key: 'fhir', value: fhirNames.join(', '), placeholder: 'Observation' },
+		], values => {
+			if (values.label) { tab.label = values.label; }
+			tab.icon = values.icon;
+			tab.fhirResources = values.fhir ? values.fhir.split(',').map(s => s.trim()).filter(Boolean) : [];
+			this._render();
+		});
 	}
 
 	private async _deleteTab(ci: number, ti: number): Promise<void> {
