@@ -181,18 +181,15 @@ export class EhrTitlebarControls extends Disposable {
 	// --- Add Patient Button ---
 
 	private _buildAddPatientButton(): void {
+		// Icon-only per the test team's request — drop the "+ Patient" label
+		// and the colored gradient. The `add` codicon (plus-in-square) carries
+		// the create affordance; the `person` icon identifies the action.
 		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-patient'));
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		const plusIcon = DOM.append(btn, DOM.$('span'));
-		plusIcon.textContent = '+';
-		plusIcon.style.cssText = 'font-size:11px;font-weight:700;';
-
+		DOM.append(btn, DOM.$('span.codicon.codicon-add'));
 		DOM.append(btn, DOM.$('span.codicon.codicon-person'));
-
-		const lbl = DOM.append(btn, DOM.$('span.ehr-action-label'));
-		lbl.textContent = 'Patient';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -203,18 +200,15 @@ export class EhrTitlebarControls extends Disposable {
 	// --- Add Appointment Button ---
 
 	private _buildAddAppointmentButton(): void {
+		// Icon-only per the test team's request — drop the "+ Appointment"
+		// label and the colored gradient. Same shape as the patient button
+		// (plus codicon + topic icon).
 		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-appointment'));
 		btn.title = 'Add Appointment';
 		btn.setAttribute('aria-label', 'Add Appointment');
 
-		const plusIcon = DOM.append(btn, DOM.$('span'));
-		plusIcon.textContent = '+';
-		plusIcon.style.cssText = 'font-size:11px;font-weight:700;';
-
+		DOM.append(btn, DOM.$('span.codicon.codicon-add'));
 		DOM.append(btn, DOM.$('span.codicon.codicon-calendar'));
-
-		const lbl = DOM.append(btn, DOM.$('span.ehr-action-label'));
-		lbl.textContent = 'Appointment';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();

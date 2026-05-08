@@ -116,54 +116,58 @@
 }
 
 /* --- Action Buttons (+Patient, +Appointment) ---
- * Distinct colors per action so they're easy to spot next to the
- * editor split / layout actions in the titlebar. */
+ * Icon-only — same titlebar treatment as the editor split / layout
+ * actions (transparent background, foreground icon, hover tint). The
+ * test team asked for the colored gradients to go and for the labels
+ * to be dropped so the buttons read as plain titlebar icons.
+ *
+ * Layout: two stacked codicons (plus + topic). The `gap` is tight so
+ * the pair reads as a single icon-pair rather than two separate
+ * controls. Tooltip / aria-label still convey the full action text. */
 .ehr-action-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	padding: 3px 10px;
+	gap: 2px;
+	padding: 3px 8px;
 	border-radius: 6px;
 	cursor: pointer;
-	color: #fff;
+	color: var(--vscode-titleBar-activeForeground, #ccc);
+	background: transparent;
 	border: none;
-	font-size: 12px;
-	font-weight: 600;
 	height: 24px;
-	transition: filter 0.15s, transform 0.05s;
+	transition: background-color 0.15s, color 0.15s, transform 0.05s;
 	-webkit-app-region: no-drag;
-	margin-left: 4px;
+	margin-left: 2px;
 }
 
-.ehr-action-btn .ehr-action-label {
+.ehr-action-btn .codicon {
+	font-size: 14px;
+	line-height: 1;
+}
+
+/* The leading `+` icon should read a touch smaller so the pair looks
+ * like "add <thing>" rather than two equal-weight icons. */
+.ehr-action-btn .codicon-add {
 	font-size: 11px;
-	letter-spacing: 0.2px;
+	opacity: 0.85;
 }
 
 .ehr-action-btn:hover {
-	filter: brightness(1.12);
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
+	color: var(--vscode-titleBar-activeForeground, #fff);
+}
+
+.ehr-action-btn:hover .codicon-add {
+	opacity: 1;
 }
 
 .ehr-action-btn:active {
 	transform: translateY(1px);
 }
 
-/* +Patient — teal/emerald */
-.ehr-action-btn-patient {
-	background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-}
-
-.ehr-action-btn-patient:hover {
-	background: linear-gradient(180deg, #14c997 0%, #06a974 100%);
-}
-
-/* +Appointment — indigo */
-.ehr-action-btn-appointment {
-	background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
-}
-
-.ehr-action-btn-appointment:hover {
-	background: linear-gradient(180deg, #7177f4 0%, #5851ea 100%);
+.ehr-action-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder, #007acc);
+	outline-offset: -1px;
 }
 
 /* --- Overlay (Patient Form / Appointment Form) ---

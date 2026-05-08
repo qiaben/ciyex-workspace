@@ -15,10 +15,17 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
+
+// Storage key the calendar editor writes to so the sidebar can mirror its
+// view mode + selected date. Keep in sync with CalendarEditor.STORAGE_KEY.
+const CALENDAR_VIEW_STATE_KEY = 'ciyex.calendar.viewState';
+type CalendarViewMode = 'day' | 'week' | 'month';
+interface CalendarViewState { viewMode: CalendarViewMode; currentDate: string; updatedAt: number }
 
 interface Appointment {
 	id: string;
@@ -84,14 +91,69 @@ export class ScheduleSidebarPane extends ViewPane {
 		@ICiyexAuthService _authService: ICiyexAuthService,
 		@ILogService private readonly logService: ILogService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+	}
+
+	// View mode + reference date sourced from the calendar editor's published
+	// state (workspace-scoped storage). Defaults to today / day so the sidebar
+	// is useful even before the calendar has been opened in this session.
+	private viewMode: CalendarViewMode = 'day';
+	private currentDate: Date = new Date();
+
+	private _readCalendarState(): void {
+		const raw = this.storageService.get(CALENDAR_VIEW_STATE_KEY, StorageScope.WORKSPACE);
+		if (!raw) { this.viewMode = 'day'; this.currentDate = new Date(); return; }
+		try {
+			const s = JSON.parse(raw) as Partial<CalendarViewState>;
+			this.viewMode = (s.viewMode === 'week' || s.viewMode === 'month') ? s.viewMode : 'day';
+			const d = s.currentDate ? new Date(s.currentDate) : new Date();
+			this.currentDate = isNaN(d.getTime()) ? new Date() : d;
+		} catch {
+			this.viewMode = 'day';
+			this.currentDate = new Date();
+		}
+	}
+
+	private _getRange(): { startDate: string; endDate: string; rangeLabel: string } {
+		const d = new Date(this.currentDate);
+		const iso = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+		if (this.viewMode === 'day') {
+			const s = iso(d);
+			return { startDate: s, endDate: s, rangeLabel: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) };
+		}
+		if (this.viewMode === 'month') {
+			const first = new Date(d.getFullYear(), d.getMonth(), 1);
+			const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+			return { startDate: iso(first), endDate: iso(last), rangeLabel: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) };
+		}
+		// Week: Monday → Sunday
+		const day = d.getDay();
+		const monday = new Date(d);
+		monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+		const sunday = new Date(monday);
+		sunday.setDate(monday.getDate() + 6);
+		const sFmt = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+		const eFmt = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+		// allow-any-unicode-next-line
+		return { startDate: iso(monday), endDate: iso(sunday), rangeLabel: `${sFmt} – ${eFmt}` };
 	}
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.schedule-sidebar'));
 		this.container.style.cssText = 'padding:0;overflow-y:auto;height:100%;font-size:12px;';
+
+		// Mirror the calendar editor's view state (day / week / month + the
+		// reference date the user is browsing). Re-render whenever the
+		// calendar publishes a new value so flipping Week/Month from the
+		// calendar header updates the sidebar's range immediately.
+		this._readCalendarState();
+		this._register(this.storageService.onDidChangeValue(StorageScope.WORKSPACE, CALENDAR_VIEW_STATE_KEY, this._store)(() => {
+			this._readCalendarState();
+			void this._loadAndRender();
+		}));
 
 		// Render skeleton, then poll every 2s until data loads
 		this._render();
@@ -118,12 +180,16 @@ export class ScheduleSidebarPane extends ViewPane {
 	private hasMore = false;
 
 	private async _loadAndRender(append = false): Promise<void> {
-		const today = new Date().toISOString().split('T')[0];
+		// Range matches the calendar editor's view (day = today, week =
+		// Mon-Sun of currentDate, month = full calendar month). When the
+		// user toggles Week / Month in the calendar header the sidebar
+		// re-runs this loader via the storage-change listener above.
+		const { startDate, endDate } = this._getRange();
 
 		// Load appointments + status options only (rooms/waitlist are secondary)
 		const loadAppts = async () => {
 			try {
-				const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=200');
+				const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=500');
 				if (res.ok) {
 					const data = await res.json();
 					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
@@ -138,21 +204,23 @@ export class ScheduleSidebarPane extends ViewPane {
 						locationName: a.locationName || a.locationDisplay || '',
 						status: a.status || 'Scheduled',
 					}));
-					// Filter client-side to today only
-					const todayFiltered = page.filter((a: Appointment) => {
+					// Client-side filter: keep appointments whose start date
+					// falls inside [startDate, endDate]. Use local-date strings
+					// so DST / TZ shifts don't drop edge rows the way an ISO
+					// `toISOString().split('T')[0]` slice would.
+					const inRange = (a: Appointment): boolean => {
 						const raw = a.start || a.startTime;
 						if (!raw) { return false; }
-						try {
-							const d = new Date(String(raw));
-							if (isNaN(d.getTime())) { return false; }
-							return d.toISOString().split('T')[0] === today;
-						} catch { return false; }
-					});
-					const useFiltered = todayFiltered.length > 0 || page.length === 0;
+						const d = new Date(String(raw));
+						if (isNaN(d.getTime())) { return false; }
+						const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+						return local >= startDate && local <= endDate;
+					};
+					const filtered = page.filter(inRange);
 					if (append) {
-						this.appointments = [...this.appointments, ...(useFiltered ? todayFiltered : page)];
+						this.appointments = [...this.appointments, ...filtered];
 					} else {
-						this.appointments = useFiltered ? todayFiltered : page;
+						this.appointments = filtered;
 					}
 					this.totalAppointments = this.appointments.length;
 					this.hasMore = false;
@@ -326,13 +394,17 @@ export class ScheduleSidebarPane extends ViewPane {
 
 		const filtered = this._getFilteredAppointments();
 
-		// Section header
+		// Section header — reflects the calendar editor's current view + range
+		// instead of always saying "today" so users can tell at a glance which
+		// span the sidebar list represents (Day / Week of MMM dd-dd / MMM YYYY).
 		const header = DOM.append(section, DOM.$('.section-header'));
-		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);display:flex;';
-		const now = new Date();
+		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;gap:6px;';
 		const headerText = DOM.append(header, DOM.$('span'));
-		headerText.textContent = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+		headerText.textContent = this._getRange().rangeLabel;
 		headerText.style.cssText = 'flex:1;';
+		const modeBadge = DOM.append(header, DOM.$('span'));
+		modeBadge.textContent = this.viewMode;
+		modeBadge.style.cssText = 'padding:1px 6px;border-radius:8px;background:rgba(128,128,128,0.18);color:var(--vscode-foreground);font-size:9px;letter-spacing:0.4px;';
 		const countText = DOM.append(header, DOM.$('span'));
 		countText.textContent = `${filtered.length} appts`;
 		countText.style.cssText = 'font-size:10px;';

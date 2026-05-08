@@ -6,7 +6,7 @@
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
@@ -92,14 +92,31 @@ export class CalendarEditor extends EditorPane {
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
-		@IStorageService storageService: IStorageService,
+		@IStorageService private readonly _storageService: IStorageService,
 		@IConfigurationService private readonly configService: IConfigurationService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
-		super(CalendarEditor.ID, group, telemetryService, themeService, storageService);
+		super(CalendarEditor.ID, group, telemetryService, themeService, _storageService);
+	}
+
+	// Keys + helper for publishing the calendar's view state so the
+	// Schedule sidebar (a separate ViewPane) can mirror what the user is
+	// viewing. The sidebar reads these on its own render and re-renders
+	// when they change. Workspace-scoped + machine-target so the value is
+	// per-window and not synced across machines.
+	private static readonly STORAGE_KEY = 'ciyex.calendar.viewState';
+	private _publishCalendarState(): void {
+		try {
+			const state = {
+				viewMode: this.viewMode,
+				currentDate: this.currentDate.toISOString(),
+				updatedAt: Date.now(),
+			};
+			this._storageService.store(CalendarEditor.STORAGE_KEY, JSON.stringify(state), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		} catch { /* storage write is best-effort */ }
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -141,6 +158,7 @@ export class CalendarEditor extends EditorPane {
 		await super.setInput(input, options, context, token);
 		const defaultView = this.configService.getValue<string>('ciyex.calendar.defaultView') || 'day';
 		this.viewMode = defaultView === 'week' ? 'week' : defaultView === 'month' ? 'month' : 'day';
+		this._publishCalendarState();
 		await this._loadAndRender();
 	}
 
@@ -341,7 +359,7 @@ export class CalendarEditor extends EditorPane {
 		const label = DOM.append(navGroup, DOM.$('button')) as HTMLButtonElement;
 		label.title = 'Click to jump to today';
 		label.style.cssText = 'padding:3px 16px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border-right:1px solid var(--vscode-editorWidget-border);min-width:220px;text-align:center;';
-		label.addEventListener('click', () => { this.currentDate = new Date(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
+		label.addEventListener('click', () => { this.currentDate = new Date(); this._publishCalendarState(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		if (this.viewMode === 'day') {
 			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 		} else if (this.viewMode === 'month') {
@@ -390,7 +408,7 @@ export class CalendarEditor extends EditorPane {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
-			btn.addEventListener('click', () => { this.viewMode = mode; this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
+			btn.addEventListener('click', () => { this.viewMode = mode; this._publishCalendarState(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
 		// Provider filter — multi-select checkbox dropdown
@@ -754,7 +772,7 @@ export class CalendarEditor extends EditorPane {
 			cell.style.cssText = `min-height:80px;background:var(--vscode-editorWidget-background);border-radius:3px;padding:4px;cursor:pointer;${isToday ? 'border:2px solid var(--vscode-focusBorder);' : 'border:1px solid rgba(128,128,128,0.1);'}`;
 			cell.addEventListener('mouseenter', () => { cell.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; });
 			cell.addEventListener('mouseleave', () => { cell.style.background = 'var(--vscode-editorWidget-background)'; });
-			cell.addEventListener('click', () => { this.currentDate = new Date(dateStr + 'T00:00:00'); this.viewMode = 'day'; this._refresh(); });
+			cell.addEventListener('click', () => { this.currentDate = new Date(dateStr + 'T00:00:00'); this.viewMode = 'day'; this._publishCalendarState(); this._refresh(); });
 
 			// Day number
 			const numEl = DOM.append(cell, DOM.$('div'));
@@ -826,6 +844,7 @@ export class CalendarEditor extends EditorPane {
 		} else {
 			this.currentDate.setDate(this.currentDate.getDate() + dir * 7);
 		}
+		this._publishCalendarState();
 		this._headerRendered = false;
 		this._renderHeader();
 		this._renderGrid();
