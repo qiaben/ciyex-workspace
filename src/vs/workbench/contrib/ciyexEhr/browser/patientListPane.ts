@@ -328,8 +328,45 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
+			// Action column — Open Chart / Record Vitals / Visit Summary, mirroring
+			// the EHR-UI patient list. Clicking the row anywhere outside these
+			// buttons still opens the chart, so the row's default behavior is
+			// preserved while the buttons give one-click access to the most
+			// common follow-on tasks.
+			const actions = document.createElement('span');
+			actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
+			const mkAction = (icon: string, title: string, color: string, onClick: () => void) => {
+				const btn = document.createElement('button');
+				btn.textContent = icon;
+				btn.title = title;
+				btn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}1a;color:${color};line-height:1;`;
+				btn.addEventListener('mouseenter', () => { btn.style.background = `${color}33`; });
+				btn.addEventListener('mouseleave', () => { btn.style.background = `${color}1a`; });
+				btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+				actions.appendChild(btn);
+			};
+			// allow-any-unicode-next-line
+			mkAction('📋', 'Open Chart', '#3b82f6', () => {
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
+			});
+			// allow-any-unicode-next-line
+			mkAction('❤', 'Record Vitals', '#a855f7', () => {
+				// Open the chart on the vitals tab — initialTab override is
+				// honoured by PatientChartEditor.setInput().
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'vitals');
+			});
+			// allow-any-unicode-next-line
+			mkAction('🗒', 'Visit Summary', '#f59e0b', () => {
+				// Open the chart on the encounters tab so the user can see the
+				// list of past visits and pick one. Mirrors the EHR-UI's
+				// "Visit Summary" action shortcut.
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'encounters');
+			});
+			row.appendChild(actions);
+
 			row.addEventListener('click', () => {
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, `${patient.firstName} ${patient.lastName}`);
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
 
 			this._listEl.appendChild(row);

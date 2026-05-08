@@ -872,7 +872,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
-					{ key: 'authorName', label: 'Author / Provider', type: 'text', placeholder: 'Search Author' },
+					{ key: 'authorName', label: 'Author / Provider', type: 'practitioner-search', placeholder: 'Search Author' },
 					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
 					// Local file picker — reads the selected file as a base64 data URL
 					// and stores it in the `attachment` field. The backend's
@@ -1484,24 +1484,17 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
-	// Encounter create/edit. Adds a labelled `patient` patient-search picker
-	// (the backend tab_field_config doesn't ship one because the patient is
-	// resolved from the URL, but the test team explicitly asked for a
-	// "Search Patient" placeholder + working search inside the form). The
-	// overlay logic appends local-only fields to the backend section, so this
-	// shows up regardless of what the backend returns.
+	// Encounter create/edit. Patient is resolved from the URL path (the chart's
+	// patient context), so we no longer ship a duplicate "Search Patient" field
+	// — the test team flagged that as an unwanted duplicate when the backend
+	// tab_field_config V20 started shipping its own `patient` reference. Start
+	// and end dates use plain `date` (no time component) per the test report's
+	// "remove time range in the start date and end date" ask.
 	encounters: {
 		tabKey: 'encounters',
 		sections: [
 			{
 				key: 'encounter-details', title: 'Encounter', columns: 2, visible: true, collapsible: false, fields: [
-					// Local-only patient picker — backend tab_field_config doesn't
-					// ship one (the FHIR controller resolves the patient from the
-					// URL path) but the test team explicitly asked for a "Search
-					// Patient" field on the form. localOnly:true so the overlay
-					// always appends it; not `required` because save still works
-					// when only the URL patientId is set.
-					{ key: 'patient', label: 'Patient', type: 'patient-search', placeholder: 'Search Patient', localOnly: true },
 					{
 						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
 							{ label: 'Ambulatory', value: 'AMB' },
@@ -1524,8 +1517,8 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Cancelled', value: 'cancelled' },
 						]
 					},
-					{ key: 'startDate', label: 'Start Date', type: 'datetime', required: true },
-					{ key: 'endDate', label: 'End Date', type: 'datetime' },
+					{ key: 'startDate', label: 'Start Date', type: 'date', required: true },
+					{ key: 'endDate', label: 'End Date', type: 'date' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, localOnly: true },
 				],
 			},
@@ -1753,6 +1746,16 @@ export class PatientChartEditor extends EditorPane {
 						if (tab.key === 'vitals') {
 							sections = sections.filter(s => s.key !== 'vitals-meta' && !/recording info/i.test(s.title || ''));
 						}
+						// Encounter: drop any backend-shipped `patient` reference field —
+						// the patient is already resolved from the chart's URL path, and the
+						// extra picker showed up as a duplicate in the test team's "Add
+						// New Encounter" page.
+						if (tab.key === 'encounters') {
+							sections = sections.map(s => ({
+								...s,
+								fields: s.fields.filter(f => f.key !== 'patient' && f.key !== 'patientId' && f.key !== 'subject'),
+							}));
+						}
 						// Per-field overlays: backend tab_field_config often omits the
 						// search type, placeholder, validation pattern, default value, or
 						// select options that the local fallback specifies. Carry those
@@ -1775,9 +1778,28 @@ export class PatientChartEditor extends EditorPane {
 									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup';
 									const backendOpts = f.options;
 									const hasBackendOptions = Array.isArray(backendOpts) && backendOpts.length > 0;
+									// Promote backend `text` fields to `select`/`date`/`datetime`/etc.
+									// when the local override defines a richer type. The test team flagged
+									// "Visit Type / Priority dropdown not showing" because the backend
+									// shipped these as plain text inputs and the overlay was only swapping
+									// type for search-type promotions. Anything other than text → richer
+									// renders the local control with the backend label preserved.
+									const backendType = (f.type || 'text').toLowerCase();
+									const ovType = (ov.type || 'text').toLowerCase();
+									const promoteRicher =
+										ovType === 'select' && (backendType === 'text' || !backendType) ||
+										ovType === 'date' && backendType === 'datetime' ||
+										ovType === 'date' && backendType === 'text' ||
+										ovType === 'datetime' && (backendType === 'text' || !backendType) ||
+										ovType === 'phone' && (backendType === 'text' || !backendType) ||
+										ovType === 'email' && (backendType === 'text' || !backendType) ||
+										ovType === 'number' && backendType === 'text' ||
+										ovType === 'textarea' && backendType === 'text' ||
+										ovType === 'boolean' && (backendType === 'text' || !backendType) ||
+										ovType === 'file' && (backendType === 'text' || !backendType);
 									return {
 										...f,
-										type: isSearchType ? ov.type : f.type,
+										type: isSearchType ? ov.type : (promoteRicher ? ov.type : f.type),
 										placeholder: f.placeholder || ov.placeholder,
 										lookupConfig: f.lookupConfig || ov.lookupConfig,
 										validationPattern: f.validationPattern || ov.validationPattern,
@@ -2002,18 +2024,29 @@ export class PatientChartEditor extends EditorPane {
 		this._tabCountEls.clear();
 		this._quickInfoValEls.clear();
 
-		// CHART heading with collapse button
+		// CHART heading with collapse button. When collapsed the header drops
+		// the "CHART" label entirely so the expand button is centred and
+		// obvious — the test team flagged the previous "<" / ">" glyphs as
+		// unrecognisable. Use double-chevron icons so the affordance reads
+		// the same way it does in the EHR-UI sidebar.
 		const chartHdr = DOM.append(this.sidebarEl, DOM.$('div'));
-		chartHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;';
+		chartHdr.style.cssText = this.sidebarCollapsed
+			? 'display:flex;align-items:center;justify-content:center;padding:12px 0 8px;'
+			: 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;';
 
-		const chartLabel = DOM.append(chartHdr, DOM.$('span'));
-		chartLabel.textContent = 'CHART';
-		chartLabel.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+		if (!this.sidebarCollapsed) {
+			const chartLabel = DOM.append(chartHdr, DOM.$('span'));
+			chartLabel.textContent = 'CHART';
+			chartLabel.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+		}
 
 		const collapseBtn = DOM.append(chartHdr, DOM.$('button'));
-		collapseBtn.textContent = this.sidebarCollapsed ? '>' : '<';
+		// allow-any-unicode-next-line
+		collapseBtn.textContent = this.sidebarCollapsed ? '»' : '«';
 		collapseBtn.title = this.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
-		collapseBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:3px;';
+		collapseBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:14px;font-weight:700;padding:2px 8px;border-radius:3px;';
+		collapseBtn.addEventListener('mouseenter', () => { collapseBtn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+		collapseBtn.addEventListener('mouseleave', () => { collapseBtn.style.background = 'transparent'; });
 		collapseBtn.addEventListener('click', () => this._toggleSidebar());
 
 		if (this.sidebarCollapsed) {
@@ -3080,6 +3113,26 @@ export class PatientChartEditor extends EditorPane {
 				if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { continue; }
 				const v = String(el.value ?? '').trim();
 				if (!v) { missing.push({ key: r.key, label: r.label, el }); }
+			}
+			// ID-lookup fields (materialId, payerId, locationId, ...) MUST come
+			// from a dropdown selection — backends look these up by FK, so a
+			// typed-but-not-selected value is functionally empty and would
+			// otherwise produce the "given id must not be null" save error the
+			// test team flagged on the Education page. Catch them up front
+			// regardless of the `required` flag.
+			const idLookupRx = /(^|[A-Za-z])(materialId|locationId|providerId|formId|payerId|encounterId|organizationId|insurerId)$/;
+			for (const sec of (config?.sections || [])) {
+				for (const f of (sec.fields || [])) {
+					if (f.type !== 'lookup' || !idLookupRx.test(f.key)) { continue; }
+					const el = dialogInputs.get(f.key);
+					if (!el) { continue; }
+					const v = String(el.value ?? '').trim();
+					if (!v && (f.required || f.key === 'materialId')) {
+						if (!missing.some(m => m.key === f.key)) {
+							missing.push({ key: f.key, label: `${f.label} (please pick from the search dropdown)`, el });
+						}
+					}
+				}
 			}
 			// Pattern validation. Negative test cases the team flagged: name/title fields
 			// were accepting numbers and special characters, lot-number / dose fields were
