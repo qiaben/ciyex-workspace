@@ -93,6 +93,19 @@ export class EncounterFormEditor extends EditorPane {
 		this._renderForm();
 		this._setupScrollSync();
 		this._setupAutoSave();
+
+		// Auto-scroll to a requested section (e.g. when "Record Vitals" is
+		// invoked from the appointment row, jump straight to Vitals).
+		if (input.initialSectionKey) {
+			const target = this.sectionCards.get(input.initialSectionKey);
+			if (target) {
+				const body = target.children[1] as HTMLElement | undefined;
+				const header = target.children[0] as HTMLElement | undefined;
+				if (body && header && body.style.display === 'none') { header.click(); }
+				const top = target.offsetTop - this.scrollArea.offsetTop;
+				this.scrollArea.scrollTo({ top });
+			}
+		}
 	}
 
 	private async _loadFormSchema(): Promise<void> {

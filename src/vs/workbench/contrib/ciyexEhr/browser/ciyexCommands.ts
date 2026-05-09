@@ -243,7 +243,7 @@ registerAction2(class extends Action2 {
 		});
 	}
 
-	async run(accessor: ServicesAccessor, patientId?: string, encounterId?: string, patientName?: string, encounterLabel?: string): Promise<void> {
+	async run(accessor: ServicesAccessor, patientId?: string, encounterId?: string, patientName?: string, encounterLabel?: string, sectionKey?: string): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 
 		// If no encounterId, fetch latest non-errored encounter
@@ -272,6 +272,7 @@ registerAction2(class extends Action2 {
 			encounterId,
 			patientName || '',
 			encounterLabel || `Encounter ${encounterId}`,
+			sectionKey,
 		);
 		await editorService.openEditor(input, { pinned: true });
 	}

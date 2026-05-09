@@ -1270,18 +1270,21 @@ export class AppointmentsEditor extends EditorPane {
 	 *  with EHR-UI). Falls back to the patient chart when no encounter is linked
 	 *  yet (e.g. status is still Scheduled and an encounter hasn't been created). */
 	private _openVisitChart(row: AppointmentDTO): void {
+		const label = row.patientName ? `Visit — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '');
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label);
 			return;
 		}
 		this._openPatientChart(row.patientId, row.patientName || '');
 	}
 
-	/** "Record Vitals" — opens the encounter on the vitals section. Without an
-	 *  encounter, falls back to the patient chart's Vitals tab. */
+	/** "Record Vitals" — opens the encounter form (which has a Vitals
+	 *  section). Without an encounter, opens the patient chart on the Vitals
+	 *  tab so the user lands somewhere they can record values. */
 	private _openVitalsForRow(row: AppointmentDTO): void {
+		const label = row.patientName ? `Vitals — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', 'vitals');
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label, 'vitals');
 			return;
 		}
 		this._openPatientChartTab(row.patientId, row.patientName || '', 'vitals');
@@ -1294,10 +1297,12 @@ export class AppointmentsEditor extends EditorPane {
 	}
 
 	/** "Visit Summary": if the appointment has a linked encounterId, open the
-	 *  encounter form; otherwise fall back to opening the chart on Encounters. */
+	 *  encounter form on the Assessment & Plan section; otherwise fall back to
+	 *  opening the chart on Encounters. */
 	private _openVisitSummary(row: AppointmentDTO): void {
+		const label = row.patientName ? `Summary — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '');
+			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label, 'plan');
 			return;
 		}
 		this._openPatientChartTab(row.patientId, row.patientName || '', 'encounters');

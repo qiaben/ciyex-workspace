@@ -3997,10 +3997,21 @@ export class PatientChartEditor extends EditorPane {
 				try {
 					const url = this._buildSearchUrl(f, q.trim());
 					if (!url) { return; }
-					const res = await this.apiService.fetch(url);
-					if (!res.ok) { return; }
-					const data = await res.json();
-					const items = this._extractSearchItems(f, data);
+					let items: Array<{ code: string; label: string }> = [];
+					try {
+						const res = await this.apiService.fetch(url);
+						if (res.ok) {
+							const data = await res.json();
+							items = this._extractSearchItems(f, data);
+						}
+					} catch { /* fall through to fallback */ }
+					// When the code-search endpoint returns nothing (e.g. ciyex-codes
+					// has no CVX data loaded for this org/version), filter our
+					// built-in fallback list locally so the user still gets a
+					// usable picker. The web app uses the same trick for CVX.
+					if (items.length === 0 && isCodeSearch) {
+						items = this._codeSearchFallback(f, q.trim());
+					}
 					DOM.clearNode(dropdown);
 					rows.length = 0;
 					if (items.length === 0) {
@@ -4112,6 +4123,62 @@ export class PatientChartEditor extends EditorPane {
 			default:
 				return null;
 		}
+	}
+
+	/**
+	 * Built-in fallback used when the ciyex-codes search endpoint returns
+	 * nothing (e.g. CVX dataset not yet loaded for this org). Mirrors the
+	 * web app's FALLBACK_CVX_CODES so the UI degrades gracefully instead
+	 * of showing an empty dropdown.
+	 */
+	private _codeSearchFallback(f: FieldDef, q: string): Array<{ code: string; label: string }> {
+		const sysRaw = (f.lookupConfig?.system || '').toUpperCase();
+		const fhirSystem = (f as unknown as { fhirMapping?: { system?: string } }).fhirMapping?.system || '';
+		const sys = sysRaw || (/cvx/i.test(fhirSystem) ? 'CVX' : '');
+		if (sys !== 'CVX') { return []; }
+		const lq = q.toLowerCase();
+		const FALLBACK_CVX_CODES: Array<{ code: string; label: string }> = [
+			{ code: '03', label: 'MMR (Measles, Mumps, Rubella)' },
+			{ code: '08', label: 'Hepatitis B, adolescent or pediatric' },
+			{ code: '10', label: 'IPV (Poliovirus, inactivated)' },
+			{ code: '17', label: 'HIB (Haemophilus influenzae type b)' },
+			{ code: '20', label: 'DTaP' },
+			{ code: '21', label: 'Varicella (Chickenpox)' },
+			{ code: '33', label: 'Pneumococcal polysaccharide (PPV23)' },
+			{ code: '43', label: 'Hepatitis B, adult' },
+			{ code: '45', label: 'Hepatitis B, pediatric' },
+			{ code: '49', label: 'Hib (PRP-OMP)' },
+			{ code: '52', label: 'Hepatitis A, adult' },
+			{ code: '62', label: 'HPV, bivalent' },
+			{ code: '83', label: 'Hepatitis A, pediatric/adolescent' },
+			{ code: '85', label: 'Hep A-Hep B' },
+			{ code: '88', label: 'Flu, unspecified' },
+			{ code: '94', label: 'MMR-Varicella (MMRV)' },
+			{ code: '100', label: 'Pneumococcal conjugate (PCV7)' },
+			{ code: '110', label: 'DTaP-Hepatitis B-IPV' },
+			{ code: '113', label: 'Td, adult' },
+			{ code: '114', label: 'Meningococcal MCV4P' },
+			{ code: '115', label: 'Tdap' },
+			{ code: '116', label: 'Rotavirus, pentavalent' },
+			{ code: '121', label: 'Zoster (shingles), live' },
+			{ code: '133', label: 'PCV13 (Pneumococcal conjugate)' },
+			{ code: '135', label: 'Influenza, high dose' },
+			{ code: '140', label: 'Influenza, seasonal, injectable' },
+			{ code: '150', label: 'Influenza, injectable, quadrivalent' },
+			{ code: '158', label: 'Influenza, injectable, quadrivalent, preservative free' },
+			{ code: '162', label: 'Meningococcal B, recombinant' },
+			{ code: '165', label: 'HPV9 (Human Papillomavirus 9-valent)' },
+			{ code: '174', label: 'COVID-19 (Moderna)' },
+			{ code: '175', label: 'COVID-19 (Pfizer-BioNTech)' },
+			{ code: '176', label: 'COVID-19 Pfizer-BioNTech' },
+			{ code: '207', label: 'COVID-19 Moderna' },
+			{ code: '210', label: 'COVID-19 Janssen (Johnson & Johnson)' },
+			{ code: '212', label: 'COVID-19 Novavax' },
+			{ code: '228', label: 'Zoster (shingles), recombinant (Shingrix)' },
+		];
+		return FALLBACK_CVX_CODES
+			.filter(c => c.code.includes(lq) || c.label.toLowerCase().includes(lq))
+			.slice(0, 15);
 	}
 
 	private _extractSearchItems(f: FieldDef, payload: unknown): Array<{ code: string; label: string }> {

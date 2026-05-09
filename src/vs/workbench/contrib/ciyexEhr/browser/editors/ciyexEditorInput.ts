@@ -102,6 +102,7 @@ export class EncounterFormEditorInput extends EditorInput {
 		readonly encounterId: string,
 		readonly patientName: string,
 		readonly encounterLabel: string,
+		readonly initialSectionKey?: string,
 	) { super(); }
 
 	override getName(): string { return this.encounterLabel || 'Encounter'; }
