@@ -87,6 +87,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run gulp vscode-reh-web-linux-x64-min-ci
 
+      - name: Stage build output inside Docker context
+        # gulp emits to ../vscode-reh-web-linux-x64 (sibling of the repo).
+        # docker build's context is `.`, so the COPY in Dockerfile.web can't
+        # reach a sibling. Move the artefact into the repo before building.
+        run: |
+          set -euo pipefail
+          if [ ! -d "../vscode-reh-web-linux-x64" ]; then
+            echo "::error::Expected build output ../vscode-reh-web-linux-x64 was not produced"
+            exit 1
+          fi
+          rm -rf ./vscode-reh-web-linux-x64
+          mv ../vscode-reh-web-linux-x64 ./vscode-reh-web-linux-x64
+          du -sh ./vscode-reh-web-linux-x64
+
       - name: Get version
         id: version
         run: |
@@ -115,4 +129,4 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}-alpha.${{ github.run_number }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           build-args: |
-            BUILD_DIR=../vscode-reh-web-linux-x64
+            BUILD_DIR=vscode-reh-web-linux-x64
