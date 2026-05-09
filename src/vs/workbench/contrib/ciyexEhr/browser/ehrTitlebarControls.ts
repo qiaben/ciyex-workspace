@@ -144,9 +144,15 @@ export class EhrTitlebarControls extends Disposable {
 						|| (Array.isArray(data) ? data : null);
 					const patients: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
 					this._renderSearchResults(patients);
+				} else {
+					// Show "No patients found" rather than silently doing nothing —
+					// the test team flagged the search bar as "not working" when
+					// the API errored without any visible feedback.
+					this._renderSearchResults([]);
 				}
 			} catch {
-				// ignore
+				if (this.searchCts.token.isCancellationRequested) { return; }
+				this._renderSearchResults([]);
 			}
 		}, 300);
 	}

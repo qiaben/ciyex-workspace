@@ -1150,6 +1150,15 @@ export class EncounterFormEditor extends EditorPane {
 			if (timer) { clearTimeout(timer); }
 			const q = searchInput.value.trim();
 			if (q.length < 2) { results.style.display = 'none'; return; }
+			// Show loading state while waiting for results so it's clear the
+			// search is happening (test team flagged: "doesn't perform any search
+			// option" — they couldn't tell whether the field was broken or
+			// just slow).
+			DOM.clearNode(results);
+			const loading = DOM.append(results, DOM.$('div'));
+			loading.textContent = 'Searching...';
+			loading.style.cssText = 'padding:14px;text-align:center;color:var(--vscode-descriptionForeground);font-size:11px;';
+			results.style.display = 'block';
 			timer = setTimeout(async () => {
 				const [cpt, hcpcs] = await Promise.all([fetchCodes('CPT', q), fetchCodes('HCPCS', q)]);
 				const tagged: Array<Record<string, unknown>> = [
@@ -1157,6 +1166,13 @@ export class EncounterFormEditor extends EditorPane {
 					...hcpcs.map(c => ({ ...c, _system: 'HCPCS' })),
 				];
 				DOM.clearNode(results);
+				if (tagged.length === 0) {
+					const empty = DOM.append(results, DOM.$('div'));
+					empty.textContent = `No CPT or HCPCS codes found for "${q}"`;
+					empty.style.cssText = 'padding:14px;text-align:center;color:var(--vscode-descriptionForeground);font-size:11px;';
+					results.style.display = 'block';
+					return;
+				}
 				for (const c of tagged) {
 					const item = DOM.append(results, DOM.$('div'));
 					item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';

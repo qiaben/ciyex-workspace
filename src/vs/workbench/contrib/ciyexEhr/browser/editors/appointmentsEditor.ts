@@ -523,7 +523,17 @@ export class AppointmentsEditor extends EditorPane {
 		const filtered = this._getFilteredRows();
 		const doc = DOM.getActiveWindow().document;
 		const iframe = doc.createElement('iframe');
-		iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+		// Set individual style properties instead of cssText / setAttribute('style', ...)
+		// — under strict Trusted Types, both can be flagged as TrustedHTML sinks
+		// in Electron/Chromium, throwing
+		// "This document requires 'TrustedHTML' assignment".
+		iframe.style.position = 'fixed';
+		iframe.style.right = '0';
+		iframe.style.bottom = '0';
+		iframe.style.width = '0';
+		iframe.style.height = '0';
+		iframe.style.border = '0';
+		iframe.title = 'Print Frame';
 		// Don't use `srcdoc` — modern Chromium's Trusted Types policy treats
 		// srcdoc/innerHTML/etc. as TrustedHTML sinks and rejects raw strings
 		// with "This document requires 'TrustedHTML' assignment". Appending

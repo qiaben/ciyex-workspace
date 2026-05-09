@@ -31,6 +31,13 @@ interface FilterDef {
 	key: string;
 	label: string;
 	options?: Array<{ value: string; label: string }>;
+	/** When true, render a popover with a search input above the option list. */
+	searchable?: boolean;
+	/** When true, derive the option list from the loaded items using `dynamicKey` (or `key`). */
+	dynamic?: boolean;
+	dynamicKey?: string;
+	/** Placeholder shown inside the search box. */
+	searchPlaceholder?: string;
 }
 
 interface KpiDef {
@@ -54,11 +61,13 @@ interface ReportDef {
 	pageSize?: number;
 }
 
-const DEFAULT_FILTERS: FilterDef[] = [
-	{ type: 'date-from', key: 'dateFrom', label: 'From' },
-	{ type: 'date-to', key: 'dateTo', label: 'To' },
-	{ type: 'select', key: 'provider', label: 'Provider', options: [{ value: '', label: 'All Providers' }] },
-];
+const DATE_FROM: FilterDef = { type: 'date-from', key: 'dateFrom', label: 'From' };
+const DATE_TO: FilterDef = { type: 'date-to', key: 'dateTo', label: 'To' };
+const PROVIDER_FILTER: FilterDef = { type: 'select', key: 'provider', label: 'Provider', searchable: true, dynamic: true };
+const PATIENT_FILTER: FilterDef = { type: 'select', key: 'patient', label: 'Patient', searchable: true, dynamic: true };
+const PAYER_FILTER: FilterDef = { type: 'select', key: 'payer', label: 'Payer', searchable: true, dynamic: true };
+
+const DEFAULT_FILTERS: FilterDef[] = [DATE_FROM, DATE_TO, PROVIDER_FILTER];
 
 const STATUS_FILTER = (options: Array<{ value: string; label: string }>): FilterDef => (
 	{ type: 'select', key: 'status', label: 'Status', options }
@@ -85,12 +94,32 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'insurance', label: 'Insurance' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{
+						type: 'select', key: 'gender', label: 'Gender', options: [
+							{ value: '', label: 'All Gender' },
+							{ value: 'male', label: 'Male' },
+							{ value: 'female', label: 'Female' },
+							{ value: 'other', label: 'Other' },
+							{ value: 'unknown', label: 'Unknown' },
+						]
+					},
+					{
+						type: 'select', key: 'ageGroup', label: 'Age Group', options: [
+							{ value: '', label: 'All Age Group' },
+							{ value: '0-17', label: '0-17' },
+							{ value: '18-29', label: '18-29' },
+							{ value: '30-49', label: '30-49' },
+							{ value: '50-64', label: '50-64' },
+							{ value: '65+', label: '65+' },
+						]
+					},
 					STATUS_FILTER([
 						{ value: '', label: 'All Status' },
 						{ value: 'Active', label: 'Active' },
 						{ value: 'Inactive', label: 'Inactive' },
 					]),
+					{ type: 'select', key: 'insurance', label: 'Insurance', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Total Patients', calc: items => String(items.length), color: COLORS[0] },
@@ -129,7 +158,8 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'diagnosis', label: 'Diagnosis' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{ type: 'select', key: 'visitType', label: 'Visit Type', searchable: true, dynamic: true },
 					STATUS_FILTER([
 						{ value: '', label: 'All Status' },
 						{ value: 'completed', label: 'Completed' },
@@ -168,7 +198,15 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'orderingProvider', label: 'Ordering Provider' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{ type: 'select', key: 'test', label: 'Test', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'active', label: 'Active' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'cancelled', label: 'Cancelled' },
+						{ value: 'pending', label: 'Pending' },
+					]),
 					{
 						type: 'select', key: 'priority', label: 'Priority', options: [
 							{ value: '', label: 'All Priority' },
@@ -201,7 +239,18 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'status', label: 'Status' },
 					{ key: 'prescriberName', label: 'Prescriber' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [
+					DATE_FROM, DATE_TO, PROVIDER_FILTER, PATIENT_FILTER,
+					{ type: 'select', key: 'medication', label: 'Medication', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'active', label: 'Active' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'discontinued', label: 'Discontinued' },
+						{ value: 'on-hold', label: 'On Hold' },
+					]),
+					{ type: 'select', key: 'prescriber', label: 'Prescriber', searchable: true, dynamic: true },
+				],
 				kpis: [
 					{ label: 'Total Prescriptions', calc: items => String(items.length), color: COLORS[0] },
 					{ label: 'Active', calc: items => String(countWhere(items, i => /active/i.test(i.status || ''))), color: COLORS[1] },
@@ -218,22 +267,34 @@ function getReportDef(key: string): ReportDef {
 			return {
 				apiPath: '/api/referrals?page=0&size=1000',
 				columns: [
-					{ key: 'referralDate', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
-					{ key: 'specialistName', label: 'Referred To' },
+					{ key: 'specialistName', label: 'Specialist' },
 					{ key: 'specialty', label: 'Specialty' },
-					{ key: 'status', label: 'Status' },
 					{ key: 'urgency', label: 'Urgency' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'referralDate', label: 'Date' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
+					DATE_FROM, DATE_TO, PROVIDER_FILTER, PATIENT_FILTER,
+					{ type: 'select', key: 'referredTo', label: 'Referred To', searchable: true, dynamic: true },
+					{ type: 'select', key: 'specialty', label: 'Specialty', searchable: true, dynamic: true },
 					STATUS_FILTER([
 						{ value: '', label: 'All Status' },
 						{ value: 'sent', label: 'Sent' },
+						{ value: 'draft', label: 'Draft' },
 						{ value: 'scheduled', label: 'Scheduled' },
+						{ value: 'acknowledged', label: 'Acknowledged' },
 						{ value: 'completed', label: 'Completed' },
-						{ value: 'no-response', label: 'No Response' },
+						{ value: 'denied', label: 'Denied' },
 					]),
+					{
+						type: 'select', key: 'urgency', label: 'Urgency', options: [
+							{ value: '', label: 'All Urgency' },
+							{ value: 'routine', label: 'Routine' },
+							{ value: 'urgent', label: 'Urgent' },
+							{ value: 'stat', label: 'STAT' },
+						]
+					},
 				],
 				kpis: [
 					{ label: 'Total Referrals', calc: items => String(items.length), color: COLORS[0] },
@@ -257,20 +318,18 @@ function getReportDef(key: string): ReportDef {
 				apiPath: '/api/immunizations?page=0&size=1000',
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
-					{ key: 'vaccineName', label: 'Vaccine Name' },
-					{ key: 'doseNumber', label: 'Dose #' },
-					{ key: 'administrationDate', label: 'Last Dose Date' },
-					{ key: 'nextDueDate', label: 'Next Due' },
+					{ key: 'vaccineName', label: 'Vaccine' },
+					{ key: 'cvxCode', label: 'CVX' },
+					{ key: 'route', label: 'Route' },
 					{ key: 'status', label: 'Status' },
+					{ key: 'administrationDate', label: 'Date' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
-					STATUS_FILTER([
-						{ value: '', label: 'All Status' },
-						{ value: 'current', label: 'Current' },
-						{ value: 'overdue', label: 'Overdue' },
-						{ value: 'missing', label: 'Missing' },
-					]),
+					DATE_FROM, DATE_TO,
+					{ ...PROVIDER_FILTER, label: 'Provider' },
+					PATIENT_FILTER,
+					{ type: 'select', key: 'vaccine', label: 'Vaccine', searchable: true, dynamic: true },
+					{ type: 'select', key: 'site', label: 'Site', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Total Records', calc: items => String(items.length), color: COLORS[0] },
@@ -289,20 +348,13 @@ function getReportDef(key: string): ReportDef {
 				apiPath: '/api/fhir-resource/conditions?page=0&size=1000',
 				columns: [
 					{ key: 'patientRefDisplay', label: 'Patient' },
-					{ key: 'code', label: 'Problem' },
+					{ key: 'code', label: 'Diagnosis' },
 					{ key: 'clinicalStatus', label: 'Status' },
-					{ key: 'onsetDate', label: 'Onset Date' },
-					{ key: 'resolvedDate', label: 'Resolved Date' },
-					{ key: 'icdCode', label: 'ICD Code' },
+					{ key: 'recordedDate', label: 'Recorded' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
-					STATUS_FILTER([
-						{ value: '', label: 'All Status' },
-						{ value: 'active', label: 'Active' },
-						{ value: 'resolved', label: 'Resolved' },
-						{ value: 'archived', label: 'Archived' },
-					]),
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{ type: 'select', key: 'category', label: 'Category', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Active Problems', calc: items => String(countWhere(items, i => /active/i.test(i.clinicalStatus || i.status || ''))), color: COLORS[0] },
@@ -324,12 +376,14 @@ function getReportDef(key: string): ReportDef {
 				columns: [
 					{ key: 'serviceDate', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
-					{ key: 'serviceType', label: 'Service Type' },
+					{ key: 'providerName', label: 'Provider' },
+					{ key: 'payerDisplay', label: 'Payer' },
 					{ key: 'totalAmount', label: 'Charges' },
 					{ key: 'paidAmount', label: 'Payments' },
-					{ key: 'providerName', label: 'Provider' },
+					{ key: 'adjustments', label: 'Adjustments' },
+					{ key: 'balance', label: 'Balance' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER, PAYER_FILTER, PATIENT_FILTER],
 				kpis: [
 					{ label: 'Gross Charges', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.totalAmount || i.amount || 0), 0)), color: COLORS[0] },
 					{ label: 'Net Collections', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.paidAmount || 0), 0)), color: COLORS[1] },
@@ -366,7 +420,7 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'days90Plus', label: '90+ Days' },
 					{ key: 'totalAmount', label: 'Total' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [DATE_FROM, DATE_TO, PAYER_FILTER, PROVIDER_FILTER],
 				kpis: [
 					{ label: 'Total A/R', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.outstandingAmount || i.totalAmount || 0), 0)), color: COLORS[0] },
 					{
@@ -402,7 +456,10 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'appealed', label: 'Appealed' },
 					{ key: 'recovered', label: 'Recovered' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [
+					DATE_FROM, DATE_TO, PAYER_FILTER,
+					{ type: 'select', key: 'denialReason', label: 'Denial Reason', searchable: true, dynamic: true },
+				],
 				kpis: [
 					{
 						label: 'Denial Rate', calc: items => {
@@ -437,7 +494,7 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'revenuePct', label: 'Revenue %' },
 					{ key: 'avgReimbRate', label: 'Avg Reimb Rate' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER, PAYER_FILTER],
 				kpis: [
 					{ label: 'Active Payers', calc: items => String(new Set(items.map(i => i.payerDisplay).filter(Boolean)).size), color: COLORS[0] },
 					{
@@ -477,7 +534,11 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'totalAmount', label: 'Total Charges' },
 					{ key: 'wRVU', label: 'wRVU' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{ type: 'select', key: 'cptCode', label: 'CPT Code', searchable: true, dynamic: true },
+					{ type: 'select', key: 'description', label: 'Description', searchable: true, dynamic: true },
+				],
 				kpis: [
 					{ label: 'Total Procedures', calc: items => String(items.length), color: COLORS[0] },
 					{ label: 'Unique CPT Codes', calc: items => String(new Set(items.map(i => i.cptCode).filter(Boolean)).size), color: COLORS[1] },
@@ -508,15 +569,17 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'status', label: 'Status' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
-					{
-						type: 'select', key: 'appointmentType', label: 'Visit Type', options: [
-							{ value: '', label: 'All Types' },
-							{ value: 'new', label: 'New Patient' },
-							{ value: 'follow-up', label: 'Follow-up' },
-							{ value: 'consultation', label: 'Consultation' },
-						]
-					},
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{ type: 'select', key: 'visitType', label: 'Visit Type', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'scheduled', label: 'Scheduled' },
+						{ value: 'confirmed', label: 'Confirmed' },
+						{ value: 'checked-in', label: 'Checked-In' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'cancelled', label: 'Cancelled' },
+						{ value: 'no-show', label: 'No-Show' },
+					]),
 				],
 				kpis: [
 					{ label: 'Total Scheduled', calc: items => String(items.length), color: COLORS[0] },
@@ -548,7 +611,25 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'cancelReason', label: 'Reason' },
 					{ key: 'estImpact', label: 'Est. Impact' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					{
+						type: 'select', key: 'time', label: 'Time', options: [
+							{ value: '', label: 'All Time' },
+							{ value: 'morning', label: 'Morning (6am-12pm)' },
+							{ value: 'afternoon', label: 'Afternoon (12pm-5pm)' },
+							{ value: 'evening', label: 'Evening (5pm-9pm)' },
+						]
+					},
+					PATIENT_FILTER,
+					{ type: 'select', key: 'visitType', label: 'Visit Type', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'no-show', label: 'No-Show' },
+						{ value: 'cancelled', label: 'Cancelled' },
+					]),
+					{ type: 'select', key: 'reason', label: 'Reason', searchable: true, dynamic: true },
+				],
 				kpis: [
 					{
 						label: 'No-Show Rate', calc: items => {
@@ -593,7 +674,7 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'charges', label: 'Charges' },
 					{ key: 'collections', label: 'Collections' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER],
 				kpis: [
 					{ label: 'Active Providers', calc: items => String(new Set(items.map(i => i.providerDisplay).filter(Boolean)).size), color: COLORS[0] },
 					{
@@ -627,7 +708,7 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'utilization', label: 'Utilization %' },
 					{ key: 'revenue', label: 'Revenue' },
 				],
-				filters: DEFAULT_FILTERS,
+				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER],
 				kpis: [
 					{
 						label: 'Utilization Rate', calc: items => {
@@ -663,13 +744,13 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'status', label: 'Status' },
 				],
 				filters: [
-					{
-						type: 'select', key: 'year', label: 'Report Year', options: [
-							{ value: '2025', label: '2025' },
-							{ value: '2026', label: '2026' },
-						]
-					},
-					DEFAULT_FILTERS[2],
+					PROVIDER_FILTER,
+					{ type: 'select', key: 'measure', label: 'Measure', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'meeting', label: 'Meeting Benchmark' },
+						{ value: 'below', label: 'Below Benchmark' },
+					]),
 				],
 				kpis: [
 					{ label: 'MIPS Score', calc: () => '0', color: COLORS[0] },
@@ -695,15 +776,16 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'providerName', label: 'Provider' },
 				],
 				filters: [
-					DEFAULT_FILTERS[2],
+					PROVIDER_FILTER,
 					{
 						type: 'select', key: 'gapType', label: 'Gap Type', options: [
-							{ value: '', label: 'All' },
+							{ value: '', label: 'All Gap Type' },
 							{ value: 'screenings', label: 'Screenings' },
 							{ value: 'immunizations', label: 'Immunizations' },
 							{ value: 'follow-ups', label: 'Follow-ups' },
 						]
 					},
+					{ type: 'select', key: 'description', label: 'Description', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Total Open Gaps', calc: items => String(items.length), color: COLORS[0] },
@@ -738,17 +820,11 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'ipAddress', label: 'IP Address' },
 				],
 				filters: [
-					...DEFAULT_FILTERS,
-					{
-						type: 'select', key: 'action', label: 'Action Type', options: [
-							{ value: '', label: 'All Actions' },
-							{ value: 'login', label: 'Login' },
-							{ value: 'logout', label: 'Logout' },
-							{ value: 'view', label: 'Chart View' },
-							{ value: 'modify', label: 'Data Modify' },
-							{ value: 'order', label: 'Order' },
-						]
-					},
+					DATE_FROM, DATE_TO,
+					{ type: 'select', key: 'user', label: 'User', searchable: true, dynamic: true },
+					{ type: 'select', key: 'action', label: 'Action', searchable: true, dynamic: true },
+					{ type: 'select', key: 'resource', label: 'Resource', searchable: true, dynamic: true },
+					{ type: 'select', key: 'ipAddress', label: 'IP Address', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Total Actions', calc: items => String(items.length), color: COLORS[0] },
@@ -780,17 +856,8 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'avgDaysSinceVisit', label: 'Avg Days Since Visit' },
 				],
 				filters: [
-					{
-						type: 'select', key: 'condition', label: 'Condition', options: [
-							{ value: '', label: 'All' },
-							{ value: 'diabetes', label: 'Diabetes' },
-							{ value: 'hypertension', label: 'Hypertension' },
-							{ value: 'asthma', label: 'Asthma' },
-							{ value: 'copd', label: 'COPD' },
-							{ value: 'chf', label: 'CHF' },
-						]
-					},
-					DEFAULT_FILTERS[2],
+					PROVIDER_FILTER,
+					{ type: 'select', key: 'condition', label: 'Condition', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Registry Patients', calc: items => String(new Set(items.map(i => i.patientId || i.patientName).filter(Boolean)).size), color: COLORS[0] },
@@ -825,10 +892,10 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'lastVisit', label: 'Last Visit' },
 				],
 				filters: [
-					DEFAULT_FILTERS[2],
+					PROVIDER_FILTER,
 					{
 						type: 'select', key: 'riskTier', label: 'Risk Tier', options: [
-							{ value: '', label: 'All Tiers' },
+							{ value: '', label: 'All Risk Tier' },
 							{ value: 'low', label: 'Low' },
 							{ value: 'moderate', label: 'Moderate' },
 							{ value: 'high', label: 'High' },
@@ -864,7 +931,20 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'avgPerUser', label: 'Avg/User' },
 					{ key: 'trend30d', label: '30d Trend (%)' },
 				],
-				filters: [DEFAULT_FILTERS[0], DEFAULT_FILTERS[1]],
+				filters: [
+					DATE_FROM, DATE_TO,
+					{
+						type: 'select', key: 'feature', label: 'Feature', options: [
+							{ value: '', label: 'All Feature' },
+							{ value: 'view-chart', label: 'View Chart' },
+							{ value: 'schedule-appointment', label: 'Schedule Appointment' },
+							{ value: 'refill-prescription', label: 'Refill Prescription' },
+							{ value: 'bill-payment', label: 'Bill Payment' },
+							{ value: 'download-records', label: 'Download Records' },
+							{ value: 'message', label: 'Message' },
+						]
+					},
+				],
 				kpis: [
 					{
 						label: 'Enrolled %', calc: items => {
@@ -1078,20 +1158,24 @@ export class ReportsEditor extends EditorPane {
 				const labelEl = DOM.append(this.filtersEl, DOM.$('label'));
 				labelEl.textContent = f.label;
 				labelEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-right:4px;';
-				const sel = DOM.append(this.filtersEl, DOM.$('select')) as HTMLSelectElement;
-				sel.style.cssText = INPUT_STYLE + 'cursor:pointer;';
-				for (const opt of f.options || []) {
-					const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
-					o.value = opt.value;
-					o.textContent = opt.label;
+				if (f.searchable) {
+					this._buildSearchableFilter(this.filtersEl, f);
+				} else {
+					const sel = DOM.append(this.filtersEl, DOM.$('select')) as HTMLSelectElement;
+					sel.style.cssText = INPUT_STYLE + 'cursor:pointer;';
+					for (const opt of f.options || []) {
+						const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+						o.value = opt.value;
+						o.textContent = opt.label;
+					}
+					sel.value = this.filterValues[f.key] || '';
+					sel.addEventListener('change', () => {
+						this.filterValues[f.key] = sel.value;
+						this.currentPage = 0;
+						this._render();
+					});
+					if (f.key === 'provider') { this.providerSelect = sel; }
 				}
-				sel.value = this.filterValues[f.key] || '';
-				sel.addEventListener('change', () => {
-					this.filterValues[f.key] = sel.value;
-					this.currentPage = 0;
-					this._render();
-				});
-				if (f.key === 'provider') { this.providerSelect = sel; }
 			}
 		}
 
@@ -1128,6 +1212,155 @@ export class ReportsEditor extends EditorPane {
 			o.value = p;
 			o.textContent = p;
 		}
+	}
+
+	private _searchableOpenPopup: HTMLElement | null = null;
+
+	private _dynamicOptions(filter: FilterDef): Array<{ value: string; label: string }> {
+		const sourceKey = filter.dynamicKey || filter.key;
+		const accessors: Record<string, (i: Record<string, string>) => string> = {
+			provider: i => i.providerName || i.providerDisplay || i.prescriberName || i.orderingProvider || '',
+			patient: i => i.patientName || i.patientDisplay || i.patientRefDisplay || '',
+			medication: i => i.medicationName || '',
+			prescriber: i => i.prescriberName || i.providerName || '',
+			specialist: i => i.specialistName || '',
+			specialty: i => i.specialty || '',
+			vaccine: i => i.vaccineName || '',
+			site: i => i.site || i.bodySite || '',
+			payer: i => i.payerDisplay || i.insurance || '',
+			insurance: i => i.insurance || i.payerDisplay || '',
+			test: i => i.testDisplay || i.orderName || i.code || '',
+			cptCode: i => i.cptCode || i.code || '',
+			description: i => i.description || i.code || '',
+			user: i => i.userName || i.user || '',
+			ipAddress: i => i.ipAddress || '',
+			resource: i => i.resourceType || '',
+			action: i => i.action || '',
+			feature: i => i.feature || '',
+			condition: i => i.condition || i.code || '',
+			riskTier: i => i.riskTier || '',
+			gapType: i => i.gapType || '',
+			measure: i => i.measure || '',
+			category: i => i.category || '',
+			denialReason: i => i.denialReason || '',
+			reason: i => i.cancelReason || i.reason || '',
+			time: i => i.appointmentTime || '',
+			visitType: i => i.appointmentType || i.type || '',
+			referredTo: i => i.specialistName || i.referredTo || '',
+			urgency: i => i.urgency || '',
+		};
+		const accessor = accessors[sourceKey] || ((i: Record<string, string>) => i[sourceKey] || '');
+		const set = new Set<string>();
+		for (const i of this.items) {
+			const v = accessor(i);
+			if (v) { set.add(v); }
+		}
+		const out: Array<{ value: string; label: string }> = Array.from(set).sort().map(v => ({ value: v, label: v }));
+		return out;
+	}
+
+	private _buildSearchableFilter(parent: HTMLElement, filter: FilterDef): void {
+		const wrap = DOM.append(parent, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;display:inline-block;';
+
+		const allLabel = `All ${filter.label}`;
+		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+		trigger.style.cssText = INPUT_STYLE + 'cursor:pointer;min-width:140px;text-align:left;display:inline-flex;align-items:center;gap:6px;padding-right:24px;position:relative;';
+		const txt = DOM.append(trigger, DOM.$('span'));
+		txt.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		const caret = DOM.append(trigger, DOM.$('span'));
+		// allow-any-unicode-next-line
+		caret.textContent = '▾';
+		caret.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--vscode-descriptionForeground);';
+
+		const setLabelText = (): void => {
+			const v = this.filterValues[filter.key];
+			const allOpts: Array<{ value: string; label: string }> = filter.dynamic ? this._dynamicOptions(filter) : (filter.options || []);
+			const match = allOpts.find(o => o.value === v);
+			txt.textContent = v ? (match ? match.label : v) : allLabel;
+		};
+		setLabelText();
+
+		const renderPopup = (): HTMLElement => {
+			const popup = DOM.$('div');
+			popup.style.cssText = 'position:absolute;top:100%;left:0;margin-top:2px;z-index:1000;width:240px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.3);overflow:hidden;';
+
+			const searchWrap = DOM.append(popup, DOM.$('div'));
+			searchWrap.style.cssText = 'padding:6px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+			searchInput.type = 'text';
+			searchInput.placeholder = filter.searchPlaceholder || `Search ${filter.label.toLowerCase()}...`;
+			searchInput.style.cssText = INPUT_STYLE + 'width:100%;box-sizing:border-box;';
+
+			const list = DOM.append(popup, DOM.$('div'));
+			list.style.cssText = 'max-height:240px;overflow-y:auto;';
+
+			const renderOptions = (): void => {
+				DOM.clearNode(list);
+				const baseOpts: Array<{ value: string; label: string }> = filter.dynamic ? this._dynamicOptions(filter) : (filter.options || []).slice();
+				if (!baseOpts.some(o => o.value === '')) {
+					baseOpts.unshift({ value: '', label: allLabel });
+				}
+				const q = searchInput.value.toLowerCase();
+				const filtered = q ? baseOpts.filter(o => o.label.toLowerCase().includes(q) || o.value === '') : baseOpts;
+
+				if (filtered.length === 0 || (filtered.length === 1 && filtered[0].value === '')) {
+					if (filtered.length === 0) {
+						const empty = DOM.append(list, DOM.$('div'));
+						empty.textContent = 'No matches';
+						empty.style.cssText = 'padding:14px;text-align:center;color:var(--vscode-descriptionForeground);font-size:11px;';
+						return;
+					}
+				}
+				for (const opt of filtered) {
+					const row = DOM.append(list, DOM.$('div'));
+					row.textContent = opt.label;
+					const isSel = (this.filterValues[filter.key] || '') === opt.value;
+					row.style.cssText = `padding:6px 12px;font-size:12px;cursor:pointer;${isSel ? 'background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground);' : ''}`;
+					row.addEventListener('mouseenter', () => { if (!isSel) { row.style.background = 'var(--vscode-list-hoverBackground)'; } });
+					row.addEventListener('mouseleave', () => { if (!isSel) { row.style.background = ''; } });
+					row.addEventListener('click', () => {
+						this.filterValues[filter.key] = opt.value;
+						setLabelText();
+						closePopup();
+						this.currentPage = 0;
+						this._render();
+					});
+				}
+			};
+			searchInput.addEventListener('input', renderOptions);
+			renderOptions();
+			setTimeout(() => { try { searchInput.focus(); } catch { /* ignore */ } }, 0);
+			return popup;
+		};
+
+		const closePopup = (): void => {
+			if (this._searchableOpenPopup && this._searchableOpenPopup.parentElement) {
+				this._searchableOpenPopup.parentElement.removeChild(this._searchableOpenPopup);
+			}
+			this._searchableOpenPopup = null;
+		};
+
+		const onDocClick = (e: MouseEvent): void => {
+			if (!this._searchableOpenPopup) { return; }
+			const t = e.target as Node | null;
+			if (t && (this._searchableOpenPopup.contains(t) || trigger.contains(t))) { return; }
+			closePopup();
+			DOM.getActiveWindow().document.removeEventListener('mousedown', onDocClick, true);
+		};
+
+		trigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			if (this._searchableOpenPopup) {
+				closePopup();
+				DOM.getActiveWindow().document.removeEventListener('mousedown', onDocClick, true);
+				return;
+			}
+			const popup = renderPopup();
+			wrap.appendChild(popup);
+			this._searchableOpenPopup = popup;
+			DOM.getActiveWindow().document.addEventListener('mousedown', onDocClick, true);
+		});
 	}
 
 	private async _loadData(): Promise<void> {
@@ -1273,17 +1506,48 @@ export class ReportsEditor extends EditorPane {
 			result = result.filter(i => { const d = rowDate(i); return d ? new Date(d).getTime() <= to : true; });
 		}
 
+		const fieldAccessors: Record<string, (i: Record<string, string>) => string> = {
+			provider: i => i.providerName || i.providerDisplay || i.prescriberName || i.orderingProvider || '',
+			status: i => i.status || i.clinicalStatus || '',
+			patient: i => i.patientName || i.patientDisplay || i.patientRefDisplay || '',
+			medication: i => i.medicationName || '',
+			prescriber: i => i.prescriberName || i.providerName || '',
+			specialty: i => i.specialty || '',
+			vaccine: i => i.vaccineName || '',
+			site: i => i.site || i.bodySite || '',
+			payer: i => i.payerDisplay || i.insurance || '',
+			insurance: i => i.insurance || i.payerDisplay || '',
+			test: i => i.testDisplay || i.orderName || i.code || '',
+			cptCode: i => i.cptCode || i.code || '',
+			description: i => i.description || i.code || '',
+			user: i => i.userName || i.user || '',
+			ipAddress: i => i.ipAddress || '',
+			resource: i => i.resourceType || '',
+			action: i => i.action || '',
+			feature: i => i.feature || '',
+			condition: i => i.condition || i.code || '',
+			riskTier: i => i.riskTier || '',
+			gapType: i => i.gapType || '',
+			measure: i => i.measure || '',
+			category: i => i.category || '',
+			denialReason: i => i.denialReason || '',
+			reason: i => i.cancelReason || i.reason || '',
+			time: i => i.appointmentTime || '',
+			visitType: i => i.appointmentType || i.type || '',
+			referredTo: i => i.specialistName || i.referredTo || '',
+			urgency: i => i.urgency || '',
+			gender: i => i.gender || '',
+			ageGroup: i => i.ageGroup || '',
+			priority: i => i.priority || '',
+		};
+
 		for (const f of this.reportDef.filters) {
-			if (f.type === 'select' && this.filterValues[f.key]) {
-				const v = this.filterValues[f.key].toLowerCase();
-				if (f.key === 'provider') {
-					result = result.filter(i => (i.providerName || i.providerDisplay || i.prescriberName || i.orderingProvider || '').toLowerCase().includes(v));
-				} else if (f.key === 'status') {
-					result = result.filter(i => (i.status || i.clinicalStatus || '').toLowerCase().includes(v));
-				} else {
-					result = result.filter(i => (i[f.key] || '').toLowerCase().includes(v));
-				}
-			}
+			if (f.type !== 'select') { continue; }
+			const raw = this.filterValues[f.key];
+			if (!raw) { continue; }
+			const v = raw.toLowerCase();
+			const accessor = fieldAccessors[f.key] || ((i: Record<string, string>) => i[f.key] || '');
+			result = result.filter(i => accessor(i).toLowerCase().includes(v));
 		}
 
 		if (this.sortKey) {
@@ -1476,54 +1740,63 @@ export class ReportsEditor extends EditorPane {
 		DOM.clearNode(this.contentEl);
 
 		const header = DOM.append(this.contentEl, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px;';
-		const catBadge = DOM.append(header, DOM.$('span'));
-		catBadge.textContent = this.currentInput?.category || 'Administrative';
-		catBadge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:3px;background:rgba(0,122,204,0.1);color:var(--vscode-textLink-foreground);text-transform:uppercase;letter-spacing:0.5px;';
-		const title = DOM.append(header, DOM.$('h2'));
-		title.textContent = this.currentInput?.reportLabel || 'AI Usage Dashboard';
+		header.style.cssText = 'margin-bottom:16px;';
+		const titleRow = DOM.append(header, DOM.$('div'));
+		titleRow.style.cssText = 'display:flex;align-items:center;gap:12px;';
+		const dot = DOM.append(titleRow, DOM.$('span'));
+		dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0;';
+		const title = DOM.append(titleRow, DOM.$('h2'));
+		title.textContent = 'AI Token Usage';
 		title.style.cssText = 'font-size:20px;font-weight:600;margin:0;flex:1;';
+		const subtitle = DOM.append(header, DOM.$('div'));
+		subtitle.textContent = 'Monitor AI model usage, token costs, and performance';
+		subtitle.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin:4px 0 0 20px;';
 
-		// Filters: From/To + Refresh
+		// Filters: From / to / To + refresh icon
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
-		filters.style.cssText = 'display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:rgba(0,122,204,0.03);';
-		const fromLabel = DOM.append(filters, DOM.$('label'));
-		fromLabel.textContent = 'From';
-		fromLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		filters.style.cssText = 'display:flex;gap:10px;margin-bottom:16px;align-items:center;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:rgba(0,122,204,0.03);';
+
+		const today = new Date();
+		const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+		const isoOf = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 		const fromInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
 		fromInput.type = 'date';
+		fromInput.value = isoOf(monthAgo);
 		fromInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;';
-		const toLabel = DOM.append(filters, DOM.$('label'));
-		toLabel.textContent = 'To';
-		toLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
+		const toSep = DOM.append(filters, DOM.$('span'));
+		toSep.textContent = 'to';
+		toSep.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
 		const toInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
 		toInput.type = 'date';
+		toInput.value = isoOf(today);
 		toInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;';
+
 		const spacer = DOM.append(filters, DOM.$('span'));
 		spacer.style.flex = '1';
-		const refreshBtn = DOM.append(filters, DOM.$('button'));
-		refreshBtn.textContent = 'Refresh';
-		refreshBtn.style.cssText = BTN_PRIMARY;
+		const refreshBtn = DOM.append(filters, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.title = 'Refresh';
+		// allow-any-unicode-next-line
+		refreshBtn.textContent = '↻';
+		refreshBtn.style.cssText = INPUT_STYLE + 'cursor:pointer;font-size:14px;width:30px;height:28px;display:flex;align-items:center;justify-content:center;';
 
 		// KPIs row
 		const kpiRow = DOM.append(this.contentEl, DOM.$('div'));
-		kpiRow.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;';
+		kpiRow.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px;';
+
+		// Usage by Model card (with empty state)
+		const modelCard = DOM.append(this.contentEl, DOM.$('div'));
+		modelCard.style.cssText = 'padding:14px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;';
 
 		// Daily trend chart card
 		const trendCard = DOM.append(this.contentEl, DOM.$('div'));
 		trendCard.style.cssText = 'padding:14px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;';
 		const trendTitle = DOM.append(trendCard, DOM.$('h3'));
-		trendTitle.textContent = 'Daily Token Usage';
+		trendTitle.textContent = 'Daily Usage Trend';
 		trendTitle.style.cssText = 'font-size:13px;font-weight:600;margin:0 0 10px;';
 		const trendChart = DOM.append(trendCard, DOM.$('div'));
-
-		// By Model table card
-		const modelCard = DOM.append(this.contentEl, DOM.$('div'));
-		modelCard.style.cssText = 'padding:14px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;';
-		const modelTitle = DOM.append(modelCard, DOM.$('h3'));
-		modelTitle.textContent = 'Usage by Model';
-		modelTitle.style.cssText = 'font-size:13px;font-weight:600;margin:0 0 10px;';
-		const modelTbl = DOM.append(modelCard, DOM.$('div'));
 
 		// Recent calls table card
 		const callsCard = DOM.append(this.contentEl, DOM.$('div'));
@@ -1532,6 +1805,8 @@ export class ReportsEditor extends EditorPane {
 		callsTitle.textContent = 'Recent AI Calls';
 		callsTitle.style.cssText = 'font-size:13px;font-weight:600;margin:0 0 10px;';
 		const callsTbl = DOM.append(callsCard, DOM.$('div'));
+
+		const modelTbl = modelCard;
 
 		let callsPage = 0;
 		const callsPageSize = 20;
@@ -1556,21 +1831,46 @@ export class ReportsEditor extends EditorPane {
 			DOM.clearNode(kpiRow);
 			const summary = await tryFetch(`/api/app-proxy/ask-ciya/api/ai/usage/summary${qs('')}`) as Record<string, number> | null;
 			const summaryData = (summary as { data?: Record<string, number> } | null)?.data || summary || {};
-			const kpis = [
+			const kpiDefs = [
 				{ label: 'Total Requests', value: String(summaryData['totalRequests'] ?? '0'), color: COLORS[0] },
-				{ label: 'Total Tokens', value: String(summaryData['totalTokens'] ?? '0'), color: COLORS[1] },
-				{ label: 'Estimated Cost', value: `$${Number(summaryData['totalCost'] ?? 0).toFixed(2)}`, color: COLORS[2] },
-				{ label: 'Avg Latency (ms)', value: String(Math.round(Number(summaryData['avgLatency'] ?? 0))), color: COLORS[3] },
+				{ label: 'Total Tokens', value: String(summaryData['totalTokens'] ?? '0'), color: COLORS[2] },
+				{ label: 'Estimated Cost', value: `$${Number(summaryData['totalCost'] ?? 0).toFixed(4)}`, color: COLORS[1] },
+				{ label: 'Avg Latency', value: `${Math.round(Number(summaryData['avgLatency'] ?? 0))}ms`, color: COLORS[3] },
 			];
-			for (const k of kpis) {
+			for (const k of kpiDefs) {
 				const card = DOM.append(kpiRow, DOM.$('div'));
 				card.style.cssText = `padding:14px 16px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;border-left:3px solid ${k.color};`;
+				const lbl = DOM.append(card, DOM.$('div'));
+				lbl.textContent = k.label;
+				lbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
 				const v = DOM.append(card, DOM.$('div'));
 				v.textContent = k.value;
-				v.style.cssText = 'font-size:22px;font-weight:700;line-height:1.2;';
-				const l = DOM.append(card, DOM.$('div'));
-				l.textContent = k.label;
-				l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+				v.style.cssText = `font-size:22px;font-weight:700;line-height:1.3;color:${k.color};margin-top:4px;`;
+			}
+
+			// By Model
+			DOM.clearNode(modelTbl);
+			const modelTitle = DOM.append(modelTbl, DOM.$('h3'));
+			modelTitle.textContent = 'Usage by Model';
+			modelTitle.style.cssText = 'font-size:13px;font-weight:600;margin:0 0 10px;';
+			const byModel = (summaryData['byModel'] as unknown as Array<Record<string, string | number>> | undefined) || [];
+			if (byModel.length === 0) {
+				const e = DOM.append(modelTbl, DOM.$('div'));
+				e.style.cssText = 'padding:30px 0;text-align:center;color:var(--vscode-descriptionForeground);';
+				const msg = DOM.append(e, DOM.$('div'));
+				msg.textContent = 'No usage data for this period';
+				msg.style.cssText = 'font-size:12px;';
+			} else {
+				this._renderSimpleTable(modelTbl, byModel, [
+					{ key: 'model', label: 'Model' },
+					{ key: 'vendor', label: 'Vendor' },
+					{ key: 'requests', label: 'Requests' },
+					{ key: 'promptTokens', label: 'Prompt Tokens' },
+					{ key: 'completionTokens', label: 'Completion Tokens' },
+					{ key: 'totalTokens', label: 'Total Tokens' },
+					{ key: 'cost', label: 'Est. Cost' },
+					{ key: 'avgLatency', label: 'Avg Latency' },
+				]);
 			}
 
 			// Daily trend
@@ -1579,8 +1879,8 @@ export class ReportsEditor extends EditorPane {
 			const dailyData = (daily as { data?: Array<Record<string, number | string>> })?.data || (Array.isArray(daily) ? daily : []) || [];
 			if (dailyData.length === 0) {
 				const e = DOM.append(trendChart, DOM.$('div'));
-				e.textContent = 'No data';
-				e.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);text-align:center;padding:20px 0;';
+				e.textContent = 'No usage data for this period';
+				e.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);text-align:center;padding:30px 0;';
 			} else {
 				const max = Math.max(...dailyData.map(d => Number(d['totalTokens'] ?? 0)), 1);
 				trendChart.style.cssText = 'display:flex;align-items:flex-end;gap:3px;height:120px;';
@@ -1593,26 +1893,18 @@ export class ReportsEditor extends EditorPane {
 				}
 			}
 
-			// By Model table
-			DOM.clearNode(modelTbl);
-			const byModel = (summaryData['byModel'] as unknown as Array<Record<string, string | number>> | undefined) || [];
-			this._renderSimpleTable(modelTbl, byModel, [
-				{ key: 'model', label: 'Model' },
-				{ key: 'vendor', label: 'Vendor' },
-				{ key: 'requests', label: 'Requests' },
-				{ key: 'promptTokens', label: 'Prompt Tokens' },
-				{ key: 'completionTokens', label: 'Completion Tokens' },
-				{ key: 'totalTokens', label: 'Total Tokens' },
-				{ key: 'cost', label: 'Est. Cost' },
-				{ key: 'avgLatency', label: 'Avg Latency' },
-			]);
-
 			// Recent calls
 			const loadCalls = async (): Promise<void> => {
 				DOM.clearNode(callsTbl);
 				const callsResp = await tryFetch(`/api/app-proxy/ask-ciya/api/ai/usage/log${qs('')}${qs('').includes('?') ? '&' : '?'}page=${callsPage}&size=${callsPageSize}`) as { data?: { content?: Array<Record<string, string | number>>; totalPages?: number }; content?: Array<Record<string, string | number>>; totalPages?: number } | null;
 				const callsContent = callsResp?.data?.content || callsResp?.content || [];
 				const totalPages = callsResp?.data?.totalPages || callsResp?.totalPages || 1;
+				if (callsContent.length === 0) {
+					const e = DOM.append(callsTbl, DOM.$('div'));
+					e.textContent = 'No AI calls recorded yet';
+					e.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);text-align:center;padding:30px 0;';
+					return;
+				}
 				this._renderSimpleTable(callsTbl, callsContent, [
 					{ key: 'createdAt', label: 'Time' },
 					{ key: 'userName', label: 'User' },

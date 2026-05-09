@@ -633,7 +633,7 @@ export class DeveloperPortalEditor extends EditorPane {
 				await this._renderSection();
 			});
 
-			if (sandboxes.length === 0) { this._showEmpty(listEl, 'No sandboxes yet. Create one to start testing.'); return; }
+			if (sandboxes.length === 0) { this._showEmpty(listEl, 'No sandboxes yet. Create one to start testing your app.'); return; }
 
 			for (const sb of sandboxes) {
 				const card = DOM.append(listEl, DOM.$('div'));
@@ -763,7 +763,7 @@ export class DeveloperPortalEditor extends EditorPane {
 			const members = (data?.data || data || []) as Record<string, string>[];
 			subtitle.textContent = `${members.length} member(s)`;
 
-			if (members.length === 0) { this._showEmpty(tableEl, 'No team members yet.'); return; }
+			if (members.length === 0) { this._showEmpty(tableEl, 'No team members yet. Invite someone to collaborate.'); return; }
 
 			// Custom render: Email | Role | Status | Joined | Actions
 			const tbl = DOM.append(tableEl, DOM.$('div'));

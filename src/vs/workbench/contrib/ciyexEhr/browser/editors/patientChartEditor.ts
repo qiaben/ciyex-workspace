@@ -706,13 +706,13 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
 					{
 						key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #',
-						validationPattern: '^[A-Za-z0-9\\-]{1,30}$',
-						validationMessage: 'Lot number must be alphanumeric (dashes allowed), max 30 chars',
+						validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{0,29}$',
+						validationMessage: 'Lot number must start with a letter or digit, can include dashes, max 30 chars',
 					},
 					{
 						key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL',
-						validationPattern: '^\\d+(\\.\\d+)?\\s*(mL|ml|cc|mg|mcg|units?|IU)$',
-						validationMessage: 'Dose should be a number followed by a unit (mL, mg, mcg, units, IU)',
+						validationPattern: '^(?!0(?:\\.0+)?\\s)\\d+(\\.\\d+)?\\s*(mL|ml|cc|mg|mcg|units?|IU)$',
+						validationMessage: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU)',
 					},
 					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
 					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
@@ -754,7 +754,32 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		tabKey: 'insurance',
 		sections: [
 			{
-				key: 'policy-info', title: 'Policy Information', columns: 3, visible: true, collapsible: false, fields: [
+				key: 'insurance-company', title: 'Insurance Company', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'companyName', label: 'Company Name', type: 'text', required: true, placeholder: 'Insurance company name' },
+					{
+						key: 'active', label: 'Active', type: 'select', options: [
+							{ label: 'Yes', value: 'true' },
+							{ label: 'No', value: 'false' },
+						], defaultValue: 'true'
+					},
+					{ key: 'payerId', label: 'Payer ID', type: 'text', placeholder: 'EDI Payer ID' },
+					{ key: 'phone', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567' },
+					{ key: 'fax', label: 'Fax', type: 'phone', placeholder: '(555) 123-4568' },
+					{ key: 'email', label: 'Email', type: 'email', placeholder: 'claims@insurance.com' },
+					{ key: 'website', label: 'Website', type: 'text', placeholder: 'https://provider.insur...', colSpan: 2 },
+				],
+			},
+			{
+				key: 'claims-address', title: 'Claims Address', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'addressLine1', label: 'Address Line 1', type: 'text', placeholder: 'Street address' },
+					{ key: 'addressLine2', label: 'Address Line 2', type: 'text', placeholder: 'Suite, PO Box' },
+					{ key: 'city', label: 'City', type: 'text', placeholder: 'Enter city' },
+					{ key: 'state', label: 'State', type: 'text', placeholder: 'Enter state...' },
+					{ key: 'zipCode', label: 'Zip Code', type: 'text', placeholder: 'Enter zip code...' },
+				],
+			},
+			{
+				key: 'policy-info', title: 'Policy Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
 					{
 						key: 'insuranceType', label: 'Insurance Tier', type: 'select', required: true, options: [
 							{ label: 'Primary', value: 'primary' },
@@ -1315,77 +1340,66 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	// plain text inputs in place.
 	payment: {
 		tabKey: 'payment',
-		// Mirrors web app PaymentPostingTab — payment types and line-item allocations.
+		// Mirrors web app PaymentPostingTab — Payment Date, Method, Amount, Reference,
+		// Apply to Claim, Status, Notes (in that order to match the New Payment form).
 		sections: [
 			{
-				key: 'payment', title: 'Post Payment', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'claimId', label: 'Claim', type: 'lookup', required: true, placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
+				key: 'payment', title: 'Payment', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{
-						key: 'paymentType', label: 'Payment Type', type: 'select', required: true, options: [
+						key: 'paymentMethod', label: 'Payment Method', type: 'select', required: true, options: [
+							{ label: 'Credit Card', value: 'credit_card' },
+							{ label: 'Cash', value: 'cash' },
+							{ label: 'Check', value: 'check' },
+							{ label: 'EFT/ACH', value: 'eft' },
 							{ label: 'Insurance Payment', value: 'insurance' },
 							{ label: 'Patient Copay', value: 'patient_copay' },
 							{ label: 'Patient Coinsurance', value: 'patient_coinsurance' },
 							{ label: 'Patient Deductible', value: 'patient_deductible' },
 							{ label: 'Patient Self-Pay', value: 'patient_self_pay' },
-							{ label: 'Cash', value: 'cash' },
-							{ label: 'Check', value: 'check' },
-							{ label: 'Credit Card', value: 'credit_card' },
-							{ label: 'EFT/ACH', value: 'eft' },
-						], defaultValue: 'insurance'
+						], defaultValue: 'credit_card'
 					},
-					{ key: 'amount', label: 'Payment Amount', type: 'number', required: true, placeholder: '0.00' },
-					{ key: 'allowedAmount', label: 'Allowed Amount', type: 'number', placeholder: '0.00' },
-					{ key: 'adjustmentAmount', label: 'Adjustment / Write-off', type: 'number', placeholder: '0.00' },
-					{ key: 'deductible', label: 'Deductible', type: 'number', placeholder: '0.00' },
-					{ key: 'copay', label: 'Copay', type: 'number', placeholder: '0.00' },
-					{ key: 'coinsurance', label: 'Coinsurance', type: 'number', placeholder: '0.00' },
+					{ key: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
 					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
+					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Select Status...', value: '' },
 							{ label: 'Draft', value: 'draft' },
 							{ label: 'Posted', value: 'issued' },
 							{ label: 'Balanced', value: 'balanced' },
 							{ label: 'Cancelled', value: 'cancelled' },
-						], defaultValue: 'issued'
+						]
 					},
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter notes...', colSpan: 2 },
 				],
 			},
 		],
 	},
 	statements: {
 		tabKey: 'statements',
-		// Mirrors web app StatementsTab.
+		// Mirrors web app StatementsTab — Statement Date, Invoice Number, Balance Due,
+		// Status, Total Net, Recipient, Issuer, Notes.
 		sections: [
 			{
-				key: 'statement', title: 'Statement', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'statementNumber', label: 'Statement Number', type: 'text', placeholder: 'Auto-generated' },
-					{ key: 'statementDate', label: 'Statement Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
-					{ key: 'periodStart', label: 'Period Start', type: 'date' },
-					{ key: 'periodEnd', label: 'Period End', type: 'date' },
-					{ key: 'totalCharges', label: 'Total Charges', type: 'number', placeholder: '0.00' },
-					{ key: 'totalPayments', label: 'Total Payments', type: 'number', placeholder: '0.00' },
-					{ key: 'totalAdjustments', label: 'Total Adjustments', type: 'number', placeholder: '0.00' },
-					{ key: 'balance', label: 'Balance Due', type: 'number', placeholder: '0.00' },
+				key: 'statement', title: 'Statement Information', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'statementDate', label: 'Statement Date', type: 'date', required: true, placeholder: 'mm/dd/yyyy', defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Enter invoice number...' },
+					{ key: 'balance', label: 'Balance Due', type: 'number', placeholder: '0' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Select Status...', value: '' },
 							{ label: 'Draft', value: 'draft' },
 							{ label: 'Sent', value: 'sent' },
 							{ label: 'Paid', value: 'paid' },
 							{ label: 'Overdue', value: 'overdue' },
 							{ label: 'Voided', value: 'voided' },
-						], defaultValue: 'draft'
-					},
-					{
-						key: 'deliveryMethod', label: 'Delivery Method', type: 'select', options: [
-							{ label: 'Mail', value: 'mail' },
-							{ label: 'Email', value: 'email' },
-							{ label: 'Patient Portal', value: 'portal' },
 						]
 					},
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+					{ key: 'totalNet', label: 'Total Net', type: 'number', placeholder: '0' },
+					{ key: 'recipient', label: 'Recipient', type: 'text', placeholder: 'Enter recipient' },
+					{ key: 'issuer', label: 'Issuer', type: 'text', placeholder: 'Enter issuer...' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter notes...', colSpan: 2 },
 				],
 			},
 		],
@@ -3266,8 +3280,10 @@ export class PatientChartEditor extends EditorPane {
 			// proper name (allergen, medication, vaccine, procedure, condition, alert,
 			// test, document title).
 			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
-			// Alphanumerics + spaces + a small set of clinical units — for lot # / dose.
-			const codeishPattern = /^[A-Za-z0-9][A-Za-z0-9\s\-./%]*$/;
+			// Lot numbers must start with alpha/digit, no leading dashes, length 2-30.
+			const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{1,29}$/;
+			// Dose must be a positive (non-zero) number, optionally with a unit. Rejects "-1", "0", "0.0 mL".
+			const dosePattern = /^(?!0+(?:\.0+)?\s*$)(?!0+(?:\.0+)?\s+)\d+(?:\.\d+)?(?:\s*[A-Za-z%]+)?$/;
 			const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
 				allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
@@ -3284,8 +3300,9 @@ export class PatientChartEditor extends EditorPane {
 				description: { rx: namePattern, msg: 'No special characters allowed' },
 				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
 				subject: { rx: namePattern, msg: 'No special characters allowed' },
-				lotNumber: { rx: codeishPattern, msg: 'Letters and numbers only — no special characters' },
-				dose: { rx: codeishPattern, msg: 'Numbers + units only — no special characters' },
+				lotNumber: { rx: lotPattern, msg: 'Lot number must start with a letter or digit; dashes allowed; 2-30 characters' },
+				dose: { rx: dosePattern, msg: 'Dose must be a positive number, optionally followed by a unit (e.g. 0.5 mL)' },
+				doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			};
 			// Implicit format checks for type=phone / type=email when the
 			// field config didn't ship its own validationPattern. Applies

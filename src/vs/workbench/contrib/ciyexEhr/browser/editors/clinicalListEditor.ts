@@ -74,6 +74,13 @@ export interface FormFieldDef {
 	defaultValue?: string | number | (() => string | number);
 	/** Width hint */
 	width?: string;
+	/** Minimum allowed numeric value. Maps to HTML `min` attribute and is enforced on save. */
+	minValue?: number;
+	/** Maximum allowed numeric value. Maps to HTML `max` attribute and is enforced on save. */
+	maxValue?: number;
+	/** Render the field off-screen. Used for fields that should only be filled via auto-fill
+	 * from a related `search`-type field (e.g. patientId, materialId). */
+	hidden?: boolean;
 }
 
 export interface FilterDropdownDef {
@@ -733,6 +740,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		for (const field of fields) {
 			const group = DOM.append(body, DOM.$('div'));
 			group.style.cssText = field.width ? `grid-column:${field.width};` : '';
+			if (field.hidden) {
+				// Render an off-screen input so `inputs.get(...)` still resolves it for
+				// auto-fill from search results, but keep the field invisible to the user.
+				group.style.cssText += ';position:absolute;left:-9999px;visibility:hidden;';
+			}
 
 			const label = DOM.append(group, DOM.$('label'));
 			label.textContent = field.label + (field.required ? ' *' : '');
@@ -917,6 +929,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.type = field.type;
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || '';
+				if (field.type === 'number') {
+					if (field.minValue !== undefined) { inputEl.min = String(field.minValue); }
+					if (field.maxValue !== undefined) { inputEl.max = String(field.maxValue); }
+					if (field.minValue === undefined) { inputEl.min = '0'; }
+				}
 			}
 
 			// Set value from editing item (with alias lookup) or default
@@ -967,9 +984,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				if (field.required) {
 					const input = inputs.get(field.key);
 					if (!input || !input.value.trim()) {
-						errorEl.textContent = `${field.label} is required`;
+						errorEl.textContent = field.validationMessage || `${field.label} is required`;
 						errorEl.style.display = 'block';
-						input?.focus();
+						if (input && !field.hidden) { input.focus(); }
 						return;
 					}
 				}
@@ -981,6 +998,32 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						errorEl.style.display = 'block';
 						input?.focus();
 						return;
+					}
+				}
+				if (field.type === 'number') {
+					const input = inputs.get(field.key);
+					const v = input?.value.trim() || '';
+					if (v) {
+						const n = Number(v);
+						if (!isFinite(n)) {
+							errorEl.textContent = `${field.label} must be a number`;
+							errorEl.style.display = 'block';
+							input?.focus();
+							return;
+						}
+						const minV = field.minValue !== undefined ? field.minValue : 0;
+						if (n < minV) {
+							errorEl.textContent = `${field.label} must be ${minV} or greater`;
+							errorEl.style.display = 'block';
+							input?.focus();
+							return;
+						}
+						if (field.maxValue !== undefined && n > field.maxValue) {
+							errorEl.textContent = `${field.label} must be ${field.maxValue} or less`;
+							errorEl.style.display = 'block';
+							input?.focus();
+							return;
+						}
 					}
 				}
 			}
