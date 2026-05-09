@@ -47,9 +47,23 @@ interface KpiDef {
 }
 
 interface ChartDef {
-	type: 'bar' | 'pie' | 'donut';
+	type: 'bar' | 'pie' | 'donut' | 'horizontalBar' | 'line' | 'area';
+	/** Field key used for grouping. Ignored for time-series/day-of-week (`dateField` is used). */
 	groupKey: string;
 	label: string;
+	/**
+	 * Aggregation mode. 'count' (default) groups by `groupKey` and counts items.
+	 * 'month' aggregates by YYYY-MM extracted from `dateField`.
+	 * 'day-of-week' aggregates by Mon..Sun extracted from `dateField`.
+	 * 'hour' aggregates by 0..23 extracted from `dateField`.
+	 */
+	aggregate?: 'count' | 'month' | 'day-of-week' | 'hour';
+	/** Date field used by month/day-of-week/hour aggregation. */
+	dateField?: string;
+	/** Maximum bars to show for bar/horizontalBar charts. Defaults to 12 (or 10 for top-N). */
+	limit?: number;
+	/** When true and aggregate is 'count', only show the top N most-common values. */
+	topN?: boolean;
 }
 
 interface ReportDef {
@@ -143,6 +157,7 @@ function getReportDef(key: string): ReportDef {
 					{ type: 'bar', groupKey: 'ageGroup', label: 'Age Distribution' },
 					{ type: 'pie', groupKey: 'gender', label: 'Gender Distribution' },
 					{ type: 'donut', groupKey: 'active', label: 'Patient Status' },
+					{ type: 'donut', groupKey: 'ageGroup', label: 'By Age Group' },
 				],
 			};
 
@@ -180,8 +195,10 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
+					{ type: 'area', groupKey: '', label: 'Monthly Volume', aggregate: 'month', dateField: 'startDate' },
 					{ type: 'bar', groupKey: 'type', label: 'By Visit Type' },
 					{ type: 'pie', groupKey: 'status', label: 'By Status' },
+					{ type: 'bar', groupKey: '', label: 'By Day of Week', aggregate: 'day-of-week', dateField: 'startDate' },
 				],
 			};
 
@@ -225,6 +242,8 @@ function getReportDef(key: string): ReportDef {
 				charts: [
 					{ type: 'pie', groupKey: 'status', label: 'By Status' },
 					{ type: 'bar', groupKey: 'priority', label: 'By Priority' },
+					{ type: 'line', groupKey: '', label: 'Monthly Volume', aggregate: 'month', dateField: 'orderDate' },
+					{ type: 'donut', groupKey: 'testDisplay', label: 'By Test' },
 				],
 			};
 
@@ -259,7 +278,10 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'donut', groupKey: 'status', label: 'By Status' },
-					{ type: 'bar', groupKey: 'medicationName', label: 'Top Medications' },
+					{ type: 'horizontalBar', groupKey: 'medicationName', label: 'Top Medications', limit: 10 },
+					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
+					{ type: 'pie', groupKey: 'prescriberName', label: 'By Prescriber' },
+					{ type: 'area', groupKey: '', label: 'Monthly Prescribing Volume', aggregate: 'month', dateField: 'createdAt' },
 				],
 			};
 
@@ -309,7 +331,9 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'pie', groupKey: 'status', label: 'By Status' },
-					{ type: 'bar', groupKey: 'specialty', label: 'By Specialty' },
+					{ type: 'horizontalBar', groupKey: 'specialty', label: 'By Specialty', limit: 10 },
+					{ type: 'line', groupKey: '', label: 'Monthly Volume', aggregate: 'month', dateField: 'referralDate' },
+					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
 				],
 			};
 
@@ -338,8 +362,10 @@ function getReportDef(key: string): ReportDef {
 					{ label: 'Missing', calc: items => String(countWhere(items, i => /missing|not[-_ ]?given/i.test(i.status || ''))), color: COLORS[3] },
 				],
 				charts: [
-					{ type: 'donut', groupKey: 'status', label: 'By Status' },
-					{ type: 'bar', groupKey: 'vaccineName', label: 'Top Vaccines' },
+					{ type: 'bar', groupKey: 'vaccineName', label: 'By Vaccine Type' },
+					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
+					{ type: 'donut', groupKey: 'site', label: 'By Site' },
+					{ type: 'pie', groupKey: 'providerName', label: 'By Provider' },
 				],
 			};
 
@@ -357,14 +383,14 @@ function getReportDef(key: string): ReportDef {
 					{ type: 'select', key: 'category', label: 'Category', searchable: true, dynamic: true },
 				],
 				kpis: [
-					{ label: 'Active Problems', calc: items => String(countWhere(items, i => /active/i.test(i.clinicalStatus || i.status || ''))), color: COLORS[0] },
-					{ label: 'Resolved', calc: items => String(countWhere(items, i => /resolved/i.test(i.clinicalStatus || i.status || ''))), color: COLORS[1] },
-					{ label: 'Total Encounters', calc: items => String(new Set(items.map(i => i.encounterId).filter(Boolean)).size || items.length), color: COLORS[2] },
-					{ label: 'Unique ICD Codes', calc: items => String(new Set(items.map(i => i.icdCode || i.code).filter(Boolean)).size), color: COLORS[3] },
+					{ label: 'Total Diagnoses', calc: items => String(items.length), color: COLORS[0] },
+					{ label: 'Unique Conditions', calc: items => String(new Set(items.map(i => i.icdCode || i.code).filter(Boolean)).size), color: COLORS[1] },
+					{ label: 'Chronic Conditions', calc: items => String(countWhere(items, i => /chronic|long[-_ ]?term/i.test(i.category || i.clinicalStatus || ''))), color: COLORS[2] },
+					{ label: 'Patients w/ Dx', calc: items => String(new Set(items.map(i => i.patientId || i.patientRefDisplay).filter(Boolean)).size), color: COLORS[3] },
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'code', label: 'Top Problems' },
-					{ type: 'pie', groupKey: 'clinicalStatus', label: 'By Status' },
+					{ type: 'horizontalBar', groupKey: 'code', label: 'Top 15 Diagnoses', limit: 15 },
+					{ type: 'pie', groupKey: 'category', label: 'By ICD-10 Chapter' },
 				],
 			};
 
@@ -403,8 +429,9 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'payerDisplay', label: 'By Payer' },
-					{ type: 'bar', groupKey: 'providerName', label: 'By Provider' },
+					{ type: 'bar', groupKey: 'providerName', label: 'Revenue by Provider' },
+					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
+					{ type: 'area', groupKey: '', label: 'Monthly Revenue', aggregate: 'month', dateField: 'serviceDate' },
 				],
 			};
 
@@ -442,7 +469,7 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'agingBucket', label: 'A/R Aging Buckets' },
-					{ type: 'bar', groupKey: 'payerDisplay', label: 'By Payer' },
+					{ type: 'horizontalBar', groupKey: 'payerDisplay', label: 'A/R by Payer', limit: 10 },
 				],
 			};
 
@@ -478,7 +505,8 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'denialReason', label: 'Top Denial Reasons' },
+					{ type: 'horizontalBar', groupKey: 'denialReason', label: 'Top Denial Reasons', limit: 10 },
+					{ type: 'line', groupKey: '', label: 'Denial Trend', aggregate: 'month', dateField: 'serviceDate' },
 					{ type: 'bar', groupKey: 'payerDisplay', label: 'By Payer' },
 				],
 			};
@@ -521,6 +549,7 @@ function getReportDef(key: string): ReportDef {
 				charts: [
 					{ type: 'pie', groupKey: 'payerDisplay', label: 'Patients by Payer' },
 					{ type: 'donut', groupKey: 'payerDisplay', label: 'Revenue by Payer' },
+					{ type: 'bar', groupKey: 'payerDisplay', label: 'Avg Reimbursement Rate' },
 				],
 			};
 
@@ -551,7 +580,10 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'cptCode', label: 'Top 10 CPT Codes' },
+					{ type: 'horizontalBar', groupKey: 'cptCode', label: 'Top 10 CPT Codes', limit: 10 },
+					{ type: 'bar', groupKey: 'emLevel', label: 'E&M Level Distribution' },
+					{ type: 'donut', groupKey: 'cptCode', label: 'By CPT Code' },
+					{ type: 'donut', groupKey: 'description', label: 'By Description' },
 				],
 			};
 
@@ -593,8 +625,10 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
+					{ type: 'area', groupKey: '', label: 'Daily Volume', aggregate: 'month', dateField: 'appointmentDate' },
 					{ type: 'donut', groupKey: 'status', label: 'By Status' },
-					{ type: 'bar', groupKey: 'appointmentType', label: 'By Visit Type' },
+					{ type: 'bar', groupKey: '', label: 'By Day of Week', aggregate: 'day-of-week', dateField: 'appointmentDate' },
+					{ type: 'pie', groupKey: 'appointmentType', label: 'By Visit Type' },
 				],
 			};
 
@@ -658,7 +692,9 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'providerName', label: 'By Provider' },
+					{ type: 'line', groupKey: '', label: 'No-Show Rate Trend', aggregate: 'month', dateField: 'appointmentDate' },
+					{ type: 'bar', groupKey: '', label: 'By Day of Week', aggregate: 'day-of-week', dateField: 'appointmentDate' },
+					{ type: 'horizontalBar', groupKey: 'providerName', label: 'By Provider', limit: 10 },
 					{ type: 'pie', groupKey: 'cancelReason', label: 'Cancellation Reasons' },
 				],
 			};
@@ -694,6 +730,8 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'providerDisplay', label: 'Encounters by Provider' },
+					{ type: 'bar', groupKey: 'providerDisplay', label: 'wRVU by Provider' },
+					{ type: 'bar', groupKey: 'providerDisplay', label: 'Revenue by Provider' },
 				],
 			};
 
@@ -726,7 +764,9 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'providerName', label: 'By Provider' },
+					{ type: 'bar', groupKey: 'providerName', label: 'Utilization by Provider' },
+					{ type: 'bar', groupKey: '', label: 'Utilization by Day', aggregate: 'day-of-week', dateField: 'appointmentDate' },
+					{ type: 'line', groupKey: '', label: 'Utilization Trend', aggregate: 'month', dateField: 'appointmentDate' },
 				],
 			};
 
@@ -759,7 +799,9 @@ function getReportDef(key: string): ReportDef {
 					{ label: 'Below Benchmark', calc: items => String(countWhere(items, i => Number(i.performance || 0) < Number(i.benchmark || 0))), color: COLORS[3] },
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'measure', label: 'Performance vs Benchmark' },
+					{ type: 'bar', groupKey: 'measure', label: 'Measure Performance vs. Benchmark' },
+					{ type: 'line', groupKey: '', label: 'MIPS Score Trend', aggregate: 'month', dateField: 'recordedDate' },
+					{ type: 'pie', groupKey: 'status', label: 'By Status' },
 				],
 			};
 
@@ -805,6 +847,9 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'gapType', label: 'Gaps by Type' },
+					{ type: 'area', groupKey: '', label: 'Gap Closure Trend', aggregate: 'month', dateField: 'closedAt' },
+					{ type: 'horizontalBar', groupKey: 'providerName', label: 'Open Gaps by Provider', limit: 10 },
+					{ type: 'pie', groupKey: 'gapType', label: 'By Gap Type' },
 				],
 			};
 
@@ -839,7 +884,10 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
+					{ type: 'bar', groupKey: '', label: 'Activity by Hour of Day', aggregate: 'hour', dateField: 'createdAt' },
 					{ type: 'pie', groupKey: 'action', label: 'By Action Type' },
+					{ type: 'area', groupKey: '', label: 'Daily Activity Trend', aggregate: 'month', dateField: 'createdAt' },
+					{ type: 'pie', groupKey: 'resourceType', label: 'By Resource' },
 				],
 			};
 
@@ -877,6 +925,8 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'condition', label: 'Patients by Condition' },
+					{ type: 'bar', groupKey: 'condition', label: 'Control Rates' },
+					{ type: 'line', groupKey: '', label: 'Control Rate Trend', aggregate: 'month', dateField: 'recordedDate' },
 				],
 			};
 
@@ -915,7 +965,9 @@ function getReportDef(key: string): ReportDef {
 					},
 				],
 				charts: [
-					{ type: 'pie', groupKey: 'riskTier', label: 'Risk Distribution' },
+					{ type: 'pie', groupKey: 'riskTier', label: 'Risk Tier Distribution' },
+					{ type: 'horizontalBar', groupKey: 'topRiskFactor', label: 'Top Risk Factors', limit: 10 },
+					{ type: 'bar', groupKey: '', label: 'Risk Migration Trend', aggregate: 'month', dateField: 'recordedDate' },
 				],
 			};
 
@@ -958,6 +1010,8 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'feature', label: 'Feature Usage' },
+					{ type: 'line', groupKey: '', label: 'Enrollment Trend', aggregate: 'month', dateField: 'createdAt' },
+					{ type: 'pie', groupKey: 'ageGroup', label: 'Active Users by Age' },
 				],
 			};
 
@@ -990,6 +1044,8 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'providerDisplay', label: 'Unsigned by Provider' },
+					{ type: 'bar', groupKey: 'unsignedAgeBucket', label: 'Unsigned Note Aging' },
+					{ type: 'line', groupKey: '', label: 'Completion Rate Trend', aggregate: 'month', dateField: 'startDate' },
 				],
 			};
 
@@ -1585,12 +1641,7 @@ export class ReportsEditor extends EditorPane {
 		// Charts
 		DOM.clearNode(this.chartsEl);
 		for (const chart of this.reportDef.charts) {
-			const groupCounts: Record<string, number> = {};
-			for (const item of filtered) {
-				const v = String(item[chart.groupKey] || 'Other');
-				groupCounts[v] = (groupCounts[v] || 0) + 1;
-			}
-			const sorted = Object.entries(groupCounts).sort((a, b) => b[1] - a[1]);
+			const sorted = this._computeChartData(filtered, chart);
 			this._renderChart(this.chartsEl, chart, sorted);
 		}
 
@@ -1674,6 +1725,61 @@ export class ReportsEditor extends EditorPane {
 		}
 	}
 
+	private _computeChartData(items: Record<string, string>[], chart: ChartDef): Array<[string, number]> {
+		const aggregate = chart.aggregate || 'count';
+		if (aggregate === 'month') {
+			const counts: Record<string, number> = {};
+			const df = chart.dateField;
+			for (const i of items) {
+				const raw = (df && i[df]) || i.startDate || i.serviceDate || i.referralDate || i.administrationDate
+					|| i.orderDate || i.appointmentDate || i.recordedDate || i.createdAt || '';
+				if (!raw) { continue; }
+				const m = /^(\d{4})-(\d{2})/.exec(raw);
+				if (!m) { continue; }
+				const key = `${m[1]}-${m[2]}`;
+				counts[key] = (counts[key] || 0) + 1;
+			}
+			return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+		}
+		if (aggregate === 'day-of-week') {
+			const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+			const counts: Record<string, number> = {};
+			for (const d of days) { counts[d] = 0; }
+			const df = chart.dateField;
+			for (const i of items) {
+				const raw = (df && i[df]) || i.startDate || i.serviceDate || i.referralDate || i.administrationDate
+					|| i.orderDate || i.appointmentDate || i.recordedDate || i.createdAt || '';
+				if (!raw) { continue; }
+				const t = Date.parse(raw);
+				if (isNaN(t)) { continue; }
+				const day = days[new Date(t).getDay()];
+				counts[day]++;
+			}
+			return days.map(d => [d, counts[d]] as [string, number]);
+		}
+		if (aggregate === 'hour') {
+			const counts = new Array(24).fill(0);
+			const df = chart.dateField;
+			for (const i of items) {
+				const raw = (df && i[df]) || i.startDate || i.timestamp || i.createdAt || '';
+				if (!raw) { continue; }
+				const t = Date.parse(raw);
+				if (isNaN(t)) { continue; }
+				counts[new Date(t).getHours()]++;
+			}
+			return counts.map((n, h) => [`${String(h).padStart(2, '0')}:00`, n] as [string, number]);
+		}
+		// Default: count by groupKey
+		const counts: Record<string, number> = {};
+		for (const item of items) {
+			const v = String(item[chart.groupKey] || 'Other');
+			counts[v] = (counts[v] || 0) + 1;
+		}
+		const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+		const limit = chart.limit ?? (chart.topN ? 10 : undefined);
+		return limit ? sorted.slice(0, limit) : sorted;
+	}
+
 	private _renderChart(parent: HTMLElement, chart: ChartDef, sorted: Array<[string, number]>): void {
 		const card = DOM.append(parent, DOM.$('div'));
 		card.style.cssText = 'padding:14px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;background:var(--vscode-editor-background);';
@@ -1688,8 +1794,30 @@ export class ReportsEditor extends EditorPane {
 			return;
 		}
 
-		if (chart.type === 'bar') {
-			const barData = sorted.slice(0, 12);
+		if (chart.type === 'horizontalBar') {
+			const barData = sorted.slice(0, chart.limit ?? 15);
+			const max = Math.max(...barData.map(d => d[1]), 1);
+			const chartEl = DOM.append(card, DOM.$('div'));
+			chartEl.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+			for (let i = 0; i < barData.length; i++) {
+				const [label, value] = barData[i];
+				const row = DOM.append(chartEl, DOM.$('div'));
+				row.style.cssText = 'display:grid;grid-template-columns:120px 1fr 40px;gap:8px;align-items:center;';
+				const lblEl = DOM.append(row, DOM.$('span'));
+				lblEl.textContent = label.length > 18 ? label.substring(0, 18) + '…' : label;
+				lblEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+				lblEl.title = label;
+				const barWrap = DOM.append(row, DOM.$('div'));
+				barWrap.style.cssText = 'height:14px;background:rgba(128,128,128,0.08);border-radius:3px;overflow:hidden;';
+				const bar = DOM.append(barWrap, DOM.$('div'));
+				bar.style.cssText = `width:${(value / max) * 100}%;height:100%;background:${COLORS[i % COLORS.length]};`;
+				bar.title = `${label}: ${value}`;
+				const valEl = DOM.append(row, DOM.$('span'));
+				valEl.textContent = String(value);
+				valEl.style.cssText = 'font-size:11px;font-weight:600;text-align:right;';
+			}
+		} else if (chart.type === 'bar') {
+			const barData = sorted.slice(0, chart.limit ?? 12);
 			const max = Math.max(...barData.map(d => d[1]), 1);
 			const chartEl = DOM.append(card, DOM.$('div'));
 			chartEl.style.cssText = 'display:flex;align-items:flex-end;gap:4px;height:140px;';
@@ -1704,8 +1832,59 @@ export class ReportsEditor extends EditorPane {
 				valEl.textContent = String(value);
 				valEl.style.cssText = 'font-size:10px;font-weight:600;';
 				const lblEl = DOM.append(col, DOM.$('div'));
+				// allow-any-unicode-next-line
 				lblEl.textContent = label.length > 12 ? label.substring(0, 12) + '…' : label;
 				lblEl.style.cssText = 'font-size:8px;color:var(--vscode-descriptionForeground);text-align:center;max-width:100%;overflow:hidden;';
+			}
+		} else if (chart.type === 'line' || chart.type === 'area') {
+			// Time-series: render as area-fill polygon over horizontally-laid points.
+			// Inputs are ordered chronologically (or alphabetically for non-month keys).
+			const data = sorted.slice(0, chart.limit ?? 60);
+			const max = Math.max(...data.map(d => d[1]), 1);
+			const w = 100; const h = 140;
+			const wrap = DOM.append(card, DOM.$('div'));
+			wrap.style.cssText = 'position:relative;height:140px;';
+			const svg = DOM.append(wrap, DOM.$('svg')) as unknown as SVGSVGElement;
+			svg.setAttribute('viewBox', `0 0 ${w * data.length} ${h}`);
+			svg.setAttribute('preserveAspectRatio', 'none');
+			svg.setAttribute('width', '100%');
+			svg.setAttribute('height', String(h));
+			const points = data.map((d, idx) => {
+				const x = idx * w + w / 2;
+				const y = h - 10 - (d[1] / max) * (h - 20);
+				return `${x},${y}`;
+			});
+			if (chart.type === 'area') {
+				const ns = 'http://www.w3.org/2000/svg';
+				const poly = DOM.getActiveWindow().document.createElementNS(ns, 'polygon');
+				const closed = `0,${h} ${points.join(' ')} ${w * data.length},${h}`;
+				poly.setAttribute('points', closed);
+				poly.setAttribute('fill', COLORS[0] + '33');
+				svg.appendChild(poly);
+			}
+			const ns2 = 'http://www.w3.org/2000/svg';
+			const line = DOM.getActiveWindow().document.createElementNS(ns2, 'polyline');
+			line.setAttribute('points', points.join(' '));
+			line.setAttribute('fill', 'none');
+			line.setAttribute('stroke', COLORS[0]);
+			line.setAttribute('stroke-width', '6');
+			line.setAttribute('stroke-linecap', 'round');
+			line.setAttribute('stroke-linejoin', 'round');
+			svg.appendChild(line);
+			// X-axis labels (first/middle/last)
+			const labelRow = DOM.append(card, DOM.$('div'));
+			labelRow.style.cssText = 'display:flex;justify-content:space-between;font-size:9px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+			if (data.length > 0) {
+				const first = DOM.append(labelRow, DOM.$('span'));
+				first.textContent = data[0][0];
+				if (data.length > 2) {
+					const mid = DOM.append(labelRow, DOM.$('span'));
+					mid.textContent = data[Math.floor(data.length / 2)][0];
+				}
+				if (data.length > 1) {
+					const last = DOM.append(labelRow, DOM.$('span'));
+					last.textContent = data[data.length - 1][0];
+				}
 			}
 		} else {
 			// pie or donut

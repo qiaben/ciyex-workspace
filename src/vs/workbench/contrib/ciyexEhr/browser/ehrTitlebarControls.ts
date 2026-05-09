@@ -852,12 +852,49 @@ export class EhrTitlebarControls extends Disposable {
 		}
 		labelEl.append(` ${label}`);
 
+		// Native <input type="date"> on Linux Chromium hardcodes a locale-driven
+		// placeholder ("dd-mm-yyyy") that ignores the placeholder attribute,
+		// which the test team flagged as wrong format. Render a text input
+		// (mm/dd/yyyy) plus a hidden native date picker for the calendar pop-up;
+		// the hidden ISO input is what code reads as `.value`.
+		if (type === 'date') {
+			const wrap = DOM.append(group, DOM.$('.ehr-date-wrap'));
+			wrap.style.cssText = 'position:relative;display:flex;';
+			const visible = DOM.append(wrap, DOM.$('input.ehr-form-input')) as HTMLInputElement;
+			visible.type = 'text';
+			visible.placeholder = 'MM/DD/YYYY';
+			visible.maxLength = 10;
+			visible.style.flex = '1';
+			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			hidden.type = 'hidden';
+			hidden.name = name;
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.style.cssText = 'position:absolute;right:0;top:0;width:32px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;';
+			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			visible.addEventListener('input', () => {
+				const iso = usToIso(visible.value);
+				hidden.value = iso;
+				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+			});
+			picker.addEventListener('change', () => {
+				visible.value = isoToUs(picker.value);
+				hidden.value = picker.value;
+			});
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground);pointer-events:none;';
+			// Return the hidden ISO input so callers reading `.value` still see
+			// yyyy-mm-dd, matching the previous native-date-input contract.
+			return hidden;
+		}
+
 		const input = DOM.append(group, DOM.$(`input.ehr-form-input`)) as HTMLInputElement;
 		input.type = type;
 		input.name = name;
 		if (type === 'tel') { input.placeholder = '(555) 123-4567'; }
 		if (type === 'email') { input.placeholder = 'name@example.com'; }
-		if (type === 'date') { input.placeholder = 'MM/DD/YYYY'; }
 		return input;
 	}
 
