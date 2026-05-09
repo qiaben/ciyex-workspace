@@ -54,6 +54,12 @@ export interface FormFieldDef {
 	/** Error message for validationPattern mismatch. */
 	validationMessage?: string;
 	/**
+	 * For 'search' type: client-side fallback options used when the API returns empty/fails.
+	 * Items are filtered against the typed query (substring match against displayField/value).
+	 * Useful for code systems (CVX, etc.) when the backend dataset is incomplete.
+	 */
+	fallbackOptions?: Array<Record<string, string>>;
+	/**
 	 * For 'search' type: map of additional form-field keys to fill from a selected result.
 	 * Key is the form field to fill, value is the property key on the result object.
 	 * Example: { patientLastName: 'lastName', patientPhone: 'phone' }
@@ -778,22 +784,36 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						return;
 					}
 					this.searchDebounceTimers.set(timerKey, setTimeout(async () => {
+						let results: Record<string, unknown>[] = [];
 						try {
 							const param = field.searchParam || 'search';
 							const sep = searchEndpoint.includes('?') ? '&' : '?';
 							const res = await this.apiService.fetch(`${searchEndpoint}${sep}${param}=${encodeURIComponent(query)}`);
-							if (!res.ok) { return; }
-							const data = await res.json();
-							const wrapper = data?.data || data;
-							const results: Record<string, unknown>[] = wrapper?.content || (Array.isArray(wrapper) ? wrapper : []);
-							DOM.clearNode(dropdown);
-							if (results.length === 0) {
-								const noRes = DOM.append(dropdown, DOM.$('div'));
-								noRes.textContent = 'No results found';
-								noRes.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
-								dropdown.style.display = 'block';
-								return;
+							if (res.ok) {
+								const data = await res.json();
+								const wrapper = data?.data || data;
+								results = wrapper?.content || (Array.isArray(wrapper) ? wrapper : []);
 							}
+						} catch {
+							// fall through to fallback
+						}
+						// Client-side fallback when API returns empty/fails (e.g. CVX codes
+						// when ciyex-codes has no CVX data loaded).
+						if (results.length === 0 && field.fallbackOptions && field.fallbackOptions.length > 0) {
+							const lq = query.toLowerCase();
+							results = field.fallbackOptions
+								.filter(opt => Object.values(opt).some(v => String(v).toLowerCase().includes(lq)))
+								.slice(0, 15);
+						}
+						DOM.clearNode(dropdown);
+						if (results.length === 0) {
+							const noRes = DOM.append(dropdown, DOM.$('div'));
+							noRes.textContent = 'No results found';
+							noRes.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
+							dropdown.style.display = 'block';
+							return;
+						}
+						{
 							for (const result of results.slice(0, 15)) {
 								const item = DOM.append(dropdown, DOM.$('div'));
 								// Build display text
@@ -835,8 +855,6 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 								});
 							}
 							dropdown.style.display = 'block';
-						} catch {
-							// Silently ignore search errors
 						}
 					}, 300));
 				});

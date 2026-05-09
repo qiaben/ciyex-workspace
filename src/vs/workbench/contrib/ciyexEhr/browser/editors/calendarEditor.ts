@@ -328,8 +328,12 @@ export class CalendarEditor extends EditorPane {
 		if (this.patientNameFilter) {
 			const q = this.patientNameFilter.toLowerCase();
 			filtered = filtered.filter(a => {
-				const full = `${a.patientFirstName || ''} ${a.patientLastName || ''} ${a.patientName || ''}`.toLowerCase();
-				return full.includes(q);
+				const haystack = [
+					a.patientFirstName, a.patientLastName, a.patientName,
+					a.providerName, a.practitionerName, a.locationName,
+					a.status, getAppointmentType(a),
+				].map(v => String(v ?? '')).join(' ').toLowerCase();
+				return haystack.includes(q);
 			});
 		}
 		return filtered;
@@ -388,18 +392,23 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Calendar-scope patient filter — filters the visible appointments by
-		// patient name (in addition to provider / location filters). The test
-		// team asked for a working search "near the add patient" button on
-		// the calendar page; this is the inline filter that complements the
-		// titlebar's global patient search (which opens charts).
+		// Calendar-scope filter — narrows the visible appointments by patient
+		// name, provider name, location, or visit type. The test team flagged
+		// the previous "Filter by patient..." placeholder as unclear and asked
+		// for a working search bar; broadening the predicate to all four
+		// fields makes the bar match the user's expectation that "search"
+		// covers any column they can see.
 		const searchWrap = DOM.append(this.headerBar, DOM.$('.cal-patient-search'));
-		searchWrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:12px;';
+		searchWrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:12px;position:relative;';
+		const searchIcon = DOM.append(searchWrap, DOM.$('span'));
+		searchIcon.classList.add('codicon');
+		searchIcon.classList.add('codicon-search');
+		searchIcon.style.cssText = 'position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);pointer-events:none;';
 		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
 		searchInput.type = 'text';
-		searchInput.placeholder = 'Filter by patient...';
+		searchInput.placeholder = 'Search by patient, provider, location, type…';
 		searchInput.value = this.patientNameFilter;
-		searchInput.style.cssText = 'padding:4px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;width:180px;';
+		searchInput.style.cssText = 'padding:4px 10px 4px 28px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;width:240px;';
 		let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 		searchInput.addEventListener('input', () => {
 			if (searchDebounce) { clearTimeout(searchDebounce); }
@@ -1000,6 +1009,7 @@ export class CalendarEditor extends EditorPane {
 			} else if (type === 'textarea') {
 				const ta = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				ta.id = id; ta.value = value; ta.rows = 3; ta.style.cssText = inputStyle + 'resize:vertical;';
+				if (id === 'notes') { ta.placeholder = 'Reason for visit or scheduling notes…'; }
 				formFields.set(id, ta);
 				return ta;
 			} else if (type === 'date') {
@@ -1097,20 +1107,14 @@ export class CalendarEditor extends EditorPane {
 		];
 		const visitTypeEl = field('Visit Type', 'visitType', 'select', 'Consultation', false, visitTypes) as HTMLSelectElement;
 
-		// Date + Time row
-		row('Date', 'startDate', 'date', date, true, 'Start Time', 'startTime', 'time', time, true);
-		// End Time + Priority in a manual row
-		const endPriorityRow = DOM.append(form, DOM.$('.form-row'));
-		endPriorityRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
-		const endTimeGroup = DOM.append(endPriorityRow, DOM.$('.fg'));
-		const endTimeLbl = DOM.append(endTimeGroup, DOM.$('label'));
-		endTimeLbl.textContent = 'End Time *';
-		endTimeLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
-		const endTimeInp = DOM.append(endTimeGroup, DOM.$('input')) as HTMLInputElement;
-		endTimeInp.id = 'endTime'; endTimeInp.type = 'time'; endTimeInp.value = endTime;
-		endTimeInp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
-		formFields.set('endTime', endTimeInp);
-		const priorityGroup = DOM.append(endPriorityRow, DOM.$('.fg'));
+		// Start Date + Start Time row
+		row('Start Date', 'startDate', 'date', date, true, 'Start Time', 'startTime', 'time', time, true);
+		// End Date + End Time row — both required, both render as mm/dd/yyyy
+		// via buildDateField. End Date defaults to the same day as Start.
+		row('End Date', 'endDate', 'date', date, true, 'End Time', 'endTime', 'time', endTime, true);
+		const priorityRow = DOM.append(form, DOM.$('.form-row'));
+		priorityRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
+		const priorityGroup = DOM.append(priorityRow, DOM.$('.fg'));
 		const priorityLbl = DOM.append(priorityGroup, DOM.$('label'));
 		priorityLbl.textContent = 'Priority';
 		priorityLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
@@ -1162,6 +1166,7 @@ export class CalendarEditor extends EditorPane {
 			const visitType = visitTypeEl.value;
 			const startD = (formFields.get('startDate') as HTMLInputElement | undefined)?.value || '';
 			const startT = (formFields.get('startTime') as HTMLInputElement | undefined)?.value || '';
+			const endD = (formFields.get('endDate') as HTMLInputElement | undefined)?.value || startD;
 			const endT = (formFields.get('endTime') as HTMLInputElement | undefined)?.value || '';
 			const provId = providerIdEl.value;
 			const locId = locationIdEl.value;
@@ -1196,7 +1201,7 @@ export class CalendarEditor extends EditorPane {
 							status: status || 'scheduled',
 							priority: (formFields.get('priority') as HTMLSelectElement | undefined)?.value || 'routine',
 							start: `${startD}T${startT}:00`,
-							end: `${startD}T${endT}:00`,
+							end: `${endD}T${endT}:00`,
 							reason: notes || null,
 							patientName: patName,
 							patientId: patId || undefined,

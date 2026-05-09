@@ -169,8 +169,10 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'vitals_temperature', label: 'Temperature', type: 'number', placeholder: '\u00B0F' },
 					{ key: 'vitals_spo2', label: 'SpO2', type: 'number', placeholder: '%' },
 					{ key: 'vitals_respiratory_rate', label: 'Respiratory Rate', type: 'number', placeholder: '/min' },
-					{ key: 'vitals_weight', label: 'Weight', type: 'number', placeholder: 'lbs' },
-					{ key: 'vitals_height', label: 'Height', type: 'number', placeholder: 'in' },
+					// Use kg / cm to match the web app's Vitalsform — its useMemo
+					// uses w / (h/100)^2 with weightKg / heightCm directly.
+					{ key: 'vitals_weight', label: 'Weight (kg)', type: 'number', placeholder: 'kg' },
+					{ key: 'vitals_height', label: 'Height (cm)', type: 'number', placeholder: 'cm' },
 					{ key: 'vitals_bmi', label: 'BMI', type: 'number', placeholder: 'Auto-calculated' },
 					{ key: 'vitals_pain_level', label: 'Pain Level', type: 'number', placeholder: '0-10' },
 					{ key: 'vitals_notes', label: 'Notes', type: 'text', colSpan: 2, placeholder: 'Additional notes...' },
@@ -246,7 +248,7 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
-				key: 'procedures', title: 'Procedures & Coding', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+				key: 'procedures', title: 'Procedures & Coding', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
 					{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', type: 'procedure-list' },
 					{ key: 'procedures_notes', label: 'Procedure Notes', type: 'textarea', placeholder: 'Procedure details and notes...' },
 				]
@@ -595,14 +597,17 @@ export class EncounterFormEditor extends EditorPane {
 				// Auto-expand the section before scrolling — sections like
 				// "Procedures & Coding" default to collapsed, so a TOC click
 				// previously appeared to do nothing because the body
-				// (display:none) was still hidden after scrolling. Click the
-				// header to flip the collapse state when the body is hidden.
+				// (display:none) was still hidden after scrolling.
 				const body = el.children[1] as HTMLElement | undefined;
 				const header = el.children[0] as HTMLElement | undefined;
 				if (body && header && body.style.display === 'none') {
 					header.click();
 				}
-				el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				// Scroll the dedicated scrollArea (not the document) so the
+				// click reliably brings the section into view even when the
+				// editor is inside a tab/panel with its own scroll context.
+				const top = el.offsetTop - this.scrollArea.offsetTop;
+				this.scrollArea.scrollTo({ top, behavior: 'smooth' });
 			});
 
 			this.tocItems.push({ key: sec.key, el: item });
@@ -791,28 +796,29 @@ export class EncounterFormEditor extends EditorPane {
 			}
 		}
 
-		// Vitals BMI auto-calc — same behavior as EHR-UI's encounter form.
-		// Weight in lbs and Height in inches: BMI = (lbs * 703) / (in * in).
-		// Recalc on either input changing; lock the BMI cell so the user can't
-		// type over the derived value.
-		const weightLbs = renderedInputs.get('vitals_weight');
-		const heightIn = renderedInputs.get('vitals_height');
+		// Vitals BMI auto-calc — exact same formula as EHR-UI's Vitalsform.
+		// Weight in kg, Height in cm: BMI = w / (h/100)^2. Recalc on either
+		// input changing; lock the BMI cell so the user can't type over the
+		// derived value.
+		const weightKg = renderedInputs.get('vitals_weight');
+		const heightCm = renderedInputs.get('vitals_height');
 		const bmi = renderedInputs.get('vitals_bmi');
-		if (weightLbs && heightIn && bmi) {
+		if (weightKg && heightCm && bmi) {
 			bmi.readOnly = true;
 			bmi.style.background = 'rgba(128,128,128,0.06)';
 			bmi.placeholder = 'Auto-calculated';
 			const recalc = () => {
-				const w = parseFloat(weightLbs.value);
-				const h = parseFloat(heightIn.value);
+				const w = parseFloat(weightKg.value);
+				const h = parseFloat(heightCm.value);
 				if (!isNaN(w) && !isNaN(h) && h > 0) {
-					bmi.value = ((w * 703) / (h * h)).toFixed(1);
+					const heightM = h / 100;
+					bmi.value = (w / (heightM * heightM)).toFixed(1);
 				} else {
 					bmi.value = '';
 				}
 			};
-			weightLbs.addEventListener('input', recalc);
-			heightIn.addEventListener('input', recalc);
+			weightKg.addEventListener('input', recalc);
+			heightCm.addEventListener('input', recalc);
 			recalc();
 		}
 	}
@@ -1099,76 +1105,73 @@ export class EncounterFormEditor extends EditorPane {
 
 		if (readOnly || !searchContainer) { return; }
 
-		// Two labelled search rows \u2014 one for CPT, one for HCPCS \u2014 so the test
-		// team can tell which code system the search is hitting. The previous
-		// "Search CPT/HCPCS codes..." used a single input that only queried CPT
-		// and used the wrong endpoint path, so HCPCS suggestions never showed
-		// and CPT suggestions returned an unfiltered list.
-		const buildCodeSearch = (label: string, codeType: string, placeholder: string) => {
-			const lbl = DOM.append(searchContainer, DOM.$('label'));
-			lbl.textContent = label;
-			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
+		// Single unified CPT + HCPCS search to match the web app. Queries both
+		// catalogs in parallel and tags each row with its source so the user
+		// can pick from either system without switching inputs.
+		const lbl = DOM.append(searchContainer, DOM.$('label'));
+		lbl.textContent = 'Procedure Codes';
+		lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
 
-			const searchRow = DOM.append(searchContainer, DOM.$('div'));
-			searchRow.style.cssText = 'display:flex;gap:8px;';
-			const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
-			searchInput.type = 'text';
-			searchInput.placeholder = placeholder;
-			searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const searchRow = DOM.append(searchContainer, DOM.$('div'));
+		searchRow.style.cssText = 'display:flex;gap:8px;';
+		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search CPT codes and HCPCS codes';
+		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
-			const results = DOM.append(searchContainer, DOM.$('div'));
-			results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+		const results = DOM.append(searchContainer, DOM.$('div'));
+		results.style.cssText = 'max-height:200px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
 
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			searchInput.addEventListener('input', () => {
-				if (timer) { clearTimeout(timer); }
-				const q = searchInput.value;
-				if (q.length < 2) { results.style.display = 'none'; return; }
-				timer = setTimeout(async () => {
-					try {
-						// Hit the ciyex-codes catalog (CPT ~10K, HCPCS ~8.3K)
-						// instead of /api/global_codes which only stores org
-						// custom codes (typically empty). The system slug
-						// passed in (CPT or HCPCS) maps directly to the
-						// ciyex-codes CodeSystem enum.
-						const res = await this.apiService.fetch(`/api/app-proxy/ciyex-codes/api/codes/${codeType}/search?q=${encodeURIComponent(q)}&page=0&size=15`);
-						if (res.ok) {
-							const data = await res.json();
-							const raw = data?.data?.content || data?.content || data?.data || [];
-							const list = Array.isArray(raw) ? raw : [];
-							DOM.clearNode(results);
-							for (const c of list) {
-								const item = DOM.append(results, DOM.$('div'));
-								item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
-								const codeEl = DOM.append(item, DOM.$('span'));
-								codeEl.textContent = String(c.code || c.codeValue || '');
-								codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:60px;font-family:var(--vscode-editor-font-family,monospace);';
-								const descEl = DOM.append(item, DOM.$('span'));
-								descEl.textContent = String(c.shortDescription || c.description || c.longDescription || '');
-								descEl.style.cssText = 'flex:1;color:var(--vscode-foreground);';
-								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-								item.addEventListener('mouseleave', () => { item.style.background = ''; });
-								item.addEventListener('click', () => {
-									procs.push({
-										code: String(c.code || c.codeValue || ''),
-										description: String(c.shortDescription || c.description || c.longDescription || ''),
-										units: 1,
-									});
-									renderList();
-									searchInput.value = '';
-									results.style.display = 'none';
-								});
-							}
-							results.style.display = list.length > 0 ? 'block' : 'none';
-						}
-					} catch { /* */ }
-				}, 300);
-			});
+		const fetchCodes = async (codeType: 'CPT' | 'HCPCS', q: string): Promise<Array<Record<string, unknown>>> => {
+			try {
+				const res = await this.apiService.fetch(`/api/app-proxy/ciyex-codes/api/codes/${codeType}/search?q=${encodeURIComponent(q)}&page=0&size=10`);
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const raw = data?.data?.content || data?.content || data?.data || [];
+				return Array.isArray(raw) ? raw : [];
+			} catch { return []; }
 		};
-		// codeType slug must match the ciyex-codes CodeSystem enum:
-		// CPT (current procedural terminology) and HCPCS.
-		buildCodeSearch('CPT Code', 'CPT', 'Search CPT codes...');
-		buildCodeSearch('HCPCS Code', 'HCPCS', 'Search HCPCS codes...');
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (timer) { clearTimeout(timer); }
+			const q = searchInput.value.trim();
+			if (q.length < 2) { results.style.display = 'none'; return; }
+			timer = setTimeout(async () => {
+				const [cpt, hcpcs] = await Promise.all([fetchCodes('CPT', q), fetchCodes('HCPCS', q)]);
+				const tagged: Array<Record<string, unknown>> = [
+					...cpt.map(c => ({ ...c, _system: 'CPT' })),
+					...hcpcs.map(c => ({ ...c, _system: 'HCPCS' })),
+				];
+				DOM.clearNode(results);
+				for (const c of tagged) {
+					const item = DOM.append(results, DOM.$('div'));
+					item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
+					const sysBadge = DOM.append(item, DOM.$('span'));
+					sysBadge.textContent = String(c._system);
+					sysBadge.style.cssText = `min-width:48px;text-align:center;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;background:${c._system === 'CPT' ? '#0e639c' : '#a855f7'};color:#fff;`;
+					const codeEl = DOM.append(item, DOM.$('span'));
+					codeEl.textContent = String(c.code || c.codeValue || '');
+					codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:60px;font-family:var(--vscode-editor-font-family,monospace);';
+					const descEl = DOM.append(item, DOM.$('span'));
+					descEl.textContent = String(c.shortDescription || c.description || c.longDescription || '');
+					descEl.style.cssText = 'flex:1;color:var(--vscode-foreground);';
+					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+					item.addEventListener('mouseleave', () => { item.style.background = ''; });
+					item.addEventListener('click', () => {
+						procs.push({
+							code: String(c.code || c.codeValue || ''),
+							description: String(c.shortDescription || c.description || c.longDescription || ''),
+							units: 1,
+						});
+						renderList();
+						searchInput.value = '';
+						results.style.display = 'none';
+					});
+				}
+				results.style.display = tagged.length > 0 ? 'block' : 'none';
+			}, 300);
+		});
 	}
 
 	override layout(dimension: DOM.Dimension): void {

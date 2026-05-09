@@ -19,17 +19,12 @@
       "label": "Clinical",
       "position": 1,
       "tabs": [
-        { "key": "encounters", "label": "Encounters", "icon": "ClipboardList", "emoji": "\ud83d\udccb", "color": "#5C6BC0", "position": 0, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Encounter"] },
-        { "key": "problems", "label": "Problems", "icon": "AlertCircle", "emoji": "\u26a0\ufe0f", "color": "#FFA726", "position": 1, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Condition"] },
-        { "key": "allergies", "label": "Allergies", "icon": "AlertTriangle", "emoji": "\ud83d\udea8", "color": "#EF5350", "position": 2, "visible": true, "display": "list", "panel": "main", "fhirResources": ["AllergyIntolerance"] },
-        { "key": "medications", "label": "Medications", "icon": "Pill", "emoji": "\ud83d\udc8a", "color": "#FF8A65", "position": 3, "visible": true, "display": "list", "panel": "main", "fhirResources": ["MedicationRequest"] },
-        { "key": "vitals", "label": "Vitals", "icon": "Activity", "emoji": "\u2764\ufe0f", "color": "#66BB6A", "position": 4, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Observation"] },
-        { "key": "labs", "label": "Lab Results", "icon": "TestTube", "emoji": "\ud83e\uddea", "color": "#FFD54F", "position": 5, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DiagnosticReport", "Observation"] },
-        { "key": "immunizations", "label": "Immunizations", "icon": "Syringe", "emoji": "\ud83d\udc89", "color": "#26A69A", "position": 6, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Immunization"] },
-        { "key": "procedures", "label": "Procedures", "icon": "Scissors", "emoji": "\u2702\ufe0f", "color": "#AB47BC", "position": 7, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Procedure"] },
-        { "key": "history", "label": "History", "icon": "History", "emoji": "\ud83d\udcda", "color": "#8D6E63", "position": 8, "visible": true, "display": "list", "panel": "main", "fhirResources": ["FamilyMemberHistory", "Observation"] },
-        { "key": "visit-notes", "label": "Visit Notes", "icon": "FileEdit", "emoji": "\ud83d\udcdd", "color": "#5C6BC0", "position": 9, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DocumentReference"] },
-        { "key": "referrals", "label": "Referrals", "icon": "ExternalLink", "emoji": "\ud83d\udd17", "color": "#7E57C2", "position": 10, "visible": true, "display": "list", "panel": "main", "fhirResources": ["ServiceRequest"] }
+        { "key": "clinical-alerts", "label": "Clinical Alerts", "icon": "Bell", "emoji": "\ud83d\udd14", "color": "#EF5350", "position": 0, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Flag"] },
+        { "key": "medications", "label": "Medications", "icon": "Pill", "emoji": "\ud83d\udc8a", "color": "#FF8A65", "position": 1, "visible": true, "display": "list", "panel": "main", "fhirResources": ["MedicationRequest"] },
+        { "key": "labs", "label": "Labs", "icon": "TestTube", "emoji": "\ud83e\uddea", "color": "#FFD54F", "position": 2, "visible": true, "display": "list", "panel": "main", "fhirResources": ["DiagnosticReport", "Observation"] },
+        { "key": "immunizations", "label": "Immunizations", "icon": "Syringe", "emoji": "\ud83d\udc89", "color": "#26A69A", "position": 3, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Immunization"] },
+        { "key": "procedures", "label": "Procedures", "icon": "Scissors", "emoji": "\u2702\ufe0f", "color": "#AB47BC", "position": 4, "visible": true, "display": "list", "panel": "main", "fhirResources": ["Procedure"] },
+        { "key": "history", "label": "History", "icon": "History", "emoji": "\ud83d\udcda", "color": "#8D6E63", "position": 5, "visible": true, "display": "list", "panel": "main", "fhirResources": ["FamilyMemberHistory", "Observation"] }
       ]
     },
     {

@@ -107,13 +107,18 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		key: 'general', label: 'General', position: 2, tabs: [
 			{
 				key: 'insurance', label: 'Insurance', icon: 'Shield', emoji: '\u{1F6E1}\u{FE0F}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Coverage', 'Organization'],
+				// Columns mirror web app insurance list (payer, plan, member, group,
+				// tier, plan type, effective date, end date, status).
 				columns: [
+					{ key: 'insuranceType', label: 'Tier', aliases: ['insuranceType', 'tier', 'coverageType', 'level'] },
 					{ key: 'payerName', label: 'Payer', aliases: ['payerName', 'insurerName', 'organizationDisplay', 'payor.display', 'name'] },
 					{ key: 'planName', label: 'Plan', aliases: ['planName', 'plan', 'productName'] },
+					{ key: 'policyType', label: 'Plan Type', aliases: ['policyType', 'planType'] },
 					{ key: 'policyNumber', label: 'Member ID', aliases: ['policyNumber', 'memberId', 'subscriberId', 'identifier'] },
 					{ key: 'groupNumber', label: 'Group #', aliases: ['groupNumber', 'group'] },
-					{ key: 'insuranceType', label: 'Tier', aliases: ['insuranceType', 'tier'] },
+					{ key: 'subscriberRelationship', label: 'Relationship', aliases: ['subscriberRelationship', 'relationship'] },
 					{ key: 'policyEffectiveDate', label: 'Effective', aliases: ['policyEffectiveDate', 'periodStart', 'period.start', 'effectiveDate'] },
+					{ key: 'policyEndDate', label: 'End', aliases: ['policyEndDate', 'periodEnd', 'period.end'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -307,22 +312,27 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// source of truth as the web UI's PaymentPostingTab / StatementsTab.
 			{
 				key: 'payment', label: 'Payment', icon: 'CreditCard', emoji: '\u{1F4B3}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'],
+				// Columns mirror web app PaymentPostingTab "existing payments" table.
 				columns: [
+					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'claim.identifier', 'claimId', 'claim'] },
+					{ key: 'dateOfService', label: 'DOS', aliases: ['dateOfService', 'serviceDate'] },
 					{ key: 'paymentDate', label: 'Payment Date', aliases: ['paymentDate', 'date', 'transactionDate', 'created'] },
-					{ key: 'paymentMethod', label: 'Method', aliases: ['paymentMethod', 'method', 'type'] },
-					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value', 'totalGross.value'] },
-					{ key: 'referenceNumber', label: 'Reference', aliases: ['referenceNumber', 'identifier', 'checkNumber'] },
-					{ key: 'claimId', label: 'Claim', aliases: ['claimId', 'claim', 'claimReference'] },
+					{ key: 'paymentType', label: 'Type', aliases: ['paymentType', 'paymentMethod', 'method', 'type'] },
+					{ key: 'amount', label: 'Amount', aliases: ['amount', 'totalAmount', 'totalNet.value', 'totalGross.value'] },
+					{ key: 'reference', label: 'Reference', aliases: ['reference', 'referenceNumber', 'identifier', 'checkNumber'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
 			{
 				key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentNotice'],
+				// Columns mirror web app StatementsTab.
 				columns: [
+					{ key: 'statementNumber', label: 'Statement #', aliases: ['statementNumber', 'identifier', 'id'] },
 					{ key: 'statementDate', label: 'Statement Date', aliases: ['statementDate', 'date', 'created', 'createdAt'] },
 					{ key: 'dueDate', label: 'Due Date', aliases: ['dueDate', 'paymentDate'] },
 					{ key: 'totalCharges', label: 'Charges', aliases: ['totalCharges', 'totalGross.value'] },
 					{ key: 'totalPayments', label: 'Payments', aliases: ['totalPayments', 'amount.value'] },
+					{ key: 'totalAdjustments', label: 'Adjustments', aliases: ['totalAdjustments'] },
 					{ key: 'balance', label: 'Balance', aliases: ['balance', 'totalNet.value'] },
 					{ key: 'status', label: 'Status' },
 				],
@@ -801,9 +811,52 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'policyNumber', label: 'Policy / Member ID', type: 'text', required: true, placeholder: 'Member ID' },
 					{ key: 'groupNumber', label: 'Group Number', type: 'text', placeholder: 'Group #' },
-					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
 					{ key: 'policyEffectiveDate', label: 'Effective Date', type: 'date' },
 					{ key: 'policyEndDate', label: 'End Date', type: 'date' },
+				],
+			},
+			{
+				key: 'financial-responsibility', title: 'Financial Responsibility', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
+					{ key: 'specialistCopay', label: 'Specialist Copay', type: 'text', placeholder: '$0.00' },
+					{ key: 'erCopay', label: 'ER Copay', type: 'text', placeholder: '$0.00' },
+					{ key: 'deductibleIndividual', label: 'Deductible (Individual)', type: 'text', placeholder: '$0.00' },
+					{ key: 'deductibleFamily', label: 'Deductible (Family)', type: 'text', placeholder: '$0.00' },
+					{ key: 'deductibleMet', label: 'Deductible Met', type: 'text', placeholder: '$0.00' },
+					{ key: 'coinsurancePct', label: 'Coinsurance %', type: 'number', placeholder: '20' },
+					{ key: 'outOfPocketMax', label: 'Out-of-Pocket Max', type: 'text', placeholder: '$0.00' },
+					{ key: 'outOfPocketMet', label: 'Out-of-Pocket Met', type: 'text', placeholder: '$0.00' },
+				],
+			},
+			{
+				key: 'payer-contact', title: 'Payer Contact & Claims', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'payerPhone', label: 'Payer Phone', type: 'phone' },
+					{ key: 'claimsPhone', label: 'Claims Phone', type: 'phone' },
+					{ key: 'priorAuthPhone', label: 'Prior Auth Phone', type: 'phone' },
+					{ key: 'claimsAddress', label: 'Claims Mailing Address', type: 'text', colSpan: 3, placeholder: 'Full claims address' },
+					{ key: 'payerId', label: 'Payer ID (EDI)', type: 'text', placeholder: 'EDI payer ID' },
+					{ key: 'electronicPayerId', label: 'Electronic Payer ID', type: 'text', placeholder: 'For 837 / EDI submission' },
+					{
+						key: 'priorAuthRequired', label: 'Prior Authorization Required', type: 'select', options: [
+							{ label: 'No', value: 'no' },
+							{ label: 'Yes', value: 'yes' },
+							{ label: 'Some Services', value: 'some' },
+						]
+					},
+					{
+						key: 'referralRequired', label: 'Referral Required', type: 'select', options: [
+							{ label: 'No', value: 'no' },
+							{ label: 'Yes', value: 'yes' },
+						]
+					},
+					{ key: 'verifiedDate', label: 'Last Verified', type: 'date' },
+				],
+			},
+			{
+				key: 'card-images', title: 'Insurance Card Images', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'cardFrontUrl', label: 'Card Front (URL)', type: 'text', placeholder: 'https://...' },
+					{ key: 'cardBackUrl', label: 'Card Back (URL)', type: 'text', placeholder: 'https://...' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 			{
@@ -1262,45 +1315,59 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	// plain text inputs in place.
 	payment: {
 		tabKey: 'payment',
+		// Mirrors web app PaymentPostingTab — payment types and line-item allocations.
 		sections: [
 			{
-				key: 'payment', title: 'Payment', columns: 2, visible: true, collapsible: false, fields: [
+				key: 'payment', title: 'Post Payment', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'claimId', label: 'Claim', type: 'lookup', required: true, placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{
-						key: 'method', label: 'Payment Method', type: 'select', required: true, options: [
+						key: 'paymentType', label: 'Payment Type', type: 'select', required: true, options: [
+							{ label: 'Insurance Payment', value: 'insurance' },
+							{ label: 'Patient Copay', value: 'patient_copay' },
+							{ label: 'Patient Coinsurance', value: 'patient_coinsurance' },
+							{ label: 'Patient Deductible', value: 'patient_deductible' },
+							{ label: 'Patient Self-Pay', value: 'patient_self_pay' },
 							{ label: 'Cash', value: 'cash' },
 							{ label: 'Check', value: 'check' },
-							{ label: 'Credit Card', value: 'credit-card' },
-							{ label: 'Debit Card', value: 'debit-card' },
-							{ label: 'ACH', value: 'ach' },
-							{ label: 'Insurance', value: 'insurance' },
-							{ label: 'Other', value: 'other' },
-						]
+							{ label: 'Credit Card', value: 'credit_card' },
+							{ label: 'EFT/ACH', value: 'eft' },
+						], defaultValue: 'insurance'
 					},
-					{ key: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'amount', label: 'Payment Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'allowedAmount', label: 'Allowed Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'adjustmentAmount', label: 'Adjustment / Write-off', type: 'number', placeholder: '0.00' },
+					{ key: 'deductible', label: 'Deductible', type: 'number', placeholder: '0.00' },
+					{ key: 'copay', label: 'Copay', type: 'number', placeholder: '0.00' },
+					{ key: 'coinsurance', label: 'Coinsurance', type: 'number', placeholder: '0.00' },
 					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
-					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Posted', value: 'posted' },
-							{ label: 'Pending', value: 'pending' },
-							{ label: 'Voided', value: 'voided' },
-						]
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Posted', value: 'issued' },
+							{ label: 'Balanced', value: 'balanced' },
+							{ label: 'Cancelled', value: 'cancelled' },
+						], defaultValue: 'issued'
 					},
-					{ key: 'note', label: 'Notes', type: 'textarea', colSpan: 2 },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 		],
 	},
 	statements: {
 		tabKey: 'statements',
+		// Mirrors web app StatementsTab.
 		sections: [
 			{
 				key: 'statement', title: 'Statement', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'statementNumber', label: 'Statement Number', type: 'text', placeholder: 'Auto-generated' },
 					{ key: 'statementDate', label: 'Statement Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'dueDate', label: 'Due Date', type: 'date' },
+					{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
+					{ key: 'periodStart', label: 'Period Start', type: 'date' },
+					{ key: 'periodEnd', label: 'Period End', type: 'date' },
 					{ key: 'totalCharges', label: 'Total Charges', type: 'number', placeholder: '0.00' },
 					{ key: 'totalPayments', label: 'Total Payments', type: 'number', placeholder: '0.00' },
+					{ key: 'totalAdjustments', label: 'Total Adjustments', type: 'number', placeholder: '0.00' },
 					{ key: 'balance', label: 'Balance Due', type: 'number', placeholder: '0.00' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
@@ -1309,6 +1376,13 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Paid', value: 'paid' },
 							{ label: 'Overdue', value: 'overdue' },
 							{ label: 'Voided', value: 'voided' },
+						], defaultValue: 'draft'
+					},
+					{
+						key: 'deliveryMethod', label: 'Delivery Method', type: 'select', options: [
+							{ label: 'Mail', value: 'mail' },
+							{ label: 'Email', value: 'email' },
+							{ label: 'Patient Portal', value: 'portal' },
 						]
 					},
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
@@ -4027,11 +4101,13 @@ export class PatientChartEditor extends EditorPane {
 			case 'lookup': {
 				// Backend tab_field_config emits fields like:
 				//   { type: "lookup", lookupConfig: { endpoint: "/api/providers", searchable: true } }
-				// Forward the search through the configured endpoint.
+				// Forward the search through the configured endpoint. Send both `search`
+				// and `q` so we work with /api/providers (search), /api/education/materials
+				// (q), and /api/locations (search) without per-endpoint config.
 				const ep = f.lookupConfig?.endpoint;
 				if (!ep) { return null; }
 				const sep = ep.includes('?') ? '&' : '?';
-				return `${ep}${sep}search=${enc}&page=0&size=20`;
+				return `${ep}${sep}search=${enc}&q=${enc}&page=0&size=20`;
 			}
 			default:
 				return null;

@@ -253,6 +253,9 @@ export class AppointmentsEditor extends EditorPane {
 	// Auto-refresh
 	private refreshInterval = 30000;
 	private _refreshTimer: number | null = null;
+	private _countdownTimer: number | null = null;
+	private _nextRefreshAt = 0;
+	private countdownEl: HTMLElement | null = null;
 
 	// Inline editing
 	private editingStatusId: number | null = null;
@@ -422,12 +425,34 @@ export class AppointmentsEditor extends EditorPane {
 	private _startAutoRefresh(): void {
 		this._stopAutoRefresh();
 		if (this.refreshInterval > 0) {
-			this._refreshTimer = DOM.getActiveWindow().setInterval(() => this._loadAppointments(), this.refreshInterval);
+			const win = DOM.getActiveWindow();
+			this._nextRefreshAt = Date.now() + this.refreshInterval;
+			this._refreshTimer = win.setInterval(() => {
+				this._nextRefreshAt = Date.now() + this.refreshInterval;
+				void this._loadAppointments();
+			}, this.refreshInterval);
+			// Countdown ticker — updates the visible "30s" label every second.
+			this._countdownTimer = win.setInterval(() => this._updateCountdownLabel(), 1000);
 		}
+		this._updateCountdownLabel();
 	}
 
 	private _stopAutoRefresh(): void {
-		if (this._refreshTimer) { DOM.getActiveWindow().clearInterval(this._refreshTimer); this._refreshTimer = null; }
+		const win = DOM.getActiveWindow();
+		if (this._refreshTimer) { win.clearInterval(this._refreshTimer); this._refreshTimer = null; }
+		if (this._countdownTimer) { win.clearInterval(this._countdownTimer); this._countdownTimer = null; }
+		this._nextRefreshAt = 0;
+		this._updateCountdownLabel();
+	}
+
+	private _updateCountdownLabel(): void {
+		if (!this.countdownEl) { return; }
+		if (this.refreshInterval <= 0 || this._nextRefreshAt === 0) {
+			this.countdownEl.textContent = '';
+			return;
+		}
+		const seconds = Math.max(0, Math.ceil((this._nextRefreshAt - Date.now()) / 1000));
+		this.countdownEl.textContent = `(${seconds}s)`;
 	}
 
 	// allow-any-unicode-next-line
@@ -499,9 +524,11 @@ export class AppointmentsEditor extends EditorPane {
 		const doc = DOM.getActiveWindow().document;
 		const iframe = doc.createElement('iframe');
 		iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-		// Empty `srcdoc` gives us a same-origin contentDocument we can build
-		// out via DOM APIs without invoking document.write / innerHTML.
-		iframe.setAttribute('srcdoc', '<!DOCTYPE html>');
+		// Don't use `srcdoc` — modern Chromium's Trusted Types policy treats
+		// srcdoc/innerHTML/etc. as TrustedHTML sinks and rejects raw strings
+		// with "This document requires 'TrustedHTML' assignment". Appending
+		// the iframe yields an empty same-origin about:blank document we can
+		// build via DOM APIs.
 		doc.body.appendChild(iframe);
 		const buildAndPrint = () => {
 			const idoc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -569,11 +596,22 @@ export class AppointmentsEditor extends EditorPane {
 			finally { DOM.getActiveWindow().setTimeout(() => { try { doc.body.removeChild(iframe); } catch { /* ignore */ } }, 1000); }
 		};
 		// Wait for the empty document to be ready before we start appending.
-		if (iframe.contentDocument?.readyState === 'complete') {
-			buildAndPrint();
-		} else {
-			iframe.addEventListener('load', () => buildAndPrint(), { once: true });
-		}
+		// about:blank iframes sometimes never fire `load`, so also poll once
+		// per animation frame as a fallback so Print never hangs forever.
+		let printed = false;
+		const tryBuild = () => {
+			if (printed) { return; }
+			const idoc = iframe.contentDocument;
+			if (!idoc) { return; }
+			if (idoc.readyState === 'complete' || idoc.readyState === 'interactive') {
+				printed = true;
+				buildAndPrint();
+			}
+		};
+		iframe.addEventListener('load', () => tryBuild(), { once: true });
+		// Defer first attempt to next tick so the about:blank document is initialised.
+		DOM.getActiveWindow().setTimeout(() => tryBuild(), 0);
+		DOM.getActiveWindow().setTimeout(() => tryBuild(), 50);
 	}
 
 	private _exportToCSV(): void {
@@ -644,13 +682,23 @@ export class AppointmentsEditor extends EditorPane {
 		const actionGroup = DOM.append(header, DOM.$('div'));
 		actionGroup.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
 
-		// Manual refresh — clicking immediately reloads the table
+		// Manual refresh — clicking immediately reloads the table. Provide a
+		// visible "spinning" feedback so the user can tell the click landed.
 		const refreshBtn = DOM.append(actionGroup, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.style.cssText = btnStyle;
 		// allow-any-unicode-next-line
 		refreshBtn.textContent = '⟳ Refresh';
 		refreshBtn.title = 'Refresh appointments now';
-		refreshBtn.addEventListener('click', () => { void this._loadAppointments(); });
+		refreshBtn.addEventListener('click', async () => {
+			refreshBtn.disabled = true;
+			const prev = refreshBtn.textContent;
+			refreshBtn.textContent = 'Refreshing…';
+			try { await this._loadAppointments(); }
+			finally {
+				refreshBtn.disabled = false;
+				refreshBtn.textContent = prev;
+			}
+		});
 
 		// Auto-refresh interval picker (Off / 15s / 30s / 60s)
 		const refreshWrap = DOM.append(actionGroup, DOM.$('div'));
@@ -666,6 +714,10 @@ export class AppointmentsEditor extends EditorPane {
 			o.value = String(opt.value); o.textContent = opt.label;
 			if (opt.value === this.refreshInterval) { o.selected = true; }
 		}
+		// Visible countdown so the team can confirm auto-refresh is firing.
+		this.countdownEl = DOM.append(refreshWrap, DOM.$('span'));
+		this.countdownEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);min-width:36px;font-variant-numeric:tabular-nums;';
+		this._updateCountdownLabel();
 		refreshSel.addEventListener('change', () => {
 			this.refreshInterval = parseInt(refreshSel.value, 10);
 			this._startAutoRefresh();
@@ -926,10 +978,20 @@ export class AppointmentsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Table ─────────────────────────────────────────────────────────
 		const tableWrap = DOM.append(this.contentEl, DOM.$('div'));
+		tableWrap.classList.add('appt-table-wrap');
 		// `overflow-x:auto` keeps the ACTIONS column reachable on narrow viewports
 		// (it was clipped under `overflow:hidden`); `min-width` on the inner table
 		// makes the row keep its 9 columns instead of squeezing them invisibly.
-		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
+		// Explicitly opt back into a visible horizontal scrollbar — parts of the
+		// EHR shell hide scrollbars globally via `scrollbar-width:none`, and the
+		// appointment table is wide enough that the bar must stay visible.
+		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;';
+		// Force-show the horizontal scrollbar even when an ancestor sets
+		// scrollbar-width:none / ::-webkit-scrollbar{display:none}.
+		const tableWrapStyle = DOM.append(this.contentEl, DOM.$('style'));
+		tableWrapStyle.textContent = '.appt-table-wrap::-webkit-scrollbar{display:block;height:10px;}'
+			+ '.appt-table-wrap::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background,#79797966);border-radius:4px;}'
+			+ '.appt-table-wrap::-webkit-scrollbar-track{background:transparent;}';
 
 		const table = DOM.append(tableWrap, DOM.$('table'));
 		// `table-layout:fixed` honours the column widths set via <colgroup> so all
