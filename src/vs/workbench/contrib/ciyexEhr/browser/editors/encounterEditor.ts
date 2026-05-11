@@ -12,7 +12,6 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -34,8 +33,7 @@ export class EncounterEditor extends EditorPane {
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
 		@IFileService private readonly fileService: IFileService, @IEditorService private readonly editorService: IEditorService,
-		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService) {
+		@INotificationService private readonly notificationService: INotificationService, @IDialogService private readonly dialogService: IDialogService) {
 		super(EncounterEditor.ID, group, t, th, s);
 	}
 
@@ -207,17 +205,72 @@ export class EncounterEditor extends EditorPane {
 		this._slink(ctrl, 'Delete', () => this._deleteSection(si), true);
 	}
 
-	private async _addSection(): Promise<void> {
-		const title = await this.quickInputService.input({ prompt: 'Section title:' });
-		if (!title) { return; }
-		this.config.sections.push({ key: title.toLowerCase().replace(/\s+/g, '-'), title, columns: 1, visible: true, collapsible: true, fields: [] });
-		this._dirty = true; this._render();
+	private _addSection(): void {
+		this._inlineDialog('Add Section', [
+			{ label: 'Section Title', key: 'title', placeholder: 'e.g., Chief Complaint' },
+		], values => {
+			if (!values.title) { return; }
+			this.config.sections.push({ key: values.title.toLowerCase().replace(/\s+/g, '-'), title: values.title, columns: 1, visible: true, collapsible: true, fields: [] });
+			this._dirty = true;
+			this._render();
+		});
 	}
 
-	private async _editSection(si: number): Promise<void> {
+	private _editSection(si: number): void {
 		const sec = this.config.sections[si];
-		const title = await this.quickInputService.input({ prompt: 'Section title:', value: sec.title });
-		if (title !== null && title !== undefined) { sec.title = title; sec.key = title.toLowerCase().replace(/\s+/g, '-'); this._dirty = true; this._render(); }
+		this._inlineDialog('Edit Section', [
+			{ label: 'Section Title', key: 'title', value: sec.title, placeholder: sec.title },
+		], values => {
+			if (!values.title) { return; }
+			sec.title = values.title;
+			sec.key = values.title.toLowerCase().replace(/\s+/g, '-');
+			this._dirty = true;
+			this._render();
+		});
+	}
+
+	private _inlineDialog(title: string, fields: Array<{ label: string; key: string; placeholder?: string; value?: string }>, onConfirm: (values: Record<string, string>) => void): void {
+		const overlay = DOM.append(this.root, DOM.$('.enc-dialog-overlay'));
+		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('.enc-dialog'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;min-width:340px;max-width:480px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+		const titleEl = DOM.append(dialog, DOM.$('h3'));
+		titleEl.textContent = title;
+		titleEl.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		const inputs: Record<string, HTMLInputElement> = {};
+		for (const field of fields) {
+			const wrap = DOM.append(dialog, DOM.$('div'));
+			wrap.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(wrap, DOM.$('label'));
+			lbl.textContent = field.label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			input.type = 'text';
+			input.value = field.value || '';
+			input.placeholder = field.placeholder || '';
+			input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			inputs[field.key] = input;
+		}
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const confirmBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		confirmBtn.textContent = 'OK';
+		confirmBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		const close = () => overlay.remove();
+		cancelBtn.addEventListener('click', close);
+		overlay.addEventListener('click', e => { if (e.target === overlay) { close(); } });
+		confirmBtn.addEventListener('click', () => {
+			const values: Record<string, string> = {};
+			for (const [key, input] of Object.entries(inputs)) { values[key] = input.value.trim(); }
+			close();
+			onConfirm(values);
+		});
+		const inputArr = Object.values(inputs);
+		if (inputArr.length > 0) { setTimeout(() => inputArr[0].focus(), 50); }
+		inputArr[inputArr.length - 1]?.addEventListener('keydown', e => { if (e.key === 'Enter') { confirmBtn.click(); } });
 	}
 
 	private async _deleteSection(si: number): Promise<void> {

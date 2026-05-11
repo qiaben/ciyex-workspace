@@ -30,6 +30,14 @@ interface FieldDef {
 	showInTable?: boolean;
 	readOnly?: boolean;
 	rows?: number;
+	accept?: string;
+	lookupConfig?: {
+		endpoint?: string;
+		displayField?: string;
+		valueField?: string;
+		searchable?: boolean;
+		autoFillFields?: Record<string, string>;
+	};
 }
 
 interface SectionDef {
@@ -301,6 +309,148 @@ export class SettingsHubEditor extends EditorPane {
 	// ─────────── FHIR Generic Section ───────────
 
 	private listBodyEl: HTMLElement | null = null;
+	private practiceLogoData: string | null = null;
+	private practiceLogoLoaded: boolean = false;
+
+	private async _ensurePracticeLogo(): Promise<void> {
+		if (this.practiceLogoLoaded) { return; }
+		this.practiceLogoLoaded = true;
+		try {
+			const res = await this.apiService.fetch('/api/practice-logo');
+			if (res.ok) {
+				const json = await res.json();
+				this.practiceLogoData = json?.data?.logoData || null;
+			}
+		} catch { /* ignore */ }
+	}
+
+	/**
+	 * Patch known fields per tab so they render the right way in the workspace
+	 * (matches the EHR UI's `patchSettingsFieldConfig` helper):
+	 *   - referral-providers: organization → lookup against /api/fhir-resource/referral-practices
+	 *     with auto-fill of phone / email / website / address from the chosen practice
+	 *   - providers: photo → upload field (already handled by isPhotoKey detection)
+	 */
+	private _patchFieldConfig(tabKey: string, fc: FieldConfig): void {
+		if (!fc.sections) { return; }
+		const isRefProv = /referral-provider/i.test(tabKey);
+		const isProvider = tabKey === 'providers' || tabKey === 'provider';
+		if (!isRefProv && !isProvider) { return; }
+		for (const section of fc.sections) {
+			for (const f of section.fields) {
+				const keyLower = f.key.toLowerCase();
+				if (isRefProv && (f.key === 'organization' || f.key === 'organizationId' || f.key === 'affiliation' || f.key === 'organizationName' || /organ|affil/.test(keyLower))) {
+					f.type = 'lookup';
+					f.lookupConfig = f.lookupConfig?.endpoint ? f.lookupConfig : {
+						endpoint: '/api/fhir-resource/referral-practices',
+						displayField: 'name',
+						valueField: 'name',
+						searchable: true,
+						autoFillFields: {
+							phone: 'phone',
+							fax: 'fax',
+							email: 'email',
+							website: 'website',
+							addressLine1: 'addressLine1',
+							addressLine2: 'addressLine2',
+							city: 'city',
+							state: 'state',
+							zip: 'zip',
+						},
+					};
+				}
+			}
+		}
+	}
+
+	private _renderPracticeLogoPanel(parent: HTMLElement): void {
+		const wrap = DOM.append(parent, DOM.$('.sh-logo-panel'));
+		wrap.style.cssText = 'display:flex;gap:16px;align-items:flex-start;padding:16px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;';
+
+		const preview = DOM.append(wrap, DOM.$('div'));
+		preview.style.cssText = 'width:120px;height:120px;border:2px dashed var(--vscode-editorWidget-border);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;background:var(--vscode-editor-background);';
+		if (this.practiceLogoData) {
+			const img = DOM.append(preview, DOM.$('img')) as HTMLImageElement;
+			img.src = this.practiceLogoData;
+			img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;';
+		} else {
+			const ph = DOM.append(preview, DOM.$('span'));
+			ph.textContent = '\u{1F5BC}';
+			ph.style.cssText = 'font-size:36px;opacity:0.4;';
+		}
+
+		const info = DOM.append(wrap, DOM.$('div'));
+		info.style.cssText = 'flex:1;';
+		const lbl = DOM.append(info, DOM.$('div'));
+		lbl.textContent = 'Practice Logo';
+		lbl.style.cssText = 'font-weight:600;font-size:14px;margin-bottom:4px;';
+		const desc = DOM.append(info, DOM.$('div'));
+		desc.textContent = 'Upload your practice logo. It will appear on printed documents and reports. Max 2MB, PNG / JPG / SVG.';
+		desc.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:12px;';
+
+		const actions = DOM.append(info, DOM.$('div'));
+		actions.style.cssText = 'display:flex;gap:8px;';
+
+		const fileInput = DOM.append(info, DOM.$('input')) as HTMLInputElement;
+		fileInput.type = 'file';
+		fileInput.accept = 'image/*';
+		fileInput.style.display = 'none';
+		fileInput.addEventListener('change', () => this._uploadLogo(fileInput));
+
+		const uploadBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		uploadBtn.textContent = '\u{2B06} Upload';
+		uploadBtn.style.cssText = 'padding:5px 12px;background:transparent;border:1px solid var(--vscode-button-border,var(--vscode-input-border,#3c3c3c));border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		uploadBtn.addEventListener('click', () => fileInput.click());
+
+		if (this.practiceLogoData) {
+			const removeBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			removeBtn.textContent = '\u{1F5D1} Remove';
+			removeBtn.style.cssText = 'padding:5px 12px;background:transparent;border:1px solid var(--vscode-errorForeground,#f48771);border-radius:4px;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:12px;';
+			removeBtn.addEventListener('click', () => this._removeLogo());
+		}
+	}
+
+	private async _uploadLogo(input: HTMLInputElement): Promise<void> {
+		const file = input.files?.[0];
+		if (!file) { return; }
+		if (file.size > 2 * 1024 * 1024) {
+			this.notificationService.notify({ severity: Severity.Error, message: 'Logo must be under 2MB.' });
+			return;
+		}
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const url = `${this.apiService.apiUrl}/api/practice-logo`;
+			const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_token') : '') || '';
+			const tenant = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') : '') || '';
+			const res = await fetch(url, {
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${token}`,
+					...(tenant ? { 'X-Tenant-Name': tenant } : {}),
+				},
+				body: formData,
+			});
+			if (res.ok) {
+				const json = await res.json();
+				this.practiceLogoData = json?.data?.logoData || null;
+				this._renderContent();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Practice logo uploaded.' });
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Upload failed (${res.status}).` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Upload failed: ${e}` });
+		}
+	}
+
+	private async _removeLogo(): Promise<void> {
+		try {
+			await this.apiService.fetch('/api/practice-logo', { method: 'DELETE' });
+			this.practiceLogoData = null;
+			this._renderContent();
+		} catch { /* ignore */ }
+	}
 
 	private async _renderFhirSection(tabKey: string): Promise<void> {
 		// Show a loading state
@@ -321,6 +471,9 @@ export class SettingsHubEditor extends EditorPane {
 					this.currentFieldConfig = typeof c.fieldConfig === 'string'
 						? JSON.parse(c.fieldConfig)
 						: (c.fieldConfig as FieldConfig | undefined) || null;
+					if (this.currentFieldConfig) {
+						this._patchFieldConfig(tabKey, this.currentFieldConfig);
+					}
 				}
 			} catch { /* fall through */ }
 			await this._fetchFhirRecords(tabKey);
@@ -329,6 +482,12 @@ export class SettingsHubEditor extends EditorPane {
 		DOM.clearNode(this.contentEl);
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
+
+		// Practice tab: render logo upload panel above the form/list
+		if (tabKey === 'practice') {
+			await this._ensurePracticeLogo();
+			this._renderPracticeLogoPanel(root);
+		}
 
 		// Header
 		const header = DOM.append(root, DOM.$('.sh-fhir-header'));
@@ -703,6 +862,8 @@ export class SettingsHubEditor extends EditorPane {
 			ta.readOnly = isView || !!field.readOnly;
 			ta.style.cssText = inputStyle + 'font-family:inherit;resize:vertical;';
 			ta.addEventListener('input', () => { this.formData[field.key] = ta.value; });
+		} else if (t === 'lookup' && field.lookupConfig?.endpoint) {
+			this._renderLookupField(cell, field, value, isView, inputStyle);
 		} else if (t === 'select' || t === 'enum' || (Array.isArray(field.options) && field.options.length > 0)) {
 			const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
 			sel.disabled = isView || !!field.readOnly;
@@ -759,6 +920,88 @@ export class SettingsHubEditor extends EditorPane {
 			e.textContent = error;
 			e.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;';
 		}
+	}
+
+	/**
+	 * Render a lookup (searchable dropdown) field. Used by Referral Provider's
+	 * "organization" field — fetches Referral Practices and auto-fills contact
+	 * info / address from the selected record.
+	 */
+	private _renderLookupField(cell: HTMLElement, field: FieldDef, value: unknown, isView: boolean, inputStyle: string): void {
+		const cfg = field.lookupConfig!;
+		const wrap = DOM.append(cell, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;';
+		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		input.type = 'text';
+		input.value = (value === null || value === undefined) ? '' : String(value);
+		input.placeholder = field.placeholder || 'Search…';
+		input.readOnly = isView || !!field.readOnly;
+		input.style.cssText = inputStyle;
+		input.autocomplete = 'off';
+
+		const dropdown = DOM.append(wrap, DOM.$('div'));
+		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:240px;overflow-y:auto;z-index:50;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);margin-top:2px;';
+
+		let results: Array<Record<string, unknown>> = [];
+		let debounce: ReturnType<typeof setTimeout> | null = null;
+
+		const close = () => { dropdown.style.display = 'none'; };
+		const open = () => { if (results.length > 0) { dropdown.style.display = 'block'; } };
+
+		const search = async (term: string): Promise<void> => {
+			if (term.trim().length === 0) {
+				results = [];
+				DOM.clearNode(dropdown);
+				close();
+				return;
+			}
+			try {
+				const sep = cfg.endpoint!.includes('?') ? '&' : '?';
+				const url = `${cfg.endpoint}${sep}search=${encodeURIComponent(term)}&size=10`;
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) { return; }
+				const json = await res.json();
+				const payload = json?.data || json;
+				results = payload?.content || (Array.isArray(payload) ? payload : []);
+				DOM.clearNode(dropdown);
+				for (const row of results) {
+					const item = DOM.append(dropdown, DOM.$('div'));
+					const displayField = cfg.displayField || 'name';
+					const display = (row as Record<string, unknown>)[displayField];
+					item.textContent = display ? String(display) : '(no name)';
+					item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(128,128,128,0.1);';
+					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
+					item.addEventListener('mouseleave', () => { item.style.background = ''; });
+					item.addEventListener('mousedown', e => {
+						e.preventDefault();
+						const valField = cfg.valueField || displayField;
+						const v = (row as Record<string, unknown>)[valField];
+						input.value = String(v ?? '');
+						this.formData[field.key] = input.value;
+						// Auto-fill mapped fields (e.g. organization → phone/email/address)
+						if (cfg.autoFillFields) {
+							for (const [target, source] of Object.entries(cfg.autoFillFields)) {
+								const sourceVal = (row as Record<string, unknown>)[source];
+								if (sourceVal !== undefined && sourceVal !== null) {
+									this.formData[target] = sourceVal;
+								}
+							}
+							this._renderContent();
+						}
+						close();
+					});
+				}
+				open();
+			} catch { /* ignore */ }
+		};
+
+		input.addEventListener('input', () => {
+			this.formData[field.key] = input.value;
+			if (debounce) { clearTimeout(debounce); }
+			debounce = setTimeout(() => { void search(input.value); }, 200);
+		});
+		input.addEventListener('focus', open);
+		input.addEventListener('blur', () => setTimeout(close, 150));
 	}
 
 	private async _saveRecord(): Promise<void> {

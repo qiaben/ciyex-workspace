@@ -442,12 +442,19 @@ export class MessagingEditor extends EditorPane {
 		sep1.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border);margin:0 4px;';
 
 		// allow-any-unicode-next-line
-		mkFmtBtn('〈〉', 'Inline code', 'font-family:monospace;', () => this._wrapSelection('`', '`'));
-		// allow-any-unicode-next-line
 		mkFmtBtn('🔗', 'Insert link', '', () => this._wrapSelection('[', '](url)'));
+		mkFmtBtn('1.', 'Numbered list', 'font-family:monospace;', () => this._insertAtLineStart('1. '));
 		// allow-any-unicode-next-line
-		mkFmtBtn('•', 'Bullet list', '', () => this._insertAtLineStart('• '));
+		mkFmtBtn('☰', 'Bullet list', '', () => this._insertAtLineStart('- '));
+
+		// Separator
+		const sep2 = DOM.append(toolbar, DOM.$('span'));
+		sep2.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border);margin:0 4px;';
+
 		mkFmtBtn('"', 'Quote', '', () => this._insertAtLineStart('> '));
+		// allow-any-unicode-next-line
+		mkFmtBtn('<>', 'Inline code', 'font-family:monospace;', () => this._wrapSelection('`', '`'));
+		mkFmtBtn('{}', 'Code block', 'font-family:monospace;', () => this._wrapSelection('\n```\n', '\n```\n'));
 
 		// Spacer pushes attach to the right (kept inline with toolbar for compactness)
 		const spacer = DOM.append(toolbar, DOM.$('span'));

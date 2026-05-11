@@ -177,6 +177,9 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'status', label: 'Status', width: '90px' },
 			{ key: 'orderDate', label: 'Date', width: '90px' },
 		],
+		// Status / Priority / Result all live in the toolbar as dropdowns, mirroring
+		// the web app's /labs page (QA report 2026-05-11).
+		statusAsDropdown: true,
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
@@ -1179,26 +1182,27 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 						await dlg.info('This authorization is already denied.');
 						return;
 					}
-					// Loop until a non-empty reason is provided, or the user cancels.
-					// Previously: empty reason silently no-op'd, so the test team saw
-					// the Deny action "not working".
-					let reason = '';
-					while (!reason) {
-						const res = await dlg.input({
-							type: 'question',
-							message: 'Deny authorization',
-							detail: `Patient: ${item.patientName || '—'}\nReason is required and will be saved with the denial.`,
-							inputs: [{ placeholder: 'Denial reason (required)' }],
-						});
-						if (!res.confirmed) { return; }
-						reason = res.values?.[0]?.trim() || '';
-						if (!reason) {
-							await dlg.error('A denial reason is required.');
-						}
+					const res = await dlg.input({
+						type: 'question',
+						// allow-any-unicode-next-line
+						message: 'Deny authorization',
+						// allow-any-unicode-next-line
+						detail: `Patient: ${item.patientName || '—'}\nThe reason is saved with the denial.`,
+						inputs: [{ placeholder: 'Denial reason (required)' }],
+					});
+					if (!res.confirmed) { return; }
+					const reason = res.values?.[0]?.trim() || '';
+					if (!reason) {
+						await dlg.error('A denial reason is required.');
+						return;
 					}
+					// Backend (PriorAuthService.deny) reads `denialReason` from the
+					// request body and ALSO accepts the existing record-shape fields
+					// — sending just `{ reason }` silently dropped the reason (QA
+					// report 2026-05-11). Send both keys for safety.
 					const r = await api.fetch(`/api/prior-auth/${item.id}/deny`, {
 						method: 'POST', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ reason }),
+						body: JSON.stringify({ denialReason: reason, reason }),
 					});
 					if (!r.ok) {
 						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
@@ -1301,54 +1305,50 @@ export class EducationEditor extends ClinicalListEditorBase {
 	private readonly _assignmentsConfig: ClinicalEditorConfig = {
 		title: 'Patient Assignments', apiPath: '/api/patient-education',
 		searchPlaceholder: 'Search by topic, patient, category...',
-		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
+		// Column keys mirror PatientEducationAssignmentDto field names. The
+		// previous config used `category`/`priority` which the backend doesn't
+		// emit, so Topic + Patient columns rendered empty (QA report image15).
+		clientSideFilter: ['materialTitle', 'patientName', 'materialCategory', 'materialContentType', 'status', 'assignedBy', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		columns: [
-			{ key: 'materialTitle', label: 'Topic', width: '1.5fr' },
+			{ key: 'materialTitle', label: 'Topic', width: 'minmax(0,1.6fr)' },
 			{ key: 'patientName', label: 'Patient' },
-			{ key: 'category', label: 'Category', width: '110px' },
-			{ key: 'status', label: 'Status', width: '100px' },
-			{ key: 'priority', label: 'Priority', width: '80px' },
+			{ key: 'materialCategory', label: 'Category', width: '120px' },
+			{ key: 'materialContentType', label: 'Type', width: '90px' },
+			{ key: 'assignedBy', label: 'Assigned By', width: '120px' },
+			{ key: 'status', label: 'Status', width: '110px' },
 			{ key: 'dueDate', label: 'Due Date', width: '100px' },
 		],
 		statusTabs: [
+			{ label: 'Assigned', value: 'assigned' },
+			{ label: 'Viewed', value: 'viewed' },
 			{ label: 'Completed', value: 'completed' },
-			{ label: 'In Progress', value: 'in-progress' },
-			{ label: 'Preparation', value: 'preparation' },
-			{ label: 'Not Done', value: 'not-done' },
-			{ label: 'On Hold', value: 'on-hold' },
+			{ label: 'Dismissed', value: 'dismissed' },
 		],
 		additionalFilters: [
 			{
-				key: 'category', placeholder: 'All Categories',
+				key: 'materialCategory', placeholder: 'All Categories',
 				options: [
-					{ label: 'Education', value: 'Education' },
-					{ label: 'Handout', value: 'Handout' },
-					{ label: 'Video', value: 'Video' },
-					{ label: 'Verbal Counseling', value: 'Verbal Counseling' },
-					{ label: 'Online Resource', value: 'Online Resource' },
-				],
-			},
-			{
-				key: 'priority', placeholder: 'All Priority',
-				options: [
-					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' },
+					{ label: 'Disease Management', value: 'disease_management' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' },
+					{ label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Mental Health', value: 'mental_health' },
+					{ label: 'Nutrition', value: 'nutrition' },
+					{ label: 'Other', value: 'other' },
 				],
 			},
 		],
 		cellRenderer: (key, value, item) => {
-			if (key === 'category' && value) {
-				const iconMap: Record<string, string> = {
-					// allow-any-unicode-next-line
-					Education: '📚', Handout: '📄', Video: '🎥',
-					// allow-any-unicode-next-line
-					'Verbal Counseling': '💬', 'Online Resource': '🌐',
-				};
-				// allow-any-unicode-next-line
-				return `${iconMap[String(value)] || '📖'} ${value}`;
+			if (key === 'materialCategory' && value) {
+				return String(value).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 			}
-			if (key === 'sent' && value) {
+			if (key === 'materialContentType' && value) {
+				return String(value).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			if (key === 'dueDate' && value) {
 				try { return new Date(String(value)).toLocaleDateString(); } catch { return String(value); }
 			}
 			// allow-any-unicode-next-line
@@ -1408,36 +1408,67 @@ export class EducationEditor extends ClinicalListEditorBase {
 		return this.eduView === 'library' ? this._libraryConfig : this._assignmentsConfig;
 	}
 
-	protected override createEditor(parent: HTMLElement): void {
-		const tabRow = parent.ownerDocument.createElement('div');
-		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);';
-		parent.appendChild(tabRow);
+	private _eduSidebarItems: Map<string, HTMLElement> = new Map();
 
-		const tabBtns: HTMLButtonElement[] = [];
-		const styleBtn = (btn: HTMLButtonElement, active: boolean) => {
-			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
-			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
-			btn.style.fontWeight = active ? '600' : '400';
-		};
-		const makeTab = (view: 'library' | 'assignments', label: string) => {
-			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
-			btn.textContent = label;
-			const isActive = this.eduView === view;
-			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
-			btn.addEventListener('click', () => {
-				if (this.eduView !== view) {
-					this.eduView = view;
-					tabBtns.forEach(b => { styleBtn(b, b === btn); });
-					this._resetAndReload();
-				}
+	/**
+	 * Render a left sidebar with "Education Library" and "Patient Assignments"
+	 * sections, matching the web app's /patient_education split view.
+	 */
+	protected override wrapContent(parent: HTMLElement): HTMLElement {
+		const wrapper = DOM.append(parent, DOM.$('.education-wrapper'));
+		wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;width:100%;';
+
+		const sidebar = DOM.append(wrapper, DOM.$('.education-sidebar'));
+		sidebar.style.cssText = 'width:230px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;display:flex;flex-direction:column;';
+
+		const sbHeader = DOM.append(sidebar, DOM.$('div'));
+		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;';
+		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
+		// allow-any-unicode-next-line
+		sbTitle.textContent = '📚 Patient Education';
+		sbTitle.style.cssText = 'font-weight:700;font-size:14px;color:var(--vscode-foreground);';
+		const sbSub = DOM.append(sbHeader, DOM.$('div'));
+		sbSub.textContent = 'Library & assignments';
+		sbSub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+		const items: Array<{ key: 'library' | 'assignments'; label: string; icon: string }> = [
+			// allow-any-unicode-next-line
+			{ key: 'library', label: 'Education Library', icon: '📖' },
+			// allow-any-unicode-next-line
+			{ key: 'assignments', label: 'Patient Assignments', icon: '📝' },
+		];
+		for (const it of items) {
+			const navEl = DOM.append(sidebar, DOM.$('div'));
+			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;';
+			const iconEl = DOM.append(navEl, DOM.$('span'));
+			iconEl.textContent = it.icon;
+			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;';
+			const lbl = DOM.append(navEl, DOM.$('span'));
+			lbl.textContent = it.label;
+			navEl.addEventListener('mouseenter', () => { if (this.eduView !== it.key) { navEl.style.background = 'var(--vscode-list-hoverBackground)'; } });
+			navEl.addEventListener('mouseleave', () => { if (this.eduView !== it.key) { navEl.style.background = ''; } });
+			navEl.addEventListener('click', () => {
+				if (this.eduView === it.key) { return; }
+				this.eduView = it.key;
+				this._updateEduSidebarActive();
+				this._resetAndReload();
 			});
-			tabBtns.push(btn);
-			tabRow.appendChild(btn);
-		};
-		makeTab('library', 'Library');
-		makeTab('assignments', 'Assignments');
+			this._eduSidebarItems.set(it.key, navEl);
+		}
+		this._updateEduSidebarActive();
 
-		super.createEditor(parent);
+		const main = DOM.append(wrapper, DOM.$('.education-main'));
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+		return main;
+	}
+
+	private _updateEduSidebarActive(): void {
+		for (const [key, el] of this._eduSidebarItems.entries()) {
+			const isActive = key === this.eduView;
+			el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground,rgba(0,122,204,0.18))' : '';
+			el.style.color = isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			el.style.fontWeight = isActive ? '600' : '500';
+		}
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(EducationEditor.ID, group, t, th, s, a, d); }
@@ -1453,6 +1484,18 @@ export class RecallEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexRecall';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Recall', apiPath: '/api/recalls',
+		// KPI cards on the web RecallBoard come from /api/recalls/kpis. Surfacing
+		// them here gives the desktop the same "Due Today / Overdue / Completed /
+		// Compliance / Pending / Contacted / Scheduled / Cancelled" header strip.
+		statsPath: '/api/recalls/kpis',
+		statsFilterMap: {
+			overdue: 'OVERDUE',
+			pendingTotal: 'PENDING',
+			contactedTotal: 'CONTACTED',
+			scheduledTotal: 'SCHEDULED',
+			completedThisMonth: 'COMPLETED',
+			cancelledTotal: 'CANCELLED',
+		},
 		searchPlaceholder: 'Search by patient name...',
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
@@ -1469,9 +1512,11 @@ export class RecallEditor extends ClinicalListEditorBase {
 			{ key: 'preferredContact', label: 'Contact', width: '90px' },
 		],
 		statusTabs: [
-			{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
+			{ label: 'Pending', value: 'PENDING' }, { label: 'Due', value: 'DUE' },
+			{ label: 'Overdue', value: 'OVERDUE' },
 			{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
-			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
+			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Declined', value: 'DECLINED' },
+			{ label: 'Cancelled', value: 'CANCELLED' },
 		],
 		additionalFilters: [
 			{
@@ -1511,14 +1556,17 @@ export class RecallEditor extends ClinicalListEditorBase {
 		formFields: [
 			{
 				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
-				placeholder: 'Search patient (must be selected from results)...',
+				placeholder: 'Type 2+ letters, then pick the patient from the dropdown',
 				apiPath: '/api/patients',
 				relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
 				relatedFieldsMap: { patientPhone: 'phone', patientEmail: 'email' },
-				validationMessage: 'Please select a patient from the search results',
+				validationMessage: 'Pick a patient from the dropdown — typing a name alone is not enough',
 			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a patient from the search results — not just type the name' },
+			// patientId is filled by the patientName search; hidden + not required
+			// so an empty value doesn't trigger a confusing "Patient ID required"
+			// error against a field the user can't see (QA report 2026-05-11).
+			{ key: 'patientId', label: 'Patient ID', type: 'text', hidden: true, placeholder: 'Auto-filled' },
 			{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
 			{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
 			{

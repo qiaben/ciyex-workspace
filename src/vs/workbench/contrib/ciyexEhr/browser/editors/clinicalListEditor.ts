@@ -171,6 +171,13 @@ export interface ClinicalEditorConfig {
 	 * status values directly).
 	 */
 	statsFilterMap?: Record<string, string>;
+	/**
+	 * When true, the toolbar renders the status filter as a dropdown (using
+	 * `statusTabs` as the option list) instead of as a row of pill buttons.
+	 * Matches the web app's Labs page where Status / Priority / Result are
+	 * shown as inline `<select>` controls.
+	 */
+	statusAsDropdown?: boolean;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -423,7 +430,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Even spacing and consistent padding so the "subtopic" pills align
 		// uniformly. Previously the 4px gap and varying padding made them feel
 		// crowded (Medical Codes QA report).
-		if (cfg.statusTabs) {
+		// When `statusAsDropdown` is set, the status filter is rendered inside the
+		// toolbar as a <select> instead of pills (mirrors the web app's Labs page).
+		if (cfg.statusTabs && !cfg.statusAsDropdown) {
 			const tabs = DOM.append(this.contentEl, DOM.$('div'));
 			tabs.style.cssText = 'display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center;';
 			for (const t of [{ label: 'All', value: '' }, ...cfg.statusTabs]) {
@@ -468,9 +477,28 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			setTimeout(() => { s.focus(); s.setSelectionRange(caret, caret); }, 0);
 		}
 
+		// Status dropdown — mirrors the web app's Labs page where Status sits
+		// in the toolbar alongside Priority and Result.
+		if (cfg.statusAsDropdown && cfg.statusTabs) {
+			const sel = DOM.append(tb, DOM.$('select')) as HTMLSelectElement;
+			sel.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;min-width:130px;';
+			sel.title = 'Status';
+			const allOpt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+			allOpt.value = '';
+			allOpt.textContent = 'All Status';
+			for (const t of cfg.statusTabs) {
+				const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+				opt.value = t.value;
+				opt.textContent = t.label;
+				if (this.statusFilter === t.value) { opt.selected = true; }
+			}
+			sel.addEventListener('change', () => { this.statusFilter = sel.value; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
+		}
+
 		if (cfg.priorityOptions) {
 			const sel = DOM.append(tb, DOM.$('select')) as HTMLSelectElement;
-			sel.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+			sel.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;min-width:130px;';
+			sel.title = 'Priority';
 			const allOpt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 			allOpt.value = '';
 			allOpt.textContent = 'All Priority';

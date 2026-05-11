@@ -228,8 +228,11 @@ import { PortalFormsPane } from './portal/portalFormsPane.js';
 import { TemplatesPane } from './portal/templatesPane.js';
 viewsRegistry.registerViews([
 	{ id: DocumentReviewPane.ID, name: localize2('docReviews', "Document Reviews"), ctorDescriptor: new SyncDescriptor(DocumentReviewPane) },
-	{ id: AccessRequestPane.ID, name: localize2('accessRequests', "Access Requests"), ctorDescriptor: new SyncDescriptor(AccessRequestPane) },
-	{ id: FormSubmissionPane.ID, name: localize2('formSubmissions', "Form Submissions"), ctorDescriptor: new SyncDescriptor(FormSubmissionPane) },
+	// Names mirror the web app's Portal Management sidebar (QA report 2026-05-11):
+	// "Form Reviews" and "Patient Approvals" replace the older "Form Submissions"
+	// and "Access Requests" labels.
+	{ id: FormSubmissionPane.ID, name: localize2('formReviews', "Form Reviews"), ctorDescriptor: new SyncDescriptor(FormSubmissionPane) },
+	{ id: AccessRequestPane.ID, name: localize2('patientApprovals', "Patient Approvals"), ctorDescriptor: new SyncDescriptor(AccessRequestPane) },
 	{ id: PortalFormsPane.ID, name: localize2('portalForms', "Portal Forms"), ctorDescriptor: new SyncDescriptor(PortalFormsPane) },
 	{ id: TemplatesPane.ID, name: localize2('templates', "Templates"), ctorDescriptor: new SyncDescriptor(TemplatesPane) },
 ], PORTAL_MGMT_CONTAINER);
