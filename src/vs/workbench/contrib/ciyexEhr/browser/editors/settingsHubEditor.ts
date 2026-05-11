@@ -66,30 +66,47 @@ interface SidebarItem {
 	icon: string;
 	kind: 'fhir' | 'admin' | 'builtin' | 'command';
 	commandId?: string;
+	/** Group label shown above this item — empty means the section header is suppressed. */
+	group?: SidebarGroup;
 }
 
+/**
+ * Sidebar section groups, in display order. Matches the EHR Web UI settings
+ * sidebar groups (General resources, User Management, Layout & Forms, System).
+ */
+type SidebarGroup = 'general' | 'user-mgmt' | 'layout-forms' | 'system';
+
+const GROUP_LABELS: Record<SidebarGroup, string> = {
+	'general': 'GENERAL',
+	'user-mgmt': 'USER MANAGEMENT',
+	'layout-forms': 'LAYOUT & FORMS',
+	'system': 'SYSTEM',
+};
+
 const ADMIN_ITEMS: SidebarItem[] = [
-	{ key: '__users__', label: 'Users', icon: '\u{1F465}', kind: 'admin' },
-	{ key: '__roles__', label: 'Roles & Permissions', icon: '\u{1F6E1}', kind: 'admin' },
+	{ key: '__users__', label: 'Users', icon: '\u{1F465}', kind: 'admin', group: 'user-mgmt' },
+	{ key: '__roles__', label: 'Roles & Permissions', icon: '\u{1F6E1}', kind: 'admin', group: 'user-mgmt' },
 ];
 
-// Mirror the Ciyex web /settings sidebar: every item that has its own
-// dedicated editor in the workspace shows up as a navigation row that runs
-// the matching command. That keeps the sidebar 1:1 with the EHR-UI even
-// though each click opens a dedicated editor (instead of swapping the hub's
-// right pane). Command IDs are the same ones the gear menu / Ctrl+, used to
-// expose individually before the Settings Hub redirect.
+// Mirror the Ciyex web /settings sidebar. Layout & Forms group contains the
+// page-tree settings (Chart, Menu, Encounter, Portal). System group contains
+// the global preferences (Display, Form Options, Template Documents, Calendar
+// Colors). Items with kind:'command' open a dedicated editor rather than
+// rendering inside the hub — same command IDs the gear menu used to expose
+// before the Settings Hub redirect.
 const BUILTIN_ITEMS: SidebarItem[] = [
-	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin' },
-	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin' },
-	{ key: '__calendar-colors__', label: 'Calendar Colors', icon: '\u{1F3A8}', kind: 'builtin' },
-	{ key: '__template-documents__', label: 'Template Documents', icon: '\u{1F4DD}', kind: 'builtin' },
-	{ key: '__encounter-settings__', label: 'Encounter Settings', icon: '\u{1F4CB}', kind: 'builtin' },
-	{ key: '__layout-settings__', label: 'Layout Settings (Chart)', icon: '\u{1F9F1}', kind: 'command', commandId: 'ciyex.openLayoutSettings' },
-	{ key: '__layout-hub__', label: 'Layout Configuration', icon: '\u{1F4D0}', kind: 'command', commandId: 'ciyex.openLayoutHub' },
-	{ key: '__menu-config__', label: 'Menu Configuration', icon: '\u{1F4DC}', kind: 'command', commandId: 'ciyex.openMenuConfig' },
-	{ key: '__portal-settings__', label: 'Portal Settings', icon: '\u{1F310}', kind: 'command', commandId: 'ciyex.openPortalSettings' },
-	{ key: '__practice-settings__', label: 'Practice Settings', icon: '\u{1F3E2}', kind: 'command', commandId: 'ciyex.openPracticeSettings' },
+	// Layout & Forms
+	{ key: '__layout-settings__', label: 'Chart', icon: '\u{1F4CA}', kind: 'command', commandId: 'ciyex.openLayoutSettings', group: 'layout-forms' },
+	{ key: '__menu-config__', label: 'Menu', icon: '\u{1F4DC}', kind: 'builtin', group: 'layout-forms' },
+	{ key: '__encounter-settings__', label: 'Encounter', icon: '\u{1F4CB}', kind: 'builtin', group: 'layout-forms' },
+	{ key: '__portal-settings__', label: 'Portal', icon: '\u{1F310}', kind: 'command', commandId: 'ciyex.openPortalSettings', group: 'layout-forms' },
+	{ key: '__template-documents__', label: 'Template Documents', icon: '\u{1F4DD}', kind: 'builtin', group: 'layout-forms' },
+	// System
+	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin', group: 'system' },
+	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin', group: 'system' },
+	{ key: '__calendar-colors__', label: 'Calendar Colors', icon: '\u{1F3A8}', kind: 'builtin', group: 'system' },
+	{ key: '__layout-hub__', label: 'Layout Configuration', icon: '\u{1F4D0}', kind: 'command', commandId: 'ciyex.openLayoutHub', group: 'system' },
+	{ key: '__practice-settings__', label: 'Practice Settings', icon: '\u{1F3E2}', kind: 'command', commandId: 'ciyex.openPracticeSettings', group: 'system' },
 ];
 
 const ICON_MAP: Record<string, string> = {
@@ -157,10 +174,12 @@ export class SettingsHubEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.settings-hub-editor.ciyex-editor-root'));
+		// Match the EHR Web UI: bg-gray-50 sidebar (a touch lighter than the
+		// editor background) and a flat editor content area to the right.
 		this.root.style.cssText = 'height:100%;display:flex;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
 		this.sidebarEl = DOM.append(this.root, DOM.$('.sh-sidebar'));
-		this.sidebarEl.style.cssText = 'width:224px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,rgba(0,0,0,0.06));overflow-y:auto;';
+		this.sidebarEl.style.cssText = 'width:224px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,rgba(0,0,0,0.06));overflow-y:auto;display:flex;flex-direction:column;';
 
 		this.contentEl = DOM.append(this.root, DOM.$('.sh-content'));
 		this.contentEl.style.cssText = 'flex:1;overflow-y:auto;';
@@ -214,51 +233,71 @@ export class SettingsHubEditor extends EditorPane {
 	private _renderSidebar(): void {
 		DOM.clearNode(this.sidebarEl);
 
+		// Header — mirrors the EHR Web UI sidebar header "SETTINGS"
 		const header = DOM.append(this.sidebarEl, DOM.$('.sh-sb-header'));
-		header.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		header.style.cssText = 'padding:14px 16px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
+		const headerIcon = DOM.append(header, DOM.$('span'));
+		headerIcon.textContent = '\u{2699}';
+		headerIcon.style.cssText = 'font-size:14px;color:var(--vscode-descriptionForeground);';
 		const headerText = DOM.append(header, DOM.$('h2'));
-		headerText.textContent = '\u{2699} SETTINGS';
-		headerText.style.cssText = 'margin:0;font-size:11px;font-weight:600;letter-spacing:1px;color:var(--vscode-descriptionForeground);';
+		headerText.textContent = 'SETTINGS';
+		headerText.style.cssText = 'margin:0;font-size:11px;font-weight:600;letter-spacing:1.4px;color:var(--vscode-descriptionForeground);';
 
 		const nav = DOM.append(this.sidebarEl, DOM.$('nav'));
-		nav.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:2px;';
+		nav.style.cssText = 'padding:8px 6px;display:flex;flex-direction:column;gap:1px;flex:1;overflow-y:auto;';
 
-		// FHIR-resource settings (Practice, Facilities, Providers, Insurance, etc.)
-		for (const item of this.fhirItems) {
-			this._renderSidebarBtn(nav, item);
-		}
-
-		// Divider
+		// "General" group — FHIR resource settings (Practice, Facilities, Providers, Insurance, etc.)
+		// Always rendered first because it contains the practice-level data users
+		// most often need to edit. Matches the EHR Web UI which puts these at the top.
 		if (this.fhirItems.length > 0) {
-			const divider = DOM.append(nav, DOM.$('hr'));
-			divider.style.cssText = 'border:none;border-top:1px solid var(--vscode-editorWidget-border);margin:8px 0;';
+			this._renderGroupHeader(nav, GROUP_LABELS['general']);
+			for (const item of this.fhirItems) {
+				this._renderSidebarBtn(nav, item);
+			}
 		}
 
-		// Admin items
-		for (const item of ADMIN_ITEMS) {
-			this._renderSidebarBtn(nav, item);
+		// Other groups, in declared order. Each group prints its header label
+		// once, then all items belonging to that group.
+		const groupedItems: Array<[SidebarGroup, SidebarItem[]]> = [
+			['user-mgmt', ADMIN_ITEMS],
+			['layout-forms', BUILTIN_ITEMS.filter(i => i.group === 'layout-forms')],
+			['system', BUILTIN_ITEMS.filter(i => i.group === 'system')],
+		];
+		for (const [groupKey, items] of groupedItems) {
+			if (items.length === 0) { continue; }
+			this._renderGroupHeader(nav, GROUP_LABELS[groupKey]);
+			for (const item of items) {
+				this._renderSidebarBtn(nav, item);
+			}
 		}
+	}
 
-		const divider2 = DOM.append(nav, DOM.$('hr'));
-		divider2.style.cssText = 'border:none;border-top:1px solid var(--vscode-editorWidget-border);margin:8px 0;';
-
-		// Built-in
-		for (const item of BUILTIN_ITEMS) {
-			this._renderSidebarBtn(nav, item);
-		}
+	private _renderGroupHeader(parent: HTMLElement, text: string): void {
+		const h = DOM.append(parent, DOM.$('div'));
+		h.textContent = text;
+		h.style.cssText = 'padding:14px 10px 6px;font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);text-transform:uppercase;';
 	}
 
 	private _renderSidebarBtn(parent: HTMLElement, item: SidebarItem): void {
 		const btn = DOM.append(parent, DOM.$('button'));
 		btn.dataset.key = item.key;
 		const isActive = this.activeKey === item.key;
-		btn.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:${isActive ? 'var(--vscode-list-activeSelectionBackground,#0e639c)' : 'transparent'};color:${isActive ? 'var(--vscode-list-activeSelectionForeground,#fff)' : 'var(--vscode-foreground)'};border:none;border-radius:4px;cursor:pointer;text-align:left;font-size:13px;`;
+		// Match the EHR Web UI: active = blue-600 bg + white text + slight shadow,
+		// inactive = transparent + foreground text with subtle hover. Padding 7px
+		// 10px keeps row height ~32px (matches w-56 sidebar in the web).
+		btn.style.cssText = `display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;background:${isActive ? '#2563eb' : 'transparent'};color:${isActive ? '#ffffff' : 'var(--vscode-foreground)'};border:none;border-radius:6px;cursor:pointer;text-align:left;font-size:13px;font-weight:${isActive ? '500' : '400'};transition:background 0.08s;`;
 		const icon = DOM.append(btn, DOM.$('span'));
 		icon.textContent = item.icon;
-		icon.style.cssText = 'flex-shrink:0;width:16px;font-size:12px;text-align:center;';
+		icon.style.cssText = 'flex-shrink:0;width:16px;font-size:13px;text-align:center;opacity:0.95;';
 		const label = DOM.append(btn, DOM.$('span'));
 		label.textContent = item.label;
 		label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		// Command-kind items get a subtle "\u2197" suffix to show they open a new editor.
+		if (item.kind === 'command') {
+			const ext = DOM.append(btn, DOM.$('span'));
+			ext.textContent = '\u2197';
+			ext.style.cssText = `font-size:10px;opacity:${isActive ? '0.85' : '0.45'};`;
+		}
 		btn.addEventListener('mouseenter', () => { if (!isActive) { btn.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; } });
 		btn.addEventListener('mouseleave', () => { if (!isActive) { btn.style.background = 'transparent'; } });
 		btn.addEventListener('click', () => {
@@ -303,6 +342,7 @@ export class SettingsHubEditor extends EditorPane {
 		if (key === '__display__') { this._renderDisplay(); return; }
 		if (key === '__template-documents__') { this._renderTemplateDocuments(); return; }
 		if (key === '__encounter-settings__') { this._renderEncounterSettings(); return; }
+		if (key === '__menu-config__') { this._renderMenuConfiguration(); return; }
 		if (key === '__calendar-colors__') { this._renderCalendarColors(); return; }
 
 		// Codes is backed by /api/global_codes, not the FHIR endpoint — use a dedicated renderer
@@ -3443,6 +3483,251 @@ export class SettingsHubEditor extends EditorPane {
 		});
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 		setTimeout(() => keyInp.focus(), 50);
+	}
+
+	/**
+	 * Menu Configuration — manages the EHR sidebar menu tree.
+	 * Mirrors the EHR Web UI /settings/menu-configuration page:
+	 *   - Loads /api/menus/ehr-sidebar (tree) + /api/menus/ehr-sidebar/overrides (mutations)
+	 *   - Lets admins add/edit/hide/reorder custom items
+	 *   - Backed by /api/menus/ehr-sidebar/custom-items (POST) and /items/{id}/{hide|modify}
+	 */
+	private async _renderMenuConfiguration(): Promise<void> {
+		interface MenuItemNode { item: { id: number; itemKey: string; label: string; icon: string | null; screenSlug: string | null; isSystem?: boolean }; children?: MenuItemNode[] }
+
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;max-width:1000px;margin:0 auto;';
+
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
+		const left = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(left, DOM.$('h1'));
+		title.textContent = 'Menu';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(left, DOM.$('p'));
+		sub.textContent = 'Configure the EHR sidebar — reorder, hide, modify built-in items, or add custom links.';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
+
+		const headerActions = DOM.append(header, DOM.$('div'));
+		headerActions.style.cssText = 'display:flex;gap:8px;';
+		const addBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Item';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		const resetBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+		resetBtn.textContent = '\u21BA Reset to Defaults';
+		resetBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+
+		const body = DOM.append(root, DOM.$('div'));
+
+		const renderTree = async (): Promise<void> => {
+			DOM.clearNode(body);
+			const loading = DOM.append(body, DOM.$('div'));
+			loading.textContent = 'Loading menu…';
+			loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+			try {
+				const res = await this.apiService.fetch('/api/menus/ehr-sidebar');
+				if (!res.ok) {
+					loading.textContent = `Failed to load menu (${res.status})`;
+					return;
+				}
+				const data = await res.json();
+				const tree: MenuItemNode[] = Array.isArray(data) ? data : (data.data || data.items || []);
+				DOM.clearNode(body);
+				if (tree.length === 0) {
+					const empty = DOM.append(body, DOM.$('div'));
+					empty.textContent = 'No menu items configured.';
+					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
+					return;
+				}
+				const treeWrap = DOM.append(body, DOM.$('div'));
+				treeWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+				const renderNode = (node: MenuItemNode, depth: number): void => {
+					const row = DOM.append(treeWrap, DOM.$('div'));
+					row.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;padding-left:${12 + depth * 24}px;border-bottom:1px solid rgba(128,128,128,0.1);font-size:12px;`;
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.03))'; });
+					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+					const icon = DOM.append(row, DOM.$('span'));
+					icon.textContent = ICON_MAP[node.item.icon || 'FileText'] || '\u{1F4C4}';
+					icon.style.cssText = 'opacity:0.7;font-size:13px;';
+					const lbl = DOM.append(row, DOM.$('span'));
+					lbl.textContent = node.item.label;
+					lbl.style.cssText = 'flex:1;font-weight:500;';
+					const keyCode = DOM.append(row, DOM.$('code'));
+					keyCode.textContent = node.item.itemKey;
+					keyCode.style.cssText = 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);padding:1px 5px;border-radius:3px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+					if (node.item.screenSlug) {
+						const slug = DOM.append(row, DOM.$('span'));
+						slug.textContent = `→ /${node.item.screenSlug}`;
+						slug.style.cssText = 'font-size:10px;color:var(--vscode-textLink-foreground,#3794ff);';
+					}
+					if (node.item.isSystem) {
+						const sys = DOM.append(row, DOM.$('span'));
+						sys.textContent = 'SYSTEM';
+						sys.style.cssText = 'font-size:9px;font-weight:600;background:rgba(128,128,128,0.15);color:var(--vscode-descriptionForeground);padding:1px 5px;border-radius:3px;letter-spacing:0.5px;';
+					}
+					this._tableAction(row, '\u270F', 'Edit', () => this._openMenuItemModal(node.item, renderTree));
+					this._tableAction(row, '\u{1F441}', 'Hide/Show', () => this._toggleMenuItemHidden(node.item.id, renderTree));
+					if (!node.item.isSystem) {
+						this._tableAction(row, '\u{1F5D1}', 'Delete', () => this._deleteMenuItem(node.item.id, node.item.label, renderTree), 'danger');
+					}
+
+					for (const child of node.children || []) {
+						renderNode(child, depth + 1);
+					}
+				};
+				for (const node of tree) {
+					renderNode(node, 0);
+				}
+			} catch {
+				loading.textContent = 'Waiting for login…';
+			}
+		};
+
+		addBtn.addEventListener('click', () => this._openMenuItemModal(null, renderTree));
+		resetBtn.addEventListener('click', async () => {
+			const { confirmed } = await this.dialogService.confirm({ message: 'Reset the menu to factory defaults? All custom items and overrides will be removed.' });
+			if (!confirmed) { return; }
+			try {
+				const res = await this.apiService.fetch('/api/menus/ehr-sidebar/reset', { method: 'POST' });
+				if (res.ok) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Menu reset to defaults.' });
+					await renderTree();
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: `Reset failed (${res.status})` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Reset failed: ${e}` });
+			}
+		});
+
+		await renderTree();
+	}
+
+	private _openMenuItemModal(existing: { id?: number; itemKey: string; label: string; icon: string | null; screenSlug: string | null } | null, reload: () => Promise<void>): void {
+		const isEdit = existing !== null && !!existing.id;
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:460px;max-width:92vw;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const ht = DOM.append(modal, DOM.$('h3'));
+		ht.textContent = isEdit ? 'Modify Menu Item' : 'Add Menu Item';
+		ht.style.cssText = 'margin:0 0 14px;font-size:16px;font-weight:600;';
+
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin:8px 0 4px;';
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+
+		const mk = (text: string): HTMLElement => { const l = DOM.append(modal, DOM.$('label')); l.textContent = text; l.style.cssText = labelStyle; return l; };
+
+		mk('Label *');
+		const labelInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		labelInp.value = existing?.label || '';
+		labelInp.placeholder = 'e.g. Reports';
+		labelInp.style.cssText = inputStyle;
+
+		mk('Item Key (auto from label if blank)');
+		const keyInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		keyInp.value = existing?.itemKey || '';
+		keyInp.placeholder = 'lowercase-with-hyphens';
+		keyInp.disabled = isEdit;
+		keyInp.style.cssText = inputStyle;
+
+		mk('Icon (lucide name)');
+		const iconInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		iconInp.value = existing?.icon || 'FileText';
+		iconInp.placeholder = 'FileText, Heart, Pill, …';
+		iconInp.style.cssText = inputStyle;
+
+		mk('Screen Slug (URL path)');
+		const slugInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		slugInp.value = existing?.screenSlug || '';
+		slugInp.placeholder = 'e.g. reports — opens /reports';
+		slugInp.style.cssText = inputStyle;
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? 'Save' : 'Add';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', async () => {
+			if (!labelInp.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Label is required.' });
+				return;
+			}
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving…';
+			const itemKey = keyInp.value.trim() || labelInp.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+			const payload = {
+				itemKey,
+				label: labelInp.value.trim(),
+				icon: iconInp.value.trim() || null,
+				screenSlug: slugInp.value.trim() || null,
+			};
+			try {
+				let res: Response;
+				if (isEdit && existing) {
+					res = await this.apiService.fetch(`/api/menus/ehr-sidebar/items/${existing.id}/modify`, {
+						method: 'PUT', body: JSON.stringify({ label: payload.label, icon: payload.icon, screenSlug: payload.screenSlug }),
+					});
+				} else {
+					res = await this.apiService.fetch('/api/menus/ehr-sidebar/custom-items', {
+						method: 'POST', body: JSON.stringify(payload),
+					});
+				}
+				if (res.ok) {
+					overlay.remove();
+					await reload();
+					this.notificationService.notify({ severity: Severity.Info, message: 'Saved.' });
+				} else {
+					const txt = await res.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = isEdit ? 'Save' : 'Add';
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = isEdit ? 'Save' : 'Add';
+			}
+		});
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => labelInp.focus(), 50);
+	}
+
+	private async _toggleMenuItemHidden(itemId: number, reload: () => Promise<void>): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`/api/menus/ehr-sidebar/items/${itemId}/hide`, { method: 'POST' });
+			if (res.ok) {
+				await reload();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Visibility toggled.' });
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Toggle failed (${res.status})` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Toggle failed: ${e}` });
+		}
+	}
+
+	private async _deleteMenuItem(itemId: number, label: string, reload: () => Promise<void>): Promise<void> {
+		const { confirmed } = await this.dialogService.confirm({ message: `Delete menu item "${label}"?` });
+		if (!confirmed) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/menus/ehr-sidebar/items/${itemId}`, { method: 'DELETE' });
+			if (res.ok) {
+				await reload();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Menu item deleted.' });
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status})` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+		}
 	}
 
 	private _previewTemplateDoc(tpl: { name: string; context: string; content: string }): void {
