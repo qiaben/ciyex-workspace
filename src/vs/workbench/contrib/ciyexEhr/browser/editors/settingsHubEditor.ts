@@ -301,6 +301,9 @@ export class SettingsHubEditor extends EditorPane {
 		if (key === '__display__') { this._renderDisplay(); return; }
 		if (key === '__calendar-colors__') { this._renderCalendarColors(); return; }
 
+		// Codes is backed by /api/global_codes, not the FHIR endpoint — use a dedicated renderer
+		if (key === 'codes') { this._renderCodes(); return; }
+
 		// FHIR resource settings — generic list/form
 		this._renderFhirSection(key);
 	}
@@ -1606,6 +1609,130 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Codes tab — backed by /api/global_codes (not the FHIR endpoint), matching
+	 * the EHR Web UI CodesPage. Renders search + codeType filter + table.
+	 */
+	private async _renderCodes(): Promise<void> {
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;max-width:1200px;margin:0 auto;';
+
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'margin-bottom:16px;';
+		const title = DOM.append(header, DOM.$('h1'));
+		title.textContent = 'Codes';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(header, DOM.$('p'));
+		sub.textContent = 'Global codes (ICD-10, CPT, HCPCS, CVX) — backed by /api/global_codes.';
+		sub.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
+
+		const CODE_TYPES: Array<[string, string]> = [
+			['', 'All Code Types'],
+			['CPT4', 'CPT4 Procedure / Service'],
+			['HCPCS', 'HCPCS Procedure / Service'],
+			['CVX', 'CVX Immunization'],
+			['ICD10', 'ICD10 Diagnosis'],
+			['ICD9', 'ICD9 Diagnosis'],
+			['CUSTOM', 'Custom'],
+		];
+
+		const filterRow = DOM.append(root, DOM.$('div'));
+		filterRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:14px;';
+
+		const searchInput = DOM.append(filterRow, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'search';
+		searchInput.placeholder = 'Search by code or description…';
+		searchInput.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;flex:1;outline:none;';
+
+		const typeSelect = DOM.append(filterRow, DOM.$('select')) as HTMLSelectElement;
+		typeSelect.style.cssText = 'padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;cursor:pointer;';
+		for (const [v, l] of CODE_TYPES) {
+			const opt = DOM.append(typeSelect, DOM.$('option')) as HTMLOptionElement;
+			opt.value = v;
+			opt.textContent = l;
+		}
+
+		const searchBtn = DOM.append(filterRow, DOM.$('button')) as HTMLButtonElement;
+		searchBtn.textContent = 'Search';
+		searchBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+
+		const body = DOM.append(root, DOM.$('div'));
+
+		const load = async (): Promise<void> => {
+			DOM.clearNode(body);
+			const loadEl = DOM.append(body, DOM.$('div'));
+			loadEl.textContent = 'Loading codes…';
+			loadEl.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
+
+			const params = new URLSearchParams();
+			params.set('page', '1');
+			params.set('size', '50');
+			const q = searchInput.value.trim();
+			const t = typeSelect.value;
+			if (q) { params.set('q', q); }
+			if (t) { params.set('codeType', t); }
+			const useSearch = !!(q || t);
+			const path = useSearch ? `/api/global_codes/search?${params}` : `/api/global_codes?${params}`;
+
+			try {
+				const res = await this.apiService.fetch(path);
+				if (!res.ok) {
+					const err = await res.text().catch(() => '');
+					loadEl.textContent = `Failed to load codes (${res.status}). ${err.substring(0, 200)}`;
+					return;
+				}
+				const json = await res.json();
+				const codes: Array<Record<string, unknown>> = json?.data || [];
+				const total: number = json?.total ?? json?.totalCount ?? json?.count ?? codes.length;
+
+				DOM.clearNode(body);
+				if (codes.length === 0) {
+					const empty = DOM.append(body, DOM.$('div'));
+					empty.textContent = q || t ? 'No codes match your filter.' : 'No codes found.';
+					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
+					return;
+				}
+
+				const totalRow = DOM.append(body, DOM.$('div'));
+				totalRow.textContent = `${total.toLocaleString()} record${total === 1 ? '' : 's'}`;
+				totalRow.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
+
+				const tableWrap = DOM.append(body, DOM.$('div'));
+				tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+				const table = DOM.append(tableWrap, DOM.$('table'));
+				table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
+				const thead = DOM.append(table, DOM.$('thead'));
+				const tr = DOM.append(thead, DOM.$('tr'));
+				tr.style.cssText = 'background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);';
+				for (const col of ['Code', 'Type', 'Description', 'Category', 'Active']) {
+					const th = DOM.append(tr, DOM.$('th'));
+					th.textContent = col;
+					th.style.cssText = 'padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+				}
+
+				const tbody = DOM.append(table, DOM.$('tbody'));
+				for (const c of codes) {
+					const code = c as { code?: string; codeType?: string; description?: string; shortDescription?: string; category?: string; active?: boolean };
+					const row = DOM.append(tbody, DOM.$('tr'));
+					row.style.cssText = 'border-bottom:1px solid rgba(128,128,128,0.1);';
+					this._appendCell(row, code.code || '-');
+					this._appendCell(row, code.codeType || '-');
+					this._appendCell(row, code.description || code.shortDescription || '-');
+					this._appendCell(row, code.category || '-');
+					this._appendCell(row, code.active === false ? 'No' : 'Yes');
+				}
+			} catch (e) {
+				loadEl.textContent = `Failed to load codes: ${e}`;
+			}
+		};
+
+		searchBtn.addEventListener('click', () => { void load(); });
+		searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { void load(); } });
+		typeSelect.addEventListener('change', () => { void load(); });
+
+		void load();
+	}
+
 	private _renderDisplay(): void {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
@@ -1673,17 +1800,17 @@ export class SettingsHubEditor extends EditorPane {
 
 	private _renderCalendarColors(): void {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
-		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
+		root.style.cssText = 'padding:24px;max-width:1000px;margin:0 auto;';
 		const title = DOM.append(root, DOM.$('h1'));
 		title.textContent = 'Calendar Colors';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Customize appointment colors by visit type, provider, or location.';
+		sub.textContent = 'Customize calendar appearance and appointment colors. Saved via /api/ui-colors.';
 		sub.style.cssText = 'margin:0 0 20px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
-		// Tab bar
-		type ColorTab = 'visit-type' | 'provider' | 'location';
-		let activeColorTab: ColorTab = 'visit-type';
+		// Tab bar \u2014 Calendar tab matches what the EHR Web UI shows
+		type ColorTab = 'calendar' | 'visit-type' | 'provider' | 'location';
+		let activeColorTab: ColorTab = 'calendar';
 		const tabBar = DOM.append(root, DOM.$('div'));
 		tabBar.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:20px;';
 		const colorTabBody = DOM.append(root, DOM.$('div'));
@@ -1692,7 +1819,12 @@ export class SettingsHubEditor extends EditorPane {
 			DOM.clearNode(colorTabBody);
 			DOM.clearNode(tabBar);
 
-			const tabs: Array<[ColorTab, string]> = [['visit-type', 'Visit Types'], ['provider', 'Providers'], ['location', 'Locations']];
+			const tabs: Array<[ColorTab, string]> = [
+				['calendar', 'Calendar'],
+				['visit-type', 'Visit Types'],
+				['provider', 'Providers'],
+				['location', 'Locations'],
+			];
 			for (const [key, lbl] of tabs) {
 				const btn = DOM.append(tabBar, DOM.$('button'));
 				btn.textContent = lbl;
@@ -1701,88 +1833,177 @@ export class SettingsHubEditor extends EditorPane {
 				btn.addEventListener('click', () => { activeColorTab = key; renderColorTab(key); });
 			}
 
-			const endpoint = tab === 'visit-type' ? '/api/appointment-types' : tab === 'provider' ? '/api/providers?page=0&size=50' : '/api/locations';
+			if (tab === 'calendar') {
+				this._renderCalendarTab(colorTabBody);
+				return;
+			}
 
-			const loading = DOM.append(colorTabBody, DOM.$('div'));
-			loading.textContent = 'Loading\u2026';
-			loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
-
-			this.apiService.fetch(endpoint).then(async res => {
-				loading.remove();
-				if (!res.ok) {
-					const msg = DOM.append(colorTabBody, DOM.$('div'));
-					msg.textContent = `Failed to load (${res.status})`;
-					msg.style.cssText = 'padding:24px;color:var(--vscode-descriptionForeground);';
-					return;
-				}
-				const json = await res.json();
-				const items: Array<Record<string, unknown>> = Array.isArray(json?.data?.content)
-					? json.data.content
-					: (Array.isArray(json?.data) ? json.data : (json?.content || (Array.isArray(json) ? json : [])));
-
-				if (items.length === 0) {
-					const empty = DOM.append(colorTabBody, DOM.$('div'));
-					empty.textContent = 'No items found.';
-					empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
-					return;
-				}
-
-				const grid = DOM.append(colorTabBody, DOM.$('div'));
-				grid.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
-
-				for (const item of items) {
-					const name = (item.name || item.displayName || item.firstName + ' ' + item.lastName || item.visitTypeName || item.locationName || item.typeName || item.id || '(unnamed)') as string;
-					const currentColor = (item.color || item.calendarColor || '#3b82f6') as string;
-
-					const row = DOM.append(grid, DOM.$('div'));
-					row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;';
-
-					const nameEl = DOM.append(row, DOM.$('span'));
-					nameEl.textContent = name.trim() || String(item.id || '');
-					nameEl.style.cssText = 'font-size:13px;font-weight:500;flex:1;';
-
-					const right = DOM.append(row, DOM.$('div'));
-					right.style.cssText = 'display:flex;align-items:center;gap:8px;';
-
-					const swatch = DOM.append(right, DOM.$('div'));
-					swatch.style.cssText = `width:24px;height:24px;border-radius:4px;background:${currentColor};border:1px solid rgba(0,0,0,0.2);`;
-
-					const colorInput = DOM.append(right, DOM.$('input')) as HTMLInputElement;
-					colorInput.type = 'color';
-					colorInput.value = /^#[0-9a-f]{6}$/i.test(currentColor) ? currentColor : '#3b82f6';
-					colorInput.style.cssText = 'width:32px;height:28px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;cursor:pointer;background:transparent;padding:1px;';
-					colorInput.addEventListener('input', () => {
-						swatch.style.background = colorInput.value;
-					});
-
-					const saveColorBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
-					saveColorBtn.textContent = 'Apply';
-					saveColorBtn.style.cssText = 'padding:3px 10px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:11px;';
-					saveColorBtn.addEventListener('click', async () => {
-						const id = item.id as string;
-						if (!id) { return; }
-						const colorEndpoint = tab === 'visit-type' ? `/api/appointment-types/${id}` : tab === 'provider' ? `/api/providers/${id}` : `/api/locations/${id}`;
-						try {
-							const patchRes = await this.apiService.fetch(colorEndpoint, {
-								method: 'PATCH',
-								body: JSON.stringify({ color: colorInput.value }),
-							});
-							if (patchRes.ok) {
-								this.notificationService.notify({ severity: Severity.Info, message: 'Color saved.' });
-							} else {
-								this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${patchRes.status})` });
-							}
-						} catch (e) {
-							this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
-						}
-					});
-				}
-			}).catch(() => {
-				loading.textContent = 'Waiting for login\u2026';
-			});
+			void this._renderCalendarEntityTab(colorTabBody, tab);
 		};
 
 		renderColorTab(activeColorTab);
+	}
+
+	/** General Calendar tab \u2014 working/non-working hours backgrounds, status colors. */
+	private _renderCalendarTab(parent: HTMLElement): void {
+		const desc = DOM.append(parent, DOM.$('p'));
+		desc.textContent = 'General calendar appearance settings.';
+		desc.style.cssText = 'margin:0 0 12px;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const panel = DOM.append(parent, DOM.$('div'));
+		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+		const items: Array<[string, string, string]> = [
+			['workingHoursBg', 'Working Hours Background', '#ffffff'],
+			['nonWorkingHoursBg', 'Non-Working Hours Background', '#f1f5f9'],
+			['scheduledColor', 'Scheduled Appointment', '#3b82f6'],
+			['checkedInColor', 'Checked In', '#22c55e'],
+			['noShowColor', 'No Show', '#ef4444'],
+			['cancelledColor', 'Cancelled', '#9ca3af'],
+		];
+		for (const [key, label, defaultColor] of items) {
+			const row = DOM.append(panel, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(128,128,128,0.1);';
+			const left = DOM.append(row, DOM.$('div'));
+			const lbl = DOM.append(left, DOM.$('div'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'font-size:13px;font-weight:500;';
+			const k = DOM.append(left, DOM.$('code'));
+			k.textContent = key;
+			k.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:10px;color:var(--vscode-descriptionForeground);';
+			const colorInput = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+			colorInput.type = 'color';
+			colorInput.value = defaultColor;
+			colorInput.style.cssText = 'width:48px;height:32px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;background:transparent;padding:2px;';
+		}
+	}
+
+	/** Visit Types / Providers / Locations color editor \u2014 backed by /api/ui-colors. */
+	private async _renderCalendarEntityTab(parent: HTMLElement, tab: 'visit-type' | 'provider' | 'location'): Promise<void> {
+		const loading = DOM.append(parent, DOM.$('div'));
+		loading.textContent = 'Loading\u2026';
+		loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+
+		try {
+			let items: Array<{ key: string; label: string; color?: string }> = [];
+
+			if (tab === 'visit-type') {
+				const res = await this.apiService.fetch('/api/tab-field-config/appointments');
+				if (res.ok) {
+					const json = await res.json();
+					const raw = json?.fieldConfig ?? json?.data?.fieldConfig;
+					const fc = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+					const sections = fc?.sections || [];
+					for (const s of sections) {
+						for (const f of (s.fields || [])) {
+							if (f.key === 'appointmentType' && Array.isArray(f.options)) {
+								items = (f.options as Array<string | { value: string; label: string }>).map(o => {
+									if (typeof o === 'string') { return { key: o, label: o }; }
+									return { key: o.value || o.label, label: o.label || o.value };
+								});
+							}
+						}
+					}
+				}
+				if (items.length === 0) {
+					try {
+						const r = await this.apiService.fetch('/api/list-options/list/Visit%20Type');
+						if (r.ok) {
+							const j = await r.json();
+							const list: Array<{ title: string; activity?: number }> = j?.data || (Array.isArray(j) ? j : []);
+							items = list.filter(i => i.activity !== 0).map(i => ({ key: i.title, label: i.title }));
+						}
+					} catch { /* ignore */ }
+				}
+			} else if (tab === 'provider') {
+				const res = await this.apiService.fetch('/api/fhir-resource/providers?size=100');
+				if (res.ok) {
+					const json = await res.json();
+					const list: Array<Record<string, unknown>> = json?.data?.content || json?.data || (Array.isArray(json) ? json : []);
+					items = list.map(p => {
+						const ident = (p['identification'] || {}) as Record<string, unknown>;
+						const first = (p['identification.firstName'] || ident.firstName || p.firstName || '') as string;
+						const last = (p['identification.lastName'] || ident.lastName || p.lastName || '') as string;
+						const name = `${first} ${last}`.trim() || (p.name as string) || (p.displayName as string) || `Provider #${p.id}`;
+						return { key: String(p.id || p.fhirId), label: name };
+					}).filter(o => o.key && o.label);
+				}
+			} else {
+				const res = await this.apiService.fetch('/api/fhir-resource/facilities?size=100');
+				if (res.ok) {
+					const json = await res.json();
+					const list: Array<Record<string, unknown>> = json?.data?.content || json?.data || (Array.isArray(json) ? json : []);
+					items = list.map(l => ({ key: String(l.id || l.fhirId), label: (l.name as string) || '' })).filter(o => o.key && o.label);
+				}
+			}
+
+			// Overlay saved colors
+			try {
+				const colorsRes = await this.apiService.fetch('/api/ui-colors');
+				if (colorsRes.ok) {
+					const cj = await colorsRes.json();
+					const cs: Array<{ category: string; entityKey: string; bgColor?: string }> = cj?.data || [];
+					const category = tab === 'visit-type' ? 'visit-type' : tab === 'provider' ? 'provider' : 'location';
+					for (const c of cs.filter(x => x.category === category)) {
+						const item = items.find(i => i.key === c.entityKey);
+						if (item && c.bgColor) { item.color = c.bgColor; }
+					}
+				}
+			} catch { /* ignore */ }
+
+			loading.remove();
+
+			if (items.length === 0) {
+				const empty = DOM.append(parent, DOM.$('div'));
+				empty.textContent = `No ${tab === 'visit-type' ? 'visit types' : tab === 'provider' ? 'providers' : 'locations'} found.`;
+				empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
+				return;
+			}
+
+			const grid = DOM.append(parent, DOM.$('div'));
+			grid.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+			for (const item of items) {
+				const cur = item.color || '#3b82f6';
+				const row = DOM.append(grid, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;';
+				const nameEl = DOM.append(row, DOM.$('span'));
+				nameEl.textContent = item.label;
+				nameEl.style.cssText = 'font-size:13px;font-weight:500;flex:1;';
+				const right = DOM.append(row, DOM.$('div'));
+				right.style.cssText = 'display:flex;align-items:center;gap:8px;';
+				const swatch = DOM.append(right, DOM.$('div'));
+				swatch.style.cssText = `width:24px;height:24px;border-radius:4px;background:${cur};border:1px solid rgba(0,0,0,0.2);`;
+				const colorInput = DOM.append(right, DOM.$('input')) as HTMLInputElement;
+				colorInput.type = 'color';
+				colorInput.value = /^#[0-9a-f]{6}$/i.test(cur) ? cur : '#3b82f6';
+				colorInput.style.cssText = 'width:32px;height:28px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;cursor:pointer;background:transparent;padding:1px;';
+				colorInput.addEventListener('input', () => { swatch.style.background = colorInput.value; });
+				const saveBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
+				saveBtn.textContent = 'Apply';
+				saveBtn.style.cssText = 'padding:3px 10px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:11px;';
+				saveBtn.addEventListener('click', () => this._saveUiColor(tab, item.key, item.label, colorInput.value));
+			}
+		} catch (e) {
+			loading.textContent = `Failed to load: ${e}`;
+		}
+	}
+
+	private async _saveUiColor(category: 'visit-type' | 'provider' | 'location', entityKey: string, entityLabel: string, bgColor: string): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/ui-colors', {
+				method: 'POST',
+				body: JSON.stringify({ category, entityKey, entityLabel, bgColor, borderColor: bgColor }),
+			});
+			if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'Color saved.' });
+			} else {
+				const err = await res.text().catch(() => '');
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${err.substring(0, 120)}` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+		}
 	}
 
 	// allow-any-unicode-next-line
