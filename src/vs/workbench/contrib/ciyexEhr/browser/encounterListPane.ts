@@ -56,7 +56,7 @@ export class EncounterListPane extends ViewPane {
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
-		this.container = DOM.append(parent, DOM.$('.encounter-list-pane'));
+		this.container = DOM.append(parent, DOM.$('.encounter-list-pane.ciyex-editor-root'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
 
 		// Toolbar row 1: search + add

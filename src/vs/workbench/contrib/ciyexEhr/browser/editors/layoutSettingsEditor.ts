@@ -78,7 +78,7 @@ export class LayoutSettingsEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.layout-settings-editor'));
+		this.root = DOM.append(parent, DOM.$('.layout-settings-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
 		this.contentEl = DOM.append(this.root, DOM.$('div'));

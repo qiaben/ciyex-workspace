@@ -59,7 +59,7 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.ciyex-encounter-form'));
+		this.root = DOM.append(parent, DOM.$('.ciyex-encounter-form.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 
 		// Header

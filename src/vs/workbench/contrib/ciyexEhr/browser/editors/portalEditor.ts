@@ -43,7 +43,7 @@ export class PortalEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor'));
+		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:row;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
 		// Sidebar matches the web application's left navigation pattern: a fixed

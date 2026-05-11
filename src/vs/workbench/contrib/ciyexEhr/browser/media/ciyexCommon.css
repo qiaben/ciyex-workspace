@@ -1,0 +1,133 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* ============================================================================
+ * Ciyex EHR — Friendly scroll + Pagination styles
+ * Applied across every Ciyex custom editor pane via the `.ciyex-editor-root`
+ * class added on the editor's root element. Hides the native vertical
+ * scrollbar everywhere in the pane, keeps a thin hover scrollbar for
+ * horizontal overflow (tables), and enables native smooth scrolling.
+ * ============================================================================ */
+
+/* Hide native scrollbars on every scrollable descendant of a Ciyex editor pane.
+ * Scroll functionality (wheel, touch, keyboard) still works. */
+.ciyex-editor-root,
+.ciyex-editor-root * {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	scroll-behavior: smooth;
+}
+
+.ciyex-editor-root::-webkit-scrollbar,
+.ciyex-editor-root *::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+	display: none;
+	background: transparent;
+}
+
+/* Opt-in: keep a slim hover scrollbar for horizontal overflow (e.g. wide tables).
+ * Add the `.ciyex-thin-h-scroll` class on the overflow-x container. */
+.ciyex-editor-root .ciyex-thin-h-scroll {
+	scrollbar-width: thin;
+	scrollbar-color: rgba(127, 127, 127, 0.35) transparent;
+}
+
+.ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar {
+	height: 6px;
+	width: 6px;
+	display: block;
+}
+
+.ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-thumb {
+	background: rgba(127, 127, 127, 0.25);
+	border-radius: 3px;
+}
+
+.ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-thumb:hover {
+	background: rgba(127, 127, 127, 0.55);
+}
+
+/* ============================================================================
+ * Pagination control
+ * ============================================================================ */
+
+.ciyex-pagination {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px;
+	border-top: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.25));
+	background: var(--vscode-editorWidget-background, transparent);
+	font-size: 12px;
+	color: var(--vscode-foreground);
+	flex-wrap: wrap;
+	user-select: none;
+}
+
+.ciyex-pagination .ciyex-pagination-info {
+	color: var(--vscode-descriptionForeground);
+	margin-right: auto;
+}
+
+.ciyex-pagination .ciyex-pagination-size {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.ciyex-pagination .ciyex-pagination-size select {
+	background: var(--vscode-dropdown-background, var(--vscode-input-background));
+	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, rgba(127, 127, 127, 0.4)));
+	border-radius: 4px;
+	padding: 2px 6px;
+	font-size: 12px;
+	outline: none;
+	cursor: pointer;
+}
+
+.ciyex-pagination .ciyex-pagination-pages {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.ciyex-pagination button.ciyex-pagination-btn {
+	background: var(--vscode-button-secondaryBackground, transparent);
+	color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+	border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+	border-radius: 4px;
+	padding: 3px 9px;
+	min-width: 28px;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background 0.12s ease, color 0.12s ease;
+}
+
+.ciyex-pagination button.ciyex-pagination-btn:hover:not(:disabled) {
+	background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.15));
+}
+
+.ciyex-pagination button.ciyex-pagination-btn.is-active {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #ffffff);
+	border-color: var(--vscode-button-background, #0e639c);
+}
+
+.ciyex-pagination button.ciyex-pagination-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.ciyex-pagination .ciyex-pagination-ellipsis {
+	padding: 0 4px;
+	color: var(--vscode-descriptionForeground);
+}

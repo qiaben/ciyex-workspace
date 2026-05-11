@@ -142,7 +142,7 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
-		this.container = DOM.append(parent, DOM.$('.schedule-sidebar'));
+		this.container = DOM.append(parent, DOM.$('.schedule-sidebar.ciyex-editor-root'));
 		this.container.style.cssText = 'padding:0;overflow-y:auto;height:100%;font-size:12px;';
 
 		// Mirror the calendar editor's view state (day / week / month + the

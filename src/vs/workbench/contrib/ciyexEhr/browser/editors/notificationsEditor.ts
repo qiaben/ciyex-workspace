@@ -85,7 +85,7 @@ export class NotificationsEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.notifications-editor'));
+		this.root = DOM.append(parent, DOM.$('.notifications-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'max-width:1200px;margin:0 auto;padding:20px 24px;';

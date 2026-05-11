@@ -1664,7 +1664,7 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.ciyex-patient-chart'));
+		this.root = DOM.append(parent, DOM.$('.ciyex-patient-chart.ciyex-editor-root'));
 		// position:relative so absolute-positioned overlays (record dialog) anchor to this pane
 		this.root.style.cssText = 'position:relative;height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;overflow:hidden;';
 

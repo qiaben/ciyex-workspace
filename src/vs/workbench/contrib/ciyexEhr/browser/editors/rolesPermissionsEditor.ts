@@ -44,7 +44,7 @@ export class RolesPermissionsEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.roles-perms-editor'));
+		this.root = DOM.append(parent, DOM.$('.roles-perms-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'max-width:900px;margin:0 auto;padding:20px 24px;';
@@ -108,6 +108,7 @@ export class RolesPermissionsEditor extends EditorPane {
 
 		if (!role.isSystem) {
 			const delBtn = DOM.append(header, DOM.$('button'));
+			// allow-any-unicode-next-line
 			delBtn.textContent = '🗑️';
 			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;';
 			delBtn.addEventListener('click', async (e) => {

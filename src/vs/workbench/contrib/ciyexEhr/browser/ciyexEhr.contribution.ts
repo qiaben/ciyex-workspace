@@ -13,6 +13,9 @@ import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } fr
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { CiyexEhrContribution } from './ciyexEhrContribution.js';
 
+// Friendly-scroll + pagination styles applied to every Ciyex editor pane
+import './media/ciyexCommon.css';
+
 // Register EHR ViewContainers in Activity Bar (Calendar, Patients, Clinical, etc.)
 import './ciyexViewContainers.js';
 

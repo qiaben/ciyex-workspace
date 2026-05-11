@@ -50,7 +50,7 @@ export class LayoutHubEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.layout-hub-editor'));
+		this.root = DOM.append(parent, DOM.$('.layout-hub-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
 		this.sidebarEl = DOM.append(this.root, DOM.$('.lh-sidebar'));

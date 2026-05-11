@@ -275,7 +275,7 @@ export class AppointmentsEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.appointments-editor'));
+		this.root = DOM.append(parent, DOM.$('.appointments-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);';
 		// Scrollable content area — pagination is rendered as a sibling and pinned
 		// to the bottom (see _render). Keeps the toolbar/table scrollable while the

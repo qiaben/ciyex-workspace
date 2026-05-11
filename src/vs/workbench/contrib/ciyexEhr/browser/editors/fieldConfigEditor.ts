@@ -20,7 +20,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; fhirMapping?: { resource: string; path: string; type: string; [k: string]: unknown }; validation?: Record<string, unknown>; options?: Array<{ label: string; value: string }>; [k: string]: unknown }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; fhirMapping?: { resource: string; path: string; type: string;[k: string]: unknown }; validation?: Record<string, unknown>; options?: Array<{ label: string; value: string }>;[k: string]: unknown }
 interface SectionDef { key: string; title: string; columns?: number; visible?: boolean; collapsible?: boolean; fields: FieldDef[] }
 interface FieldConfig { tabKey: string; fhirResources: string[]; sections: SectionDef[] }
 
@@ -42,7 +42,7 @@ export class FieldConfigEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor'));
+		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 		const header = DOM.append(this.root, DOM.$('.h'));
 		header.style.cssText = 'padding:12px 24px;max-width:1000px;width:100%;margin:0 auto;';

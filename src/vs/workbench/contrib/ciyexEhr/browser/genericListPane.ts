@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import * as DOM from '../../../../base/browser/dom.js';
 
 /**
  * Configuration for a generic EHR list pane.
@@ -79,6 +80,7 @@ export class GenericListPane extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
+		container.classList.add('ciyex-editor-root');
 		container.style.cssText = 'overflow:auto;display:flex;flex-direction:column;height:100%;';
 
 		// Toolbar: search + filter + action
@@ -130,8 +132,9 @@ export class GenericListPane extends ViewPane {
 		this._showMsg('Loading...');
 		this._loadData();
 
-		const retry = setInterval(() => {
-			if (this._loaded) { clearInterval(retry); return; }
+		const win = DOM.getActiveWindow();
+		const retry = win.setInterval(() => {
+			if (this._loaded) { win.clearInterval(retry); return; }
 			this._loadData();
 		}, 2000);
 	}
@@ -222,7 +225,7 @@ export class GenericListPane extends ViewPane {
 				for (const item of items) {
 					for (const col of this._config.columns) {
 						const val = String((item as Record<string, unknown>)[col.key] || '');
-						if (val in map) { (item as Record<string, unknown>)[col.key] = map[val]; }
+						if (Object.prototype.hasOwnProperty.call(map, val)) { (item as Record<string, unknown>)[col.key] = map[val]; }
 					}
 				}
 			}

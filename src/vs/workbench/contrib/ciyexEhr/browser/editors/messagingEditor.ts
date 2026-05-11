@@ -75,7 +75,7 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.messaging-editor'));
+		this.root = DOM.append(parent, DOM.$('.messaging-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:13px;background:var(--vscode-editor-background);';
 
 		// Header

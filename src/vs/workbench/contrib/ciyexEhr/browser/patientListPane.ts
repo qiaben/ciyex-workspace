@@ -60,6 +60,7 @@ export class PatientListPane extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
+		container.classList.add('ciyex-editor-root');
 		container.style.display = 'flex';
 		container.style.flexDirection = 'column';
 		container.style.height = '100%';

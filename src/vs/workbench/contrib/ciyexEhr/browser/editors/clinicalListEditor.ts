@@ -241,7 +241,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Subclasses can override `wrapContent` to inject decoration (e.g. a
 		// sidebar). Default returns parent unchanged.
 		const contentHost = this.wrapContent(parent);
-		this.root = DOM.append(contentHost, DOM.$('.clinical-list-editor'));
+		this.root = DOM.append(contentHost, DOM.$('.clinical-list-editor.ciyex-editor-root'));
 		// Outer container hides scrollbars by default; the inner content scrolls only
 		// when it actually overflows. Matches ciyex-ehr-ui where pages don't double-scroll.
 		this.root.style.cssText = 'height:100%;overflow:auto;background:var(--vscode-editor-background);position:relative;scrollbar-width:none;-ms-overflow-style:none;';
