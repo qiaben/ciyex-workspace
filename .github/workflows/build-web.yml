@@ -54,11 +54,14 @@ jobs:
           key: node_modules-web-linux-x64-${{ hashFiles('.build/packagelockhash') }}
 
       - name: Extract node_modules cache
+        id: extract-cache
         if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        # Treat extraction failure as a soft error so the Install step can recover.
+        continue-on-error: true
         run: tar -xzf .build/node_modules_cache/cache.tgz
 
       - name: Install dependencies
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        if: steps.cache-node-modules.outputs.cache-hit != 'true' || steps.extract-cache.outcome == 'failure'
         env:
           npm_config_arch: x64
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
@@ -71,7 +74,7 @@ jobs:
           done
 
       - name: Create node_modules archive
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        if: steps.cache-node-modules.outputs.cache-hit != 'true' || steps.extract-cache.outcome == 'failure'
         run: |
           node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt
           mkdir -p .build/node_modules_cache
