@@ -81,6 +81,9 @@ export class TasksEditor extends EditorPane {
 	private totalElements = 0;
 	private formOverlay: HTMLElement | null = null;
 	private searchInputEl: HTMLInputElement | null = null;
+	// Class-level search debounce — prevents multiple parallel fetches when the
+	// toolbar re-renders (which would create a new closure and orphan the old timer).
+	private searchTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -224,10 +227,9 @@ export class TasksEditor extends EditorPane {
 		search.value = this.searchQuery;
 		search.style.cssText = inputStyle + 'flex:1;min-width:180px;';
 		this.searchInputEl = search;
-		let searchTimer: ReturnType<typeof setTimeout> | undefined;
 		search.addEventListener('input', () => {
-			if (searchTimer) { clearTimeout(searchTimer); }
-			searchTimer = setTimeout(() => { this.searchQuery = search.value; this.currentPage = 0; this._loadTasks(); }, 300);
+			if (this.searchTimer) { clearTimeout(this.searchTimer); }
+			this.searchTimer = setTimeout(() => { this.searchQuery = search.value; this.currentPage = 0; this._loadTasks(); }, 300);
 		});
 
 		// Priority filter
@@ -646,6 +648,21 @@ export class TasksEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Title is required' });
 				return;
 			}
+			// Validate text fields reject special characters
+			const textValidation: Array<{ key: string; label: string }> = [
+				{ key: 'title', label: 'Title' },
+				{ key: 'assignedTo', label: 'Assigned To' },
+				{ key: 'assignedBy', label: 'Assigned By' },
+				{ key: 'patientName', label: 'Patient Name' },
+			];
+			const textPattern = /^[A-Za-z0-9 ,.'\-()@/]{1,256}$/;
+			for (const { key, label } of textValidation) {
+				const v = (fields.get(key) as HTMLInputElement)?.value?.trim() || '';
+				if (v && !textPattern.test(v)) {
+					this.notificationService.notify({ severity: Severity.Warning, message: `${label} contains invalid characters. Use only letters, numbers, spaces, and common punctuation.` });
+					return;
+				}
+			}
 
 			const payload: Record<string, unknown> = {};
 			for (const [key, el] of fields) {
@@ -686,5 +703,10 @@ export class TasksEditor extends EditorPane {
 	override layout(dimension: DOM.Dimension): void {
 		this.root.style.height = `${dimension.height}px`;
 		this.root.style.width = `${dimension.width}px`;
+	}
+
+	override dispose(): void {
+		if (this.searchTimer) { clearTimeout(this.searchTimer); }
+		super.dispose();
 	}
 }

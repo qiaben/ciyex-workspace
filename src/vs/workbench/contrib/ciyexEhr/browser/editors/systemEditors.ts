@@ -14,6 +14,126 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
+// PORTAL MANAGEMENT FULL-PAGE EDITORS
+// allow-any-unicode-next-line
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Document Review Editor — full-page view of portal document reviews (mirrors web app).
+ */
+export class DocumentReviewEditor extends ClinicalListEditorBase {
+	static readonly ID = 'workbench.editor.ciyexDocumentReview';
+	protected readonly config: ClinicalEditorConfig = {
+		title: 'Document Review',
+		apiPath: '/api/portal/document-reviews',
+		searchPlaceholder: 'Search by patient, document type...',
+		clientSideFilter: ['patientName', 'fileName', 'category', 'status', 'id'],
+		editable: false,
+		columns: [
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'fileName', label: 'Document' },
+			{ key: 'category', label: 'Category', width: '120px' },
+			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'createdAt', label: 'Submitted', width: '110px' },
+		],
+		statusTabs: [
+			{ label: 'Pending', value: 'pending' },
+			{ label: 'Accepted', value: 'accepted' },
+			{ label: 'Rejected', value: 'rejected' },
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'createdAt' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(value); }
+			}
+			if (key === 'category' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Accept', icon: '\u{2714}', handler: async (item, api, reload, dlg) => {
+					if (String(item.status).toLowerCase() !== 'pending') { await dlg.info('Only pending documents can be accepted.'); return; }
+					const r = await dlg.confirm({ message: `Accept document from ${item.patientName}?`, type: 'question' });
+					if (!r.confirmed) { return; }
+					await api.fetch(`/api/portal/document-reviews/${item.id}/accept`, { method: 'PUT' });
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Reject', icon: '\u{2718}', handler: async (item, api, reload, dlg) => {
+					if (String(item.status).toLowerCase() !== 'pending') { await dlg.info('Only pending documents can be rejected.'); return; }
+					const res = await dlg.input({ type: 'question', message: 'Rejection reason', inputs: [{ placeholder: 'Reason for rejection...' }] });
+					if (!res.confirmed) { return; }
+					const reason = res.values?.[0]?.trim() || '';
+					await api.fetch(`/api/portal/document-reviews/${item.id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'PUT' });
+					reload();
+				}
+			},
+		],
+	};
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(DocumentReviewEditor.ID, group, t, th, s, a, d); }
+}
+
+/**
+ * Form Submission Editor — full-page view of portal form submissions (mirrors web app).
+ */
+export class FormSubmissionEditor extends ClinicalListEditorBase {
+	static readonly ID = 'workbench.editor.ciyexFormSubmission';
+	protected readonly config: ClinicalEditorConfig = {
+		title: 'Form Submissions',
+		apiPath: '/api/portal/form-submissions',
+		searchPlaceholder: 'Search by patient, form title...',
+		clientSideFilter: ['patientName', 'formTitle', 'formKey', 'status', 'id'],
+		editable: false,
+		columns: [
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'formTitle', label: 'Form' },
+			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'submittedDate', label: 'Submitted', width: '110px' },
+		],
+		statusTabs: [
+			{ label: 'Pending', value: 'pending' },
+			{ label: 'Accepted', value: 'accepted' },
+			{ label: 'Rejected', value: 'rejected' },
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'submittedDate' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(value); }
+			}
+			return String(value ?? '');
+		},
+		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Accept', icon: '\u{2714}', handler: async (item, api, reload, dlg) => {
+					if (String(item.status).toLowerCase() !== 'pending') { await dlg.info('Only pending submissions can be accepted.'); return; }
+					const r = await dlg.confirm({ message: `Accept form submission from ${item.patientName}?`, type: 'question' });
+					if (!r.confirmed) { return; }
+					await api.fetch(`/api/portal/form-submissions/${item.id}/accept`, { method: 'PUT' });
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Reject', icon: '\u{2718}', handler: async (item, api, reload, dlg) => {
+					if (String(item.status).toLowerCase() !== 'pending') { await dlg.info('Only pending submissions can be rejected.'); return; }
+					const res = await dlg.input({ type: 'question', message: 'Rejection reason', inputs: [{ placeholder: 'Reason for rejection...' }] });
+					if (!res.confirmed) { return; }
+					const reason = res.values?.[0]?.trim() || '';
+					await api.fetch(`/api/portal/form-submissions/${item.id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'PUT' });
+					reload();
+				}
+			},
+		],
+	};
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(FormSubmissionEditor.ID, group, t, th, s, a, d); }
+}
+
+// allow-any-unicode-next-line
+// ─────────────────────────────────────────────────────────────────────────────
 // SYSTEM EDITORS
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────

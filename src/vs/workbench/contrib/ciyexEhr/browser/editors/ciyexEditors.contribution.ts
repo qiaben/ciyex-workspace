@@ -28,6 +28,8 @@ import {
 	PracticeSettingsEditorInput, LayoutSettingsEditorInput,
 	// Hub editors (mirror EHR UI Settings + Layout Settings pages)
 	SettingsHubEditorInput, LayoutHubEditorInput,
+	// Portal Management full-page editors
+	DocumentReviewEditorInput, FormSubmissionEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -57,6 +59,7 @@ import {
 } from './clinicalEditors.js';
 import {
 	ConsentsEditor, FaxEditor, DocScanningEditor, AuditLogEditor,
+	DocumentReviewEditor, FormSubmissionEditor,
 } from './systemEditors.js';
 import { NotificationsEditor } from './notificationsEditor.js';
 import { KioskEditor } from './kioskEditor.js';
@@ -118,6 +121,10 @@ reg.registerEditorPane(EditorPaneDescriptor.create(FaxEditor, FaxEditor.ID, loca
 reg.registerEditorPane(EditorPaneDescriptor.create(DocScanningEditor, DocScanningEditor.ID, localize('docScanning', "Document Scanning")), [new SyncDescriptor(DocScanningEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(KioskEditor, KioskEditor.ID, localize('kiosk', "Check-in Kiosk")), [new SyncDescriptor(KioskEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(AuditLogEditor, AuditLogEditor.ID, localize('auditLog', "Audit Log")), [new SyncDescriptor(AuditLogEditorInput)]);
+
+// Portal Management full-page editors
+reg.registerEditorPane(EditorPaneDescriptor.create(DocumentReviewEditor, DocumentReviewEditor.ID, localize('docReview', "Document Review")), [new SyncDescriptor(DocumentReviewEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(FormSubmissionEditor, FormSubmissionEditor.ID, localize('formSubmission', "Form Submissions")), [new SyncDescriptor(FormSubmissionEditorInput)]);
 
 // Developer Portal
 reg.registerEditorPane(EditorPaneDescriptor.create(DeveloperPortalEditor, DeveloperPortalEditor.ID, localize('developerPortal', "Developer Portal")), [new SyncDescriptor(DeveloperPortalEditorInput)]);

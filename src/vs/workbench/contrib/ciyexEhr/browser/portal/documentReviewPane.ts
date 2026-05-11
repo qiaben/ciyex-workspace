@@ -14,6 +14,8 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface DocumentReview {
@@ -45,6 +47,7 @@ export class DocumentReviewPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -54,12 +57,24 @@ export class DocumentReviewPane extends ViewPane {
 		this.container = DOM.append(parent, DOM.$('.doc-review-pane'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
 
+		// "Open full page" button at the top so users can navigate to the full editor
+		const header = DOM.append(this.container, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const lbl = DOM.append(header, DOM.$('span'));
+		lbl.textContent = 'Pending';
+		lbl.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.4px;';
+		const openBtn = DOM.append(header, DOM.$('button'));
+		openBtn.textContent = 'View All';
+		openBtn.title = 'Open Document Review full page';
+		openBtn.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;';
+		openBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.openDocumentReview'));
+
 		this.listEl = DOM.append(this.container, DOM.$('div'));
 		this.listEl.style.cssText = 'flex:1;overflow-y:auto;';
 		this.listEl.textContent = 'Loading...';
 
 		this._load();
-		const retry = setInterval(() => { if (this.loaded) { clearInterval(retry); return; } this._load(); }, 3000);
+		const retry = mainWindow.setInterval(() => { if (this.loaded) { mainWindow.clearInterval(retry); return; } this._load(); }, 3000);
 	}
 
 	private async _load(): Promise<void> {
@@ -92,7 +107,8 @@ export class DocumentReviewPane extends ViewPane {
 			top.style.cssText = 'display:flex;align-items:center;gap:6px;';
 
 			const icon = DOM.append(top, DOM.$('span'));
-			icon.textContent = '📄';
+			// allow-any-unicode-next-line
+			icon.textContent = '\u{1F4C4}';
 
 			const name = DOM.append(top, DOM.$('span'));
 			name.textContent = item.patientName;
@@ -119,6 +135,7 @@ export class DocumentReviewPane extends ViewPane {
 			});
 
 			const rejectBtn = DOM.append(actions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			rejectBtn.textContent = '✗ Reject';
 			rejectBtn.style.cssText = 'padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;';
 			rejectBtn.addEventListener('click', async () => {

@@ -477,6 +477,23 @@ export class AuditLogEditorInput extends BaseClinicalEditorInput {
 }
 
 // allow-any-unicode-next-line
+// ─── Portal Management EditorInputs (full-page) ───
+
+export class DocumentReviewEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexDocumentReview';
+	readonly clinicalId = DocumentReviewEditorInput.ID;
+	readonly clinicalLabel = 'Document Review';
+	readonly clinicalIcon = 'file';
+}
+
+export class FormSubmissionEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexFormSubmission';
+	readonly clinicalId = FormSubmissionEditorInput.ID;
+	readonly clinicalLabel = 'Form Submissions';
+	readonly clinicalIcon = 'checklist';
+}
+
+// allow-any-unicode-next-line
 // ─── Developer Portal EditorInput ───
 
 export class DeveloperPortalEditorInput extends EditorInput {

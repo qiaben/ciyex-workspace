@@ -524,14 +524,28 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 			for (const c of cfg.columns) {
 				const cell = DOM.append(r, DOM.$('span'));
-				const v = String(item[c.key] ?? '');
+				const rawVal = item[c.key];
+				// Normalize raw booleans to human-readable text before rendering
+				let displayVal: string;
 				if (cfg.cellRenderer) {
-					cell.textContent = cfg.cellRenderer(c.key, item[c.key], item);
+					displayVal = cfg.cellRenderer(c.key, rawVal, item);
+				} else if (typeof rawVal === 'boolean') {
+					// isActive → Active/Inactive; other booleans → Yes/No
+					const lk = c.key.toLowerCase();
+					if (lk === 'isactive' || lk === 'active') {
+						displayVal = rawVal ? 'Active' : 'Inactive';
+					} else if (lk === 'enabled' || lk === 'available' || lk === 'published') {
+						displayVal = rawVal ? 'Enabled' : 'Disabled';
+					} else {
+						displayVal = rawVal ? 'Yes' : 'No';
+					}
 				} else {
-					cell.textContent = v;
+					displayVal = String(rawVal ?? '');
 				}
+				cell.textContent = displayVal;
 				cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 				const lowerKey = c.key.toLowerCase();
+				const v = displayVal;
 				if (lowerKey === 'status' || lowerKey === 'priority' || lowerKey === 'severity' || lowerKey === 'urgency') {
 					const clr = STATUS_COLORS[v.toLowerCase().replace(/\s+/g, '_')] || '#6b7280';
 					cell.style.cssText += `color:${clr};font-weight:500;text-transform:capitalize;`;

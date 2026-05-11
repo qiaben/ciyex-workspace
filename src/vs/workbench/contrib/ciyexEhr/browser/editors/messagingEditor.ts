@@ -16,6 +16,7 @@ import { MessagingEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface Message {
 	id: string;
@@ -282,20 +283,46 @@ export class MessagingEditor extends EditorPane {
 			const attRow = DOM.append(col, DOM.$('div'));
 			attRow.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;';
 			for (const att of msg.attachments) {
+				const isImage = att.fileType?.startsWith('image') || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(att.fileName);
 				const card = DOM.append(attRow, DOM.$('div'));
-				card.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;cursor:pointer;max-width:250px;';
-				card.addEventListener('mouseenter', () => { card.style.background = 'var(--vscode-list-hoverBackground)'; });
-				card.addEventListener('mouseleave', () => { card.style.background = ''; });
-				const icon = DOM.append(card, DOM.$('span'));
+				card.style.cssText = 'display:flex;flex-direction:column;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;cursor:pointer;overflow:hidden;max-width:260px;';
+				card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--vscode-focusBorder)'; });
+				card.addEventListener('mouseleave', () => { card.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+
+				if (isImage && att.fileUrl) {
+					// Inline thumbnail preview for images
+					const img = DOM.append(card, DOM.$('img')) as HTMLImageElement;
+					img.src = att.fileUrl;
+					img.alt = att.fileName;
+					img.style.cssText = 'width:100%;max-height:160px;object-fit:cover;display:block;';
+					img.addEventListener('error', () => { img.style.display = 'none'; });
+					// Click → open full-size in a lightbox overlay
+					card.addEventListener('click', () => this._showImagePreview(att.fileUrl, att.fileName));
+				}
+
+				const meta = DOM.append(card, DOM.$('div'));
+				meta.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 8px;';
+				const icon = DOM.append(meta, DOM.$('span'));
 				// allow-any-unicode-next-line
-				icon.textContent = att.fileType?.startsWith('image') ? '🖼️' : '📎';
-				const info = DOM.append(card, DOM.$('div'));
+				icon.textContent = isImage ? '\u{1F5BC}️' : '\u{1F4CE}';
+				const info = DOM.append(meta, DOM.$('div'));
 				const fname = DOM.append(info, DOM.$('div'));
 				fname.textContent = att.fileName;
-				fname.style.cssText = 'font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;';
+				fname.style.cssText = 'font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;';
 				const fsize = DOM.append(info, DOM.$('div'));
 				fsize.textContent = this._formatSize(att.fileSize);
 				fsize.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+
+				if (!isImage && att.fileUrl) {
+					card.addEventListener('click', () => {
+						// Open non-image files in a new tab / external
+						const a = document.createElement('a');
+						a.href = att.fileUrl;
+						a.target = '_blank';
+						a.rel = 'noopener noreferrer';
+						a.click();
+					});
+				}
 			}
 		}
 
@@ -598,6 +625,36 @@ export class MessagingEditor extends EditorPane {
 		if (lastIndex < text.length) {
 			container.appendChild(document.createTextNode(text.substring(lastIndex)));
 		}
+	}
+
+	private _showImagePreview(url: string, name: string): void {
+		// Full-screen lightbox overlay for image attachments
+		const overlay = document.createElement('div');
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out;';
+		overlay.addEventListener('click', () => overlay.remove());
+
+		const header = document.createElement('div');
+		header.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.5);';
+		const title = document.createElement('span');
+		title.textContent = name;
+		title.style.cssText = 'font-size:13px;color:#fff;font-weight:500;';
+		const closeBtn = document.createElement('button');
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+		header.appendChild(title);
+		header.appendChild(closeBtn);
+		overlay.appendChild(header);
+
+		const img = document.createElement('img');
+		img.src = url;
+		img.alt = name;
+		img.style.cssText = 'max-width:90vw;max-height:85vh;object-fit:contain;border-radius:4px;box-shadow:0 4px 24px rgba(0,0,0,0.5);';
+		img.addEventListener('click', (e) => e.stopPropagation());
+		overlay.appendChild(img);
+
+		mainWindow.document.body.appendChild(overlay);
 	}
 
 	private _formatSize(bytes: number): string {

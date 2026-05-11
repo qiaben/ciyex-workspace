@@ -21,7 +21,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPrescriptions';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Prescriptions', apiPath: '/api/prescriptions', statsPath: '/api/prescriptions/stats',
-		searchPlaceholder: 'Search by patient, medication, pharmacy...',
+		searchPlaceholder: 'Search by patient, medication, prescriber, pharmacy...',
 		clientSideFilter: ['patientName', 'medicationName', 'sig', 'pharmacyName', 'prescriberName', 'status', 'priority', 'id'],
 		editable: true,
 		refetchOnEdit: true,
@@ -41,18 +41,8 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
-		additionalFilters: [
-			{
-				key: 'prescriberName', placeholder: 'All Prescribers',
-				options: [
-					{ label: 'Dr. Brian Wilson', value: 'Brian Wilson' },
-					{ label: 'Dr. Robert Kumar', value: 'Robert Kumar' },
-					{ label: 'Dr. Emily Taylor', value: 'Emily Taylor' },
-					{ label: 'Dr. Jessica Patel', value: 'Jessica Patel' },
-					{ label: 'Dr. Sarah Williams', value: 'Sarah Williams' },
-				],
-			},
-		],
+		// No additionalFilters — prescriber is in clientSideFilter so the main search bar
+		// (placeholder includes "prescriber") already filters by prescriber name.
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
@@ -79,7 +69,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 					{ label: 'Ointment', value: 'ointment' }, { label: 'Patch', value: 'patch' },
 				]
 			},
-			{ key: 'sig', label: 'SIG (Directions)', type: 'text', required: true, placeholder: 'Take 1 tablet by mouth twice daily' },
+			{ key: 'sig', label: 'SIG (Directions)', type: 'text', required: true, placeholder: 'Take 1 tablet by mouth twice daily', validationPattern: '^[A-Za-z0-9 ,.\\-/()+:;\'&]{2,256}$', validationMessage: 'SIG must be 2-256 characters using only letters, numbers, and standard punctuation' },
 			{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30' },
 			{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30' },
 			{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0 },
@@ -266,8 +256,29 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 		],
 		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Update Status', icon: '\u{1F504}', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Update lab order status', inputs: [{ placeholder: 'New status: active, pending, completed, cancelled' }] });
+					if (!res.confirmed || !res.values?.[0]?.trim()) { return; }
+					const newStatus = res.values[0].trim().toLowerCase();
+					await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ ...item, status: newStatus }),
+					});
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Print Order', icon: '\u{1F5A8}', handler: async (item, api, _reload, dlg) => {
+					const res = await api.fetch(`/api/lab-order/${item.patientId}/${item.id}/print`, { method: 'POST' });
+					if (!res.ok) { await dlg.info('Print request sent (check printer queue).'); }
+					else { await dlg.info('Lab order sent to printer.'); }
+				}
+			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 
@@ -340,8 +351,33 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
 		],
 		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Mark Final', icon: '\u{2705}', handler: async (item, api, reload, dlg) => {
+					if (String(item.status).toLowerCase() === 'final') { await dlg.info('Result is already Final.'); return; }
+					const r = await dlg.confirm({ message: 'Mark this result as Final?', type: 'question' });
+					if (!r.confirmed) { return; }
+					await api.fetch(`/api/lab-results/${item.id}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ ...item, status: 'final' }),
+					});
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Flag Abnormal', icon: '\u{26A0}', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Abnormal flag', inputs: [{ placeholder: 'high / low / critical / abnormal' }] });
+					if (!res.confirmed || !res.values?.[0]?.trim()) { return; }
+					await api.fetch(`/api/lab-results/${item.id}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ ...item, abnormalFlag: res.values[0].trim().toLowerCase() }),
+					});
+					reload();
+				}
+			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab result?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-results/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab result?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-results/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 
@@ -396,7 +432,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine', width: '1.5fr' },
 			{ key: 'cvxCode', label: 'CVX', width: '60px' }, { key: 'doseNumber', label: 'Dose', width: '50px' },
 			{ key: 'site', label: 'Site', width: '80px' }, { key: 'route', label: 'Route', width: '70px' },
-			{ key: 'administrationDate', label: 'Date', width: '90px' }, { key: 'administeredBy', label: 'Administered By' },
+			{ key: 'administrationDate', label: 'Admin Date', width: '90px' }, { key: 'administeredBy', label: 'Administered By' },
 			{ key: 'status', label: 'Status', width: '80px' },
 		],
 		statusTabs: [{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' }, { label: 'Entered in Error', value: 'entered_in_error' }],
@@ -478,7 +514,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters and cannot start with a hyphen' },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 			// Administration Details
-			{ key: 'administrationDate', label: 'Administration Date', type: 'date', required: true },
+			{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
 			{
 				key: 'site', label: 'Site', type: 'select', options: [
 					{ label: 'Select site...', value: '' },
@@ -533,16 +569,47 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexReferrals';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Referrals', apiPath: '/api/referrals', statsPath: '/api/referrals/stats',
-		searchPlaceholder: 'Search by patient, specialist, facility...',
-		clientSideFilter: ['patientName', 'specialistName', 'specialty', 'facilityName', 'reason', 'urgency', 'status', 'id'],
+		searchPlaceholder: 'Search by patient, specialist, reason...',
+		clientSideFilter: ['patientName', 'specialistName', 'specialty', 'facilityName', 'reason', 'urgency', 'referringProvider', 'status', 'id'],
 		editable: true,
+		// Map each stats-card key to the status filter value it should activate
+		statsFilterMap: {
+			draft: 'draft', sent: 'sent', acknowledged: 'acknowledged',
+			scheduled: 'scheduled', completed: 'completed', cancelled: 'cancelled', denied: 'denied',
+		},
+		// Columns match the web app: Urgency | Patient | Specialist / Specialty | Facility | Reason | Date | Status
 		columns: [
-			{ key: 'patientName', label: 'Patient' }, { key: 'specialistName', label: 'Specialist' },
-			{ key: 'specialty', label: 'Specialty', width: '100px' }, { key: 'facilityName', label: 'Facility' },
+			{ key: 'urgency', label: 'Urgency', width: '80px' },
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'specialistName', label: 'Specialist / Specialty' },
+			{ key: 'facilityName', label: 'Facility' },
+			{ key: 'facilityPhone', label: 'Contact', width: '110px' },
 			{ key: 'reason', label: 'Reason' },
-			{ key: 'urgency', label: 'Urgency', width: '80px' }, { key: 'status', label: 'Status', width: '90px' },
-			{ key: 'referralDate', label: 'Date', width: '90px' },
+			{ key: 'referralDate', label: 'Referral Date', width: '100px' },
+			{ key: 'status', label: 'Status', width: '110px' },
 		],
+		cellRenderer: (key, value, item) => {
+			if (key === 'specialistName') {
+				const name = String(item.specialistName || '--');
+				const specialty = String(item.specialty || '');
+				return specialty ? `${name} · ${specialty}` : name;
+			}
+			if (key === 'urgency') {
+				const u = String(value || 'routine').toLowerCase();
+				return u === 'stat' ? 'STAT' : u.charAt(0).toUpperCase() + u.slice(1);
+			}
+			if (key === 'referralDate' && typeof value === 'string') {
+				try { return new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { return String(value); }
+			}
+			if (key === 'facilityPhone' && value) {
+				return String(value);
+			}
+			if (key === 'reason') {
+				const r = String(value || '--');
+				return r.length > 50 ? r.slice(0, 47) + '…' : r;
+			}
+			return String(value ?? '');
+		},
 		statusTabs: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Sent', value: 'sent' },
 			{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
@@ -563,8 +630,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{ key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true },
-			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI' },
+			{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
+			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
 			{
 				key: 'specialty', label: 'Specialty', type: 'select', options: [
 					{ label: 'Allergy/Immunology', value: 'Allergy/Immunology' },
@@ -592,10 +660,10 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'Other' },
 				]
 			},
-			{ key: 'facilityName', label: 'Facility Name', type: 'text' },
+			{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
 			{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: 'Street address' },
-			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text' },
-			{ key: 'facilityFax', label: 'Facility Fax', type: 'text' },
+			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
+			{ key: 'facilityFax', label: 'Facility Fax', type: 'text', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
 			{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true },
 			{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea' },
 			{
@@ -614,57 +682,68 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Send', icon: '📤', handler: async (item, api, reload, dlg) => {
+				label: 'Send', icon: '\u{1F4E4}', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
-					if (current === 'sent' || current === 'acknowledged' || current === 'completed') {
-						await dlg.info(`Referral is already ${current}.`);
-						return;
-					}
+					if (['sent', 'acknowledged', 'scheduled', 'completed'].includes(current)) { await dlg.info(`Referral is already ${current}.`); return; }
 					const r = await dlg.confirm({ message: 'Send this referral?', type: 'question' });
 					if (!r.confirmed) { return; }
-					// Try the dedicated send endpoint first, fall back to the status transition.
 					let res = await api.fetch(`/api/referrals/${item.id}/send`, { method: 'POST' });
-					if (!res.ok) {
-						res = await api.fetch(`/api/referrals/${item.id}/status`, {
-							method: 'PUT', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ status: 'sent' }),
-						});
-					}
-					if (!res.ok) {
-						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
-						await dlg.error(String(err?.['message'] || 'Failed to send referral'));
-						return;
-					}
+					if (!res.ok) { res = await api.fetch(`/api/referrals/${item.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'sent' }) }); }
+					if (!res.ok) { const err = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || 'Failed to send referral')); return; }
 					reload();
 				}
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Cancel', icon: '🚫', handler: async (item, api, reload, dlg) => {
+				label: 'Acknowledge', icon: '✅', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
-					if (current === 'cancelled' || current === 'completed') {
-						await dlg.info(`Referral is already ${current}.`);
-						return;
-					}
+					if (current !== 'sent') { await dlg.info(`Can only acknowledge a Sent referral (current: ${current}).`); return; }
+					const r = await dlg.confirm({ message: 'Acknowledge this referral?', type: 'question' });
+					if (!r.confirmed) { return; }
+					const res = await api.fetch(`/api/referrals/${item.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'acknowledged' }) });
+					if (!res.ok) { const err = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || 'Failed to acknowledge referral')); return; }
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Schedule', icon: '\u{1F4C5}', handler: async (item, api, reload, dlg) => {
+					const current = String(item.status || '').toLowerCase();
+					if (current !== 'acknowledged') { await dlg.info(`Can only schedule an Acknowledged referral (current: ${current}).`); return; }
+					const r = await dlg.confirm({ message: 'Mark this referral as scheduled?', type: 'question' });
+					if (!r.confirmed) { return; }
+					const res = await api.fetch(`/api/referrals/${item.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'scheduled' }) });
+					if (!res.ok) { const err = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || 'Failed to schedule referral')); return; }
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Complete', icon: '\u{1F3C1}', handler: async (item, api, reload, dlg) => {
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'completed' || current === 'cancelled') { await dlg.info(`Referral is already ${current}.`); return; }
+					const r = await dlg.confirm({ message: 'Mark this referral as completed?', type: 'question' });
+					if (!r.confirmed) { return; }
+					const res = await api.fetch(`/api/referrals/${item.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
+					if (!res.ok) { const err = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || 'Failed to complete referral')); return; }
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Cancel', icon: '\u{1F6AB}', handler: async (item, api, reload, dlg) => {
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'cancelled' || current === 'completed') { await dlg.info(`Referral is already ${current}.`); return; }
 					const r = await dlg.confirm({ message: `Cancel referral for ${item.patientName || 'patient'}?`, type: 'warning', primaryButton: 'Cancel Referral' });
 					if (!r.confirmed) { return; }
 					let res = await api.fetch(`/api/referrals/${item.id}/cancel`, { method: 'POST' });
-					if (!res.ok) {
-						res = await api.fetch(`/api/referrals/${item.id}/status`, {
-							method: 'PUT', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ status: 'cancelled' }),
-						});
-					}
-					if (!res.ok) {
-						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
-						await dlg.error(String(err?.['message'] || 'Failed to cancel referral'));
-						return;
-					}
+					if (!res.ok) { res = await api.fetch(`/api/referrals/${item.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'cancelled' }) }); }
+					if (!res.ok) { const err = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || 'Failed to cancel referral')); return; }
 					reload();
 				}
 			},
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this referral?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/referrals/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this referral?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/referrals/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ReferralsEditor.ID, group, t, th, s, a, d); }

@@ -17,6 +17,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { MessagingEditorInput } from '../editors/ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface Channel {
 	id: string;
@@ -81,13 +82,13 @@ export class ChannelListPane extends ViewPane {
 		this.listEl.textContent = 'Loading...';
 
 		this._loadChannels();
-		const retry = setInterval(() => {
-			if (this.loaded) { clearInterval(retry); return; }
+		const retry = mainWindow.setInterval(() => {
+			if (this.loaded) { mainWindow.clearInterval(retry); return; }
 			this._loadChannels();
 		}, 3000);
 
 		// Poll unread every 30s
-		setInterval(() => { if (this.loaded) { this._loadChannels(); } }, 30000);
+		mainWindow.setInterval(() => { if (this.loaded) { this._loadChannels(); } }, 30000);
 	}
 
 	private async _loadChannels(): Promise<void> {
@@ -155,7 +156,8 @@ export class ChannelListPane extends ViewPane {
 			} else {
 				// # icon for channels
 				const icon = DOM.append(row, DOM.$('span'));
-				icon.textContent = ch.type === 'private' ? '🔒' : '#';
+				// allow-any-unicode-next-line
+				icon.textContent = ch.type === 'private' ? '\u{1F512}' : '#';
 				icon.style.cssText = 'width:22px;text-align:center;flex-shrink:0;font-weight:600;color:var(--vscode-descriptionForeground);';
 			}
 
@@ -201,67 +203,124 @@ export class ChannelListPane extends ViewPane {
 		}
 	}
 
-	private async _createChannel(): Promise<void> {
-		// Quick pick: Channel or DM
-		const choice = await new Promise<string | undefined>(resolve => {
-			const picker = DOM.append(this.container, DOM.$('div'));
-			picker.style.cssText = 'position:absolute;top:60px;left:8px;right:8px;background:var(--vscode-quickInput-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:4px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+	private _formEl: HTMLElement | null = null;
 
-			for (const [label, value] of [['# New Channel', 'channel'], ['👤 New Direct Message', 'dm']]) {
-				const item = DOM.append(picker, DOM.$('div'));
-				item.textContent = label;
-				item.style.cssText = 'padding:6px 10px;cursor:pointer;border-radius:4px;font-size:12px;';
-				item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-				item.addEventListener('mouseleave', () => { item.style.background = ''; });
-				item.addEventListener('click', () => { picker.remove(); resolve(value); });
+	private _createChannel(): void {
+		// Inline form overlay so we don't rely on browser prompt() which can be blocked in Electron
+		if (this._formEl) { this._formEl.remove(); this._formEl = null; return; }
+
+		const form = DOM.append(this.container, DOM.$('div'));
+		this._formEl = form;
+		form.style.cssText = 'position:absolute;top:40px;left:0;right:0;background:var(--vscode-editorWidget-background,#252526);border-bottom:1px solid var(--vscode-editorWidget-border);padding:10px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+
+		const inputStyle = 'width:100%;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;margin-bottom:6px;';
+
+		// Type selector (tabs)
+		const typeRow = DOM.append(form, DOM.$('div'));
+		typeRow.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;';
+		let selectedType = 'channel';
+		// Track type buttons directly to avoid querySelectorAll
+		const typeBtns: Array<{ btn: HTMLButtonElement; type: string }> = [];
+		const refreshTypeBtns = () => {
+			for (const entry of typeBtns) {
+				const active = entry.type === selectedType;
+				entry.btn.style.background = active ? 'var(--vscode-button-background)' : 'transparent';
+				entry.btn.style.color = active ? 'var(--vscode-button-foreground)' : 'var(--vscode-foreground)';
 			}
+		};
+		const makeTypeBtn = (label: string, type: string) => {
+			const btn = DOM.append(typeRow, DOM.$('button')) as HTMLButtonElement;
+			btn.textContent = label;
+			const active = type === selectedType;
+			btn.style.cssText = `flex:1;padding:4px 8px;border-radius:3px;font-size:11px;cursor:pointer;border:1px solid var(--vscode-editorWidget-border);background:${active ? 'var(--vscode-button-background)' : 'transparent'};color:${active ? 'var(--vscode-button-foreground)' : 'var(--vscode-foreground)'};`;
+			typeBtns.push({ btn, type });
+			btn.addEventListener('click', () => {
+				selectedType = type;
+				refreshTypeBtns();
+				nameLbl.textContent = selectedType === 'dm' ? 'User Email' : 'Channel Name';
+			});
+			return btn;
+		};
+		makeTypeBtn('# Channel', 'channel');
+		makeTypeBtn('DM', 'dm');
 
-			// Click outside to dismiss
-			const dismiss = () => { picker.remove(); resolve(undefined); };
-			setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 100);
+		const nameLbl = DOM.append(form, DOM.$('label'));
+		nameLbl.textContent = 'Channel Name';
+		nameLbl.style.cssText = 'font-size:10px;font-weight:600;display:block;margin-bottom:3px;color:var(--vscode-descriptionForeground);';
+
+		const nameInput = DOM.append(form, DOM.$('input')) as HTMLInputElement;
+		nameInput.type = 'text';
+		nameInput.placeholder = 'e.g. general';
+		nameInput.style.cssText = inputStyle;
+		nameInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { form.remove(); this._formEl = null; } if (e.key === 'Enter') { createBtn.click(); } });
+
+		const errEl = DOM.append(form, DOM.$('div'));
+		errEl.style.cssText = 'font-size:10px;color:#f48771;margin-bottom:4px;display:none;';
+
+		const btnRow = DOM.append(form, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:6px;';
+
+		const cancelBtn = DOM.append(btnRow, DOM.$('button'));
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'flex:1;padding:4px;border:1px solid var(--vscode-editorWidget-border);border-radius:3px;background:transparent;color:var(--vscode-foreground);font-size:11px;cursor:pointer;';
+		cancelBtn.addEventListener('click', () => { form.remove(); this._formEl = null; });
+
+		const createBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		createBtn.textContent = 'Create';
+		createBtn.style.cssText = 'flex:1;padding:4px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;font-size:11px;cursor:pointer;font-weight:600;';
+		createBtn.addEventListener('click', async () => {
+			const value = nameInput.value.trim();
+			if (!value) { errEl.textContent = 'This field is required'; errEl.style.display = 'block'; return; }
+			errEl.style.display = 'none';
+			createBtn.disabled = true;
+			createBtn.textContent = '...';
+
+			try {
+				if (selectedType === 'channel') {
+					const res = await this.apiService.fetch('/api/channels', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ name: value, type: 'public' }),
+					});
+					if (res.ok) {
+						const data = await res.json();
+						const ch = data?.data || data;
+						form.remove(); this._formEl = null;
+						await this._loadChannels();
+						const inp = new MessagingEditorInput(ch.id, ch.name, ch.type || 'public');
+						this.editorService.openEditor(inp, { pinned: true });
+					} else {
+						errEl.textContent = 'Failed to create channel';
+						errEl.style.display = 'block';
+					}
+				} else {
+					const res = await this.apiService.fetch('/api/channels/dm', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ email: value }),
+					});
+					if (res.ok) {
+						const data = await res.json();
+						const ch = data?.data || data;
+						form.remove(); this._formEl = null;
+						await this._loadChannels();
+						const inp = new MessagingEditorInput(ch.id, ch.name || value, 'dm');
+						this.editorService.openEditor(inp, { pinned: true });
+					} else {
+						errEl.textContent = 'Failed to start DM — check user email';
+						errEl.style.display = 'block';
+					}
+				}
+			} catch {
+				errEl.textContent = 'Network error';
+				errEl.style.display = 'block';
+			} finally {
+				createBtn.disabled = false;
+				createBtn.textContent = 'Create';
+			}
 		});
 
-		if (!choice) { return; }
-
-		if (choice === 'channel') {
-			// Prompt for channel name
-			const nameInput = prompt('Channel name:');
-			if (!nameInput) { return; }
-
-			try {
-				const res = await this.apiService.fetch('/api/channels', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ name: nameInput, type: 'public' }),
-				});
-				if (res.ok) {
-					const data = await res.json();
-					const ch = data?.data || data;
-					await this._loadChannels();
-					const input = new MessagingEditorInput(ch.id, ch.name, ch.type || 'public');
-					this.editorService.openEditor(input, { pinned: true });
-				}
-			} catch { /* failed */ }
-		} else {
-			// DM: prompt for email
-			const email = prompt('User email for DM:');
-			if (!email) { return; }
-
-			try {
-				const res = await this.apiService.fetch('/api/channels/dm', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ email }),
-				});
-				if (res.ok) {
-					const data = await res.json();
-					const ch = data?.data || data;
-					await this._loadChannels();
-					const input = new MessagingEditorInput(ch.id, ch.name || email, 'dm');
-					this.editorService.openEditor(input, { pinned: true });
-				}
-			} catch { /* failed */ }
-		}
+		setTimeout(() => nameInput.focus(), 50);
 	}
 
 	protected override layoutBody(height: number, width: number): void {
