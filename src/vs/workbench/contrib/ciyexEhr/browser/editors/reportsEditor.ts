@@ -288,13 +288,14 @@ function getReportDef(key: string): ReportDef {
 		case 'referral-tracking':
 			return {
 				apiPath: '/api/referrals?page=0&size=1000',
+				// Columns match ciyex-ehr-ui: Date, Patient, Referred To, Specialty, Status, Urgency
 				columns: [
-					{ key: 'patientName', label: 'Patient' },
-					{ key: 'specialistName', label: 'Specialist' },
-					{ key: 'specialty', label: 'Specialty' },
-					{ key: 'urgency', label: 'Urgency' },
-					{ key: 'status', label: 'Status' },
 					{ key: 'referralDate', label: 'Date' },
+					{ key: 'patientName', label: 'Patient' },
+					{ key: 'specialistName', label: 'Referred To' },
+					{ key: 'specialty', label: 'Specialty' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'urgency', label: 'Urgency' },
 				],
 				filters: [
 					DATE_FROM, DATE_TO, PROVIDER_FILTER, PATIENT_FILTER,
@@ -340,58 +341,92 @@ function getReportDef(key: string): ReportDef {
 		case 'immunizations':
 			return {
 				apiPath: '/api/immunizations?page=0&size=1000',
+				// Columns match ciyex-ehr-ui immunization report: Date, Patient, Vaccine, Dose, Site, Provider
 				columns: [
+					{ key: 'administrationDate', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'vaccineName', label: 'Vaccine' },
-					{ key: 'cvxCode', label: 'CVX' },
-					{ key: 'route', label: 'Route' },
-					{ key: 'status', label: 'Status' },
-					{ key: 'administrationDate', label: 'Date' },
+					{ key: 'doseNumber', label: 'Dose' },
+					{ key: 'site', label: 'Site' },
+					{ key: 'administeredBy', label: 'Provider' },
 				],
 				filters: [
 					DATE_FROM, DATE_TO,
-					{ ...PROVIDER_FILTER, label: 'Provider' },
+					{ ...PROVIDER_FILTER, label: 'Provider', dynamicKey: 'administeredBy' },
 					PATIENT_FILTER,
-					{ type: 'select', key: 'vaccine', label: 'Vaccine', searchable: true, dynamic: true },
-					{ type: 'select', key: 'site', label: 'Site', searchable: true, dynamic: true },
+					{ type: 'select', key: 'vaccine', label: 'Vaccine Type', searchable: true, dynamic: true, dynamicKey: 'vaccineName' },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'not_done', label: 'Not Done' },
+						{ value: 'entered_in_error', label: 'Entered in Error' },
+					]),
 				],
 				kpis: [
-					{ label: 'Total Records', calc: items => String(items.length), color: COLORS[0] },
-					{ label: 'Current', calc: items => String(countWhere(items, i => /current|complet/i.test(i.status || ''))), color: COLORS[1] },
-					{ label: 'Overdue', calc: items => String(countWhere(items, i => /overdue/i.test(i.status || ''))), color: COLORS[2] },
-					{ label: 'Missing', calc: items => String(countWhere(items, i => /missing|not[-_ ]?given/i.test(i.status || ''))), color: COLORS[3] },
+					{ label: 'Administered', calc: items => String(countWhere(items, i => /complet/i.test(i.status || ''))), color: COLORS[0] },
+					{ label: 'Patients Overdue', calc: items => String(countWhere(items, i => /overdue/i.test(i.status || ''))), color: COLORS[1] },
+					{
+						label: 'Up-to-Date Rate', calc: items => {
+							const done = countWhere(items, i => /complet/i.test(i.status || ''));
+							return items.length ? fmtPct(100 * done / items.length) : '0%';
+						}, color: COLORS[2]
+					},
+					{
+						label: 'This Month', calc: items => {
+							const now = new Date(); const mStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+							return String(countWhere(items, i => { const d = i.administrationDate; return !!d && new Date(d).getTime() >= mStart; }));
+						}, color: COLORS[3]
+					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'vaccineName', label: 'By Vaccine Type' },
-					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
-					{ type: 'donut', groupKey: 'site', label: 'By Site' },
-					{ type: 'pie', groupKey: 'providerName', label: 'By Provider' },
+					{ type: 'bar', groupKey: 'vaccineName', label: 'By Vaccine Type', limit: 10 },
+					{ type: 'area', groupKey: '', label: 'Monthly Administered', aggregate: 'month', dateField: 'administrationDate' },
+					{ type: 'pie', groupKey: 'site', label: 'By Site' },
+					{ type: 'donut', groupKey: 'status', label: 'By Status' },
 				],
 			};
 
 		case 'problem-list':
 			return {
 				apiPath: '/api/fhir-resource/conditions?page=0&size=1000',
+				// Columns match ciyex-ehr-ui: ICD-10 Code, Description, Patient, Category, Status, Recorded
 				columns: [
+					{ key: 'icdCode', label: 'ICD-10 Code' },
+					{ key: 'description', label: 'Description' },
 					{ key: 'patientRefDisplay', label: 'Patient' },
-					{ key: 'code', label: 'Diagnosis' },
+					{ key: 'category', label: 'Category' },
 					{ key: 'clinicalStatus', label: 'Status' },
 					{ key: 'recordedDate', label: 'Recorded' },
 				],
 				filters: [
-					DATE_FROM, DATE_TO, PROVIDER_FILTER,
-					{ type: 'select', key: 'category', label: 'Category', searchable: true, dynamic: true },
+					DATE_FROM, DATE_TO,
+					// Searchable provider filter matching reference
+					{ type: 'select', key: 'provider', label: 'Provider', searchable: true, dynamic: true, searchPlaceholder: 'Search provider name...' },
+					// Category searchable dropdown
+					{ type: 'select', key: 'category', label: 'Category', searchable: true, dynamic: true, searchPlaceholder: 'Search category...' },
+					// Clinical status filter
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'active', label: 'Active' },
+						{ value: 'recurrence', label: 'Recurrence' },
+						{ value: 'relapse', label: 'Relapse' },
+						{ value: 'inactive', label: 'Inactive' },
+						{ value: 'remission', label: 'Remission' },
+						{ value: 'resolved', label: 'Resolved' },
+					]),
 				],
 				kpis: [
 					{ label: 'Total Diagnoses', calc: items => String(items.length), color: COLORS[0] },
 					{ label: 'Unique Conditions', calc: items => String(new Set(items.map(i => i.icdCode || i.code).filter(Boolean)).size), color: COLORS[1] },
-					{ label: 'Chronic Conditions', calc: items => String(countWhere(items, i => /chronic|long[-_ ]?term/i.test(i.category || i.clinicalStatus || ''))), color: COLORS[2] },
+					{ label: 'Chronic Conditions', calc: items => String(countWhere(items, i => /chronic|long[-_ ]?term|persistent/i.test(i.category || i.clinicalStatus || ''))), color: COLORS[2] },
 					{ label: 'Patients w/ Dx', calc: items => String(new Set(items.map(i => i.patientId || i.patientRefDisplay).filter(Boolean)).size), color: COLORS[3] },
 				],
 				charts: [
-					{ type: 'horizontalBar', groupKey: 'code', label: 'Top 15 Diagnoses', limit: 15 },
-					{ type: 'pie', groupKey: 'category', label: 'By ICD-10 Chapter' },
+					{ type: 'horizontalBar', groupKey: 'icdCode', label: 'Top 15 Diagnoses', limit: 15, topN: true },
+					{ type: 'pie', groupKey: 'category', label: 'By Category' },
+					{ type: 'donut', groupKey: 'clinicalStatus', label: 'By Status' },
 				],
+				pageSize: 25,
 			};
 
 		// allow-any-unicode-next-line
@@ -399,15 +434,16 @@ function getReportDef(key: string): ReportDef {
 		case 'revenue-overview':
 			return {
 				apiPath: '/api/payments/transactions?page=0&size=1000',
+				// Columns match ciyex-ehr-ui: Date, Patient, Provider, Payer, Charges, Payments, Adjustments, Balance
 				columns: [
-					{ key: 'serviceDate', label: 'Date' },
+					{ key: 'collectedAt', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'providerName', label: 'Provider' },
 					{ key: 'payerDisplay', label: 'Payer' },
-					{ key: 'totalAmount', label: 'Charges' },
+					{ key: 'amount', label: 'Charges' },
 					{ key: 'paidAmount', label: 'Payments' },
-					{ key: 'adjustments', label: 'Adjustments' },
-					{ key: 'balance', label: 'Balance' },
+					{ key: 'adjustmentAmount', label: 'Adjustments' },
+					{ key: 'balanceAmount', label: 'Balance' },
 				],
 				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER, PAYER_FILTER, PATIENT_FILTER],
 				kpis: [
@@ -470,22 +506,34 @@ function getReportDef(key: string): ReportDef {
 				charts: [
 					{ type: 'bar', groupKey: 'agingBucket', label: 'A/R Aging Buckets' },
 					{ type: 'horizontalBar', groupKey: 'payerDisplay', label: 'A/R by Payer', limit: 10 },
+					{ type: 'line', groupKey: '', label: 'Days in A/R Trend', aggregate: 'month', dateField: 'serviceDate' },
 				],
 			};
 
 		case 'denial-management':
 			return {
-				apiPath: '/api/claims?page=0&size=1000&status=denied',
+				// Try dedicated denial endpoint first; fall back to general claims with denied status
+				apiPath: '/api/all-claims?page=0&size=1000&status=SUBMITTED',
+				// Columns match ciyex-ehr-ui: Denial Reason, Count, Amount, Appealed, Recovered
 				columns: [
 					{ key: 'denialReason', label: 'Denial Reason' },
-					{ key: 'count', label: 'Count' },
+					{ key: 'patientName', label: 'Patient' },
+					{ key: 'payerName', label: 'Payer' },
 					{ key: 'totalAmount', label: 'Amount' },
-					{ key: 'appealed', label: 'Appealed' },
-					{ key: 'recovered', label: 'Recovered' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'serviceDate', label: 'Date' },
 				],
 				filters: [
-					DATE_FROM, DATE_TO, PAYER_FILTER,
+					DATE_FROM, DATE_TO,
+					{ ...PAYER_FILTER, dynamicKey: 'payerName' },
 					{ type: 'select', key: 'denialReason', label: 'Denial Reason', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'DRAFT', label: 'Draft' },
+						{ value: 'SUBMITTED', label: 'Submitted' },
+						{ value: 'CLOSED', label: 'Closed' },
+						{ value: 'VOID', label: 'Void' },
+					]),
 				],
 				kpis: [
 					{
@@ -556,17 +604,18 @@ function getReportDef(key: string): ReportDef {
 		case 'cpt-utilization':
 			return {
 				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				// Columns match ciyex-ehr-ui: CPT Code, Description, Volume, Total Charges, wRVU
 				columns: [
 					{ key: 'cptCode', label: 'CPT Code' },
 					{ key: 'description', label: 'Description' },
-					{ key: 'volume', label: 'Volume' },
+					{ key: 'providerDisplay', label: 'Provider' },
 					{ key: 'totalAmount', label: 'Total Charges' },
-					{ key: 'wRVU', label: 'wRVU' },
+					{ key: 'startDate', label: 'Date' },
 				],
 				filters: [
-					DATE_FROM, DATE_TO, PROVIDER_FILTER,
-					{ type: 'select', key: 'cptCode', label: 'CPT Code', searchable: true, dynamic: true },
-					{ type: 'select', key: 'description', label: 'Description', searchable: true, dynamic: true },
+					DATE_FROM, DATE_TO,
+					{ type: 'select', key: 'provider', label: 'Provider', searchable: true, dynamic: true, searchPlaceholder: 'Search provider...' },
+					{ type: 'select', key: 'cptCode', label: 'CPT Code', searchable: true, dynamic: true, searchPlaceholder: 'Search CPT code...' },
 				],
 				kpis: [
 					{ label: 'Total Procedures', calc: items => String(items.length), color: COLORS[0] },
@@ -1304,6 +1353,7 @@ export class ReportsEditor extends EditorPane {
 			visitType: i => i.appointmentType || i.type || '',
 			referredTo: i => i.specialistName || i.referredTo || '',
 			urgency: i => i.urgency || '',
+			administeredBy: i => i.administeredBy || i.performerName || i.providerName || '',
 		};
 		const accessor = accessors[sourceKey] || ((i: Record<string, string>) => i[sourceKey] || '');
 		const set = new Set<string>();
@@ -1493,8 +1543,9 @@ export class ReportsEditor extends EditorPane {
 		if (!out['prescriberName']) { out['prescriberName'] = pickFirst(out['providerName'], out['providerDisplay']); }
 		if (!out['orderingProvider']) { out['orderingProvider'] = pickFirst(out['providerName'], out['providerDisplay']); }
 
-		if (!out['payerDisplay']) { out['payerDisplay'] = pickFirst(out['insurerName'], out['insuranceName'], out['organizationDisplay'], out['payerName'], out['payor.display'], out['insurance']); }
-		if (!out['insurance']) { out['insurance'] = pickFirst(out['payerDisplay'], out['insurerName'], out['insuranceName']); }
+		if (!out['payerDisplay']) { out['payerDisplay'] = pickFirst(out['insurerName'], out['insuranceName'], out['organizationDisplay'], out['payerName'], out['payor.display'], out['insurance'], out['primaryInsurance'], out['insuranceProvider'], out['payer']); }
+		if (!out['insurance']) { out['insurance'] = pickFirst(out['payerDisplay'], out['insurerName'], out['insuranceName'], out['primaryInsurance'], out['insuranceProvider']); }
+		if (!out['payerName']) { out['payerName'] = pickFirst(out['payerDisplay'], out['insurerName'], out['insuranceName']); }
 
 		if (!out['specialistName']) { out['specialistName'] = pickFirst(out['specialist'], out['providerName'], out['referredTo']); }
 		if (!out['specialty']) { out['specialty'] = pickFirst(out['specialtyDisplay'], out['practiceArea']); }
@@ -1503,7 +1554,15 @@ export class ReportsEditor extends EditorPane {
 		if (!out['userName']) { out['userName'] = pickFirst(out['user'], out['userId']); }
 
 		if (!out['code']) { out['code'] = pickFirst(out['display'], out['text'], out['diagnosisCode'], out['icdCode'], out['conditionCode']); }
-		if (!out['icdCode']) { out['icdCode'] = pickFirst(out['diagnosisCode'], out['code']); }
+		if (!out['icdCode']) { out['icdCode'] = pickFirst(out['diagnosisCode'], out['code'], out['conditionCode']); }
+		if (!out['description']) { out['description'] = pickFirst(out['display'], out['text'], out['shortDescription'], out['conditionName'], out['diagnosisDescription']); }
+		// diagnosis column for encounter summary — map from FHIR Encounter reasonCode/diagnoses
+		if (!out['diagnosis']) {
+			out['diagnosis'] = pickFirst(
+				out['reasonCode'], out['reasonCodeDisplay'], out['diagnosisCode'], out['diagnosis.condition.display'],
+				out['reasonDisplay'], out['diagnosisDescription'], out['code'],
+			);
+		}
 		if (!out['type']) { out['type'] = pickFirst(out['typeDisplay'], out['encounterType'], out['visitCategory'], out['serviceType'], out['appointmentType']); }
 		if (!out['appointmentType']) { out['appointmentType'] = pickFirst(out['type'], out['serviceType'], out['encounterType']); }
 		if (!out['clinicalStatus']) { out['clinicalStatus'] = pickFirst(out['conditionStatus'], out['status']); }
@@ -1515,7 +1574,8 @@ export class ReportsEditor extends EditorPane {
 		if (!out['serviceDate']) { out['serviceDate'] = pickFirst(out['serviced'], out['servicedDate'], out['period.start'], out['date']); }
 		if (!out['orderDate']) { out['orderDate'] = pickFirst(out['orderDateTime'], out['authoredOn'], out['date']); }
 		if (!out['referralDate']) { out['referralDate'] = pickFirst(out['authoredOn'], out['createdAt'], out['createdDate']); }
-		if (!out['administrationDate']) { out['administrationDate'] = pickFirst(out['occurrenceDate'], out['date'], out['administeredDate']); }
+		if (!out['administrationDate']) { out['administrationDate'] = pickFirst(out['occurrenceDate'], out['date'], out['administeredDate'], out['administrationDate']); }
+		if (!out['administeredBy']) { out['administeredBy'] = pickFirst(out['performerName'], out['providerName'], out['providerDisplay'], out['practitionerName']); }
 		if (!out['recordedDate']) { out['recordedDate'] = pickFirst(out['recorded'], out['createdAt']); }
 		if (!out['onsetDate']) { out['onsetDate'] = pickFirst(out['onsetDateTime'], out['onset']); }
 		if (!out['appointmentDate']) { out['appointmentDate'] = pickFirst(out['date'], out['start'], out['startDate']); }
@@ -1595,6 +1655,7 @@ export class ReportsEditor extends EditorPane {
 			gender: i => i.gender || '',
 			ageGroup: i => i.ageGroup || '',
 			priority: i => i.priority || '',
+			administeredBy: i => i.administeredBy || i.performerName || i.providerName || '',
 		};
 
 		for (const f of this.reportDef.filters) {

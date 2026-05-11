@@ -276,12 +276,11 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 		editable: true,
 		filterKey: 'ocrStatus',
 		columns: [
-			{ key: 'fileName', label: 'File Name', width: '1.5fr' },
-			{ key: 'patientName', label: 'Patient' },
+			{ key: 'fileName', label: 'Document', width: '1.5fr' },
 			{ key: 'category', label: 'Category', width: '110px' },
-			{ key: 'mimeType', label: 'Type', width: '90px' },
+			{ key: 'patientName', label: 'Patient' },
 			{ key: 'ocrStatus', label: 'OCR Status', width: '100px' },
-			{ key: 'ocrConfidence', label: 'Confidence', width: '80px' },
+			{ key: 'fileSize', label: 'Size', width: '75px' },
 			{ key: 'createdAt', label: 'Uploaded', width: '130px' },
 		],
 		statusTabs: [
@@ -294,6 +293,9 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			{
 				key: 'category', placeholder: 'All Categories',
 				options: [
+					{ label: 'Medical Record', value: 'medical_record' },
+					{ label: 'Insurance', value: 'insurance' },
+					{ label: 'Legal', value: 'legal' },
 					{ label: 'Lab Report', value: 'lab_report' },
 					{ label: 'Imaging', value: 'imaging' },
 					{ label: 'Insurance Card', value: 'insurance_card' },
@@ -301,15 +303,6 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 					{ label: 'Referral', value: 'referral' },
 					{ label: 'Discharge Summary', value: 'discharge_summary' },
 					{ label: 'Other', value: 'other' },
-				],
-			},
-			{
-				key: 'ocrStatus', placeholder: 'All OCR Status',
-				options: [
-					{ label: 'Pending', value: 'pending' },
-					{ label: 'Processing', value: 'processing' },
-					{ label: 'Completed', value: 'completed' },
-					{ label: 'Failed', value: 'failed' },
 				],
 			},
 		],
@@ -342,6 +335,13 @@ export class DocScanningEditor extends ClinicalListEditorBase {
 			}
 			if (key === 'createdAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleString(); } catch { return String(value); }
+			}
+			if (key === 'fileSize') {
+				const bytes = Number(value);
+				if (!bytes || isNaN(bytes)) { return '—'; }
+				if (bytes < 1024) { return `${bytes} B`; }
+				if (bytes < 1024 * 1024) { return `${(bytes / 1024).toFixed(1)} KB`; }
+				return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 			}
 			if (key === 'mimeType' && typeof value === 'string') {
 				return value.replace('application/', '').replace('image/', '').toUpperCase();
@@ -393,12 +393,13 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 		columns: [
 			{ key: 'createdAt', label: 'Timestamp', width: '130px' },
 			{ key: 'userName', label: 'User' },
-			{ key: 'userRole', label: 'Role', width: '90px' },
+			{ key: 'userRole', label: 'Role', width: '80px' },
 			{ key: 'action', label: 'Action', width: '80px' },
-			{ key: 'resourceType', label: 'Resource Type', width: '130px' },
+			{ key: 'resourceType', label: 'Resource Type', width: '120px' },
 			{ key: 'resourceName', label: 'Resource' },
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'ipAddress', label: 'IP Address', width: '110px' },
+			{ key: 'details', label: 'Details', width: '120px' },
 		],
 		statusTabs: [
 			{ label: 'View', value: 'VIEW' },
@@ -432,23 +433,45 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 			if (key === 'action' && typeof value === 'string') {
 				return value.toUpperCase();
 			}
+			if (key === 'details') {
+				if (!value) { return '—'; }
+				if (typeof value === 'object') {
+					try { return JSON.stringify(value).slice(0, 60); } catch { return '—'; }
+				}
+				const s = String(value);
+				return s.length > 60 ? s.slice(0, 60) + '…' : s;
+			}
 			return String(value ?? '');
 		},
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Export CSV', icon: '📥', handler: async (_item, _api, _reload, _dlg) => {
-					// Export all currently loaded audit entries as CSV
-					const cols = ['createdAt', 'userName', 'userRole', 'action', 'resourceType', 'resourceName', 'patientName', 'ipAddress'];
-					const header = ['Timestamp', 'User', 'Role', 'Action', 'Resource Type', 'Resource', 'Patient', 'IP'].join(',');
-					const notice = mainWindow.document.createElement('div');
-					// allow-any-unicode-next-line
-					notice.textContent = 'Export initiated — open browser console for CSV data.';
-					notice.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#0e639c;color:#fff;padding:10px 16px;border-radius:6px;font-size:12px;z-index:99999;';
-					mainWindow.document.body.appendChild(notice);
-					setTimeout(() => notice.remove(), 3000);
-					console.log(header);
-					console.log(cols.join(','));
+				label: 'Export CSV', icon: '📥', handler: async (_item, api, _reload, _dlg) => {
+					// Fetch all audit log entries and export as a downloadable CSV file
+					const cols = ['createdAt', 'userName', 'userRole', 'action', 'resourceType', 'resourceName', 'patientName', 'ipAddress', 'details'];
+					const headers = ['Timestamp', 'User', 'Role', 'Action', 'Resource Type', 'Resource', 'Patient', 'IP Address', 'Details'];
+					let allItems: Record<string, unknown>[] = [];
+					try {
+						const res = await api.fetch('/api/audit-log?page=0&size=500');
+						if (res.ok) {
+							const d = await res.json();
+							const w = d?.data || d;
+							allItems = w?.content || (Array.isArray(w) ? w : []);
+						}
+					} catch { /* use empty set */ }
+					const escape = (v: unknown) => {
+						const s = String(v ?? '');
+						return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+					};
+					const csv = [headers.join(','), ...allItems.map(row => cols.map(c => escape(row[c])).join(','))].join('\n');
+					const blob = new Blob([csv], { type: 'text/csv' });
+					const url = URL.createObjectURL(blob);
+					const a = mainWindow.document.createElement('a');
+					a.href = url;
+					a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+					mainWindow.document.body.appendChild(a);
+					a.click();
+					setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 				}
 			},
 		],

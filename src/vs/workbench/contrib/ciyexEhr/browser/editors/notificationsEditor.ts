@@ -227,7 +227,8 @@ export class NotificationsEditor extends EditorPane {
 		this._renderTable(this.contentEl, this.logs,
 			[{ key: 'channelType', label: 'Channel', w: '70px' }, { key: 'recipientName', label: 'Recipient' }, { key: 'recipient', label: 'Address' }, { key: 'subject', label: 'Subject', w: '1.5fr' }, { key: 'status', label: 'Status', w: '90px' }, { key: 'sentAt', label: 'Sent At', w: '130px' }],
 			(item) => {
-				const acts = DOM.append(DOM.append(this.contentEl, DOM.$('span')), DOM.$('div'));
+				const acts = document.createElement('div');
+				acts.style.cssText = 'display:flex;gap:4px;';
 				if (item.status === 'failed' || item.status === 'bounced') {
 					const retry = DOM.append(acts, DOM.$('button'));
 					// allow-any-unicode-next-line

@@ -304,6 +304,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		}
 	}
 
+	/** Call from a subclass (e.g. after switching a view) to reset state and reload. */
+	protected _resetAndReload(): void {
+		this.currentPage = 0;
+		this.statusFilter = '';
+		this.searchValue = '';
+		this.priorityFilter = '';
+		this.additionalFilterValues.clear();
+		if (this.config.statsPath) { this._loadStats(); }
+		this._loadData();
+	}
+
 	private _renderError(message: string): void {
 		DOM.clearNode(this.contentEl);
 

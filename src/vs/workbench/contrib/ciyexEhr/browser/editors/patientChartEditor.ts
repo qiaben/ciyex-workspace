@@ -3301,8 +3301,10 @@ export class PatientChartEditor extends EditorPane {
 				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
 				subject: { rx: namePattern, msg: 'No special characters allowed' },
 				lotNumber: { rx: lotPattern, msg: 'Lot number must start with a letter or digit; dashes allowed; 2-30 characters' },
+				lot_number: { rx: lotPattern, msg: 'Lot number must start with a letter or digit; dashes allowed; 2-30 characters' },
 				dose: { rx: dosePattern, msg: 'Dose must be a positive number, optionally followed by a unit (e.g. 0.5 mL)' },
 				doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
+				dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			};
 			// Implicit format checks for type=phone / type=email when the
 			// field config didn't ship its own validationPattern. Applies

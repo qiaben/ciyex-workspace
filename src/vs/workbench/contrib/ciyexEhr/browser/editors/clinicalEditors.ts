@@ -149,17 +149,17 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 
 export class LabsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexLabs';
-	protected readonly config: ClinicalEditorConfig = {
+
+	private labView: 'orders' | 'results' = 'orders';
+
+	private readonly _ordersConfig: ClinicalEditorConfig = {
 		title: 'Lab Orders', apiPath: '/api/lab-order/search', statsPath: undefined,
 		searchPlaceholder: 'Search by patient, test, order number...',
 		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'result', 'id'],
 		editable: true,
 		refetchOnEdit: true,
-		// Backend is patient-scoped: POST /api/lab-order/{patientId}, PUT/GET/DELETE /api/lab-order/{patientId}/{orderId}.
 		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
 		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
-		// Render the Patient column as full name. Backends sometimes only fill patientFirstName,
-		// or store full name in a single field — fall back across common shapes.
 		cellRenderer: (key, _value, item) => {
 			if (key === 'patientFirstName') {
 				const fn = String(item.patientFirstName || '').trim();
@@ -171,7 +171,6 @@ export class LabsEditor extends ClinicalListEditorBase {
 			}
 			return String(_value ?? '');
 		},
-		// Columns ordered to match ciyex-ehr-ui: Patient, Order#, Test, Provider, Priority, Result, Status, Date
 		columns: [
 			{ key: 'patientFirstName', label: 'Patient' },
 			{ key: 'orderNumber', label: 'Order #', width: '110px' },
@@ -183,7 +182,6 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'orderDate', label: 'Date', width: '90px' },
 		],
 		statusTabs: [
-			{ label: 'Lab Orders', value: '' },
 			{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
 		],
@@ -194,29 +192,22 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{
 				key: 'result', placeholder: 'All Results',
 				options: [
-					{ label: 'Pending', value: 'Pending' },
-					{ label: 'Preliminary', value: 'Preliminary' },
-					{ label: 'Final', value: 'Final' },
-					{ label: 'Corrected', value: 'Corrected' },
-					{ label: 'Amended', value: 'Amended' },
+					{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
+					{ label: 'Final', value: 'Final' }, { label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
 				],
 			},
 		],
 		formFields: [
-			// Patient Information
 			{
 				key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
 				placeholder: 'Search patient by name, MRN or ID...',
 				apiPath: '/api/patients', relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
-				// Overwrite this field with just firstName after the search displayText
-				// is shown, and fill patientLastName separately so the payload is correct.
 				relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
 				aliases: ['firstName', 'patientFirst', 'patient.firstName'],
 			},
 			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
 			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
-			// Order Meta
 			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
 			{
 				key: 'orderNumber', label: 'Order Number', type: 'text', required: true,
@@ -230,7 +221,6 @@ export class LabsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'orderName', label: 'Order Name', type: 'text', placeholder: 'Order name' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-			// Test Details
 			{
 				key: 'testDisplay', label: 'Test Name', type: 'search', required: true,
 				placeholder: 'Search LOINC test (e.g. CBC, glucose)...',
@@ -241,7 +231,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 				relatedField: 'testCode',
 				relatedDisplayFields: ['code', 'shortDescription'],
 				validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
-				validationMessage: 'Test Name must be at least 2 characters and contain only letters/numbers/punctuation',
+				validationMessage: 'Test Name must be at least 2 characters',
 			},
 			{ key: 'testCode', label: 'Test Code (LOINC)', type: 'text', required: true, placeholder: 'Auto-filled from test search', validationPattern: '^[0-9A-Za-z\\-]{1,16}$', validationMessage: 'Invalid LOINC code format' },
 			{
@@ -272,7 +262,6 @@ export class LabsEditor extends ClinicalListEditorBase {
 					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
 				], defaultValue: 'Pending'
 			},
-			// Diagnosis — backed by ciyex-codes search so users can pick valid codes.
 			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 		],
@@ -281,6 +270,118 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
+
+	private readonly _resultsConfig: ClinicalEditorConfig = {
+		title: 'Lab Results', apiPath: '/api/lab-results/search',
+		searchPlaceholder: 'Search by test name, code, value, panel...',
+		clientSideFilter: ['testName', 'loincCode', 'resultValue', 'units', 'panelName', 'status', 'abnormalFlag', 'id'],
+		editable: true,
+		refetchOnEdit: true,
+		columns: [
+			{ key: 'testName', label: 'Test', width: '1.5fr' },
+			{ key: 'resultValue', label: 'Value', width: '90px' },
+			{ key: 'referenceRange', label: 'Range', width: '100px' },
+			{ key: 'abnormalFlag', label: 'Flag', width: '70px' },
+			{ key: 'status', label: 'Status', width: '90px' },
+			{ key: 'collectedDate', label: 'Collected', width: '110px' },
+			{ key: 'units', label: 'Units', width: '70px' },
+		],
+		statusTabs: [
+			{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
+			{ label: 'Final', value: 'final' }, { label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
+		],
+		additionalFilters: [
+			{
+				key: 'abnormalFlag', placeholder: 'All Flags',
+				options: [
+					{ label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
+					{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' },
+					{ label: 'Abnormal', value: 'abnormal' },
+				],
+			},
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'collectedDate' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
+			}
+			if (key === 'abnormalFlag' && typeof value === 'string') {
+				return value.charAt(0).toUpperCase() + value.slice(1);
+			}
+			return String(value ?? '');
+		},
+		formFields: [
+			{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
+			{ key: 'procedureName', label: 'Procedure Name', type: 'text', placeholder: 'Procedure name' },
+			{ key: 'loincCode', label: 'LOINC Code', type: 'text', placeholder: 'e.g. 2345-7' },
+			{
+				key: 'status', label: 'Status', type: 'select', required: true, options: [
+					{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
+					{ label: 'Partial', value: 'partial' }, { label: 'Final', value: 'final' },
+					{ label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
+				], defaultValue: 'pending'
+			},
+			{
+				key: 'abnormalFlag', label: 'Abnormal Flag', type: 'select', options: [
+					{ label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
+					{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' }, { label: 'Abnormal', value: 'abnormal' },
+				], defaultValue: 'normal'
+			},
+			{ key: 'resultValue', label: 'Value', type: 'text', required: true, placeholder: 'Result value' },
+			{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
+			{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
+			{ key: 'refLow', label: 'Ref Low', type: 'number' },
+			{ key: 'refHigh', label: 'Ref High', type: 'number' },
+			{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
+			{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+			{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
+			{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
+			{ key: 'panelCode', label: 'Panel Code', type: 'text' },
+			{ key: 'recommendations', label: 'Recommendations', type: 'textarea', placeholder: 'Clinical recommendations...', width: 'span 2' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab result?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-results/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	// @ts-ignore — override abstract readonly with getter to support view switching
+	protected get config(): ClinicalEditorConfig {
+		return this.labView === 'orders' ? this._ordersConfig : this._resultsConfig;
+	}
+
+	protected override createEditor(parent: HTMLElement): void {
+		const tabRow = parent.ownerDocument.createElement('div');
+		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);';
+		parent.appendChild(tabRow);
+
+		const tabBtns: HTMLButtonElement[] = [];
+		const styleBtn = (btn: HTMLButtonElement, active: boolean) => {
+			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
+			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			btn.style.fontWeight = active ? '600' : '400';
+		};
+		const makeTab = (view: 'orders' | 'results', label: string) => {
+			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
+			btn.textContent = label;
+			const isActive = this.labView === view;
+			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
+			btn.addEventListener('click', () => {
+				if (this.labView !== view) {
+					this.labView = view;
+					tabBtns.forEach(b => { styleBtn(b, b === btn); });
+					this._resetAndReload();
+				}
+			});
+			tabBtns.push(btn);
+			tabRow.appendChild(btn);
+		};
+		makeTab('orders', 'Lab Orders');
+		makeTab('results', 'Lab Results');
+
+		super.createEditor(parent);
+	}
+
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(LabsEditor.ID, group, t, th, s, a, d); }
 }
 
@@ -312,9 +413,15 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				searchParam: 'q',
 				searchDisplayField: 'shortDescription',
 				searchValueField: 'code',
-				relatedField: 'cvxCodeId',
-				aliases: ['cvx', 'vaccineCode', 'cvxCodeId'],
-				relatedDisplayFields: ['code', 'shortDescription'],
+				// relatedField points back to the same field so the numeric code (not the
+				// display description) is stored in cvxCode after the user selects a result.
+				relatedField: 'cvxCode',
+				aliases: ['cvx', 'vaccineCode'],
+				// relatedDisplayFields intentionally omitted so the dropdown item text comes
+				// from searchDisplayField ('shortDescription') and the input is then
+				// overwritten with result['code'] via relatedField above. This ensures the
+				// form payload contains the numeric CVX code (e.g. "88") and satisfies the
+				// validationPattern rather than the human-readable description.
 				relatedFieldsMap: { vaccineName: 'shortDescription' },
 				validationPattern: '^[0-9]{1,4}$',
 				validationMessage: 'CVX code must be 1-4 digits',
@@ -948,16 +1055,96 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 
 export class EducationEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexEducation';
-	protected readonly config: ClinicalEditorConfig = {
-		title: 'Patient Education', apiPath: '/api/patient-education',
-		searchPlaceholder: 'Search by topic, category...',
+
+	private eduView: 'library' | 'assignments' = 'library';
+
+	private readonly _libraryConfig: ClinicalEditorConfig = {
+		title: 'Education Library', apiPath: '/api/education/materials',
+		searchPlaceholder: 'Search by title, category, content type...',
+		clientSideFilter: ['title', 'category', 'contentType', 'source', 'id'],
+		editable: true,
+		refetchOnEdit: true,
+		columns: [
+			{ key: 'title', label: 'Title', width: '1.5fr' },
+			{ key: 'category', label: 'Category', width: '120px' },
+			{ key: 'contentType', label: 'Type', width: '90px' },
+			{ key: 'source', label: 'Source' },
+			{ key: 'isActive', label: 'Active', width: '60px' },
+			{ key: 'viewCount', label: 'Views', width: '60px' },
+		],
+		additionalFilters: [
+			{
+				key: 'category', placeholder: 'All Categories',
+				options: [
+					{ label: 'Disease Management', value: 'disease_management' },
+					{ label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' },
+					{ label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Mental Health', value: 'mental_health' },
+					{ label: 'Nutrition', value: 'nutrition' },
+					{ label: 'Other', value: 'other' },
+				],
+			},
+			{
+				key: 'contentType', placeholder: 'All Types',
+				options: [
+					{ label: 'Article', value: 'article' }, { label: 'Video', value: 'video' },
+					{ label: 'PDF', value: 'pdf' }, { label: 'Link', value: 'link' },
+					{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
+				],
+			},
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'isActive') { return value ? 'Yes' : 'No'; }
+			if (key === 'category' || key === 'contentType') {
+				return String(value ?? '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+		formFields: [
+			{ key: 'title', label: 'Title', type: 'text', required: true, placeholder: 'Material title', width: 'span 2' },
+			{
+				key: 'category', label: 'Category', type: 'select', options: [
+					{ label: 'Disease Management', value: 'disease_management' }, { label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' }, { label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' }, { label: 'Mental Health', value: 'mental_health' },
+					{ label: 'Nutrition', value: 'nutrition' }, { label: 'Other', value: 'other' },
+				]
+			},
+			{
+				key: 'contentType', label: 'Content Type', type: 'select', options: [
+					{ label: 'Article', value: 'article' }, { label: 'Video', value: 'video' },
+					{ label: 'PDF', value: 'pdf' }, { label: 'Link', value: 'link' },
+					{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
+				], defaultValue: 'article'
+			},
+			{ key: 'source', label: 'Source', type: 'text', placeholder: 'Source / author' },
+			{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
+			{
+				key: 'isActive', label: 'Active', type: 'select', options: [
+					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
+				], defaultValue: 'true'
+			},
+			{ key: 'tags', label: 'Tags', type: 'text', placeholder: 'Comma-separated tags', width: 'span 2' },
+			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Brief description...', width: 'span 2' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this material?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/education/materials/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	private readonly _assignmentsConfig: ClinicalEditorConfig = {
+		title: 'Patient Assignments', apiPath: '/api/patient-education',
+		searchPlaceholder: 'Search by topic, patient, category...',
 		clientSideFilter: ['materialTitle', 'patientName', 'category', 'status', 'priority', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		columns: [
 			{ key: 'materialTitle', label: 'Topic', width: '1.5fr' },
 			{ key: 'patientName', label: 'Patient' },
-			{ key: 'category', label: 'Category', width: '100px' },
+			{ key: 'category', label: 'Category', width: '110px' },
 			{ key: 'status', label: 'Status', width: '100px' },
 			{ key: 'priority', label: 'Priority', width: '80px' },
 			{ key: 'dueDate', label: 'Due Date', width: '100px' },
@@ -978,6 +1165,12 @@ export class EducationEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'other' },
 				],
 			},
+			{
+				key: 'priority', placeholder: 'All Priority',
+				options: [
+					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' },
+				],
+			},
 		],
 		formFields: [
 			{
@@ -987,25 +1180,24 @@ export class EducationEditor extends ClinicalListEditorBase {
 				relatedDisplayFields: ['firstName', 'lastName'],
 				validationMessage: 'Please select a patient from the search results',
 			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a patient from the search results — not just typed text' },
+			// type:'number' ensures the ID is sent as a JSON number (not string) so
+			// Spring JPA findById does not receive null when the value is ''.
+			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a patient from the search results — not just typed text' },
 			{
 				key: 'materialTitle', label: 'Topic / Material', type: 'search', required: true,
-				placeholder: 'Search education material (must be selected from results)...',
+				placeholder: 'Search education material...',
 				apiPath: '/api/education/materials',
 				relatedField: 'materialId',
 				searchDisplayField: 'title',
 				relatedFieldsMap: { category: 'category' },
 				validationMessage: 'Please select an education material from the search results',
 			},
-			{ key: 'materialId', label: 'Material ID', type: 'text', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select an education material from the search results — not just typed text' },
+			{ key: 'materialId', label: 'Material ID', type: 'number', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a material from the search results — not just typed text' },
 			{
 				key: 'category', label: 'Category', type: 'select', options: [
-					{ label: 'Disease Management', value: 'disease_management' },
-					{ label: 'Medication', value: 'medication' },
-					{ label: 'Procedure', value: 'procedure' },
-					{ label: 'Lifestyle', value: 'lifestyle' },
-					{ label: 'Preventive', value: 'preventive' },
-					{ label: 'Other', value: 'other' },
+					{ label: 'Disease Management', value: 'disease_management' }, { label: 'Medication', value: 'medication' },
+					{ label: 'Procedure', value: 'procedure' }, { label: 'Lifestyle', value: 'lifestyle' },
+					{ label: 'Preventive', value: 'preventive' }, { label: 'Other', value: 'other' },
 				]
 			},
 			{
@@ -1028,6 +1220,44 @@ export class EducationEditor extends ClinicalListEditorBase {
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this assignment?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/education/assignments/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
+
+	// @ts-ignore — override abstract readonly with getter to support view switching
+	protected get config(): ClinicalEditorConfig {
+		return this.eduView === 'library' ? this._libraryConfig : this._assignmentsConfig;
+	}
+
+	protected override createEditor(parent: HTMLElement): void {
+		const tabRow = parent.ownerDocument.createElement('div');
+		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);';
+		parent.appendChild(tabRow);
+
+		const tabBtns: HTMLButtonElement[] = [];
+		const styleBtn = (btn: HTMLButtonElement, active: boolean) => {
+			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
+			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			btn.style.fontWeight = active ? '600' : '400';
+		};
+		const makeTab = (view: 'library' | 'assignments', label: string) => {
+			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
+			btn.textContent = label;
+			const isActive = this.eduView === view;
+			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
+			btn.addEventListener('click', () => {
+				if (this.eduView !== view) {
+					this.eduView = view;
+					tabBtns.forEach(b => { styleBtn(b, b === btn); });
+					this._resetAndReload();
+				}
+			});
+			tabBtns.push(btn);
+			tabRow.appendChild(btn);
+		};
+		makeTab('library', 'Library');
+		makeTab('assignments', 'Assignments');
+
+		super.createEditor(parent);
+	}
+
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(EducationEditor.ID, group, t, th, s, a, d); }
 }
 
@@ -1205,15 +1435,29 @@ export class CodesEditor extends ClinicalListEditorBase {
 					{ label: 'Custom', value: 'CUSTOM' },
 				]
 			},
-			{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
-			{ key: 'category', label: 'Category', type: 'text' },
 			{ key: 'modifier', label: 'Modifier', type: 'text', placeholder: 'e.g. 25, 59, GT' },
+			{ key: 'category', label: 'Category', type: 'text' },
+			{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
+			{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
 			{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
+			{ key: 'relatedTo', label: 'Related To', type: 'text', placeholder: 'Related code or category' },
 			{
-				key: 'active', label: 'Active', type: 'select', options: [
+				key: 'active', label: 'Status', type: 'select', options: [
 					{ label: 'Active', value: 'true' },
 					{ label: 'Inactive', value: 'false' },
 				], defaultValue: 'true'
+			},
+			{
+				key: 'diagnosisReporting', label: 'Diagnosis Reporting', type: 'select', options: [
+					{ label: 'Yes', value: 'true' },
+					{ label: 'No', value: 'false' },
+				], defaultValue: 'false'
+			},
+			{
+				key: 'serviceReporting', label: 'Service Reporting', type: 'select', options: [
+					{ label: 'Yes', value: 'true' },
+					{ label: 'No', value: 'false' },
+				], defaultValue: 'false'
 			},
 		],
 		actions: [
@@ -1226,8 +1470,11 @@ export class CodesEditor extends ClinicalListEditorBase {
 
 export class InventoryEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexInventory';
-	protected readonly config: ClinicalEditorConfig = {
-		title: 'Inventory Management', apiPath: '/api/inventory',
+
+	private invView: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings' = 'inventory';
+
+	private readonly _inventoryConfig: ClinicalEditorConfig = {
+		title: 'Inventory', apiPath: '/api/inventory',
 		searchPlaceholder: 'Search by name, SKU, barcode, category...',
 		clientSideFilter: ['name', 'sku', 'barcode', 'description', 'categoryName', 'locationName', 'manufacturer', 'unit', 'status', 'id'],
 		editable: true,
@@ -1332,13 +1579,160 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this inventory item?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
+
+	private readonly _ordersConfig: ClinicalEditorConfig = {
+		title: 'Purchase Orders', apiPath: '/api/inventory/orders',
+		searchPlaceholder: 'Search orders...',
+		clientSideFilter: ['orderNumber', 'supplierName', 'status', 'id'],
+		editable: true,
+		columns: [
+			{ key: 'orderNumber', label: 'Order #', width: '120px' },
+			{ key: 'supplierName', label: 'Supplier' },
+			{ key: 'totalItems', label: 'Items', width: '60px' },
+			{ key: 'totalCost', label: 'Total Cost', width: '100px' },
+			{ key: 'status', label: 'Status', width: '100px' },
+			{ key: 'orderDate', label: 'Order Date', width: '110px' },
+			{ key: 'expectedDate', label: 'Expected', width: '110px' },
+		],
+		statusTabs: [
+			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
+			{ label: 'Received', value: 'received' }, { label: 'Cancelled', value: 'cancelled' },
+		],
+		formFields: [
+			{ key: 'supplierName', label: 'Supplier', type: 'search', placeholder: 'Search supplier...', apiPath: '/api/inventory/suppliers', searchDisplayField: 'name' },
+			{ key: 'orderNumber', label: 'Order #', type: 'text', placeholder: 'Auto-generated' },
+			{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+			{ key: 'expectedDate', label: 'Expected Date', type: 'date' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
+					{ label: 'Received', value: 'received' }, { label: 'Cancelled', value: 'cancelled' },
+				], defaultValue: 'draft'
+			},
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Order notes...' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/orders/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	private readonly _suppliersConfig: ClinicalEditorConfig = {
+		title: 'Suppliers', apiPath: '/api/inventory/suppliers',
+		searchPlaceholder: 'Search suppliers...',
+		clientSideFilter: ['name', 'contactName', 'email', 'phone', 'id'],
+		editable: true,
+		columns: [
+			{ key: 'name', label: 'Supplier Name', width: '1.5fr' },
+			{ key: 'contactName', label: 'Contact' },
+			{ key: 'email', label: 'Email' },
+			{ key: 'phone', label: 'Phone', width: '120px' },
+			{ key: 'isActive', label: 'Active', width: '60px' },
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'isActive') { return value ? 'Yes' : 'No'; }
+			return String(value ?? '');
+		},
+		formFields: [
+			{ key: 'name', label: 'Supplier Name', type: 'text', required: true, placeholder: 'Company name' },
+			{ key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'Primary contact' },
+			{ key: 'email', label: 'Email', type: 'text', placeholder: 'contact@supplier.com' },
+			{ key: 'phone', label: 'Phone', type: 'text', placeholder: '(555) 123-4567' },
+			{ key: 'address', label: 'Address', type: 'text', placeholder: 'Street address' },
+			{ key: 'website', label: 'Website', type: 'text', placeholder: 'https://...' },
+			{ key: 'accountNumber', label: 'Account #', type: 'text' },
+			{ key: 'paymentTerms', label: 'Payment Terms', type: 'text', placeholder: 'Net 30, COD...' },
+			{
+				key: 'isActive', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
+				], defaultValue: 'true'
+			},
+			{ key: 'notes', label: 'Notes', type: 'textarea' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this supplier?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/suppliers/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	private readonly _recordsConfig: ClinicalEditorConfig = {
+		title: 'Inventory Records', apiPath: '/api/inventory/records',
+		searchPlaceholder: 'Search records...',
+		clientSideFilter: ['itemName', 'adjustmentType', 'reason', 'id'],
+		editable: false,
+		columns: [
+			{ key: 'itemName', label: 'Item', width: '1.5fr' },
+			{ key: 'adjustmentType', label: 'Type', width: '100px' },
+			{ key: 'quantity', label: 'Qty', width: '70px' },
+			{ key: 'reason', label: 'Reason' },
+			{ key: 'performedBy', label: 'By', width: '120px' },
+			{ key: 'createdAt', label: 'Date', width: '130px' },
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'createdAt' && typeof value === 'string') {
+				try { return new Date(value).toLocaleString(); } catch { return String(value); }
+			}
+			return String(value ?? '');
+		},
+		actions: [],
+	};
+
+	// @ts-ignore — override abstract readonly with getter
+	protected get config(): ClinicalEditorConfig {
+		switch (this.invView) {
+			case 'orders': return this._ordersConfig;
+			case 'suppliers': return this._suppliersConfig;
+			case 'records': return this._recordsConfig;
+			default: return this._inventoryConfig;
+		}
+	}
+
+	protected override createEditor(parent: HTMLElement): void {
+		const tabRow = parent.ownerDocument.createElement('div');
+		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);overflow-x:auto;';
+		parent.appendChild(tabRow);
+
+		const invTabBtns: HTMLButtonElement[] = [];
+		const styleInvBtn = (btn: HTMLButtonElement, active: boolean) => {
+			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
+			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			btn.style.fontWeight = active ? '600' : '400';
+		};
+		const invTabs: Array<{ view: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings'; label: string }> = [
+			{ view: 'inventory', label: 'Inventory' },
+			{ view: 'orders', label: 'Orders' },
+			{ view: 'records', label: 'Records' },
+			{ view: 'suppliers', label: 'Suppliers' },
+		];
+		invTabs.forEach(({ view, label }) => {
+			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
+			btn.textContent = label;
+			const isActive = this.invView === view;
+			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
+			btn.addEventListener('click', () => {
+				if (this.invView !== view) {
+					this.invView = view;
+					invTabBtns.forEach(b => { styleInvBtn(b, b === btn); });
+					this._resetAndReload();
+				}
+			});
+			invTabBtns.push(btn);
+			tabRow.appendChild(btn);
+		});
+
+		super.createEditor(parent);
+	}
+
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }
 }
 
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
-	protected readonly config: ClinicalEditorConfig = {
-		title: 'Payments', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
+
+	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' = 'transactions';
+
+	private readonly _transactionsConfig: ClinicalEditorConfig = {
+		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
 		searchPlaceholder: 'Search by patient, transaction...',
 		// Backend doesn't filter on status= / q=, so do it client-side.
 		clientSideFilter: ['patientId', 'patientName', 'transactionType', 'paymentMethodType', 'description', 'status', 'transactionId', 'id'],
@@ -1478,6 +1872,183 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
+
+	private readonly _methodsConfig: ClinicalEditorConfig = {
+		title: 'Payment Methods', apiPath: '/api/payments/methods',
+		searchPlaceholder: 'Search by patient, type...',
+		clientSideFilter: ['patientName', 'methodType', 'last4', 'status', 'id'],
+		editable: true,
+		columns: [
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'methodType', label: 'Type', width: '110px' },
+			{ key: 'last4', label: 'Last 4', width: '70px' },
+			{ key: 'expiryMonth', label: 'Expiry', width: '80px' },
+			{ key: 'cardHolderName', label: 'Card Holder' },
+			{ key: 'isDefault', label: 'Default', width: '70px' },
+			{ key: 'status', label: 'Status', width: '90px' },
+		],
+		cellRenderer: (key, value) => {
+			if (key === 'isDefault') { return value ? 'Yes' : 'No'; }
+			if (key === 'methodType' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+		statusTabs: [
+			{ label: 'Active', value: 'active' }, { label: 'Expired', value: 'expired' }, { label: 'Removed', value: 'removed' },
+		],
+		formFields: [
+			{
+				key: 'patientName', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient...', apiPath: '/api/patients',
+				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled' },
+			{
+				key: 'methodType', label: 'Method Type', type: 'select', required: true, options: [
+					{ label: 'Credit Card', value: 'credit_card' }, { label: 'Debit Card', value: 'debit_card' },
+					{ label: 'ACH / Bank', value: 'ach' }, { label: 'FSA / HSA', value: 'fsa_hsa' },
+				]
+			},
+			{ key: 'cardHolderName', label: 'Card Holder Name', type: 'text', placeholder: 'Name on card' },
+			{ key: 'last4', label: 'Last 4 Digits', type: 'text', placeholder: '1234' },
+			{ key: 'expiryMonth', label: 'Expiry (MM/YY)', type: 'text', placeholder: '12/26' },
+			{ key: 'billingAddress', label: 'Billing Address', type: 'text' },
+			{
+				key: 'isDefault', label: 'Set as Default', type: 'select', options: [
+					{ label: 'Yes', value: 'true' }, { label: 'No', value: 'false' },
+				], defaultValue: 'false'
+			},
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Remove this payment method?', type: 'warning', primaryButton: 'Remove' }); if (r.confirmed) { await api.fetch(`/api/payments/methods/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	private readonly _plansConfig: ClinicalEditorConfig = {
+		title: 'Payment Plans', apiPath: '/api/payments/plans',
+		searchPlaceholder: 'Search by patient, plan...',
+		clientSideFilter: ['patientName', 'planName', 'status', 'id'],
+		editable: true,
+		columns: [
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'planName', label: 'Plan Name' },
+			{ key: 'totalAmount', label: 'Total', width: '90px' },
+			{ key: 'paidAmount', label: 'Paid', width: '90px' },
+			{ key: 'remainingAmount', label: 'Remaining', width: '90px' },
+			{ key: 'installments', label: 'Installments', width: '90px' },
+			{ key: 'nextDueDate', label: 'Next Due', width: '110px' },
+			{ key: 'status', label: 'Status', width: '90px' },
+		],
+		statusTabs: [
+			{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
+			{ label: 'Defaulted', value: 'defaulted' }, { label: 'Cancelled', value: 'cancelled' },
+		],
+		cellRenderer: (key, value) => {
+			if ((key === 'totalAmount' || key === 'paidAmount' || key === 'remainingAmount') && typeof value === 'number') {
+				return `$${value.toFixed(2)}`;
+			}
+			if (key === 'nextDueDate' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
+			}
+			return String(value ?? '');
+		},
+		formFields: [
+			{
+				key: 'patientName', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient...', apiPath: '/api/patients',
+				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled' },
+			{ key: 'planName', label: 'Plan Name', type: 'text', required: true, placeholder: 'e.g. 6-Month Payment Plan' },
+			{ key: 'totalAmount', label: 'Total Amount ($)', type: 'number', required: true, placeholder: '0.00' },
+			{ key: 'installments', label: 'Number of Installments', type: 'number', required: true, placeholder: '6' },
+			{ key: 'startDate', label: 'Start Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+			{ key: 'nextDueDate', label: 'Next Due Date', type: 'date' },
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Plan notes...' },
+		],
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Cancel this payment plan?', type: 'warning', primaryButton: 'Cancel Plan' }); if (r.confirmed) { await api.fetch(`/api/payments/plans/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
+	};
+
+	private readonly _ledgerConfig: ClinicalEditorConfig = {
+		title: 'Ledger', apiPath: '/api/payments/ledger',
+		searchPlaceholder: 'Search ledger entries...',
+		clientSideFilter: ['patientName', 'entryType', 'description', 'id'],
+		editable: false,
+		columns: [
+			{ key: 'entryDate', label: 'Date', width: '110px' },
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'entryType', label: 'Type', width: '100px' },
+			{ key: 'description', label: 'Description' },
+			{ key: 'debit', label: 'Debit', width: '90px' },
+			{ key: 'credit', label: 'Credit', width: '90px' },
+			{ key: 'balance', label: 'Balance', width: '90px' },
+		],
+		cellRenderer: (key, value) => {
+			if ((key === 'debit' || key === 'credit' || key === 'balance') && typeof value === 'number') {
+				return `$${value.toFixed(2)}`;
+			}
+			if (key === 'entryDate' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
+			}
+			if (key === 'entryType' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+		actions: [],
+	};
+
+	// @ts-ignore — override abstract readonly with getter
+	protected get config(): ClinicalEditorConfig {
+		switch (this.payView) {
+			case 'methods': return this._methodsConfig;
+			case 'plans': return this._plansConfig;
+			case 'ledger': return this._ledgerConfig;
+			default: return this._transactionsConfig;
+		}
+	}
+
+	protected override createEditor(parent: HTMLElement): void {
+		const tabRow = parent.ownerDocument.createElement('div');
+		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);overflow-x:auto;';
+		parent.appendChild(tabRow);
+
+		const payTabBtns: HTMLButtonElement[] = [];
+		const stylePayBtn = (btn: HTMLButtonElement, active: boolean) => {
+			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
+			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			btn.style.fontWeight = active ? '600' : '400';
+		};
+		const payTabs: Array<{ view: 'transactions' | 'methods' | 'plans' | 'ledger'; label: string }> = [
+			{ view: 'transactions', label: 'Transactions' },
+			{ view: 'methods', label: 'Payment Methods' },
+			{ view: 'plans', label: 'Payment Plans' },
+			{ view: 'ledger', label: 'Ledger' },
+		];
+		payTabs.forEach(({ view, label }) => {
+			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
+			btn.textContent = label;
+			const isActive = this.payView === view;
+			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
+			btn.addEventListener('click', () => {
+				if (this.payView !== view) {
+					this.payView = view;
+					payTabBtns.forEach(b => { stylePayBtn(b, b === btn); });
+					this._resetAndReload();
+				}
+			});
+			payTabBtns.push(btn);
+			tabRow.appendChild(btn);
+		});
+
+		super.createEditor(parent);
+	}
+
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
 }
 
@@ -1509,20 +2080,24 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		],
 		columns: [
 			{ key: 'claimNumber', label: 'Claim #', width: '110px' },
+			{ key: 'invoiceNumber', label: 'Invoice #', width: '100px' },
 			{ key: 'patientName', label: 'Patient' },
-			{ key: 'diagnosisCode', label: 'Dx Code', width: '90px' },
-			{ key: 'payerName', label: 'Payer' },
-			{ key: 'type', label: 'Type', width: '110px' },
-			{ key: 'planName', label: 'Plan' },
 			{ key: 'provider', label: 'Provider' },
-			{ key: 'policyNumber', label: 'Policy #', width: '110px' },
-			{ key: 'serviceDate', label: 'Date', width: '100px' },
-			{ key: 'status', label: 'Status', width: '100px' },
+			{ key: 'payerName', label: 'Payer' },
+			{ key: 'planName', label: 'Plan' },
+			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
+			{ key: 'policyNumber', label: 'Policy #', width: '100px' },
+			{ key: 'serviceDate', label: 'Date', width: '90px' },
+			{ key: 'status', label: 'Status', width: '120px' },
 		],
+		// Status values match ciyex-ehr-ui ClaimManagementDashboard status pills
 		statusTabs: [
-			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
-			{ label: 'Pending', value: 'pending' }, { label: 'Approved', value: 'approved' },
-			{ label: 'Denied', value: 'denied' }, { label: 'Paid', value: 'paid' },
+			{ label: 'Draft', value: 'DRAFT' },
+			{ label: 'In Process', value: 'IN_PROCESS' },
+			{ label: 'Ready', value: 'READY_FOR_SUBMISSION' },
+			{ label: 'Submitted', value: 'SUBMITTED' },
+			{ label: 'Closed', value: 'CLOSED' },
+			{ label: 'Void', value: 'VOID' },
 		],
 		formFields: [
 			{
@@ -1553,11 +2128,15 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			},
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
-					{ label: 'Pending', value: 'pending' }, { label: 'Approved', value: 'approved' },
-					{ label: 'Denied', value: 'denied' }, { label: 'Paid', value: 'paid' },
-				], defaultValue: 'draft'
+					{ label: 'Draft', value: 'DRAFT' },
+					{ label: 'In Process', value: 'IN_PROCESS' },
+					{ label: 'Ready for Submission', value: 'READY_FOR_SUBMISSION' },
+					{ label: 'Submitted', value: 'SUBMITTED' },
+					{ label: 'Closed', value: 'CLOSED' },
+					{ label: 'Void', value: 'VOID' },
+				], defaultValue: 'DRAFT'
 			},
+			{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Linked invoice number' },
 			{ key: 'totalAmount', label: 'Total Amount ($)', type: 'number' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 		],
@@ -1565,12 +2144,12 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 			{
 				// allow-any-unicode-next-line
 				label: 'Update Status', icon: '📋', handler: async (item, api, reload, dlg) => {
-					const statuses = ['draft', 'submitted', 'pending', 'approved', 'denied', 'paid'];
+					const statuses = ['DRAFT', 'IN_PROCESS', 'READY_FOR_SUBMISSION', 'SUBMITTED', 'CLOSED', 'VOID'];
 					const res = await dlg.prompt<string>({
 						type: 'question',
 						message: 'Update claim status',
 						detail: `Current status: ${String(item.status || '—')}`,
-						buttons: statuses.map(v => ({ label: v.charAt(0).toUpperCase() + v.slice(1), run: () => v })),
+						buttons: statuses.map(v => ({ label: v.replace(/_/g, ' '), run: () => v })),
 						cancelButton: true,
 					});
 					const status = res.result;
