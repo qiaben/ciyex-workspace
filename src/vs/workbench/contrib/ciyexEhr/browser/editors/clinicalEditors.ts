@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ClinicalListEditorBase, ClinicalEditorConfig } from './clinicalListEditor.js';
+import * as DOM from '../../../../../base/browser/dom.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -140,7 +141,12 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 export class LabsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexLabs';
 
-	private labView: 'orders' | 'results' = 'orders';
+	private _activeView: 'orders' | 'results' = 'orders';
+	private _sidebarItems: Map<string, HTMLElement> = new Map();
+
+	protected get config(): ClinicalEditorConfig {
+		return this._activeView === 'results' ? this._resultsConfig : this._ordersConfig;
+	}
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
 		title: 'Lab Orders', apiPath: '/api/lab-order/search', statsPath: undefined,
@@ -277,11 +283,20 @@ export class LabsEditor extends ClinicalListEditorBase {
 					else { await dlg.info('Lab order sent to printer.'); }
 				}
 			},
+			{
+				// allow-any-unicode-next-line
+				label: 'View Results', icon: '\u{1F4CA}', handler: async (item, _api, _reload, dlg) => {
+					await dlg.info(`Switch to "Lab Results" in the sidebar to view results for order ${item.orderNumber || item.id}.`);
+				}
+			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 
+	// Lab Results — sibling view shown when the user picks "Lab Results" in
+	// the sidebar. The web app exposes both Orders and Results as a single
+	// Labs page with a left sidebar (see /labs in ciyex-ehr-ui).
 	private readonly _resultsConfig: ClinicalEditorConfig = {
 		title: 'Lab Results', apiPath: '/api/lab-results/search',
 		searchPlaceholder: 'Search by test name, code, value, panel...',
@@ -381,44 +396,68 @@ export class LabsEditor extends ClinicalListEditorBase {
 		],
 	};
 
-	// @ts-ignore — override abstract readonly with getter to support view switching
-	protected get config(): ClinicalEditorConfig {
-		return this.labView === 'orders' ? this._ordersConfig : this._resultsConfig;
-	}
-
-	protected override createEditor(parent: HTMLElement): void {
-		const tabRow = parent.ownerDocument.createElement('div');
-		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);';
-		parent.appendChild(tabRow);
-
-		const tabBtns: HTMLButtonElement[] = [];
-		const styleBtn = (btn: HTMLButtonElement, active: boolean) => {
-			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
-			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
-			btn.style.fontWeight = active ? '600' : '400';
-		};
-		const makeTab = (view: 'orders' | 'results', label: string) => {
-			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
-			btn.textContent = label;
-			const isActive = this.labView === view;
-			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
-			btn.addEventListener('click', () => {
-				if (this.labView !== view) {
-					this.labView = view;
-					tabBtns.forEach(b => { styleBtn(b, b === btn); });
-					this._resetAndReload();
-				}
-			});
-			tabBtns.push(btn);
-			tabRow.appendChild(btn);
-		};
-		makeTab('orders', 'Lab Orders');
-		makeTab('results', 'Lab Results');
-
-		super.createEditor(parent);
-	}
-
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(LabsEditor.ID, group, t, th, s, a, d); }
+
+	/**
+	 * Render a left sidebar with "Lab Orders" and "Lab Results" sections, matching
+	 * the web app at /labs. Selecting a view switches the active config and reloads.
+	 */
+	protected override wrapContent(parent: HTMLElement): HTMLElement {
+		const wrapper = DOM.append(parent, DOM.$('.labs-wrapper'));
+		wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;width:100%;';
+
+		const sidebar = DOM.append(wrapper, DOM.$('.labs-sidebar'));
+		sidebar.style.cssText = 'width:220px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;display:flex;flex-direction:column;';
+
+		const sbHeader = DOM.append(sidebar, DOM.$('div'));
+		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;';
+		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
+		// allow-any-unicode-next-line
+		sbTitle.textContent = '🧪 Labs';
+		sbTitle.style.cssText = 'font-weight:700;font-size:14px;color:var(--vscode-foreground);';
+		const sbSub = DOM.append(sbHeader, DOM.$('div'));
+		sbSub.textContent = 'Orders & results';
+		sbSub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+		const items: Array<{ key: 'orders' | 'results'; label: string; icon: string }> = [
+			// allow-any-unicode-next-line
+			{ key: 'orders', label: 'Lab Orders', icon: '🧫' },
+			// allow-any-unicode-next-line
+			{ key: 'results', label: 'Lab Results', icon: '📊' },
+		];
+		for (const it of items) {
+			const navEl = DOM.append(sidebar, DOM.$('div'));
+			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;';
+			const iconEl = DOM.append(navEl, DOM.$('span'));
+			iconEl.textContent = it.icon;
+			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;';
+			const lbl = DOM.append(navEl, DOM.$('span'));
+			lbl.textContent = it.label;
+			navEl.addEventListener('mouseenter', () => { if (this._activeView !== it.key) { navEl.style.background = 'var(--vscode-list-hoverBackground)'; } });
+			navEl.addEventListener('mouseleave', () => { if (this._activeView !== it.key) { navEl.style.background = ''; } });
+			navEl.addEventListener('click', () => {
+				if (this._activeView === it.key) { return; }
+				this._activeView = it.key;
+				this._updateSidebarActive();
+				this._resetAndReload();
+			});
+			this._sidebarItems.set(it.key, navEl);
+		}
+		this._updateSidebarActive();
+
+		const main = DOM.append(wrapper, DOM.$('.labs-main'));
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+		return main;
+	}
+
+	private _updateSidebarActive(): void {
+		for (const [key, el] of this._sidebarItems.entries()) {
+			const isActive = key === this._activeView;
+			el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground,rgba(0,122,204,0.18))' : '';
+			el.style.color = isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			el.style.fontWeight = isActive ? '600' : '500';
+		}
+	}
 }
 
 export class ImmunizationsEditor extends ClinicalListEditorBase {
@@ -629,7 +668,14 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true, placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{
+				key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true,
+				placeholder: 'Search provider (must be selected from results)...',
+				apiPath: '/api/providers',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				aliases: ['referringPrescriber', 'referringProviderName'],
+				validationMessage: 'Please select a referring provider from the search results',
+			},
 			{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
 			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
@@ -1100,29 +1146,67 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{
 				// allow-any-unicode-next-line
 				label: 'Approve', icon: '✓', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Approve authorization', inputs: [{ placeholder: 'Approved units', value: '1' }] });
-					const u = res.confirmed ? res.values?.[0]?.trim() : undefined;
-					if (u) {
-						await api.fetch(`/api/prior-auth/${item.id}/approve`, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ approvedUnits: Number(u) }),
-						});
-						reload();
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'approved') {
+						await dlg.info('This authorization is already approved.');
+						return;
 					}
+					const res = await dlg.input({ type: 'question', message: 'Approve authorization', detail: `Patient: ${item.patientName || '—'}`, inputs: [{ placeholder: 'Approved units (number)', value: '1' }] });
+					if (!res.confirmed) { return; }
+					const u = res.values?.[0]?.trim() || '';
+					const n = Number(u);
+					if (!u || !isFinite(n) || n <= 0) {
+						await dlg.error('Please enter a valid number of approved units (greater than zero).');
+						return;
+					}
+					const r = await api.fetch(`/api/prior-auth/${item.id}/approve`, {
+						method: 'POST', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ approvedUnits: n }),
+					});
+					if (!r.ok) {
+						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to approve authorization (HTTP ${r.status}).`));
+						return;
+					}
+					reload();
 				}
 			},
 			{
 				// allow-any-unicode-next-line
 				label: 'Deny', icon: '✗', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Deny authorization', inputs: [{ placeholder: 'Denial reason' }] });
-					const r = res.confirmed ? res.values?.[0]?.trim() : undefined;
-					if (r) {
-						await api.fetch(`/api/prior-auth/${item.id}/deny`, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ reason: r }),
-						});
-						reload();
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'denied') {
+						await dlg.info('This authorization is already denied.');
+						return;
 					}
+					// Loop until a non-empty reason is provided, or the user cancels.
+					// Previously: empty reason silently no-op'd, so the test team saw
+					// the Deny action "not working".
+					let reason = '';
+					while (!reason) {
+						const res = await dlg.input({
+							type: 'question',
+							message: 'Deny authorization',
+							detail: `Patient: ${item.patientName || '—'}\nReason is required and will be saved with the denial.`,
+							inputs: [{ placeholder: 'Denial reason (required)' }],
+						});
+						if (!res.confirmed) { return; }
+						reason = res.values?.[0]?.trim() || '';
+						if (!reason) {
+							await dlg.error('A denial reason is required.');
+						}
+					}
+					const r = await api.fetch(`/api/prior-auth/${item.id}/deny`, {
+						method: 'POST', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ reason }),
+					});
+					if (!r.ok) {
+						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to deny authorization (HTTP ${r.status}).`));
+						return;
+					}
+					await dlg.info('Authorization denied.');
+					reload();
 				}
 			},
 			// allow-any-unicode-next-line
@@ -1229,19 +1313,21 @@ export class EducationEditor extends ClinicalListEditorBase {
 			{ key: 'dueDate', label: 'Due Date', width: '100px' },
 		],
 		statusTabs: [
-			{ label: 'Assigned', value: 'assigned' }, { label: 'Viewed', value: 'viewed' },
-			{ label: 'Completed', value: 'completed' }, { label: 'Dismissed', value: 'dismissed' },
+			{ label: 'Completed', value: 'completed' },
+			{ label: 'In Progress', value: 'in-progress' },
+			{ label: 'Preparation', value: 'preparation' },
+			{ label: 'Not Done', value: 'not-done' },
+			{ label: 'On Hold', value: 'on-hold' },
 		],
 		additionalFilters: [
 			{
 				key: 'category', placeholder: 'All Categories',
 				options: [
-					{ label: 'Disease Management', value: 'disease_management' },
-					{ label: 'Medication', value: 'medication' },
-					{ label: 'Procedure', value: 'procedure' },
-					{ label: 'Lifestyle', value: 'lifestyle' },
-					{ label: 'Preventive', value: 'preventive' },
-					{ label: 'Other', value: 'other' },
+					{ label: 'Education', value: 'Education' },
+					{ label: 'Handout', value: 'Handout' },
+					{ label: 'Video', value: 'Video' },
+					{ label: 'Verbal Counseling', value: 'Verbal Counseling' },
+					{ label: 'Online Resource', value: 'Online Resource' },
 				],
 			},
 			{
@@ -1251,6 +1337,23 @@ export class EducationEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
+		cellRenderer: (key, value, item) => {
+			if (key === 'category' && value) {
+				const iconMap: Record<string, string> = {
+					// allow-any-unicode-next-line
+					Education: '📚', Handout: '📄', Video: '🎥',
+					// allow-any-unicode-next-line
+					'Verbal Counseling': '💬', 'Online Resource': '🌐',
+				};
+				// allow-any-unicode-next-line
+				return `${iconMap[String(value)] || '📖'} ${value}`;
+			}
+			if (key === 'sent' && value) {
+				try { return new Date(String(value)).toLocaleDateString(); } catch { return String(value); }
+			}
+			// allow-any-unicode-next-line
+			return String(value ?? item[key] ?? '—');
+		},
 		formFields: [
 			{
 				key: 'patientName', label: 'Patient', type: 'search', required: true,
@@ -1351,13 +1454,19 @@ export class RecallEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Recall', apiPath: '/api/recalls',
 		searchPlaceholder: 'Search by patient name...',
-		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'id'],
+		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
+		// Columns ordered to match the web app's RecallBoard:
+		// Patient | Type | Provider | Due Date | Status | Priority | Attempts | Contact
 		columns: [
-			{ key: 'patientName', label: 'Patient' }, { key: 'recallTypeName', label: 'Type' },
-			{ key: 'providerName', label: 'Provider' }, { key: 'dueDate', label: 'Due Date', width: '100px' },
-			{ key: 'status', label: 'Status', width: '100px' }, { key: 'priority', label: 'Priority', width: '80px' },
-			{ key: 'attemptCount', label: 'Attempts', width: '70px' },
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'recallTypeName', label: 'Type' },
+			{ key: 'providerName', label: 'Provider' },
+			{ key: 'dueDate', label: 'Due Date', width: '110px' },
+			{ key: 'status', label: 'Status', width: '110px' },
+			{ key: 'priority', label: 'Priority', width: '90px' },
+			{ key: 'attemptCount', label: 'Attempts', width: '80px' },
+			{ key: 'preferredContact', label: 'Contact', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
@@ -1402,12 +1511,14 @@ export class RecallEditor extends ClinicalListEditorBase {
 		formFields: [
 			{
 				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
-				placeholder: 'Search patient...', apiPath: '/api/patients',
+				placeholder: 'Search patient (must be selected from results)...',
+				apiPath: '/api/patients',
 				relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
 				relatedFieldsMap: { patientPhone: 'phone', patientEmail: 'email' },
+				validationMessage: 'Please select a patient from the search results',
 			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a patient from the search results — not just type the name' },
 			{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
 			{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
 			{
@@ -1813,6 +1924,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
 		searchPlaceholder: 'Search by patient, transaction...',
+		// "+ Collect Payment" POSTs to /api/payments/collect — the GET list lives
+		// at /api/payments/transactions but the backend has no POST on that path.
+		// QA report 2026-05-11: clicking save raised
+		// "request method 'POST' is not supported".
+		buildCreateUrl: () => '/api/payments/collect',
+		// PUT/PATCH/DELETE still live under /transactions/{id}.
+		buildItemUrl: (item) => `/api/payments/transactions/${item.id}`,
 		// Backend doesn't filter on status= / q=, so do it client-side.
 		clientSideFilter: ['patientId', 'patientName', 'transactionType', 'paymentMethodType', 'description', 'status', 'transactionId', 'id'],
 		// Backend `transactionStats()` returns 9 keys; only the *Count ones map to a
@@ -2232,23 +2350,63 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 						cancelButton: true,
 					});
 					const status = res.result;
-					if (status) {
-						await api.fetch(`/api/all-claims/${item.claimId || item.id}/status`, {
-							method: 'PUT', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ status }),
-						});
-						reload();
+					if (!status) { return; }
+					const r = await api.fetch(`/api/all-claims/${item.claimId || item.id}/status`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ status }),
+					});
+					if (!r.ok) {
+						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to update status (HTTP ${r.status}).`));
+						return;
 					}
+					await dlg.info(`Claim status updated to "${status}".`);
+					reload();
 				}
 			},
 			{
 				// allow-any-unicode-next-line
 				label: 'Send', icon: '📤', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.confirm({ message: 'Send this claim to insurance?', type: 'question' });
-					if (res.confirmed) {
-						await api.fetch(`/api/all-claims/${item.claimId || item.id}/sends`, { method: 'POST' });
-						reload();
+					const current = String(item.status || '').toLowerCase();
+					if (current === 'submitted' || current === 'approved' || current === 'paid') {
+						await dlg.info(`Claim is already ${current}.`);
+						return;
 					}
+					const res = await dlg.confirm({
+						message: 'Send this claim to insurance?',
+						detail: `Claim #${item.claimNumber || item.id} for ${item.patientName || 'patient'} → ${item.payerName || 'payer'}`,
+						type: 'question',
+						primaryButton: 'Send',
+					});
+					if (!res.confirmed) { return; }
+					const r = await api.fetch(`/api/all-claims/${item.claimId || item.id}/sends`, { method: 'POST' });
+					if (!r.ok) {
+						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to send claim (HTTP ${r.status}). Check that the claim has a payer, provider, diagnosis and policy number.`));
+						return;
+					}
+					await dlg.info('Claim sent to insurance.');
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Void & Recreate', icon: '↺', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.confirm({
+						message: 'Void this claim and create a replacement?',
+						detail: 'This permanently voids the current claim and creates a new draft.',
+						type: 'warning',
+						primaryButton: 'Void & Recreate',
+					});
+					if (!res.confirmed) { return; }
+					const r = await api.fetch(`/api/all-claims/${item.claimId || item.id}/void-recreate`, { method: 'POST' });
+					if (!r.ok) {
+						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to void claim (HTTP ${r.status}).`));
+						return;
+					}
+					await dlg.info('Claim voided and replaced.');
+					reload();
 				}
 			},
 		],

@@ -32,6 +32,7 @@ export class PortalEditor extends EditorPane {
 	private config: PortalConfig = { general: {}, features: {}, forms: [], navigation: [] };
 	private _dirty = false;
 	private _activeTab = 'general';
+	private _sidebarItems: Map<string, HTMLElement> = new Map();
 	get dirty(): boolean { return this._dirty; }
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService,
@@ -43,34 +44,58 @@ export class PortalEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor'));
-		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
+		this.root.style.cssText = 'height:100%;display:flex;flex-direction:row;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
-		const header = DOM.append(this.root, DOM.$('.h'));
-		header.style.cssText = 'padding:12px 24px;max-width:1000px;width:100%;margin:0 auto;';
+		// Sidebar matches the web application's left navigation pattern: a fixed
+		// rail with section icons + labels instead of horizontal tabs at the top.
+		const sidebar = DOM.append(this.root, DOM.$('.portal-sidebar'));
+		sidebar.style.cssText = 'width:220px;flex-shrink:0;background:var(--vscode-sideBar-background);border-right:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;padding:16px 0;overflow-y:auto;';
+
+		const sbHeader = DOM.append(sidebar, DOM.$('div'));
+		sbHeader.textContent = 'Patient Portal';
+		sbHeader.style.cssText = 'padding:0 16px 12px 16px;font-weight:600;font-size:13px;color:var(--vscode-foreground);text-transform:uppercase;letter-spacing:0.5px;';
+
+		const navItems: Array<{ key: string; label: string; icon: string }> = [
+			// allow-any-unicode-next-line
+			{ key: 'general', label: 'General', icon: '⚙' },
+			// allow-any-unicode-next-line
+			{ key: 'features', label: 'Features', icon: '✨' },
+			{ key: 'forms', label: 'Forms', icon: '\u{1F4DD}' },
+			{ key: 'navigation', label: 'Navigation', icon: '\u{1F9ED}' },
+		];
+		for (const nav of navItems) {
+			const navEl = DOM.append(sidebar, DOM.$('div'));
+			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 16px;cursor:pointer;font-size:13px;color:var(--vscode-descriptionForeground);border-left:3px solid transparent;transition:background 0.1s;';
+			const iconEl = DOM.append(navEl, DOM.$('span'));
+			iconEl.textContent = nav.icon;
+			iconEl.style.cssText = 'font-size:14px;width:16px;text-align:center;';
+			const labelEl = DOM.append(navEl, DOM.$('span'));
+			labelEl.textContent = nav.label;
+			navEl.addEventListener('mouseenter', () => { if (this._activeTab !== nav.key) { navEl.style.background = 'var(--vscode-list-hoverBackground)'; } });
+			navEl.addEventListener('mouseleave', () => { if (this._activeTab !== nav.key) { navEl.style.background = ''; } });
+			navEl.addEventListener('click', () => { this._activeTab = nav.key; this._render(); });
+			this._sidebarItems.set(nav.key, navEl);
+		}
+
+		// Main content area
+		const main = DOM.append(this.root, DOM.$('.portal-main'));
+		main.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;';
+
+		const header = DOM.append(main, DOM.$('.h'));
+		header.style.cssText = 'padding:12px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
 		const tb = DOM.append(header, DOM.$('.tb'));
-		tb.style.cssText = 'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		tb.style.cssText = 'display:flex;align-items:center;gap:12px;';
 		const tl = DOM.append(tb, DOM.$('span'));
-		tl.textContent = 'Patient Portal';
+		tl.textContent = 'Patient Portal Configuration';
 		tl.style.cssText = 'font-weight:600;font-size:14px;flex:1;';
 		this._link(tb, 'Save', () => this._save());
 		this._link(tb, 'Open JSON', () => this._openJson());
 
-		// Tabs
-		const tabs = DOM.append(header, DOM.$('.tabs'));
-		tabs.style.cssText = 'display:flex;border-bottom:1px solid var(--vscode-editorWidget-border);margin-top:8px;';
-		for (const tab of ['general', 'features', 'forms', 'navigation']) {
-			const tabEl = DOM.append(tabs, DOM.$('div'));
-			tabEl.textContent = tab.charAt(0).toUpperCase() + tab.slice(1);
-			tabEl.dataset.tab = tab;
-			tabEl.style.cssText = `padding:8px 16px;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;color:var(--vscode-descriptionForeground);`;
-			tabEl.addEventListener('click', () => { this._activeTab = tab; this._render(); });
-		}
-
-		const bc = DOM.append(this.root, DOM.$('.bc'));
+		const bc = DOM.append(main, DOM.$('.bc'));
 		bc.style.cssText = 'flex:1;overflow-y:auto;';
 		this.body = DOM.append(bc, DOM.$('.b'));
-		this.body.style.cssText = 'max-width:1000px;width:100%;margin:0 auto;padding:16px 24px;';
+		this.body.style.cssText = 'max-width:900px;width:100%;margin:0 auto;padding:16px 24px;';
 	}
 
 	override async setInput(input: BaseCiyexInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -82,12 +107,13 @@ export class PortalEditor extends EditorPane {
 	private _render(): void {
 		DOM.clearNode(this.body);
 
-		// Update tab active state
-		const tabs = this.root.querySelectorAll('[data-tab]');
-		for (const tab of tabs) {
-			const isActive = (tab as HTMLElement).dataset.tab === this._activeTab;
-			(tab as HTMLElement).style.borderBottomColor = isActive ? 'var(--vscode-focusBorder)' : 'transparent';
-			(tab as HTMLElement).style.color = isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+		// Update sidebar nav active state
+		for (const [key, el] of this._sidebarItems.entries()) {
+			const isActive = key === this._activeTab;
+			el.style.borderLeftColor = isActive ? 'var(--vscode-focusBorder)' : 'transparent';
+			el.style.color = isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
+			el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground,rgba(0,122,204,0.12))' : '';
+			el.style.fontWeight = isActive ? '600' : '400';
 		}
 
 		switch (this._activeTab) {

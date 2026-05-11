@@ -91,6 +91,7 @@ export interface FilterDropdownDef {
 	options: Array<{ label: string; value: string }>;
 }
 
+
 export interface ClinicalEditorConfig {
 	title: string;
 	apiPath: string;
@@ -200,8 +201,8 @@ const STATUS_COLORS: Record<string, string> = {
 export abstract class ClinicalListEditorBase extends EditorPane {
 	protected abstract readonly config: ClinicalEditorConfig;
 
-	private root!: HTMLElement;
-	private contentEl!: HTMLElement;
+	protected root!: HTMLElement;
+	protected contentEl!: HTMLElement;
 	private items: Record<string, unknown>[] = [];
 	private stats: Record<string, number> = {};
 	private searchValue = '';
@@ -230,7 +231,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this.root = DOM.append(parent, DOM.$('.clinical-list-editor'));
+		// Subclasses can override `wrapContent` to inject decoration (e.g. a
+		// sidebar). Default returns parent unchanged.
+		const contentHost = this.wrapContent(parent);
+		this.root = DOM.append(contentHost, DOM.$('.clinical-list-editor'));
 		// Outer container hides scrollbars by default; the inner content scrolls only
 		// when it actually overflows. Matches ciyex-ehr-ui where pages don't double-scroll.
 		this.root.style.cssText = 'height:100%;overflow:auto;background:var(--vscode-editor-background);position:relative;scrollbar-width:none;-ms-overflow-style:none;';
@@ -239,6 +243,22 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		styleEl.textContent = '.clinical-list-editor::-webkit-scrollbar{display:none;width:0;height:0;}';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'width:100%;padding:20px 24px;box-sizing:border-box;';
+	}
+
+	/**
+	 * Hook for subclasses to wrap the editor in additional UI such as a left
+	 * sidebar. The returned element becomes the parent of the standard content.
+	 * Default implementation returns `parent` unchanged.
+	 */
+	protected wrapContent(parent: HTMLElement): HTMLElement {
+		return parent;
+	}
+
+	/** Reload list data (and stats if configured). Exposed for subclasses that
+	 * mutate state (e.g. sidebar view-switch) and need to trigger a refresh. */
+	protected reload(): void {
+		if (this.config.statsPath) { this._loadStats(); }
+		this._loadData();
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -367,11 +387,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// allow-any-unicode-next-line
 		// ─── Stats cards ───
-		if (Object.keys(this.stats).length > 0) {
+		// Grid layout gives every card an equal width — the previous flex/wrap layout
+		// sized cards to their content, which the QA team flagged as misaligned cards
+		// with inconsistent spacing on the Referrals page.
+		const numericStats = Object.entries(this.stats).filter(([, v]) => typeof v === 'number');
+		if (numericStats.length > 0) {
 			const row = DOM.append(this.contentEl, DOM.$('div'));
-			row.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;';
-			for (const [k, v] of Object.entries(this.stats)) {
-				if (typeof v !== 'number') { continue; }
+			const cols = Math.min(numericStats.length, 6);
+			row.style.cssText = `display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:10px;margin-bottom:16px;`;
+			for (const [k, v] of numericStats) {
 				// If statsFilterMap is set, only mapped keys are clickable filters; the
 				// rest are info-only aggregates (e.g. total counts, sums). Without a
 				// map, fall back to the legacy behavior of using the raw key.
@@ -379,7 +403,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const clickable = filterValue !== undefined;
 				const c = DOM.append(row, DOM.$('div'));
 				const isActive = clickable && this.statusFilter === filterValue;
-				c.style.cssText = `padding:8px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:6px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};min-width:70px;background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s;${clickable ? '' : 'opacity:0.85;'}`;
+				c.style.cssText = `padding:12px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:8px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s,border-color 0.15s;${clickable ? '' : 'opacity:0.85;'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:64px;`;
 				if (clickable) {
 					c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
 					c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
@@ -387,23 +411,28 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 				const numEl = DOM.append(c, DOM.$('div'));
 				numEl.textContent = String(v);
-				numEl.style.cssText = `font-size:18px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};`;
+				numEl.style.cssText = `font-size:22px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};line-height:1;`;
 				const l = DOM.append(c, DOM.$('div'));
 				l.textContent = k.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim();
-				l.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);text-transform:capitalize;';
+				l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);text-transform:capitalize;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
 			}
 		}
 
 		// allow-any-unicode-next-line
 		// ─── Status tabs ───
+		// Even spacing and consistent padding so the "subtopic" pills align
+		// uniformly. Previously the 4px gap and varying padding made them feel
+		// crowded (Medical Codes QA report).
 		if (cfg.statusTabs) {
 			const tabs = DOM.append(this.contentEl, DOM.$('div'));
-			tabs.style.cssText = 'display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap;';
+			tabs.style.cssText = 'display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center;';
 			for (const t of [{ label: 'All', value: '' }, ...cfg.statusTabs]) {
 				const b = DOM.append(tabs, DOM.$('button'));
 				b.textContent = t.label;
 				const a = this.statusFilter === t.value;
-				b.style.cssText = `padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;border:1px solid ${a ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};background:${a ? 'rgba(0,122,204,0.15)' : 'transparent'};color:var(--vscode-foreground);transition:all 0.15s;`;
+				b.style.cssText = `padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid ${a ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};background:${a ? 'rgba(0,122,204,0.15)' : 'transparent'};color:var(--vscode-foreground);transition:all 0.15s;white-space:nowrap;`;
+				b.addEventListener('mouseenter', () => { if (!a) { b.style.background = 'var(--vscode-list-hoverBackground)'; } });
+				b.addEventListener('mouseleave', () => { if (!a) { b.style.background = 'transparent'; } });
 				b.addEventListener('click', () => { this.statusFilter = t.value; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 			}
 		}
@@ -481,7 +510,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// ─── Table ───
 		const tbl = DOM.append(this.contentEl, DOM.$('div'));
 		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
-		const colWidths = cfg.columns.map(c => c.width || '1fr').join(' ');
+		// `minmax(0,1fr)` lets flexible columns shrink below their content width.
+		// Without this, an overflowing cell on one row would expand its column and
+		// shift the others, so the header and data rows no longer aligned
+		// (Medical Codes QA report: "Alignment issues between subtopics").
+		const colWidths = cfg.columns.map(c => c.width || 'minmax(0,1fr)').join(' ');
 		// Fixed actions-column width so header and data rows align (each row is its own
 		// grid; `auto` would size independently per row and shift columns left/right).
 		const actionCount = (cfg.actions?.length || 0) + (cfg.editable && cfg.formFields ? 1 : 0);
@@ -1004,14 +1037,28 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
 		saveBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 		saveBtn.addEventListener('click', async () => {
-			// Validate required fields
+			// Reset prior validation state
+			const clearError = (input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | undefined) => {
+				if (!input) { return; }
+				input.style.borderColor = '';
+				input.addEventListener('input', () => { input.style.borderColor = ''; }, { once: true });
+				input.addEventListener('change', () => { input.style.borderColor = ''; }, { once: true });
+			};
+			for (const input of inputs.values()) { clearError(input); }
+			const failValidation = (input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | undefined, msg: string, field: FormFieldDef) => {
+				errorEl.textContent = msg;
+				errorEl.style.display = 'block';
+				if (input) {
+					input.style.borderColor = '#ef4444';
+					if (!field.hidden) { input.focus(); }
+				}
+			};
+			// Validate required fields + patterns + ranges
 			for (const field of fields) {
 				if (field.required) {
 					const input = inputs.get(field.key);
 					if (!input || !input.value.trim()) {
-						errorEl.textContent = field.validationMessage || `${field.label} is required`;
-						errorEl.style.display = 'block';
-						if (input && !field.hidden) { input.focus(); }
+						failValidation(input, field.validationMessage || `${field.label} is required`, field);
 						return;
 					}
 				}
@@ -1019,9 +1066,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					const input = inputs.get(field.key);
 					const v = input?.value.trim() || '';
 					if (v && !new RegExp(field.validationPattern).test(v)) {
-						errorEl.textContent = field.validationMessage || `${field.label} format is invalid`;
-						errorEl.style.display = 'block';
-						input?.focus();
+						failValidation(input, field.validationMessage || `${field.label} format is invalid`, field);
 						return;
 					}
 				}
@@ -1031,22 +1076,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					if (v) {
 						const n = Number(v);
 						if (!isFinite(n)) {
-							errorEl.textContent = `${field.label} must be a number`;
-							errorEl.style.display = 'block';
-							input?.focus();
+							failValidation(input, `${field.label} must be a number`, field);
 							return;
 						}
 						const minV = field.minValue !== undefined ? field.minValue : 0;
 						if (n < minV) {
-							errorEl.textContent = `${field.label} must be ${minV} or greater`;
-							errorEl.style.display = 'block';
-							input?.focus();
+							failValidation(input, `${field.label} must be ${minV} or greater`, field);
 							return;
 						}
 						if (field.maxValue !== undefined && n > field.maxValue) {
-							errorEl.textContent = `${field.label} must be ${field.maxValue} or less`;
-							errorEl.style.display = 'block';
-							input?.focus();
+							failValidation(input, `${field.label} must be ${field.maxValue} or less`, field);
 							return;
 						}
 					}

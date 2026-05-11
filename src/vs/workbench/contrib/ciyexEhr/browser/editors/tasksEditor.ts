@@ -229,7 +229,20 @@ export class TasksEditor extends EditorPane {
 		this.searchInputEl = search;
 		search.addEventListener('input', () => {
 			if (this.searchTimer) { clearTimeout(this.searchTimer); }
-			this.searchTimer = setTimeout(() => { this.searchQuery = search.value; this.currentPage = 0; this._loadTasks(); }, 300);
+			this.searchTimer = setTimeout(() => { this.searchQuery = search.value; this.currentPage = 0; this._loadTasks(); }, 200);
+		});
+		// Clear button — visible only when search has text. Lets users reset
+		// the search with one click instead of selecting + deleting.
+		const clearBtn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		clearBtn.textContent = '×';
+		clearBtn.title = 'Clear search';
+		clearBtn.style.cssText = `padding:6px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:14px;display:${this.searchQuery ? 'inline-block' : 'none'};`;
+		clearBtn.addEventListener('click', () => {
+			search.value = '';
+			this.searchQuery = '';
+			this.currentPage = 0;
+			this._loadTasks();
 		});
 
 		// Priority filter
@@ -632,23 +645,89 @@ export class TasksEditor extends EditorPane {
 
 		// Buttons
 		const btnRow = DOM.append(panel, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
 
-		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		// Delete button on the left, only shown for existing tasks
+		const leftGroup = DOM.append(btnRow, DOM.$('div'));
+		leftGroup.style.cssText = 'display:flex;gap:8px;';
+		if (task) {
+			const deleteBtn = DOM.append(leftGroup, DOM.$('button')) as HTMLButtonElement;
+			deleteBtn.textContent = 'Delete';
+			deleteBtn.style.cssText = 'padding:8px 20px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+			deleteBtn.addEventListener('mouseenter', () => { deleteBtn.style.background = 'rgba(239,68,68,0.1)'; });
+			deleteBtn.addEventListener('mouseleave', () => { deleteBtn.style.background = 'transparent'; });
+			deleteBtn.addEventListener('click', async () => {
+				if (!task.id) { return; }
+				deleteBtn.disabled = true;
+				deleteBtn.textContent = 'Deleting...';
+				try {
+					const res = await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
+					if (res.ok) {
+						this.formOverlay?.remove();
+						this.formOverlay = null;
+						this.notificationService.notify({ severity: Severity.Info, message: `Task "${task.title}" deleted` });
+						await this._loadAll();
+					} else {
+						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete task' });
+						deleteBtn.disabled = false;
+						deleteBtn.textContent = 'Delete';
+					}
+				} catch {
+					this.notificationService.notify({ severity: Severity.Error, message: 'Error deleting task' });
+					deleteBtn.disabled = false;
+					deleteBtn.textContent = 'Delete';
+				}
+			});
+		}
+
+		const rightGroup = DOM.append(btnRow, DOM.$('div'));
+		rightGroup.style.cssText = 'display:flex;gap:8px;';
+
+		const cancelBtn = DOM.append(rightGroup, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
 		cancelBtn.addEventListener('click', () => { this.formOverlay?.remove(); this.formOverlay = null; });
 
-		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		const saveBtn = DOM.append(rightGroup, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = task ? 'Save Changes' : 'Create';
 		saveBtn.style.cssText = 'padding:8px 20px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+		// Per-field error element, created lazily and reused across re-validations
+		// so we don't rely on querySelector (project linter forbids selector-based
+		// lookups — track the element directly instead).
+		const fieldErrors = new Map<string, HTMLElement>();
+		const showFieldError = (key: string, input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, message: string) => {
+			input.style.borderColor = '#ef4444';
+			input.focus();
+			let errEl = fieldErrors.get(key);
+			if (!errEl && input.parentElement) {
+				errEl = DOM.append(input.parentElement, DOM.$('div.field-error'));
+				errEl.style.cssText = 'color:#ef4444;font-size:11px;margin-top:4px;';
+				fieldErrors.set(key, errEl);
+			}
+			if (errEl) { errEl.textContent = message; errEl.style.display = 'block'; }
+			input.addEventListener('input', () => {
+				input.style.borderColor = '';
+				const e = fieldErrors.get(key);
+				if (e) { e.style.display = 'none'; }
+			}, { once: true });
+		};
+
 		saveBtn.addEventListener('click', async () => {
-			const title = (fields.get('title') as HTMLInputElement)?.value?.trim();
+			const titleInput = fields.get('title') as HTMLInputElement;
+			const title = titleInput?.value?.trim();
 			if (!title) {
+				showFieldError('title', titleInput, 'Title is required');
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Title is required' });
 				return;
 			}
-			// Validate text fields reject special characters
+			if (title.length < 3) {
+				showFieldError('title', titleInput, 'Title must be at least 3 characters');
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Title must be at least 3 characters' });
+				return;
+			}
+			// Validate text fields reject special characters and surface the
+			// offending field with a red border (matches base-class behaviour
+			// from clinicalListEditor.ts).
 			const textValidation: Array<{ key: string; label: string }> = [
 				{ key: 'title', label: 'Title' },
 				{ key: 'assignedTo', label: 'Assigned To' },
@@ -657,8 +736,12 @@ export class TasksEditor extends EditorPane {
 			];
 			const textPattern = /^[A-Za-z0-9 ,.'\-()@/]{1,256}$/;
 			for (const { key, label } of textValidation) {
-				const v = (fields.get(key) as HTMLInputElement)?.value?.trim() || '';
+				const input = fields.get(key) as HTMLInputElement | undefined;
+				const v = input?.value?.trim() || '';
 				if (v && !textPattern.test(v)) {
+					if (input) {
+						showFieldError(key, input, `${label} contains invalid characters`);
+					}
 					this.notificationService.notify({ severity: Severity.Warning, message: `${label} contains invalid characters. Use only letters, numbers, spaces, and common punctuation.` });
 					return;
 				}

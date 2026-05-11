@@ -415,8 +415,50 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	private _buildCompose(): void {
+		// Switch compose layout to a column so the toolbar sits above the input.
+		this.composeEl.style.cssText = 'padding:8px 16px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;gap:6px;flex-shrink:0;';
+
+		// Formatting toolbar (Bold / Italic / Underline / Code / Link / Bullet / Emoji)
+		const toolbar = DOM.append(this.composeEl, DOM.$('.messaging-toolbar'));
+		toolbar.style.cssText = 'display:flex;gap:2px;align-items:center;flex-wrap:wrap;';
+
+		const mkFmtBtn = (label: string, title: string, extraStyle: string, onClick: () => void) => {
+			const b = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.title = title;
+			b.style.cssText = 'background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 8px;color:var(--vscode-foreground);min-width:28px;' + extraStyle;
+			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(255,255,255,0.08))'; });
+			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+			b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+			return b;
+		};
+		mkFmtBtn('B', 'Bold (Ctrl+B)', 'font-weight:700;', () => this._wrapSelection('**', '**'));
+		mkFmtBtn('I', 'Italic (Ctrl+I)', 'font-style:italic;', () => this._wrapSelection('_', '_'));
+		mkFmtBtn('U', 'Underline (Ctrl+U)', 'text-decoration:underline;', () => this._wrapSelection('__', '__'));
+		mkFmtBtn('S', 'Strikethrough', 'text-decoration:line-through;', () => this._wrapSelection('~~', '~~'));
+
+		// Separator
+		const sep1 = DOM.append(toolbar, DOM.$('span'));
+		sep1.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border);margin:0 4px;';
+
+		// allow-any-unicode-next-line
+		mkFmtBtn('〈〉', 'Inline code', 'font-family:monospace;', () => this._wrapSelection('`', '`'));
+		// allow-any-unicode-next-line
+		mkFmtBtn('🔗', 'Insert link', '', () => this._wrapSelection('[', '](url)'));
+		// allow-any-unicode-next-line
+		mkFmtBtn('•', 'Bullet list', '', () => this._insertAtLineStart('• '));
+		mkFmtBtn('"', 'Quote', '', () => this._insertAtLineStart('> '));
+
+		// Spacer pushes attach to the right (kept inline with toolbar for compactness)
+		const spacer = DOM.append(toolbar, DOM.$('span'));
+		spacer.style.flex = '1';
+
+		// Input row: attach + textarea + send
+		const inputRow = DOM.append(this.composeEl, DOM.$('.messaging-input-row'));
+		inputRow.style.cssText = 'display:flex;gap:8px;align-items:flex-end;';
+
 		// Attach button
-		const attachBtn = DOM.append(this.composeEl, DOM.$('button'));
+		const attachBtn = DOM.append(inputRow, DOM.$('button'));
 		// allow-any-unicode-next-line
 		attachBtn.textContent = '📎';
 		attachBtn.title = 'Attach file';
@@ -424,11 +466,17 @@ export class MessagingEditor extends EditorPane {
 		attachBtn.addEventListener('click', () => this._attachFile());
 
 		// Input
-		this.inputEl = DOM.append(this.composeEl, DOM.$('textarea')) as HTMLTextAreaElement;
-		this.inputEl.placeholder = 'Type a message...';
+		this.inputEl = DOM.append(inputRow, DOM.$('textarea')) as HTMLTextAreaElement;
+		this.inputEl.placeholder = 'Type a message... (**bold**, _italic_, __underline__)';
 		this.inputEl.style.cssText = 'flex:1;padding:8px 12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;font-family:inherit;resize:none;min-height:36px;max-height:120px;line-height:1.4;';
 		this.inputEl.rows = 1;
 		this.inputEl.addEventListener('keydown', (e) => {
+			// Keyboard shortcuts for formatting
+			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+				if (e.key === 'b' || e.key === 'B') { e.preventDefault(); this._wrapSelection('**', '**'); return; }
+				if (e.key === 'i' || e.key === 'I') { e.preventDefault(); this._wrapSelection('_', '_'); return; }
+				if (e.key === 'u' || e.key === 'U') { e.preventDefault(); this._wrapSelection('__', '__'); return; }
+			}
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
 				this._sendMessage();
@@ -446,12 +494,49 @@ export class MessagingEditor extends EditorPane {
 		});
 
 		// Send button
-		const sendBtn = DOM.append(this.composeEl, DOM.$('button'));
+		const sendBtn = DOM.append(inputRow, DOM.$('button'));
 		// allow-any-unicode-next-line
 		sendBtn.textContent = '▶';
 		sendBtn.title = 'Send';
 		sendBtn.style.cssText = 'padding:6px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0;';
 		sendBtn.addEventListener('click', () => this._sendMessage());
+	}
+
+	/**
+	 * Wrap the current textarea selection with the given before/after markers.
+	 * If nothing is selected, place the markers around the caret with the caret
+	 * positioned between them so the user can immediately type the styled content.
+	 */
+	private _wrapSelection(before: string, after: string): void {
+		if (!this.inputEl) { return; }
+		const start = this.inputEl.selectionStart ?? this.inputEl.value.length;
+		const end = this.inputEl.selectionEnd ?? this.inputEl.value.length;
+		const value = this.inputEl.value;
+		const selected = value.substring(start, end);
+		const newValue = value.substring(0, start) + before + selected + after + value.substring(end);
+		this.inputEl.value = newValue;
+		const newCaret = selected.length > 0 ? start + before.length + selected.length + after.length : start + before.length;
+		this.inputEl.focus();
+		this.inputEl.setSelectionRange(
+			selected.length > 0 ? newCaret : newCaret,
+			selected.length > 0 ? newCaret : newCaret,
+		);
+		// Trigger auto-resize
+		this.inputEl.style.height = 'auto';
+		this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+	}
+
+	/** Insert text at the start of the current line (for bullet/quote markers). */
+	private _insertAtLineStart(prefix: string): void {
+		if (!this.inputEl) { return; }
+		const value = this.inputEl.value;
+		const caret = this.inputEl.selectionStart ?? value.length;
+		const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
+		const newValue = value.substring(0, lineStart) + prefix + value.substring(lineStart);
+		this.inputEl.value = newValue;
+		const newCaret = caret + prefix.length;
+		this.inputEl.focus();
+		this.inputEl.setSelectionRange(newCaret, newCaret);
 	}
 
 	private async _sendMessage(): Promise<void> {
@@ -594,17 +679,18 @@ export class MessagingEditor extends EditorPane {
 		} catch { /* delete failed */ }
 	}
 
-	// Parse @mentions and *bold* / _italic_ / `code` into DOM nodes without innerHTML
-	// (VS Code's Trusted Types policy throws on direct innerHTML string assignment).
+	// Parse @mentions and **bold** / __underline__ / _italic_ / ~~strike~~ / `code` into DOM nodes
+	// without innerHTML (VS Code's Trusted Types policy throws on direct innerHTML string assignment).
+	// Order matters: longer markers (** , __, ~~) must be tested before single-char counterparts.
 	private _renderRichContent(container: HTMLElement, text: string): void {
-		const pattern = /@(\w+)|\*\*(.+?)\*\*|_(.+?)_|`(.+?)`/g;
+		const pattern = /@(\w+)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|_(.+?)_|`(.+?)`/g;
 		let lastIndex = 0;
 		let match: RegExpExecArray | null;
 		while ((match = pattern.exec(text)) !== null) {
 			if (match.index > lastIndex) {
 				container.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
 			}
-			const [full, mention, bold, italic, code] = match;
+			const [full, mention, bold, underline, strike, italic, code] = match;
 			if (mention !== undefined) {
 				const span = DOM.append(container, DOM.$('span'));
 				span.textContent = `@${mention}`;
@@ -612,6 +698,14 @@ export class MessagingEditor extends EditorPane {
 			} else if (bold !== undefined) {
 				const el = DOM.append(container, DOM.$('strong'));
 				el.textContent = bold;
+			} else if (underline !== undefined) {
+				const el = DOM.append(container, DOM.$('u'));
+				el.textContent = underline;
+				el.style.textDecoration = 'underline';
+			} else if (strike !== undefined) {
+				const el = DOM.append(container, DOM.$('s'));
+				el.textContent = strike;
+				el.style.textDecoration = 'line-through';
 			} else if (italic !== undefined) {
 				const el = DOM.append(container, DOM.$('em'));
 				el.textContent = italic;
