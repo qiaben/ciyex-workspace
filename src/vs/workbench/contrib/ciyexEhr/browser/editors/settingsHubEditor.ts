@@ -200,8 +200,13 @@ export class SettingsHubEditor extends EditorPane {
 			const res = await this.apiService.fetch('/api/tab-field-config/all');
 			if (res.ok) {
 				const data: TabFieldConfig[] = await res.json();
+				// Exclude tabs that have a dedicated builtin renderer in the hub
+				// (e.g. `template-documents` would otherwise appear twice — once as
+				// the DocumentReference FHIR table, once as the Template Documents
+				// templates editor). The builtin handles the actual templates flow.
+				const BUILTIN_DUPS = new Set(['template-documents']);
 				this.fhirItems = data
-					.filter(d => d.category === 'Settings' && Array.isArray(d.fhirResources) && d.fhirResources.length > 0)
+					.filter(d => d.category === 'Settings' && Array.isArray(d.fhirResources) && d.fhirResources.length > 0 && !BUILTIN_DUPS.has(d.tabKey))
 					.map(d => ({
 						key: d.tabKey,
 						label: d.label || this._titleCase(d.tabKey),
@@ -969,16 +974,36 @@ export class SettingsHubEditor extends EditorPane {
 			saveBtn.disabled = true;
 			saveBtn.textContent = 'Saving\u2026';
 			try {
+				// Backend expects List<ScheduleDto> directly (NOT { blocks: [...] } \u2014
+				// that caused the "Cannot deserialize ArrayList<ScheduleDto> from
+				// Object value" 500 the team reported). Each block maps a
+				// recurring weekly availability window to a ScheduleDto whose
+				// recurrence carries the day-of-week, time, and providerId.
+				const payload = blocks.map(b => ({
+					providerId: Number(providerId) || undefined,
+					fhirId: b.fhirId || undefined,
+					actorReferences: [`Practitioner/${providerId}`, ...(b.locationId ? [`Location/${b.locationId}`] : [])],
+					status: 'active',
+					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+					recurrence: {
+						frequency: 'WEEKLY',
+						interval: 1,
+						byWeekday: b.daysOfWeek,
+						startTime: b.startTime,
+						endTime: b.endTime,
+						locationId: b.locationId,
+					},
+				}));
 				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(providerId)}/availability`, {
 					method: 'PUT',
-					body: JSON.stringify({ blocks }),
+					body: JSON.stringify(payload),
 				});
 				if (res.ok) {
 					this.notificationService.notify({ severity: Severity.Info, message: 'Availability saved.' });
 					overlay.remove();
 				} else {
 					const txt = await res.text().catch(() => '');
-					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 200)}` });
 					saveBtn.disabled = false;
 					saveBtn.textContent = 'Save Availability';
 				}
@@ -989,20 +1014,25 @@ export class SettingsHubEditor extends EditorPane {
 			}
 		});
 
-		// Load existing
+		// Load existing \u2014 backend returns List<ScheduleDto> wrapped in ApiResponse{data: [...]}.
+		// Each ScheduleDto has a `recurrence` with byWeekday + startTime + endTime that we
+		// flatten back into the simpler block model the modal renders.
 		try {
 			const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(providerId)}/availability`);
 			if (res.ok) {
 				const json = await res.json();
-				const list: Array<Record<string, unknown>> = json?.data?.blocks || json?.blocks || json?.data || (Array.isArray(json) ? json : []);
-				blocks = list.map(b => ({
-					id: (b.id as string) || (b.fhirId as string),
-					fhirId: b.fhirId as string,
-					daysOfWeek: (b.daysOfWeek || (b.byWeekday as string[]) || []) as string[],
-					startTime: (b.startTime as string) || '',
-					endTime: (b.endTime as string) || '',
-					locationId: b.locationId as string | undefined,
-				}));
+				const list: Array<Record<string, unknown>> = (json?.data as Array<Record<string, unknown>>) || (Array.isArray(json) ? json : []);
+				blocks = list.map(b => {
+					const rec = (b.recurrence as Record<string, unknown>) || {};
+					return {
+						id: (b.id as string) || (b.fhirId as string),
+						fhirId: b.fhirId as string,
+						daysOfWeek: ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []),
+						startTime: (rec.startTime as string) || (b.startTime as string) || '',
+						endTime: (rec.endTime as string) || (b.endTime as string) || '',
+						locationId: (rec.locationId as string) || (b.locationId as string | undefined),
+					};
+				});
 			}
 		} catch { /* ignore \u2014 start with empty */ }
 		renderBlocks();
@@ -1237,11 +1267,18 @@ export class SettingsHubEditor extends EditorPane {
 		// Make the lookup field visually distinct from a plain text input —
 		// adds a dropdown chevron + magnifier so users discover it's a picker.
 		// This addresses the team report "Organization dropdown visibility/UI is unclear".
-		input.style.cssText = inputStyle + 'padding-right:28px;background-image:linear-gradient(45deg,transparent 50%,var(--vscode-foreground) 50%),linear-gradient(135deg,var(--vscode-foreground) 50%,transparent 50%);background-position:calc(100% - 14px) calc(50% + 1px),calc(100% - 9px) calc(50% + 1px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;cursor:pointer;';
+		input.style.cssText = inputStyle + 'padding-right:32px;cursor:pointer;';
 		input.autocomplete = 'off';
 
+		// Explicit dropdown chevron — overlaid as a sibling so the input remains
+		// a plain text field but visually reads as a combobox. This is what
+		// the team report flagged as missing on the Referral Provider page.
+		const chevron = DOM.append(wrap, DOM.$('span'));
+		chevron.textContent = '\u25BE';
+		chevron.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--vscode-descriptionForeground);font-size:10px;';
+
 		const dropdown = DOM.append(wrap, DOM.$('div'));
-		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);margin-top:2px;';
+		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border));border-radius:6px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.25);margin-top:4px;';
 
 		let results: Array<Record<string, unknown>> = [];
 		let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -1509,7 +1546,7 @@ export class SettingsHubEditor extends EditorPane {
 					actionsTd.style.cssText = 'padding:6px 12px;white-space:nowrap;';
 					this._tableAction(actionsTd, '\u270f', 'Edit', () => this._showEditUserDialog(root, user as Record<string, unknown>));
 					this._tableAction(actionsTd, '\u{1F511}', 'Reset Password', () => this._resetUserPassword(user.id || ''));
-					this._tableAction(actionsTd, '\u{1F5D1}', 'Delete', () => this._deleteUser(user.id || '', user.username || ''), 'danger');
+					this._tableAction(actionsTd, '\u{1F6AB}', 'Disable user', () => this._deleteUser(user.id || '', user.username || ''), 'danger');
 				}
 			};
 
@@ -1872,40 +1909,40 @@ export class SettingsHubEditor extends EditorPane {
 
 	private async _deleteUser(userId: string, username: string): Promise<void> {
 		if (!userId) { return; }
+		// The backend does NOT support DELETE /api/admin/users/{id} — there is
+		// only PUT /api/admin/users/{id}/deactivate (matches the EHR Web UI
+		// "delete user" behaviour, which also deactivates rather than deletes).
+		// Calling DELETE returns "Request method 'DELETE' is not supported", so
+		// the workspace must call the deactivate endpoint instead.
 		const { confirmed } = await this.dialogService.confirm({
-			message: `Delete user "${username}"?`,
-			detail: 'This permanently removes the account from Keycloak and the database. This cannot be undone.',
-			primaryButton: 'Delete',
+			message: `Disable user "${username}"?`,
+			detail: 'This deactivates the account in Keycloak. The user will no longer be able to sign in. You can re-enable later.',
+			primaryButton: 'Disable',
 			type: 'warning',
 		});
 		if (!confirmed) { return; }
 		try {
-			const res = await this.apiService.fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+			const res = await this.apiService.fetch(`/api/admin/users/${userId}/deactivate`, { method: 'PUT' });
 			if (res.ok || res.status === 204) {
-				this.notificationService.notify({ severity: Severity.Info, message: 'User deleted.' });
+				this.notificationService.notify({ severity: Severity.Info, message: `User ${username} disabled.` });
 				this._onSidebarClick('__users__');
 				return;
 			}
-			// Surface a useful diagnosis rather than just "Delete failed (500)".
-			let msg = `Delete failed (${res.status})`;
+			let msg = `Disable failed (${res.status})`;
 			try {
 				const json = await res.json();
 				if (json?.message) { msg = json.message; }
 				else if (json?.error) { msg = json.error; }
 			} catch { /* keep status-only msg */ }
-			if (res.status === 500) {
-				msg += ' — Backend error. The user may have linked FHIR/audit records that block deletion. Try disabling the account instead.';
-			} else if (res.status === 403) {
-				msg += ' — Permission denied. Only admins can delete users.';
+			if (res.status === 403) {
+				msg += ' — Permission denied. Only admins can disable users.';
 			} else if (res.status === 404) {
 				msg += ' — User no longer exists.';
 				this._onSidebarClick('__users__');
-			} else if (res.status === 409) {
-				msg += ' — Conflict: user has dependent records. Disable instead of deleting.';
 			}
 			this.notificationService.notify({ severity: Severity.Error, message: msg });
 		} catch (e) {
-			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+			this.notificationService.notify({ severity: Severity.Error, message: `Disable failed: ${e}` });
 		}
 	}
 
@@ -2047,26 +2084,48 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	private async _renderRolesPermissions(): Promise<void> {
+		// Matches the EHR Web UI /settings \u2192 Roles & Permissions page exactly
+		// (see test report image_3): one full-width row per role with a colored
+		// left border (per-role accent), name + key + System badge, description
+		// with "N permissions, M FHIR scopes" inline, and edit/delete actions
+		// on the right. Built-in system roles cannot be deleted.
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
 
 		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
-		const titleEl = DOM.append(header, DOM.$('h1'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:16px;';
+		const headerLeft = DOM.append(header, DOM.$('div'));
+		headerLeft.style.cssText = 'display:flex;align-items:center;gap:10px;';
+		const shieldIcon = DOM.append(headerLeft, DOM.$('div'));
+		shieldIcon.textContent = '\u{1F6E1}';
+		shieldIcon.style.cssText = 'width:38px;height:38px;display:flex;align-items:center;justify-content:center;background:rgba(99,102,241,0.12);border-radius:8px;font-size:18px;';
+		const titleCol = DOM.append(headerLeft, DOM.$('div'));
+		const titleEl = DOM.append(titleCol, DOM.$('h1'));
 		titleEl.textContent = 'Roles & Permissions';
-		titleEl.style.cssText = 'margin:0;font-size:22px;font-weight:600;';
+		titleEl.style.cssText = 'margin:0;font-size:18px;font-weight:600;';
+		const sub = DOM.append(titleCol, DOM.$('p'));
+		sub.textContent = 'Configure role-based access control';
+		sub.style.cssText = 'margin:2px 0 0;font-size:12px;color:var(--vscode-descriptionForeground);';
+
 		const newRoleBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
 		newRoleBtn.textContent = '+ New Role';
-		newRoleBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		newRoleBtn.style.cssText = 'padding:8px 16px;background:#6366f1;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
 		newRoleBtn.addEventListener('click', () => this._showRoleDialog(root, null));
-
-		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Manage roles, FHIR permissions, and SMART scopes.';
-		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
 
 		const loading = DOM.append(root, DOM.$('div'));
 		loading.textContent = 'Loading roles\u2026';
 		loading.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
+
+		// Per-role accent colors \u2014 match the EHR Web UI's hard-coded role border
+		// stripe colors so Admin = red, Billing = purple, Front Desk = orange, etc.
+		const ROLE_COLORS: Record<string, string> = {
+			ADMIN: '#ef4444', SUPER_ADMIN: '#dc2626',
+			PROVIDER: '#3b82f6', NURSE: '#10b981',
+			MA: '#14b8a6', MEDICAL_ASSISTANT: '#14b8a6',
+			FRONT_DESK: '#f59e0b', BILLING: '#a855f7',
+			LAB_TECHNICIAN: '#0ea5e9', PATIENT: '#64748b',
+		};
+		const colorFor = (key: string): string => ROLE_COLORS[(key || '').toUpperCase()] || '#94a3b8';
 
 		try {
 			const res = await this.apiService.fetch('/api/admin/roles');
@@ -2089,7 +2148,7 @@ export class SettingsHubEditor extends EditorPane {
 			}
 
 			const grid = DOM.append(root, DOM.$('div'));
-			grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;';
+			grid.style.cssText = 'display:flex;flex-direction:column;gap:10px;';
 			for (const r of list) {
 				const role = r as {
 					id?: string | number;
@@ -2099,122 +2158,67 @@ export class SettingsHubEditor extends EditorPane {
 					permissions?: string[];
 					smartScopes?: string[];
 					isActive?: boolean;
+					isSystem?: boolean;
 				};
+				const accent = colorFor(role.roleName || '');
 				const card = DOM.append(grid, DOM.$('div'));
-				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);position:relative;';
-				card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--vscode-focusBorder)'; });
-				card.addEventListener('mouseleave', () => { card.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+				card.style.cssText = `display:flex;align-items:flex-start;padding:14px 16px;border:1px solid var(--vscode-editorWidget-border);border-left:4px solid ${accent};border-radius:8px;background:var(--vscode-editor-background);gap:12px;position:relative;`;
+				card.addEventListener('mouseenter', () => { card.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.02))'; });
+				card.addEventListener('mouseleave', () => { card.style.background = 'var(--vscode-editor-background)'; });
 
 				// Action buttons top-right
 				const cardActions = DOM.append(card, DOM.$('div'));
 				cardActions.style.cssText = 'position:absolute;top:10px;right:10px;display:flex;gap:4px;';
 				this._tableAction(cardActions, '\u270f', 'Edit', () => this._showRoleDialog(root, r));
-				this._tableAction(cardActions, '\u{1F5D1}', 'Delete', () => this._deleteRole(r.id as string, role.roleName || ''), 'danger');
+				if (!role.isSystem) {
+					this._tableAction(cardActions, '\u{1F5D1}', 'Delete', () => this._deleteRole(r.id as string, role.roleName || ''), 'danger');
+				}
 
-				// Header: label + name
-				const headRow = DOM.append(card, DOM.$('div'));
-				headRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-right:60px;';
+				// Content wrapper (left-aligned, takes remaining space)
+				const content = DOM.append(card, DOM.$('div'));
+				content.style.cssText = 'flex:1;min-width:0;padding-right:60px;';
+
+				// Header: label + name + system lock badge — mirrors image_3 from
+				// the test report exactly (label, KEY, lock System)
+				const headRow = DOM.append(content, DOM.$('div'));
+				headRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:4px;';
 				const lbl = DOM.append(headRow, DOM.$('span'));
 				lbl.textContent = role.roleLabel || role.roleName || '(unnamed)';
 				lbl.style.cssText = 'font-weight:600;font-size:14px;';
-				const code = DOM.append(headRow, DOM.$('code'));
+				const code = DOM.append(headRow, DOM.$('span'));
 				code.textContent = role.roleName || '';
-				code.style.cssText = 'font-size:10px;font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground);background:rgba(128,128,128,0.1);padding:1px 5px;border-radius:3px;';
+				code.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-weight:500;letter-spacing:0.3px;';
+				if (role.isSystem) {
+					const sys = DOM.append(headRow, DOM.$('span'));
+					sys.textContent = '\u{1F512} System';
+					sys.style.cssText = 'font-size:10px;color:#f59e0b;font-weight:500;';
+				}
 				if (role.isActive === false) {
 					const inactive = DOM.append(headRow, DOM.$('span'));
 					inactive.textContent = 'INACTIVE';
 					inactive.style.cssText = 'font-size:9px;font-weight:600;background:rgba(248,113,113,0.2);color:var(--vscode-errorForeground,#f48771);padding:1px 5px;border-radius:3px;letter-spacing:0.5px;';
 				}
 
-				if (role.description) {
-					const d = DOM.append(card, DOM.$('div'));
-					d.textContent = role.description;
-					d.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:10px;';
-				}
-
-				const stats = DOM.append(card, DOM.$('div'));
-				stats.style.cssText = 'display:flex;gap:14px;font-size:11px;color:var(--vscode-descriptionForeground);margin-top:8px;';
+				// Single-line summary in the web format:
+				// "{description} — {N} permissions, {M} FHIR scopes"
+				// The permission count + FHIR scope count are rendered in the
+				// link color so they read as inline "tags" the user can scan.
+				const summary = DOM.append(content, DOM.$('div'));
+				summary.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);line-height:1.5;';
 				const permCount = (role.permissions || []).length;
 				const scopeCount = (role.smartScopes || []).length;
-				const permEl = DOM.append(stats, DOM.$('span'));
-				permEl.textContent = `${permCount} permission${permCount === 1 ? '' : 's'}`;
-				const scopeEl = DOM.append(stats, DOM.$('span'));
-				scopeEl.textContent = `${scopeCount} FHIR scope${scopeCount === 1 ? '' : 's'}`;
-
-				// Collapsible permissions detail — matches the EHR Web UI PermissionMatrix
-				// expand behaviour so users see the actual permissions, not just a count.
-				const PREVIEW = 6;
-				const allPerms = role.permissions || [];
-				const allScopes = role.smartScopes || [];
-				let expanded = false;
-
-				const detailWrap = DOM.append(card, DOM.$('div'));
-				detailWrap.style.cssText = 'margin-top:10px;';
-
-				const permSection = DOM.append(detailWrap, DOM.$('div'));
-				permSection.style.cssText = 'margin-bottom:6px;';
-				const permTitle = DOM.append(permSection, DOM.$('div'));
-				permTitle.textContent = 'Permissions';
-				permTitle.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;';
-				const permPills = DOM.append(permSection, DOM.$('div'));
-				permPills.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
-
-				const scopeSection = DOM.append(detailWrap, DOM.$('div'));
-				scopeSection.style.cssText = 'margin-top:8px;';
-				const scopeTitle = DOM.append(scopeSection, DOM.$('div'));
-				scopeTitle.textContent = 'FHIR Scopes';
-				scopeTitle.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;';
-				const scopePills = DOM.append(scopeSection, DOM.$('div'));
-				scopePills.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
-
-				const renderPills = (): void => {
-					DOM.clearNode(permPills);
-					DOM.clearNode(scopePills);
-					if (allPerms.length === 0) {
-						const none = DOM.append(permPills, DOM.$('span'));
-						none.textContent = '(none)';
-						none.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:11px;font-style:italic;';
-					}
-					const shownPerms = expanded ? allPerms : allPerms.slice(0, PREVIEW);
-					for (const p of shownPerms) {
-						const pill = DOM.append(permPills, DOM.$('span'));
-						pill.textContent = p;
-						pill.style.cssText = 'background:rgba(55,148,255,0.1);color:var(--vscode-textLink-foreground,#3794ff);padding:2px 7px;border-radius:10px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
-					}
-					if (!expanded && allPerms.length > PREVIEW) {
-						const more = DOM.append(permPills, DOM.$('span'));
-						more.textContent = `+${allPerms.length - PREVIEW} more`;
-						more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:2px 6px;';
-					}
-					if (allScopes.length === 0) {
-						scopeSection.style.display = 'none';
-					} else {
-						scopeSection.style.display = '';
-						const shownScopes = expanded ? allScopes : allScopes.slice(0, PREVIEW);
-						for (const s of shownScopes) {
-							const pill = DOM.append(scopePills, DOM.$('span'));
-							pill.textContent = s;
-							pill.style.cssText = 'background:rgba(34,197,94,0.1);color:#22c55e;padding:2px 7px;border-radius:10px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
-						}
-						if (!expanded && allScopes.length > PREVIEW) {
-							const more = DOM.append(scopePills, DOM.$('span'));
-							more.textContent = `+${allScopes.length - PREVIEW} more`;
-							more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:2px 6px;';
-						}
-					}
-				};
-				renderPills();
-
-				if (allPerms.length > PREVIEW || allScopes.length > PREVIEW) {
-					const toggleBtn = DOM.append(detailWrap, DOM.$('button')) as HTMLButtonElement;
-					toggleBtn.textContent = 'Show all';
-					toggleBtn.style.cssText = 'margin-top:8px;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:11px;padding:0;text-decoration:underline;';
-					toggleBtn.addEventListener('click', () => {
-						expanded = !expanded;
-						toggleBtn.textContent = expanded ? 'Show less' : 'Show all';
-						renderPills();
-					});
+				if (role.description) {
+					const dTxt = DOM.append(summary, DOM.$('span'));
+					dTxt.textContent = `${role.description} — `;
 				}
+				const permTag = DOM.append(summary, DOM.$('span'));
+				permTag.textContent = `${permCount} permissions`;
+				permTag.style.cssText = 'color:var(--vscode-textLink-foreground,#3794ff);font-weight:500;';
+				const comma = DOM.append(summary, DOM.$('span'));
+				comma.textContent = ', ';
+				const scopeTag = DOM.append(summary, DOM.$('span'));
+				scopeTag.textContent = `${scopeCount} FHIR scopes`;
+				scopeTag.style.cssText = 'color:var(--vscode-textLink-foreground,#3794ff);font-weight:500;';
 			}
 		} catch {
 			loading.textContent = 'Waiting for login\u2026';
@@ -2377,8 +2381,12 @@ export class SettingsHubEditor extends EditorPane {
 		const head = DOM.append(panel, DOM.$('div'));
 		head.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
 		const ht = DOM.append(head, DOM.$('h3'));
-		ht.textContent = list.listName || list.title || '(unnamed list)';
-		ht.style.cssText = 'margin:0;font-size:13px;font-weight:600;flex:1;';
+		// Surface the list ID when no name is present so users still see something
+		// useful (the team report showed a list with literally "(unnamed list)"
+		// because the backend returned a row with listName null).
+		const displayName = list.listName || list.title;
+		ht.textContent = displayName ? displayName : (list.id ? `List #${list.id}` : '(unnamed list)');
+		ht.style.cssText = `margin:0;font-size:13px;font-weight:600;flex:1;${displayName ? '' : 'font-style:italic;color:var(--vscode-descriptionForeground);'}`;
 
 		const actions = DOM.append(head, DOM.$('div'));
 		actions.style.cssText = 'display:flex;gap:4px;';
@@ -2750,6 +2758,11 @@ export class SettingsHubEditor extends EditorPane {
 		mkField('feeStandard', 'Fee Standard', { type: 'number', placeholder: 'e.g. 150.00' });
 		mkField('active', 'Active', { type: 'checkbox' });
 		mkField('diagnosisReporting', 'Diagnosis Reporting', { type: 'checkbox' });
+		// "Service Reporting" was missing from the workspace form even though the
+		// backend GlobalCodeDto persists it — the team report (image_29 vs image_30)
+		// shows the web Create Code form has both Diagnosis Reporting AND Service
+		// Reporting checkboxes. Adding it here brings the form to 1:1 parity.
+		mkField('serviceReporting', 'Service Reporting', { type: 'checkbox' });
 
 		const actions = DOM.append(modal, DOM.$('div'));
 		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
@@ -2818,108 +2831,160 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Display Settings — mirrors the EHR Web UI /settings → Display page exactly:
+	 *   - Heading "Display Settings" with Monitor icon
+	 *   - "Font Size" section with 4 button-cards (Small / Default / Large / Extra Large)
+	 *     each showing an "Aa" sample at the actual size and a check mark on active
+	 *   - Preview pane with sample patient card + table
+	 *   - Footer note explaining the preference is browser-local
+	 * Selected size persists in localStorage under `ciyex_display_fontSize`.
+	 */
 	private _renderDisplay(): void {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
-		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
+		root.style.cssText = 'padding:24px;max-width:720px;margin:0 auto;';
 
-		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px;';
-		const left = DOM.append(header, DOM.$('div'));
-		const title = DOM.append(left, DOM.$('h1'));
-		title.textContent = 'Display';
-		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(left, DOM.$('p'));
-		sub.textContent = 'Adjust display preferences for the EHR interface. Saved locally per workspace.';
-		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
-
-		const saveBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-		saveBtn.textContent = 'Save';
-		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
-
-		const panel = DOM.append(root, DOM.$('div'));
-		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
-
-		const STORAGE_KEY = 'ciyex_display_settings';
-		let stored: Record<string, unknown> = {};
+		const STORAGE_KEY = 'ciyex_display_fontSize';
+		type FontSize = 'small' | 'default' | 'large' | 'x-large';
+		const FONT_OPTIONS: Array<{ value: FontSize; label: string; desc: string; px: string }> = [
+			{ value: 'small', label: 'Small', desc: '14px base', px: '14px' },
+			{ value: 'default', label: 'Default', desc: '16px base', px: '16px' },
+			{ value: 'large', label: 'Large', desc: '18px base', px: '18px' },
+			{ value: 'x-large', label: 'Extra Large', desc: '20px base', px: '20px' },
+		];
+		let current: FontSize = 'default';
 		try {
-			const raw = localStorage.getItem(STORAGE_KEY);
-			if (raw) { stored = JSON.parse(raw); }
+			const raw = localStorage.getItem(STORAGE_KEY) as FontSize | null;
+			if (raw && FONT_OPTIONS.some(o => o.value === raw)) { current = raw; }
 		} catch { /* ignore */ }
 
-		const state: Record<string, unknown> = {
-			fontSize: stored.fontSize || '13px',
-			dateFormat: stored.dateFormat || 'MM/DD/YYYY',
-			timeFormat: stored.timeFormat || '12-hour (AM/PM)',
-			theme: stored.theme || 'System',
-			density: stored.density || 'Comfortable',
-			compactMode: stored.compactMode ?? false,
-			showAvatars: stored.showAvatars ?? true,
-			sidebarCollapsed: stored.sidebarCollapsed ?? false,
-			showRecordCount: stored.showRecordCount ?? true,
-			showTooltips: stored.showTooltips ?? true,
-		};
+		// Header (Monitor icon + "Display Settings" title)
+		const headerRow = DOM.append(root, DOM.$('div'));
+		headerRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:20px;';
+		const headerIcon = DOM.append(headerRow, DOM.$('span'));
+		headerIcon.textContent = '\u{1F5A5}';
+		headerIcon.style.cssText = 'font-size:18px;color:var(--vscode-descriptionForeground);';
+		const title = DOM.append(headerRow, DOM.$('h2'));
+		title.textContent = 'Display Settings';
+		title.style.cssText = 'margin:0;font-size:18px;font-weight:600;';
 
-		const mkRow = (label: string, desc: string, control: HTMLElement): void => {
-			const row = DOM.append(panel, DOM.$('div'));
-			row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(128,128,128,0.1);gap:16px;';
-			const leftCol = DOM.append(row, DOM.$('div'));
-			leftCol.style.cssText = 'flex:1;';
-			const lbl = DOM.append(leftCol, DOM.$('div'));
-			lbl.textContent = label;
-			lbl.style.cssText = 'font-size:13px;font-weight:500;';
-			const d = DOM.append(leftCol, DOM.$('div'));
-			d.textContent = desc;
-			d.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-			row.appendChild(control);
-		};
+		// Font Size section
+		const fontSection = DOM.append(root, DOM.$('div'));
+		fontSection.style.cssText = 'margin-bottom:32px;';
 
-		const mkSelect = (options: string[], key: string): HTMLSelectElement => {
-			const sel = mainWindow.document.createElement('select');
-			sel.style.cssText = 'padding:5px 8px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;cursor:pointer;';
-			for (const opt of options) {
-				const o = mainWindow.document.createElement('option');
-				o.value = opt;
-				o.textContent = opt;
-				if (opt === String(state[key])) { o.selected = true; }
-				sel.appendChild(o);
+		const fontHeader = DOM.append(fontSection, DOM.$('div'));
+		fontHeader.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;';
+		const fontIcon = DOM.append(fontHeader, DOM.$('span'));
+		fontIcon.textContent = '\u{1F520}';
+		fontIcon.style.cssText = 'font-size:14px;opacity:0.6;';
+		const fontTitle = DOM.append(fontHeader, DOM.$('h3'));
+		fontTitle.textContent = 'Font Size';
+		fontTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+
+		const fontDesc = DOM.append(fontSection, DOM.$('p'));
+		fontDesc.textContent = 'Adjust the base font size across the entire application. This affects all text, buttons, and form elements.';
+		fontDesc.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const grid = DOM.append(fontSection, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:10px;';
+
+		const buttonRefs: HTMLButtonElement[] = [];
+		const renderButtons = (): void => {
+			DOM.clearNode(grid);
+			buttonRefs.length = 0;
+			for (const opt of FONT_OPTIONS) {
+				const btn = DOM.append(grid, DOM.$('button')) as HTMLButtonElement;
+				const isActive = opt.value === current;
+				btn.style.cssText = `position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 12px;border-radius:8px;border:2px solid ${isActive ? '#3b82f6' : 'var(--vscode-editorWidget-border)'};background:${isActive ? 'rgba(59,130,246,0.08)' : 'var(--vscode-editor-background)'};cursor:pointer;transition:all 0.08s;`;
+				btn.addEventListener('mouseenter', () => { if (!isActive) { btn.style.borderColor = 'var(--vscode-focusBorder)'; } });
+				btn.addEventListener('mouseleave', () => { if (!isActive) { btn.style.borderColor = 'var(--vscode-editorWidget-border)'; } });
+				if (isActive) {
+					const check = DOM.append(btn, DOM.$('span'));
+					check.textContent = '✓';
+					check.style.cssText = 'position:absolute;top:6px;right:8px;color:#3b82f6;font-size:13px;font-weight:700;';
+				}
+				const sample = DOM.append(btn, DOM.$('span'));
+				sample.textContent = 'Aa';
+				sample.style.cssText = `font-weight:500;color:var(--vscode-foreground);font-size:${opt.px};`;
+				const label = DOM.append(btn, DOM.$('span'));
+				label.textContent = opt.label;
+				label.style.cssText = `font-size:13px;font-weight:500;color:${isActive ? '#3b82f6' : 'var(--vscode-foreground)'};`;
+				const desc = DOM.append(btn, DOM.$('span'));
+				desc.textContent = opt.desc;
+				desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+				btn.addEventListener('click', () => {
+					current = opt.value;
+					try { localStorage.setItem(STORAGE_KEY, current); } catch { /* ignore */ }
+					renderButtons();
+					renderPreview();
+				});
+				buttonRefs.push(btn);
 			}
-			sel.addEventListener('change', () => { state[key] = sel.value; });
-			return sel;
 		};
 
-		const mkToggle = (key: string): HTMLButtonElement => {
-			const sw = mainWindow.document.createElement('button') as HTMLButtonElement;
-			const update = (v: boolean): void => {
-				sw.style.cssText = `position:relative;width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;background:${v ? 'var(--vscode-focusBorder,#0e639c)' : 'rgba(128,128,128,0.4)'};flex-shrink:0;`;
-				DOM.clearNode(sw);
-				const knob = mainWindow.document.createElement('span');
-				knob.style.cssText = `position:absolute;top:3px;${v ? 'right:3px;' : 'left:3px;'}width:16px;height:16px;border-radius:50%;background:#fff;`;
-				sw.appendChild(knob);
-			};
-			update(!!state[key]);
-			sw.addEventListener('click', () => { state[key] = !state[key]; update(!!state[key]); });
-			return sw;
-		};
+		// Preview pane
+		const previewWrap = DOM.append(root, DOM.$('div'));
+		previewWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:18px;background:var(--vscode-editor-background);';
 
-		mkRow('Theme', 'Light, dark, or follow system', mkSelect(['System', 'Light', 'Dark'], 'theme'));
-		mkRow('Font Size', 'Base font size for all EHR text', mkSelect(['11px', '12px', '13px', '14px', '15px', '16px'], 'fontSize'));
-		mkRow('Date Format', 'How dates are displayed throughout the app', mkSelect(['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY'], 'dateFormat'));
-		mkRow('Time Format', 'How times are displayed', mkSelect(['12-hour (AM/PM)', '24-hour'], 'timeFormat'));
-		mkRow('Density', 'Layout density for lists and tables', mkSelect(['Comfortable', 'Compact', 'Spacious'], 'density'));
-		mkRow('Compact Mode', 'Reduce padding and margins for denser display', mkToggle('compactMode'));
-		mkRow('Show Avatars', 'Display profile photos next to names', mkToggle('showAvatars'));
-		mkRow('Sidebar Collapsed', 'Start with navigation sidebar collapsed', mkToggle('sidebarCollapsed'));
-		mkRow('Show Record Count', 'Display total record counts in section headers', mkToggle('showRecordCount'));
-		mkRow('Show Tooltips', 'Display informational tooltips on hover', mkToggle('showTooltips'));
+		const previewLbl = DOM.append(previewWrap, DOM.$('div'));
+		previewLbl.textContent = 'PREVIEW';
+		previewLbl.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);margin-bottom:12px;';
 
-		saveBtn.addEventListener('click', () => {
-			try {
-				localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-				this.notificationService.notify({ severity: Severity.Info, message: 'Display preferences saved.' });
-			} catch (e) {
-				this.notificationService.notify({ severity: Severity.Error, message: `Failed to save: ${e}` });
+		const previewBody = DOM.append(previewWrap, DOM.$('div'));
+
+		const renderPreview = (): void => {
+			DOM.clearNode(previewBody);
+			const px = FONT_OPTIONS.find(o => o.value === current)?.px || '16px';
+			previewBody.style.fontSize = px;
+
+			const name = DOM.append(previewBody, DOM.$('div'));
+			name.textContent = 'Patient: Karen Mitchell';
+			name.style.cssText = 'font-size:1.125em;font-weight:600;margin-bottom:4px;';
+
+			const meta = DOM.append(previewBody, DOM.$('div'));
+			meta.textContent = 'Date of Birth: 12/16/1960 (65y) · Female · MRN: 1148';
+			meta.style.cssText = 'font-size:0.875em;color:var(--vscode-descriptionForeground);margin-bottom:10px;';
+
+			const badges = DOM.append(previewBody, DOM.$('div'));
+			badges.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;';
+			const active = DOM.append(badges, DOM.$('span'));
+			active.textContent = 'Active';
+			active.style.cssText = 'padding:3px 10px;border-radius:999px;font-size:0.75em;font-weight:500;background:rgba(34,197,94,0.15);color:#22c55e;';
+			const allergy = DOM.append(badges, DOM.$('span'));
+			allergy.textContent = 'Allergy: Peanut';
+			allergy.style.cssText = 'padding:3px 10px;border-radius:999px;font-size:0.75em;font-weight:500;background:rgba(239,68,68,0.15);color:#ef4444;';
+
+			const table = DOM.append(previewBody, DOM.$('table'));
+			table.style.cssText = 'width:100%;font-size:0.875em;border-collapse:collapse;';
+			const thead = DOM.append(table, DOM.$('thead'));
+			const headRow = DOM.append(thead, DOM.$('tr'));
+			for (const col of ['Field', 'Value']) {
+				const th = DOM.append(headRow, DOM.$('th'));
+				th.textContent = col;
+				th.style.cssText = 'text-align:left;padding:6px 0;color:var(--vscode-descriptionForeground);font-weight:500;border-bottom:1px solid var(--vscode-editorWidget-border);';
 			}
-		});
+			const rows: Array<[string, string]> = [
+				['Phone', '(543) 476-5375'],
+				['Email', 'karen.mitchell@email.com'],
+			];
+			const tbody = DOM.append(table, DOM.$('tbody'));
+			for (const [k, v] of rows) {
+				const tr = DOM.append(tbody, DOM.$('tr'));
+				const td1 = DOM.append(tr, DOM.$('td'));
+				td1.textContent = k;
+				td1.style.cssText = 'padding:6px 0;color:var(--vscode-descriptionForeground);border-bottom:1px solid rgba(128,128,128,0.1);';
+				const td2 = DOM.append(tr, DOM.$('td'));
+				td2.textContent = v;
+				td2.style.cssText = 'padding:6px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
+			}
+		};
+
+		renderButtons();
+		renderPreview();
+
+		const footnote = DOM.append(root, DOM.$('p'));
+		footnote.textContent = 'This setting is saved to your browser. Each user can set their own preferred font size.';
+		footnote.style.cssText = 'margin:16px 0 0;font-size:11px;color:var(--vscode-descriptionForeground);';
 	}
 
 	/**
