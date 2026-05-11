@@ -561,9 +561,200 @@ export class PortalSettingsEditor extends EditorPane {
 		this._toggleRow(this.contentEl, 'Require Signature', 'Patient must provide electronic signature',
 			() => form.settings?.requireSignature === true, v => { form.settings = { ...(form.settings || {}), requireSignature: v }; });
 
-		const fieldsNote = DOM.append(this.contentEl, DOM.$('div'));
-		fieldsNote.textContent = 'Tip: Edit the form fields JSON in the API or use the EHR UI for visual field editing.';
-		fieldsNote.style.cssText = 'margin-top:16px;padding:12px;border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;font-size:11px;color:var(--vscode-descriptionForeground);';
+		// Field Configuration — visual section/field editor (matches the EHR Web UI
+		// FieldConfigEditor used in /settings/portal-settings → Forms tab). Without
+		// this users had no way to manage form tabs/fields inside the workspace.
+		const fcHeader = DOM.append(this.contentEl, DOM.$('h4'));
+		fcHeader.textContent = 'FIELD CONFIGURATION';
+		fcHeader.style.cssText = 'margin:24px 0 12px;font-size:11px;font-weight:600;letter-spacing:1px;color:var(--vscode-descriptionForeground);text-transform:uppercase;border-top:1px solid var(--vscode-editorWidget-border);padding-top:16px;';
+
+		const fcSub = DOM.append(this.contentEl, DOM.$('p'));
+		fcSub.textContent = 'Manage form tabs (sections) and field configuration — exactly like the web app.';
+		fcSub.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		this._renderFormFieldConfig(this.contentEl, form);
+	}
+
+	private _renderFormFieldConfig(parent: HTMLElement, form: PortalForm): void {
+		interface FormSection { key: string; title: string; columns?: number; visible?: boolean; fields?: Array<{ key?: string; label?: string; type?: string; placeholder?: string }> }
+		interface FormFieldConfig { sections: FormSection[] }
+
+		const fc: FormFieldConfig = (form.fieldConfig as FormFieldConfig | undefined) || { sections: [] };
+		if (!fc.sections) { fc.sections = []; }
+
+		const container = DOM.append(parent, DOM.$('div'));
+		container.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);';
+
+		const render = (): void => {
+			DOM.clearNode(container);
+
+			if (fc.sections.length === 0) {
+				const empty = DOM.append(container, DOM.$('div'));
+				empty.textContent = 'No tabs/sections yet. Click "+ Add Tab" below to create one.';
+				empty.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;font-size:12px;margin-bottom:10px;';
+			}
+
+			fc.sections.forEach((section, idx) => {
+				const sectionCard = DOM.append(container, DOM.$('div'));
+				sectionCard.style.cssText = `border:1px solid var(--vscode-editorWidget-border);border-radius:6px;margin-bottom:8px;overflow:hidden;${section.visible === false ? 'opacity:0.6;' : ''}`;
+
+				const head = DOM.append(sectionCard, DOM.$('div'));
+				head.style.cssText = 'padding:8px 12px;background:rgba(0,122,204,0.05);display:flex;align-items:center;gap:8px;';
+
+				const upBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+				upBtn.textContent = '\u25B2';
+				upBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.6;cursor:pointer;font-size:10px;';
+				upBtn.addEventListener('click', () => {
+					if (idx === 0) { return; }
+					[fc.sections[idx - 1], fc.sections[idx]] = [fc.sections[idx], fc.sections[idx - 1]];
+					form.fieldConfig = fc;
+					render();
+				});
+				const downBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+				downBtn.textContent = '\u25BC';
+				downBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.6;cursor:pointer;font-size:10px;';
+				downBtn.addEventListener('click', () => {
+					if (idx === fc.sections.length - 1) { return; }
+					[fc.sections[idx], fc.sections[idx + 1]] = [fc.sections[idx + 1], fc.sections[idx]];
+					form.fieldConfig = fc;
+					render();
+				});
+
+				const titleInp = DOM.append(head, DOM.$('input')) as HTMLInputElement;
+				titleInp.value = section.title || '';
+				titleInp.placeholder = 'Tab title';
+				titleInp.style.cssText = 'flex:1;padding:4px 8px;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--vscode-foreground);font-size:13px;font-weight:600;outline:none;';
+				titleInp.addEventListener('focus', () => { titleInp.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; titleInp.style.background = 'var(--vscode-input-background)'; });
+				titleInp.addEventListener('blur', () => { titleInp.style.borderColor = 'transparent'; titleInp.style.background = 'transparent'; });
+				titleInp.addEventListener('input', () => { section.title = titleInp.value; form.fieldConfig = fc; });
+
+				const keyCode = DOM.append(head, DOM.$('code'));
+				keyCode.textContent = section.key;
+				keyCode.style.cssText = 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);padding:2px 6px;border-radius:3px;font-size:10px;';
+
+				const visBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+				visBtn.textContent = section.visible === false ? '\u{1F441}\u200D\u{1F5E8}' : '\u{1F441}';
+				visBtn.title = section.visible === false ? 'Show' : 'Hide';
+				visBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;';
+				visBtn.addEventListener('click', () => { section.visible = section.visible === false; form.fieldConfig = fc; render(); });
+
+				const delSecBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+				delSecBtn.textContent = '\u{1F5D1}';
+				delSecBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:12px;';
+				delSecBtn.addEventListener('click', async () => {
+					const { confirmed } = await this.dialogService.confirm({ message: `Delete tab "${section.title}"?` });
+					if (!confirmed) { return; }
+					fc.sections.splice(idx, 1);
+					form.fieldConfig = fc;
+					render();
+				});
+
+				const body = DOM.append(sectionCard, DOM.$('div'));
+				body.style.cssText = 'padding:8px 12px;display:flex;flex-direction:column;gap:4px;';
+				const fields = section.fields || [];
+				if (fields.length === 0) {
+					const note = DOM.append(body, DOM.$('div'));
+					note.textContent = '(no fields)';
+					note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-style:italic;';
+				}
+				fields.forEach((field, fi) => {
+					const row = DOM.append(body, DOM.$('div'));
+					row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 6px;border-radius:3px;background:rgba(128,128,128,0.06);';
+					const fk = DOM.append(row, DOM.$('code'));
+					fk.textContent = field.key || '?';
+					fk.style.cssText = 'min-width:100px;font-size:11px;color:var(--vscode-descriptionForeground);';
+					const fl = DOM.append(row, DOM.$('span'));
+					fl.textContent = field.label || '(no label)';
+					fl.style.cssText = 'flex:1;';
+					const ft = DOM.append(row, DOM.$('span'));
+					ft.textContent = field.type || 'text';
+					ft.style.cssText = 'background:rgba(14,99,156,0.15);color:var(--vscode-textLink-foreground,#3794ff);padding:1px 5px;border-radius:3px;font-size:9px;';
+					const rm = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+					rm.textContent = '\u2715';
+					rm.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:11px;padding:0 4px;';
+					rm.addEventListener('click', () => { fields.splice(fi, 1); section.fields = fields; form.fieldConfig = fc; render(); });
+				});
+
+				const addFieldBtn = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
+				addFieldBtn.textContent = '+ Add Field';
+				addFieldBtn.style.cssText = 'align-self:flex-start;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;padding:3px 10px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;margin-top:4px;';
+				addFieldBtn.addEventListener('click', () => this._openPortalFieldModal(section, form, fc, render));
+			});
+
+			const addTabBtn = DOM.append(container, DOM.$('button')) as HTMLButtonElement;
+			addTabBtn.textContent = '+ Add Tab';
+			addTabBtn.style.cssText = 'display:block;width:100%;padding:8px;background:transparent;border:2px dashed var(--vscode-editorWidget-border);border-radius:6px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:12px;font-weight:500;margin-top:6px;';
+			addTabBtn.addEventListener('click', () => {
+				this._inlineDialog('Add Tab', [
+					{ label: 'Tab Title', key: 'title', placeholder: 'Personal Information' },
+					{ label: 'Tab Key (lowercase)', key: 'key', placeholder: 'personal' },
+				], values => {
+					if (!values.title) { return; }
+					const key = (values.key || values.title.toLowerCase()).replace(/[^a-z0-9_-]/g, '_');
+					fc.sections.push({ key, title: values.title, columns: 2, visible: true, fields: [] });
+					form.fieldConfig = fc;
+					render();
+				});
+			});
+		};
+
+		render();
+	}
+
+	private _openPortalFieldModal(section: { fields?: Array<{ key?: string; label?: string; type?: string; placeholder?: string }> }, form: PortalForm, fc: unknown, reload: () => void): void {
+		const overlay = DOM.append(this.root, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1100;';
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:420px;max-width:92vw;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const ht = DOM.append(modal, DOM.$('h3'));
+		ht.textContent = 'Add Field';
+		ht.style.cssText = 'margin:0 0 14px;font-size:15px;font-weight:600;';
+
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin:8px 0 4px;';
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+
+		const mkLabel = (txt: string): HTMLElement => { const l = DOM.append(modal, DOM.$('label')); l.textContent = txt; l.style.cssText = labelStyle; return l; };
+		mkLabel('Field Key *');
+		const keyInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		keyInp.style.cssText = inputStyle;
+		mkLabel('Field Label *');
+		const labelInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		labelInp.style.cssText = inputStyle;
+		mkLabel('Type');
+		const typeSel = DOM.append(modal, DOM.$('select')) as HTMLSelectElement;
+		typeSel.style.cssText = inputStyle + 'cursor:pointer;';
+		for (const t of ['text', 'textarea', 'email', 'phone', 'number', 'date', 'select', 'boolean', 'signature']) {
+			const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = t;
+			o.textContent = t;
+		}
+		mkLabel('Placeholder');
+		const phInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		phInp.style.cssText = inputStyle;
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;';
+		const cancel = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancel.textContent = 'Cancel';
+		cancel.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancel.addEventListener('click', () => overlay.remove());
+		const add = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		add.textContent = 'Add';
+		add.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		add.addEventListener('click', () => {
+			if (!keyInp.value.trim() || !labelInp.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Key and Label are required.' });
+				return;
+			}
+			section.fields = section.fields || [];
+			section.fields.push({ key: keyInp.value.trim(), label: labelInp.value.trim(), type: typeSel.value, placeholder: phInp.value.trim() || undefined });
+			form.fieldConfig = fc;
+			overlay.remove();
+			reload();
+		});
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => keyInp.focus(), 50);
 	}
 
 	private async _saveForm(form: PortalForm): Promise<void> {

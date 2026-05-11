@@ -83,7 +83,9 @@ const BUILTIN_ITEMS: SidebarItem[] = [
 	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin' },
 	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin' },
 	{ key: '__calendar-colors__', label: 'Calendar Colors', icon: '\u{1F3A8}', kind: 'builtin' },
-	{ key: '__layout-settings__', label: 'Layout Settings', icon: '\u{1F9F1}', kind: 'command', commandId: 'ciyex.openLayoutSettings' },
+	{ key: '__template-documents__', label: 'Template Documents', icon: '\u{1F4DD}', kind: 'builtin' },
+	{ key: '__encounter-settings__', label: 'Encounter Settings', icon: '\u{1F4CB}', kind: 'builtin' },
+	{ key: '__layout-settings__', label: 'Layout Settings (Chart)', icon: '\u{1F9F1}', kind: 'command', commandId: 'ciyex.openLayoutSettings' },
 	{ key: '__layout-hub__', label: 'Layout Configuration', icon: '\u{1F4D0}', kind: 'command', commandId: 'ciyex.openLayoutHub' },
 	{ key: '__menu-config__', label: 'Menu Configuration', icon: '\u{1F4DC}', kind: 'command', commandId: 'ciyex.openMenuConfig' },
 	{ key: '__portal-settings__', label: 'Portal Settings', icon: '\u{1F310}', kind: 'command', commandId: 'ciyex.openPortalSettings' },
@@ -299,6 +301,8 @@ export class SettingsHubEditor extends EditorPane {
 		if (key === '__roles__') { this._renderRolesPermissions(); return; }
 		if (key === '__form-options__') { this._renderFormOptions(); return; }
 		if (key === '__display__') { this._renderDisplay(); return; }
+		if (key === '__template-documents__') { this._renderTemplateDocuments(); return; }
+		if (key === '__encounter-settings__') { this._renderEncounterSettings(); return; }
 		if (key === '__calendar-colors__') { this._renderCalendarColors(); return; }
 
 		// Codes is backed by /api/global_codes, not the FHIR endpoint — use a dedicated renderer
@@ -751,20 +755,219 @@ export class SettingsHubEditor extends EditorPane {
 
 		// Action bar
 		const actions = DOM.append(wrap, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px;';
+		actions.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;';
+
+		// Left side \u2014 Availability shortcut for provider records (edit/view, with id)
+		const leftActions = DOM.append(actions, DOM.$('div'));
+		leftActions.style.cssText = 'display:flex;gap:8px;';
+		const isProvider = this.activeKey === 'providers' || this.activeKey === 'provider';
+		const recId = this.selectedRecord ? ((this.selectedRecord as { id?: string; fhirId?: string }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
+		if (isProvider && recId && this.mode !== 'create') {
+			const availBtn = DOM.append(leftActions, DOM.$('button')) as HTMLButtonElement;
+			availBtn.textContent = '\u{1F4C5} Manage Availability';
+			availBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+			availBtn.addEventListener('click', () => this._openProviderAvailabilityModal(String(recId)));
+		}
+
+		const rightActions = DOM.append(actions, DOM.$('div'));
+		rightActions.style.cssText = 'display:flex;gap:8px;';
 
 		if (!isView) {
-			const cancel = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			const cancel = DOM.append(rightActions, DOM.$('button')) as HTMLButtonElement;
 			cancel.textContent = 'Cancel';
 			cancel.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
 			cancel.addEventListener('click', () => { this.mode = 'list'; this.validationErrors = {}; this._renderContent(); });
 
-			const save = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			const save = DOM.append(rightActions, DOM.$('button')) as HTMLButtonElement;
 			save.textContent = this.saving ? 'Saving\u2026' : (this.mode === 'create' ? 'Create' : 'Save');
 			save.disabled = this.saving;
 			save.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 			save.addEventListener('click', () => this._saveRecord());
 		}
+	}
+
+	/**
+	 * Open a modal to manage a provider's availability schedule.
+	 * Mirrors the ProviderAvailabilityEditor from the EHR Web UI:
+	 *   - Lists current availability blocks for this provider
+	 *   - Lets admins add/edit/delete blocks with day-of-week + start/end + location
+	 *   - Backed by /api/providers/{providerId}/availability
+	 *
+	 * Without provider availability set, appointments cannot be scheduled \u2014 this
+	 * unblocks the high-priority issue called out in the team test report.
+	 */
+	private async _openProviderAvailabilityModal(providerId: string): Promise<void> {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:720px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = 'Provider Availability';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const desc = DOM.append(modal, DOM.$('p'));
+		desc.textContent = 'Set the days and times this provider is available for appointments. Required before patients can book.';
+		desc.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const blocksWrap = DOM.append(modal, DOM.$('div'));
+		blocksWrap.style.cssText = 'margin-bottom:16px;';
+
+		interface AvailabilityBlock {
+			id?: string;
+			fhirId?: string;
+			daysOfWeek: string[];
+			startTime: string;
+			endTime: string;
+			locationId?: string;
+		}
+		let blocks: AvailabilityBlock[] = [];
+
+		const DAYS: Array<[string, string]> = [
+			['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun'],
+		];
+
+		const renderBlocks = (): void => {
+			DOM.clearNode(blocksWrap);
+			if (blocks.length === 0) {
+				const empty = DOM.append(blocksWrap, DOM.$('div'));
+				empty.textContent = 'No availability blocks. Add one to define when this provider can be booked.';
+				empty.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;font-size:12px;';
+				return;
+			}
+			blocks.forEach((block, idx) => {
+				const row = DOM.append(blocksWrap, DOM.$('div'));
+				row.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:12px;font-size:12px;';
+				const days = DOM.append(row, DOM.$('div'));
+				const dayNames = (block.daysOfWeek || []).map(d => DAYS.find(([c]) => c === d)?.[1] || d).join(', ');
+				days.textContent = dayNames || '(no days)';
+				days.style.cssText = 'flex:1;font-weight:500;';
+				const time = DOM.append(row, DOM.$('div'));
+				time.textContent = `${block.startTime || '?'} \u2013 ${block.endTime || '?'}`;
+				time.style.cssText = 'color:var(--vscode-descriptionForeground);';
+				const delBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				delBtn.textContent = '\u{1F5D1}';
+				delBtn.title = 'Remove block';
+				delBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:14px;padding:2px 6px;';
+				delBtn.addEventListener('click', () => { blocks.splice(idx, 1); renderBlocks(); });
+			});
+		};
+
+		// Add block form
+		const addForm = DOM.append(modal, DOM.$('div'));
+		addForm.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:rgba(0,122,204,0.04);';
+		const addTitle = DOM.append(addForm, DOM.$('div'));
+		addTitle.textContent = 'Add a block';
+		addTitle.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;';
+
+		const daysRow = DOM.append(addForm, DOM.$('div'));
+		daysRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;';
+		const selectedDays = new Set<string>(['MO', 'TU', 'WE', 'TH', 'FR']);
+		for (const [code, label] of DAYS) {
+			const b = DOM.append(daysRow, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			const update = (): void => {
+				const sel = selectedDays.has(code);
+				b.style.cssText = `padding:4px 10px;border-radius:14px;border:1px solid ${sel ? 'var(--vscode-focusBorder)' : 'var(--vscode-input-border,#3c3c3c)'};background:${sel ? 'var(--vscode-focusBorder)' : 'transparent'};color:${sel ? '#fff' : 'var(--vscode-foreground)'};cursor:pointer;font-size:11px;`;
+			};
+			update();
+			b.addEventListener('click', () => {
+				if (selectedDays.has(code)) { selectedDays.delete(code); }
+				else { selectedDays.add(code); }
+				update();
+			});
+		}
+
+		const timeRow = DOM.append(addForm, DOM.$('div'));
+		timeRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:10px;';
+		const startInp = DOM.append(timeRow, DOM.$('input')) as HTMLInputElement;
+		startInp.type = 'time';
+		startInp.value = '09:00';
+		startInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const toLbl = DOM.append(timeRow, DOM.$('span'));
+		toLbl.textContent = 'to';
+		toLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		const endInp = DOM.append(timeRow, DOM.$('input')) as HTMLInputElement;
+		endInp.type = 'time';
+		endInp.value = '17:00';
+		endInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+
+		const addBtn = DOM.append(addForm, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Block';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
+		addBtn.addEventListener('click', () => {
+			if (selectedDays.size === 0) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Select at least one day.' });
+				return;
+			}
+			if (!startInp.value || !endInp.value) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Start and end time required.' });
+				return;
+			}
+			blocks.push({ daysOfWeek: Array.from(selectedDays), startTime: startInp.value, endTime: endInp.value });
+			renderBlocks();
+		});
+
+		const footer = DOM.append(modal, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;';
+		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Save Availability';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', async () => {
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving\u2026';
+			try {
+				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(providerId)}/availability`, {
+					method: 'PUT',
+					body: JSON.stringify({ blocks }),
+				});
+				if (res.ok) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Availability saved.' });
+					overlay.remove();
+				} else {
+					const txt = await res.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = 'Save Availability';
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = 'Save Availability';
+			}
+		});
+
+		// Load existing
+		try {
+			const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(providerId)}/availability`);
+			if (res.ok) {
+				const json = await res.json();
+				const list: Array<Record<string, unknown>> = json?.data?.blocks || json?.blocks || json?.data || (Array.isArray(json) ? json : []);
+				blocks = list.map(b => ({
+					id: (b.id as string) || (b.fhirId as string),
+					fhirId: b.fhirId as string,
+					daysOfWeek: (b.daysOfWeek || (b.byWeekday as string[]) || []) as string[],
+					startTime: (b.startTime as string) || '',
+					endTime: (b.endTime as string) || '',
+					locationId: b.locationId as string | undefined,
+				}));
+			}
+		} catch { /* ignore \u2014 start with empty */ }
+		renderBlocks();
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 	}
 
 	private _renderField(parent: HTMLElement, field: FieldDef, isView: boolean): void {
@@ -820,33 +1023,85 @@ export class SettingsHubEditor extends EditorPane {
 			return;
 		}
 
-		// Special: photo/photoUrl fields → file upload with preview
-		const isPhotoKey = field.key === 'photo' || field.key === 'photoUrl' || field.key === 'logo' || field.key === 'logoUrl' || field.key === 'image' || field.key === 'imageUrl';
+		// Special: photo/photoUrl/avatar/image/logo fields → file upload with preview.
+		// Detection is permissive: matches by key (any common variant) or by explicit
+		// field.type ('photo' | 'image' | 'upload' | 'file'). Without this any custom
+		// tab_field_config that uses keys like `providerPhoto`, `avatarUrl`, `profilePic`,
+		// `headshot`, `signature` etc. would render as a plain text field.
+		const keyLower = field.key.toLowerCase();
+		const photoKeys = ['photo', 'photourl', 'logo', 'logourl', 'image', 'imageurl', 'avatar', 'avatarurl', 'picture', 'pictureurl', 'profilepic', 'profilepicture', 'headshot', 'signature', 'signatureurl'];
+		const isPhotoKey = photoKeys.includes(keyLower)
+			|| /photo|image|logo|avatar|picture|headshot|signature/i.test(field.key)
+			|| t === 'photo' || t === 'image' || t === 'upload' || t === 'file';
 		if (isPhotoKey) {
 			const wrap = DOM.append(cell, DOM.$('div'));
-			wrap.style.cssText = 'display:flex;align-items:center;gap:10px;';
-			const photoSrc = (value as string) || '';
-			if (photoSrc) {
-				const img = DOM.append(wrap, DOM.$('img')) as HTMLImageElement;
-				img.src = photoSrc;
-				img.style.cssText = 'width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid var(--vscode-editorWidget-border);';
-				img.onerror = () => { img.style.display = 'none'; };
-			}
+			wrap.style.cssText = 'display:flex;align-items:flex-start;gap:12px;';
+
+			const preview = DOM.append(wrap, DOM.$('div'));
+			preview.style.cssText = 'width:80px;height:80px;border:2px dashed var(--vscode-editorWidget-border);border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--vscode-editor-background);flex-shrink:0;';
+
+			const renderPreview = (src: string): void => {
+				DOM.clearNode(preview);
+				if (src) {
+					const img = DOM.append(preview, DOM.$('img')) as HTMLImageElement;
+					img.src = src;
+					img.style.cssText = 'max-width:100%;max-height:100%;object-fit:cover;';
+					img.onerror = () => {
+						DOM.clearNode(preview);
+						const ph = DOM.append(preview, DOM.$('span'));
+						ph.textContent = '\u{1F5BC}';
+						ph.style.cssText = 'font-size:28px;opacity:0.4;';
+					};
+				} else {
+					const ph = DOM.append(preview, DOM.$('span'));
+					ph.textContent = '\u{1F5BC}';
+					ph.style.cssText = 'font-size:28px;opacity:0.4;';
+				}
+			};
+			const initial = (value as string) || '';
+			renderPreview(initial);
+
+			const controls = DOM.append(wrap, DOM.$('div'));
+			controls.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:6px;';
+
 			if (!isView && !field.readOnly) {
-				const fileInput = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				const fileInput = DOM.append(controls, DOM.$('input')) as HTMLInputElement;
 				fileInput.type = 'file';
 				fileInput.accept = 'image/*';
-				fileInput.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+				fileInput.style.cssText = 'font-size:11px;color:var(--vscode-foreground);padding:4px 0;';
 				fileInput.addEventListener('change', () => {
 					const file = fileInput.files?.[0];
 					if (!file) { return; }
+					if (file.size > 5 * 1024 * 1024) {
+						this.notificationService.notify({ severity: Severity.Error, message: 'Image must be under 5MB.' });
+						fileInput.value = '';
+						return;
+					}
 					const reader = new FileReader();
-					reader.onload = () => { this.formData[field.key] = reader.result as string; };
+					reader.onload = () => {
+						const dataUrl = reader.result as string;
+						this.formData[field.key] = dataUrl;
+						renderPreview(dataUrl);
+					};
 					reader.readAsDataURL(file);
 				});
+
+				// Optional URL input (alternative to file upload)
+				const urlLbl = DOM.append(controls, DOM.$('div'));
+				urlLbl.textContent = 'Or paste URL:';
+				urlLbl.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+				const urlInp = DOM.append(controls, DOM.$('input')) as HTMLInputElement;
+				urlInp.type = 'url';
+				urlInp.value = initial.startsWith('data:') ? '' : initial;
+				urlInp.placeholder = 'https://…';
+				urlInp.style.cssText = inputStyle;
+				urlInp.addEventListener('input', () => {
+					this.formData[field.key] = urlInp.value;
+					renderPreview(urlInp.value);
+				});
 			} else {
-				const urlEl = DOM.append(wrap, DOM.$('span'));
-				urlEl.textContent = photoSrc || '-';
+				const urlEl = DOM.append(controls, DOM.$('span'));
+				urlEl.textContent = initial && !initial.startsWith('data:') ? initial : (initial ? '(uploaded image)' : '-');
 				urlEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);word-break:break-all;';
 			}
 			if (error) {
@@ -937,74 +1192,110 @@ export class SettingsHubEditor extends EditorPane {
 		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		input.type = 'text';
 		input.value = (value === null || value === undefined) ? '' : String(value);
-		input.placeholder = field.placeholder || 'Search…';
+		input.placeholder = field.placeholder || 'Search organizations…';
 		input.readOnly = isView || !!field.readOnly;
-		input.style.cssText = inputStyle;
+		// Make the lookup field visually distinct from a plain text input —
+		// adds a dropdown chevron + magnifier so users discover it's a picker.
+		// This addresses the team report "Organization dropdown visibility/UI is unclear".
+		input.style.cssText = inputStyle + 'padding-right:28px;background-image:linear-gradient(45deg,transparent 50%,var(--vscode-foreground) 50%),linear-gradient(135deg,var(--vscode-foreground) 50%,transparent 50%);background-position:calc(100% - 14px) calc(50% + 1px),calc(100% - 9px) calc(50% + 1px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;cursor:pointer;';
 		input.autocomplete = 'off';
 
 		const dropdown = DOM.append(wrap, DOM.$('div'));
-		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:240px;overflow-y:auto;z-index:50;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);margin-top:2px;';
+		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);margin-top:2px;';
 
 		let results: Array<Record<string, unknown>> = [];
 		let debounce: ReturnType<typeof setTimeout> | null = null;
+		let loaded = false;
 
-		const close = () => { dropdown.style.display = 'none'; };
-		const open = () => { if (results.length > 0) { dropdown.style.display = 'block'; } };
+		const close = (): void => { dropdown.style.display = 'none'; };
+		const open = (): void => { dropdown.style.display = 'block'; };
 
-		const search = async (term: string): Promise<void> => {
-			if (term.trim().length === 0) {
-				results = [];
-				DOM.clearNode(dropdown);
-				close();
+		const renderResults = (): void => {
+			DOM.clearNode(dropdown);
+			if (results.length === 0) {
+				const none = DOM.append(dropdown, DOM.$('div'));
+				none.textContent = input.value.trim() ? 'No results.' : 'Type to search…';
+				none.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
 				return;
 			}
+			const displayField = cfg.displayField || 'name';
+			for (const row of results) {
+				const item = DOM.append(dropdown, DOM.$('div'));
+				const display = (row as Record<string, unknown>)[displayField];
+				const subBits: string[] = [];
+				const city = (row as Record<string, unknown>)['city'];
+				const state = (row as Record<string, unknown>)['state'];
+				if (city) { subBits.push(String(city)); }
+				if (state) { subBits.push(String(state)); }
+				const phone = (row as Record<string, unknown>)['phone'];
+				if (phone) { subBits.push(String(phone)); }
+
+				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(128,128,128,0.1);';
+				const nameEl = DOM.append(item, DOM.$('div'));
+				nameEl.textContent = display ? String(display) : '(no name)';
+				nameEl.style.cssText = 'font-weight:500;';
+				if (subBits.length > 0) {
+					const subEl = DOM.append(item, DOM.$('div'));
+					subEl.textContent = subBits.join(' · ');
+					subEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
+				}
+				item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
+				item.addEventListener('mouseleave', () => { item.style.background = ''; });
+				item.addEventListener('mousedown', e => {
+					e.preventDefault();
+					const valField = cfg.valueField || displayField;
+					const v = (row as Record<string, unknown>)[valField];
+					input.value = String(v ?? '');
+					this.formData[field.key] = input.value;
+					// Auto-fill mapped fields (e.g. organization → phone / email / website / address)
+					if (cfg.autoFillFields) {
+						for (const [target, source] of Object.entries(cfg.autoFillFields)) {
+							const sourceVal = (row as Record<string, unknown>)[source];
+							if (sourceVal !== undefined && sourceVal !== null) {
+								this.formData[target] = sourceVal;
+							}
+						}
+						this._renderContent();
+					}
+					close();
+				});
+			}
+		};
+
+		const load = async (term: string): Promise<void> => {
 			try {
 				const sep = cfg.endpoint!.includes('?') ? '&' : '?';
-				const url = `${cfg.endpoint}${sep}search=${encodeURIComponent(term)}&size=10`;
+				const url = term.trim()
+					? `${cfg.endpoint}${sep}search=${encodeURIComponent(term)}&size=20`
+					: `${cfg.endpoint}${sep}size=20`;
 				const res = await this.apiService.fetch(url);
-				if (!res.ok) { return; }
+				if (!res.ok) {
+					results = [];
+					renderResults();
+					return;
+				}
 				const json = await res.json();
 				const payload = json?.data || json;
 				results = payload?.content || (Array.isArray(payload) ? payload : []);
-				DOM.clearNode(dropdown);
-				for (const row of results) {
-					const item = DOM.append(dropdown, DOM.$('div'));
-					const displayField = cfg.displayField || 'name';
-					const display = (row as Record<string, unknown>)[displayField];
-					item.textContent = display ? String(display) : '(no name)';
-					item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(128,128,128,0.1);';
-					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
-					item.addEventListener('mouseleave', () => { item.style.background = ''; });
-					item.addEventListener('mousedown', e => {
-						e.preventDefault();
-						const valField = cfg.valueField || displayField;
-						const v = (row as Record<string, unknown>)[valField];
-						input.value = String(v ?? '');
-						this.formData[field.key] = input.value;
-						// Auto-fill mapped fields (e.g. organization → phone/email/address)
-						if (cfg.autoFillFields) {
-							for (const [target, source] of Object.entries(cfg.autoFillFields)) {
-								const sourceVal = (row as Record<string, unknown>)[source];
-								if (sourceVal !== undefined && sourceVal !== null) {
-									this.formData[target] = sourceVal;
-								}
-							}
-							this._renderContent();
-						}
-						close();
-					});
-				}
+				loaded = true;
+				renderResults();
 				open();
-			} catch { /* ignore */ }
+			} catch {
+				results = [];
+				renderResults();
+			}
 		};
 
 		input.addEventListener('input', () => {
 			this.formData[field.key] = input.value;
 			if (debounce) { clearTimeout(debounce); }
-			debounce = setTimeout(() => { void search(input.value); }, 200);
+			debounce = setTimeout(() => { void load(input.value); }, 200);
 		});
-		input.addEventListener('focus', open);
-		input.addEventListener('blur', () => setTimeout(close, 150));
+		input.addEventListener('focus', () => {
+			if (!loaded) { void load(''); }
+			else { open(); }
+		});
+		input.addEventListener('blur', () => setTimeout(close, 200));
 	}
 
 	private async _saveRecord(): Promise<void> {
@@ -1293,8 +1584,10 @@ export class SettingsHubEditor extends EditorPane {
 		passwordInp.placeholder = 'Leave blank to auto-generate';
 		passwordInp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;font-family:var(--vscode-editor-font-family,monospace);box-sizing:border-box;outline:none;';
 
-		const optionsRow = DOM.append(dialog, DOM.$('div'));
-		optionsRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;';
+		const optionsCol = DOM.append(dialog, DOM.$('div'));
+		optionsCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:16px;';
+		const optionsRow = DOM.append(optionsCol, DOM.$('div'));
+		optionsRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
 		const sendWelcomeCb = DOM.append(optionsRow, DOM.$('input')) as HTMLInputElement;
 		sendWelcomeCb.type = 'checkbox';
 		sendWelcomeCb.checked = true;
@@ -1304,6 +1597,20 @@ export class SettingsHubEditor extends EditorPane {
 		swl.textContent = 'Send welcome email with credentials';
 		swl.setAttribute('for', 'sh-send-welcome');
 		swl.style.cssText = 'font-size:12px;cursor:pointer;';
+
+		// "Generate printable credentials" — matches the EHR Web UI option.
+		// When checked, the temporary password is shown after creation with a Print action.
+		const printRow = DOM.append(optionsCol, DOM.$('div'));
+		printRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		const printCb = DOM.append(printRow, DOM.$('input')) as HTMLInputElement;
+		printCb.type = 'checkbox';
+		printCb.checked = true;
+		printCb.style.cssText = 'cursor:pointer;accent-color:var(--vscode-focusBorder);';
+		printCb.id = 'sh-print-creds';
+		const pwl = DOM.append(printRow, DOM.$('label'));
+		pwl.textContent = 'Generate printable credentials';
+		pwl.setAttribute('for', 'sh-print-creds');
+		pwl.style.cssText = 'font-size:12px;cursor:pointer;';
 
 		const setSelected = (item: { id: string; firstName: string; lastName: string; email?: string; npi?: string } | null): void => {
 			selectedSubject = item;
@@ -1417,18 +1724,28 @@ export class SettingsHubEditor extends EditorPane {
 				roleName: roleSel.value,
 				temporaryPassword: passwordInp.value.trim() || undefined,
 				sendWelcomeEmail: sendWelcomeCb.checked,
+				generatePrint: printCb.checked,
 				...(activeTab === 'staff' && selectedSubject.id ? { practitionerFhirId: selectedSubject.id, npi: selectedSubject.npi } : {}),
 				...(activeTab === 'patients' && selectedSubject.id ? { patientFhirId: selectedSubject.id } : {}),
 			};
 			try {
 				const res = await this.apiService.fetch('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
-				if (res.ok) {
+				const json = await res.json().catch(() => null);
+				if (res.ok && json?.success !== false) {
 					overlay.remove();
 					this.notificationService.notify({ severity: Severity.Info, message: `User created for ${selectedSubject.firstName} ${selectedSubject.lastName}.` });
+					// Show printable credentials when requested and the server returned a temporary password.
+					if (printCb.checked && json?.data?.temporaryPassword) {
+						this._showCredentialsModal({
+							userId: String(json.data.id || ''),
+							username: String(json.data.email || body.email),
+							temporaryPassword: String(json.data.temporaryPassword),
+							resetDate: new Date().toISOString().split('T')[0],
+						});
+					}
 					this._onSidebarClick('__users__');
 				} else {
-					const err = await res.json().catch(() => null);
-					this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Create failed (${res.status})` });
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || `Create failed (${res.status})` });
 				}
 			} catch (e) {
 				this.notificationService.notify({ severity: Severity.Error, message: `Create failed: ${e}` });
@@ -1492,14 +1809,21 @@ export class SettingsHubEditor extends EditorPane {
 
 	private async _resetUserPassword(userId: string): Promise<void> {
 		if (!userId) { return; }
-		const { confirmed } = await this.dialogService.confirm({ message: 'Send password reset email to this user?' });
+		const { confirmed } = await this.dialogService.confirm({
+			message: 'Reset password?',
+			detail: 'A new temporary password will be generated. You can show or print the credentials for the user.',
+			primaryButton: 'Reset',
+		});
 		if (!confirmed) { return; }
 		try {
 			const res = await this.apiService.fetch(`/api/admin/users/${userId}/reset-password`, { method: 'POST' });
-			if (res.ok) {
-				this.notificationService.notify({ severity: Severity.Info, message: 'Password reset email sent.' });
+			const json = await res.json().catch(() => null);
+			if (res.ok && json?.data?.temporaryPassword) {
+				this._showCredentialsModal(json.data as { userId: string; username: string; temporaryPassword: string; resetDate?: string });
+			} else if (res.ok) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'Password reset.' });
 			} else {
-				this.notificationService.notify({ severity: Severity.Error, message: `Failed to send reset email (${res.status})` });
+				this.notificationService.notify({ severity: Severity.Error, message: json?.message || `Failed to reset password (${res.status})` });
 			}
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Failed: ${e}` });
@@ -1508,19 +1832,178 @@ export class SettingsHubEditor extends EditorPane {
 
 	private async _deleteUser(userId: string, username: string): Promise<void> {
 		if (!userId) { return; }
-		const { confirmed } = await this.dialogService.confirm({ message: `Delete user "${username}"? This cannot be undone.` });
+		const { confirmed } = await this.dialogService.confirm({
+			message: `Delete user "${username}"?`,
+			detail: 'This permanently removes the account from Keycloak and the database. This cannot be undone.',
+			primaryButton: 'Delete',
+			type: 'warning',
+		});
 		if (!confirmed) { return; }
 		try {
 			const res = await this.apiService.fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
-			if (res.ok) {
+			if (res.ok || res.status === 204) {
 				this.notificationService.notify({ severity: Severity.Info, message: 'User deleted.' });
 				this._onSidebarClick('__users__');
-			} else {
-				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status})` });
+				return;
 			}
+			// Surface a useful diagnosis rather than just "Delete failed (500)".
+			let msg = `Delete failed (${res.status})`;
+			try {
+				const json = await res.json();
+				if (json?.message) { msg = json.message; }
+				else if (json?.error) { msg = json.error; }
+			} catch { /* keep status-only msg */ }
+			if (res.status === 500) {
+				msg += ' — Backend error. The user may have linked FHIR/audit records that block deletion. Try disabling the account instead.';
+			} else if (res.status === 403) {
+				msg += ' — Permission denied. Only admins can delete users.';
+			} else if (res.status === 404) {
+				msg += ' — User no longer exists.';
+				this._onSidebarClick('__users__');
+			} else if (res.status === 409) {
+				msg += ' — Conflict: user has dependent records. Disable instead of deleting.';
+			}
+			this.notificationService.notify({ severity: Severity.Error, message: msg });
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
 		}
+	}
+
+	/**
+	 * Show a credentials modal with Copy/Print actions matching the EHR Web UI behavior.
+	 * Used after user creation and password reset when the backend returns a temporaryPassword.
+	 */
+	private _showCredentialsModal(data: { userId: string; username: string; temporaryPassword: string; resetDate?: string }): void {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1001;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:480px;max-width:92vw;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = 'Login Credentials';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const desc = DOM.append(modal, DOM.$('p'));
+		desc.textContent = 'Share these credentials with the user. The temporary password must be changed on first login.';
+		desc.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const credBox = DOM.append(modal, DOM.$('div'));
+		credBox.style.cssText = 'background:rgba(0,122,204,0.08);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:12px;font-family:var(--vscode-editor-font-family,monospace);font-size:13px;line-height:1.7;';
+
+		const row = (label: string, value: string): void => {
+			const r = DOM.append(credBox, DOM.$('div'));
+			r.style.cssText = 'display:flex;gap:8px;';
+			const k = DOM.append(r, DOM.$('span'));
+			k.textContent = label;
+			k.style.cssText = 'font-weight:600;min-width:90px;color:var(--vscode-descriptionForeground);';
+			const v = DOM.append(r, DOM.$('span'));
+			v.textContent = value;
+			v.style.cssText = 'font-weight:500;';
+		};
+		row('Username:', data.username);
+		row('Password:', data.temporaryPassword);
+		if (data.resetDate) { row('Reset Date:', data.resetDate); }
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+
+		const copyBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		copyBtn.textContent = '\u{1F4CB} Copy';
+		copyBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		copyBtn.addEventListener('click', async () => {
+			const text = `Username: ${data.username}\nPassword: ${data.temporaryPassword}`;
+			try {
+				await mainWindow.navigator.clipboard.writeText(text);
+				this.notificationService.notify({ severity: Severity.Info, message: 'Credentials copied to clipboard.' });
+			} catch {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable.' });
+			}
+		});
+
+		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		printBtn.textContent = '\u{1F5A8} Print';
+		printBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		printBtn.addEventListener('click', () => this._printCredentials(data));
+
+		const doneBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		doneBtn.textContent = 'Done';
+		doneBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		doneBtn.addEventListener('click', () => overlay.remove());
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+	}
+
+	/** Open a printable popup with the user's credentials. */
+	private _printCredentials(data: { username: string; temporaryPassword: string; resetDate?: string }): void {
+		const w = mainWindow.open('', '_blank', 'width=600,height=500');
+		if (!w) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Pop-up blocked. Allow pop-ups to print credentials.' });
+			return;
+		}
+		const doc = w.document;
+		const html = doc.createElement('html');
+		const head = doc.createElement('head');
+		const title = doc.createElement('title');
+		title.textContent = 'Login Credentials';
+		head.appendChild(title);
+		const style = doc.createElement('style');
+		style.textContent = `
+			body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1a1a2e; }
+			h1 { font-size: 22px; margin: 0 0 8px; }
+			h2 { font-size: 14px; color: #6b7280; font-weight: normal; margin: 0 0 30px; }
+			.card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; max-width: 460px; }
+			.row { display: flex; padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
+			.row:last-child { border-bottom: none; }
+			.k { font-weight: 600; min-width: 130px; color: #6b7280; }
+			.v { font-family: 'Courier New', monospace; font-weight: 600; }
+			.note { margin-top: 24px; font-size: 12px; color: #6b7280; }
+		`;
+		head.appendChild(style);
+		const body = doc.createElement('body');
+		const h1 = doc.createElement('h1');
+		h1.textContent = 'Login Credentials';
+		const h2 = doc.createElement('h2');
+		h2.textContent = 'Ciyex Workspace';
+		const card = doc.createElement('div');
+		card.className = 'card';
+		const rows: Array<[string, string]> = [
+			['Username', data.username],
+			['Password', data.temporaryPassword],
+		];
+		if (data.resetDate) { rows.push(['Issued', data.resetDate]); }
+		for (const [k, v] of rows) {
+			const r = doc.createElement('div');
+			r.className = 'row';
+			const ke = doc.createElement('div');
+			ke.className = 'k';
+			ke.textContent = k;
+			const ve = doc.createElement('div');
+			ve.className = 'v';
+			ve.textContent = v;
+			r.appendChild(ke);
+			r.appendChild(ve);
+			card.appendChild(r);
+		}
+		const note = doc.createElement('div');
+		note.className = 'note';
+		note.textContent = 'This is a temporary password. The user must change it on first login. Keep secure.';
+		body.appendChild(h1);
+		body.appendChild(h2);
+		body.appendChild(card);
+		body.appendChild(note);
+		html.appendChild(head);
+		html.appendChild(body);
+		doc.documentElement.replaceWith(html);
+		doc.close();
+		w.focus();
+		w.print();
 	}
 
 	private async _renderRolesPermissions(): Promise<void> {
@@ -1618,21 +2101,79 @@ export class SettingsHubEditor extends EditorPane {
 				const scopeEl = DOM.append(stats, DOM.$('span'));
 				scopeEl.textContent = `${scopeCount} FHIR scope${scopeCount === 1 ? '' : 's'}`;
 
-				// Show first few permissions as pills
-				const perms = (role.permissions || []).slice(0, 4);
-				if (perms.length > 0) {
-					const pillRow = DOM.append(card, DOM.$('div'));
-					pillRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;';
-					for (const p of perms) {
-						const pill = DOM.append(pillRow, DOM.$('span'));
+				// Collapsible permissions detail — matches the EHR Web UI PermissionMatrix
+				// expand behaviour so users see the actual permissions, not just a count.
+				const PREVIEW = 6;
+				const allPerms = role.permissions || [];
+				const allScopes = role.smartScopes || [];
+				let expanded = false;
+
+				const detailWrap = DOM.append(card, DOM.$('div'));
+				detailWrap.style.cssText = 'margin-top:10px;';
+
+				const permSection = DOM.append(detailWrap, DOM.$('div'));
+				permSection.style.cssText = 'margin-bottom:6px;';
+				const permTitle = DOM.append(permSection, DOM.$('div'));
+				permTitle.textContent = 'Permissions';
+				permTitle.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;';
+				const permPills = DOM.append(permSection, DOM.$('div'));
+				permPills.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
+
+				const scopeSection = DOM.append(detailWrap, DOM.$('div'));
+				scopeSection.style.cssText = 'margin-top:8px;';
+				const scopeTitle = DOM.append(scopeSection, DOM.$('div'));
+				scopeTitle.textContent = 'FHIR Scopes';
+				scopeTitle.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;';
+				const scopePills = DOM.append(scopeSection, DOM.$('div'));
+				scopePills.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
+
+				const renderPills = (): void => {
+					DOM.clearNode(permPills);
+					DOM.clearNode(scopePills);
+					if (allPerms.length === 0) {
+						const none = DOM.append(permPills, DOM.$('span'));
+						none.textContent = '(none)';
+						none.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:11px;font-style:italic;';
+					}
+					const shownPerms = expanded ? allPerms : allPerms.slice(0, PREVIEW);
+					for (const p of shownPerms) {
+						const pill = DOM.append(permPills, DOM.$('span'));
 						pill.textContent = p;
-						pill.style.cssText = 'background:rgba(55,148,255,0.1);color:var(--vscode-textLink-foreground,#3794ff);padding:1px 6px;border-radius:3px;font-size:10px;';
+						pill.style.cssText = 'background:rgba(55,148,255,0.1);color:var(--vscode-textLink-foreground,#3794ff);padding:2px 7px;border-radius:10px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
 					}
-					if ((role.permissions || []).length > 4) {
-						const more = DOM.append(pillRow, DOM.$('span'));
-						more.textContent = `+${(role.permissions || []).length - 4} more`;
-						more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:1px 6px;';
+					if (!expanded && allPerms.length > PREVIEW) {
+						const more = DOM.append(permPills, DOM.$('span'));
+						more.textContent = `+${allPerms.length - PREVIEW} more`;
+						more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:2px 6px;';
 					}
+					if (allScopes.length === 0) {
+						scopeSection.style.display = 'none';
+					} else {
+						scopeSection.style.display = '';
+						const shownScopes = expanded ? allScopes : allScopes.slice(0, PREVIEW);
+						for (const s of shownScopes) {
+							const pill = DOM.append(scopePills, DOM.$('span'));
+							pill.textContent = s;
+							pill.style.cssText = 'background:rgba(34,197,94,0.1);color:#22c55e;padding:2px 7px;border-radius:10px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+						}
+						if (!expanded && allScopes.length > PREVIEW) {
+							const more = DOM.append(scopePills, DOM.$('span'));
+							more.textContent = `+${allScopes.length - PREVIEW} more`;
+							more.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;padding:2px 6px;';
+						}
+					}
+				};
+				renderPills();
+
+				if (allPerms.length > PREVIEW || allScopes.length > PREVIEW) {
+					const toggleBtn = DOM.append(detailWrap, DOM.$('button')) as HTMLButtonElement;
+					toggleBtn.textContent = 'Show all';
+					toggleBtn.style.cssText = 'margin-top:8px;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:11px;padding:0;text-decoration:underline;';
+					toggleBtn.addEventListener('click', () => {
+						expanded = !expanded;
+						toggleBtn.textContent = expanded ? 'Show less' : 'Show all';
+						renderPills();
+					});
 				}
 			}
 		} catch {
@@ -1740,72 +2281,230 @@ export class SettingsHubEditor extends EditorPane {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
 
-		const title = DOM.append(root, DOM.$('h1'));
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px;';
+		const left = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(left, DOM.$('h1'));
 		title.textContent = 'Form Options';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(root, DOM.$('p'));
+		const sub = DOM.append(left, DOM.$('p'));
 		sub.textContent = 'Edit option lists used by select / radio / checkbox fields across all forms.';
-		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
 
-		const loading = DOM.append(root, DOM.$('div'));
-		loading.textContent = 'Loading option lists\u2026';
-		loading.style.cssText = 'color:var(--vscode-descriptionForeground);';
+		const newListBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+		newListBtn.textContent = '+ New List';
+		newListBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 
-		try {
-			const res = await this.apiService.fetch('/api/list-options');
-			if (!res.ok) {
-				loading.textContent = `Failed to load option lists (${res.status})`;
-				return;
-			}
-			const json = await res.json();
-			const lists: Array<Record<string, unknown>> = json?.data || json?.content || (Array.isArray(json) ? json : []);
-			loading.remove();
-
-			if (lists.length === 0) {
-				const empty = DOM.append(root, DOM.$('div'));
-				empty.textContent = 'No option lists configured.';
-				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
-				return;
-			}
-
-			for (const list of lists) {
-				const l = list as { listName?: string; options?: Array<{ value?: string; label?: string }> };
-				const panel = DOM.append(root, DOM.$('div'));
-				panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:12px;overflow:hidden;';
-				const head = DOM.append(panel, DOM.$('div'));
-				head.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);';
-				const ht = DOM.append(head, DOM.$('h3'));
-				ht.textContent = l.listName || '(unnamed list)';
-				ht.style.cssText = 'margin:0;font-size:13px;font-weight:600;';
-				const body = DOM.append(panel, DOM.$('div'));
-				body.style.cssText = 'padding:14px;display:flex;flex-wrap:wrap;gap:6px;';
-				for (const opt of (l.options || [])) {
-					const chip = DOM.append(body, DOM.$('span'));
-					chip.textContent = `${opt.label || opt.value} (${opt.value || ''})`;
-					chip.style.cssText = 'background:rgba(128,128,128,0.15);padding:3px 8px;border-radius:12px;font-size:11px;';
+		const body = DOM.append(root, DOM.$('div'));
+		const renderBody = async (): Promise<void> => {
+			DOM.clearNode(body);
+			const loading = DOM.append(body, DOM.$('div'));
+			loading.textContent = 'Loading option lists\u2026';
+			loading.style.cssText = 'color:var(--vscode-descriptionForeground);';
+			try {
+				const res = await this.apiService.fetch('/api/list-options');
+				if (!res.ok) {
+					loading.textContent = `Failed to load option lists (${res.status})`;
+					return;
 				}
+				const json = await res.json();
+				const lists: Array<Record<string, unknown>> = json?.data || json?.content || (Array.isArray(json) ? json : []);
+				loading.remove();
+
+				if (lists.length === 0) {
+					const empty = DOM.append(body, DOM.$('div'));
+					empty.textContent = 'No option lists yet. Click "+ New List" to create one.';
+					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
+					return;
+				}
+
+				for (const list of lists) {
+					const l = list as { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> };
+					this._renderOptionList(body, l, renderBody);
+				}
+			} catch {
+				loading.textContent = 'Waiting for login\u2026';
 			}
-		} catch {
-			loading.textContent = 'Waiting for login\u2026';
+		};
+
+		newListBtn.addEventListener('click', () => this._openListOptionModal('create', null, renderBody));
+		void renderBody();
+	}
+
+	private _renderOptionList(parent: HTMLElement, list: { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> }, reload: () => Promise<void>): void {
+		const panel = DOM.append(parent, DOM.$('div'));
+		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:12px;overflow:hidden;';
+		const head = DOM.append(panel, DOM.$('div'));
+		head.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = list.listName || list.title || '(unnamed list)';
+		ht.style.cssText = 'margin:0;font-size:13px;font-weight:600;flex:1;';
+
+		const actions = DOM.append(head, DOM.$('div'));
+		actions.style.cssText = 'display:flex;gap:4px;';
+		this._tableAction(actions, '\u270f', 'Edit list', () => this._openListOptionModal('edit', list, reload));
+		this._tableAction(actions, '\u{1F5D1}', 'Delete list', async () => {
+			if (!list.id) { return; }
+			const { confirmed } = await this.dialogService.confirm({ message: `Delete list "${list.listName || list.title}"?` });
+			if (!confirmed) { return; }
+			try {
+				const res = await this.apiService.fetch(`/api/list-options/${list.id}`, { method: 'DELETE' });
+				if (res.ok) {
+					await reload();
+					this.notificationService.notify({ severity: Severity.Info, message: 'List deleted.' });
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status}).` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+			}
+		}, 'danger');
+
+		const body = DOM.append(panel, DOM.$('div'));
+		body.style.cssText = 'padding:14px;display:flex;flex-wrap:wrap;gap:6px;';
+		const opts = list.options || [];
+		if (opts.length === 0) {
+			const note = DOM.append(body, DOM.$('span'));
+			note.textContent = 'No options defined.';
+			note.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);font-style:italic;';
+			return;
+		}
+		for (const opt of opts) {
+			const chip = DOM.append(body, DOM.$('span'));
+			chip.textContent = `${opt.label || opt.value} (${opt.value || ''})`;
+			chip.style.cssText = 'background:rgba(128,128,128,0.15);padding:3px 8px;border-radius:12px;font-size:11px;';
 		}
 	}
 
+	private _openListOptionModal(mode: 'create' | 'edit', list: { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> } | null, reload: () => Promise<void>): void {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:540px;max-width:92vw;max-height:88vh;overflow-y:auto;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = mode === 'create' ? 'New Option List' : 'Edit Option List';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const nameLbl = DOM.append(modal, DOM.$('label'));
+		nameLbl.textContent = 'List Name *';
+		nameLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const nameInput = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		nameInput.value = list?.listName || list?.title || '';
+		nameInput.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;margin-bottom:14px;';
+
+		const optsLbl = DOM.append(modal, DOM.$('div'));
+		optsLbl.textContent = 'Options';
+		optsLbl.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
+
+		const optsContainer = DOM.append(modal, DOM.$('div'));
+		optsContainer.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:240px;overflow-y:auto;';
+
+		const opts: Array<{ value: string; label: string }> = (list?.options || []).map(o => ({ value: o.value || '', label: o.label || '' }));
+		if (opts.length === 0) { opts.push({ value: '', label: '' }); }
+
+		const renderOpts = (): void => {
+			DOM.clearNode(optsContainer);
+			opts.forEach((opt, idx) => {
+				const row = DOM.append(optsContainer, DOM.$('div'));
+				row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+				const valInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				valInp.placeholder = 'Value';
+				valInp.value = opt.value;
+				valInp.style.cssText = 'flex:1;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+				valInp.addEventListener('input', () => { opts[idx].value = valInp.value; });
+				const lblInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				lblInp.placeholder = 'Label';
+				lblInp.value = opt.label;
+				lblInp.style.cssText = 'flex:1;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+				lblInp.addEventListener('input', () => { opts[idx].label = lblInp.value; });
+				const rm = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				rm.textContent = '\u2715';
+				rm.title = 'Remove option';
+				rm.style.cssText = 'padding:4px 8px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:11px;';
+				rm.addEventListener('click', () => { opts.splice(idx, 1); renderOpts(); });
+			});
+		};
+		renderOpts();
+
+		const addOptBtn = DOM.append(modal, DOM.$('button')) as HTMLButtonElement;
+		addOptBtn.textContent = '+ Add Option';
+		addOptBtn.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;margin-bottom:14px;';
+		addOptBtn.addEventListener('click', () => { opts.push({ value: '', label: '' }); renderOpts(); });
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px;';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', async () => {
+			const listName = nameInput.value.trim();
+			if (!listName) {
+				this.notificationService.notify({ severity: Severity.Error, message: 'List name is required.' });
+				return;
+			}
+			const cleanedOpts = opts.filter(o => o.value || o.label);
+			const payload = { listName, options: cleanedOpts };
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving\u2026';
+			try {
+				const id = list?.id;
+				const method = id ? 'PUT' : 'POST';
+				const url = id ? `/api/list-options/${id}` : '/api/list-options';
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (res.ok) {
+					overlay.remove();
+					await reload();
+					this.notificationService.notify({ severity: Severity.Info, message: 'List saved.' });
+				} else {
+					const txt = await res.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+			}
+		});
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+	}
+
 	/**
-	 * Codes tab — backed by /api/global_codes (not the FHIR endpoint), matching
-	 * the EHR Web UI CodesPage. Renders search + codeType filter + table.
+	 * Codes tab — backed by /api/global_codes (matches EHR Web UI CodesPage).
+	 * Provides search + codeType filter + Add/Edit/View/Delete CRUD actions.
 	 */
 	private async _renderCodes(): Promise<void> {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:1200px;margin:0 auto;';
 
 		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'margin-bottom:16px;';
-		const title = DOM.append(header, DOM.$('h1'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
+		const headerLeft = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(headerLeft, DOM.$('h1'));
 		title.textContent = 'Codes';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(header, DOM.$('p'));
+		const sub = DOM.append(headerLeft, DOM.$('p'));
 		sub.textContent = 'Global codes (ICD-10, CPT, HCPCS, CVX) — backed by /api/global_codes.';
 		sub.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
+
+		const headerRight = DOM.append(header, DOM.$('div'));
+		const addBtn = DOM.append(headerRight, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Code';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 
 		const CODE_TYPES: Array<[string, string]> = [
 			['', 'All Code Types'],
@@ -1885,7 +2584,7 @@ export class SettingsHubEditor extends EditorPane {
 				const thead = DOM.append(table, DOM.$('thead'));
 				const tr = DOM.append(thead, DOM.$('tr'));
 				tr.style.cssText = 'background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);';
-				for (const col of ['Code', 'Type', 'Description', 'Category', 'Active']) {
+				for (const col of ['Code', 'Type', 'Description', 'Category', 'Active', 'Actions']) {
 					const th = DOM.append(tr, DOM.$('th'));
 					th.textContent = col;
 					th.style.cssText = 'padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
@@ -1893,7 +2592,7 @@ export class SettingsHubEditor extends EditorPane {
 
 				const tbody = DOM.append(table, DOM.$('tbody'));
 				for (const c of codes) {
-					const code = c as { code?: string; codeType?: string; description?: string; shortDescription?: string; category?: string; active?: boolean };
+					const code = c as { id?: number | string; code?: string; codeType?: string; description?: string; shortDescription?: string; category?: string; active?: boolean };
 					const row = DOM.append(tbody, DOM.$('tr'));
 					row.style.cssText = 'border-bottom:1px solid rgba(128,128,128,0.1);';
 					this._appendCell(row, code.code || '-');
@@ -1901,12 +2600,19 @@ export class SettingsHubEditor extends EditorPane {
 					this._appendCell(row, code.description || code.shortDescription || '-');
 					this._appendCell(row, code.category || '-');
 					this._appendCell(row, code.active === false ? 'No' : 'Yes');
+
+					const actionsTd = DOM.append(row, DOM.$('td'));
+					actionsTd.style.cssText = 'padding:10px 12px;white-space:nowrap;';
+					this._tableAction(actionsTd, '\u{1F441}', 'View', () => this._openCodeModal('view', code, load));
+					this._tableAction(actionsTd, '\u270F', 'Edit', () => this._openCodeModal('edit', code, load));
+					this._tableAction(actionsTd, '\u{1F5D1}', 'Delete', () => this._deleteCode(code, load), 'danger');
 				}
 			} catch (e) {
 				loadEl.textContent = `Failed to load codes: ${e}`;
 			}
 		};
 
+		addBtn.addEventListener('click', () => this._openCodeModal('create', null, load));
 		searchBtn.addEventListener('click', () => { void load(); });
 		searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { void load(); } });
 		typeSelect.addEventListener('change', () => { void load(); });
@@ -1914,69 +2620,876 @@ export class SettingsHubEditor extends EditorPane {
 		void load();
 	}
 
+	/** Opens a modal to view/edit/create a global code record. */
+	private _openCodeModal(mode: 'view' | 'edit' | 'create', code: Record<string, unknown> | null, reload: () => Promise<void>): void {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:680px;max-width:92vw;max-height:88vh;overflow-y:auto;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = mode === 'create' ? 'Create Code' : mode === 'edit' ? 'Edit Code' : 'View Code';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const grid = DOM.append(modal, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
+
+		const form: Record<string, unknown> = code ? { ...code } : { active: true };
+		const isView = mode === 'view';
+
+		const mkField = (key: string, label: string, opts: { required?: boolean; placeholder?: string; type?: 'text' | 'number' | 'textarea' | 'select' | 'checkbox'; options?: Array<[string, string]>; span?: number } = {}): void => {
+			const cell = DOM.append(grid, DOM.$('div'));
+			cell.style.cssText = `grid-column:span ${opts.span || 1};`;
+			const lbl = DOM.append(cell, DOM.$('label'));
+			lbl.textContent = label + (opts.required ? ' *' : '');
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+
+			if (opts.type === 'select') {
+				const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
+				sel.disabled = isView;
+				sel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;';
+				for (const [v, l] of (opts.options || [])) {
+					const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+					o.value = v;
+					o.textContent = l;
+					if (String(form[key] ?? '') === v) { o.selected = true; }
+				}
+				sel.addEventListener('change', () => { form[key] = sel.value; });
+			} else if (opts.type === 'checkbox') {
+				const wrap = DOM.append(cell, DOM.$('label'));
+				wrap.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;';
+				const cb = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				cb.type = 'checkbox';
+				cb.disabled = isView;
+				cb.checked = !!form[key];
+				cb.addEventListener('change', () => { form[key] = cb.checked; });
+				const t = DOM.append(wrap, DOM.$('span'));
+				t.textContent = opts.placeholder || label;
+			} else {
+				const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
+				inp.type = opts.type === 'number' ? 'number' : 'text';
+				inp.placeholder = opts.placeholder || '';
+				inp.value = form[key] === undefined || form[key] === null ? '' : String(form[key]);
+				inp.disabled = isView;
+				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+				inp.addEventListener('input', () => {
+					if (opts.type === 'number') {
+						const n = inp.value === '' ? undefined : Number(inp.value);
+						form[key] = Number.isFinite(n) ? n : undefined;
+					} else {
+						form[key] = inp.value;
+					}
+				});
+			}
+		};
+
+		mkField('code', 'Code', { required: true, placeholder: 'e.g. I10' });
+		mkField('codeType', 'Type', {
+			required: true, type: 'select', options: [
+				['', 'Select Type'],
+				['CPT4', 'CPT4 Procedure / Service'],
+				['HCPCS', 'HCPCS Procedure / Service'],
+				['CVX', 'CVX Immunization'],
+				['ICD10', 'ICD10 Diagnosis'],
+				['ICD9', 'ICD9 Diagnosis'],
+				['CUSTOM', 'Custom'],
+			],
+		});
+		mkField('modifier', 'Modifier', { placeholder: 'e.g. 25, 59' });
+		mkField('category', 'Category', { placeholder: 'e.g. Evaluation & Management' });
+		mkField('description', 'Description', { span: 2, placeholder: 'e.g. Essential (primary) hypertension' });
+		mkField('shortDescription', 'Short Description', { span: 2, placeholder: 'e.g. Hypertension' });
+		mkField('relateTo', 'Relate To', { placeholder: 'Related code or group' });
+		mkField('feeStandard', 'Fee Standard', { type: 'number', placeholder: 'e.g. 150.00' });
+		mkField('active', 'Active', { type: 'checkbox' });
+		mkField('diagnosisReporting', 'Diagnosis Reporting', { type: 'checkbox' });
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = isView ? 'Close' : 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+
+		if (!isView) {
+			const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+			saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+			saveBtn.addEventListener('click', async () => {
+				if (!form['code'] || !form['codeType']) {
+					this.notificationService.notify({ severity: Severity.Error, message: 'Code and Type are required.' });
+					return;
+				}
+				saveBtn.disabled = true;
+				saveBtn.textContent = 'Saving…';
+				try {
+					const id = form['id'];
+					const method = id ? 'PUT' : 'POST';
+					const url = id ? `/api/global_codes/${id}` : '/api/global_codes';
+					const res = await this.apiService.fetch(url, { method, body: JSON.stringify(form) });
+					if (res.ok) {
+						overlay.remove();
+						await reload();
+						this.notificationService.notify({ severity: Severity.Info, message: 'Saved successfully.' });
+					} else {
+						const txt = await res.text().catch(() => '');
+						this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+						saveBtn.disabled = false;
+						saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+					}
+				} catch (e) {
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = mode === 'create' ? 'Create' : 'Save';
+				}
+			});
+		}
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+	}
+
+	private async _deleteCode(code: Record<string, unknown>, reload: () => Promise<void>): Promise<void> {
+		const id = (code as { id?: number | string }).id;
+		if (!id) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Cannot delete: code has no ID.' });
+			return;
+		}
+		const { confirmed } = await this.dialogService.confirm({ message: `Delete code "${code['code']}"? This cannot be undone.` });
+		if (!confirmed) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/global_codes/${id}`, { method: 'DELETE' });
+			if (res.ok) {
+				await reload();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Code deleted.' });
+			} else {
+				const txt = await res.text().catch(() => '');
+				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status}). ${txt.substring(0, 160)}` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+		}
+	}
+
 	private _renderDisplay(): void {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
 		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
 
-		const title = DOM.append(root, DOM.$('h1'));
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px;';
+		const left = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(left, DOM.$('h1'));
 		title.textContent = 'Display';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(root, DOM.$('p'));
-		sub.textContent = 'Adjust display preferences for the EHR interface.';
-		sub.style.cssText = 'margin:0 0 24px;color:var(--vscode-descriptionForeground);font-size:13px;';
+		const sub = DOM.append(left, DOM.$('p'));
+		sub.textContent = 'Adjust display preferences for the EHR interface. Saved locally per workspace.';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
+
+		const saveBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Save';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 
 		const panel = DOM.append(root, DOM.$('div'));
 		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 
-		const mkRow = (label: string, desc: string, control: HTMLElement) => {
+		const STORAGE_KEY = 'ciyex_display_settings';
+		let stored: Record<string, unknown> = {};
+		try {
+			const raw = localStorage.getItem(STORAGE_KEY);
+			if (raw) { stored = JSON.parse(raw); }
+		} catch { /* ignore */ }
+
+		const state: Record<string, unknown> = {
+			fontSize: stored.fontSize || '13px',
+			dateFormat: stored.dateFormat || 'MM/DD/YYYY',
+			timeFormat: stored.timeFormat || '12-hour (AM/PM)',
+			theme: stored.theme || 'System',
+			density: stored.density || 'Comfortable',
+			compactMode: stored.compactMode ?? false,
+			showAvatars: stored.showAvatars ?? true,
+			sidebarCollapsed: stored.sidebarCollapsed ?? false,
+			showRecordCount: stored.showRecordCount ?? true,
+			showTooltips: stored.showTooltips ?? true,
+		};
+
+		const mkRow = (label: string, desc: string, control: HTMLElement): void => {
 			const row = DOM.append(panel, DOM.$('div'));
-			row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(128,128,128,0.1);';
-			const left = DOM.append(row, DOM.$('div'));
-			const lbl = DOM.append(left, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(128,128,128,0.1);gap:16px;';
+			const leftCol = DOM.append(row, DOM.$('div'));
+			leftCol.style.cssText = 'flex:1;';
+			const lbl = DOM.append(leftCol, DOM.$('div'));
 			lbl.textContent = label;
 			lbl.style.cssText = 'font-size:13px;font-weight:500;';
-			const d = DOM.append(left, DOM.$('div'));
+			const d = DOM.append(leftCol, DOM.$('div'));
 			d.textContent = desc;
 			d.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 			row.appendChild(control);
 		};
 
-		const mkSelect = (options: string[], currentVal: string, key: string) => {
+		const mkSelect = (options: string[], key: string): HTMLSelectElement => {
 			const sel = mainWindow.document.createElement('select');
 			sel.style.cssText = 'padding:5px 8px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;cursor:pointer;';
 			for (const opt of options) {
 				const o = mainWindow.document.createElement('option');
 				o.value = opt;
 				o.textContent = opt;
-				if (opt === currentVal) { o.selected = true; }
+				if (opt === String(state[key])) { o.selected = true; }
 				sel.appendChild(o);
 			}
-			sel.addEventListener('change', () => { /* preference stored in-memory only */ });
+			sel.addEventListener('change', () => { state[key] = sel.value; });
 			return sel;
 		};
 
-		const mkToggle = (currentVal: boolean) => {
+		const mkToggle = (key: string): HTMLButtonElement => {
 			const sw = mainWindow.document.createElement('button') as HTMLButtonElement;
-			let val = currentVal;
-			const update = (v: boolean) => {
+			const update = (v: boolean): void => {
 				sw.style.cssText = `position:relative;width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;background:${v ? 'var(--vscode-focusBorder,#0e639c)' : 'rgba(128,128,128,0.4)'};flex-shrink:0;`;
 				DOM.clearNode(sw);
 				const knob = mainWindow.document.createElement('span');
 				knob.style.cssText = `position:absolute;top:3px;${v ? 'right:3px;' : 'left:3px;'}width:16px;height:16px;border-radius:50%;background:#fff;`;
 				sw.appendChild(knob);
 			};
-			update(val);
-			sw.addEventListener('click', () => { val = !val; update(val); });
+			update(!!state[key]);
+			sw.addEventListener('click', () => { state[key] = !state[key]; update(!!state[key]); });
 			return sw;
 		};
 
-		mkRow('Font Size', 'Base font size for all EHR text', mkSelect(['11px', '12px', '13px', '14px', '15px', '16px'], '13px', 'fontSize'));
-		mkRow('Date Format', 'How dates are displayed throughout the app', mkSelect(['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY'], 'MM/DD/YYYY', 'dateFormat'));
-		mkRow('Time Format', 'How times are displayed', mkSelect(['12-hour (AM/PM)', '24-hour'], '12-hour (AM/PM)', 'timeFormat'));
-		mkRow('Compact Mode', 'Reduce padding and margins for denser display', mkToggle(false));
-		mkRow('Show Avatars', 'Display profile photos next to names', mkToggle(true));
-		mkRow('Sidebar Collapsed', 'Start with navigation sidebar collapsed', mkToggle(false));
-		mkRow('Show Record Count', 'Display total record counts in section headers', mkToggle(true));
+		mkRow('Theme', 'Light, dark, or follow system', mkSelect(['System', 'Light', 'Dark'], 'theme'));
+		mkRow('Font Size', 'Base font size for all EHR text', mkSelect(['11px', '12px', '13px', '14px', '15px', '16px'], 'fontSize'));
+		mkRow('Date Format', 'How dates are displayed throughout the app', mkSelect(['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY'], 'dateFormat'));
+		mkRow('Time Format', 'How times are displayed', mkSelect(['12-hour (AM/PM)', '24-hour'], 'timeFormat'));
+		mkRow('Density', 'Layout density for lists and tables', mkSelect(['Comfortable', 'Compact', 'Spacious'], 'density'));
+		mkRow('Compact Mode', 'Reduce padding and margins for denser display', mkToggle('compactMode'));
+		mkRow('Show Avatars', 'Display profile photos next to names', mkToggle('showAvatars'));
+		mkRow('Sidebar Collapsed', 'Start with navigation sidebar collapsed', mkToggle('sidebarCollapsed'));
+		mkRow('Show Record Count', 'Display total record counts in section headers', mkToggle('showRecordCount'));
+		mkRow('Show Tooltips', 'Display informational tooltips on hover', mkToggle('showTooltips'));
+
+		saveBtn.addEventListener('click', () => {
+			try {
+				localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+				this.notificationService.notify({ severity: Severity.Info, message: 'Display preferences saved.' });
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed to save: ${e}` });
+			}
+		});
+	}
+
+	/**
+	 * Template Documents — manages reusable document templates for encounter notes
+	 * and patient portal content. Backed by /api/template-documents which returns
+	 * { id, name, context: 'ENCOUNTER' | 'PORTAL', content, options, ... } records.
+	 *
+	 * The Web EHR uses Tiptap for a full WYSIWYG editor; the workspace renders an
+	 * HTML textarea + live preview to keep the footprint manageable while still
+	 * supporting the same workflow (create / edit / delete / context filter).
+	 */
+	private async _renderTemplateDocuments(): Promise<void> {
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
+
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
+		const left = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(left, DOM.$('h1'));
+		title.textContent = 'Template Documents';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(left, DOM.$('p'));
+		sub.textContent = 'Reusable document templates for encounters and the patient portal.';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
+		const newBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+		newBtn.textContent = '+ New Template';
+		newBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+
+		// Context filter (ENCOUNTER vs PORTAL) — same as the EHR Web UI tabs
+		const filterRow = DOM.append(root, DOM.$('div'));
+		filterRow.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:16px;';
+		type Ctx = '' | 'ENCOUNTER' | 'PORTAL';
+		let activeCtx: Ctx = '';
+		const tabs: Array<[Ctx, string]> = [['', 'All'], ['ENCOUNTER', 'Encounter'], ['PORTAL', 'Portal']];
+		const tabBtns: Record<string, HTMLButtonElement> = {};
+		for (const [val, lbl] of tabs) {
+			const b = DOM.append(filterRow, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = lbl;
+			b.style.cssText = 'padding:8px 16px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;';
+			tabBtns[val] = b;
+			b.addEventListener('click', () => { activeCtx = val; renderTabs(); void load(); });
+		}
+		const renderTabs = (): void => {
+			for (const [val] of tabs) {
+				const b = tabBtns[val];
+				const isActive = activeCtx === val;
+				b.style.cssText = `padding:8px 16px;background:transparent;border:none;border-bottom:2px solid ${isActive ? 'var(--vscode-focusBorder)' : 'transparent'};color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;`;
+			}
+		};
+		renderTabs();
+
+		const body = DOM.append(root, DOM.$('div'));
+
+		interface TemplateDoc {
+			id?: number;
+			name: string;
+			context: string;
+			content: string;
+			options?: Record<string, unknown>;
+			createdAt?: string;
+			updatedAt?: string;
+		}
+
+		const load = async (): Promise<void> => {
+			DOM.clearNode(body);
+			const loading = DOM.append(body, DOM.$('div'));
+			loading.textContent = 'Loading templates…';
+			loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
+			try {
+				const url = activeCtx ? `/api/template-documents?context=${activeCtx}` : '/api/template-documents';
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) {
+					loading.textContent = `Failed to load templates (${res.status})`;
+					return;
+				}
+				const json = await res.json();
+				const list: TemplateDoc[] = (Array.isArray(json) ? json : (json.data || json.content || [])) as TemplateDoc[];
+				DOM.clearNode(body);
+				if (list.length === 0) {
+					const empty = DOM.append(body, DOM.$('div'));
+					empty.textContent = 'No templates yet. Click "+ New Template" to create one.';
+					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
+					return;
+				}
+				const grid = DOM.append(body, DOM.$('div'));
+				grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;';
+				for (const tpl of list) {
+					const card = DOM.append(grid, DOM.$('div'));
+					card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);position:relative;';
+					const ctxBadge = DOM.append(card, DOM.$('span'));
+					ctxBadge.textContent = tpl.context;
+					ctxBadge.style.cssText = `position:absolute;top:10px;right:10px;font-size:9px;font-weight:600;letter-spacing:0.5px;padding:2px 6px;border-radius:3px;background:${tpl.context === 'ENCOUNTER' ? 'rgba(34,197,94,0.15)' : 'rgba(168,85,247,0.15)'};color:${tpl.context === 'ENCOUNTER' ? '#22c55e' : '#a855f7'};`;
+					const name = DOM.append(card, DOM.$('div'));
+					name.textContent = tpl.name || '(untitled)';
+					name.style.cssText = 'font-weight:600;font-size:14px;margin-bottom:6px;padding-right:80px;';
+					const preview = DOM.append(card, DOM.$('div'));
+					const plain = (tpl.content || '').replace(/<[^>]*>/g, '').trim();
+					preview.textContent = plain.length > 120 ? plain.substring(0, 120) + '…' : (plain || '(empty)');
+					preview.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);line-height:1.4;margin-bottom:10px;min-height:42px;';
+					const cardActions = DOM.append(card, DOM.$('div'));
+					cardActions.style.cssText = 'display:flex;gap:4px;justify-content:flex-end;';
+					this._tableAction(cardActions, '\u270F', 'Edit', () => this._openTemplateDocModal(tpl, load));
+					this._tableAction(cardActions, '\u{1F441}', 'Preview', () => this._previewTemplateDoc(tpl));
+					this._tableAction(cardActions, '\u{1F5D1}', 'Delete', async () => {
+						if (!tpl.id) { return; }
+						const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${tpl.name}"?` });
+						if (!confirmed) { return; }
+						try {
+							const r = await this.apiService.fetch(`/api/template-documents/${tpl.id}`, { method: 'DELETE' });
+							if (r.ok) {
+								await load();
+								this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
+							} else {
+								this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${r.status})` });
+							}
+						} catch (e) {
+							this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+						}
+					}, 'danger');
+				}
+			} catch {
+				loading.textContent = 'Waiting for login…';
+			}
+		};
+
+		newBtn.addEventListener('click', () => this._openTemplateDocModal(null, load));
+		void load();
+	}
+
+	private _openTemplateDocModal(tpl: { id?: number; name: string; context: string; content: string; options?: Record<string, unknown> } | null, reload: () => Promise<void>): void {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:880px;max-width:96vw;max-height:90vh;overflow-y:auto;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = tpl ? 'Edit Template' : 'New Template';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const grid = DOM.append(modal, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;';
+
+		const nameField = DOM.append(grid, DOM.$('div'));
+		const nameLbl = DOM.append(nameField, DOM.$('label'));
+		nameLbl.textContent = 'Template Name *';
+		nameLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const nameInput = DOM.append(nameField, DOM.$('input')) as HTMLInputElement;
+		nameInput.value = tpl?.name || '';
+		nameInput.placeholder = 'e.g. SOAP Note, Welcome Letter';
+		nameInput.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+
+		const ctxField = DOM.append(grid, DOM.$('div'));
+		const ctxLbl = DOM.append(ctxField, DOM.$('label'));
+		ctxLbl.textContent = 'Context *';
+		ctxLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const ctxSel = DOM.append(ctxField, DOM.$('select')) as HTMLSelectElement;
+		ctxSel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:13px;cursor:pointer;';
+		for (const [v, l] of [['ENCOUNTER', 'Encounter'], ['PORTAL', 'Portal']]) {
+			const o = DOM.append(ctxSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = v;
+			o.textContent = l;
+			if (tpl?.context === v) { o.selected = true; }
+		}
+
+		const contentLbl = DOM.append(modal, DOM.$('label'));
+		contentLbl.textContent = 'Content (HTML supported) *';
+		contentLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+
+		const editorRow = DOM.append(modal, DOM.$('div'));
+		editorRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
+
+		const contentArea = DOM.append(editorRow, DOM.$('textarea')) as HTMLTextAreaElement;
+		contentArea.value = tpl?.content || '';
+		contentArea.placeholder = '<p>Your template HTML…</p>';
+		contentArea.rows = 16;
+		contentArea.style.cssText = 'width:100%;padding:8px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;font-family:var(--vscode-editor-font-family,monospace);resize:vertical;min-height:280px;';
+
+		const previewWrap = DOM.append(editorRow, DOM.$('div'));
+		previewWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:4px;padding:10px;background:var(--vscode-editor-background);overflow:auto;min-height:280px;font-size:13px;line-height:1.5;';
+		const previewLabel = DOM.append(previewWrap, DOM.$('div'));
+		previewLabel.textContent = 'Preview';
+		previewLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;font-weight:600;';
+		const previewBody = DOM.append(previewWrap, DOM.$('div'));
+		const renderPreview = (): void => {
+			// Sanitize: render only as plain text inside a structured preview to avoid
+			// CSP / Trusted-Types issues with innerHTML. Iframe srcdoc would also work,
+			// but text rendering is sufficient for confirming the template looks right.
+			DOM.clearNode(previewBody);
+			const lines = contentArea.value.split(/\n+/);
+			for (const line of lines) {
+				const stripped = line.replace(/<[^>]*>/g, '');
+				if (!stripped.trim()) { continue; }
+				const p = DOM.append(previewBody, DOM.$('p'));
+				p.textContent = stripped;
+				p.style.cssText = 'margin:0 0 6px;';
+			}
+			if (!previewBody.firstChild) {
+				const ph = DOM.append(previewBody, DOM.$('div'));
+				ph.textContent = '(empty)';
+				ph.style.cssText = 'color:var(--vscode-descriptionForeground);font-style:italic;';
+			}
+		};
+		renderPreview();
+		contentArea.addEventListener('input', renderPreview);
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = tpl ? 'Save' : 'Create';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', async () => {
+			if (!nameInput.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Error, message: 'Template name is required.' });
+				return;
+			}
+			const payload = {
+				name: nameInput.value.trim(),
+				context: ctxSel.value,
+				content: contentArea.value,
+				options: tpl?.options || {},
+			};
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving…';
+			try {
+				const url = tpl?.id ? `/api/template-documents/${tpl.id}` : '/api/template-documents';
+				const method = tpl?.id ? 'PUT' : 'POST';
+				const r = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (r.ok) {
+					overlay.remove();
+					await reload();
+					this.notificationService.notify({ severity: Severity.Info, message: 'Template saved.' });
+				} else {
+					const txt = await r.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${r.status}). ${txt.substring(0, 160)}` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = tpl ? 'Save' : 'Create';
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = tpl ? 'Save' : 'Create';
+			}
+		});
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+	}
+
+	/**
+	 * Encounter Settings — visual editor for the encounter-form field configuration.
+	 * Mirrors the EHR Web UI /settings/encounter-settings page:
+	 *   - Lists sections with toggle enable/disable, move up/down, edit title/columns
+	 *   - Add / Remove sections and fields, Save to backend
+	 *   - Backed by /api/tab-field-config/encounter-form
+	 *
+	 * Addresses the team report: "No Add/Edit/Save options available in Encounter tab".
+	 */
+	private async _renderEncounterSettings(): Promise<void> {
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
+
+		interface EncSection { key: string; title: string; columns?: number; collapsible?: boolean; collapsed?: boolean; visible?: boolean; fields?: Array<Record<string, unknown>>;[k: string]: unknown }
+		interface EncFieldConfig { sections: EncSection[]; features?: Record<string, unknown> }
+
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
+		const left = DOM.append(header, DOM.$('div'));
+		const title = DOM.append(left, DOM.$('h1'));
+		title.textContent = 'Encounter Settings';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(left, DOM.$('p'));
+		sub.textContent = 'Configure encounter form sections — enable/disable, reorder, add fields, and save.';
+		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
+
+		const headerActions = DOM.append(header, DOM.$('div'));
+		headerActions.style.cssText = 'display:flex;gap:8px;';
+		const resetBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+		resetBtn.textContent = '\u21BA Reset';
+		resetBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const saveBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Save';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+
+		const body = DOM.append(root, DOM.$('div'));
+
+		let fieldConfig: EncFieldConfig = { sections: [] };
+		let fhirResources: string[] = [];
+		let configSource = 'UNIVERSAL_DEFAULT';
+
+		const renderBody = (): void => {
+			DOM.clearNode(body);
+
+			const meta = DOM.append(body, DOM.$('div'));
+			meta.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px;';
+			const srcBadge = DOM.append(meta, DOM.$('span'));
+			srcBadge.textContent = configSource === 'ORG_CUSTOM' ? 'Custom Config' : 'Universal Default';
+			srcBadge.style.cssText = `padding:3px 10px;border-radius:999px;font-weight:500;background:${configSource === 'ORG_CUSTOM' ? 'rgba(14,99,156,0.15)' : 'rgba(128,128,128,0.15)'};color:${configSource === 'ORG_CUSTOM' ? 'var(--vscode-textLink-foreground,#3794ff)' : 'var(--vscode-descriptionForeground)'};`;
+			const counts = DOM.append(meta, DOM.$('span'));
+			const enabled = fieldConfig.sections.filter(s => s.visible !== false).length;
+			counts.textContent = `${enabled} / ${fieldConfig.sections.length} sections enabled`;
+			counts.style.cssText = 'color:var(--vscode-descriptionForeground);';
+
+			if (fieldConfig.sections.length === 0) {
+				const empty = DOM.append(body, DOM.$('div'));
+				empty.textContent = 'No sections configured.';
+				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:12px;';
+			} else {
+				fieldConfig.sections.forEach((section, idx) => this._renderEncounterSection(body, section, idx, fieldConfig, renderBody));
+			}
+
+			const addSectionBtn = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
+			addSectionBtn.textContent = '+ Add Section';
+			addSectionBtn.style.cssText = 'display:block;width:100%;padding:10px;background:transparent;border:2px dashed var(--vscode-editorWidget-border);border-radius:8px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;margin-top:8px;';
+			addSectionBtn.addEventListener('click', () => {
+				const newKey = `section_${Date.now()}`;
+				fieldConfig.sections.push({ key: newKey, title: 'New Section', columns: 2, visible: true, fields: [] });
+				renderBody();
+			});
+		};
+
+		// Load
+		try {
+			const res = await this.apiService.fetch('/api/tab-field-config/encounter-form');
+			if (res.ok) {
+				const data = await res.json();
+				const cfg = data?.data || data;
+				const fc = typeof cfg.fieldConfig === 'string' ? JSON.parse(cfg.fieldConfig) : (cfg.fieldConfig || { sections: [] });
+				if (fc.sections) {
+					fc.sections = fc.sections.map((s: EncSection) => ({ ...s, visible: s.visible !== false }));
+				}
+				fieldConfig = fc as EncFieldConfig;
+				fhirResources = cfg.fhirResources || [];
+				configSource = cfg.orgId && cfg.orgId !== '*' ? 'ORG_CUSTOM' : 'UNIVERSAL_DEFAULT';
+			}
+		} catch { /* ignore */ }
+		renderBody();
+
+		saveBtn.addEventListener('click', async () => {
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving…';
+			try {
+				const res = await this.apiService.fetch('/api/tab-field-config/encounter-form', {
+					method: 'PUT',
+					body: JSON.stringify({ fieldConfig, fhirResources }),
+				});
+				if (res.ok) {
+					configSource = 'ORG_CUSTOM';
+					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter configuration saved.' });
+					renderBody();
+				} else {
+					const txt = await res.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+			}
+			saveBtn.disabled = false;
+			saveBtn.textContent = 'Save';
+		});
+
+		resetBtn.addEventListener('click', async () => {
+			const { confirmed } = await this.dialogService.confirm({ message: 'Reset to defaults? Custom encounter configuration will be removed.' });
+			if (!confirmed) { return; }
+			try {
+				const res = await this.apiService.fetch('/api/tab-field-config/encounter-form', { method: 'DELETE' });
+				if (res.ok) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Reset to defaults.' });
+					// Reload by re-rendering
+					this._renderEncounterSettings();
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Reset failed: ${e}` });
+			}
+		});
+	}
+
+	private _renderEncounterSection(parent: HTMLElement, section: { key: string; title: string; columns?: number; visible?: boolean; fields?: Array<Record<string, unknown>>;[k: string]: unknown }, idx: number, fc: { sections: Array<{ key: string; title: string; columns?: number; visible?: boolean; fields?: Array<Record<string, unknown>>;[k: string]: unknown }> }, reload: () => void): void {
+		const card = DOM.append(parent, DOM.$('div'));
+		card.style.cssText = `border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:10px;overflow:hidden;${section.visible === false ? 'opacity:0.55;' : ''}`;
+
+		const head = DOM.append(card, DOM.$('div'));
+		head.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.05);display:flex;align-items:center;gap:10px;';
+
+		const upBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		upBtn.textContent = '\u25B2';
+		upBtn.title = 'Move up';
+		upBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.6;cursor:pointer;font-size:10px;padding:0 4px;';
+		upBtn.addEventListener('click', () => {
+			if (idx === 0) { return; }
+			[fc.sections[idx - 1], fc.sections[idx]] = [fc.sections[idx], fc.sections[idx - 1]];
+			reload();
+		});
+		const downBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		downBtn.textContent = '\u25BC';
+		downBtn.title = 'Move down';
+		downBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.6;cursor:pointer;font-size:10px;padding:0 4px;';
+		downBtn.addEventListener('click', () => {
+			if (idx === fc.sections.length - 1) { return; }
+			[fc.sections[idx], fc.sections[idx + 1]] = [fc.sections[idx + 1], fc.sections[idx]];
+			reload();
+		});
+
+		const titleInp = DOM.append(head, DOM.$('input')) as HTMLInputElement;
+		titleInp.value = section.title;
+		titleInp.style.cssText = 'flex:1;padding:4px 8px;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--vscode-foreground);font-size:13px;font-weight:600;outline:none;';
+		titleInp.addEventListener('focus', () => { titleInp.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; titleInp.style.background = 'var(--vscode-input-background)'; });
+		titleInp.addEventListener('blur', () => { titleInp.style.borderColor = 'transparent'; titleInp.style.background = 'transparent'; });
+		titleInp.addEventListener('input', () => { section.title = titleInp.value; });
+
+		const keyEl = DOM.append(head, DOM.$('code'));
+		keyEl.textContent = section.key;
+		keyEl.style.cssText = 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);padding:2px 6px;border-radius:3px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+
+		const colLbl = DOM.append(head, DOM.$('label'));
+		colLbl.textContent = 'Cols:';
+		colLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		const colSel = DOM.append(head, DOM.$('select')) as HTMLSelectElement;
+		colSel.style.cssText = 'padding:3px 6px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-dropdown-foreground);font-size:11px;cursor:pointer;';
+		for (const n of [1, 2, 3]) {
+			const o = DOM.append(colSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = String(n);
+			o.textContent = String(n);
+			if ((section.columns || 2) === n) { o.selected = true; }
+		}
+		colSel.addEventListener('change', () => { section.columns = Number(colSel.value); });
+
+		const visBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		visBtn.textContent = section.visible === false ? '\u{1F441}\u200D\u{1F5E8}' : '\u{1F441}';
+		visBtn.title = section.visible === false ? 'Show section' : 'Hide section';
+		visBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;';
+		visBtn.addEventListener('click', () => { section.visible = section.visible === false; reload(); });
+
+		const delSec = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		delSec.textContent = '\u{1F5D1}';
+		delSec.title = 'Delete section';
+		delSec.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:12px;';
+		delSec.addEventListener('click', async () => {
+			const { confirmed } = await this.dialogService.confirm({ message: `Delete section "${section.title}"?` });
+			if (!confirmed) { return; }
+			fc.sections.splice(idx, 1);
+			reload();
+		});
+
+		const fieldsBody = DOM.append(card, DOM.$('div'));
+		fieldsBody.style.cssText = 'padding:10px 14px;display:flex;flex-direction:column;gap:6px;';
+		const fields = section.fields || [];
+		if (fields.length === 0) {
+			const none = DOM.append(fieldsBody, DOM.$('div'));
+			none.textContent = '(No fields)';
+			none.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-style:italic;';
+		}
+		fields.forEach((field, fi) => {
+			const f = field as { key?: string; label?: string; type?: string };
+			const row = DOM.append(fieldsBody, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border-radius:4px;background:rgba(128,128,128,0.06);';
+			const fkey = DOM.append(row, DOM.$('code'));
+			fkey.textContent = f.key || '?';
+			fkey.style.cssText = 'min-width:120px;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--vscode-descriptionForeground);';
+			const flabel = DOM.append(row, DOM.$('span'));
+			flabel.textContent = f.label || '(no label)';
+			flabel.style.cssText = 'flex:1;';
+			const ftype = DOM.append(row, DOM.$('span'));
+			ftype.textContent = f.type || 'text';
+			ftype.style.cssText = 'background:rgba(14,99,156,0.15);color:var(--vscode-textLink-foreground,#3794ff);padding:1px 6px;border-radius:3px;font-size:10px;';
+			const del = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+			del.textContent = '\u2715';
+			del.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:12px;padding:0 4px;';
+			del.addEventListener('click', () => { fields.splice(fi, 1); section.fields = fields; reload(); });
+		});
+
+		const addFieldBtn = DOM.append(fieldsBody, DOM.$('button')) as HTMLButtonElement;
+		addFieldBtn.textContent = '+ Add Field';
+		addFieldBtn.style.cssText = 'align-self:flex-start;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;padding:3px 10px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;margin-top:4px;';
+		addFieldBtn.addEventListener('click', () => this._openEncounterFieldModal(null, section, reload));
+	}
+
+	private _openEncounterFieldModal(existing: { key?: string; label?: string; type?: string; placeholder?: string } | null, section: { key: string; fields?: Array<Record<string, unknown>> }, reload: () => void): void {
+		const overlay = DOM.append(this.contentEl, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:440px;max-width:92vw;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		const ht = DOM.append(modal, DOM.$('h3'));
+		ht.textContent = existing ? 'Edit Field' : 'Add Field';
+		ht.style.cssText = 'margin:0 0 14px;font-size:15px;font-weight:600;';
+
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin:8px 0 4px;';
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+
+		const keyLbl = DOM.append(modal, DOM.$('label'));
+		keyLbl.textContent = 'Field Key *';
+		keyLbl.style.cssText = labelStyle;
+		const keyInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		keyInp.value = existing?.key || '';
+		keyInp.placeholder = 'camelCase identifier';
+		keyInp.style.cssText = inputStyle;
+
+		const labelLbl = DOM.append(modal, DOM.$('label'));
+		labelLbl.textContent = 'Field Label *';
+		labelLbl.style.cssText = labelStyle;
+		const labelInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		labelInp.value = existing?.label || '';
+		labelInp.style.cssText = inputStyle;
+
+		const typeLbl = DOM.append(modal, DOM.$('label'));
+		typeLbl.textContent = 'Type';
+		typeLbl.style.cssText = labelStyle;
+		const typeSel = DOM.append(modal, DOM.$('select')) as HTMLSelectElement;
+		typeSel.style.cssText = inputStyle + 'cursor:pointer;';
+		for (const t of ['text', 'textarea', 'number', 'date', 'select', 'boolean', 'email', 'phone']) {
+			const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = t;
+			o.textContent = t;
+			if (existing?.type === t) { o.selected = true; }
+		}
+
+		const phLbl = DOM.append(modal, DOM.$('label'));
+		phLbl.textContent = 'Placeholder';
+		phLbl.style.cssText = labelStyle;
+		const phInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		phInp.value = existing?.placeholder || '';
+		phInp.style.cssText = inputStyle;
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:16px;';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = existing ? 'Save' : 'Add';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', () => {
+			if (!keyInp.value.trim() || !labelInp.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Key and Label are required.' });
+				return;
+			}
+			const newField = {
+				key: keyInp.value.trim(),
+				label: labelInp.value.trim(),
+				type: typeSel.value,
+				placeholder: phInp.value.trim() || undefined,
+			};
+			if (existing) {
+				Object.assign(existing, newField);
+			} else {
+				section.fields = section.fields || [];
+				section.fields.push(newField);
+			}
+			overlay.remove();
+			reload();
+		});
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => keyInp.focus(), 50);
+	}
+
+	private _previewTemplateDoc(tpl: { name: string; context: string; content: string }): void {
+		const w = mainWindow.open('', '_blank', 'width=800,height=600');
+		if (!w) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Pop-up blocked.' });
+			return;
+		}
+		const doc = w.document;
+		const html = doc.createElement('html');
+		const head = doc.createElement('head');
+		const title = doc.createElement('title');
+		title.textContent = `Preview · ${tpl.name}`;
+		head.appendChild(title);
+		const style = doc.createElement('style');
+		style.textContent = `
+			body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px; max-width: 720px; margin: 0 auto; color: #1a1a2e; }
+			.meta { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+			h1 { font-size: 22px; margin: 0 0 16px; }
+			.content { line-height: 1.6; }
+		`;
+		head.appendChild(style);
+		const body = doc.createElement('body');
+		const meta = doc.createElement('div');
+		meta.className = 'meta';
+		meta.textContent = tpl.context;
+		const h1 = doc.createElement('h1');
+		h1.textContent = tpl.name;
+		const wrap = doc.createElement('div');
+		wrap.className = 'content';
+		// Render the template body as plain paragraphs split by newlines. Avoids
+		// HTML injection and Trusted Types issues in the popup window.
+		const plainLines = tpl.content.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '').split(/\n+/);
+		for (const line of plainLines) {
+			const trimmed = line.trim();
+			if (!trimmed) { continue; }
+			const p = doc.createElement('p');
+			p.textContent = trimmed;
+			wrap.appendChild(p);
+		}
+		body.appendChild(meta);
+		body.appendChild(h1);
+		body.appendChild(wrap);
+		html.appendChild(head);
+		html.appendChild(body);
+		doc.documentElement.replaceWith(html);
+		doc.close();
 	}
 
 	private _renderCalendarColors(): void {

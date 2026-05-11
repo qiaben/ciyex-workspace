@@ -257,9 +257,12 @@ export class CiyexAuthGate extends Disposable {
 		this._overlay.appendChild(content);
 	}
 
-	// --- Ciyex no-text logo (3D knot PNG) ---
+	// --- Ciyex no-text logo (3D knot PNG with SVG fallback) ---
 	private _logo(size: number): HTMLElement {
-		const container = h('div', { display: 'block', margin: '0 auto', width: `${size}px`, height: `${size}px` });
+		const container = h('div', {
+			display: 'flex', alignItems: 'center', justifyContent: 'center',
+			margin: '0 auto', width: `${size}px`, height: `${size}px`,
+		});
 		const img = document.createElement('img');
 		// FileAccess maps `vs/../../resources/...` to the correct file URL in both
 		// dev and packaged builds (where the relative-path form misresolves and
@@ -267,8 +270,30 @@ export class CiyexAuthGate extends Disposable {
 		img.src = FileAccess.asBrowserUri('vs/workbench/browser/media/ciyex-logo.png').toString(true);
 		img.alt = 'Ciyex';
 		Object.assign(img.style, { width: `${size}px`, height: `${size}px`, objectFit: 'contain' });
+		// Fallback: when the PNG fails to load (custom build, missing resource, CSP),
+		// render an SVG mark so the login screen is never branding-less.
+		img.addEventListener('error', () => {
+			img.remove();
+			const fb = this._logoFallback(size);
+			container.appendChild(fb);
+		});
 		container.appendChild(img);
 		return container;
+	}
+
+	// SVG fallback for the login logo — keeps branding visible when the PNG
+	// asset is unavailable for any reason.
+	private _logoFallback(size: number): HTMLElement {
+		return createSvg(size, '0 0 64 64', (svg) => {
+			svg.setAttribute('fill', 'none');
+			// Rounded square background
+			svgRect(svg, { x: '4', y: '4', width: '56', height: '56', rx: '12', fill: '#465FFF' });
+			// "C" stylized mark
+			svgPath(svg, 'M44 22a16 16 0 1 0 0 20', {
+				stroke: '#ffffff', 'stroke-width': '5', 'stroke-linecap': 'round', fill: 'none',
+			});
+			svgCircle(svg, { cx: '44', cy: '32', r: '3.5', fill: '#ffffff' });
+		});
 	}
 
 	// --- Build helpers ---

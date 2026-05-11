@@ -53,6 +53,9 @@ export class LayoutEditor extends EditorPane {
 	private searchInput!: HTMLInputElement;
 	private config: LayoutConfig = { source: 'UNIVERSAL_DEFAULT', categories: [] };
 	private _dirty = false;
+	// Direct references to rendered section/item DOM nodes — used by the search
+	// filter so we don't have to querySelectorAll(.settings-section).
+	private _sectionNodes: Array<{ section: HTMLElement; items: HTMLElement[] }> = [];
 
 	get dirty(): boolean { return this._dirty; }
 
@@ -133,6 +136,7 @@ export class LayoutEditor extends EditorPane {
 
 	private _render(): void {
 		DOM.clearNode(this.settingsBody);
+		this._sectionNodes = [];
 
 		if (this.config.categories.length === 0) {
 			const empty = DOM.append(this.settingsBody, DOM.$('.settings-empty'));
@@ -171,13 +175,17 @@ export class LayoutEditor extends EditorPane {
 		this._addSmallLink(sectionHeader, 'Rename', () => this._editCategory(ci));
 		this._addSmallLink(sectionHeader, 'Delete', () => this._deleteCategory(ci), true);
 
-		// Tab settings rows
+		// Tab settings rows — track each row's DOM node so _filterSettings can
+		// show/hide them without querySelectorAll (forbidden by VSCode lint rules).
+		const items: HTMLElement[] = [];
 		for (let ti = 0; ti < cat.tabs.length; ti++) {
-			this._renderTabSetting(section, cat.tabs[ti], ci, ti);
+			const row = this._renderTabSetting(section, cat.tabs[ti], ci, ti);
+			items.push(row);
 		}
+		this._sectionNodes.push({ section, items });
 	}
 
-	private _renderTabSetting(parent: HTMLElement, tab: TabDef, ci: number, ti: number): void {
+	private _renderTabSetting(parent: HTMLElement, tab: TabDef, ci: number, ti: number): HTMLElement {
 		// Setting row (like a VS Code setting item)
 		const row = DOM.append(parent, DOM.$('.setting-item'));
 		row.dataset.key = tab.key;
@@ -255,6 +263,7 @@ export class LayoutEditor extends EditorPane {
 		// Action links
 		this._addSmallLink(controls, 'Edit', () => this._editTab(ci, ti));
 		this._addSmallLink(controls, 'Delete', () => this._deleteTab(ci, ti), true);
+		return row;
 	}
 
 	// ---- CRUD Operations ----
@@ -302,40 +311,147 @@ export class LayoutEditor extends EditorPane {
 		this._render();
 	}
 
-	private async _addTab(): Promise<void> {
+	private _addTab(): void {
 		if (this.config.categories.length === 0) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Add a category first.' });
 			return;
 		}
-		const key = await this.quickInputService.input({ prompt: 'Tab key (e.g., vitals)' });
-		if (!key) { return; }
-		const label = await this.quickInputService.input({ prompt: 'Tab label', value: key.charAt(0).toUpperCase() + key.slice(1) });
-		if (!label) { return; }
-		const catNames = this.config.categories.map(c => c.label).join(', ');
-		const catName = await this.quickInputService.input({ prompt: `Category (${catNames})`, value: this.config.categories[0].label });
-		const cat = this.config.categories.find(c => c.label === catName) || this.config.categories[0];
-		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR Resources (comma-separated)', value: 'Patient' });
-		const fhirResources = fhirStr ? fhirStr.split(',').map(s => s.trim()).filter(Boolean) : [];
-		cat.tabs.push({ key, label, icon: 'FileText', position: cat.tabs.length, visible: true, fhirResources });
-		this._markDirty();
-		this._render();
+		this._openTabFormModal(null, -1, -1);
 	}
 
-	private async _editTab(ci: number, ti: number): Promise<void> {
-		const tab = this.config.categories[ci].tabs[ti];
-		const label = await this.quickInputService.input({ prompt: 'Tab label', value: tab.label });
-		if (!label) { return; }
-		tab.label = label;
-		const icon = await this.quickInputService.input({ prompt: 'Icon name', value: tab.icon });
-		if (icon) { tab.icon = icon; }
-		const key = await this.quickInputService.input({ prompt: 'Tab key', value: tab.key });
-		if (key) { tab.key = key; }
-		const fhirStr = await this.quickInputService.input({ prompt: 'FHIR Resources (comma-separated)', value: tab.fhirResources.join(', ') });
-		if (fhirStr !== null && fhirStr !== undefined) {
-			tab.fhirResources = fhirStr.split(',').map(s => s.trim()).filter(Boolean);
+	private _editTab(ci: number, ti: number): void {
+		this._openTabFormModal(this.config.categories[ci].tabs[ti], ci, ti);
+	}
+
+	/**
+	 * Open a modal form to add or edit a tab. Matches the EHR Web UI layout-settings
+	 * "Add Item" dialog: all fields visible at once (Key, Label, Icon, Category,
+	 * FHIR Resources, Visible), not a chain of quick-input prompts.
+	 */
+	private _openTabFormModal(existing: TabDef | null, ci: number, ti: number): void {
+		const isEdit = existing !== null;
+		const overlay = DOM.append(this.rootElement, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:520px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+
+		const head = DOM.append(modal, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		const ht = DOM.append(head, DOM.$('h3'));
+		ht.textContent = isEdit ? 'Edit Item' : 'Add Item';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;margin-top:10px;';
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+
+		const keyLbl = DOM.append(modal, DOM.$('label'));
+		keyLbl.textContent = 'Tab Key *';
+		keyLbl.style.cssText = labelStyle;
+		const keyInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		keyInp.value = existing?.key || '';
+		keyInp.placeholder = 'e.g. vitals, allergies';
+		keyInp.style.cssText = inputStyle;
+		keyInp.disabled = isEdit;
+
+		const labelLbl = DOM.append(modal, DOM.$('label'));
+		labelLbl.textContent = 'Tab Label *';
+		labelLbl.style.cssText = labelStyle;
+		const labelInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		labelInp.value = existing?.label || '';
+		labelInp.placeholder = 'e.g. Vitals';
+		labelInp.style.cssText = inputStyle;
+
+		const iconLbl = DOM.append(modal, DOM.$('label'));
+		iconLbl.textContent = 'Icon Name';
+		iconLbl.style.cssText = labelStyle;
+		const iconInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		iconInp.value = existing?.icon || 'FileText';
+		iconInp.placeholder = 'lucide icon name (e.g. FileText, Heart, Pill)';
+		iconInp.style.cssText = inputStyle;
+
+		const catLbl = DOM.append(modal, DOM.$('label'));
+		catLbl.textContent = 'Category *';
+		catLbl.style.cssText = labelStyle;
+		const catSel = DOM.append(modal, DOM.$('select')) as HTMLSelectElement;
+		catSel.style.cssText = inputStyle + 'cursor:pointer;';
+		for (let i = 0; i < this.config.categories.length; i++) {
+			const c = this.config.categories[i];
+			const o = DOM.append(catSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = String(i);
+			o.textContent = c.label;
+			if (isEdit ? i === ci : i === 0) { o.selected = true; }
 		}
-		this._markDirty();
-		this._render();
+
+		const fhirLbl = DOM.append(modal, DOM.$('label'));
+		fhirLbl.textContent = 'FHIR Resources';
+		fhirLbl.style.cssText = labelStyle;
+		const fhirInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		fhirInp.value = existing ? existing.fhirResources.join(', ') : 'Patient';
+		fhirInp.placeholder = 'Comma-separated (e.g. Observation, Condition)';
+		fhirInp.style.cssText = inputStyle;
+		const fhirHint = DOM.append(modal, DOM.$('div'));
+		fhirHint.textContent = 'Examples: Patient, Observation, Condition, Procedure, AllergyIntolerance, Immunization';
+		fhirHint.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:3px;';
+
+		const visWrap = DOM.append(modal, DOM.$('label'));
+		visWrap.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;font-size:13px;';
+		const visCb = DOM.append(visWrap, DOM.$('input')) as HTMLInputElement;
+		visCb.type = 'checkbox';
+		visCb.checked = existing ? existing.visible : true;
+		const visTxt = DOM.append(visWrap, DOM.$('span'));
+		visTxt.textContent = 'Visible in chart';
+
+		const actions = DOM.append(modal, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:20px;';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? 'Save' : 'Add Item';
+		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		saveBtn.addEventListener('click', () => {
+			const key = keyInp.value.trim();
+			const label = labelInp.value.trim();
+			if (!key || !label) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Tab Key and Label are required.' });
+				return;
+			}
+			const fhirResources = fhirInp.value.split(',').map(s => s.trim()).filter(Boolean);
+			const tab: TabDef = {
+				key,
+				label,
+				icon: iconInp.value.trim() || 'FileText',
+				position: existing ? existing.position : this.config.categories[Number(catSel.value)].tabs.length,
+				visible: visCb.checked,
+				fhirResources,
+			};
+			const newCi = Number(catSel.value);
+			if (isEdit) {
+				if (newCi === ci) {
+					this.config.categories[ci].tabs[ti] = tab;
+				} else {
+					this.config.categories[ci].tabs.splice(ti, 1);
+					this.config.categories[ci].tabs.forEach((t, i) => { t.position = i; });
+					tab.position = this.config.categories[newCi].tabs.length;
+					this.config.categories[newCi].tabs.push(tab);
+				}
+			} else {
+				this.config.categories[newCi].tabs.push(tab);
+			}
+			this._markDirty();
+			this._render();
+			overlay.remove();
+		});
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => (isEdit ? labelInp : keyInp).focus(), 50);
 	}
 
 	private _toggleVisibility(ci: number, ti: number): void {
@@ -366,18 +482,19 @@ export class LayoutEditor extends EditorPane {
 
 	private _filterSettings(): void {
 		const query = this.searchInput.value.toLowerCase();
-		const sections = this.settingsBody.querySelectorAll('.settings-section');
-		for (const section of sections) {
-			const items = section.querySelectorAll('.setting-item');
+		// Walk our tracked DOM references rather than querying by selector — the
+		// VSCode codebase forbids querySelectorAll because string selectors are
+		// fragile (no-restricted-syntax in eslint.config.js).
+		for (const { section, items } of this._sectionNodes) {
 			let anyVisible = false;
 			for (const item of items) {
-				const key = (item as HTMLElement).dataset.key || '';
+				const key = item.dataset.key || '';
 				const text = item.textContent?.toLowerCase() || '';
 				const match = !query || text.includes(query) || key.includes(query);
-				(item as HTMLElement).style.display = match ? '' : 'none';
+				item.style.display = match ? '' : 'none';
 				if (match) { anyVisible = true; }
 			}
-			(section as HTMLElement).style.display = anyVisible || !query ? '' : 'none';
+			section.style.display = anyVisible || !query ? '' : 'none';
 		}
 	}
 
