@@ -1195,36 +1195,199 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Add User dialog matching the EHR Web UI flow:
+	 *   1. Pick "Staff" or "Patient" tab.
+	 *   2. Search providers (Staff) or patients (Patient) and pick one.
+	 *   3. Choose a role (loaded from /api/admin/roles).
+	 *   4. Optionally send a welcome email.
+	 *   5. Submit → POST /api/admin/users.
+	 */
 	private _showAddUserDialog(root: HTMLElement): void {
 		const overlay = DOM.append(root, DOM.$('.sh-dialog-overlay'));
 		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
 		const dialog = DOM.append(overlay, DOM.$('div'));
-		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:420px;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-		const t = DOM.append(dialog, DOM.$('h3'));
-		t.textContent = 'Add User';
-		t.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
-		const fields: Array<[string, string, string]> = [
-			['Username', 'username', ''],
-			['First Name', 'firstName', ''],
-			['Last Name', 'lastName', ''],
-			['Email', 'email', ''],
-			['Password', 'password', ''],
-		];
-		const inputs: Record<string, HTMLInputElement> = {};
-		for (const [label, key, placeholder] of fields) {
-			const wrap = DOM.append(dialog, DOM.$('div'));
-			wrap.style.cssText = 'margin-bottom:12px;';
-			const lbl = DOM.append(wrap, DOM.$('label'));
-			lbl.textContent = label;
-			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-			const inp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
-			inp.type = key === 'password' ? 'password' : 'text';
-			inp.placeholder = placeholder;
-			inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
-			inputs[key] = inp;
-		}
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:520px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;';
+
+		const title = DOM.append(dialog, DOM.$('h3'));
+		title.textContent = 'Add User';
+		title.style.cssText = 'margin:0 0 4px;font-size:15px;font-weight:600;';
+		const subtitle = DOM.append(dialog, DOM.$('p'));
+		subtitle.textContent = 'Search for a provider or patient, then assign a role and credentials.';
+		subtitle.style.cssText = 'margin:0 0 16px;color:var(--vscode-descriptionForeground);font-size:12px;';
+
+		// Staff / Patients tab bar
+		let activeTab: 'staff' | 'patients' = 'staff';
+		const tabBar = DOM.append(dialog, DOM.$('div'));
+		tabBar.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:14px;';
+		const staffTab = DOM.append(tabBar, DOM.$('button'));
+		const patientsTab = DOM.append(tabBar, DOM.$('button'));
+		const tabStyle = (active: boolean) => `padding:6px 14px;background:transparent;border:none;border-bottom:2px solid ${active ? 'var(--vscode-focusBorder)' : 'transparent'};color:${active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};cursor:pointer;font-size:12px;font-weight:500;margin-bottom:-1px;`;
+		staffTab.textContent = '\u{1FA7A} Staff (Provider)';
+		patientsTab.textContent = '\u{1F464} Patient';
+		staffTab.style.cssText = tabStyle(true);
+		patientsTab.style.cssText = tabStyle(false);
+
+		// Search row
+		const searchWrap = DOM.append(dialog, DOM.$('div'));
+		searchWrap.style.cssText = 'margin-bottom:12px;position:relative;';
+		const searchLbl = DOM.append(searchWrap, DOM.$('label'));
+		searchLbl.textContent = 'Search by Name or NPI';
+		searchLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Type 2+ characters…';
+		searchInput.autocomplete = 'off';
+		searchInput.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+		const results = DOM.append(searchWrap, DOM.$('div'));
+		results.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:4px;max-height:200px;overflow-y:auto;z-index:50;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);margin-top:2px;';
+
+		let selectedSubject: { id: string; firstName: string; lastName: string; email?: string; npi?: string } | null = null;
+
+		// Selected preview
+		const preview = DOM.append(dialog, DOM.$('div'));
+		preview.style.cssText = 'display:none;padding:10px 12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.4);border-radius:4px;margin-bottom:12px;font-size:12px;';
+
+		// Form fields
+		const emailWrap = DOM.append(dialog, DOM.$('div'));
+		emailWrap.style.cssText = 'margin-bottom:12px;';
+		const emailLbl = DOM.append(emailWrap, DOM.$('label'));
+		emailLbl.textContent = 'Email *';
+		emailLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const emailInp = DOM.append(emailWrap, DOM.$('input')) as HTMLInputElement;
+		emailInp.type = 'email';
+		emailInp.placeholder = 'name@example.com';
+		emailInp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+
+		const roleWrap = DOM.append(dialog, DOM.$('div'));
+		roleWrap.style.cssText = 'margin-bottom:12px;';
+		const roleLbl = DOM.append(roleWrap, DOM.$('label'));
+		roleLbl.textContent = 'Role *';
+		roleLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const roleSel = DOM.append(roleWrap, DOM.$('select')) as HTMLSelectElement;
+		roleSel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:13px;box-sizing:border-box;outline:none;cursor:pointer;';
+		const placeholderOpt = DOM.append(roleSel, DOM.$('option')) as HTMLOptionElement;
+		placeholderOpt.value = '';
+		placeholderOpt.textContent = '— Select Role —';
+		// Load roles
+		this.apiService.fetch('/api/admin/roles').then(async r => {
+			if (!r.ok) { return; }
+			const j = await r.json();
+			const roles: Array<{ roleName: string; roleLabel?: string; isActive?: boolean }> = j?.data || [];
+			for (const role of roles.filter(rl => rl.isActive !== false)) {
+				const opt = DOM.append(roleSel, DOM.$('option')) as HTMLOptionElement;
+				opt.value = role.roleName;
+				opt.textContent = role.roleLabel || role.roleName;
+				if (activeTab === 'patients' && role.roleName === 'PATIENT') { opt.selected = true; }
+				if (activeTab === 'staff' && role.roleName === 'PROVIDER') { opt.selected = true; }
+			}
+		}).catch(() => { /* ignore */ });
+
+		const passwordWrap = DOM.append(dialog, DOM.$('div'));
+		passwordWrap.style.cssText = 'margin-bottom:12px;';
+		const passwordLbl = DOM.append(passwordWrap, DOM.$('label'));
+		passwordLbl.textContent = 'Temporary Password (optional)';
+		passwordLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const passwordInp = DOM.append(passwordWrap, DOM.$('input')) as HTMLInputElement;
+		passwordInp.type = 'text';
+		passwordInp.placeholder = 'Leave blank to auto-generate';
+		passwordInp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;font-family:var(--vscode-editor-font-family,monospace);box-sizing:border-box;outline:none;';
+
+		const optionsRow = DOM.append(dialog, DOM.$('div'));
+		optionsRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;';
+		const sendWelcomeCb = DOM.append(optionsRow, DOM.$('input')) as HTMLInputElement;
+		sendWelcomeCb.type = 'checkbox';
+		sendWelcomeCb.checked = true;
+		sendWelcomeCb.style.cssText = 'cursor:pointer;accent-color:var(--vscode-focusBorder);';
+		sendWelcomeCb.id = 'sh-send-welcome';
+		const swl = DOM.append(optionsRow, DOM.$('label'));
+		swl.textContent = 'Send welcome email with credentials';
+		swl.setAttribute('for', 'sh-send-welcome');
+		swl.style.cssText = 'font-size:12px;cursor:pointer;';
+
+		const setSelected = (item: { id: string; firstName: string; lastName: string; email?: string; npi?: string } | null): void => {
+			selectedSubject = item;
+			if (!item) { preview.style.display = 'none'; return; }
+			DOM.clearNode(preview);
+			preview.style.display = 'block';
+			const nm = DOM.append(preview, DOM.$('div'));
+			nm.textContent = `✓ Selected: ${item.firstName} ${item.lastName}`;
+			nm.style.cssText = 'font-weight:600;color:#22c55e;';
+			if (item.email || item.npi) {
+				const det = DOM.append(preview, DOM.$('div'));
+				det.textContent = `${item.email || ''}${item.email && item.npi ? ' · ' : ''}${item.npi ? `NPI ${item.npi}` : ''}`;
+				det.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+			}
+			if (item.email && !emailInp.value) { emailInp.value = item.email; }
+			searchInput.value = `${item.firstName} ${item.lastName}`.trim();
+			results.style.display = 'none';
+		};
+
+		// Debounced search
+		let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+		const doSearch = async (q: string): Promise<void> => {
+			if (q.length < 2) { results.style.display = 'none'; return; }
+			const endpoint = activeTab === 'patients'
+				? `/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`
+				: `/api/fhir-resource/providers?search=${encodeURIComponent(q)}&page=0&size=10`;
+			try {
+				const r = await this.apiService.fetch(endpoint);
+				if (!r.ok) { return; }
+				const j = await r.json();
+				const list: Array<Record<string, unknown>> = j?.data?.content || j?.data || j?.content || (Array.isArray(j) ? j : []);
+				DOM.clearNode(results);
+				if (list.length === 0) {
+					const none = DOM.append(results, DOM.$('div'));
+					none.textContent = 'No results';
+					none.style.cssText = 'padding:8px 10px;color:var(--vscode-descriptionForeground);font-size:12px;';
+				}
+				for (const row of list) {
+					const ident = (row['identification'] || {}) as Record<string, unknown>;
+					const first = String(row['identification.firstName'] || ident.firstName || row.firstName || '');
+					const last = String(row['identification.lastName'] || ident.lastName || row.lastName || '');
+					const email = String((row['identification.email'] || ident.email || row.email || '') as string);
+					const npi = String(row.npi || '');
+					const item = DOM.append(results, DOM.$('div'));
+					item.style.cssText = 'padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
+					item.addEventListener('mouseleave', () => { item.style.background = ''; });
+					const n = DOM.append(item, DOM.$('div'));
+					n.textContent = `${first} ${last}`.trim() || '(no name)';
+					n.style.fontWeight = '500';
+					const meta = DOM.append(item, DOM.$('div'));
+					meta.textContent = email + (email && npi ? ' · ' : '') + (npi ? `NPI ${npi}` : '');
+					meta.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+					item.addEventListener('mousedown', e => {
+						e.preventDefault();
+						setSelected({ id: String(row.id || row.fhirId || ''), firstName: first, lastName: last, email, npi });
+					});
+				}
+				results.style.display = 'block';
+			} catch { /* ignore */ }
+		};
+
+		searchInput.addEventListener('input', () => {
+			selectedSubject = null;
+			preview.style.display = 'none';
+			if (searchDebounce) { clearTimeout(searchDebounce); }
+			searchDebounce = setTimeout(() => { void doSearch(searchInput.value.trim()); }, 250);
+		});
+		searchInput.addEventListener('focus', () => { if (results.children.length > 0) { results.style.display = 'block'; } });
+		searchInput.addEventListener('blur', () => setTimeout(() => { results.style.display = 'none'; }, 200));
+
+		const switchTab = (tab: 'staff' | 'patients') => {
+			activeTab = tab;
+			staffTab.style.cssText = tabStyle(tab === 'staff');
+			patientsTab.style.cssText = tabStyle(tab === 'patients');
+			searchInput.placeholder = tab === 'patients' ? 'Search patients by name…' : 'Search providers by name or NPI…';
+			searchInput.value = '';
+			setSelected(null);
+		};
+		staffTab.addEventListener('click', () => switchTab('staff'));
+		patientsTab.addEventListener('click', () => switchTab('patients'));
+
 		const btnRow = DOM.append(dialog, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:14px;';
 		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
@@ -1233,18 +1396,35 @@ export class SettingsHubEditor extends EditorPane {
 		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 		cancelBtn.addEventListener('click', () => overlay.remove());
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+
 		saveBtn.addEventListener('click', async () => {
-			const body: Record<string, string> = {};
-			for (const [k, inp] of Object.entries(inputs)) { body[k] = inp.value.trim(); }
-			if (!body.username || !body.email) {
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Username and email are required.' });
+			if (!selectedSubject) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Search and select a provider or patient first.' });
 				return;
 			}
+			if (!emailInp.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Email is required.' });
+				return;
+			}
+			if (!roleSel.value) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Pick a role.' });
+				return;
+			}
+			const body = {
+				firstName: selectedSubject.firstName,
+				lastName: selectedSubject.lastName,
+				email: emailInp.value.trim(),
+				roleName: roleSel.value,
+				temporaryPassword: passwordInp.value.trim() || undefined,
+				sendWelcomeEmail: sendWelcomeCb.checked,
+				...(activeTab === 'staff' && selectedSubject.id ? { practitionerFhirId: selectedSubject.id, npi: selectedSubject.npi } : {}),
+				...(activeTab === 'patients' && selectedSubject.id ? { patientFhirId: selectedSubject.id } : {}),
+			};
 			try {
 				const res = await this.apiService.fetch('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
 				if (res.ok) {
 					overlay.remove();
-					this.notificationService.notify({ severity: Severity.Info, message: 'User created.' });
+					this.notificationService.notify({ severity: Severity.Info, message: `User created for ${selectedSubject.firstName} ${selectedSubject.lastName}.` });
 					this._onSidebarClick('__users__');
 				} else {
 					const err = await res.json().catch(() => null);
@@ -1254,7 +1434,8 @@ export class SettingsHubEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Error, message: `Create failed: ${e}` });
 			}
 		});
-		setTimeout(() => inputs['username']?.focus(), 50);
+
+		setTimeout(() => searchInput.focus(), 50);
 	}
 
 	private _showEditUserDialog(root: HTMLElement, user: Record<string, unknown>): void {
