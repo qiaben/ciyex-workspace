@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { FileAccess } from '../../../../base/common/network.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
 
 type AuthStep = 'email' | 'authenticate' | 'locked' | 'warning';
@@ -90,7 +92,7 @@ export class CiyexAuthGate extends Disposable {
 	private _error = '';
 	private _discoverResult: { exists: boolean; authMethods: string[]; orgName: string; idps: Array<{ alias: string; displayName: string; providerId: string }> } | null = null;
 	private _countdown = 120;
-	private _countdownInterval: ReturnType<typeof setInterval> | null = null;
+	private _countdownInterval: number | null = null;
 
 	constructor(
 		private readonly _parent: HTMLElement,
@@ -146,7 +148,7 @@ export class CiyexAuthGate extends Disposable {
 
 	private _startCountdown(): void {
 		this._clearCountdown();
-		this._countdownInterval = setInterval(() => {
+		this._countdownInterval = mainWindow.setInterval(() => {
 			this._countdown--;
 			if (this._countdown <= 0) {
 				this._clearCountdown();
@@ -159,7 +161,7 @@ export class CiyexAuthGate extends Disposable {
 
 	private _clearCountdown(): void {
 		if (this._countdownInterval) {
-			clearInterval(this._countdownInterval);
+			mainWindow.clearInterval(this._countdownInterval);
 			this._countdownInterval = null;
 		}
 	}
@@ -220,6 +222,7 @@ export class CiyexAuthGate extends Disposable {
 			alignItems: 'center',
 			justifyContent: 'center',
 			background: c.bg,
+			// eslint-disable-next-line local/code-no-unexternalized-strings
 			fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
 		});
 
@@ -237,7 +240,7 @@ export class CiyexAuthGate extends Disposable {
 				#ciyex-auth-gate button:disabled { opacity: 0.5; cursor: not-allowed; }
 				@keyframes ciyex-spin { to { transform: rotate(360deg); } }
 			`;
-			document.head.appendChild(this._styleEl);
+			mainWindow.document.head.appendChild(this._styleEl);
 		}
 
 		let content: HTMLElement;
@@ -258,9 +261,10 @@ export class CiyexAuthGate extends Disposable {
 	private _logo(size: number): HTMLElement {
 		const container = h('div', { display: 'block', margin: '0 auto', width: `${size}px`, height: `${size}px` });
 		const img = document.createElement('img');
-		// Resolve from the workbench HTML location (out/vs/code/electron-browser/workbench/)
-		// up to the app root, then into resources/
-		img.src = '../../../../../resources/ciyex-logo-no-text.png';
+		// FileAccess maps `vs/../../resources/...` to the correct file URL in both
+		// dev and packaged builds (where the relative-path form misresolves and
+		// shows a broken-image icon).
+		img.src = FileAccess.asBrowserUri('vs/workbench/browser/media/ciyex-logo.png').toString(true);
 		img.alt = 'Ciyex';
 		Object.assign(img.style, { width: `${size}px`, height: `${size}px`, objectFit: 'contain' });
 		container.appendChild(img);
