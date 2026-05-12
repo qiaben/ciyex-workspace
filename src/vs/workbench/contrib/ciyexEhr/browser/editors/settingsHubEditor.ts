@@ -667,27 +667,55 @@ export class SettingsHubEditor extends EditorPane {
 			this._tableAction(actionsTd, '\u{1F5D1}', 'Delete', () => { this._deleteRecord(r); }, 'danger');
 		}
 
-		// Pagination
+		// Pagination — always rendered (even single page) so users see the
+		// total record count and can adjust page size. Team report v4
+		// specifically requested "pagination for all" tabs.
 		const totalPages = Math.max(1, Math.ceil(this.totalElements / this.pageSize));
-		if (totalPages > 1) {
-			const pag = DOM.append(body, DOM.$('div'));
-			pag.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-top:14px;';
-			const info = DOM.append(pag, DOM.$('span'));
-			info.textContent = `Page ${this.page + 1} of ${totalPages} (${this.totalElements} total)`;
-			info.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
-			const ctrls = DOM.append(pag, DOM.$('div'));
-			ctrls.style.cssText = 'display:flex;gap:6px;';
-			const prev = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
-			prev.textContent = '← Prev';
-			prev.disabled = this.page === 0;
-			prev.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;';
-			prev.addEventListener('click', async () => { this.page--; await this._fetchFhirRecords(this.activeKey); this._renderContent(); });
-			const next = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
-			next.textContent = 'Next \u2192';
-			next.disabled = this.page >= totalPages - 1;
-			next.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;';
-			next.addEventListener('click', async () => { this.page++; await this._fetchFhirRecords(this.activeKey); this._renderContent(); });
+		const pag = DOM.append(body, DOM.$('div'));
+		pag.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px;';
+
+		const leftCol = DOM.append(pag, DOM.$('div'));
+		leftCol.style.cssText = 'display:flex;align-items:center;gap:14px;';
+		const info = DOM.append(leftCol, DOM.$('span'));
+		const startIdx = this.totalElements === 0 ? 0 : this.page * this.pageSize + 1;
+		const endIdx = Math.min(this.totalElements, (this.page + 1) * this.pageSize);
+		info.textContent = `${startIdx}\u2013${endIdx} of ${this.totalElements}`;
+		info.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const sizeLbl = DOM.append(leftCol, DOM.$('label'));
+		sizeLbl.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:var(--vscode-descriptionForeground);';
+		const sizeTxt = DOM.append(sizeLbl, DOM.$('span'));
+		sizeTxt.textContent = 'Rows per page:';
+		const sizeSel = DOM.append(sizeLbl, DOM.$('select')) as HTMLSelectElement;
+		sizeSel.style.cssText = 'padding:3px 6px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-dropdown-foreground);font-size:11px;cursor:pointer;';
+		for (const sz of [10, 25, 50, 100]) {
+			const o = DOM.append(sizeSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = String(sz);
+			o.textContent = String(sz);
+			if (sz === this.pageSize) { o.selected = true; }
 		}
+		sizeSel.addEventListener('change', async () => {
+			this.pageSize = Number(sizeSel.value);
+			this.page = 0;
+			await this._fetchFhirRecords(this.activeKey);
+			this._renderContent();
+		});
+
+		const ctrls = DOM.append(pag, DOM.$('div'));
+		ctrls.style.cssText = 'display:flex;gap:6px;align-items:center;';
+		const pageLbl = DOM.append(ctrls, DOM.$('span'));
+		pageLbl.textContent = `Page ${this.page + 1} of ${totalPages}`;
+		pageLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-right:8px;';
+		const prev = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
+		prev.textContent = '\u2190 Prev';
+		prev.disabled = this.page === 0;
+		prev.style.cssText = `padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:${this.page === 0 ? 'not-allowed' : 'pointer'};font-size:11px;opacity:${this.page === 0 ? '0.4' : '1'};`;
+		prev.addEventListener('click', async () => { if (this.page === 0) { return; } this.page--; await this._fetchFhirRecords(this.activeKey); this._renderContent(); });
+		const next = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
+		next.textContent = 'Next \u2192';
+		next.disabled = this.page >= totalPages - 1;
+		next.style.cssText = `padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:${this.page >= totalPages - 1 ? 'not-allowed' : 'pointer'};font-size:11px;opacity:${this.page >= totalPages - 1 ? '0.4' : '1'};`;
+		next.addEventListener('click', async () => { if (this.page >= totalPages - 1) { return; } this.page++; await this._fetchFhirRecords(this.activeKey); this._renderContent(); });
 	}
 
 	private _tableAction(parent: HTMLElement, icon: string, title: string, fn: () => void, kind: 'normal' | 'danger' = 'normal'): void {
@@ -1202,14 +1230,23 @@ export class SettingsHubEditor extends EditorPane {
 			return;
 		}
 
-		// Special: Provider Availability field — instead of rendering as plain
-		// text input, show a summary of the saved schedule blocks (Mon-Fri 9-5,
-		// etc.) plus a Manage Availability button that opens the modal editor.
-		// This fixes the team report bug "saved availability is not showing in
-		// this tab" — previously the FHIR provider's `availability` field
-		// rendered as an empty input even when blocks existed in the backend.
+		// Special: Provider Availability field — show a summary of the saved
+		// schedule blocks (Mon-Fri 9-5, etc.) plus a Manage Availability button
+		// that opens the modal editor. Without this the FHIR provider's
+		// `availability` field rendered as an empty input even when blocks
+		// existed in the backend (per team report v3/v4).
+		//
+		// Detection is permissive — match by tab + field.key OR field.label
+		// OR field.type so any custom field config that names this column
+		// "availability_blocks", "Availability", "schedule", etc. all hit
+		// the same renderer.
 		const isProvider = this.activeKey === 'providers' || this.activeKey === 'provider';
-		const isAvailabilityField = isProvider && /availability|schedule/i.test(field.key);
+		const isAvailabilityField = isProvider && (
+			/availability|schedule/i.test(field.key)
+			|| /availability|schedule/i.test(field.label || '')
+			|| t === 'availability'
+			|| t === 'schedule'
+		);
 		if (isAvailabilityField) {
 			const wrap = DOM.append(cell, DOM.$('div'));
 			wrap.style.cssText = `display:flex;flex-direction:column;gap:8px;padding:8px 10px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:4px;min-height:42px;`;
@@ -1218,6 +1255,30 @@ export class SettingsHubEditor extends EditorPane {
 			summary.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 
 			const recordId = this.selectedRecord ? ((this.selectedRecord as { id?: string | number }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
+			const dayLabels: Record<string, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
+			const renderBlocks = (list: Array<Record<string, unknown>>): void => {
+				DOM.clearNode(summary);
+				if (list.length === 0) {
+					const empty = DOM.append(summary, DOM.$('span'));
+					empty.textContent = 'No availability blocks. Click "Manage Availability" to add one.';
+					empty.style.fontStyle = 'italic';
+					return;
+				}
+				for (const b of list) {
+					const rec = (b.recurrence as Record<string, unknown>) || {};
+					const days: string[] = ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []).map(d => dayLabels[d] || d);
+					const start = (rec.startTime as string) || (b.startTime as string) || '?';
+					const end = (rec.endTime as string) || (b.endTime as string) || '?';
+					const row = DOM.append(summary, DOM.$('div'));
+					row.style.cssText = 'display:flex;gap:10px;font-size:12px;color:var(--vscode-foreground);padding:3px 0;';
+					const dayBadge = DOM.append(row, DOM.$('span'));
+					dayBadge.textContent = days.join(', ') || '(no days)';
+					dayBadge.style.cssText = 'font-weight:500;min-width:160px;color:var(--vscode-foreground);';
+					const timeBadge = DOM.append(row, DOM.$('span'));
+					timeBadge.textContent = `${start} - ${end}`;
+					timeBadge.style.cssText = 'color:var(--vscode-descriptionForeground);';
+				}
+			};
 			const renderSummary = async (): Promise<void> => {
 				DOM.clearNode(summary);
 				if (!recordId) {
@@ -1226,40 +1287,34 @@ export class SettingsHubEditor extends EditorPane {
 					note.style.fontStyle = 'italic';
 					return;
 				}
-				const loading = DOM.append(summary, DOM.$('span'));
-				loading.textContent = 'Loading availability…';
+				// If the form record already has availability blocks attached
+				// (some backends embed them in the provider record itself),
+				// render those immediately so the user sees the data even
+				// before the GET round-trips. The async API call below will
+				// overwrite this with the authoritative server state.
+				const embedded = this.formData[field.key] as unknown;
+				if (Array.isArray(embedded) && embedded.length > 0) {
+					renderBlocks(embedded as Array<Record<string, unknown>>);
+				} else {
+					const loading = DOM.append(summary, DOM.$('span'));
+					loading.textContent = 'Loading availability…';
+				}
 				try {
 					const r = await this.apiService.fetch(`/api/providers/${encodeURIComponent(String(recordId))}/availability`);
 					if (!r.ok) {
-						loading.textContent = `Unable to load availability (${r.status}).`;
+						DOM.clearNode(summary);
+						const err = DOM.append(summary, DOM.$('span'));
+						err.textContent = `Unable to load availability (${r.status}).`;
 						return;
 					}
 					const j = await r.json();
 					const list: Array<Record<string, unknown>> = (j?.data as Array<Record<string, unknown>>) || (Array.isArray(j) ? j : []);
+					renderBlocks(list);
+				} catch (e) {
 					DOM.clearNode(summary);
-					if (list.length === 0) {
-						const empty = DOM.append(summary, DOM.$('span'));
-						empty.textContent = 'No availability blocks. Click "Manage Availability" to add one.';
-						empty.style.fontStyle = 'italic';
-						return;
-					}
-					const dayLabels: Record<string, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
-					for (const b of list) {
-						const rec = (b.recurrence as Record<string, unknown>) || {};
-						const days: string[] = ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []).map(d => dayLabels[d] || d);
-						const start = (rec.startTime as string) || (b.startTime as string) || '?';
-						const end = (rec.endTime as string) || (b.endTime as string) || '?';
-						const row = DOM.append(summary, DOM.$('div'));
-						row.style.cssText = 'display:flex;gap:10px;font-size:12px;color:var(--vscode-foreground);padding:2px 0;';
-						const dayBadge = DOM.append(row, DOM.$('span'));
-						dayBadge.textContent = days.join(', ') || '(no days)';
-						dayBadge.style.cssText = 'font-weight:500;min-width:140px;';
-						const timeBadge = DOM.append(row, DOM.$('span'));
-						timeBadge.textContent = `${start} - ${end}`;
-						timeBadge.style.cssText = 'color:var(--vscode-descriptionForeground);';
-					}
-				} catch {
-					loading.textContent = 'Waiting for login…';
+					const err = DOM.append(summary, DOM.$('span'));
+					err.textContent = `Load failed: ${e}`;
+					err.style.color = 'var(--vscode-errorForeground,#f48771)';
 				}
 			};
 			void renderSummary();
@@ -2498,7 +2553,16 @@ export class SettingsHubEditor extends EditorPane {
 		}
 
 		// -- FHIR API Scopes section (Read / Write matrix per resource) ----
-		const selectedScopes = new Set<string>(((role?.smartScopes as string[]) || []));
+		// The backend stores scopes with a `SCOPE_` prefix (e.g.
+		// "SCOPE_user/Patient.read") because that's the format Spring's
+		// authority handling expects. Our matrix uses the canonical SMART
+		// shape "user/Patient.read" — so on load we strip the prefix and
+		// on save we re-attach it. Without this the matrix renders blank
+		// for system roles (Medical Assistant, Nurse, etc.) even though
+		// the backend has them populated.
+		const stripScopePrefix = (s: string): string => s.startsWith('SCOPE_') ? s.substring(6) : s;
+		const rawScopes = ((role?.smartScopes as string[]) || []);
+		const selectedScopes = new Set<string>(rawScopes.map(stripScopePrefix));
 		const SCOPE_GROUPS: Array<{ label: string; resources: string[] }> = [
 			{ label: 'Clinical', resources: ['Patient', 'Encounter', 'Observation', 'Procedure', 'MedicationRequest', 'DiagnosticReport', 'CarePlan', 'Immunization', 'AllergyIntolerance', 'Condition', 'Composition'] },
 			{ label: 'Administrative', resources: ['Appointment', 'ServiceRequest', 'DocumentReference', 'Consent', 'Task', 'Communication', 'RelatedPerson', 'CommunicationRequest', 'QuestionnaireResponse'] },
@@ -2634,7 +2698,7 @@ export class SettingsHubEditor extends EditorPane {
 				roleLabel,
 				description: descArea.value.trim(),
 				permissions: Array.from(selectedPerms),
-				smartScopes: Array.from(selectedScopes),
+				smartScopes: Array.from(selectedScopes).map(s => s.startsWith('SCOPE_') ? s : `SCOPE_${s}`),
 				isActive: true,
 			};
 			saveBtn.disabled = true;
@@ -3388,7 +3452,18 @@ export class SettingsHubEditor extends EditorPane {
 		if (!this._fontSizeStyleInjected) {
 			this._fontSizeStyleInjected = true;
 			const styleEl = mainWindow.document.createElement('style');
-			styleEl.textContent = '.ciyex-editor-root { font-size: var(--ciyex-display-fontSize, 16px); }';
+			// Scale every Ciyex pane via the CSS variable. The selector covers
+			// the settings-hub root, every ciyex contribution editor root,
+			// AND the entire VSCode workbench so calendar/encounter/etc.
+			// scale uniformly with the chosen size. We intentionally use
+			// !important on the workbench rule because VSCode's default
+			// monaco-workbench rules set font-size inline.
+			styleEl.textContent = `
+				.ciyex-editor-root,
+				.monaco-workbench .ciyex-editor-root,
+				.monaco-workbench .ciyex-settings-editor { font-size: var(--ciyex-display-fontSize, 16px); }
+				.monaco-workbench .part.editor > .content { font-size: var(--ciyex-display-fontSize, inherit); }
+			`;
 			mainWindow.document.head.appendChild(styleEl);
 		}
 		const applyGlobalFontSize = (size: FontSize): void => {

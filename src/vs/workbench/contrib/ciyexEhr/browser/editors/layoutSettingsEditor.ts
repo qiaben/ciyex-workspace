@@ -44,6 +44,13 @@ interface AvailableTab {
 
 type Section = 'tab-manager' | 'field-config';
 
+/**
+ * Two scopes can be configured here, mirroring the web's
+ * `/settings/layout-settings` (Chart) and `/settings/layout-settings/config/settings`
+ * (Settings sidebar). Switching scope reloads the appropriate tab-field-config.
+ */
+type Scope = 'chart' | 'settings';
+
 const SOURCE_LABELS: Record<string, string> = {
 	'ORG_CUSTOM': 'Custom Config',
 	'PRACTICE_TYPE_DEFAULT': 'Practice Default',
@@ -60,6 +67,7 @@ export class LayoutSettingsEditor extends EditorPane {
 	private source: string = 'UNIVERSAL_DEFAULT';
 	private availableTabs: AvailableTab[] = [];
 	private activeSection: Section = 'tab-manager';
+	private activeScope: Scope = 'chart';
 	private selectedFieldTab: string = '';
 	private fieldConfig: Record<string, unknown> | null = null;
 	private fieldConfigFhir: string[] = [];
@@ -123,10 +131,12 @@ export class LayoutSettingsEditor extends EditorPane {
 
 		const headerLeft = DOM.append(headerWrap, DOM.$('div'));
 		const title = DOM.append(headerLeft, DOM.$('h1'));
-		title.textContent = '\u2699 Chart';
+		title.textContent = this.activeScope === 'chart' ? '\u2699 Chart' : '\u2699 Settings';
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;display:flex;align-items:center;gap:6px;';
 		const subtitle = DOM.append(headerLeft, DOM.$('p'));
-		subtitle.textContent = 'Configure patient chart layout, tabs, and field mappings';
+		subtitle.textContent = this.activeScope === 'chart'
+			? 'Configure patient chart layout, tabs, and field mappings'
+			: 'Configure tabs, fields, and FHIR mappings for the Settings page';
 		subtitle.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
 
 		const headerRight = DOM.append(headerWrap, DOM.$('div'));
@@ -135,6 +145,29 @@ export class LayoutSettingsEditor extends EditorPane {
 		sourceBadge.textContent = SOURCE_LABELS[this.source] || this.source;
 		const isCustom = this.source === 'ORG_CUSTOM';
 		sourceBadge.style.cssText = `padding:4px 10px;border-radius:999px;font-size:11px;font-weight:500;background:${isCustom ? 'rgba(14,99,156,0.15)' : 'rgba(128,128,128,0.15)'};color:${isCustom ? 'var(--vscode-textLink-foreground,#3794ff)' : 'var(--vscode-descriptionForeground)'};`;
+
+		// Scope switcher (Chart vs Settings) \u2014 matches the web's LAYOUT
+		// SETTINGS sidebar which has both Chart and Settings sub-routes.
+		// The team report v4 flagged "Settings tab itself missing"; this
+		// adds it as a top-of-pane toggle.
+		const scopeBar = DOM.append(this.contentEl, DOM.$('.ls-scope-bar'));
+		scopeBar.style.cssText = 'display:flex;gap:4px;margin-bottom:14px;padding:4px;background:rgba(128,128,128,0.08);border-radius:6px;width:fit-content;';
+		const scopes: Array<[Scope, string]> = [['chart', '\u{1F4CA} Chart'], ['settings', '\u{2699} Settings']];
+		for (const [k, lbl] of scopes) {
+			const sb = DOM.append(scopeBar, DOM.$('button')) as HTMLButtonElement;
+			sb.textContent = lbl;
+			const active = this.activeScope === k;
+			sb.style.cssText = `padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:12px;font-weight:500;background:${active ? 'var(--vscode-editor-background)' : 'transparent'};color:${active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};${active ? 'box-shadow:0 1px 2px rgba(0,0,0,0.1);' : ''}`;
+			sb.addEventListener('click', () => {
+				if (this.activeScope === k) { return; }
+				this.activeScope = k;
+				// Reset selected field config when switching scopes so we
+				// don't mix up Chart layout with Settings layout.
+				this.selectedFieldTab = '';
+				this.fieldConfig = null;
+				this._render();
+			});
+		}
 
 		// Section tabs
 		const sectionTabs = DOM.append(this.contentEl, DOM.$('.ls-section-tabs'));
@@ -424,32 +457,154 @@ export class LayoutSettingsEditor extends EditorPane {
 	}
 
 	private _addTab(ci: number): void {
-		this._inlineDialog('Add Tab', [
-			{ label: 'Tab Key (e.g., vitals)', key: 'key', placeholder: 'vitals' },
-			{ label: 'Tab Label', key: 'label', placeholder: 'Vitals' },
-			{ label: 'FHIR Resource Type (optional)', key: 'fhir', placeholder: 'Observation' },
-		], values => {
-			if (!values.key) { return; }
-			const label = values.label || (values.key.charAt(0).toUpperCase() + values.key.slice(1));
-			const fhirResources = values.fhir ? values.fhir.split(',').map(s => s.trim()).filter(Boolean) : [];
-			this.categories[ci].tabs.push({ key: values.key, label, icon: 'FileText', position: this.categories[ci].tabs.length, visible: true, fhirResources });
-			this._render();
-		});
+		this._openTabModal('add', ci, -1, null);
 	}
 
 	private _editTab(ci: number, ti: number): void {
-		const tab = this.categories[ci].tabs[ti];
-		const fhirNames = (tab.fhirResources || []).map(r => typeof r === 'string' ? r : (r?.type || '')).filter(Boolean);
-		this._inlineDialog('Edit Tab', [
-			{ label: 'Tab Label', key: 'label', value: tab.label, placeholder: tab.label },
-			{ label: 'Icon Name', key: 'icon', value: tab.icon || '', placeholder: 'FileText' },
-			{ label: 'FHIR Resources (comma-separated)', key: 'fhir', value: fhirNames.join(', '), placeholder: 'Observation' },
-		], values => {
-			if (values.label) { tab.label = values.label; }
-			tab.icon = values.icon;
-			tab.fhirResources = values.fhir ? values.fhir.split(',').map(s => s.trim()).filter(Boolean) : [];
+		this._openTabModal('edit', ci, ti, this.categories[ci].tabs[ti]);
+	}
+
+	/**
+	 * Web-parity Add Tab modal. Web form layout (image_chart in v4):
+	 *   Tab Label  ............  Key (auto)  Icon (file upload + filename)
+	 *   FHIR Resources (free text, optional)
+	 *
+	 * The Icon control is an upload picker — the team report flagged the
+	 * old "Icon Name" text input as wrong ("the icon field should be in
+	 * upload option"). On change, the file is read as a data URL and
+	 * stored on the tab so admins can paste a custom icon.
+	 */
+	private _openTabModal(mode: 'add' | 'edit', ci: number, ti: number, existing: TabItem | null): void {
+		const overlay = DOM.append(this.root, DOM.$('.ls-dialog-overlay'));
+		overlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const dialog = DOM.append(overlay, DOM.$('.ls-dialog'));
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;width:560px;max-width:92vw;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+
+		const titleEl = DOM.append(dialog, DOM.$('h3'));
+		titleEl.textContent = mode === 'add' ? 'Add Tab' : 'Edit Tab';
+		titleEl.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+
+		// Row 1: Tab Label + Key + Icon — three columns matching the web
+		const row = DOM.append(dialog, DOM.$('div'));
+		row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 1.2fr;gap:10px;margin-bottom:12px;';
+
+		const lblCol = DOM.append(row, DOM.$('div'));
+		const lblLabel = DOM.append(lblCol, DOM.$('label'));
+		lblLabel.textContent = 'Tab Label';
+		lblLabel.style.cssText = labelStyle;
+		const lblInp = DOM.append(lblCol, DOM.$('input')) as HTMLInputElement;
+		lblInp.value = existing?.label || '';
+		lblInp.placeholder = 'e.g. Encounters';
+		lblInp.style.cssText = inputStyle;
+
+		const keyCol = DOM.append(row, DOM.$('div'));
+		const keyLabel = DOM.append(keyCol, DOM.$('label'));
+		keyLabel.textContent = 'Key';
+		keyLabel.style.cssText = labelStyle;
+		const keyInp = DOM.append(keyCol, DOM.$('input')) as HTMLInputElement;
+		keyInp.value = existing?.key || '';
+		keyInp.placeholder = 'auto';
+		keyInp.disabled = mode === 'edit';
+		keyInp.style.cssText = inputStyle;
+		// Auto-fill key from label as the user types
+		lblInp.addEventListener('input', () => {
+			if (mode === 'add' && !keyInp.value) {
+				keyInp.placeholder = lblInp.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'auto';
+			}
+		});
+
+		const iconCol = DOM.append(row, DOM.$('div'));
+		const iconLabel = DOM.append(iconCol, DOM.$('label'));
+		iconLabel.textContent = 'Icon';
+		iconLabel.style.cssText = labelStyle;
+		let iconValue: string = existing?.icon || 'FileText';
+		const iconBtn = DOM.append(iconCol, DOM.$('button')) as HTMLButtonElement;
+		const updateIconBtn = (): void => {
+			DOM.clearNode(iconBtn);
+			iconBtn.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left;';
+			if (iconValue.startsWith('data:image/')) {
+				const img = DOM.append(iconBtn, DOM.$('img')) as HTMLImageElement;
+				img.src = iconValue;
+				img.style.cssText = 'width:16px;height:16px;object-fit:contain;';
+				const txt = DOM.append(iconBtn, DOM.$('span'));
+				txt.textContent = 'Custom icon';
+				txt.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;';
+			} else {
+				const docIcon = DOM.append(iconBtn, DOM.$('span'));
+				docIcon.textContent = '\u{1F4C4}';
+				docIcon.style.cssText = 'font-size:14px;opacity:0.7;';
+				const txt = DOM.append(iconBtn, DOM.$('span'));
+				txt.textContent = iconValue || 'FileText';
+				txt.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;';
+			}
+		};
+		updateIconBtn();
+		const fileInput = DOM.append(iconCol, DOM.$('input')) as HTMLInputElement;
+		fileInput.type = 'file';
+		fileInput.accept = 'image/*';
+		fileInput.style.display = 'none';
+		iconBtn.addEventListener('click', () => fileInput.click());
+		fileInput.addEventListener('change', () => {
+			const f = fileInput.files?.[0];
+			if (!f) { return; }
+			if (f.size > 256 * 1024) {
+				this.notificationService.notify({ severity: Severity.Error, message: 'Icon must be under 256 KB.' });
+				return;
+			}
+			const reader = new FileReader();
+			reader.onload = () => { iconValue = reader.result as string; updateIconBtn(); };
+			reader.readAsDataURL(f);
+		});
+
+		// FHIR Resources row
+		const fhirWrap = DOM.append(dialog, DOM.$('div'));
+		fhirWrap.style.cssText = 'margin-bottom:12px;';
+		const fhirLbl = DOM.append(fhirWrap, DOM.$('label'));
+		fhirLbl.textContent = 'FHIR Resources';
+		fhirLbl.style.cssText = labelStyle;
+		const fhirInp = DOM.append(fhirWrap, DOM.$('input')) as HTMLInputElement;
+		const fhirNames = (existing?.fhirResources || []).map(r => typeof r === 'string' ? r : (r?.type || '')).filter(Boolean);
+		fhirInp.value = fhirNames.join(', ');
+		fhirInp.placeholder = 'Type FHIR resource name…';
+		fhirInp.style.cssText = inputStyle;
+		const fhirHelp = DOM.append(fhirWrap, DOM.$('div'));
+		fhirHelp.textContent = 'Leave empty for static / page tabs. Type any FHIR resource name for data-driven tabs.';
+		fhirHelp.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+
+		// Action buttons
+		const btnRow = DOM.append(dialog, DOM.$('div'));
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => overlay.remove());
+
+		const okBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+		okBtn.textContent = mode === 'add' ? 'Add' : 'Save';
+		okBtn.style.cssText = 'padding:6px 14px;background:#22c55e;color:#ffffff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		okBtn.addEventListener('click', () => {
+			const label = lblInp.value.trim();
+			if (!label) { this.notificationService.notify({ severity: Severity.Warning, message: 'Tab Label is required.' }); return; }
+			const key = (keyInp.value.trim() || keyInp.placeholder).replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+			if (!key || key === 'auto') { this.notificationService.notify({ severity: Severity.Warning, message: 'Tab Key could not be generated.' }); return; }
+			const fhirResources = fhirInp.value ? fhirInp.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+			if (mode === 'add') {
+				this.categories[ci].tabs.push({ key, label, icon: iconValue, position: this.categories[ci].tabs.length, visible: true, fhirResources });
+			} else if (existing) {
+				existing.key = key;
+				existing.label = label;
+				existing.icon = iconValue;
+				existing.fhirResources = fhirResources;
+			}
+			overlay.remove();
 			this._render();
 		});
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => lblInp.focus(), 50);
 	}
 
 	private async _deleteTab(ci: number, ti: number): Promise<void> {
