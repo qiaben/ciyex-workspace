@@ -553,7 +553,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				],
 			},
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters and cannot start with a hyphen' },
+			{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters (no leading hyphen, no symbols, no spaces)' },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 			// Administration Details
 			{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
@@ -572,7 +572,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 					{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
 				]
 			},
-			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1', validationPattern: '^[1-9]\\d?$', validationMessage: 'Dose Number must be a positive whole number between 1 and 99', minValue: 1, maxValue: 99 },
+			{ key: 'doseNumber', label: 'Dose Number', type: 'number', required: true, placeholder: '1', validationPattern: '^[1-9]\\d?$', validationMessage: 'Dose Number must be a positive whole number between 1 and 99 (no negatives, no decimals)', minValue: 1, maxValue: 99 },
 			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: '1 of 3 or booster' },
 			// Provider Information
 			{

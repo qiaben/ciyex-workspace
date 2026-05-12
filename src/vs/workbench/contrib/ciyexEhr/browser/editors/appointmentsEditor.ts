@@ -512,116 +512,103 @@ export class AppointmentsEditor extends EditorPane {
 	}
 
 	private _printTable(): void {
-		// Build the print document with safe DOM APIs (createElement +
-		// textContent / appendChild) instead of an HTML string. The previous
-		// approach used `iframe.contentDocument.write(html)`, which fails in
-		// modern Electron with "TrustedHTML assignment" — Chromium's Trusted
-		// Types policy now blocks raw string injection. This rewrite keeps
-		// the same hidden-iframe + window.print() flow but builds every node
-		// programmatically so no string ever crosses a sink that requires a
-		// TrustedHTML wrapper.
+		// Render the print template into a VISIBLE modal preview before
+		// invoking the system print dialog. The hidden-iframe approach
+		// previously used here never surfaced the PDF template to the user
+		// (test team flagged "Print … not showing the pdf template"); the
+		// modal mirrors the EHR Web UI's print-preview behavior — the
+		// template is shown on screen, then the user can use the in-modal
+		// "Print / Save as PDF" button to trigger the OS dialog.
 		const filtered = this._getFilteredRows();
 		const doc = DOM.getActiveWindow().document;
-		const iframe = doc.createElement('iframe');
-		// Set individual style properties instead of cssText / setAttribute('style', ...)
-		// — under strict Trusted Types, both can be flagged as TrustedHTML sinks
-		// in Electron/Chromium, throwing
-		// "This document requires 'TrustedHTML' assignment".
-		iframe.style.position = 'fixed';
-		iframe.style.right = '0';
-		iframe.style.bottom = '0';
-		iframe.style.width = '0';
-		iframe.style.height = '0';
-		iframe.style.border = '0';
-		iframe.title = 'Print Frame';
-		// Don't use `srcdoc` — modern Chromium's Trusted Types policy treats
-		// srcdoc/innerHTML/etc. as TrustedHTML sinks and rejects raw strings
-		// with "This document requires 'TrustedHTML' assignment". Appending
-		// the iframe yields an empty same-origin about:blank document we can
-		// build via DOM APIs.
-		doc.body.appendChild(iframe);
-		const buildAndPrint = () => {
-			const idoc = iframe.contentDocument || iframe.contentWindow?.document;
-			if (!idoc) {
-				try { doc.body.removeChild(iframe); } catch { /* ignore */ }
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Print failed: unable to create print frame.' });
-				return;
+
+		// Modal backdrop — full-viewport dimmer; click outside to dismiss.
+		const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-print-backdrop'));
+		backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9998;display:flex;align-items:center;justify-content:center;';
+
+		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-print-sheet'));
+		sheet.style.cssText = 'background:#fff;color:#222;width:min(960px,92vw);max-height:88vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;font-family:sans-serif;';
+
+		const toolbar = DOM.append(sheet, DOM.$('div.ciyex-print-toolbar'));
+		toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e5e5;background:#f7f7f7;flex-shrink:0;';
+		const toolbarTitle = DOM.append(toolbar, DOM.$('span'));
+		toolbarTitle.textContent = `Print Preview — ${filtered.length} appointment${filtered.length !== 1 ? 's' : ''}`;
+		toolbarTitle.style.cssText = 'font-size:13px;font-weight:600;color:#222;flex:1;';
+		const doPrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		doPrintBtn.textContent = 'Print / Save as PDF';
+		doPrintBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+		const closePrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		closePrintBtn.textContent = 'Close';
+		closePrintBtn.style.cssText = 'padding:6px 14px;background:#e5e5e5;color:#222;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:12px;';
+
+		const preview = DOM.append(sheet, DOM.$('div.ciyex-print-preview'));
+		preview.style.cssText = 'overflow:auto;padding:24px 28px;flex:1;background:#fff;';
+		const previewHeading = DOM.append(preview, DOM.$('h2'));
+		// allow-any-unicode-next-line
+		previewHeading.textContent = `Appointments — ${this.datePreset}`;
+		previewHeading.style.cssText = 'margin:0 0 16px;font-size:18px;color:#222;';
+		const previewMeta = DOM.append(preview, DOM.$('div'));
+		previewMeta.style.cssText = 'margin-bottom:14px;font-size:11px;color:#666;';
+		previewMeta.textContent = `Generated ${new Date().toLocaleString()}`;
+		const previewTable = DOM.append(preview, DOM.$('table'));
+		previewTable.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;color:#222;';
+		const previewThead = DOM.append(previewTable, DOM.$('thead'));
+		const previewHeadRow = DOM.append(previewThead, DOM.$('tr'));
+		for (const label of ['Date', 'Time', 'Patient', 'Provider', 'Location', 'Type', 'Status', 'Room']) {
+			const th = DOM.append(previewHeadRow, DOM.$('th'));
+			th.textContent = label;
+			th.style.cssText = 'padding:8px 10px;text-align:left;border:1px solid #ddd;background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:11px;';
+		}
+		const previewTbody = DOM.append(previewTable, DOM.$('tbody'));
+		for (const r of filtered) {
+			const so = this.statusOptions.find(s => s.value === r.status);
+			const tr = DOM.append(previewTbody, DOM.$('tr'));
+			const cells: string[] = [
+				formatToDisplay(r.appointmentStartDate),
+				formatTimeTo12h(r.appointmentStartTime),
+				r.patientName || '',
+				r.providerName || '',
+				r.locationName || '',
+				r.visitType || '',
+				so?.label || r.status || '',
+				r.room || '',
+			];
+			for (const c of cells) {
+				const td = DOM.append(tr, DOM.$('td'));
+				td.textContent = String(c);
+				td.style.cssText = 'padding:8px 10px;text-align:left;border:1px solid #ddd;';
 			}
-			// Title + print stylesheet (DOM only — no innerHTML / write).
-			const head = idoc.head;
-			const titleEl = idoc.createElement('title');
-			titleEl.textContent = 'Appointments';
-			head.appendChild(titleEl);
-			const styleEl = idoc.createElement('style');
-			styleEl.textContent = [
-				'body{font-family:sans-serif;font-size:12px;margin:20px;color:#222;}',
-				'h2{margin:0 0 12px;font-size:16px;}',
-				'table{width:100%;border-collapse:collapse;}',
-				'th,td{padding:8px 10px;text-align:left;border:1px solid #ddd;}',
-				'th{background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:11px;}',
-				'@media print{@page{size:landscape;}}',
+		}
+		if (filtered.length === 0) {
+			const emptyRow = DOM.append(previewTbody, DOM.$('tr'));
+			const emptyTd = DOM.append(emptyRow, DOM.$('td')) as HTMLTableCellElement;
+			emptyTd.colSpan = 8;
+			emptyTd.textContent = 'No appointments match the current filters.';
+			emptyTd.style.cssText = 'padding:18px;text-align:center;color:#888;border:1px solid #ddd;';
+		}
+
+		const dismissPrint = () => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
+		closePrintBtn.addEventListener('click', dismissPrint);
+		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismissPrint(); } });
+		doPrintBtn.addEventListener('click', () => {
+			// Add a transient print stylesheet that hides the workbench and
+			// the modal toolbar so only the preview sheet ends up on paper /
+			// the saved PDF. window.print() then opens the OS dialog.
+			const printStyle = doc.createElement('style');
+			printStyle.textContent = [
+				'@media print{',
+				'  body>*:not(.ciyex-print-backdrop){display:none !important;}',
+				'  .ciyex-print-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+				'  .ciyex-print-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;max-height:none !important;}',
+				'  .ciyex-print-toolbar{display:none !important;}',
+				'  .ciyex-print-preview{overflow:visible !important;padding:0 !important;}',
+				'  @page{size:landscape;margin:14mm;}',
+				'}',
 			].join('');
-			head.appendChild(styleEl);
-
-			const body = idoc.body;
-			const heading = idoc.createElement('h2');
-			// allow-any-unicode-next-line
-			heading.textContent = `Appointments — ${this.datePreset}`;
-			body.appendChild(heading);
-			const table = idoc.createElement('table');
-			const thead = idoc.createElement('thead');
-			const headRow = idoc.createElement('tr');
-			for (const label of ['Date', 'Time', 'Patient', 'Provider', 'Location', 'Type', 'Status', 'Room']) {
-				const th = idoc.createElement('th');
-				th.textContent = label;
-				headRow.appendChild(th);
-			}
-			thead.appendChild(headRow);
-			table.appendChild(thead);
-			const tbody = idoc.createElement('tbody');
-			for (const r of filtered) {
-				const so = this.statusOptions.find(s => s.value === r.status);
-				const tr = idoc.createElement('tr');
-				const cells: string[] = [
-					formatToDisplay(r.appointmentStartDate),
-					formatTimeTo12h(r.appointmentStartTime),
-					r.patientName || '',
-					r.providerName || '',
-					r.locationName || '',
-					r.visitType || '',
-					so?.label || r.status || '',
-					r.room || '',
-				];
-				for (const c of cells) {
-					const td = idoc.createElement('td');
-					td.textContent = String(c);
-					tr.appendChild(td);
-				}
-				tbody.appendChild(tr);
-			}
-			table.appendChild(tbody);
-			body.appendChild(table);
-
-			try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); }
-			finally { DOM.getActiveWindow().setTimeout(() => { try { doc.body.removeChild(iframe); } catch { /* ignore */ } }, 1000); }
-		};
-		// Wait for the empty document to be ready before we start appending.
-		// about:blank iframes sometimes never fire `load`, so also poll once
-		// per animation frame as a fallback so Print never hangs forever.
-		let printed = false;
-		const tryBuild = () => {
-			if (printed) { return; }
-			const idoc = iframe.contentDocument;
-			if (!idoc) { return; }
-			if (idoc.readyState === 'complete' || idoc.readyState === 'interactive') {
-				printed = true;
-				buildAndPrint();
-			}
-		};
-		iframe.addEventListener('load', () => tryBuild(), { once: true });
-		// Defer first attempt to next tick so the about:blank document is initialised.
-		DOM.getActiveWindow().setTimeout(() => tryBuild(), 0);
-		DOM.getActiveWindow().setTimeout(() => tryBuild(), 50);
+			doc.head.appendChild(printStyle);
+			try { DOM.getActiveWindow().print(); }
+			finally { try { doc.head.removeChild(printStyle); } catch { /* ignore */ } }
+		});
 	}
 
 	private _exportToCSV(): void {
@@ -850,15 +837,22 @@ export class AppointmentsEditor extends EditorPane {
 			this._renderTableBody(this._getFilteredRows());
 		});
 
-		// Type filter — fall back to a static list when no rows have loaded yet
+		// Type filter — show the full configured catalog plus any extras observed
+		// in the current page. The test team flagged that "All Types" only ever
+		// showed the few types present in the current dataset; merging the
+		// predefined catalog with `visitTypes` gives parity with the EHR-UI.
 		const typeSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
 		typeSel.style.cssText = selectStyle;
 		const typeAll = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 		typeAll.value = ''; typeAll.textContent = 'All Types';
-		const typeOptions = this.visitTypes.length > 0
-			? this.visitTypes
-			: ['Consultation', 'New Patient', 'Follow-Up', 'Sick Visit', 'Annual Physical', 'Telehealth', 'Procedure', 'Lab Only'];
-		for (const t of typeOptions) {
+		const PREDEFINED_VISIT_TYPES = [
+			'Consultation', 'New Patient', 'Follow-Up', 'Sick Visit',
+			'Annual Physical', 'Wellness Check', 'Telehealth', 'Procedure',
+			'Lab Only', 'Vaccination', 'Imaging', 'Pre-Op', 'Post-Op',
+			'Urgent Care', 'Specialist Referral', 'Physical Therapy',
+		];
+		const mergedTypes = Array.from(new Set([...PREDEFINED_VISIT_TYPES, ...this.visitTypes])).sort();
+		for (const t of mergedTypes) {
 			const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = t; o.textContent = t;
 			if (t === this.typeFilter) { o.selected = true; }

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as DOM from '../../../../base/browser/dom.js';
 import { IViewPaneOptions, ViewPane } from '../../../browser/parts/views/viewPane.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
@@ -35,7 +36,7 @@ export class PatientListPane extends ViewPane {
 	private _loaded = false;
 	private _searchQuery = '';
 	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
-	private _genderFilter: 'all' | 'male' | 'female' | 'other' = 'all';
+	private _genderFilter: 'all' | 'male' | 'female' | 'unknown' = 'all';
 	// Pagination state — pageSize matches the EHR-UI patient list (20/page).
 	// _page is zero-indexed; the footer renders page-indicator + prev/next.
 	private _page = 0;
@@ -106,14 +107,14 @@ export class PatientListPane extends ViewPane {
 		const genderSel = document.createElement('select');
 		genderSel.style.cssText = selStyle;
 		genderSel.title = 'Gender filter';
-		for (const [val, label] of [['all', 'All Gender'], ['male', 'Male'], ['female', 'Female'], ['other', 'Other']] as const) {
+		for (const [val, label] of [['all', 'All Gender'], ['male', 'Male'], ['female', 'Female'], ['unknown', 'Unknown']] as const) {
 			const o = document.createElement('option');
 			o.value = val; o.textContent = label;
 			if (val === this._genderFilter) { o.selected = true; }
 			genderSel.appendChild(o);
 		}
 		genderSel.addEventListener('change', () => {
-			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'other';
+			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'unknown';
 			this._page = 0;
 			this._renderList();
 		});
@@ -209,7 +210,9 @@ export class PatientListPane extends ViewPane {
 			}
 			if (this._genderFilter !== 'all') {
 				const g = (p.gender || '').toLowerCase();
-				if (this._genderFilter === 'other') {
+				if (this._genderFilter === 'unknown') {
+					// Match anything that isn't explicitly male/female — covers
+					// nulls, "unknown", legacy "other" values, and unset records.
 					if (g === 'male' || g === 'female') { return false; }
 				} else if (g !== this._genderFilter) {
 					return false;
@@ -329,11 +332,9 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
-			// Action column — Open Chart / Record Vitals / Visit Summary, mirroring
-			// the EHR-UI patient list. Clicking the row anywhere outside these
-			// buttons still opens the chart, so the row's default behavior is
-			// preserved while the buttons give one-click access to the most
-			// common follow-on tasks.
+			// Action column — View Chart / Edit Patient / Deactivate, mirroring
+			// the EHR Web UI Action column. Clicking the row outside the buttons
+			// still opens the chart, preserving the row's default behavior.
 			const actions = document.createElement('span');
 			actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
 			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
@@ -348,21 +349,19 @@ export class PatientListPane extends ViewPane {
 				actions.appendChild(btn);
 			};
 			// allow-any-unicode-next-line
-			mkAction('📋', 'Open Chart', '#3b82f6', () => {
+			mkAction('👁', 'View Chart', '#3b82f6', () => {
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
 			// allow-any-unicode-next-line
-			mkAction('❤', 'Record Vitals', '#a855f7', () => {
-				// Open the chart on the vitals tab — initialTab override is
-				// honoured by PatientChartEditor.setInput().
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'vitals');
+			mkAction('✏', 'Edit Patient', '#10b981', () => {
+				// Open the chart on the demographics tab where edit is exposed —
+				// PatientChartEditor.setInput() honors the initialTab override.
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics');
 			});
+			const isActive = ((patient.status || 'active').toLowerCase() !== 'inactive');
 			// allow-any-unicode-next-line
-			mkAction('🗒', 'Visit Summary', '#f59e0b', () => {
-				// Open the chart on the encounters tab so the user can see the
-				// list of past visits and pick one. Mirrors the EHR-UI's
-				// "Visit Summary" action shortcut.
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'encounters');
+			mkAction(isActive ? '🚫' : '✓', isActive ? 'Deactivate' : 'Activate', '#ef4444', () => {
+				void this._toggleActive(patient, !isActive);
 			});
 			row.appendChild(actions);
 
@@ -384,6 +383,24 @@ export class PatientListPane extends ViewPane {
 		el.style.fontSize = '12px';
 		el.textContent = msg;
 		this._listEl.appendChild(el);
+	}
+
+	private async _toggleActive(patient: IPatientRow, makeActive: boolean): Promise<void> {
+		const verb = makeActive ? 'activate' : 'deactivate';
+		const confirmed = DOM.getActiveWindow().confirm(`Are you sure you want to ${verb} ${patient.firstName} ${patient.lastName}?`);
+		if (!confirmed) { return; }
+		try {
+			const response = await this.apiService.fetch(`/api/patients/${patient.id}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ status: makeActive ? 'Active' : 'Inactive' }),
+			});
+			if (response.ok) {
+				patient.status = makeActive ? 'Active' : 'Inactive';
+				this._renderList();
+			}
+		} catch {
+			// API error — leave the row unchanged. The next refresh will reconcile.
+		}
 	}
 
 	private _calcAge(dob: string): number {

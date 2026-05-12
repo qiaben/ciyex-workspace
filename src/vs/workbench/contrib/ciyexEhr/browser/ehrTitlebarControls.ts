@@ -129,7 +129,11 @@ export class EhrTitlebarControls extends Disposable {
 		this.searchTimer = setTimeout(async () => {
 			this.searchCts = new CancellationTokenSource();
 			try {
-				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(value)}&page=0&size=10`);
+				// Some backend builds ignore the `search` query param and just
+				// return the unfiltered first page; the test team reported the
+				// bar "not working" on those builds. Fetch a larger window and
+				// always re-filter client-side so the UX is deterministic.
+				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(value)}&page=0&size=100`);
 				if (this.searchCts.token.isCancellationRequested) { return; }
 				if (res.ok) {
 					const data = await res.json();
@@ -142,8 +146,9 @@ export class EhrTitlebarControls extends Disposable {
 						|| (Array.isArray(data?.data) ? data.data : null)
 						|| data?.content
 						|| (Array.isArray(data) ? data : null);
-					const patients: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
-					this._renderSearchResults(patients);
+					const raw: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
+					const filtered = this._clientFilterPatients(raw, value).slice(0, 10);
+					this._renderSearchResults(filtered);
 				} else {
 					// Show "No patients found" rather than silently doing nothing —
 					// the test team flagged the search bar as "not working" when
@@ -155,6 +160,20 @@ export class EhrTitlebarControls extends Disposable {
 				this._renderSearchResults([]);
 			}
 		}, 300);
+	}
+
+	private _clientFilterPatients(rows: PatientResult[], rawQuery: string): PatientResult[] {
+		const q = rawQuery.toLowerCase();
+		const usDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawQuery);
+		const isoFromUs = usDate ? `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}` : '';
+		return rows.filter(p => {
+			const fullName = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
+			const reversed = `${p.lastName || ''} ${p.firstName || ''}`.toLowerCase();
+			if (fullName.includes(q) || reversed.includes(q)) { return true; }
+			if (isoFromUs && (p.dateOfBirth || '').startsWith(isoFromUs)) { return true; }
+			if ((p.dateOfBirth || '').includes(rawQuery)) { return true; }
+			return false;
+		});
 	}
 
 	private _renderSearchResults(patients: PatientResult[]): void {

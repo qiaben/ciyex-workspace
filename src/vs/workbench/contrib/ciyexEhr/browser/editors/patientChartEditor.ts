@@ -274,8 +274,34 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 	},
 	{
 		key: 'claims', label: 'Claims', position: 5, tabs: [
-			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
-			{ key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
+			// Billing & Claims columns explicitly list a `providerName`-style
+			// alias chain so the table never falls back to the raw provider
+			// or organization ID. The 12.05.26 test report flagged ID-only
+			// columns app-wide; the chart cell renderer also runs the
+			// _resolveIdToName fallback as a second line of defense.
+			{
+				key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'],
+				columns: [
+					{ key: 'serviceDate', label: 'Service Date', aliases: ['serviceDate', 'date', 'period.start', 'created'] },
+					{ key: 'cptCode', label: 'CPT', aliases: ['cptCode', 'cpt'] },
+					{ key: 'icdCode', label: 'Diagnosis', aliases: ['icdCode', 'icd10Code', 'diagnosisCode'] },
+					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
+					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'organizationDisplay', 'insurerId', 'payerId'] },
+					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
+			{
+				key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'],
+				columns: [
+					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'identifier', 'id'] },
+					{ key: 'serviceDate', label: 'Service Date', aliases: ['serviceDate', 'date', 'period.start', 'created'] },
+					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
+					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'organizationDisplay', 'insurerId', 'payerId'] },
+					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 			// Submissions: route through the FHIR generic controller via the
 			// `claim-submissions` tab_field_config row (FHIR Claim resource).
 			// The legacy /api/portal/form-submissions endpoint required a
@@ -881,6 +907,23 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'card-images', title: 'Insurance Card Images', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'cardFrontUrl', label: 'Card Front (URL)', type: 'text', placeholder: 'https://...' },
 					{ key: 'cardBackUrl', label: 'Card Back (URL)', type: 'text', placeholder: 'https://...' },
+					{ key: 'cardFront', label: 'Card Front Upload', type: 'file' },
+					{ key: 'cardBack', label: 'Card Back Upload', type: 'file' },
+					{
+						key: 'networkStatus', label: 'Network Status', type: 'select', options: [
+							{ label: 'In-Network', value: 'in_network' },
+							{ label: 'Out-of-Network', value: 'out_of_network' },
+							{ label: 'Unknown', value: 'unknown' },
+						], defaultValue: 'in_network'
+					},
+					{ key: 'planYear', label: 'Plan Year', type: 'text', placeholder: '2026' },
+					{
+						key: 'eligibilityVerified', label: 'Eligibility Verified', type: 'select', options: [
+							{ label: 'No', value: 'no' },
+							{ label: 'Yes', value: 'yes' },
+						], defaultValue: 'no'
+					},
+					{ key: 'eligibilityVerifiedDate', label: 'Verification Date', type: 'date' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
@@ -1340,12 +1383,17 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	// plain text inputs in place.
 	payment: {
 		tabKey: 'payment',
-		// Mirrors web app PaymentPostingTab — Payment Date, Method, Amount, Reference,
-		// Apply to Claim, Status, Notes (in that order to match the New Payment form).
+		// Mirrors the EHR Web UI Post Payment / Collect Payment form. Fields
+		// are grouped into Payment Information (always visible) and
+		// Allocation & Adjustments (the line-item breakdown the test team
+		// flagged as missing in the workspace). Status defaults to 'posted'
+		// because both Post Payment and Collect Payment workflows record an
+		// applied payment, never a draft.
 		sections: [
 			{
-				key: 'payment', title: 'Payment', columns: 2, visible: true, collapsible: false, fields: [
+				key: 'payment', title: 'Payment Information', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'paymentDate', label: 'Payment Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'dateOfService', label: 'Date of Service', type: 'date' },
 					{
 						key: 'paymentMethod', label: 'Payment Method', type: 'select', required: true, options: [
 							{ label: 'Credit Card', value: 'credit_card' },
@@ -1353,24 +1401,48 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Check', value: 'check' },
 							{ label: 'EFT/ACH', value: 'eft' },
 							{ label: 'Insurance Payment', value: 'insurance' },
+							{ label: 'ERA / Remittance', value: 'era' },
 							{ label: 'Patient Copay', value: 'patient_copay' },
 							{ label: 'Patient Coinsurance', value: 'patient_coinsurance' },
 							{ label: 'Patient Deductible', value: 'patient_deductible' },
 							{ label: 'Patient Self-Pay', value: 'patient_self_pay' },
 						], defaultValue: 'credit_card'
 					},
-					{ key: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'amount', label: 'Total Amount', type: 'number', required: true, placeholder: '0.00' },
 					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
+					{ key: 'payerName', label: 'Payer / Insurance', type: 'text', placeholder: 'Aetna, BCBS, patient self...' },
 					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Select Status...', value: '' },
-							{ label: 'Draft', value: 'draft' },
 							{ label: 'Posted', value: 'issued' },
+							{ label: 'Draft', value: 'draft' },
 							{ label: 'Balanced', value: 'balanced' },
 							{ label: 'Cancelled', value: 'cancelled' },
+						], defaultValue: 'issued'
+					},
+				],
+			},
+			{
+				key: 'allocation', title: 'Allocation & Adjustments', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'allowedAmount', label: 'Allowed Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'paidAmount', label: 'Paid Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'adjustmentAmount', label: 'Adjustment Amount', type: 'number', placeholder: '0.00' },
+					{
+						key: 'adjustmentReason', label: 'Adjustment Reason', type: 'select', options: [
+							{ label: 'None', value: '' },
+							{ label: 'CO-45 — Contractual Obligation', value: 'CO-45' },
+							{ label: 'PR-1 — Patient Deductible', value: 'PR-1' },
+							{ label: 'PR-2 — Patient Coinsurance', value: 'PR-2' },
+							{ label: 'PR-3 — Patient Copay', value: 'PR-3' },
+							{ label: 'CO-97 — Bundled', value: 'CO-97' },
+							{ label: 'OA-23 — Prior Payer Adjustment', value: 'OA-23' },
+							{ label: 'CO-50 — Not Medically Necessary', value: 'CO-50' },
+							{ label: 'Other', value: 'OTHER' },
 						]
 					},
+					{ key: 'patientResponsibility', label: 'Patient Responsibility', type: 'number', placeholder: '0.00' },
+					{ key: 'remainingBalance', label: 'Remaining Balance', type: 'number', placeholder: '0.00' },
+					{ key: 'eraReference', label: 'ERA / EFT Reference', type: 'text', placeholder: 'Optional ERA trace #' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter notes...', colSpan: 2 },
 				],
 			},
@@ -1378,27 +1450,52 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	},
 	statements: {
 		tabKey: 'statements',
-		// Mirrors web app StatementsTab — Statement Date, Invoice Number, Balance Due,
-		// Status, Total Net, Recipient, Issuer, Notes.
+		// Mirrors the EHR Web UI StatementsTab — the test team flagged the
+		// workspace form as "completely different from the web." Fields now
+		// match the web app's New Statement modal: Statement Number,
+		// Statement Date, Period, Balance summary, Status, Notes, etc.
 		sections: [
 			{
 				key: 'statement', title: 'Statement Information', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'statementNumber', label: 'Statement Number', type: 'text', placeholder: 'STM-2026-0001', required: true },
 					{ key: 'statementDate', label: 'Statement Date', type: 'date', required: true, placeholder: 'mm/dd/yyyy', defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Enter invoice number...' },
-					{ key: 'balance', label: 'Balance Due', type: 'number', placeholder: '0' },
+					{ key: 'periodStart', label: 'Period Start', type: 'date' },
+					{ key: 'periodEnd', label: 'Period End', type: 'date' },
+					{ key: 'dueDate', label: 'Due Date', type: 'date' },
+					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Linked invoice...' },
 					{
-						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Select Status...', value: '' },
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Draft', value: 'draft' },
 							{ label: 'Sent', value: 'sent' },
 							{ label: 'Paid', value: 'paid' },
 							{ label: 'Overdue', value: 'overdue' },
 							{ label: 'Voided', value: 'voided' },
+						], defaultValue: 'draft'
+					},
+					{ key: 'recipient', label: 'Recipient', type: 'text', placeholder: 'Patient or guarantor name' },
+				],
+			},
+			{
+				key: 'amounts', title: 'Balance Summary', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'totalCharges', label: 'Total Charges', type: 'number', placeholder: '0.00' },
+					{ key: 'totalPayments', label: 'Total Payments', type: 'number', placeholder: '0.00' },
+					{ key: 'totalAdjustments', label: 'Total Adjustments', type: 'number', placeholder: '0.00' },
+					{ key: 'insuranceBalance', label: 'Insurance Balance', type: 'number', placeholder: '0.00' },
+					{ key: 'patientBalance', label: 'Patient Balance', type: 'number', placeholder: '0.00' },
+					{ key: 'balance', label: 'Balance Due', type: 'number', required: true, placeholder: '0.00' },
+				],
+			},
+			{
+				key: 'meta', title: 'Additional Details', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'issuer', label: 'Issuer', type: 'text', placeholder: 'Practice name' },
+					{
+						key: 'deliveryMethod', label: 'Delivery Method', type: 'select', options: [
+							{ label: 'Mail', value: 'mail' },
+							{ label: 'Email', value: 'email' },
+							{ label: 'Patient Portal', value: 'portal' },
+							{ label: 'Hand Delivered', value: 'hand' },
 						]
 					},
-					{ key: 'totalNet', label: 'Total Net', type: 'number', placeholder: '0' },
-					{ key: 'recipient', label: 'Recipient', type: 'text', placeholder: 'Enter recipient' },
-					{ key: 'issuer', label: 'Issuer', type: 'text', placeholder: 'Enter issuer...' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter notes...', colSpan: 2 },
 				],
 			},
@@ -1646,6 +1743,15 @@ export class PatientChartEditor extends EditorPane {
 	/** Page index per list-tab; persists across renders so filter changes feel stable. */
 	private readonly _listPage = new Map<string, number>();
 	private readonly _quickInfoValEls = new Map<string, HTMLElement>();
+	// Lookup caches: backend list endpoints return rows with `provider` /
+	// `providerId` / `insurance.id` fields holding raw IDs. The test team
+	// flagged the entire workspace as "showing provider id instead of name"
+	// (and the same for insurance company) — cache the lookup maps so the
+	// table cell renderer can swap IDs for human-readable names everywhere.
+	private readonly _providerNameById = new Map<string, string>();
+	private readonly _orgNameById = new Map<string, string>();
+	private readonly _locationNameById = new Map<string, string>();
+	private _lookupsLoaded = false;
 
 	constructor(
 		group: IEditorGroup,
@@ -1700,7 +1806,7 @@ export class PatientChartEditor extends EditorPane {
 		// independently as soon as its own response lands.
 		const quickInfoPromise = this._loadQuickInfo();
 
-		await Promise.all([this._loadLayout(), this._loadPatient()]);
+		await Promise.all([this._loadLayout(), this._loadPatient(), this._loadLookups()]);
 		if (token.isCancellationRequested) { return; }
 
 		this._renderHeader();
@@ -1744,9 +1850,28 @@ export class PatientChartEditor extends EditorPane {
 				byKey.set(userCat.key, userCat);
 			}
 		}
+		// Clinical section must show exactly these six tabs in this order —
+		// the workspace test report (12.05.26) calls out parity with the EHR
+		// Web UI Clinical sidebar. Any extras shipped via user chart-layout
+		// or backend layout overrides are dropped here so they can't sneak in.
+		const CLINICAL_TAB_WHITELIST = ['clinical-alerts', 'medications', 'labs', 'immunizations', 'procedures', 'history'];
+
 		this.categories = Array.from(byKey.values())
 			.sort((a, b) => a.position - b.position)
-			.map(cat => ({ ...cat, tabs: cat.tabs.filter(t => t.visible !== false).sort((a, b) => a.position - b.position) }));
+			.map(cat => {
+				let tabs = cat.tabs.filter(t => t.visible !== false).sort((a, b) => a.position - b.position);
+				if (cat.key === 'clinical') {
+					const byKey = new Map<string, ChartTab>();
+					for (const t of tabs) { byKey.set(t.key, t); }
+					tabs = CLINICAL_TAB_WHITELIST
+						.map((key, idx) => {
+							const tab = byKey.get(key);
+							return tab ? { ...tab, position: idx } : null;
+						})
+						.filter((t): t is ChartTab => t !== null);
+				}
+				return { ...cat, tabs };
+			});
 	}
 
 	private async _loadPatient(): Promise<void> {
@@ -1754,6 +1879,87 @@ export class PatientChartEditor extends EditorPane {
 			const res = await this.apiService.fetch(`/api/patients/${this.patientId}`);
 			if (res.ok) { this.patientData = (await res.json())?.data || {}; }
 		} catch { /* */ }
+	}
+
+	/**
+	 * Populate id→name maps used by the table cell renderer to swap raw
+	 * provider / organization / location IDs for human-readable names. The
+	 * test team called this out as a workspace-wide regression vs. the EHR
+	 * Web UI which already does this resolution server-side. Loaded once
+	 * per chart open; results are reused across every tab's table render.
+	 */
+	private async _loadLookups(): Promise<void> {
+		if (this._lookupsLoaded) { return; }
+		const safe = async (url: string): Promise<Record<string, unknown>[]> => {
+			try {
+				const r = await this.apiService.fetch(url);
+				if (!r.ok) { return []; }
+				const d = await r.json();
+				const list = d?.data?.content || d?.data || d?.content || d || [];
+				return Array.isArray(list) ? list as Record<string, unknown>[] : [];
+			} catch { return []; }
+		};
+		const [providers, orgs, locations] = await Promise.all([
+			safe('/api/providers?size=500'),
+			safe('/api/fhir-resource/organizations?size=500'),
+			safe('/api/locations?size=500'),
+		]);
+		for (const p of providers) {
+			const id = String(p.id ?? p.fhirId ?? '');
+			const first = String(p.firstName ?? '').trim();
+			const last = String(p.lastName ?? '').trim();
+			const name = (`${first} ${last}`.trim()) || String(p.displayName ?? p.name ?? '').trim();
+			if (id && name) { this._providerNameById.set(id, name); }
+		}
+		for (const o of orgs) {
+			const id = String(o.id ?? o.fhirId ?? '');
+			const name = String(o.name ?? o.organizationName ?? o.payerName ?? '').trim();
+			if (id && name) { this._orgNameById.set(id, name); }
+		}
+		for (const l of locations) {
+			const id = String(l.id ?? l.fhirId ?? '');
+			const name = String(l.name ?? l.locationName ?? '').trim();
+			if (id && name) { this._locationNameById.set(id, name); }
+		}
+		this._lookupsLoaded = true;
+	}
+
+	/**
+	 * Heuristic id→name resolution applied by the table cell renderer. Returns
+	 * the original value untouched when no lookup applies (so dates, free
+	 * text, names, codes etc. flow through unchanged). Column-key hints
+	 * narrow which lookup map is consulted so a patient id sitting in a
+	 * `payerId` column doesn't accidentally pull an org name.
+	 */
+	private _resolveIdToName(columnKey: string, raw: unknown): unknown {
+		if (raw === null || raw === undefined || raw === '') { return raw; }
+		if (typeof raw !== 'string' && typeof raw !== 'number') { return raw; }
+		const value = String(raw);
+		// Only resolve when the value LOOKS like an id (UUID, numeric, or
+		// FHIR-style "Resource/id"). Free-text names contain spaces or
+		// punctuation other than dashes, so leaving them as-is is safe.
+		const looksLikeId = /^[0-9a-fA-F]{8}-[0-9a-fA-F-]{20,}$/.test(value)
+			|| /^\d+$/.test(value)
+			|| /^[A-Z][A-Za-z]+\/[A-Za-z0-9-]+$/.test(value);
+		if (!looksLikeId) { return raw; }
+		const idOnly = value.includes('/') ? value.split('/').pop() || value : value;
+		const key = columnKey.toLowerCase();
+		const isProviderCol = /(provider|practitioner|performer|author|prescriber|administeredby|orderedby|ordering|referrer|referredby|signedby|attendingphysician|encounterprovider)/.test(key);
+		const isOrgCol = /(insur|payer|payor|organization|company)/.test(key);
+		const isLocationCol = /(location|facility|site)/.test(key);
+		if (isProviderCol) {
+			const name = this._providerNameById.get(idOnly);
+			if (name) { return name; }
+		}
+		if (isOrgCol) {
+			const name = this._orgNameById.get(idOnly);
+			if (name) { return name; }
+		}
+		if (isLocationCol) {
+			const name = this._locationNameById.get(idOnly);
+			if (name) { return name; }
+		}
+		return raw;
 	}
 
 	// Map workspace chart-tab keys to the backend's tab_field_config.tab_key.
@@ -1847,24 +2053,71 @@ export class PatientChartEditor extends EditorPane {
 						// Encounter / appointment / visit-note / messaging / etc. forms
 						// already resolve the patient from the chart's URL path, so any
 						// backend-shipped `patient` / `patientId` / `subject` reference
-						// field shows up as a redundant manual picker. The test team
-						// flagged the duplicate Patient field on the encounter "Add New"
-						// page (issue 4) and the appointment "patient should be
-						// auto-fetched" remark on issue 5 — drop these consistently for
-						// every patient-scoped tab so the user never has to re-enter
-						// the same patient twice.
+						// field is usually a redundant manual picker. Most tabs simply
+						// drop it. Encounters + Appointments are the exception — the
+						// test team wants the Patient field visible (with "Search
+						// Patient" placeholder) and auto-populated for the current
+						// patient so the record links unambiguously even when the
+						// form is opened outside a chart context.
 						const patientScopedTabs = new Set([
-							'encounters', 'appointments', 'visit-notes', 'medications', 'labs',
+							'visit-notes', 'medications', 'labs',
 							'immunizations', 'procedures', 'clinical-alerts', 'allergies', 'problems',
 							'documents', 'education', 'messaging', 'history', 'referrals',
 							'billing', 'claims', 'submissions', 'denials', 'era-remittance',
 							'transactions', 'payment', 'statements', 'issues', 'report',
 						]);
+						const patientPrefillTabs = new Set(['encounters', 'appointments']);
 						if (patientScopedTabs.has(tab.key)) {
 							sections = sections.map(s => ({
 								...s,
 								fields: s.fields.filter(f => f.key !== 'patient' && f.key !== 'patientId' && f.key !== 'subject'),
 							}));
+						} else if (patientPrefillTabs.has(tab.key)) {
+							// Promote the patient field to a search-with-prefill UX and
+							// move it to the top of the form. The chart's patient name
+							// flows through `defaultValue` — the patient-search input
+							// already shows the name in the visible textbox AND seeds
+							// the hidden id, so a subsequent save still posts a real
+							// FK reference even when the user never touches the field.
+							const ensurePatientField = (s: typeof sections[number]): typeof s => {
+								if (!s.fields.some(f => f.key === 'patient' || f.key === 'patientId' || f.key === 'subject')) {
+									return s;
+								}
+								const fields = s.fields.map(f => {
+									if (f.key === 'patient' || f.key === 'patientId' || f.key === 'subject') {
+										return {
+											...f,
+											type: 'patient-search',
+											placeholder: 'Search Patient',
+											required: true,
+											defaultValue: this.patientName || this.patientId,
+										};
+									}
+									return f;
+								});
+								return { ...s, fields };
+							};
+							const anyHas = sections.some(s => s.fields.some(f => f.key === 'patient' || f.key === 'patientId' || f.key === 'subject'));
+							if (anyHas) {
+								sections = sections.map(ensurePatientField);
+							} else if (sections.length > 0) {
+								sections = sections.map((s, idx) => idx === 0
+									? {
+										...s,
+										fields: [
+											{
+												key: 'patientId',
+												label: 'Patient',
+												type: 'patient-search',
+												placeholder: 'Search Patient',
+												required: true,
+												defaultValue: this.patientName || this.patientId,
+											},
+											...s.fields,
+										],
+									}
+									: s);
+							}
 						}
 						// Documents: drop the backend's `fileUrl` text input — we
 						// already render an inline file picker (`attachment`),
@@ -2469,9 +2722,9 @@ export class PatientChartEditor extends EditorPane {
 		// Summary cards grid
 		const cardsGrid = DOM.append(this.mainEl, DOM.$('div'));
 		cardsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:16px;';
-		this._renderSummaryCard(cardsGrid, 'allergies', '\u{1F6E1}\u{FE0F}', 'Allergies', 'AllergyIntolerance', 'allergyName', 'NKA — No Known Allergies');
-		this._renderSummaryCard(cardsGrid, 'problems', '\u{1F90D}', 'Medical Problems', 'Condition', 'code', 'No problems recorded');
-		this._renderSummaryCard(cardsGrid, 'insurance', '\u{1F512}', 'Insurance', 'Coverage', 'payerName', 'No insurance on file');
+		this._renderSummaryCard(cardsGrid, 'allergies', '\u{1F6E1}\u{FE0F}', 'Allergies', 'AllergyIntolerance', ['allergyName', 'name', 'code', 'substance'], 'NKA — No Known Allergies');
+		this._renderSummaryCard(cardsGrid, 'problems', '\u{1F90D}', 'Medical Problems', 'Condition', ['conditionName', 'condition', 'code', 'display'], 'No problems recorded');
+		this._renderSummaryCard(cardsGrid, 'insurance', '\u{1F512}', 'Insurance', 'Coverage', ['payerName', 'insurerName', 'organizationDisplay', 'planName'], 'No insurance on file');
 		this._renderPortalAccountCard(cardsGrid);
 	}
 
@@ -2509,26 +2762,39 @@ export class PatientChartEditor extends EditorPane {
 			{
 				ep: `${FHIR_MAP['AllergyIntolerance']}/patient/${this.patientId}?page=0&size=5`,
 				emoji: '\u{1F6A8}',
-				build: (a) => ({
-					title: `Allergy: ${String(a.allergyName || '')}`,
-					description: String(a.reaction || a.severity || ''),
-					timestamp: this._formatDate(a.startDate || a.recordedDate) || '',
-					sortKey: this._toEpoch(a.startDate || a.recordedDate),
-					status: String(a.status || 'active'),
-					emoji: '\u{1F6A8}',
-				}),
+				build: (a) => {
+					// Allergy display can come back as a CodeableConcept object
+					// — extract `.text` / `.coding[0].display` so the dashboard
+					// doesn't render "Allergy: " or "[object Object]". Same for
+					// every supporting field below.
+					const name = this._displayText(a.allergyName) || this._displayText(a.name) || this._displayText(a.code) || this._displayText(a.substance);
+					if (!name) { return null; }
+					const reaction = this._displayText(a.reaction) || this._displayText(a.manifestation) || this._displayText(a.severity) || '';
+					return {
+						title: `Allergy: ${name}`,
+						description: reaction,
+						timestamp: this._formatDate(a.startDate || a.recordedDate || a.onsetDate || a.onsetDateTime) || '',
+						sortKey: this._toEpoch(a.startDate || a.recordedDate || a.onsetDate || a.onsetDateTime),
+						status: this._displayText(a.status) || this._displayText(a.clinicalStatus) || 'active',
+						emoji: '\u{1F6A8}',
+					};
+				},
 			},
 			{
 				ep: `${FHIR_MAP['Condition']}/patient/${this.patientId}?page=0&size=5`,
 				emoji: '\u{26A0}\u{FE0F}',
-				build: (c) => ({
-					title: `Problem: ${String(c.condition || c.code || '')}`,
-					description: String(c.severity || ''),
-					timestamp: this._formatDate(c.onsetDate || c.recordedDate) || '',
-					sortKey: this._toEpoch(c.onsetDate || c.recordedDate),
-					status: String(c.clinicalStatus || c.status || ''),
-					emoji: '\u{26A0}\u{FE0F}',
-				}),
+				build: (c) => {
+					const name = this._displayText(c.conditionName) || this._displayText(c.condition) || this._displayText(c.code) || this._displayText(c.display);
+					if (!name) { return null; }
+					return {
+						title: `Problem: ${name}`,
+						description: this._displayText(c.severity) || '',
+						timestamp: this._formatDate(c.onsetDate || c.onsetDateTime || c.recordedDate) || '',
+						sortKey: this._toEpoch(c.onsetDate || c.onsetDateTime || c.recordedDate),
+						status: this._displayText(c.clinicalStatus) || this._displayText(c.status) || 'active',
+						emoji: '\u{26A0}\u{FE0F}',
+					};
+				},
 			},
 			{
 				ep: `${FHIR_MAP['MedicationRequest']}/patient/${this.patientId}?page=0&size=5`,
@@ -2608,7 +2874,8 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
-	private _renderSummaryCard(parent: HTMLElement, _key: string, icon: string, title: string, resource: string, displayField: string, emptyMsg: string): void {
+	private _renderSummaryCard(parent: HTMLElement, _key: string, icon: string, title: string, resource: string, displayFields: string | string[], emptyMsg: string): void {
+		const fieldList = Array.isArray(displayFields) ? displayFields : [displayFields];
 		const card = DOM.append(parent, DOM.$('div'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
 
@@ -2650,14 +2917,12 @@ export class PatientChartEditor extends EditorPane {
 					for (const item of items.slice(0, 3)) {
 						const row = DOM.append(body, DOM.$('div'));
 						row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
-						const v = item[displayField];
-						let text: string;
-						if (v && typeof v === 'object') {
-							const obj = v as Record<string, unknown>;
-							text = String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || JSON.stringify(v).substring(0, 40));
-						} else {
-							text = String(v || item.name || item.code || '—');
+						let text = '';
+						for (const f of fieldList) {
+							text = this._displayText(item[f]);
+							if (text) { break; }
 						}
+						if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || '—'; }
 						row.textContent = text.substring(0, 50);
 					}
 				} else {
@@ -3422,6 +3687,34 @@ export class PatientChartEditor extends EditorPane {
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
+				// Education assignments — the backend's PatientEducationService
+				// expects nested foreign-key objects ({ material: { id }, patient:
+				// { id } }) rather than flat ID fields, otherwise JPA's @ManyToOne
+				// relations fall through with "The given id must not be null".
+				// Keep the flat ids in the payload too so callers that accept
+				// either shape don't regress.
+				if (tab.key === 'education' && !isEdit) {
+					const matId = payload.materialId;
+					if (matId && typeof matId === 'string') {
+						payload.material = { id: matId };
+					}
+					if (this.patientId && !payload.patient) {
+						payload.patient = { id: this.patientId };
+					}
+				}
+				// Documents — the FHIR DocumentReference URI search-parameter
+				// has a uniqueness constraint on HAPI's hfj_spidx_uri index.
+				// Two uploads without a distinct URL collide on that index
+				// and produce HAPI-0550 ("could not execute batch") on save.
+				// Inject a unique urn:uuid token whenever the form left the
+				// URL blank so every record indexes cleanly.
+				if (tab.key === 'documents' && !isEdit) {
+					const existingUrl = String(payload.url || payload.fileUrl || '').trim();
+					if (!existingUrl) {
+						const uniq = `urn:uuid:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+						payload.url = uniq;
+					}
+				}
 				// Org-level FHIR resources (Facility / Location) skip the
 				// /patient/{id} prefix — they are not patient-scoped.
 				const fhirPatient = isFhir && this._isPatientScoped(tab);
@@ -3794,14 +4087,30 @@ export class PatientChartEditor extends EditorPane {
 			recalcDuration();
 		}
 
-		// Appointments: pre-fill the patient field with the current chart's
-		// patient on a fresh form. Backend tab_field_config typically doesn't
-		// ship a patient picker because the URL carries patientId — but if
-		// the form does have one, default it to the chart's patient name so
-		// users don't have to retype it.
-		const patientInput = this._formInputs.get('patient') as HTMLInputElement | undefined;
-		if (patientInput && !patientInput.value && this.patientName) {
-			patientInput.value = this.patientName;
+		// Appointments / Encounters: pre-fill the patient field with the
+		// current chart's patient on a fresh form. The patient-search input
+		// stores the FK ID in a hidden sibling and the display name in the
+		// visible textbox — set BOTH so the backend still receives the real
+		// patientId after the user saves without touching the field.
+		for (const key of ['patient', 'patientId', 'subject'] as const) {
+			const hiddenInput = this._formInputs.get(key) as HTMLInputElement | undefined;
+			if (!hiddenInput) { continue; }
+			if (!hiddenInput.value && this.patientId) {
+				hiddenInput.value = this.patientId;
+				// The visible textbox lives one parent up — `_buildSearchInput`
+				// appends a text input, the magnifying-glass icon, then the
+				// hidden input as siblings. Walk the parent's children to find
+				// the first visible text input so the user sees the patient name.
+				const wrap = hiddenInput.parentElement;
+				if (wrap && this.patientName) {
+					for (const child of Array.from(wrap.children)) {
+						if (DOM.isHTMLInputElement(child) && child.type === 'text' && !child.value) {
+							child.value = this.patientName;
+							break;
+						}
+					}
+				}
+			}
 		}
 
 		// Apply showWhen conditions and attach listeners to controlling fields
@@ -3966,10 +4275,33 @@ export class PatientChartEditor extends EditorPane {
 		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:280px;overflow-y:auto;display:none;padding:4px 0;';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
-			dropdown.style.top = `${rect.bottom + 4}px`;
-			dropdown.style.left = `${rect.left}px`;
-			dropdown.style.minWidth = `${rect.width}px`;
-			dropdown.style.maxWidth = `${Math.max(rect.width, 360)}px`;
+			const viewportWidth = DOM.getActiveWindow().innerWidth;
+			const viewportHeight = DOM.getActiveWindow().innerHeight;
+			// Desired width — at least the input width, capped at 380px, and
+			// never wider than the viewport (minus a small margin). The test
+			// team flagged the ICD-10 dropdown as "overlapping with the page"
+			// because the previous logic could push the dropdown's right edge
+			// past the page chrome on narrow form cells.
+			const desiredWidth = Math.min(Math.max(rect.width, 380), viewportWidth - 16);
+			// Anchor to the input's left edge but clamp so the dropdown stays
+			// inside the viewport. If the right edge would overflow, slide it
+			// left so it ends 8px before the viewport edge.
+			let left = rect.left;
+			if (left + desiredWidth > viewportWidth - 8) {
+				left = Math.max(8, viewportWidth - desiredWidth - 8);
+			}
+			// Vertical: prefer below the input. Flip above if there's not
+			// enough room below, so the dropdown never falls off-screen.
+			let top = rect.bottom + 4;
+			const estimatedHeight = 280;
+			if (top + estimatedHeight > viewportHeight - 8 && rect.top > estimatedHeight + 8) {
+				top = rect.top - estimatedHeight - 4;
+			}
+			dropdown.style.top = `${top}px`;
+			dropdown.style.left = `${left}px`;
+			dropdown.style.width = `${desiredWidth}px`;
+			dropdown.style.minWidth = '';
+			dropdown.style.maxWidth = '';
 		};
 		// Recompute on overlay/window scroll & resize so the dropdown tracks the input.
 		const win = DOM.getActiveWindow();
@@ -4372,6 +4704,12 @@ export class PatientChartEditor extends EditorPane {
 						break;
 					}
 				}
+				// Provider / organization / location columns frequently arrive as
+				// raw IDs (numeric, UUID, "Practitioner/abc-123"). Swap with the
+				// resolved display name so the table never shows a bare ID in a
+				// human-readable column. The resolver is a no-op for any value
+				// that doesn't look like an ID.
+				v = this._resolveIdToName(k, v);
 				if (v === null || v === undefined || v === '') { return ''; }
 				if (typeof v === 'object') {
 					const obj = v as Record<string, unknown>;
@@ -4397,21 +4735,12 @@ export class PatientChartEditor extends EditorPane {
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
-			// Appointment rows expose the same per-row workflow shortcuts the
-			// EHR-UI offers: Open Chart (jump to the linked encounter when the
-			// appointment has one, else stay on the chart), Record Vitals
-			// (open the chart's Vitals tab), Visit Summary (encounter form).
-			// Test report 02.05.26 round 4 #11 specifically asked for this.
-			const extraActions = tab.key === 'appointments'
-				? [
-					// allow-any-unicode-next-line
-					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: () => this._openAppointmentChart(item) },
-					// allow-any-unicode-next-line
-					{ icon: '❤', title: 'Record Vitals', color: '#a855f7', onClick: () => this._navigate('vitals') },
-					// allow-any-unicode-next-line
-					{ icon: '🗒', title: 'Visit Summary', color: '#f59e0b', onClick: () => this._openAppointmentVisitSummary(item) },
-				]
-				: undefined;
+			// Appointment rows now expose only Edit (row click → edit dialog)
+			// and Delete — the 12.05.26 workspace test report asked us to
+			// strip the previous Open Chart / Record Vitals / Visit Summary
+			// shortcuts. Those workflows are still reachable from the
+			// calendar and the sidebar.
+			const extraActions = undefined;
 
 			return { cells, onClick, onDelete, extraActions };
 		});
@@ -4570,31 +4899,43 @@ export class PatientChartEditor extends EditorPane {
 		this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, 'new', this.patientName, 'New Encounter'), {}, SIDE_GROUP);
 	}
 
-	/** "Open Chart" appointment-row action — open the encounter linked to the
-	 *  appointment when one exists, otherwise jump to the chart's Encounters
-	 *  tab so the user can pick one (or create a new encounter). */
-	private _openAppointmentChart(item: Record<string, unknown>): void {
-		const encounterId = String(item.encounterId || '');
-		if (encounterId) {
-			this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, encounterId, this.patientName, 'Encounter'), {});
-			return;
-		}
-		this._navigate('encounters');
-	}
-
-	/** "Visit Summary" appointment-row action — same routing as Open Chart
-	 *  for now (the dedicated summary page lives in EHR-UI; until the desktop
-	 *  workspace ports it, the encounter form is the closest equivalent). */
-	private _openAppointmentVisitSummary(item: Record<string, unknown>): void {
-		const encounterId = String(item.encounterId || '');
-		if (encounterId) {
-			this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, encounterId, this.patientName, 'Visit Summary'), {});
-			return;
-		}
-		this._navigate('encounters');
-	}
-
 	// --- Formatting helpers ---
+
+	/**
+	 * Resolve a FHIR-shaped field to a plain display string. Handles raw
+	 * strings, CodeableConcept objects ({text, coding:[{display}]}), nested
+	 * `valueCodeableConcept` wrappers, and arrays-of-codings. Returns '' when
+	 * nothing displayable can be extracted — callers can short-circuit on
+	 * empty.
+	 */
+	private _displayText(raw: unknown): string {
+		if (raw === null || raw === undefined) { return ''; }
+		if (typeof raw === 'string' || typeof raw === 'number') { return String(raw).trim(); }
+		if (Array.isArray(raw)) {
+			for (const item of raw) {
+				const got = this._displayText(item);
+				if (got) { return got; }
+			}
+			return '';
+		}
+		if (typeof raw === 'object') {
+			const obj = raw as Record<string, unknown>;
+			const direct = (typeof obj.text === 'string' && obj.text)
+				|| (typeof obj.display === 'string' && obj.display)
+				|| (typeof obj.name === 'string' && obj.name);
+			if (direct) { return String(direct).trim(); }
+			const coding = obj.coding as Array<Record<string, unknown>> | undefined;
+			if (Array.isArray(coding)) {
+				for (const c of coding) {
+					if (typeof c?.display === 'string' && c.display) { return c.display.trim(); }
+					if (typeof c?.code === 'string' && c.code) { return c.code.trim(); }
+				}
+			}
+			const nestedCC = obj.valueCodeableConcept || obj.code || obj.severity || obj.clinicalStatus;
+			if (nestedCC && nestedCC !== raw) { return this._displayText(nestedCC); }
+		}
+		return '';
+	}
 
 	private _formatDate(raw: unknown): string {
 		if (!raw) { return ''; }

@@ -392,32 +392,11 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Calendar-scope filter — narrows the visible appointments by patient
-		// name, provider name, location, or visit type. The test team flagged
-		// the previous "Filter by patient..." placeholder as unclear and asked
-		// for a working search bar; broadening the predicate to all four
-		// fields makes the bar match the user's expectation that "search"
-		// covers any column they can see.
-		const searchWrap = DOM.append(this.headerBar, DOM.$('.cal-patient-search'));
-		searchWrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:12px;position:relative;';
-		const searchIcon = DOM.append(searchWrap, DOM.$('span'));
-		searchIcon.classList.add('codicon');
-		searchIcon.classList.add('codicon-search');
-		searchIcon.style.cssText = 'position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);pointer-events:none;';
-		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
-		searchInput.type = 'text';
-		searchInput.placeholder = 'Search by patient, provider, location, type…';
-		searchInput.value = this.patientNameFilter;
-		searchInput.style.cssText = 'padding:4px 10px 4px 28px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;width:240px;';
-		let searchDebounce: ReturnType<typeof setTimeout> | undefined;
-		searchInput.addEventListener('input', () => {
-			if (searchDebounce) { clearTimeout(searchDebounce); }
-			searchDebounce = setTimeout(() => {
-				this.patientNameFilter = searchInput.value.trim();
-				this._updateHeaderCount();
-				this._renderGrid();
-			}, 200);
-		});
+		// Calendar header no longer carries its own search bar — the test
+		// team flagged it as redundant with the global "Search patients"
+		// bar in the title bar (next to "Add Patient"). The grid renderer
+		// still honors `patientNameFilter`, so the filter pipeline is
+		// untouched; we just no longer expose a second input here.
 
 		// Plain spacer between filter and view toggles.
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
