@@ -358,7 +358,7 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	// allow-any-unicode-next-line
-	// ─────────── FHIR Generic Section ───────────
+	// ----------- FHIR Generic Section -----------
 
 	private listBodyEl: HTMLElement | null = null;
 	private practiceLogoData: string | null = null;
@@ -691,14 +691,33 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	private _tableAction(parent: HTMLElement, icon: string, title: string, fn: () => void, kind: 'normal' | 'danger' = 'normal'): void {
+		// Use a CSS class with :hover so the background only paints while the
+		// cursor is actually inside the button. Previously the JS mouseenter /
+		// mouseleave pair could leave the button "stuck" with the hover bg
+		// (e.g. when a click took focus away or the cursor exited via the
+		// button edge without firing mouseleave). The team report flagged this
+		// as "hover state sticks".
+		this._ensureActionStyles();
 		const btn = DOM.append(parent, DOM.$('button'));
+		btn.className = kind === 'danger' ? 'sh-action-btn sh-action-btn-danger' : 'sh-action-btn';
 		btn.textContent = icon;
 		btn.title = title;
-		const color = kind === 'danger' ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-foreground)';
-		btn.style.cssText = `background:transparent;border:none;cursor:pointer;color:${color};opacity:0.7;font-size:13px;padding:3px 8px;margin-left:2px;border-radius:3px;`;
-		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.06))'; btn.style.opacity = '1'; });
-		btn.addEventListener('mouseleave', () => { btn.style.background = ''; btn.style.opacity = '0.7'; });
 		btn.addEventListener('click', () => fn());
+	}
+
+	private _stylesInjected = false;
+	private _fontSizeStyleInjected = false;
+	private _ensureActionStyles(): void {
+		if (this._stylesInjected) { return; }
+		this._stylesInjected = true;
+		const style = mainWindow.document.createElement('style');
+		style.textContent = `
+			.sh-action-btn { background: transparent; border: none; cursor: pointer; color: var(--vscode-foreground); opacity: 0.7; font-size: 13px; padding: 3px 8px; margin-left: 2px; border-radius: 3px; transition: background-color 0.08s, opacity 0.08s; }
+			.sh-action-btn-danger { color: var(--vscode-errorForeground, #f48771); }
+			.sh-action-btn:hover { background-color: var(--vscode-list-hoverBackground, rgba(255,255,255,0.06)); opacity: 1; }
+			.sh-action-btn:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+		`;
+		mainWindow.document.head.appendChild(style);
 	}
 
 	private _tableColumns(): { key: string; label: string }[] {
@@ -763,7 +782,7 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	// allow-any-unicode-next-line
-	// ─────────── Form rendering ───────────
+	// ----------- Form rendering -----------
 
 	private _renderFormBody(root: HTMLElement): void {
 		const wrap = DOM.append(root, DOM.$('div'));
@@ -841,7 +860,7 @@ export class SettingsHubEditor extends EditorPane {
 	 * Without provider availability set, appointments cannot be scheduled \u2014 this
 	 * unblocks the high-priority issue called out in the team test report.
 	 */
-	private async _openProviderAvailabilityModal(providerId: string): Promise<void> {
+	private async _openProviderAvailabilityModal(providerId: string, onSaved?: () => void): Promise<void> {
 		const overlay = DOM.append(this.contentEl, DOM.$('div'));
 		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
 
@@ -1001,6 +1020,7 @@ export class SettingsHubEditor extends EditorPane {
 				if (res.ok) {
 					this.notificationService.notify({ severity: Severity.Info, message: 'Availability saved.' });
 					overlay.remove();
+					if (onSaved) { onSaved(); }
 				} else {
 					const txt = await res.text().catch(() => '');
 					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 200)}` });
@@ -1173,6 +1193,88 @@ export class SettingsHubEditor extends EditorPane {
 				const urlEl = DOM.append(controls, DOM.$('span'));
 				urlEl.textContent = initial && !initial.startsWith('data:') ? initial : (initial ? '(uploaded image)' : '-');
 				urlEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);word-break:break-all;';
+			}
+			if (error) {
+				const e = DOM.append(cell, DOM.$('div'));
+				e.textContent = error;
+				e.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;';
+			}
+			return;
+		}
+
+		// Special: Provider Availability field — instead of rendering as plain
+		// text input, show a summary of the saved schedule blocks (Mon-Fri 9-5,
+		// etc.) plus a Manage Availability button that opens the modal editor.
+		// This fixes the team report bug "saved availability is not showing in
+		// this tab" — previously the FHIR provider's `availability` field
+		// rendered as an empty input even when blocks existed in the backend.
+		const isProvider = this.activeKey === 'providers' || this.activeKey === 'provider';
+		const isAvailabilityField = isProvider && /availability|schedule/i.test(field.key);
+		if (isAvailabilityField) {
+			const wrap = DOM.append(cell, DOM.$('div'));
+			wrap.style.cssText = `display:flex;flex-direction:column;gap:8px;padding:8px 10px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:4px;min-height:42px;`;
+
+			const summary = DOM.append(wrap, DOM.$('div'));
+			summary.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+
+			const recordId = this.selectedRecord ? ((this.selectedRecord as { id?: string | number }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
+			const renderSummary = async (): Promise<void> => {
+				DOM.clearNode(summary);
+				if (!recordId) {
+					const note = DOM.append(summary, DOM.$('span'));
+					note.textContent = 'Save the provider first to manage availability.';
+					note.style.fontStyle = 'italic';
+					return;
+				}
+				const loading = DOM.append(summary, DOM.$('span'));
+				loading.textContent = 'Loading availability…';
+				try {
+					const r = await this.apiService.fetch(`/api/providers/${encodeURIComponent(String(recordId))}/availability`);
+					if (!r.ok) {
+						loading.textContent = `Unable to load availability (${r.status}).`;
+						return;
+					}
+					const j = await r.json();
+					const list: Array<Record<string, unknown>> = (j?.data as Array<Record<string, unknown>>) || (Array.isArray(j) ? j : []);
+					DOM.clearNode(summary);
+					if (list.length === 0) {
+						const empty = DOM.append(summary, DOM.$('span'));
+						empty.textContent = 'No availability blocks. Click "Manage Availability" to add one.';
+						empty.style.fontStyle = 'italic';
+						return;
+					}
+					const dayLabels: Record<string, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
+					for (const b of list) {
+						const rec = (b.recurrence as Record<string, unknown>) || {};
+						const days: string[] = ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []).map(d => dayLabels[d] || d);
+						const start = (rec.startTime as string) || (b.startTime as string) || '?';
+						const end = (rec.endTime as string) || (b.endTime as string) || '?';
+						const row = DOM.append(summary, DOM.$('div'));
+						row.style.cssText = 'display:flex;gap:10px;font-size:12px;color:var(--vscode-foreground);padding:2px 0;';
+						const dayBadge = DOM.append(row, DOM.$('span'));
+						dayBadge.textContent = days.join(', ') || '(no days)';
+						dayBadge.style.cssText = 'font-weight:500;min-width:140px;';
+						const timeBadge = DOM.append(row, DOM.$('span'));
+						timeBadge.textContent = `${start} - ${end}`;
+						timeBadge.style.cssText = 'color:var(--vscode-descriptionForeground);';
+					}
+				} catch {
+					loading.textContent = 'Waiting for login…';
+				}
+			};
+			void renderSummary();
+
+			if (!isView && !field.readOnly) {
+				const btn = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+				btn.textContent = '\u{1F4C5} Manage Availability';
+				btn.style.cssText = 'align-self:flex-start;padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+				btn.addEventListener('click', () => {
+					if (!recordId) {
+						this.notificationService.notify({ severity: Severity.Warning, message: 'Save the provider first to set availability.' });
+						return;
+					}
+					this._openProviderAvailabilityModal(String(recordId), () => { void renderSummary(); });
+				});
 			}
 			if (error) {
 				const e = DOM.append(cell, DOM.$('div'));
@@ -1426,7 +1528,7 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	// allow-any-unicode-next-line
-	// ─────────── Built-in pages ───────────
+	// ----------- Built-in pages -----------
 
 	private async _renderUsers(): Promise<void> {
 		const root = DOM.append(this.contentEl, DOM.$('div'));
@@ -1702,7 +1804,11 @@ export class SettingsHubEditor extends EditorPane {
 				det.textContent = `${item.email || ''}${item.email && item.npi ? ' · ' : ''}${item.npi ? `NPI ${item.npi}` : ''}`;
 				det.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
 			}
-			if (item.email && !emailInp.value) { emailInp.value = item.email; }
+			// Always overwrite the email field when a subject is picked — the team
+			// flagged that the email should auto-fetch from the provider's record
+			// (previously we only auto-filled when the field was empty, which
+			// meant switching subjects left the old email in place).
+			if (item.email) { emailInp.value = item.email; }
 			searchInput.value = `${item.firstName} ${item.lastName}`.trim();
 			results.style.display = 'none';
 		};
@@ -1725,25 +1831,60 @@ export class SettingsHubEditor extends EditorPane {
 					none.textContent = 'No results';
 					none.style.cssText = 'padding:8px 10px;color:var(--vscode-descriptionForeground);font-size:12px;';
 				}
+				// Cross-reference the result list with existing user accounts so we
+				// can flag providers/patients that already have a login. The team
+				// flagged that "providers who already have logins should show a
+				// green Has login badge so we don't create duplicates".
+				const existingEmails = new Set<string>();
+				const existingFhirIds = new Set<string>();
+				try {
+					const ur = await this.apiService.fetch('/api/admin/users?page=0&size=200');
+					if (ur.ok) {
+						const uj = await ur.json();
+						const users: Array<Record<string, unknown>> = Array.isArray(uj?.data) ? uj.data : (uj?.data?.content || uj?.content || (Array.isArray(uj) ? uj : []));
+						for (const u of users) {
+							if (u.email) { existingEmails.add(String(u.email).toLowerCase()); }
+							const linkedFhir = (u as { practitionerFhirId?: string; patientFhirId?: string }).practitionerFhirId || (u as { patientFhirId?: string }).patientFhirId;
+							if (linkedFhir) { existingFhirIds.add(String(linkedFhir)); }
+						}
+					}
+				} catch { /* ignore — fall back to no badges */ }
+
 				for (const row of list) {
 					const ident = (row['identification'] || {}) as Record<string, unknown>;
 					const first = String(row['identification.firstName'] || ident.firstName || row.firstName || '');
 					const last = String(row['identification.lastName'] || ident.lastName || row.lastName || '');
 					const email = String((row['identification.email'] || ident.email || row.email || '') as string);
 					const npi = String(row.npi || '');
+					const rowId = String(row.id || row.fhirId || '');
+					const hasLogin = (email && existingEmails.has(email.toLowerCase())) || (rowId && existingFhirIds.has(rowId));
+
 					const item = DOM.append(results, DOM.$('div'));
-					item.style.cssText = 'padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+					item.style.cssText = `padding:8px 10px;cursor:${hasLogin ? 'not-allowed' : 'pointer'};font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);${hasLogin ? 'opacity:0.7;' : ''}`;
 					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
 					item.addEventListener('mouseleave', () => { item.style.background = ''; });
-					const n = DOM.append(item, DOM.$('div'));
+
+					const nameRow = DOM.append(item, DOM.$('div'));
+					nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+					const n = DOM.append(nameRow, DOM.$('span'));
 					n.textContent = `${first} ${last}`.trim() || '(no name)';
 					n.style.fontWeight = '500';
+					if (hasLogin) {
+						const badge = DOM.append(nameRow, DOM.$('span'));
+						badge.textContent = 'Has login';
+						badge.style.cssText = 'font-size:10px;font-weight:500;padding:1px 8px;border-radius:10px;background:rgba(34,197,94,0.18);color:#22c55e;';
+					}
 					const meta = DOM.append(item, DOM.$('div'));
 					meta.textContent = email + (email && npi ? ' · ' : '') + (npi ? `NPI ${npi}` : '');
 					meta.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
 					item.addEventListener('mousedown', e => {
 						e.preventDefault();
-						setSelected({ id: String(row.id || row.fhirId || ''), firstName: first, lastName: last, email, npi });
+						if (hasLogin) {
+							this.notificationService.notify({ severity: Severity.Warning, message: `${first} ${last} already has a login.` });
+							return;
+						}
+						setSelected({ id: rowId, firstName: first, lastName: last, email, npi });
 					});
 				}
 				results.style.display = 'block';
@@ -2225,70 +2366,283 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Create / Edit Role drawer — mirrors the EHR Web UI exactly:
+	 *   - Role Name (uppercase + underscores, locked after creation)
+	 *   - Display Label
+	 *   - Description
+	 *   - Permissions: grouped checkboxes (Messaging, Reports, Administration)
+	 *     Each parent toggle expands all child permissions.
+	 *   - FHIR API Scopes: matrix with Read / Write columns per resource
+	 *     grouped by Clinical / Administrative / Billing & Financial /
+	 *     Organization & Settings, plus a "Select All FHIR Scopes" master.
+	 */
 	private _showRoleDialog(root: HTMLElement, role: Record<string, unknown> | null): void {
 		const isEdit = role !== null;
 		const overlay = DOM.append(root, DOM.$('.sh-dialog-overlay'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:flex-end;z-index:1000;';
+
+		// Right-anchored drawer (matches the web's slide-in modal in image_35/36)
 		const dialog = DOM.append(overlay, DOM.$('div'));
-		dialog.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:24px;width:480px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:80vh;overflow-y:auto;';
-		const t = DOM.append(dialog, DOM.$('h3'));
-		t.textContent = isEdit ? 'Edit Role' : 'New Role';
-		t.style.cssText = 'margin:0 0 16px;font-size:15px;font-weight:600;';
+		dialog.style.cssText = 'background:var(--vscode-editor-background);border-left:1px solid var(--vscode-editorWidget-border);width:540px;max-width:96vw;height:100%;box-shadow:-8px 0 24px rgba(0,0,0,0.4);display:flex;flex-direction:column;';
 
-		const mkField = (label: string, key: string, val?: string) => {
-			const wrap = DOM.append(dialog, DOM.$('div'));
-			wrap.style.cssText = 'margin-bottom:12px;';
-			const lbl = DOM.append(wrap, DOM.$('label'));
-			lbl.textContent = label;
-			lbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-			const inp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
-			inp.type = 'text';
-			inp.value = val || '';
-			inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
-			return { inp, key };
+		const head = DOM.append(dialog, DOM.$('div'));
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const t = DOM.append(head, DOM.$('h3'));
+		t.textContent = isEdit ? 'Edit Role' : 'Create Role';
+		t.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '\u2715';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.addEventListener('click', () => overlay.remove());
+
+		const body = DOM.append(dialog, DOM.$('div'));
+		body.style.cssText = 'flex:1;overflow-y:auto;padding:18px 22px;';
+
+		const labelStyle = 'display:block;font-size:12px;font-weight:600;color:var(--vscode-foreground);margin:14px 0 6px;';
+		const inputStyle = 'width:100%;padding:8px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+
+		// Role Name (locked after creation)
+		const nameLbl = DOM.append(body, DOM.$('label'));
+		nameLbl.textContent = 'Role Name *';
+		nameLbl.style.cssText = labelStyle;
+		const nameInp = DOM.append(body, DOM.$('input')) as HTMLInputElement;
+		nameInp.value = (role?.roleName as string) || '';
+		nameInp.placeholder = 'e.g. CHARGE_NURSE';
+		nameInp.disabled = isEdit;
+		nameInp.style.cssText = inputStyle;
+		const nameHelp = DOM.append(body, DOM.$('div'));
+		nameHelp.textContent = 'Uppercase with underscores. Cannot be changed after creation.';
+		nameHelp.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+
+		const labelLbl = DOM.append(body, DOM.$('label'));
+		labelLbl.textContent = 'Display Label *';
+		labelLbl.style.cssText = labelStyle;
+		const labelInp = DOM.append(body, DOM.$('input')) as HTMLInputElement;
+		labelInp.value = (role?.roleLabel as string) || '';
+		labelInp.placeholder = 'e.g. Charge Nurse';
+		labelInp.style.cssText = inputStyle;
+
+		const descLbl = DOM.append(body, DOM.$('label'));
+		descLbl.textContent = 'Description';
+		descLbl.style.cssText = labelStyle;
+		const descArea = DOM.append(body, DOM.$('textarea')) as HTMLTextAreaElement;
+		descArea.value = (role?.description as string) || '';
+		descArea.rows = 3;
+		descArea.style.cssText = inputStyle + 'resize:vertical;font-family:inherit;';
+
+		// -- Permissions section (grouped) -----------------------------
+		const selectedPerms = new Set<string>(((role?.permissions as string[]) || []));
+		const PERMISSION_GROUPS: Array<{ label: string; perms: Array<{ key: string; label: string }> }> = [
+			{ label: 'Messaging', perms: [{ key: 'messaging.read', label: 'View Messages' }, { key: 'messaging.send', label: 'Send Messages' }] },
+			{ label: 'Reports', perms: [{ key: 'reports.read', label: 'View Reports' }, { key: 'reports.manage', label: 'Manage Reports' }] },
+			{
+				label: 'Administration', perms: [
+					{ key: 'admin.users', label: 'Manage Users' },
+					{ key: 'admin.settings', label: 'Manage Settings' },
+					{ key: 'admin.roles', label: 'Manage Roles' },
+				]
+			},
+		];
+
+		const permsHeader = DOM.append(body, DOM.$('div'));
+		permsHeader.style.cssText = 'font-size:13px;font-weight:600;margin:18px 0 10px;display:flex;align-items:center;gap:8px;';
+		const permsTitle = DOM.append(permsHeader, DOM.$('span'));
+		permsTitle.textContent = 'Permissions';
+		const permsCounter = DOM.append(permsHeader, DOM.$('span'));
+		permsCounter.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);font-weight:400;';
+
+		const updatePermsCounter = (): void => {
+			permsCounter.textContent = `(${selectedPerms.size} selected)`;
 		};
+		updatePermsCounter();
 
-		const nameField = mkField('Role Name (key)', 'roleName', role?.roleName as string);
-		const labelField = mkField('Role Label (display)', 'roleLabel', role?.roleLabel as string);
-		const descField = mkField('Description', 'description', role?.description as string);
+		for (const group of PERMISSION_GROUPS) {
+			const card = DOM.append(body, DOM.$('div'));
+			card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 14px;margin-bottom:8px;';
 
-		const permWrap = DOM.append(dialog, DOM.$('div'));
-		permWrap.style.cssText = 'margin-bottom:12px;';
-		const permLbl = DOM.append(permWrap, DOM.$('label'));
-		permLbl.textContent = 'Permissions (comma-separated)';
-		permLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-		const permArea = DOM.append(permWrap, DOM.$('textarea')) as HTMLTextAreaElement;
-		permArea.value = ((role?.permissions || []) as string[]).join(', ');
-		permArea.rows = 3;
-		permArea.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;outline:none;font-family:inherit;resize:vertical;';
+			const head = DOM.append(card, DOM.$('label'));
+			head.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px;margin-bottom:6px;';
+			const parentCb = DOM.append(head, DOM.$('input')) as HTMLInputElement;
+			parentCb.type = 'checkbox';
+			parentCb.checked = group.perms.every(p => selectedPerms.has(p.key));
+			const parentLbl = DOM.append(head, DOM.$('span'));
+			parentLbl.textContent = group.label;
 
-		const btnRow = DOM.append(dialog, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
-		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
+			const children = DOM.append(card, DOM.$('div'));
+			children.style.cssText = 'display:grid;grid-template-columns:repeat(2,1fr);gap:6px 16px;padding-left:24px;';
+			const childRefs: HTMLInputElement[] = [];
+			for (const p of group.perms) {
+				const row = DOM.append(children, DOM.$('label'));
+				row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
+				const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				cb.type = 'checkbox';
+				cb.checked = selectedPerms.has(p.key);
+				cb.addEventListener('change', () => {
+					if (cb.checked) { selectedPerms.add(p.key); } else { selectedPerms.delete(p.key); }
+					parentCb.checked = group.perms.every(g => selectedPerms.has(g.key));
+					updatePermsCounter();
+				});
+				childRefs.push(cb);
+				const txt = DOM.append(row, DOM.$('span'));
+				txt.textContent = p.label;
+			}
+			parentCb.addEventListener('change', () => {
+				for (let i = 0; i < group.perms.length; i++) {
+					const p = group.perms[i];
+					if (parentCb.checked) { selectedPerms.add(p.key); } else { selectedPerms.delete(p.key); }
+					childRefs[i].checked = parentCb.checked;
+				}
+				updatePermsCounter();
+			});
+		}
+
+		// -- FHIR API Scopes section (Read / Write matrix per resource) ----
+		const selectedScopes = new Set<string>(((role?.smartScopes as string[]) || []));
+		const SCOPE_GROUPS: Array<{ label: string; resources: string[] }> = [
+			{ label: 'Clinical', resources: ['Patient', 'Encounter', 'Observation', 'Procedure', 'MedicationRequest', 'DiagnosticReport', 'CarePlan', 'Immunization', 'AllergyIntolerance', 'Condition', 'Composition'] },
+			{ label: 'Administrative', resources: ['Appointment', 'ServiceRequest', 'DocumentReference', 'Consent', 'Task', 'Communication', 'RelatedPerson', 'CommunicationRequest', 'QuestionnaireResponse'] },
+			{ label: 'Billing & Financial', resources: ['Claim', 'ClaimResponse', 'Coverage', 'Invoice', 'ExplanationOfBenefit', 'MeasureReport'] },
+			{ label: 'Organization & Settings', resources: ['Practitioner', 'Organization', 'Location', 'HealthcareService'] },
+		];
+
+		const scopesHeader = DOM.append(body, DOM.$('div'));
+		scopesHeader.style.cssText = 'font-size:13px;font-weight:600;margin:24px 0 4px;display:flex;align-items:center;gap:8px;';
+		const scopesTitle = DOM.append(scopesHeader, DOM.$('span'));
+		scopesTitle.textContent = 'FHIR API Scopes';
+		const scopesCounter = DOM.append(scopesHeader, DOM.$('span'));
+		scopesCounter.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);font-weight:400;';
+		const updateScopesCounter = (): void => { scopesCounter.textContent = `(${selectedScopes.size} selected)`; };
+		updateScopesCounter();
+
+		const scopesIntro = DOM.append(body, DOM.$('p'));
+		scopesIntro.textContent = 'Controls which FHIR resources this role can read/write via the API.';
+		scopesIntro.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin:0 0 10px;';
+
+		// "Select All FHIR Scopes" master
+		const allScopesLbl = DOM.append(body, DOM.$('label'));
+		allScopesLbl.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:500;margin-bottom:10px;';
+		const allScopesCb = DOM.append(allScopesLbl, DOM.$('input')) as HTMLInputElement;
+		allScopesCb.type = 'checkbox';
+		const allScopesTxt = DOM.append(allScopesLbl, DOM.$('span'));
+		allScopesTxt.textContent = 'Select All FHIR Scopes';
+
+		const allRowCheckboxes: HTMLInputElement[] = [];
+		for (const group of SCOPE_GROUPS) {
+			const card = DOM.append(body, DOM.$('div'));
+			card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;margin-bottom:8px;overflow:hidden;';
+
+			const head = DOM.append(card, DOM.$('div'));
+			head.style.cssText = 'padding:8px 14px;background:rgba(0,122,204,0.04);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			const ht = DOM.append(head, DOM.$('span'));
+			ht.textContent = group.label;
+			ht.style.cssText = 'font-size:12px;font-weight:600;';
+
+			const colHeaders = DOM.append(head, DOM.$('div'));
+			colHeaders.style.cssText = 'display:flex;gap:24px;font-size:11px;color:var(--vscode-descriptionForeground);font-weight:500;';
+			const readMasterLbl = DOM.append(colHeaders, DOM.$('label'));
+			readMasterLbl.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;';
+			const readMasterCb = DOM.append(readMasterLbl, DOM.$('input')) as HTMLInputElement;
+			readMasterCb.type = 'checkbox';
+			const readMasterTxt = DOM.append(readMasterLbl, DOM.$('span'));
+			readMasterTxt.textContent = 'Read';
+			const writeMasterLbl = DOM.append(colHeaders, DOM.$('label'));
+			writeMasterLbl.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;';
+			const writeMasterCb = DOM.append(writeMasterLbl, DOM.$('input')) as HTMLInputElement;
+			writeMasterCb.type = 'checkbox';
+			const writeMasterTxt = DOM.append(writeMasterLbl, DOM.$('span'));
+			writeMasterTxt.textContent = 'Write';
+
+			const rowsWrap = DOM.append(card, DOM.$('div'));
+			const groupReadCbs: HTMLInputElement[] = [];
+			const groupWriteCbs: HTMLInputElement[] = [];
+			for (const resource of group.resources) {
+				const readScope = `user/${resource}.read`;
+				const writeScope = `user/${resource}.write`;
+				const row = DOM.append(rowsWrap, DOM.$('div'));
+				row.style.cssText = 'display:grid;grid-template-columns:1fr 60px 60px;align-items:center;padding:6px 14px;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+				const name = DOM.append(row, DOM.$('span'));
+				name.textContent = resource;
+				const readCb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				readCb.type = 'checkbox';
+				readCb.checked = selectedScopes.has(readScope);
+				readCb.style.cssText = 'justify-self:center;cursor:pointer;';
+				readCb.addEventListener('change', () => {
+					if (readCb.checked) { selectedScopes.add(readScope); } else { selectedScopes.delete(readScope); }
+					readMasterCb.checked = groupReadCbs.every(c => c.checked);
+					updateScopesCounter();
+				});
+				groupReadCbs.push(readCb);
+				const writeCb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				writeCb.type = 'checkbox';
+				writeCb.checked = selectedScopes.has(writeScope);
+				writeCb.style.cssText = 'justify-self:center;cursor:pointer;';
+				writeCb.addEventListener('change', () => {
+					if (writeCb.checked) { selectedScopes.add(writeScope); } else { selectedScopes.delete(writeScope); }
+					writeMasterCb.checked = groupWriteCbs.every(c => c.checked);
+					updateScopesCounter();
+				});
+				groupWriteCbs.push(writeCb);
+				allRowCheckboxes.push(readCb, writeCb);
+			}
+			readMasterCb.checked = groupReadCbs.every(c => c.checked);
+			writeMasterCb.checked = groupWriteCbs.every(c => c.checked);
+			readMasterCb.addEventListener('change', () => {
+				for (let i = 0; i < groupReadCbs.length; i++) {
+					groupReadCbs[i].checked = readMasterCb.checked;
+					const scope = `user/${group.resources[i]}.read`;
+					if (readMasterCb.checked) { selectedScopes.add(scope); } else { selectedScopes.delete(scope); }
+				}
+				updateScopesCounter();
+			});
+			writeMasterCb.addEventListener('change', () => {
+				for (let i = 0; i < groupWriteCbs.length; i++) {
+					groupWriteCbs[i].checked = writeMasterCb.checked;
+					const scope = `user/${group.resources[i]}.write`;
+					if (writeMasterCb.checked) { selectedScopes.add(scope); } else { selectedScopes.delete(scope); }
+				}
+				updateScopesCounter();
+			});
+		}
+		allScopesCb.addEventListener('change', () => {
+			for (const cb of allRowCheckboxes) {
+				cb.checked = allScopesCb.checked;
+				cb.dispatchEvent(new Event('change'));
+			}
+		});
+
+		// Action bar pinned to the bottom of the drawer
+		const actions = DOM.append(dialog, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 22px;border-top:1px solid var(--vscode-editorWidget-border);';
+		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';
-		cancelBtn.style.cssText = 'padding:5px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		const saveBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
-		saveBtn.textContent = isEdit ? 'Save' : 'Create Role';
-		saveBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		cancelBtn.style.cssText = 'padding:7px 16px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-foreground);cursor:pointer;font-size:13px;';
 		cancelBtn.addEventListener('click', () => overlay.remove());
-		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? '\u{1F4BE} Save' : 'Create Role';
+		saveBtn.style.cssText = 'padding:7px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
 		saveBtn.addEventListener('click', async () => {
-			const perms = permArea.value.split(',').map(s => s.trim()).filter(Boolean);
-			const body = {
-				roleName: nameField.inp.value.trim(),
-				roleLabel: labelField.inp.value.trim(),
-				description: descField.inp.value.trim(),
-				permissions: perms,
-				isActive: true,
-			};
-			if (!body.roleName) {
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Role name is required.' });
+			const roleName = nameInp.value.trim();
+			const roleLabel = labelInp.value.trim();
+			if (!roleName || !roleLabel) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Role Name and Display Label are required.' });
 				return;
 			}
+			const payload = {
+				roleName,
+				roleLabel,
+				description: descArea.value.trim(),
+				permissions: Array.from(selectedPerms),
+				smartScopes: Array.from(selectedScopes),
+				isActive: true,
+			};
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving…';
 			try {
 				const method = isEdit ? 'PUT' : 'POST';
 				const url = isEdit ? `/api/admin/roles/${role!.id}` : '/api/admin/roles';
-				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(body) });
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
 				if (res.ok) {
 					overlay.remove();
 					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Role updated.' : 'Role created.' });
@@ -2296,12 +2650,18 @@ export class SettingsHubEditor extends EditorPane {
 				} else {
 					const err = await res.json().catch(() => null);
 					this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Save failed (${res.status})` });
+					saveBtn.disabled = false;
+					saveBtn.textContent = isEdit ? '\u{1F4BE} Save' : 'Create Role';
 				}
 			} catch (e) {
 				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = isEdit ? '\u{1F4BE} Save' : 'Create Role';
 			}
 		});
-		setTimeout(() => nameField.inp.focus(), 50);
+
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		setTimeout(() => (isEdit ? labelInp : nameInp).focus(), 50);
 	}
 
 	private async _deleteRole(roleId: string, roleName: string): Promise<void> {
@@ -2321,109 +2681,271 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Form Options \u2014 mirrors the EHR Web UI FormOptionsEditor:
+	 * a tree of every select/radio field across all tab_field_configs in the
+	 * left rail, plus a right pane to edit value/label/color for the picked
+	 * field. The team report flagged the old read-only chip list as "blank".
+	 *
+	 * Data flow:
+	 *   1. GET /api/tab-field-config/all to enumerate every tab.
+	 *   2. For each tab, walk fc.sections[].fields[] and collect any field
+	 *      whose type is 'select' | 'radio' (or that defines `options`).
+	 *   3. Render the tree grouped by tab in the left rail.
+	 *   4. Editing an option PUTs the entire tab config back to
+	 *      /api/tab-field-config/{tabKey}.
+	 */
 	private async _renderFormOptions(): Promise<void> {
+		interface FieldOpt { value: string; label: string; color?: string }
+		interface FieldRow { tabKey: string; tabLabel: string; section: string; key: string; label: string; type: string; options: FieldOpt[]; rawConfig: TabFieldConfig }
+
 		const root = DOM.append(this.contentEl, DOM.$('div'));
-		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
+		root.style.cssText = 'display:flex;height:100%;';
 
-		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px;';
-		const left = DOM.append(header, DOM.$('div'));
-		const title = DOM.append(left, DOM.$('h1'));
-		title.textContent = 'Form Options';
-		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(left, DOM.$('p'));
-		sub.textContent = 'Edit option lists used by select / radio / checkbox fields across all forms.';
-		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
+		// Left rail
+		const rail = DOM.append(root, DOM.$('div'));
+		rail.style.cssText = 'width:280px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);overflow-y:auto;';
+		const railHead = DOM.append(rail, DOM.$('div'));
+		railHead.style.cssText = 'padding:14px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);';
+		railHead.textContent = 'DROPDOWN FIELDS';
+		const railBody = DOM.append(rail, DOM.$('div'));
+		railBody.style.cssText = 'padding:8px 6px;';
 
-		const newListBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-		newListBtn.textContent = '+ New List';
-		newListBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		// Right pane
+		const pane = DOM.append(root, DOM.$('div'));
+		pane.style.cssText = 'flex:1;overflow-y:auto;padding:24px;';
 
-		const body = DOM.append(root, DOM.$('div'));
-		const renderBody = async (): Promise<void> => {
-			DOM.clearNode(body);
-			const loading = DOM.append(body, DOM.$('div'));
-			loading.textContent = 'Loading option lists\u2026';
-			loading.style.cssText = 'color:var(--vscode-descriptionForeground);';
-			try {
-				const res = await this.apiService.fetch('/api/list-options');
-				if (!res.ok) {
-					loading.textContent = `Failed to load option lists (${res.status})`;
-					return;
-				}
-				const json = await res.json();
-				const lists: Array<Record<string, unknown>> = json?.data || json?.content || (Array.isArray(json) ? json : []);
-				loading.remove();
+		let selectedKey: string | null = null;
+		let allFields: FieldRow[] = [];
 
-				if (lists.length === 0) {
-					const empty = DOM.append(body, DOM.$('div'));
-					empty.textContent = 'No option lists yet. Click "+ New List" to create one.';
-					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
-					return;
-				}
-
-				for (const list of lists) {
-					const l = list as { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> };
-					this._renderOptionList(body, l, renderBody);
-				}
-			} catch {
-				loading.textContent = 'Waiting for login\u2026';
+		const renderPane = (): void => {
+			DOM.clearNode(pane);
+			if (!selectedKey) {
+				const ph = DOM.append(pane, DOM.$('div'));
+				ph.textContent = 'Pick a field on the left to edit its options.';
+				ph.style.cssText = 'padding:60px;text-align:center;color:var(--vscode-descriptionForeground);';
+				return;
 			}
+			const field = allFields.find(f => `${f.tabKey}:${f.key}` === selectedKey);
+			if (!field) { return; }
+
+			const head = DOM.append(pane, DOM.$('div'));
+			head.style.cssText = 'margin-bottom:16px;';
+			const title = DOM.append(head, DOM.$('h1'));
+			title.textContent = field.label;
+			title.style.cssText = 'margin:0 0 4px;font-size:20px;font-weight:600;';
+			const sub = DOM.append(head, DOM.$('p'));
+			sub.style.cssText = 'margin:0;font-size:12px;color:var(--vscode-descriptionForeground);';
+			const tabSpan = DOM.append(sub, DOM.$('span'));
+			tabSpan.textContent = `${field.tabLabel} / ${field.section} \u00b7 Field key: `;
+			const keySpan = DOM.append(sub, DOM.$('code'));
+			keySpan.textContent = field.key;
+			keySpan.style.cssText = 'background:rgba(128,128,128,0.12);padding:1px 5px;border-radius:3px;font-size:11px;';
+
+			// Editable options table
+			const tableWrap = DOM.append(pane, DOM.$('div'));
+			tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+			const headerRow = DOM.append(tableWrap, DOM.$('div'));
+			headerRow.style.cssText = 'display:grid;grid-template-columns:30px 1fr 1fr 80px 40px;gap:8px;padding:10px 12px;background:rgba(0,122,204,0.05);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--vscode-descriptionForeground);';
+			for (const h of ['', 'VALUE', 'LABEL', 'COLOR', '']) {
+				const c = DOM.append(headerRow, DOM.$('span'));
+				c.textContent = h;
+			}
+
+			const renderOptions = (): void => {
+				// Clear all rows except the header
+				while (tableWrap.children.length > 1) { tableWrap.removeChild(tableWrap.lastChild!); }
+				field.options.forEach((opt, i) => {
+					const row = DOM.append(tableWrap, DOM.$('div'));
+					row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 1fr 80px 40px;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid rgba(128,128,128,0.08);';
+					const dragHandle = DOM.append(row, DOM.$('span'));
+					dragHandle.textContent = '\u2630';
+					dragHandle.style.cssText = 'opacity:0.4;cursor:grab;font-size:11px;';
+					const valInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+					valInp.value = opt.value;
+					valInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+					valInp.addEventListener('input', () => { field.options[i].value = valInp.value; });
+					const lblInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+					lblInp.value = opt.label;
+					lblInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+					lblInp.addEventListener('input', () => { field.options[i].label = lblInp.value; });
+					const colorInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+					colorInp.type = 'color';
+					colorInp.value = opt.color || '#3b82f6';
+					colorInp.style.cssText = 'width:100%;height:28px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;background:transparent;padding:1px;';
+					colorInp.addEventListener('input', () => { field.options[i].color = colorInp.value; });
+					const rm = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+					rm.textContent = '\u{1F5D1}';
+					rm.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:13px;';
+					rm.addEventListener('click', () => { field.options.splice(i, 1); renderOptions(); });
+				});
+			};
+			renderOptions();
+
+			const addRow = DOM.append(pane, DOM.$('button')) as HTMLButtonElement;
+			addRow.textContent = '+ Add option';
+			addRow.style.cssText = 'margin-top:10px;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;padding:6px 0;';
+			addRow.addEventListener('click', () => { field.options.push({ value: '', label: '' }); renderOptions(); });
+
+			// Preview select
+			const previewHeader = DOM.append(pane, DOM.$('div'));
+			previewHeader.textContent = 'PREVIEW';
+			previewHeader.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);margin:24px 0 6px;';
+			const previewBox = DOM.append(pane, DOM.$('div'));
+			previewBox.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:12px;';
+			const previewLbl = DOM.append(previewBox, DOM.$('label'));
+			previewLbl.textContent = field.label;
+			previewLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
+			const previewSel = DOM.append(previewBox, DOM.$('select')) as HTMLSelectElement;
+			previewSel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground);font-size:13px;';
+			const ph = DOM.append(previewSel, DOM.$('option')) as HTMLOptionElement;
+			ph.textContent = 'Select\u2026';
+			for (const o of field.options) {
+				const oo = DOM.append(previewSel, DOM.$('option')) as HTMLOptionElement;
+				oo.value = o.value;
+				oo.textContent = o.label;
+			}
+
+			// Save button
+			const actions = DOM.append(pane, DOM.$('div'));
+			actions.style.cssText = 'display:flex;justify-content:flex-end;margin-top:18px;gap:8px;';
+			const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			saveBtn.textContent = '\u{1F4BE} Save Options';
+			saveBtn.style.cssText = 'padding:7px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+			saveBtn.addEventListener('click', async () => {
+				saveBtn.disabled = true;
+				saveBtn.textContent = 'Saving\u2026';
+				try {
+					// Patch the field's options back into the section it came from
+					const fc: FieldConfig = typeof field.rawConfig.fieldConfig === 'string' ? JSON.parse(field.rawConfig.fieldConfig as string) : ((field.rawConfig.fieldConfig as FieldConfig) || { sections: [] });
+					for (const s of (fc.sections || [])) {
+						for (const f of s.fields) {
+							if (f.key === field.key) { f.options = field.options.map(o => ({ value: o.value, label: o.label })); }
+						}
+					}
+					const res = await this.apiService.fetch(`/api/tab-field-config/${encodeURIComponent(field.tabKey)}`, {
+						method: 'PUT',
+						body: JSON.stringify({ ...field.rawConfig, fieldConfig: fc }),
+					});
+					if (res.ok) {
+						this.notificationService.notify({ severity: Severity.Info, message: 'Options saved.' });
+					} else {
+						this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}).` });
+					}
+				} catch (e) {
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				}
+				saveBtn.disabled = false;
+				saveBtn.textContent = '\u{1F4BE} Save Options';
+			});
 		};
 
-		newListBtn.addEventListener('click', () => this._openListOptionModal('create', null, renderBody));
-		void renderBody();
-	}
-
-	private _renderOptionList(parent: HTMLElement, list: { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> }, reload: () => Promise<void>): void {
-		const panel = DOM.append(parent, DOM.$('div'));
-		panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:12px;overflow:hidden;';
-		const head = DOM.append(panel, DOM.$('div'));
-		head.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
-		const ht = DOM.append(head, DOM.$('h3'));
-		// Surface the list ID when no name is present so users still see something
-		// useful (the team report showed a list with literally "(unnamed list)"
-		// because the backend returned a row with listName null).
-		const displayName = list.listName || list.title;
-		ht.textContent = displayName ? displayName : (list.id ? `List #${list.id}` : '(unnamed list)');
-		ht.style.cssText = `margin:0;font-size:13px;font-weight:600;flex:1;${displayName ? '' : 'font-style:italic;color:var(--vscode-descriptionForeground);'}`;
-
-		const actions = DOM.append(head, DOM.$('div'));
-		actions.style.cssText = 'display:flex;gap:4px;';
-		this._tableAction(actions, '\u270f', 'Edit list', () => this._openListOptionModal('edit', list, reload));
-		this._tableAction(actions, '\u{1F5D1}', 'Delete list', async () => {
-			if (!list.id) { return; }
-			const { confirmed } = await this.dialogService.confirm({ message: `Delete list "${list.listName || list.title}"?` });
-			if (!confirmed) { return; }
-			try {
-				const res = await this.apiService.fetch(`/api/list-options/${list.id}`, { method: 'DELETE' });
-				if (res.ok) {
-					await reload();
-					this.notificationService.notify({ severity: Severity.Info, message: 'List deleted.' });
-				} else {
-					this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${res.status}).` });
-				}
-			} catch (e) {
-				this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
+		const renderRail = (): void => {
+			DOM.clearNode(railBody);
+			// Group fields by tab
+			const grouped: Record<string, { tabLabel: string; fields: FieldRow[] }> = {};
+			for (const f of allFields) {
+				if (!grouped[f.tabKey]) { grouped[f.tabKey] = { tabLabel: f.tabLabel, fields: [] }; }
+				grouped[f.tabKey].fields.push(f);
 			}
-		}, 'danger');
+			const tabKeys = Object.keys(grouped).sort();
+			if (tabKeys.length === 0) {
+				const empty = DOM.append(railBody, DOM.$('div'));
+				empty.textContent = 'No dropdown fields found.';
+				empty.style.cssText = 'padding:14px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+				return;
+			}
+			const expanded = new Set<string>(tabKeys.slice(0, 3));
+			const drawTabs = (): void => {
+				DOM.clearNode(railBody);
+				for (const tabKey of tabKeys) {
+					const g = grouped[tabKey];
+					const tabRow = DOM.append(railBody, DOM.$('div'));
+					tabRow.style.cssText = 'padding:6px 8px;font-size:13px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:4px;';
+					tabRow.addEventListener('mouseenter', () => { tabRow.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; });
+					tabRow.addEventListener('mouseleave', () => { tabRow.style.background = ''; });
+					const lblWrap = DOM.append(tabRow, DOM.$('span'));
+					lblWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+					const chev = DOM.append(lblWrap, DOM.$('span'));
+					chev.textContent = expanded.has(tabKey) ? '\u25be' : '\u25b8';
+					chev.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+					const name = DOM.append(lblWrap, DOM.$('span'));
+					name.textContent = g.tabLabel;
+					const count = DOM.append(tabRow, DOM.$('span'));
+					count.textContent = String(g.fields.length);
+					count.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-weight:400;';
+					tabRow.addEventListener('click', () => { if (expanded.has(tabKey)) { expanded.delete(tabKey); } else { expanded.add(tabKey); } drawTabs(); });
 
-		const body = DOM.append(panel, DOM.$('div'));
-		body.style.cssText = 'padding:14px;display:flex;flex-wrap:wrap;gap:6px;';
-		const opts = list.options || [];
-		if (opts.length === 0) {
-			const note = DOM.append(body, DOM.$('span'));
-			note.textContent = 'No options defined.';
-			note.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);font-style:italic;';
-			return;
-		}
-		for (const opt of opts) {
-			const chip = DOM.append(body, DOM.$('span'));
-			chip.textContent = `${opt.label || opt.value} (${opt.value || ''})`;
-			chip.style.cssText = 'background:rgba(128,128,128,0.15);padding:3px 8px;border-radius:12px;font-size:11px;';
+					if (expanded.has(tabKey)) {
+						for (const f of g.fields) {
+							const key = `${f.tabKey}:${f.key}`;
+							const isActive = key === selectedKey;
+							const row = DOM.append(railBody, DOM.$('div'));
+							row.style.cssText = `padding:5px 8px 5px 26px;font-size:12px;cursor:pointer;border-radius:4px;background:${isActive ? '#2563eb' : 'transparent'};color:${isActive ? '#ffffff' : 'var(--vscode-foreground)'};display:flex;justify-content:space-between;align-items:center;`;
+							row.addEventListener('mouseenter', () => { if (!isActive) { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; } });
+							row.addEventListener('mouseleave', () => { if (!isActive) { row.style.background = ''; } });
+							const fl = DOM.append(row, DOM.$('span'));
+							fl.textContent = f.label;
+							fl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+							const opCount = DOM.append(row, DOM.$('span'));
+							opCount.textContent = `${f.options.length}`;
+							opCount.style.cssText = `font-size:10px;opacity:${isActive ? '0.85' : '0.55'};`;
+							row.addEventListener('click', () => { selectedKey = key; drawTabs(); renderPane(); });
+						}
+					}
+				}
+			};
+			drawTabs();
+		};
+
+		const loading = DOM.append(railBody, DOM.$('div'));
+		loading.textContent = 'Loading\u2026';
+		loading.style.cssText = 'padding:14px;color:var(--vscode-descriptionForeground);font-size:12px;';
+
+		try {
+			const res = await this.apiService.fetch('/api/tab-field-config/all');
+			if (!res.ok) {
+				loading.textContent = `Failed (${res.status})`;
+				return;
+			}
+			const data: TabFieldConfig[] = await res.json();
+			allFields = [];
+			for (const tab of data) {
+				const fc: FieldConfig | undefined = typeof tab.fieldConfig === 'string'
+					? (() => { try { return JSON.parse(tab.fieldConfig as string); } catch { return undefined; } })()
+					: (tab.fieldConfig as FieldConfig | undefined);
+				if (!fc?.sections) { continue; }
+				for (const section of fc.sections) {
+					for (const f of section.fields) {
+						const isDropdown = f.type === 'select' || f.type === 'radio' || (Array.isArray(f.options) && f.options.length > 0);
+						if (!isDropdown) { continue; }
+						const opts: FieldOpt[] = (f.options || []).map(o =>
+							typeof o === 'string' ? { value: o, label: o } : { value: o.value, label: o.label });
+						allFields.push({
+							tabKey: tab.tabKey,
+							tabLabel: tab.label || tab.tabKey,
+							section: section.label || section.key || '',
+							key: f.key,
+							label: f.label,
+							type: f.type || 'select',
+							options: opts,
+							rawConfig: tab,
+						});
+					}
+				}
+			}
+			renderRail();
+		} catch {
+			loading.textContent = 'Waiting for login\u2026';
 		}
 	}
 
+	// Legacy /api/list-options modal kept for callers that still target the
+	// per-list editor (separate from the new tab_field_config-based Form
+	// Options tree). Only invoked from explicit code paths; intentionally
+	// retained for future "create new option list" flows.
+	// @ts-expect-error reserved for future "Manage option lists" entry
 	private _openListOptionModal(mode: 'create' | 'edit', list: { id?: number | string; listName?: string; title?: string; options?: Array<{ value?: string; label?: string }> } | null, reload: () => Promise<void>): void {
 		const overlay = DOM.append(this.contentEl, DOM.$('div'));
 		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
@@ -2858,6 +3380,23 @@ export class SettingsHubEditor extends EditorPane {
 			if (raw && FONT_OPTIONS.some(o => o.value === raw)) { current = raw; }
 		} catch { /* ignore */ }
 
+		// Apply the chosen font size to a global CSS variable so every page in
+		// the EHR workspace picks it up (not just this preview). The single
+		// style rule below wires `.ciyex-editor-root` to read the variable, so
+		// every editor pane inherits the size without us needing to walk the
+		// DOM (selector-based queries are forbidden by the VSCode lint rules).
+		if (!this._fontSizeStyleInjected) {
+			this._fontSizeStyleInjected = true;
+			const styleEl = mainWindow.document.createElement('style');
+			styleEl.textContent = '.ciyex-editor-root { font-size: var(--ciyex-display-fontSize, 16px); }';
+			mainWindow.document.head.appendChild(styleEl);
+		}
+		const applyGlobalFontSize = (size: FontSize): void => {
+			const px = FONT_OPTIONS.find(o => o.value === size)?.px || '16px';
+			mainWindow.document.documentElement.style.setProperty('--ciyex-display-fontSize', px);
+		};
+		applyGlobalFontSize(current);
+
 		// Header (Monitor icon + "Display Settings" title)
 		const headerRow = DOM.append(root, DOM.$('div'));
 		headerRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:20px;';
@@ -2915,6 +3454,7 @@ export class SettingsHubEditor extends EditorPane {
 				btn.addEventListener('click', () => {
 					current = opt.value;
 					try { localStorage.setItem(STORAGE_KEY, current); } catch { /* ignore */ }
+					applyGlobalFontSize(current);
 					renderButtons();
 					renderPreview();
 				});
@@ -3710,6 +4250,16 @@ export class SettingsHubEditor extends EditorPane {
 		slugInp.placeholder = 'e.g. reports — opens /reports';
 		slugInp.style.cssText = inputStyle;
 
+		// FHIR Resources — the web's web Add Item form (image_19) includes this
+		// so org-specific tabs can declare which FHIR resources they bind to.
+		// Saved separately to /api/tab-field-config/{key} after the menu item
+		// is created, matching the web flow.
+		mk('FHIR Resources');
+		const fhirInp = DOM.append(modal, DOM.$('input')) as HTMLInputElement;
+		fhirInp.value = '';
+		fhirInp.placeholder = 'Practitioner, Organization (comma-separated)';
+		fhirInp.style.cssText = inputStyle;
+
 		const actions = DOM.append(modal, DOM.$('div'));
 		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
 		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
@@ -3745,6 +4295,18 @@ export class SettingsHubEditor extends EditorPane {
 					});
 				}
 				if (res.ok) {
+					// When the user supplied FHIR resources for a brand-new item,
+					// also save them as a fresh tab_field_config so the new menu
+					// entry has a working settings tab. Matches the EHR Web flow.
+					if (!isEdit && fhirInp.value.trim()) {
+						const fhirArr = fhirInp.value.split(',').map(s => s.trim()).filter(Boolean).map(type => ({ type }));
+						try {
+							await this.apiService.fetch(`/api/tab-field-config/${encodeURIComponent(itemKey)}`, {
+								method: 'PUT',
+								body: JSON.stringify({ fhirResources: fhirArr, fieldConfig: { sections: [] }, category: 'Settings' }),
+							});
+						} catch { /* non-blocking */ }
+					}
 					overlay.remove();
 					await reload();
 					this.notificationService.notify({ severity: Severity.Info, message: 'Saved.' });
@@ -4051,7 +4613,7 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	// allow-any-unicode-next-line
-	// ─────────── Helpers ───────────
+	// ----------- Helpers -----------
 
 	private _appendCell(row: HTMLElement, text: string): void {
 		const td = DOM.append(row, DOM.$('td'));
