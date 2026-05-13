@@ -12,46 +12,55 @@
  * ============================================================================ */
 
 /* Hide native scrollbars on every scrollable descendant of a Ciyex editor pane.
- * Scroll functionality (wheel, touch, keyboard) still works. */
+ * Scroll functionality (wheel, touch, keyboard) still works. The team never
+ * wants to see a vertical scrollbar anywhere in this app — covers webkit
+ * (Chromium / Electron), Firefox, and IE/Edge-legacy. */
 .ciyex-editor-root,
 .ciyex-editor-root * {
-	scrollbar-width: none;
-	-ms-overflow-style: none;
+	scrollbar-width: none !important;
+	-ms-overflow-style: none !important;
 	scroll-behavior: smooth;
 }
 
 .ciyex-editor-root::-webkit-scrollbar,
-.ciyex-editor-root *::-webkit-scrollbar {
-	width: 0;
-	height: 0;
-	display: none;
-	background: transparent;
+.ciyex-editor-root::-webkit-scrollbar-thumb,
+.ciyex-editor-root::-webkit-scrollbar-track,
+.ciyex-editor-root *::-webkit-scrollbar,
+.ciyex-editor-root *::-webkit-scrollbar-thumb,
+.ciyex-editor-root *::-webkit-scrollbar-track {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
+	background: transparent !important;
+	-webkit-appearance: none !important;
 }
 
 /* Opt-in: keep a slim hover scrollbar for horizontal overflow (e.g. wide tables).
- * Add the `.ciyex-thin-h-scroll` class on the overflow-x container. */
+ * Add the `.ciyex-thin-h-scroll` class on the overflow-x container. The
+ * `!important`s here are needed to override the global `width:0 !important`
+ * scrollbar-hiding rule above. */
 .ciyex-editor-root .ciyex-thin-h-scroll {
-	scrollbar-width: thin;
+	scrollbar-width: thin !important;
 	scrollbar-color: rgba(127, 127, 127, 0.35) transparent;
 }
 
 .ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar {
-	height: 6px;
-	width: 6px;
-	display: block;
+	height: 6px !important;
+	width: 6px !important;
+	display: block !important;
 }
 
 .ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-track {
-	background: transparent;
+	background: transparent !important;
 }
 
 .ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-thumb {
-	background: rgba(127, 127, 127, 0.25);
+	background: rgba(127, 127, 127, 0.25) !important;
 	border-radius: 3px;
 }
 
 .ciyex-editor-root .ciyex-thin-h-scroll::-webkit-scrollbar-thumb:hover {
-	background: rgba(127, 127, 127, 0.55);
+	background: rgba(127, 127, 127, 0.55) !important;
 }
 
 /* ============================================================================
@@ -130,4 +139,260 @@
 .ciyex-pagination .ciyex-pagination-ellipsis {
 	padding: 0 4px;
 	color: var(--vscode-descriptionForeground);
+}
+
+/* ============================================================================
+ * Dialogs, modals, form cards — theme-friendly (light + dark)
+ * Every surface uses VS Code CSS variables so light themes stop showing the
+ * washed-out white-on-white look. No hard-coded colors: backgrounds, text,
+ * borders, inputs and buttons all derive from the active workbench theme.
+ * Applies inside any Ciyex editor pane (`.ciyex-editor-root`).
+ * ============================================================================ */
+
+.ciyex-editor-root .ciyex-dialog,
+.ciyex-editor-root .ciyex-modal,
+.ciyex-editor-root .form-card {
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	color: var(--vscode-editor-foreground, var(--vscode-foreground));
+	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.25)));
+	border-radius: 6px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+	box-sizing: border-box;
+}
+
+.ciyex-editor-root .ciyex-dialog-backdrop,
+.ciyex-editor-root .ciyex-modal-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	background: var(--vscode-editor-inactiveSelectionBackground, rgba(0, 0, 0, 0.4));
+}
+
+.ciyex-editor-root .ciyex-dialog-header,
+.ciyex-editor-root .ciyex-modal-header,
+.ciyex-editor-root .form-card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.25)));
+	color: var(--vscode-editor-foreground, var(--vscode-foreground));
+	font-weight: 600;
+}
+
+.ciyex-editor-root .ciyex-dialog-body,
+.ciyex-editor-root .ciyex-modal-body,
+.ciyex-editor-root .form-card-body {
+	padding: 16px;
+	color: var(--vscode-editor-foreground, var(--vscode-foreground));
+}
+
+.ciyex-editor-root .ciyex-dialog-footer,
+.ciyex-editor-root .ciyex-modal-footer,
+.ciyex-editor-root .form-card-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.25)));
+}
+
+/* Form rows & groups */
+.ciyex-editor-root .form-row {
+	display: flex;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.ciyex-editor-root .form-row > .form-group {
+	flex: 1;
+}
+
+.ciyex-editor-root .form-group {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 12px;
+}
+
+.ciyex-editor-root .form-label,
+.ciyex-editor-root .ciyex-form-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+/* Inputs / selects / textareas — covers both bespoke Ciyex classes and the
+ * generic HTML elements when they live inside a dialog or form card. */
+.ciyex-editor-root .ciyex-dialog input[type="text"],
+.ciyex-editor-root .ciyex-dialog input[type="number"],
+.ciyex-editor-root .ciyex-dialog input[type="email"],
+.ciyex-editor-root .ciyex-dialog input[type="password"],
+.ciyex-editor-root .ciyex-dialog input[type="search"],
+.ciyex-editor-root .ciyex-dialog input[type="tel"],
+.ciyex-editor-root .ciyex-dialog input[type="url"],
+.ciyex-editor-root .ciyex-dialog input[type="date"],
+.ciyex-editor-root .ciyex-dialog input[type="time"],
+.ciyex-editor-root .ciyex-dialog input[type="datetime-local"],
+.ciyex-editor-root .ciyex-dialog textarea,
+.ciyex-editor-root .ciyex-modal input[type="text"],
+.ciyex-editor-root .ciyex-modal input[type="number"],
+.ciyex-editor-root .ciyex-modal input[type="email"],
+.ciyex-editor-root .ciyex-modal input[type="password"],
+.ciyex-editor-root .ciyex-modal input[type="search"],
+.ciyex-editor-root .ciyex-modal input[type="tel"],
+.ciyex-editor-root .ciyex-modal input[type="url"],
+.ciyex-editor-root .ciyex-modal input[type="date"],
+.ciyex-editor-root .ciyex-modal input[type="time"],
+.ciyex-editor-root .ciyex-modal input[type="datetime-local"],
+.ciyex-editor-root .ciyex-modal textarea,
+.ciyex-editor-root .form-card input[type="text"],
+.ciyex-editor-root .form-card input[type="number"],
+.ciyex-editor-root .form-card input[type="email"],
+.ciyex-editor-root .form-card input[type="password"],
+.ciyex-editor-root .form-card input[type="search"],
+.ciyex-editor-root .form-card input[type="tel"],
+.ciyex-editor-root .form-card input[type="url"],
+.ciyex-editor-root .form-card input[type="date"],
+.ciyex-editor-root .form-card input[type="time"],
+.ciyex-editor-root .form-card input[type="datetime-local"],
+.ciyex-editor-root .form-card textarea,
+.ciyex-editor-root .ciyex-input,
+.ciyex-editor-root .ciyex-textarea {
+	width: 100%;
+	box-sizing: border-box;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.4)));
+	border-radius: 4px;
+	padding: 6px 8px;
+	font-size: 13px;
+	font-family: inherit;
+	outline: none;
+}
+
+.ciyex-editor-root .ciyex-dialog input:focus,
+.ciyex-editor-root .ciyex-dialog textarea:focus,
+.ciyex-editor-root .ciyex-modal input:focus,
+.ciyex-editor-root .ciyex-modal textarea:focus,
+.ciyex-editor-root .form-card input:focus,
+.ciyex-editor-root .form-card textarea:focus,
+.ciyex-editor-root .ciyex-input:focus,
+.ciyex-editor-root .ciyex-textarea:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ciyex-editor-root .ciyex-dialog input::placeholder,
+.ciyex-editor-root .ciyex-dialog textarea::placeholder,
+.ciyex-editor-root .ciyex-modal input::placeholder,
+.ciyex-editor-root .ciyex-modal textarea::placeholder,
+.ciyex-editor-root .form-card input::placeholder,
+.ciyex-editor-root .form-card textarea::placeholder,
+.ciyex-editor-root .ciyex-input::placeholder,
+.ciyex-editor-root .ciyex-textarea::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+.ciyex-editor-root .ciyex-dialog select,
+.ciyex-editor-root .ciyex-modal select,
+.ciyex-editor-root .form-card select,
+.ciyex-editor-root .ciyex-select {
+	width: 100%;
+	box-sizing: border-box;
+	background: var(--vscode-dropdown-background, var(--vscode-input-background));
+	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, rgba(127, 127, 127, 0.4)));
+	border-radius: 4px;
+	padding: 6px 8px;
+	font-size: 13px;
+	font-family: inherit;
+	outline: none;
+	cursor: pointer;
+}
+
+.ciyex-editor-root .ciyex-dialog select:focus,
+.ciyex-editor-root .ciyex-modal select:focus,
+.ciyex-editor-root .form-card select:focus,
+.ciyex-editor-root .ciyex-select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+/* Checkbox / radio accents follow the focus color so they read correctly in
+ * both light and dark themes. */
+.ciyex-editor-root .ciyex-dialog input[type="checkbox"],
+.ciyex-editor-root .ciyex-dialog input[type="radio"],
+.ciyex-editor-root .ciyex-modal input[type="checkbox"],
+.ciyex-editor-root .ciyex-modal input[type="radio"],
+.ciyex-editor-root .form-card input[type="checkbox"],
+.ciyex-editor-root .form-card input[type="radio"] {
+	accent-color: var(--vscode-focusBorder, var(--vscode-button-background));
+}
+
+/* Primary / secondary buttons inside dialogs & form cards. */
+.ciyex-editor-root .ciyex-btn-primary,
+.ciyex-editor-root .ciyex-dialog .btn-primary,
+.ciyex-editor-root .ciyex-modal .btn-primary,
+.ciyex-editor-root .form-card .btn-primary {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	border: 1px solid var(--vscode-button-border, transparent);
+	border-radius: 4px;
+	padding: 6px 16px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.ciyex-editor-root .ciyex-btn-primary:hover,
+.ciyex-editor-root .ciyex-dialog .btn-primary:hover,
+.ciyex-editor-root .ciyex-modal .btn-primary:hover,
+.ciyex-editor-root .form-card .btn-primary:hover {
+	background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.ciyex-editor-root .ciyex-btn-primary[disabled],
+.ciyex-editor-root .ciyex-dialog .btn-primary[disabled],
+.ciyex-editor-root .ciyex-modal .btn-primary[disabled],
+.ciyex-editor-root .form-card .btn-primary[disabled] {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.ciyex-editor-root .ciyex-btn-secondary,
+.ciyex-editor-root .ciyex-dialog .btn-secondary,
+.ciyex-editor-root .ciyex-modal .btn-secondary,
+.ciyex-editor-root .form-card .btn-secondary {
+	background: var(--vscode-button-secondaryBackground, transparent);
+	color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+	border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.4)));
+	border-radius: 4px;
+	padding: 6px 16px;
+	font-size: 13px;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.ciyex-editor-root .ciyex-btn-secondary:hover,
+.ciyex-editor-root .ciyex-dialog .btn-secondary:hover,
+.ciyex-editor-root .ciyex-modal .btn-secondary:hover,
+.ciyex-editor-root .form-card .btn-secondary:hover {
+	background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.15));
+}
+
+/* Validation / helper text */
+.ciyex-editor-root .ciyex-form-error,
+.ciyex-editor-root .form-error {
+	color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #f48771));
+	font-size: 12px;
+	padding: 6px 10px;
+	background: var(--vscode-inputValidation-errorBackground, rgba(244, 135, 113, 0.1));
+	border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(244, 135, 113, 0.3));
+	border-radius: 4px;
+}
+
+.ciyex-editor-root .ciyex-form-hint,
+.ciyex-editor-root .form-hint {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
 }

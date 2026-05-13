@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
@@ -11,6 +11,288 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+
+// allow-any-unicode-next-line
+// ─────────────────────────────────────────────────────────────────────────────
+// Care Plan goals / interventions — dynamic lists matching the web app
+// (ciyex-ehr-ui/src/components/care-plans/CarePlanFormPanel.tsx). Each section
+// has an "Add" button and a remove button per item. The collected payload uses
+// the same shape the backend already accepts: `goals: Goal[]` and
+// `interventions: Intervention[]`.
+// allow-any-unicode-next-line
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CarePlanGoal {
+	title: string;
+	description: string;
+	targetDate: string;
+	status: string;
+}
+
+interface CarePlanIntervention {
+	title: string;
+	description: string;
+	frequency: string;
+	responsibleParty: string;
+}
+
+function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown> | null): FormExtrasHandle {
+	const sectionStyle = 'grid-column:span 2;display:flex;flex-direction:column;gap:8px;margin-top:12px;';
+	const headerRowStyle = 'display:flex;align-items:center;justify-content:space-between;';
+	const titleStyle = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);margin:0;';
+	const addBtnStyle = 'padding:4px 10px;background:transparent;color:var(--vscode-textLink-foreground,#3794ff);border:1px solid var(--vscode-textLink-foreground,#3794ff);border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;';
+	const itemStyle = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;background:var(--vscode-editor-background);';
+	const itemHeaderStyle = 'display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--vscode-descriptionForeground);';
+	const removeBtnStyle = 'background:none;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:13px;padding:0 4px;';
+	const fieldRowStyle = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;';
+	const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;';
+	const labelStyle = 'font-size:10px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:2px;display:block;';
+
+	const goalsSection = DOM.append(host, DOM.$('div'));
+	goalsSection.style.cssText = sectionStyle;
+	const goalsHeader = DOM.append(goalsSection, DOM.$('div'));
+	goalsHeader.style.cssText = headerRowStyle;
+	const goalsTitle = DOM.append(goalsHeader, DOM.$('h4'));
+	// allow-any-unicode-next-line
+	goalsTitle.textContent = '🎯 Goals';
+	goalsTitle.style.cssText = titleStyle;
+	const addGoalBtn = DOM.append(goalsHeader, DOM.$('button')) as HTMLButtonElement;
+	addGoalBtn.type = 'button';
+	addGoalBtn.textContent = '+ Add Goal';
+	addGoalBtn.style.cssText = addBtnStyle;
+	const goalsList = DOM.append(goalsSection, DOM.$('div'));
+	goalsList.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+	const interventionsSection = DOM.append(host, DOM.$('div'));
+	interventionsSection.style.cssText = sectionStyle;
+	const intHeader = DOM.append(interventionsSection, DOM.$('div'));
+	intHeader.style.cssText = headerRowStyle;
+	const intTitle = DOM.append(intHeader, DOM.$('h4'));
+	// allow-any-unicode-next-line
+	intTitle.textContent = '🛠 Interventions';
+	intTitle.style.cssText = titleStyle;
+	const addIntBtn = DOM.append(intHeader, DOM.$('button')) as HTMLButtonElement;
+	addIntBtn.type = 'button';
+	addIntBtn.textContent = '+ Add Intervention';
+	addIntBtn.style.cssText = addBtnStyle;
+	const intList = DOM.append(interventionsSection, DOM.$('div'));
+	intList.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+	// Refs into the live DOM — collected at save time so the payload stays in sync
+	// with whatever the user typed without per-keystroke state mutation.
+	const goalRefs: Array<{ row: HTMLElement; getters: () => CarePlanGoal }> = [];
+	const intRefs: Array<{ row: HTMLElement; getters: () => CarePlanIntervention }> = [];
+
+	const renumberGoals = () => {
+		goalRefs.forEach((g, i) => {
+			const head = g.row.firstElementChild as HTMLElement | null;
+			if (head) {
+				const label = head.firstElementChild as HTMLElement | null;
+				if (label) { label.textContent = `Goal ${i + 1}`; }
+			}
+		});
+	};
+	const renumberInts = () => {
+		intRefs.forEach((it, i) => {
+			const head = it.row.firstElementChild as HTMLElement | null;
+			if (head) {
+				const label = head.firstElementChild as HTMLElement | null;
+				if (label) { label.textContent = `Intervention ${i + 1}`; }
+			}
+		});
+	};
+
+	const addGoal = (seed?: Partial<CarePlanGoal>) => {
+		const row = DOM.append(goalsList, DOM.$('div'));
+		row.style.cssText = itemStyle;
+		const head = DOM.append(row, DOM.$('div'));
+		head.style.cssText = itemHeaderStyle;
+		const label = DOM.append(head, DOM.$('span'));
+		label.textContent = `Goal ${goalRefs.length + 1}`;
+		const removeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		removeBtn.type = 'button';
+		// allow-any-unicode-next-line
+		removeBtn.textContent = '🗑';
+		removeBtn.title = 'Remove goal';
+		removeBtn.style.cssText = removeBtnStyle;
+
+		const titleLabel = DOM.append(row, DOM.$('label'));
+		titleLabel.textContent = 'Title';
+		titleLabel.style.cssText = labelStyle;
+		const titleInput = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+		titleInput.type = 'text';
+		titleInput.placeholder = 'e.g. Reduce HbA1c below 7%';
+		titleInput.style.cssText = inputStyle;
+		titleInput.value = seed?.title ?? '';
+
+		const descLabel = DOM.append(row, DOM.$('label'));
+		descLabel.textContent = 'Description';
+		descLabel.style.cssText = labelStyle;
+		const descInput = DOM.append(row, DOM.$('textarea')) as HTMLTextAreaElement;
+		descInput.placeholder = 'Describe the goal and how to achieve it...';
+		descInput.style.cssText = inputStyle + 'min-height:48px;resize:vertical;font-family:inherit;';
+		descInput.value = seed?.description ?? '';
+
+		const sub = DOM.append(row, DOM.$('div'));
+		sub.style.cssText = fieldRowStyle;
+		const dateCell = DOM.append(sub, DOM.$('div'));
+		const dateLabel = DOM.append(dateCell, DOM.$('label'));
+		dateLabel.textContent = 'Target Date';
+		dateLabel.style.cssText = labelStyle;
+		const dateInput = DOM.append(dateCell, DOM.$('input')) as HTMLInputElement;
+		dateInput.type = 'date';
+		dateInput.style.cssText = inputStyle;
+		dateInput.value = seed?.targetDate ? String(seed.targetDate).slice(0, 10) : '';
+
+		const statusCell = DOM.append(sub, DOM.$('div'));
+		const statusLabel = DOM.append(statusCell, DOM.$('label'));
+		statusLabel.textContent = 'Status';
+		statusLabel.style.cssText = labelStyle;
+		const statusInput = DOM.append(statusCell, DOM.$('select')) as HTMLSelectElement;
+		statusInput.style.cssText = inputStyle;
+		for (const opt of [
+			{ label: 'In Progress', value: 'in_progress' },
+			{ label: 'Achieved', value: 'achieved' },
+			{ label: 'Not Achieved', value: 'not_achieved' },
+			{ label: 'Cancelled', value: 'cancelled' },
+		]) {
+			const o = DOM.append(statusInput, DOM.$('option')) as HTMLOptionElement;
+			o.value = opt.value;
+			o.textContent = opt.label;
+		}
+		statusInput.value = seed?.status ?? 'in_progress';
+
+		const ref = {
+			row,
+			getters: (): CarePlanGoal => ({
+				title: titleInput.value.trim(),
+				description: descInput.value.trim(),
+				targetDate: dateInput.value,
+				status: statusInput.value,
+			}),
+		};
+		goalRefs.push(ref);
+		removeBtn.addEventListener('click', () => {
+			row.remove();
+			const idx = goalRefs.indexOf(ref);
+			if (idx >= 0) { goalRefs.splice(idx, 1); }
+			renumberGoals();
+		});
+	};
+
+	const addIntervention = (seed?: Partial<CarePlanIntervention>) => {
+		const row = DOM.append(intList, DOM.$('div'));
+		row.style.cssText = itemStyle;
+		const head = DOM.append(row, DOM.$('div'));
+		head.style.cssText = itemHeaderStyle;
+		const label = DOM.append(head, DOM.$('span'));
+		label.textContent = `Intervention ${intRefs.length + 1}`;
+		const removeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		removeBtn.type = 'button';
+		// allow-any-unicode-next-line
+		removeBtn.textContent = '🗑';
+		removeBtn.title = 'Remove intervention';
+		removeBtn.style.cssText = removeBtnStyle;
+
+		const titleLabel = DOM.append(row, DOM.$('label'));
+		titleLabel.textContent = 'Title';
+		titleLabel.style.cssText = labelStyle;
+		const titleInput = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+		titleInput.type = 'text';
+		titleInput.placeholder = 'e.g. Monthly A1C testing';
+		titleInput.style.cssText = inputStyle;
+		titleInput.value = seed?.title ?? '';
+
+		const descLabel = DOM.append(row, DOM.$('label'));
+		descLabel.textContent = 'Description';
+		descLabel.style.cssText = labelStyle;
+		const descInput = DOM.append(row, DOM.$('textarea')) as HTMLTextAreaElement;
+		descInput.placeholder = 'How the intervention is delivered...';
+		descInput.style.cssText = inputStyle + 'min-height:48px;resize:vertical;font-family:inherit;';
+		descInput.value = seed?.description ?? '';
+
+		const sub = DOM.append(row, DOM.$('div'));
+		sub.style.cssText = fieldRowStyle;
+		const freqCell = DOM.append(sub, DOM.$('div'));
+		const freqLabel = DOM.append(freqCell, DOM.$('label'));
+		freqLabel.textContent = 'Frequency';
+		freqLabel.style.cssText = labelStyle;
+		const freqInput = DOM.append(freqCell, DOM.$('select')) as HTMLSelectElement;
+		freqInput.style.cssText = inputStyle;
+		for (const opt of [
+			{ label: 'Daily', value: 'daily' },
+			{ label: 'Weekly', value: 'weekly' },
+			{ label: 'Monthly', value: 'monthly' },
+			{ label: 'As Needed', value: 'as_needed' },
+			{ label: 'Once', value: 'once' },
+		]) {
+			const o = DOM.append(freqInput, DOM.$('option')) as HTMLOptionElement;
+			o.value = opt.value;
+			o.textContent = opt.label;
+		}
+		freqInput.value = seed?.frequency ?? 'as_needed';
+
+		const respCell = DOM.append(sub, DOM.$('div'));
+		const respLabel = DOM.append(respCell, DOM.$('label'));
+		respLabel.textContent = 'Responsible Party';
+		respLabel.style.cssText = labelStyle;
+		const respInput = DOM.append(respCell, DOM.$('input')) as HTMLInputElement;
+		respInput.type = 'text';
+		respInput.placeholder = 'e.g. Dr. Smith';
+		respInput.style.cssText = inputStyle;
+		respInput.value = seed?.responsibleParty ?? '';
+
+		const ref = {
+			row,
+			getters: (): CarePlanIntervention => ({
+				title: titleInput.value.trim(),
+				description: descInput.value.trim(),
+				frequency: freqInput.value,
+				responsibleParty: respInput.value.trim(),
+			}),
+		};
+		intRefs.push(ref);
+		removeBtn.addEventListener('click', () => {
+			row.remove();
+			const idx = intRefs.indexOf(ref);
+			if (idx >= 0) { intRefs.splice(idx, 1); }
+			renumberInts();
+		});
+	};
+
+	addGoalBtn.addEventListener('click', () => addGoal());
+	addIntBtn.addEventListener('click', () => addIntervention());
+
+	// Seed from editing record if present.
+	if (editing) {
+		const existingGoals = Array.isArray(editing.goals) ? editing.goals as Array<Record<string, unknown>> : [];
+		for (const g of existingGoals) {
+			addGoal({
+				title: String(g.title ?? g.measure ?? ''),
+				description: String(g.description ?? ''),
+				targetDate: String(g.targetDate ?? ''),
+				status: String(g.status ?? 'in_progress'),
+			});
+		}
+		const existingInts = Array.isArray(editing.interventions) ? editing.interventions as Array<Record<string, unknown>> : [];
+		for (const it of existingInts) {
+			addIntervention({
+				title: String(it.title ?? it.description ?? ''),
+				description: String(it.description ?? ''),
+				frequency: String(it.frequency ?? 'as_needed'),
+				responsibleParty: String(it.responsibleParty ?? it.assignedTo ?? ''),
+			});
+		}
+	}
+
+	return {
+		collect: () => ({
+			// Drop completely empty entries so the backend doesn't receive blanks.
+			goals: goalRefs.map(g => g.getters()).filter(g => g.title || g.description),
+			interventions: intRefs.map(i => i.getters()).filter(i => i.title || i.description),
+		}),
+	};
+}
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -831,17 +1113,11 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 				], defaultValue: 'draft'
 			},
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
-			// Goals section (matching ciyex-ehr-ui care plan goals)
-			{ key: 'goal1Title', label: 'Goal 1 — Title', type: 'text', placeholder: 'e.g. Reduce HbA1c below 7%', aliases: ['goals[0].title', 'goal1'], width: 'span 2' },
-			{ key: 'goal1Description', label: 'Goal 1 — Description', type: 'textarea', placeholder: 'Describe the goal and how to achieve it...', aliases: ['goals[0].description'], width: 'span 2' },
-			{ key: 'goal1TargetDate', label: 'Goal 1 — Target Date', type: 'date', aliases: ['goals[0].targetDate'] },
-			{ key: 'goal2Title', label: 'Goal 2 — Title', type: 'text', placeholder: 'Second goal (optional)', aliases: ['goals[1].title', 'goal2'], width: 'span 2' },
-			{ key: 'goal2TargetDate', label: 'Goal 2 — Target Date', type: 'date', aliases: ['goals[1].targetDate'] },
-			// Interventions section
-			{ key: 'intervention1', label: 'Intervention 1', type: 'text', placeholder: 'e.g. Monthly A1C testing', aliases: ['interventions[0]', 'interventions[0].title'], width: 'span 2' },
-			{ key: 'intervention2', label: 'Intervention 2', type: 'text', placeholder: 'e.g. Dietary counseling', aliases: ['interventions[1]', 'interventions[1].title'], width: 'span 2' },
-			{ key: 'intervention3', label: 'Intervention 3', type: 'text', placeholder: 'e.g. Exercise program', aliases: ['interventions[2]', 'interventions[2].title'], width: 'span 2' },
+			// Dynamic Goals + Interventions are rendered via `formExtras` (issue #23)
+			// so the user can add an arbitrary number of items instead of the old
+			// hardcoded Goal 1 / Goal 2 / Intervention 1-3 rows.
 		],
+		formExtras: (host, editing) => renderCarePlanExtras(host, editing),
 		additionalFilters: [
 			{
 				key: 'category', placeholder: 'All Categories',
@@ -1221,6 +1497,9 @@ export class EducationEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['title', 'category', 'contentType', 'source', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Issue #24: enable horizontal scroll on narrow viewports so the Actions
+		// column stays visible rather than being clipped by the right edge.
+		tableMinWidth: '900px',
 		columns: [
 			{ key: 'title', label: 'Title', width: '1.5fr' },
 			{ key: 'category', label: 'Category', width: '120px' },
@@ -1301,6 +1580,8 @@ export class EducationEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['materialTitle', 'patientName', 'materialCategory', 'materialContentType', 'status', 'assignedBy', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Issue #24: horizontal scroll fallback when the sidebar steals viewport width.
+		tableMinWidth: '1000px',
 		columns: [
 			{ key: 'materialTitle', label: 'Topic', width: 'minmax(0,1.6fr)' },
 			{ key: 'patientName', label: 'Patient' },
@@ -1478,6 +1759,9 @@ export class RecallEditor extends ClinicalListEditorBase {
 		// them here gives the desktop the same "Due Today / Overdue / Completed /
 		// Compliance / Pending / Contacted / Scheduled / Cancelled" header strip.
 		statsPath: '/api/recalls/kpis',
+		// Recall surfaces 7+ KPI cards; compact mode halves their vertical
+		// height so the table is visible without scrolling (Issue #25).
+		compactStats: true,
 		statsFilterMap: {
 			overdue: 'OVERDUE',
 			pendingTotal: 'PENDING',
@@ -1627,14 +1911,23 @@ export class CodesEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by code, description...',
 		// "Status tabs" here are actually code-type categories, so filter on codeType.
 		filterKey: 'codeType',
-		clientSideFilter: ['code', 'codeType', 'shortDescription', 'category', 'id'],
+		clientSideFilter: ['code', 'codeType', 'modifier', 'shortDescription', 'description', 'category', 'relateTo', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Columns mirror ciyex-ehr-ui CodesPage table:
+		// Code | Type | Modifier | Category | Description | Short Desc | Relate To | Active | Dx Rep | Serv Rep | Fee
 		columns: [
-			{ key: 'code', label: 'Code', width: '100px' }, { key: 'codeType', label: 'Type', width: '80px' },
-			{ key: 'shortDescription', label: 'Description', width: '2fr' },
-			{ key: 'category', label: 'Category', width: '120px' },
-			{ key: 'active', label: 'Active', width: '60px' },
+			{ key: 'code', label: 'Code', width: '90px' },
+			{ key: 'codeType', label: 'Type', width: '70px' },
+			{ key: 'modifier', label: 'Modifier', width: '80px' },
+			{ key: 'category', label: 'Category', width: '110px' },
+			{ key: 'description', label: 'Description', width: '2fr' },
+			{ key: 'shortDescription', label: 'Short Desc', width: '1fr' },
+			{ key: 'relateTo', label: 'Relate To', width: '90px' },
+			{ key: 'active', label: 'Active', width: '70px' },
+			{ key: 'diagnosisReporting', label: 'Dx Rep', width: '65px' },
+			{ key: 'serviceReporting', label: 'Serv Rep', width: '70px' },
+			{ key: 'feeStandard', label: 'Fee', width: '70px' },
 		],
 		statusTabs: [
 			{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
@@ -1668,7 +1961,7 @@ export class CodesEditor extends ClinicalListEditorBase {
 			{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
 			{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
 			{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
-			{ key: 'relatedTo', label: 'Related To', type: 'text', placeholder: 'Related code or category' },
+			{ key: 'relateTo', label: 'Related To', type: 'text', placeholder: 'Related code or category', aliases: ['relatedTo'] },
 			{
 				key: 'active', label: 'Status', type: 'select', options: [
 					{ label: 'Active', value: 'true' },
@@ -1688,6 +1981,20 @@ export class CodesEditor extends ClinicalListEditorBase {
 				], defaultValue: 'false'
 			},
 		],
+		cellRenderer: (key, value) => {
+			if (key === 'active') {
+				return value === true || value === 'true' ? 'Active' : 'Inactive';
+			}
+			if (key === 'diagnosisReporting' || key === 'serviceReporting') {
+				return value === true || value === 'true' ? 'Y' : 'N';
+			}
+			if (key === 'feeStandard') {
+				const n = Number(value);
+				if (!isFinite(n) || !value) { return '—'; }
+				return `$${n.toFixed(2)}`;
+			}
+			return String(value ?? '');
+		},
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this code?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/global_codes/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -1708,15 +2015,17 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		editable: true,
 		mergeOnEdit: true,
 		refetchOnEdit: true,
+		// Columns mirror ciyex-ehr-ui Inventory.tsx:
+		// Name | SKU | Stock | Min | Unit | Category | Location | Status
 		columns: [
-			{ key: 'name', label: 'Item Name', width: '1.5fr' },
-			{ key: 'sku', label: 'SKU', width: '100px' },
-			{ key: 'categoryName', label: 'Category', width: '110px' },
-			{ key: 'stockOnHand', label: 'Stock', width: '60px' },
-			{ key: 'minStock', label: 'Min', width: '50px' },
+			{ key: 'name', label: 'Name', width: '1.5fr' },
+			{ key: 'sku', label: 'SKU', width: '110px' },
+			{ key: 'stockOnHand', label: 'Stock', width: '70px' },
+			{ key: 'minStock', label: 'Min', width: '60px' },
 			{ key: 'unit', label: 'Unit', width: '70px' },
-			{ key: 'costPerUnit', label: 'Cost', width: '70px' },
-			{ key: 'status', label: 'Status', width: '80px' },
+			{ key: 'categoryName', label: 'Category', width: '110px' },
+			{ key: 'locationName', label: 'Location', width: '110px' },
+			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Active', value: 'active' },
@@ -1730,6 +2039,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'Durable', value: 'durable' },
 					{ label: 'Medication', value: 'medication' },
 					{ label: 'Equipment', value: 'equipment' },
+				],
+			},
+			{
+				key: 'costMethod', placeholder: 'All Cost Methods',
+				options: [
+					{ label: 'FIFO', value: 'fifo' },
+					{ label: 'LIFO', value: 'lifo' },
+					{ label: 'Average', value: 'avg' },
 				],
 			},
 		],
@@ -1810,22 +2127,37 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
 		title: 'Purchase Orders', apiPath: '/api/orders',
-		searchPlaceholder: 'Search orders...',
-		clientSideFilter: ['orderNumber', 'supplierName', 'status', 'id'],
+		// Mirrors ciyex-ehr-ui Orders.tsx — search by PO #/supplier, status tabs
+		// include `partial`, supplier dropdown filter.
+		searchPlaceholder: 'Search by PO #, supplier...',
+		clientSideFilter: ['orderNumber', 'poNumber', 'supplierName', 'status', 'id'],
 		editable: true,
+		// Order: PO# | Supplier | Status | Date | Total | Lines (matches web app)
 		columns: [
-			{ key: 'orderNumber', label: 'Order #', width: '120px' },
+			{ key: 'orderNumber', label: 'PO #', width: '120px' },
 			{ key: 'supplierName', label: 'Supplier' },
-			{ key: 'totalItems', label: 'Items', width: '60px' },
-			{ key: 'totalCost', label: 'Total Cost', width: '100px' },
 			{ key: 'status', label: 'Status', width: '100px' },
 			{ key: 'orderDate', label: 'Order Date', width: '110px' },
 			{ key: 'expectedDate', label: 'Expected', width: '110px' },
+			{ key: 'totalCost', label: 'Total', width: '100px' },
+			{ key: 'totalItems', label: 'Lines', width: '70px' },
 		],
 		statusTabs: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
+			{ label: 'Partial', value: 'partial' },
 			{ label: 'Received', value: 'received' }, { label: 'Cancelled', value: 'cancelled' },
 		],
+		cellRenderer: (key, value) => {
+			if (key === 'totalCost' && (typeof value === 'number' || typeof value === 'string')) {
+				const n = Number(value);
+				if (!isFinite(n)) { return String(value ?? '—'); }
+				return `$${n.toFixed(2)}`;
+			}
+			if ((key === 'orderDate' || key === 'expectedDate') && typeof value === 'string' && value) {
+				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return value; }
+			}
+			return String(value ?? '');
+		},
 		formFields: [
 			{ key: 'supplierName', label: 'Supplier', type: 'search', placeholder: 'Search supplier...', apiPath: '/api/inventory/suppliers', searchDisplayField: 'name' },
 			{ key: 'orderNumber', label: 'Order #', type: 'text', placeholder: 'Auto-generated' },
@@ -1847,18 +2179,25 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _suppliersConfig: ClinicalEditorConfig = {
 		title: 'Suppliers', apiPath: '/api/suppliers',
-		searchPlaceholder: 'Search suppliers...',
+		// Match Suppliers.tsx: Name | Contact | Phone | Email | Status, plus an
+		// Active/Inactive status filter alongside the search box.
+		searchPlaceholder: 'Search by name, contact, email, phone...',
 		clientSideFilter: ['name', 'contactName', 'email', 'phone', 'id'],
 		editable: true,
+		filterKey: 'isActive',
 		columns: [
-			{ key: 'name', label: 'Supplier Name', width: '1.5fr' },
+			{ key: 'name', label: 'Name', width: '1.5fr' },
 			{ key: 'contactName', label: 'Contact' },
+			{ key: 'phone', label: 'Phone', width: '130px' },
 			{ key: 'email', label: 'Email' },
-			{ key: 'phone', label: 'Phone', width: '120px' },
-			{ key: 'isActive', label: 'Active', width: '60px' },
+			{ key: 'isActive', label: 'Status', width: '90px' },
+		],
+		statusTabs: [
+			{ label: 'Active', value: 'true' },
+			{ label: 'Inactive', value: 'false' },
 		],
 		cellRenderer: (key, value) => {
-			if (key === 'isActive') { return value ? 'Yes' : 'No'; }
+			if (key === 'isActive') { return value === true || value === 'true' ? 'Active' : 'Inactive'; }
 			return String(value ?? '');
 		},
 		formFields: [
@@ -1885,20 +2224,45 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _recordsConfig: ClinicalEditorConfig = {
 		title: 'Inventory Records', apiPath: '/api/inventory/list',
-		searchPlaceholder: 'Search records...',
-		clientSideFilter: ['itemName', 'adjustmentType', 'reason', 'id'],
+		// Web Records page has two sub-tabs (Adjustments / Waste Log) plus per-item
+		// search. Surfacing those as status tabs + reason dropdown gives the desktop
+		// the same filtering affordances.
+		searchPlaceholder: 'Search by item, reason, notes...',
+		clientSideFilter: ['itemName', 'adjustmentType', 'reasonCode', 'reason', 'notes', 'id'],
 		editable: false,
+		filterKey: 'recordType',
 		columns: [
 			{ key: 'itemName', label: 'Item', width: '1.5fr' },
 			{ key: 'adjustmentType', label: 'Type', width: '100px' },
 			{ key: 'quantity', label: 'Qty', width: '70px' },
-			{ key: 'reason', label: 'Reason' },
+			{ key: 'reasonCode', label: 'Reason', width: '110px' },
+			{ key: 'notes', label: 'Notes' },
 			{ key: 'performedBy', label: 'By', width: '120px' },
 			{ key: 'createdAt', label: 'Date', width: '130px' },
+		],
+		statusTabs: [
+			{ label: 'Adjustments', value: 'adjustment' },
+			{ label: 'Waste Log', value: 'waste' },
+		],
+		additionalFilters: [
+			{
+				key: 'reasonCode', placeholder: 'All Reasons',
+				options: [
+					{ label: 'Received', value: 'received' },
+					{ label: 'Consumed', value: 'consumed' },
+					{ label: 'Damaged', value: 'damaged' },
+					{ label: 'Expired', value: 'expired' },
+					{ label: 'Returned', value: 'returned' },
+					{ label: 'Correction', value: 'correction' },
+				],
+			},
 		],
 		cellRenderer: (key, value) => {
 			if (key === 'createdAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleString(); } catch { return String(value); }
+			}
+			if (key === 'reasonCode' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 			}
 			return String(value ?? '');
 		},

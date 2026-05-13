@@ -63,8 +63,32 @@ interface StatusOption {
 	encounterNote?: string;
 }
 
-interface Provider { id: number; name: string }
+interface Provider {
+	id: number;
+	name: string;
+	firstName?: string;
+	lastName?: string;
+	fullName?: string;
+	displayName?: string;
+	username?: string;
+	'identification.prefix'?: string;
+	'identification.firstName'?: string;
+	'identification.lastName'?: string;
+}
 interface Location { id: number; name: string }
+
+/** Build a provider display name from any of the assorted field shapes the
+ *  backend may return (`identification.*` flat keys, `firstName`/`lastName`,
+ *  `name`, `fullName`, etc.). Falls back to `username` and finally the ID. */
+function buildProviderName(p: Provider | undefined | null): string {
+	if (!p) { return ''; }
+	const prefix = p['identification.prefix'] || '';
+	const fn = p['identification.firstName'] || p.firstName || '';
+	const ln = p['identification.lastName'] || p.lastName || '';
+	const composed = `${prefix} ${fn} ${ln}`.trim();
+	if (composed) { return composed; }
+	return p.displayName || p.fullName || p.name || p.username || (p.id !== null && p.id !== undefined ? String(p.id) : '');
+}
 
 const FALLBACK_STATUS_OPTIONS: StatusOption[] = [
 	{ value: 'Scheduled', label: 'Scheduled', color: '#3b82f6', order: 0, nextStatus: 'Confirmed' },
@@ -313,7 +337,13 @@ export class AppointmentsEditor extends EditorPane {
 
 			if (provRes?.ok) {
 				const d = await provRes.json();
-				this.providers = (d?.data?.content || d?.data || d?.content || d || []) as Provider[];
+				const raw = (d?.data?.content || d?.data || d?.content || d || []) as Provider[];
+				// Backends return assorted shapes (`identification.firstName`,
+				// `firstName`/`lastName`, sometimes just `username`). Build a
+				// canonical `name` on the cached entries so every row render
+				// resolves to a real display string instead of falling back to
+				// the ID.
+				this.providers = raw.map(p => ({ ...p, name: buildProviderName(p) }));
 			}
 			if (locRes?.ok) {
 				const d = await locRes.json();
@@ -403,9 +433,21 @@ export class AppointmentsEditor extends EditorPane {
 				row.patientName = row.patientName || info.name;
 				row.patientPhone = row.patientPhone || info.phone;
 			}
-			if (!row.providerName && row.providerId) {
-				const prov = this.providers.find(p => p.id === row.providerId);
-				if (prov) { row.providerName = prov.name; }
+			// Always try to resolve a friendly provider name — the backend
+			// sometimes populates `providerName` with the ID/UUID itself, so
+			// we replace it when a real name is available from the cache.
+			const looksLikeId = (s: string | undefined): boolean => {
+				if (!s) { return true; }
+				const t = s.trim();
+				if (!t) { return true; }
+				// UUID / numeric ID / "Practitioner/<id>" reference
+				return /^[0-9a-f-]{8,}$/i.test(t) || /^\d+$/.test(t) || /^Practitioner\//i.test(t);
+			};
+			if (row.providerId !== undefined && row.providerId !== null) {
+				const prov = this.providers.find(p => String(p.id) === String(row.providerId));
+				if (prov && prov.name && (looksLikeId(row.providerName) || !row.providerName)) {
+					row.providerName = prov.name;
+				}
 			}
 			if (!row.locationName) {
 				if (row.locationDisplay) {
@@ -473,8 +515,14 @@ export class AppointmentsEditor extends EditorPane {
 			if (this.typeFilter) {
 				const tf = this.typeFilter.trim().toLowerCase();
 				const vt = String(r.visitType || '').trim().toLowerCase();
-				const at = String((r as unknown as Record<string, unknown>).appointmentType || '').trim().toLowerCase();
-				if (vt !== tf && at !== tf && !vt.includes(tf) && !at.includes(tf)) { return false; }
+				// `appointmentType` on the raw row can be a FHIR CodeableConcept
+				// object — stringifying it produced "[object Object]" which never
+				// matched. Normalize it the same way as `visitType` so the filter
+				// compares against the displayable text.
+				const rawAt = (r as unknown as Record<string, unknown>).appointmentType;
+				const at = normalizeVisitType(rawAt).trim().toLowerCase();
+				const tp = String((r as unknown as Record<string, unknown>).type || '').trim().toLowerCase();
+				if (vt !== tf && at !== tf && tp !== tf && !vt.includes(tf) && !at.includes(tf) && !tp.includes(tf)) { return false; }
 			}
 			return true;
 		});
@@ -845,6 +893,7 @@ export class AppointmentsEditor extends EditorPane {
 		typeSel.style.cssText = selectStyle;
 		const typeAll = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 		typeAll.value = ''; typeAll.textContent = 'All Types';
+		if (!this.typeFilter) { typeAll.selected = true; }
 		const PREDEFINED_VISIT_TYPES = [
 			'Consultation', 'New Patient', 'Follow-Up', 'Sick Visit',
 			'Annual Physical', 'Wellness Check', 'Telehealth', 'Procedure',
@@ -852,11 +901,24 @@ export class AppointmentsEditor extends EditorPane {
 			'Urgent Care', 'Specialist Referral', 'Physical Therapy',
 		];
 		const mergedTypes = Array.from(new Set([...PREDEFINED_VISIT_TYPES, ...this.visitTypes])).sort();
+		// Ensure the currently-selected filter value is always present in the
+		// option list even if it isn't in the predefined catalog and isn't in
+		// the current page of data — otherwise the <select> falls back to the
+		// first option ("All Types") and the visual selection appears reset.
+		if (this.typeFilter && !mergedTypes.includes(this.typeFilter)) {
+			mergedTypes.push(this.typeFilter);
+			mergedTypes.sort();
+		}
 		for (const t of mergedTypes) {
 			const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = t; o.textContent = t;
 			if (t === this.typeFilter) { o.selected = true; }
 		}
+		// Sync the native <select>'s value explicitly — setting `o.selected = true`
+		// on an option mid-construction is ignored by some browsers if a later
+		// append re-evaluates the default; assigning `typeSel.value` after the
+		// loop guarantees the visual state matches `this.typeFilter`.
+		typeSel.value = this.typeFilter || '';
 		typeSel.addEventListener('change', () => {
 			this.typeFilter = typeSel.value;
 			this._renderTableBody(this._getFilteredRows());
@@ -1149,10 +1211,23 @@ export class AppointmentsEditor extends EditorPane {
 				phoneLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 			}
 
-			// PROVIDER
+			// PROVIDER — prefer the enriched name; fall back to a live cache
+			// lookup so we don't render a bare UUID/ID when `providerName`
+			// is missing or itself looks like an identifier.
 			const tdProv = DOM.append(tr, DOM.$('td'));
 			tdProv.style.cssText = cellStyle;
-			tdProv.textContent = row.providerName || '';
+			const provLookup = row.providerId !== undefined && row.providerId !== null
+				? this.providers.find(p => String(p.id) === String(row.providerId))
+				: undefined;
+			const provFromCache = buildProviderName(provLookup);
+			const providerCellName = (() => {
+				const candidate = (row.providerName || '').trim();
+				if (!candidate) { return provFromCache || (row.providerId ? `Provider #${row.providerId}` : ''); }
+				// `candidate` looks like a UUID / numeric ID / FHIR reference → swap for the resolved name.
+				const isIdLike = /^[0-9a-f-]{8,}$/i.test(candidate) || /^\d+$/.test(candidate) || /^Practitioner\//i.test(candidate);
+				return isIdLike && provFromCache ? provFromCache : candidate;
+			})();
+			tdProv.textContent = providerCellName;
 
 			// LOCATION
 			const tdLoc = DOM.append(tr, DOM.$('td'));

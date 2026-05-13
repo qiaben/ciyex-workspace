@@ -48,6 +48,16 @@ function getAppointmentType(apt: Appointment): string {
 	return apt.type || '';
 }
 
+/** True when the string looks like an identifier (UUID, numeric ID, or
+ *  `Practitioner/<id>` reference) rather than a human-readable name —
+ *  used so we can swap a bare ID for a real display name from the cache. */
+function looksLikeProviderId(s: string | undefined | null): boolean {
+	if (!s) { return true; }
+	const t = String(s).trim();
+	if (!t) { return true; }
+	return /^[0-9a-f-]{8,}$/i.test(t) || /^\d+$/.test(t) || /^Practitioner\//i.test(t);
+}
+
 const TYPE_COLORS: Record<string, string> = {
 	'new-patient': '#4CAF50', 'new patient': '#4CAF50',
 	'follow-up': '#2196F3', 'follow up': '#2196F3',
@@ -145,6 +155,15 @@ export class CalendarEditor extends EditorPane {
 			this._loadAndRender();
 		}, 2000);
 
+		// Bridge the titlebar's global "Search by name or DOB" input to the
+		// calendar's in-grid patient/provider filter. The titlebar lives in
+		// a separate workbench part and renders its own results dropdown;
+		// it can't reach into individual editors directly, so each editor
+		// that wants live-filter behavior has to subscribe to the shared
+		// input. Without this hook the titlebar search field appeared to
+		// do nothing on the Calendar page even though it worked elsewhere.
+		this._attachTitlebarSearchBridge();
+
 		// Also reload on auth state changes
 		this._register(this.authService.onDidChangeAuthState(state => {
 			if (state === CiyexAuthState.Authenticated) {
@@ -160,6 +179,55 @@ export class CalendarEditor extends EditorPane {
 		this.viewMode = defaultView === 'week' ? 'week' : defaultView === 'month' ? 'month' : 'day';
 		this._publishCalendarState();
 		await this._loadAndRender();
+	}
+
+	/** True when the titlebar search bridge has been wired so we don't double-bind. */
+	private _titlebarBridgeAttached = false;
+
+	/** Subscribe to the titlebar's global patient search input so typing in
+	 *  "Search by name or DOB" filters the calendar grid live. Retries until
+	 *  the input is in the DOM (the titlebar part may mount after this editor
+	 *  on the very first render). */
+	private _attachTitlebarSearchBridge(): void {
+		if (this._titlebarBridgeAttached) { return; }
+		const win = DOM.getActiveWindow();
+		const tryAttach = (): boolean => {
+			// The titlebar is rendered by a separate workbench part outside
+			// this editor's DOM, so we have to reach into the document to
+			// find its search input. Suppress no-restricted-syntax here —
+			// using `dom.ts h()` is not viable for elements owned by other
+			// parts.
+			// eslint-disable-next-line no-restricted-syntax
+			const input = win.document.querySelector('.ehr-titlebar-controls .ehr-search-input') as HTMLInputElement | null;
+			if (!input) { return false; }
+			this._titlebarBridgeAttached = true;
+			// Seed the calendar filter with whatever the user has already typed.
+			if (input.value) {
+				this.patientNameFilter = input.value.trim();
+			}
+			this._register(DOM.addDisposableListener(input, 'input', () => {
+				this.patientNameFilter = input.value.trim();
+				this._updateHeaderCount();
+				this._renderGrid();
+			}));
+			// Reset the filter when the titlebar clears its dropdown via Escape.
+			this._register(DOM.addDisposableListener(input, 'keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Escape') {
+					this.patientNameFilter = '';
+					this._updateHeaderCount();
+					this._renderGrid();
+				}
+			}));
+			return true;
+		};
+		if (tryAttach()) { return; }
+		// Titlebar mounts asynchronously on first window load — retry briefly.
+		const retry = win.setInterval(() => {
+			if (tryAttach()) { win.clearInterval(retry); }
+		}, 500);
+		// Cap the wait so we don't keep polling forever if the titlebar is
+		// disabled in some build flavor.
+		win.setTimeout(() => { win.clearInterval(retry); }, 15000);
 	}
 
 	private async _loadAndRender(): Promise<void> {
@@ -286,6 +354,26 @@ export class CalendarEditor extends EditorPane {
 		}
 	}
 
+	/** Resolve a friendly provider display name from the cached providers list
+	 *  for the appointment, falling back to whatever readable string we have.
+	 *  Returns an empty string if nothing recognisable is available so the
+	 *  caller can decide whether to render anything at all. */
+	private _resolveProviderName(apt: Appointment): string {
+		const cached = apt.providerId
+			? this.providers.find(p => String(p.id) === String(apt.providerId))
+			: undefined;
+		if (cached?.name && !looksLikeProviderId(cached.name)) { return cached.name; }
+		if (apt.providerName && !looksLikeProviderId(apt.providerName)) { return apt.providerName; }
+		if (apt.practitionerName && !looksLikeProviderId(apt.practitionerName)) { return apt.practitionerName; }
+		// Last-resort: if the cache has any entry whose name happens to match the
+		// raw providerName string (legacy backends use name as the key), surface it.
+		if (apt.providerName) {
+			const byName = this.providers.find(p => p.name === apt.providerName);
+			if (byName?.name && !looksLikeProviderId(byName.name)) { return byName.name; }
+		}
+		return '';
+	}
+
 	/** Parse appointment start date/time robustly — handles ISO, epoch, date-only, time-only */
 	private _parseAptDate(apt: Appointment): Date | null {
 		const raw = apt.start || apt.startTime;
@@ -330,8 +418,8 @@ export class CalendarEditor extends EditorPane {
 			filtered = filtered.filter(a => {
 				const haystack = [
 					a.patientFirstName, a.patientLastName, a.patientName,
-					a.providerName, a.practitionerName, a.locationName,
-					a.status, getAppointmentType(a),
+					a.providerName, a.practitionerName, this._resolveProviderName(a),
+					a.locationName, a.status, getAppointmentType(a),
 				].map(v => String(v ?? '')).join(' ').toLowerCase();
 				return haystack.includes(q);
 			});
@@ -614,7 +702,8 @@ export class CalendarEditor extends EditorPane {
 						const detailLine = DOM.append(block, DOM.$('div'));
 						detailLine.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
 						const parts = [getAppointmentType(apt) || ''];
-						if (apt.providerName) { parts.push(apt.providerName); }
+						const provDisplay = this._resolveProviderName(apt);
+						if (provDisplay) { parts.push(provDisplay); }
 						detailLine.textContent = parts.filter(Boolean).join(' \u00B7 ');
 
 						// Status dot

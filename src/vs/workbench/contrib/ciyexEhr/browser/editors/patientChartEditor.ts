@@ -725,20 +725,26 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
 					{
 						key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Vaccine name',
-						validationPattern: '^[A-Za-z0-9 ,.\\-/()+&]{2,120}$',
-						validationMessage: 'Vaccine name must be 2-120 characters',
+						// Letters first, then any name-safe characters — same shape as the
+						// shared `namePattern` so the negative-test inputs (pure numbers,
+						// leading specials) are rejected before save.
+						validationPattern: '^[A-Za-z][A-Za-z0-9 ,.\\-/()+&\']{1,119}$',
+						validationMessage: 'Vaccine name must start with a letter and be 2-120 characters',
 					},
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
 					{
 						key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #',
-						validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{0,29}$',
-						validationMessage: 'Lot number must start with a letter or digit, can include dashes, max 30 chars',
+						// Lot numbers must have at least one letter AND be 3-30 chars —
+						// "15" / "123" should fail the negative test; "AB12-34" passes.
+						validationPattern: '^(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9\\-]{2,29}$',
+						validationMessage: 'Lot number must contain letters and digits, 3-30 characters',
 					},
 					{
 						key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL',
-						validationPattern: '^(?!0(?:\\.0+)?\\s)\\d+(\\.\\d+)?\\s*(mL|ml|cc|mg|mcg|units?|IU)$',
-						validationMessage: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU)',
+						// Dose MUST have a unit suffix — bare numbers like "1" must fail.
+						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?\\s*(mL|mg|mcg|units|IU|cc|g|%)$',
+						validationMessage: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU, cc, g, %)',
 					},
 					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
 					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
@@ -1397,6 +1403,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{
 						key: 'paymentMethod', label: 'Payment Method', type: 'select', required: true, options: [
 							{ label: 'Credit Card', value: 'credit_card' },
+							{ label: 'Debit Card', value: 'debit_card' },
+							{ label: 'Bank Account', value: 'bank_account' },
+							{ label: 'FSA', value: 'fsa' },
+							{ label: 'HSA', value: 'hsa' },
 							{ label: 'Cash', value: 'cash' },
 							{ label: 'Check', value: 'check' },
 							{ label: 'EFT/ACH', value: 'eft' },
@@ -1406,12 +1416,30 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Patient Coinsurance', value: 'patient_coinsurance' },
 							{ label: 'Patient Deductible', value: 'patient_deductible' },
 							{ label: 'Patient Self-Pay', value: 'patient_self_pay' },
+							{ label: 'Other', value: 'other' },
 						], defaultValue: 'credit_card'
 					},
 					{ key: 'amount', label: 'Total Amount', type: 'number', required: true, placeholder: '0.00' },
 					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
 					{ key: 'payerName', label: 'Payer / Insurance', type: 'text', placeholder: 'Aetna, BCBS, patient self...' },
 					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
+					// Reference Type + Description + Receipt Email mirror the EHR
+					// CollectPaymentModal — the test team's screenshot listed them
+					// as missing from the desktop dialog.
+					{
+						key: 'referenceType', label: 'Reference Type', type: 'select', options: [
+							{ label: 'Encounter', value: 'encounter' },
+							{ label: 'Claim', value: 'claim' },
+							{ label: 'Invoice', value: 'invoice' },
+							{ label: 'Copay', value: 'copay' },
+							{ label: 'Deductible', value: 'deductible' },
+							{ label: 'Self Pay', value: 'self_pay' },
+							{ label: 'Other', value: 'other' },
+						]
+					},
+					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'INV-001' },
+					{ key: 'description', label: 'Description', type: 'text', placeholder: 'Payment for visit...' },
+					{ key: 'receiptEmail', label: 'Receipt Email', type: 'email', placeholder: 'patient@email.com' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Posted', value: 'issued' },
@@ -1899,23 +1927,37 @@ export class PatientChartEditor extends EditorPane {
 				return Array.isArray(list) ? list as Record<string, unknown>[] : [];
 			} catch { return []; }
 		};
-		const [providers, orgs, locations] = await Promise.all([
+		// Pull every lookup we know about — `/api/providers` AND the FHIR list
+		// (each one is missing rows the other has, depending on whether the
+		// provider was created via the EHR or imported from FHIR). Insurance
+		// companies have their own endpoint that the Billing/Claims forms
+		// already use; load it into the org cache so "Organization/5213" rows
+		// resolve to the actual insurance name.
+		const [providers, providersFhir, orgs, orgsFhir, insurance, locations] = await Promise.all([
 			safe('/api/providers?size=500'),
+			safe('/api/fhir-resource/practitioners?size=500'),
+			safe('/api/organizations?size=500'),
 			safe('/api/fhir-resource/organizations?size=500'),
+			safe('/api/fhir-resource/insurance-companies?size=500'),
 			safe('/api/locations?size=500'),
 		]);
-		for (const p of providers) {
+		const addProvider = (p: Record<string, unknown>) => {
 			const id = String(p.id ?? p.fhirId ?? '');
 			const first = String(p.firstName ?? '').trim();
 			const last = String(p.lastName ?? '').trim();
-			const name = (`${first} ${last}`.trim()) || String(p.displayName ?? p.name ?? '').trim();
+			const name = (`${first} ${last}`.trim()) || String(p.displayName ?? p.name ?? p.fullName ?? '').trim();
 			if (id && name) { this._providerNameById.set(id, name); }
-		}
-		for (const o of orgs) {
+		};
+		const addOrg = (o: Record<string, unknown>) => {
 			const id = String(o.id ?? o.fhirId ?? '');
-			const name = String(o.name ?? o.organizationName ?? o.payerName ?? '').trim();
+			const name = String(o.name ?? o.organizationName ?? o.payerName ?? o.companyName ?? '').trim();
 			if (id && name) { this._orgNameById.set(id, name); }
-		}
+		};
+		for (const p of providers) { addProvider(p); }
+		for (const p of providersFhir) { addProvider(p); }
+		for (const o of orgs) { addOrg(o); }
+		for (const o of orgsFhir) { addOrg(o); }
+		for (const o of insurance) { addOrg(o); }
 		for (const l of locations) {
 			const id = String(l.id ?? l.fhirId ?? '');
 			const name = String(l.name ?? l.locationName ?? '').trim();
@@ -1933,6 +1975,19 @@ export class PatientChartEditor extends EditorPane {
 	 */
 	private _resolveIdToName(columnKey: string, raw: unknown): unknown {
 		if (raw === null || raw === undefined || raw === '') { return raw; }
+		// FHIR Reference shape: { reference: 'Practitioner/abc', display?: '...' }.
+		// If a display name already accompanies the reference, prefer it.
+		// Otherwise drill down to the reference string for the id lookup below.
+		if (typeof raw === 'object' && !Array.isArray(raw)) {
+			const r = raw as Record<string, unknown>;
+			const display = typeof r.display === 'string' ? r.display.trim() : '';
+			if (display) { return display; }
+			const ref = typeof r.reference === 'string' ? r.reference
+				: typeof r.id === 'string' || typeof r.id === 'number' ? String(r.id)
+					: '';
+			if (!ref) { return raw; }
+			return this._resolveIdToName(columnKey, ref);
+		}
 		if (typeof raw !== 'string' && typeof raw !== 'number') { return raw; }
 		const value = String(raw);
 		// Only resolve when the value LOOKS like an id (UUID, numeric, or
@@ -1943,10 +1998,19 @@ export class PatientChartEditor extends EditorPane {
 			|| /^[A-Z][A-Za-z]+\/[A-Za-z0-9-]+$/.test(value);
 		if (!looksLikeId) { return raw; }
 		const idOnly = value.includes('/') ? value.split('/').pop() || value : value;
+		// FHIR resource prefix (e.g. "Organization/5213") wins over column-key
+		// heuristics — a row's `insuranceName` column carrying a literal
+		// "Organization/5213" reference must always resolve via the org cache,
+		// even if the column key only matches the org pattern weakly.
+		const prefixMatch = /^([A-Z][A-Za-z]+)\//.exec(value);
+		const prefix = prefixMatch ? prefixMatch[1] : '';
 		const key = columnKey.toLowerCase();
-		const isProviderCol = /(provider|practitioner|performer|author|prescriber|administeredby|orderedby|ordering|referrer|referredby|signedby|attendingphysician|encounterprovider)/.test(key);
-		const isOrgCol = /(insur|payer|payor|organization|company)/.test(key);
-		const isLocationCol = /(location|facility|site)/.test(key);
+		const isProviderCol = prefix === 'Practitioner' || prefix === 'PractitionerRole'
+			|| /(provider|practitioner|performer|author|prescriber|administeredby|orderedby|ordering|referrer|referredby|signedby|attendingphysician|encounterprovider|recorder|reporter|enterer|orderer|requester)/.test(key);
+		const isOrgCol = prefix === 'Organization'
+			|| /(insur|payer|payor|organization|company)/.test(key);
+		const isLocationCol = prefix === 'Location'
+			|| /(location|facility|site)/.test(key);
 		if (isProviderCol) {
 			const name = this._providerNameById.get(idOnly);
 			if (name) { return name; }
@@ -1959,6 +2023,9 @@ export class PatientChartEditor extends EditorPane {
 			const name = this._locationNameById.get(idOnly);
 			if (name) { return name; }
 		}
+		// FHIR-prefixed ids that found no match: strip the prefix so the table
+		// at least shows the bare id ("5213") instead of "Organization/5213".
+		if (prefix) { return idOnly; }
 		return raw;
 	}
 
@@ -2065,8 +2132,15 @@ export class PatientChartEditor extends EditorPane {
 							'documents', 'education', 'messaging', 'history', 'referrals',
 							'billing', 'claims', 'submissions', 'denials', 'era-remittance',
 							'transactions', 'payment', 'statements', 'issues', 'report',
+							// Encounters opened inside the chart already know the patient
+							// (it's the chart context). The backend tab_field_config V20
+							// ships its own `patient` reference field which produced the
+							// duplicate "PATIENT (Enter patient...)" row the test team
+							// flagged in the New Encounter dialog — strip it like every
+							// other patient-scoped tab.
+							'encounters',
 						]);
-						const patientPrefillTabs = new Set(['encounters', 'appointments']);
+						const patientPrefillTabs = new Set(['appointments']);
 						if (patientScopedTabs.has(tab.key)) {
 							sections = sections.map(s => ({
 								...s,
@@ -2119,14 +2193,20 @@ export class PatientChartEditor extends EditorPane {
 									: s);
 							}
 						}
-						// Documents: drop the backend's `fileUrl` text input — we
-						// already render an inline file picker (`attachment`),
-						// and the test team flagged the two side-by-side as a
-						// duplicate attachment field.
+						// Documents: drop ALL backend attachment-shaped fields except
+						// the local `attachment` file picker. The previous filter
+						// only stripped `fileUrl` and the new dialog showed
+						// "ATTACHMENT" twice — once beside AUTHOR (backend `content`
+						// / `data`) and once below (local picker). The local
+						// `localOnly: true` attachment is appended afterwards.
 						if (tab.key === 'documents') {
+							const dupAttachKeys = new Set([
+								'fileUrl', 'attachment', 'content', 'data', 'fileData', 'fileContent',
+								'url', 'documentUrl', 'attachmentUrl', 'fileBase64', 'documentData',
+							]);
 							sections = sections.map(s => ({
 								...s,
-								fields: s.fields.filter(f => f.key !== 'fileUrl'),
+								fields: s.fields.filter(f => !dupAttachKeys.has(f.key)),
 							}));
 						}
 						// Per-field overlays: backend tab_field_config often omits the
@@ -2700,24 +2780,19 @@ export class PatientChartEditor extends EditorPane {
 		upHdr.textContent = 'Upcoming';
 		upHdr.style.cssText = 'margin:0;font-size:13px;font-weight:600;color:#3b82f6;';
 		const viewAll = DOM.append(upHdrRow, DOM.$('a'));
+		// allow-any-unicode-next-line
 		viewAll.textContent = 'View all →';
 		viewAll.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
 		viewAll.addEventListener('click', () => this._navigate('appointments'));
 
-		const upBox = DOM.append(upcoming, DOM.$('div'));
-		upBox.style.cssText = 'background:var(--vscode-editor-background);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;padding:24px;text-align:center;';
-		const upIcon = DOM.append(upBox, DOM.$('div'));
-		upIcon.textContent = '\u{1F4C5}';
-		upIcon.style.cssText = 'font-size:28px;margin-bottom:6px;';
-		const upText = DOM.append(upBox, DOM.$('div'));
-		upText.textContent = 'View upcoming appointments';
-		upText.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
-		const goLink = DOM.append(upBox, DOM.$('a'));
-		goLink.textContent = 'Go to Appointments →';
-		goLink.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
-		goLink.addEventListener('click', () => this._navigate('appointments'));
+		const upList = DOM.append(upcoming, DOM.$('div'));
+		upList.setAttribute('data-slot', 'upcoming-appointments');
+		const upLoading = DOM.append(upList, DOM.$('div'));
+		upLoading.textContent = 'Loading...';
+		upLoading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
 
 		void this._loadRecentActivity(recentList);
+		void this._loadUpcomingAppointments(upList);
 
 		// Summary cards grid
 		const cardsGrid = DOM.append(this.mainEl, DOM.$('div'));
@@ -2874,6 +2949,95 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * Right-hand "Upcoming" panel on the Dashboard. Pulls the next 5
+	 * scheduled appointments for the current patient from the same FHIR
+	 * Appointment endpoint as the Appointments tab, and paints them as a
+	 * compact list. Empty state mirrors the ehr-ui dashboard's "Go to
+	 * Appointments" call to action.
+	 */
+	private async _loadUpcomingAppointments(parent: HTMLElement): Promise<void> {
+		const ep = `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=10`;
+		try {
+			const res = await this.apiService.fetch(ep);
+			if (!res.ok) { throw new Error('appointments fetch failed'); }
+			const json = await res.json();
+			const all = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+			const todayMs = Date.now();
+			const items = all
+				.map(a => {
+					const start = String(a.appointmentStartDate || a.start || a.startDate || a.appointmentStartTime || '');
+					const ms = start ? new Date(start).getTime() : 0;
+					return { a, start, ms };
+				})
+				.filter(x => x.ms && x.ms >= todayMs - 24 * 3600 * 1000)
+				.sort((x, y) => x.ms - y.ms)
+				.slice(0, 5);
+
+			DOM.clearNode(parent);
+			if (items.length === 0) {
+				const upBox = DOM.append(parent, DOM.$('div'));
+				upBox.style.cssText = 'background:var(--vscode-editor-background);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;padding:24px;text-align:center;';
+				const upIcon = DOM.append(upBox, DOM.$('div'));
+				upIcon.textContent = '\u{1F4C5}';
+				upIcon.style.cssText = 'font-size:28px;margin-bottom:6px;';
+				const upText = DOM.append(upBox, DOM.$('div'));
+				upText.textContent = 'No upcoming appointments';
+				upText.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
+				const goLink = DOM.append(upBox, DOM.$('a'));
+				// allow-any-unicode-next-line
+				goLink.textContent = 'Go to Appointments →';
+				goLink.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+				goLink.addEventListener('click', () => this._navigate('appointments'));
+				return;
+			}
+
+			for (const { a, start } of items) {
+				const row = DOM.append(parent, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);cursor:pointer;';
+				row.addEventListener('click', () => this._navigate('appointments'));
+
+				const ic = DOM.append(row, DOM.$('div'));
+				ic.textContent = '\u{1F4C5}';
+				ic.style.cssText = 'font-size:18px;padding-top:2px;';
+
+				const content = DOM.append(row, DOM.$('div'));
+				content.style.cssText = 'flex:1;min-width:0;';
+
+				const titleRow = DOM.append(content, DOM.$('div'));
+				titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+				const t = DOM.append(titleRow, DOM.$('span'));
+				const visit = this._displayText(a.appointmentType) || this._displayText(a.visitType) || this._displayText(a.type) || 'Appointment';
+				t.textContent = visit;
+				t.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-foreground);';
+				const badge = DOM.append(titleRow, DOM.$('span'));
+				badge.textContent = this._displayText(a.status) || 'scheduled';
+				badge.style.cssText = 'font-size:10px;padding:1px 8px;border-radius:10px;background:rgba(59,130,246,0.15);color:#3b82f6;';
+
+				const desc = DOM.append(content, DOM.$('div'));
+				const prov = this._displayText(a.providerName) || this._displayText(a.providerDisplay) || this._displayText(a.practitionerName) || '';
+				desc.textContent = prov;
+				desc.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+				const time = DOM.append(content, DOM.$('div'));
+				time.textContent = this._formatDate(start) || start;
+				time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+			}
+		} catch {
+			DOM.clearNode(parent);
+			const upBox = DOM.append(parent, DOM.$('div'));
+			upBox.style.cssText = 'background:var(--vscode-editor-background);border:1px dashed var(--vscode-editorWidget-border);border-radius:6px;padding:24px;text-align:center;';
+			const upText = DOM.append(upBox, DOM.$('div'));
+			upText.textContent = 'Could not load appointments';
+			upText.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
+			const goLink = DOM.append(upBox, DOM.$('a'));
+			// allow-any-unicode-next-line
+			goLink.textContent = 'Go to Appointments →';
+			goLink.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+			goLink.addEventListener('click', () => this._navigate('appointments'));
+		}
+	}
+
 	private _renderSummaryCard(parent: HTMLElement, _key: string, icon: string, title: string, resource: string, displayFields: string | string[], emptyMsg: string): void {
 		const fieldList = Array.isArray(displayFields) ? displayFields : [displayFields];
 		const card = DOM.append(parent, DOM.$('div'));
@@ -2911,45 +3075,47 @@ export class PatientChartEditor extends EditorPane {
 					row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
 					let text = '';
 					for (const f of fieldList) { text = this._displayText(item[f]); if (text) { break; } }
-					if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || '—'; }
-					row.textContent = text.substring(0, 50);
-				}
-			};
-			try {
-				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
-				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=3`);
-				if (res.ok) {
-					const json = await res.json();
-					let items: Record<string, unknown>[] = json?.data?.content || json?.content || [];
-					// Legacy API fallback: some endpoints return allergiesList / problemsList
-					if (items.length === 0 && json?.data && typeof json.data === 'object') {
-						const d = json.data as Record<string, unknown>;
-						for (const k of ['allergiesList', 'problemsList', 'list', 'items', 'records']) {
-							if (Array.isArray(d[k]) && (d[k] as unknown[]).length > 0) { items = d[k] as Record<string, unknown>[]; break; }
+					if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || ''; }
+					// Last-ditch: pull any string-like field off the row so a
+					// FHIR record with `code.text` / `valueCodeableConcept` etc.
+					// never paints as a dash even though the field-list missed
+					// the actual key.
+					if (!text) {
+						for (const v of Object.values(item)) {
+							const t = this._displayText(v);
+							if (t && t.length > 1 && !/^[0-9a-f-]{20,}$/i.test(t)) { text = t; break; }
 						}
 					}
-					renderItems(items);
-				} else {
-					// Try legacy patient-specific endpoints as fallback
-					const legacyMap: Record<string, string> = {
-						'AllergyIntolerance': `/api/allergy-intolerances/${this.patientId}`,
-						'Condition': `/api/medical-problems/${this.patientId}`,
-					};
-					const legacyUrl = legacyMap[resource];
-					if (legacyUrl) {
-						try {
-							const lr = await this.apiService.fetch(legacyUrl);
-							if (lr.ok) {
-								const lj = await lr.json();
-								const d = (lj?.data || lj || {}) as Record<string, unknown>;
-								const items = (d.allergiesList || d.problemsList || d.content || (Array.isArray(d) ? d : [])) as Record<string, unknown>[];
-								renderItems(items);
-								return;
-							}
-						} catch { /* */ }
-					}
-					body.textContent = emptyMsg;
+					row.textContent = (text || '—').substring(0, 50);
 				}
+			};
+			// Try every endpoint shape we know — the Quick Info badge counts use
+			// the legacy `/api/allergy-intolerances/{id}` (returns
+			// `data.allergiesList`); the FHIR controller returns `data.content`.
+			// The summary cards must paint whichever returns data so they stop
+			// showing "No problems recorded" / "NKA" while the badge count is 2.
+			const legacyMap: Record<string, string> = {
+				'AllergyIntolerance': `/api/allergy-intolerances/${this.patientId}`,
+				'Condition': `/api/medical-problems/${this.patientId}`,
+			};
+			const fhirEp = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
+			const tryUrl = async (url: string): Promise<Record<string, unknown>[]> => {
+				try {
+					const r = await this.apiService.fetch(url);
+					if (!r.ok) { return []; }
+					const j = await r.json();
+					const d = (j?.data ?? j ?? {}) as Record<string, unknown>;
+					const out = (d.allergiesList || d.problemsList || d.content || d.list || d.items || d.records
+						|| (Array.isArray(d) ? d : [])) as Record<string, unknown>[];
+					return Array.isArray(out) ? out : [];
+				} catch { return []; }
+			};
+			try {
+				let items = await tryUrl(`${fhirEp}/patient/${this.patientId}?page=0&size=3`);
+				if (items.length === 0 && legacyMap[resource]) {
+					items = await tryUrl(legacyMap[resource]);
+				}
+				renderItems(items);
 			} catch {
 				body.textContent = emptyMsg;
 			}
@@ -3567,10 +3733,12 @@ export class PatientChartEditor extends EditorPane {
 			// proper name (allergen, medication, vaccine, procedure, condition, alert,
 			// test, document title).
 			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
-			// Lot numbers must start with alpha/digit, no leading dashes, length 2-30.
-			const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{1,29}$/;
-			// Dose must be a positive (non-zero) number, optionally with a unit. Rejects "-1", "0", "0.0 mL".
-			const dosePattern = /^(?!0+(?:\.0+)?\s*$)(?!0+(?:\.0+)?\s+)\d+(?:\.\d+)?(?:\s*[A-Za-z%]+)?$/;
+			// Lot numbers must contain BOTH letters and digits, length 3-30. Pure
+			// numbers like "15" / "123" must fail the negative test the team flagged.
+			const lotPattern = /^(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
+			// Dose REQUIRES a unit suffix — bare numbers like "1" / "0.5" must fail.
+			// Units mirror the immunization FieldDef validationPattern.
+			const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?\s*(mL|mg|mcg|units|IU|cc|g|%)$/i;
 			const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
 				allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
@@ -3587,9 +3755,9 @@ export class PatientChartEditor extends EditorPane {
 				description: { rx: namePattern, msg: 'No special characters allowed' },
 				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
 				subject: { rx: namePattern, msg: 'No special characters allowed' },
-				lotNumber: { rx: lotPattern, msg: 'Lot number must start with a letter or digit; dashes allowed; 2-30 characters' },
-				lot_number: { rx: lotPattern, msg: 'Lot number must start with a letter or digit; dashes allowed; 2-30 characters' },
-				dose: { rx: dosePattern, msg: 'Dose must be a positive number, optionally followed by a unit (e.g. 0.5 mL)' },
+				lotNumber: { rx: lotPattern, msg: 'Lot number must contain letters and digits, 3-30 characters' },
+				lot_number: { rx: lotPattern, msg: 'Lot number must contain letters and digits, 3-30 characters' },
+				dose: { rx: dosePattern, msg: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU, cc, g, %)' },
 				doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 				dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			};
@@ -3699,6 +3867,18 @@ export class PatientChartEditor extends EditorPane {
 						payload[key] = v;
 					}
 				}
+			}
+			// On CREATE we MUST NOT send an `id` / `fhirId` field — HAPI / JPA
+			// will reject with "The given id must not be null" if it sees a null
+			// or empty id, and even a stale id from a prefill seed would point
+			// the server at the wrong row. Strip every id-flavoured key so the
+			// backend can mint its own. See feedback_fhir_clear_id_before_create.
+			if (!isEdit) {
+				delete payload.id;
+				delete payload.fhirId;
+				delete payload.uuid;
+				delete payload._id;
+				delete payload.resourceId;
 			}
 
 			saveBtn.disabled = true;
@@ -4763,12 +4943,34 @@ export class PatientChartEditor extends EditorPane {
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
-			// Appointment rows now expose only Edit (row click → edit dialog)
-			// and Delete — the 12.05.26 workspace test report asked us to
-			// strip the previous Open Chart / Record Vitals / Visit Summary
-			// shortcuts. Those workflows are still reachable from the
-			// calendar and the sidebar.
-			const extraActions = undefined;
+			// Billing rows expose Open Chart / Record Vitals / Visit Summary —
+			// the test team flagged these were missing from the Billing
+			// actions column. They reach the same encounter editor used from
+			// the calendar; if a row has no linked encounter we fall back to
+			// the chart's encounters tab.
+			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
+			if (tab.key === 'billing') {
+				const encId = String(item.encounterId || item.encounter || item.encounterRef || '').split('/').pop() || '';
+				const openSection = (section: string): void => {
+					if (encId) {
+						this.editorService.openEditor(
+							new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter', section),
+							{},
+							SIDE_GROUP,
+						);
+					} else {
+						this._navigate('encounters');
+					}
+				};
+				extraActions = [
+					// allow-any-unicode-next-line
+					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: () => openSection('summary') },
+					// allow-any-unicode-next-line
+					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openSection('vitals') },
+					// allow-any-unicode-next-line
+					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: () => openSection('summary') },
+				];
+			}
 
 			return { cells, onClick, onDelete, extraActions };
 		});

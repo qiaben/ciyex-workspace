@@ -178,6 +178,31 @@ export interface ClinicalEditorConfig {
 	 * shown as inline `<select>` controls.
 	 */
 	statusAsDropdown?: boolean;
+	/**
+	 * When true, KPI / stats cards render in a compact mode (~half the normal
+	 * vertical height, smaller fonts). Used on dense KPI strips like the
+	 * Patient Recall board where 7+ cards would otherwise dominate the page.
+	 */
+	compactStats?: boolean;
+	/**
+	 * When set, applied as `min-width` on the table grid so the outer wrapper
+	 * can scroll horizontally instead of crushing columns. Use for pages with
+	 * many columns plus an Actions column that must stay visible (e.g. the
+	 * Patient Education Library — issue #24).
+	 */
+	tableMinWidth?: string;
+	/**
+	 * Hook for rendering custom DOM (e.g. dynamic Goals / Interventions lists
+	 * on Care Plans — issue #23) inside the dialog body. The hook is called
+	 * once per dialog open and should return a `collect()` callback that
+	 * produces extra fields for the save payload.
+	 */
+	formExtras?: (container: HTMLElement, editingItem: Record<string, unknown> | null) => FormExtrasHandle;
+}
+
+export interface FormExtrasHandle {
+	/** Called at save time to merge dynamic-list data into the payload. */
+	collect: () => Record<string, unknown>;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -400,8 +425,20 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const numericStats = Object.entries(this.stats).filter(([, v]) => typeof v === 'number');
 		if (numericStats.length > 0) {
 			const row = DOM.append(this.contentEl, DOM.$('div'));
-			const cols = Math.min(numericStats.length, 6);
-			row.style.cssText = `display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:10px;margin-bottom:16px;`;
+			// compactStats halves the vertical footprint for pages like Recall that
+			// surface 7+ KPI cards — otherwise the strip dominates the viewport.
+			const compact = !!cfg.compactStats;
+			const cols = Math.min(numericStats.length, compact ? 8 : 6);
+			const gap = compact ? 6 : 8;
+			const marginB = compact ? 8 : 12;
+			row.style.cssText = `display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:${gap}px;margin-bottom:${marginB}px;`;
+			// Compact card sizes (issues #17, #22): halve vertical footprint with
+			// padding 8px 16px and 12px body font so the strip doesn't dominate.
+			const cardPad = compact ? '3px 8px' : '8px 16px';
+			const cardMinH = compact ? '24px' : '0';
+			const cardGap = compact ? 1 : 6;
+			const numFs = compact ? 13 : 12;
+			const lblFs = compact ? 9 : 12;
 			for (const [k, v] of numericStats) {
 				// If statsFilterMap is set, only mapped keys are clickable filters; the
 				// rest are info-only aggregates (e.g. total counts, sums). Without a
@@ -410,18 +447,22 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const clickable = filterValue !== undefined;
 				const c = DOM.append(row, DOM.$('div'));
 				const isActive = clickable && this.statusFilter === filterValue;
-				c.style.cssText = `padding:8px 12px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:8px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s,border-color 0.15s;${clickable ? '' : 'opacity:0.85;'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;`;
+				// Default layout uses an inline row (number + label side-by-side) to
+				// halve the vertical footprint. compactStats keeps the column layout
+				// for KPI-heavy pages where the label needs its own line.
+				const cardDir = compact ? 'column' : 'row';
+				c.style.cssText = `padding:${cardPad};border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:6px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s,border-color 0.15s;${clickable ? '' : 'opacity:0.85;'};display:flex;flex-direction:${cardDir};align-items:center;justify-content:center;gap:${cardGap}px;min-height:${cardMinH};`;
 				if (clickable) {
 					c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
 					c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
 					c.addEventListener('click', () => { this.statusFilter = this.statusFilter === filterValue ? '' : filterValue!; this.currentPage = 0; if (cfg.clientSideFilter) { this._render(); } else { this._loadData(); } });
 				}
-				const numEl = DOM.append(c, DOM.$('div'));
+				const numEl = DOM.append(c, DOM.$('span'));
 				numEl.textContent = String(v);
-				numEl.style.cssText = `font-size:16px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};line-height:1;`;
-				const l = DOM.append(c, DOM.$('div'));
+				numEl.style.cssText = `font-size:${numFs}px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};line-height:1;`;
+				const l = DOM.append(c, DOM.$('span'));
 				l.textContent = k.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim();
-				l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);text-transform:capitalize;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
+				l.style.cssText = `font-size:${lblFs}px;color:var(--vscode-descriptionForeground);text-transform:capitalize;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;line-height:1;`;
 			}
 		}
 
@@ -536,8 +577,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// allow-any-unicode-next-line
 		// ─── Table ───
+		// Outer wrapper handles horizontal scrolling (issue #24): when the column
+		// set is wider than the viewport, the user can scroll sideways instead of
+		// the Actions column being clipped. Vertical scroll lives on the outer
+		// editor root.
 		const tbl = DOM.append(this.contentEl, DOM.$('div'));
-		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		tbl.className = 'cle-table-wrap';
+		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
+		// Override the global rule that hides horizontal scrollbars so users can
+		// see and use the scroll affordance on wide tables.
+		const tblStyle = DOM.append(tbl, DOM.$('style'));
+		tblStyle.textContent = '.cle-table-wrap{scrollbar-width:thin;}.cle-table-wrap::-webkit-scrollbar{display:block;height:8px;}.cle-table-wrap::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background);border-radius:4px;}';
 		// `minmax(0,1fr)` lets flexible columns shrink below their content width.
 		// Without this, an overflowing cell on one row would expand its column and
 		// shift the others, so the header and data rows no longer aligned
@@ -547,10 +597,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// grid; `auto` would size independently per row and shift columns left/right).
 		const actionCount = (cfg.actions?.length || 0) + (cfg.editable && cfg.formFields ? 1 : 0);
 		const cols = colWidths + (actionCount > 0 ? ` ${Math.max(80, actionCount * 26 + 8)}px` : '');
+		// Optional minimum table width (issue #24). Pages with many columns or a
+		// must-show Actions column (e.g. Patient Education library) set this so the
+		// outer wrap can scroll horizontally instead of collapsing the Actions cell.
+		const tableMinW = cfg.tableMinWidth ? `min-width:${cfg.tableMinWidth};` : '';
 
 		// Header
 		const hr = DOM.append(tbl, DOM.$('div'));
-		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);text-transform:uppercase;letter-spacing:0.3px;`;
+		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);text-transform:uppercase;letter-spacing:0.3px;${tableMinW}`;
 		for (const c of cfg.columns) { DOM.append(hr, DOM.$('span')).textContent = c.label; }
 		if (cfg.actions || cfg.editable) { DOM.append(hr, DOM.$('span')).textContent = 'Actions'; }
 
@@ -579,7 +633,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		for (const item of visibleItems) {
 			const r = DOM.append(tbl, DOM.$('div'));
-			r.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:6px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;transition:background 0.1s;`;
+			r.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:6px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;transition:background 0.1s;${tableMinW}`;
 			r.addEventListener('mouseenter', () => { r.style.background = 'var(--vscode-list-hoverBackground)'; });
 			r.addEventListener('mouseleave', () => { r.style.background = ''; });
 
@@ -785,8 +839,29 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Dialog (right-side panel) — flex column so header+footer are sticky and
 		// only the body scrolls. overflow:hidden on the dialog itself removes the
 		// outer scrollbar the user reported.
+		// color-scheme:dark tells the renderer to draw native form chrome (option
+		// dropdowns, date picker, scrollbars) in dark mode so the dialog stays in
+		// theme on light-OS systems (issue #18).
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
-		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);';
+		dialog.className = 'cle-form-dialog';
+		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:dark;';
+		// Force native <option> backgrounds to use the VS Code dropdown vars so
+		// the dropdown popup matches the rest of the dialog rather than rendering
+		// white on dark themes.
+		const dialogStyle = DOM.append(dialog, DOM.$('style'));
+		dialogStyle.textContent = [
+			'.cle-form-dialog select, .cle-form-dialog option {',
+			'  background:var(--vscode-dropdown-background, var(--vscode-input-background));',
+			'  color:var(--vscode-dropdown-foreground, var(--vscode-input-foreground));',
+			'}',
+			'.cle-form-dialog input, .cle-form-dialog textarea {',
+			'  background:var(--vscode-input-background);',
+			'  color:var(--vscode-input-foreground);',
+			'}',
+			'.cle-form-dialog input::placeholder, .cle-form-dialog textarea::placeholder {',
+			'  color:var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));',
+			'}',
+		].join('\n');
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
@@ -852,7 +927,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			} else if (field.type === 'textarea') {
 				inputEl = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
-				inputEl.style.cssText = inputStyle + 'min-height:60px;resize:vertical;font-family:inherit;';
+				// Issue #17: 60px was too tall — the prescription dialog felt
+				// dominated by the Notes textarea. 40px keeps two visible lines
+				// and the user can still drag-resize for longer entries.
+				inputEl.style.cssText = inputStyle + 'min-height:40px;max-height:120px;resize:vertical;font-family:inherit;';
 				inputEl.placeholder = field.placeholder || '';
 			} else if (field.type === 'search' && (field.apiPath || field.searchApiPath)) {
 				// Search field with live autocomplete dropdown
@@ -1052,6 +1130,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			inputs.set(field.key, inputEl);
 		}
 
+		// formExtras hook (issue #23) — lets configs (e.g. Care Plans) render
+		// dynamic Goals / Interventions lists inside the dialog and contribute
+		// extra payload fields at save time.
+		const extrasHost = DOM.append(body, DOM.$('div'));
+		extrasHost.style.cssText = 'grid-column:span 2;';
+		const extras = cfg.formExtras ? cfg.formExtras(extrasHost, this.editingItem) : null;
+
 		// Error area — spans both columns so it's always visible above the footer.
 		const errorEl = DOM.append(body, DOM.$('div'));
 		errorEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;display:none;';
@@ -1138,6 +1223,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					formValues[field.key] = v === '' ? null : Number(v);
 				} else {
 					formValues[field.key] = v;
+				}
+			}
+			// Merge dynamic-list fields contributed by formExtras (issue #23).
+			if (extras) {
+				const extraValues = extras.collect();
+				for (const [k, v] of Object.entries(extraValues)) {
+					formValues[k] = v;
 				}
 			}
 

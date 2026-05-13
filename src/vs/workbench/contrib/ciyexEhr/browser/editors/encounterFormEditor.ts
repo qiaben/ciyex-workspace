@@ -102,8 +102,13 @@ export class EncounterFormEditor extends EditorPane {
 				const body = target.children[1] as HTMLElement | undefined;
 				const header = target.children[0] as HTMLElement | undefined;
 				if (body && header && body.style.display === 'none') { header.click(); }
-				const top = target.offsetTop - this.scrollArea.offsetTop;
-				this.scrollArea.scrollTo({ top });
+				let top = 0;
+				let node: HTMLElement | null = target;
+				while (node && node !== this.scrollArea) {
+					top += node.offsetTop;
+					node = node.offsetParent as HTMLElement | null;
+				}
+				this.scrollArea.scrollTo({ top: Math.max(0, top - 8) });
 			}
 		}
 	}
@@ -616,11 +621,20 @@ export class EncounterFormEditor extends EditorPane {
 				if (body && header && body.style.display === 'none') {
 					header.click();
 				}
-				// Scroll the dedicated scrollArea (not the document) so the
-				// click reliably brings the section into view even when the
-				// editor is inside a tab/panel with its own scroll context.
-				const top = el.offsetTop - this.scrollArea.offsetTop;
-				this.scrollArea.scrollTo({ top, behavior: 'smooth' });
+				// Compute the section's top relative to the scrollArea by
+				// walking offsetParents until we hit the scroll container. The
+				// previous "el.offsetTop - scrollArea.offsetTop" subtraction
+				// was wrong (different offsetParents), which is why the last
+				// section ("Procedures & Coding") appeared to do nothing —
+				// the calculated scroll target was usually below the actual
+				// section.
+				let top = 0;
+				let node: HTMLElement | null = el;
+				while (node && node !== this.scrollArea) {
+					top += node.offsetTop;
+					node = node.offsetParent as HTMLElement | null;
+				}
+				this.scrollArea.scrollTo({ top: Math.max(0, top - 8), behavior: 'smooth' });
 			});
 
 			this.tocItems.push({ key: sec.key, el: item });
@@ -628,11 +642,20 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	private _setupScrollSync(): void {
+		const cardTopWithin = (card: HTMLElement): number => {
+			let top = 0;
+			let node: HTMLElement | null = card;
+			while (node && node !== this.scrollArea) {
+				top += node.offsetTop;
+				node = node.offsetParent as HTMLElement | null;
+			}
+			return top;
+		};
 		this.scrollArea.addEventListener('scroll', () => {
 			let activeKey = '';
-			const scrollTop = this.scrollArea.scrollTop + this.scrollArea.offsetTop + 20;
+			const scrollTop = this.scrollArea.scrollTop + 20;
 			for (const [key, card] of this.sectionCards) {
-				if (card.offsetTop <= scrollTop) {
+				if (cardTopWithin(card) <= scrollTop) {
 					activeKey = key;
 				}
 			}
@@ -931,21 +954,27 @@ export class EncounterFormEditor extends EditorPane {
 		// Order matches the EHR-UI Assessment & Diagnosis layout:
 		//   1. "Diagnosis" label
 		//   2. ICD-10 search input
-		//   3. Search results dropdown (shown while typing)
+		//   3. Search results dropdown (overlays below the input, absolutely
+		//      positioned so it doesn't displace the Assessment Notes textarea
+		//      or any section below).
 		//   4. Selected-diagnoses list
-		// The previous order put the selected list ABOVE the search box, which
-		// pushed the Assessment Notes textarea way down and was the "Assessment
-		// Notes textbox moving below incorrectly" finding in the test report.
 		const labelEl = readOnly ? null : DOM.append(parent, DOM.$('label'));
 		if (labelEl) {
 			labelEl.textContent = 'Diagnosis';
 			labelEl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:0 0 4px;';
 		}
 
-		const searchRow = readOnly ? null : DOM.append(parent, DOM.$('div'));
-		const results = readOnly ? null : DOM.append(parent, DOM.$('div'));
+		// Wrap the search input + dropdown in a position:relative container so
+		// the results panel can absolutely-overlay BELOW the input rather than
+		// flowing inline and pushing the rest of the form down.
+		const searchWrap = readOnly ? null : DOM.append(parent, DOM.$('div'));
+		if (searchWrap) {
+			searchWrap.style.cssText = 'position:relative;';
+		}
+		const searchRow = searchWrap ? DOM.append(searchWrap, DOM.$('div')) : null;
+		const results = searchWrap ? DOM.append(searchWrap, DOM.$('div')) : null;
 		if (results) {
-			results.style.cssText = 'max-height:150px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+			results.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background,var(--vscode-editor-background)));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:4px;margin-top:2px;max-height:280px;overflow-y:auto;display:none;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
 		}
 
 		const listEl = DOM.append(parent, DOM.$('div'));
@@ -1125,15 +1154,20 @@ export class EncounterFormEditor extends EditorPane {
 		lbl.textContent = 'Procedure Codes';
 		lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:8px 0 4px;';
 
-		const searchRow = DOM.append(searchContainer, DOM.$('div'));
+		// Wrap the input + dropdown in a relative container so the results
+		// list can overlay below the input rather than push Procedure Notes
+		// (and the selected-procedures list) downward.
+		const searchWrap = DOM.append(searchContainer, DOM.$('div'));
+		searchWrap.style.cssText = 'position:relative;';
+		const searchRow = DOM.append(searchWrap, DOM.$('div'));
 		searchRow.style.cssText = 'display:flex;gap:8px;';
 		const searchInput = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
 		searchInput.type = 'text';
 		searchInput.placeholder = 'Search CPT codes and HCPCS codes';
 		searchInput.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
-		const results = DOM.append(searchContainer, DOM.$('div'));
-		results.style.cssText = 'max-height:200px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
+		const results = DOM.append(searchWrap, DOM.$('div'));
+		results.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background,var(--vscode-editor-background)));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:4px;margin-top:2px;max-height:280px;overflow-y:auto;display:none;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
 
 		const fetchCodes = async (codeType: 'CPT' | 'HCPCS', q: string): Promise<Array<Record<string, unknown>>> => {
 			// Try the ciyex-codes proxy first, fall back to org-level global_codes
