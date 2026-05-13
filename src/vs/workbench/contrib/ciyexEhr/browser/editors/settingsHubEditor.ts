@@ -2167,21 +2167,21 @@ export class SettingsHubEditor extends EditorPane {
 
 					// Pick the temporary password from any of the response
 					// shapes the backend might use, falling back to the value
-					// the admin typed (if any). When `generatePrint` is checked
-					// the modal MUST appear — even if the backend didn't return
-					// a password, we show the username with a "sent via email"
-					// note so the admin gets visible confirmation that their
-					// "print credentials" intent succeeded.
-					if (printCb.checked) {
-						const tempPwd = json?.data?.temporaryPassword
-							|| json?.data?.password
-							|| json?.data?.tempPassword
-							|| json?.temporaryPassword
-							|| json?.password
-							|| body.temporaryPassword
-							|| '';
-						const newUserId = json?.data?.id || json?.data?.userId || json?.id;
-						const newUserEmail = json?.data?.email || body.email;
+					// the admin typed (if any). The modal MUST appear whenever
+					// `generatePrint` is checked OR the backend included a
+					// temporary password — earlier we only showed it on the
+					// print-checkbox path, but admins who left the password
+					// blank also need to see whatever the backend generated.
+					const tempPwd = json?.data?.temporaryPassword
+						|| json?.data?.password
+						|| json?.data?.tempPassword
+						|| json?.temporaryPassword
+						|| json?.password
+						|| body.temporaryPassword
+						|| '';
+					const newUserId = json?.data?.id || json?.data?.userId || json?.id;
+					const newUserEmail = json?.data?.email || body.email;
+					if (printCb.checked || tempPwd) {
 						setTimeout(() => {
 							this._showCredentialsModal({
 								userId: String(newUserId || ''),
@@ -3635,28 +3635,20 @@ export class SettingsHubEditor extends EditorPane {
 		} catch { /* ignore */ }
 
 		// Apply the chosen font size to a global CSS variable so every page in
-		// the EHR workspace picks it up (not just this preview). The single
-		// style rule below wires `.ciyex-editor-root` to read the variable, so
-		// every editor pane inherits the size without us needing to walk the
-		// DOM (selector-based queries are forbidden by the VSCode lint rules).
+		// the EHR workspace picks it up. Set the base font-size on the
+		// workbench root and let normal CSS inheritance cascade. Applying
+		// it to every descendant via `*` (the previous version) flattened
+		// the type hierarchy — headings, badges, small labels all rendered
+		// at the same size and the form looked broken. Setting it on the
+		// workbench root only lets explicit per-element font-sizes (em,
+		// rem, px) continue to scale relative to the new base.
 		if (!this._fontSizeStyleInjected) {
 			this._fontSizeStyleInjected = true;
 			const styleEl = mainWindow.document.createElement('style');
-			// Apply the font size to the entire VSCode workbench root so
-			// every pane — chart, calendar, encounter, settings — uniformly
-			// scales with the chosen Display size. Inherits down to all
-			// children. The team report repeatedly flagged "font size
-			// changes only in this particular tab"; this rule applies it
-			// globally instead of only to .ciyex-editor-root.
 			styleEl.textContent = `
-				.monaco-workbench,
-				.monaco-workbench *:not(.codicon):not([class^="codicon-"]):not(.monaco-icon-label):not(.action-label) {
-					font-size: var(--ciyex-display-fontSize, inherit);
-				}
+				.monaco-workbench { font-size: var(--ciyex-display-fontSize, 13px); }
 				.ciyex-editor-root,
-				.ciyex-settings-editor {
-					font-size: var(--ciyex-display-fontSize, 16px);
-				}
+				.ciyex-settings-editor { font-size: var(--ciyex-display-fontSize, 13px); }
 			`;
 			mainWindow.document.head.appendChild(styleEl);
 		}
