@@ -2307,8 +2307,14 @@ export class SettingsHubEditor extends EditorPane {
 	 * Used after user creation and password reset when the backend returns a temporaryPassword.
 	 */
 	private _showCredentialsModal(data: { userId: string; username: string; temporaryPassword: string; resetDate?: string }): void {
-		const overlay = DOM.append(this.contentEl, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1001;';
+		// Anchor the modal to <body> instead of contentEl so any subsequent
+		// _renderContent() call (e.g. from _onSidebarClick refreshing the user
+		// list) doesn't wipe it. The team report repeatedly flagged that the
+		// credentials modal "is not showing" after Create User — that was
+		// because the async sidebar re-render cleared contentEl moments after
+		// the modal was appended. Attaching to body avoids the race entirely.
+		const overlay = DOM.append(mainWindow.document.body, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
 		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:480px;max-width:92vw;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
@@ -4038,61 +4044,95 @@ export class SettingsHubEditor extends EditorPane {
 		interface EncSection { key: string; title: string; columns?: number; collapsible?: boolean; collapsed?: boolean; visible?: boolean; fields?: Array<Record<string, unknown>>;[k: string]: unknown }
 		interface EncFieldConfig { sections: EncSection[]; features?: Record<string, unknown> }
 
+		// Header matches the EHR Web UI Encounter Settings page exactly: tab
+		// title + subtitle, then a toolbar with search + "N/M enabled" + Code
+		// + Reset to Defaults + Save Changes (v6 image_encounter).
 		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:16px;';
 		const left = DOM.append(header, DOM.$('div'));
 		const title = DOM.append(left, DOM.$('h1'));
 		title.textContent = 'Encounter Settings';
-		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		title.style.cssText = 'margin:0 0 4px;font-size:20px;font-weight:600;';
 		const sub = DOM.append(left, DOM.$('p'));
-		sub.textContent = 'Configure encounter form sections — enable/disable, reorder, add fields, and save.';
+		sub.textContent = 'Configure encounter form sections \u2014 enable/disable, reorder, add fields, and save.';
 		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
 
-		const headerActions = DOM.append(header, DOM.$('div'));
-		headerActions.style.cssText = 'display:flex;gap:8px;';
-		const resetBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
-		resetBtn.textContent = '\u21BA Reset';
-		resetBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		const saveBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
-		saveBtn.textContent = 'Save';
-		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		const toolbar = DOM.append(root, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;';
+		const toolLeft = DOM.append(toolbar, DOM.$('div'));
+		toolLeft.style.cssText = 'display:flex;align-items:center;gap:14px;flex:1;';
+		const searchInp = DOM.append(toolLeft, DOM.$('input')) as HTMLInputElement;
+		searchInp.type = 'search';
+		searchInp.placeholder = 'Search sections\u2026';
+		searchInp.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;width:240px;outline:none;';
+		const countLbl = DOM.append(toolLeft, DOM.$('span'));
+		countLbl.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+
+		const toolRight = DOM.append(toolbar, DOM.$('div'));
+		toolRight.style.cssText = 'display:flex;gap:8px;';
+		const codeBtn = DOM.append(toolRight, DOM.$('button')) as HTMLButtonElement;
+		codeBtn.textContent = '<> Code';
+		codeBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const resetBtn = DOM.append(toolRight, DOM.$('button')) as HTMLButtonElement;
+		resetBtn.textContent = '\u21BA Reset to Defaults';
+		resetBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const saveBtn = DOM.append(toolRight, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = '\u{1F4BE} Save Changes';
+		saveBtn.style.cssText = 'padding:6px 14px;background:#2563eb;color:#ffffff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 
 		const body = DOM.append(root, DOM.$('div'));
 
 		let fieldConfig: EncFieldConfig = { sections: [] };
 		let fhirResources: string[] = [];
-		let configSource = 'UNIVERSAL_DEFAULT';
+		let searchTerm = '';
 
 		const renderBody = (): void => {
 			DOM.clearNode(body);
-
-			const meta = DOM.append(body, DOM.$('div'));
-			meta.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px;';
-			const srcBadge = DOM.append(meta, DOM.$('span'));
-			srcBadge.textContent = configSource === 'ORG_CUSTOM' ? 'Custom Config' : 'Universal Default';
-			srcBadge.style.cssText = `padding:3px 10px;border-radius:999px;font-weight:500;background:${configSource === 'ORG_CUSTOM' ? 'rgba(14,99,156,0.15)' : 'rgba(128,128,128,0.15)'};color:${configSource === 'ORG_CUSTOM' ? 'var(--vscode-textLink-foreground,#3794ff)' : 'var(--vscode-descriptionForeground)'};`;
-			const counts = DOM.append(meta, DOM.$('span'));
 			const enabled = fieldConfig.sections.filter(s => s.visible !== false).length;
-			counts.textContent = `${enabled} / ${fieldConfig.sections.length} sections enabled`;
-			counts.style.cssText = 'color:var(--vscode-descriptionForeground);';
+			countLbl.textContent = `${enabled} / ${fieldConfig.sections.length} enabled`;
 
 			if (fieldConfig.sections.length === 0) {
 				const empty = DOM.append(body, DOM.$('div'));
 				empty.textContent = 'No sections configured.';
 				empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:12px;';
 			} else {
-				fieldConfig.sections.forEach((section, idx) => this._renderEncounterSection(body, section, idx, fieldConfig, renderBody));
+				// Table view matching the web image: SECTION | FIELDS | COLUMNS | STATUS | ORDER
+				const tableWrap = DOM.append(body, DOM.$('div'));
+				tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;background:var(--vscode-editor-background);';
+				const tHead = DOM.append(tableWrap, DOM.$('div'));
+				tHead.style.cssText = 'display:grid;grid-template-columns:60px 1fr 100px 110px 90px 110px;gap:8px;padding:10px 12px;background:rgba(0,122,204,0.05);border-bottom:1px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:1px;';
+				for (const colName of ['', 'SECTION', 'FIELDS', 'COLUMNS', 'STATUS', 'ORDER']) {
+					const c = DOM.append(tHead, DOM.$('span'));
+					c.textContent = colName;
+				}
+				const tBody = DOM.append(tableWrap, DOM.$('div'));
+				const term = searchTerm.toLowerCase();
+				fieldConfig.sections.forEach((section, idx) => {
+					if (term && !(section.title.toLowerCase().includes(term) || section.key.toLowerCase().includes(term))) { return; }
+					this._renderEncounterSection(tBody, section, idx, fieldConfig, renderBody);
+				});
 			}
 
 			const addSectionBtn = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
 			addSectionBtn.textContent = '+ Add Section';
-			addSectionBtn.style.cssText = 'display:block;width:100%;padding:10px;background:transparent;border:2px dashed var(--vscode-editorWidget-border);border-radius:8px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;margin-top:8px;';
+			addSectionBtn.style.cssText = 'display:block;width:100%;padding:10px;background:transparent;border:2px dashed var(--vscode-editorWidget-border);border-radius:8px;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;margin-top:10px;';
 			addSectionBtn.addEventListener('click', () => {
 				const newKey = `section_${Date.now()}`;
 				fieldConfig.sections.push({ key: newKey, title: 'New Section', columns: 2, visible: true, fields: [] });
 				renderBody();
 			});
 		};
+
+		searchInp.addEventListener('input', () => { searchTerm = searchInp.value; renderBody(); });
+		codeBtn.addEventListener('click', () => {
+			const w = mainWindow.open('', '_blank', 'width=900,height=700');
+			if (!w) { return; }
+			w.document.title = 'Encounter field config (JSON)';
+			const pre = w.document.createElement('pre');
+			pre.textContent = JSON.stringify(fieldConfig, null, 2);
+			pre.style.cssText = 'font-family:monospace;font-size:12px;padding:20px;white-space:pre-wrap;';
+			w.document.body.appendChild(pre);
+		});
 
 		// Load
 		try {
@@ -4106,7 +4146,6 @@ export class SettingsHubEditor extends EditorPane {
 				}
 				fieldConfig = fc as EncFieldConfig;
 				fhirResources = cfg.fhirResources || [];
-				configSource = cfg.orgId && cfg.orgId !== '*' ? 'ORG_CUSTOM' : 'UNIVERSAL_DEFAULT';
 			}
 		} catch { /* ignore */ }
 		renderBody();
@@ -4120,7 +4159,6 @@ export class SettingsHubEditor extends EditorPane {
 					body: JSON.stringify({ fieldConfig, fhirResources }),
 				});
 				if (res.ok) {
-					configSource = 'ORG_CUSTOM';
 					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter configuration saved.' });
 					renderBody();
 				} else {
@@ -4383,45 +4421,71 @@ export class SettingsHubEditor extends EditorPane {
 					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
 					return;
 				}
+				// Tree container — matches the EHR Web UI "SIDEBAR MENU STRUCTURE"
+				// card with each item rendered as a polished row (drag handle, label,
+				// key chip, route arrow, up/down, edit, add-child, hide/show, delete).
+				// Was previously a minimal label-only row; team test report flagged
+				// it as not matching the web exactly.
+				const treeHeader = DOM.append(body, DOM.$('div'));
+				treeHeader.textContent = 'SIDEBAR MENU STRUCTURE';
+				treeHeader.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);padding:12px 14px;background:rgba(0,122,204,0.04);border:1px solid var(--vscode-editorWidget-border);border-bottom:none;border-radius:8px 8px 0 0;';
 				const treeWrap = DOM.append(body, DOM.$('div'));
-				treeWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
-				const renderNode = (node: MenuItemNode, depth: number): void => {
+				treeWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-top:none;border-radius:0 0 8px 8px;overflow:hidden;background:var(--vscode-editor-background);';
+				const renderNode = (node: MenuItemNode, depth: number, parentArr: MenuItemNode[], idxInParent: number): void => {
 					const row = DOM.append(treeWrap, DOM.$('div'));
-					row.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;padding-left:${12 + depth * 24}px;border-bottom:1px solid rgba(128,128,128,0.1);font-size:12px;`;
-					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.03))'; });
+					row.style.cssText = `display:flex;align-items:center;gap:10px;padding:10px 14px;padding-left:${14 + depth * 28}px;border-bottom:1px solid rgba(128,128,128,0.1);font-size:13px;transition:background 0.08s;`;
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; });
 					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+					const drag = DOM.append(row, DOM.$('span'));
+					drag.textContent = '\u22EE\u22EE';
+					drag.style.cssText = 'color:var(--vscode-descriptionForeground);opacity:0.4;font-size:12px;letter-spacing:-2px;cursor:grab;';
 
 					const icon = DOM.append(row, DOM.$('span'));
 					icon.textContent = ICON_MAP[node.item.icon || 'FileText'] || '\u{1F4C4}';
-					icon.style.cssText = 'opacity:0.7;font-size:13px;';
+					icon.style.cssText = 'opacity:0.85;font-size:14px;width:18px;text-align:center;flex-shrink:0;';
+
 					const lbl = DOM.append(row, DOM.$('span'));
 					lbl.textContent = node.item.label;
-					lbl.style.cssText = 'flex:1;font-weight:500;';
-					const keyCode = DOM.append(row, DOM.$('code'));
+					lbl.style.cssText = 'flex:1;font-weight:500;color:var(--vscode-foreground);';
+
+					const keyCode = DOM.append(row, DOM.$('span'));
 					keyCode.textContent = node.item.itemKey;
-					keyCode.style.cssText = 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);padding:1px 5px;border-radius:3px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+					keyCode.style.cssText = 'background:rgba(128,128,128,0.12);color:var(--vscode-descriptionForeground);padding:2px 8px;border-radius:10px;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+
 					if (node.item.screenSlug) {
 						const slug = DOM.append(row, DOM.$('span'));
-						slug.textContent = `→ /${node.item.screenSlug}`;
-						slug.style.cssText = 'font-size:10px;color:var(--vscode-textLink-foreground,#3794ff);';
+						slug.textContent = `\u2192 /${node.item.screenSlug}`;
+						slug.style.cssText = 'font-size:11px;color:var(--vscode-textLink-foreground,#3794ff);font-family:var(--vscode-editor-font-family,monospace);';
 					}
 					if (node.item.isSystem) {
 						const sys = DOM.append(row, DOM.$('span'));
-						sys.textContent = 'SYSTEM';
-						sys.style.cssText = 'font-size:9px;font-weight:600;background:rgba(128,128,128,0.15);color:var(--vscode-descriptionForeground);padding:1px 5px;border-radius:3px;letter-spacing:0.5px;';
-					}
-					this._tableAction(row, '\u270F', 'Edit', () => this._openMenuItemModal(node.item, renderTree));
-					this._tableAction(row, '\u{1F441}', 'Hide/Show', () => this._toggleMenuItemHidden(node.item.id, renderTree));
-					if (!node.item.isSystem) {
-						this._tableAction(row, '\u{1F5D1}', 'Delete', () => this._deleteMenuItem(node.item.id, node.item.label, renderTree), 'danger');
+						sys.textContent = '\u{1F512}';
+						sys.title = 'System item';
+						sys.style.cssText = 'font-size:11px;color:#f59e0b;opacity:0.8;';
 					}
 
-					for (const child of node.children || []) {
-						renderNode(child, depth + 1);
+					const actions = DOM.append(row, DOM.$('div'));
+					actions.style.cssText = 'display:flex;align-items:center;gap:2px;flex-shrink:0;';
+					this._tableAction(actions, '\u2227', 'Move up', () => this._moveMenuItem(parentArr, idxInParent, -1, renderTree));
+					this._tableAction(actions, '\u2228', 'Move down', () => this._moveMenuItem(parentArr, idxInParent, 1, renderTree));
+					this._tableAction(actions, '\u270F', 'Edit', () => this._openMenuItemModal(node.item, renderTree));
+					this._tableAction(actions, '+', 'Add child', () => {
+						const child: { id?: number; itemKey: string; label: string; icon: string | null; screenSlug: string | null } = { itemKey: '', label: '', icon: 'FileText', screenSlug: null };
+						this._openMenuItemModal(child, renderTree);
+					});
+					this._tableAction(actions, '\u{1F441}', 'Hide/Show', () => this._toggleMenuItemHidden(node.item.id, renderTree));
+					if (!node.item.isSystem) {
+						this._tableAction(actions, '\u{1F5D1}', 'Delete', () => this._deleteMenuItem(node.item.id, node.item.label, renderTree), 'danger');
+					}
+
+					const children = node.children || [];
+					for (let i = 0; i < children.length; i++) {
+						renderNode(children[i], depth + 1, children, i);
 					}
 				};
-				for (const node of tree) {
-					renderNode(node, 0);
+				for (let i = 0; i < tree.length; i++) {
+					renderNode(tree[i], 0, tree, i);
 				}
 			} catch {
 				loading.textContent = 'Waiting for login…';
@@ -4727,6 +4791,32 @@ export class SettingsHubEditor extends EditorPane {
 
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 		setTimeout(() => labelInp.focus(), 50);
+	}
+
+	/**
+	 * Move a menu item up or down within its siblings. The web's Menu
+	 * Configuration page exposes up/down chevrons next to each row; the
+	 * backend takes the reorder as an override via PUT /overrides.
+	 */
+	private async _moveMenuItem(siblings: Array<{ item: { id: number; itemKey: string } }>, idx: number, dir: -1 | 1, reload: () => Promise<void>): Promise<void> {
+		const newIdx = idx + dir;
+		if (newIdx < 0 || newIdx >= siblings.length) { return; }
+		const ordered = siblings.map(s => s.item.id);
+		[ordered[idx], ordered[newIdx]] = [ordered[newIdx], ordered[idx]];
+		try {
+			const res = await this.apiService.fetch('/api/menus/ehr-sidebar/overrides', {
+				method: 'PUT',
+				body: JSON.stringify({ reorder: ordered }),
+			});
+			if (res.ok) {
+				await reload();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Menu order updated.' });
+			} else {
+				this.notificationService.notify({ severity: Severity.Error, message: `Reorder failed (${res.status})` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Reorder failed: ${e}` });
+		}
 	}
 
 	private async _toggleMenuItemHidden(itemId: number, reload: () => Promise<void>): Promise<void> {
