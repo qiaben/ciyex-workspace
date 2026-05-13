@@ -2276,12 +2276,85 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		actions: [],
 	};
 
+	// Maintenance sub-tab (issue #27) — mirrors ciyex-ehr-ui
+	// inventory-management/Maintenance/Maintenance.tsx. The list shows
+	// equipment maintenance tasks with priority + status workflow.
+	private readonly _maintenanceConfig: ClinicalEditorConfig = {
+		title: 'Maintenance', apiPath: '/api/maintenances',
+		searchPlaceholder: 'Search by equipment, assignee, vendor...',
+		clientSideFilter: ['equipmentName', 'assignee', 'vendor', 'location', 'status', 'priority', 'id'],
+		editable: true,
+		refetchOnEdit: true,
+		filterKey: 'status',
+		columns: [
+			{ key: 'equipmentName', label: 'Equipment', width: '1.5fr' },
+			{ key: 'location', label: 'Location', width: '120px' },
+			{ key: 'priority', label: 'Priority', width: '90px' },
+			{ key: 'assignee', label: 'Assignee', width: '120px' },
+			{ key: 'scheduledDate', label: 'Scheduled', width: '110px' },
+			{ key: 'status', label: 'Status', width: '110px' },
+		],
+		statusTabs: [
+			{ label: 'Scheduled', value: 'scheduled' },
+			{ label: 'In Progress', value: 'in_progress' },
+			{ label: 'Completed', value: 'completed' },
+			{ label: 'Cancelled', value: 'cancelled' },
+		],
+		additionalFilters: [
+			{
+				key: 'priority', placeholder: 'All Priorities',
+				options: [
+					{ label: 'Low', value: 'low' },
+					{ label: 'Medium', value: 'medium' },
+					{ label: 'High', value: 'high' },
+					{ label: 'Critical', value: 'critical' },
+				],
+			},
+		],
+		formFields: [
+			{ key: 'equipmentName', label: 'Equipment Name', type: 'text', required: true, placeholder: 'Equipment...' },
+			{ key: 'location', label: 'Location', type: 'text', placeholder: 'Where is the equipment?' },
+			{
+				key: 'priority', label: 'Priority', type: 'select', options: [
+					{ label: 'Low', value: 'low' },
+					{ label: 'Medium', value: 'medium' },
+					{ label: 'High', value: 'high' },
+					{ label: 'Critical', value: 'critical' },
+				], defaultValue: 'medium',
+			},
+			{ key: 'assignee', label: 'Assignee', type: 'text', placeholder: 'Person responsible' },
+			{ key: 'vendor', label: 'Vendor', type: 'text', placeholder: 'External vendor' },
+			{ key: 'scheduledDate', label: 'Scheduled Date', type: 'date' },
+			{ key: 'completedDate', label: 'Completed Date', type: 'date' },
+			{ key: 'cost', label: 'Cost ($)', type: 'number', placeholder: '0.00' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Scheduled', value: 'scheduled' },
+					{ label: 'In Progress', value: 'in_progress' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
+				], defaultValue: 'scheduled',
+			},
+			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Maintenance notes...', width: 'span 2' },
+		],
+		cellRenderer: (key, value) => {
+			if ((key === 'scheduledDate' || key === 'completedDate') && typeof value === 'string' && value) {
+				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return value; }
+			}
+			if (key === 'status' && typeof value === 'string') {
+				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			}
+			return String(value ?? '');
+		},
+	};
+
 	// @ts-ignore — override abstract readonly with getter
 	protected get config(): ClinicalEditorConfig {
 		switch (this.invView) {
 			case 'orders': return this._ordersConfig;
 			case 'suppliers': return this._suppliersConfig;
 			case 'records': return this._recordsConfig;
+			case 'maintenance': return this._maintenanceConfig;
 			default: return this._inventoryConfig;
 		}
 	}
@@ -2297,11 +2370,15 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
+		// Match ciyex-ehr-ui inventory-management module sub-tabs (issue #27).
+		// Dashboard/Settings are EHR-UI extras with no API-driven list — they
+		// stay in the web app only for now.
 		const invTabs: Array<{ view: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings'; label: string }> = [
 			{ view: 'inventory', label: 'Inventory' },
 			{ view: 'orders', label: 'Orders' },
 			{ view: 'records', label: 'Records' },
 			{ view: 'suppliers', label: 'Suppliers' },
+			{ view: 'maintenance', label: 'Maintenance' },
 		];
 		invTabs.forEach(({ view, label }) => {
 			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;

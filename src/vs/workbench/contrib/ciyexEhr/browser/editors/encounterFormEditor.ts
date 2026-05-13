@@ -873,10 +873,18 @@ export class EncounterFormEditor extends EditorPane {
 		// Vitals BMI auto-calc — exact same formula as EHR-UI's Vitalsform.
 		// Weight in kg, Height in cm: BMI = w / (h/100)^2. Recalc on either
 		// input changing; lock the BMI cell so the user can't type over the
-		// derived value.
-		const weightKg = renderedInputs.get('vitals_weight');
-		const heightCm = renderedInputs.get('vitals_height');
-		const bmi = renderedInputs.get('vitals_bmi');
+		// derived value. Issue #14: the backend tab_field_config sometimes
+		// drops the `vitals_` prefix, so we look up both variants.
+		const pickInput = (...keys: string[]): HTMLInputElement | undefined => {
+			for (const k of keys) {
+				const el = renderedInputs.get(k);
+				if (el) { return el; }
+			}
+			return undefined;
+		};
+		const weightKg = pickInput('vitals_weight', 'weight', 'weightKg', 'bodyWeight');
+		const heightCm = pickInput('vitals_height', 'height', 'heightCm', 'bodyHeight');
+		const bmi = pickInput('vitals_bmi', 'bmi', 'bodyMassIndex');
 		if (weightKg && heightCm && bmi) {
 			bmi.readOnly = true;
 			bmi.style.background = 'rgba(128,128,128,0.06)';

@@ -4992,8 +4992,17 @@ export class PatientChartEditor extends EditorPane {
 			// the calendar; if a row has no linked encounter we fall back to
 			// the chart's encounters tab.
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
-			if (tab.key === 'billing') {
-				const encId = String(item.encounterId || item.encounter || item.encounterRef || '').split('/').pop() || '';
+			// Issue #13: Open Chart / Record Vitals / Visit Summary shortcuts —
+			// available on every encounter-linked tab (Billing, Encounters,
+			// Appointments, Visit Notes). Each opens the encounter editor
+			// scrolled to the appropriate section.
+			const encounterLinkedTabs = new Set(['billing', 'encounters', 'appointments', 'visit-notes', 'claims', 'submissions']);
+			if (encounterLinkedTabs.has(tab.key)) {
+				// Row may surface the encounter via different keys: `encounterId`,
+				// `encounter`, `encounterRef`, `encounter.reference`, or — for the
+				// Encounters tab itself — the row's own `id` / `fhirId`.
+				const encFromKeys = String(item.encounterId || item.encounter || item.encounterRef || (item.encounter as Record<string, unknown> | undefined)?.reference || '').split('/').pop() || '';
+				const encId = encFromKeys || (tab.key === 'encounters' ? String(item.id || item.fhirId || '').split('/').pop() : '') || '';
 				const openSection = (section: string): void => {
 					if (encId) {
 						this.editorService.openEditor(

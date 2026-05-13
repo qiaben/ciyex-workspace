@@ -126,6 +126,15 @@ export class EhrTitlebarControls extends Disposable {
 			return;
 		}
 
+		// Issue #1: show an immediate "Searching..." indicator so users know
+		// the bar IS working while the API call is in flight. Without this
+		// the dropdown only appeared after the 300ms debounce + response
+		// time, and the test team reported the bar as "not fetching".
+		DOM.clearNode(this.searchDropdown);
+		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
+		loading.textContent = `Searching for "${value}"…`;
+		this.searchDropdown.style.display = '';
+
 		this.searchTimer = setTimeout(async () => {
 			this.searchCts = new CancellationTokenSource();
 			try {

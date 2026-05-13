@@ -839,12 +839,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Dialog (right-side panel) — flex column so header+footer are sticky and
 		// only the body scrolls. overflow:hidden on the dialog itself removes the
 		// outer scrollbar the user reported.
-		// color-scheme:dark tells the renderer to draw native form chrome (option
-		// dropdowns, date picker, scrollbars) in dark mode so the dialog stays in
-		// theme on light-OS systems (issue #18).
+		// color-scheme follows the active workbench theme so native form chrome
+		// (option popup, date picker, scrollbars) renders in the same mode as
+		// the dialog. Hard-coding `dark` produced light-on-light forms when the
+		// user was on a light theme (issue #18).
+		const themeType = this.themeService.getColorTheme().type;
+		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
 		dialog.className = 'cle-form-dialog';
-		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:dark;';
+		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
 		// Force native <option> backgrounds to use the VS Code dropdown vars so
 		// the dropdown popup matches the rest of the dialog rather than rendering
 		// white on dark themes.
