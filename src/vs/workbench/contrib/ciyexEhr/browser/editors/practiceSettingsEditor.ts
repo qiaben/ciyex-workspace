@@ -16,6 +16,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { PracticeSettingsEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface PracticeData {
 	id?: string;
@@ -54,6 +55,16 @@ const PRACTICE_TYPES: Array<[string, string]> = [
 export class PracticeSettingsEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexPracticeSettings';
 
+	/** Inject the no-scrollbar stylesheet exactly once per browser session. */
+	private static _scrollbarStyleInjected = false;
+	private static _injectNoScrollbarStyle(): void {
+		if (this._scrollbarStyleInjected) { return; }
+		this._scrollbarStyleInjected = true;
+		const styleEl = mainWindow.document.createElement('style');
+		styleEl.textContent = '.ciyex-no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }';
+		mainWindow.document.head.appendChild(styleEl);
+	}
+
 	private root!: HTMLElement;
 	private contentEl!: HTMLElement;
 	private practice: PracticeData = {};
@@ -73,7 +84,13 @@ export class PracticeSettingsEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.practice-settings-editor.ciyex-editor-root'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
+		// Hide the native vertical scrollbar (team flagged it as visible cruft
+		// on the Practice Settings page) while preserving scroll. The
+		// .ciyex-no-scrollbar class is wired in the shared stylesheet below
+		// — Firefox uses `scrollbar-width:none`, Webkit uses ::-webkit-scrollbar.
+		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;scrollbar-width:none;';
+		this.root.classList.add('ciyex-no-scrollbar');
+		PracticeSettingsEditor._injectNoScrollbarStyle();
 
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
 		this.contentEl.style.cssText = 'max-width:1000px;margin:0 auto;padding:24px;';

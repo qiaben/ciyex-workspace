@@ -139,6 +139,16 @@ type Mode = 'list' | 'view' | 'create' | 'edit';
 export class SettingsHubEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexSettingsHub';
 
+	/** Inject the no-scrollbar stylesheet exactly once per browser session. */
+	private static _scrollbarStyleInjected = false;
+	private static _injectNoScrollbarStyle(): void {
+		if (this._scrollbarStyleInjected) { return; }
+		this._scrollbarStyleInjected = true;
+		const styleEl = mainWindow.document.createElement('style');
+		styleEl.textContent = '.ciyex-no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }';
+		mainWindow.document.head.appendChild(styleEl);
+	}
+
 	private root!: HTMLElement;
 	private sidebarEl!: HTMLElement;
 	private contentEl!: HTMLElement;
@@ -179,10 +189,17 @@ export class SettingsHubEditor extends EditorPane {
 		this.root.style.cssText = 'height:100%;display:flex;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
 
 		this.sidebarEl = DOM.append(this.root, DOM.$('.sh-sidebar'));
-		this.sidebarEl.style.cssText = 'width:224px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,rgba(0,0,0,0.06));overflow-y:auto;display:flex;flex-direction:column;';
+		this.sidebarEl.style.cssText = 'width:224px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,rgba(0,0,0,0.06));overflow-y:auto;display:flex;flex-direction:column;scrollbar-width:none;';
+		this.sidebarEl.classList.add('ciyex-no-scrollbar');
 
 		this.contentEl = DOM.append(this.root, DOM.$('.sh-content'));
-		this.contentEl.style.cssText = 'flex:1;overflow-y:auto;';
+		this.contentEl.style.cssText = 'flex:1;overflow-y:auto;scrollbar-width:none;';
+		this.contentEl.classList.add('ciyex-no-scrollbar');
+
+		// One-time inject of the scrollbar-hide stylesheet used by every Ciyex
+		// editor pane. Team report flagged "still the vertical bar is showing
+		// in this page" on Practice Settings; this hides it everywhere.
+		SettingsHubEditor._injectNoScrollbarStyle();
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -1267,24 +1284,98 @@ export class SettingsHubEditor extends EditorPane {
 			const renderBlocks = (list: Array<Record<string, unknown>>): void => {
 				DOM.clearNode(summary);
 				if (list.length === 0) {
-					const empty = DOM.append(summary, DOM.$('span'));
+					const empty = DOM.append(summary, DOM.$('div'));
 					empty.textContent = 'No availability blocks. Click "Manage Availability" to add one.';
-					empty.style.fontStyle = 'italic';
+					empty.style.cssText = 'font-style:italic;color:var(--vscode-descriptionForeground);padding:8px 0;';
 					return;
 				}
+				// "Schedule Blocks" header matches the EHR Web UI exactly
+				// (test-report v6 image showing Location/Active/Office Visit,
+				// "Every week - Mon, Tue, Wed, Thu, Fri", 8:00 AM - 5:00 PM,
+				// Effective dates, edit/delete actions per block).
+				const header = DOM.append(summary, DOM.$('div'));
+				header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
+				const headerTitle = DOM.append(header, DOM.$('div'));
+				headerTitle.textContent = 'Schedule Blocks';
+				headerTitle.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+				const headerActions = DOM.append(header, DOM.$('div'));
+				headerActions.style.cssText = 'display:flex;gap:6px;';
+				const addBlockBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+				addBlockBtn.textContent = '+ Add Block';
+				addBlockBtn.style.cssText = 'padding:5px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;font-weight:500;';
+				addBlockBtn.addEventListener('click', () => {
+					if (!recordId) {
+						this.notificationService.notify({ severity: Severity.Warning, message: 'Save the provider first to add a block.' });
+						return;
+					}
+					this._openProviderAvailabilityModal(String(recordId), () => { void renderSummary(); });
+				});
+
+				const blocksWrap = DOM.append(summary, DOM.$('div'));
+				blocksWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
 				for (const b of list) {
 					const rec = (b.recurrence as Record<string, unknown>) || {};
 					const days: string[] = ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []).map(d => dayLabels[d] || d);
 					const start = (rec.startTime as string) || (b.startTime as string) || '?';
 					const end = (rec.endTime as string) || (b.endTime as string) || '?';
-					const row = DOM.append(summary, DOM.$('div'));
-					row.style.cssText = 'display:flex;gap:10px;font-size:12px;color:var(--vscode-foreground);padding:3px 0;';
-					const dayBadge = DOM.append(row, DOM.$('span'));
-					dayBadge.textContent = days.join(', ') || '(no days)';
-					dayBadge.style.cssText = 'font-weight:500;min-width:160px;color:var(--vscode-foreground);';
-					const timeBadge = DOM.append(row, DOM.$('span'));
-					timeBadge.textContent = `${start} - ${end}`;
-					timeBadge.style.cssText = 'color:var(--vscode-descriptionForeground);';
+					const isActive = String(b.status || 'active').toLowerCase() === 'active';
+					const locationRef = (rec.locationId as string) || (b.locationId as string) || '';
+					const startDate = (rec.startDate as string) || (b.start as string) || '';
+					const endDate = (rec.endDate as string) || (b.end as string) || '';
+					const frequency = (rec.frequency as string) || 'WEEKLY';
+
+					const card = DOM.append(blocksWrap, DOM.$('div'));
+					card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;background:var(--vscode-editor-background);';
+
+					// Row 1: Location + Active badge + visit type
+					const row1 = DOM.append(card, DOM.$('div'));
+					row1.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+					const locIcon = DOM.append(row1, DOM.$('span'));
+					locIcon.textContent = '\u{1F4CD}';
+					locIcon.style.cssText = 'font-size:12px;opacity:0.7;';
+					const locTxt = DOM.append(row1, DOM.$('span'));
+					locTxt.textContent = locationRef ? `Location #${locationRef}` : 'No location';
+					locTxt.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-foreground);';
+					if (isActive) {
+						const badge = DOM.append(row1, DOM.$('span'));
+						badge.textContent = '● Active';
+						badge.style.cssText = 'font-size:10px;color:#22c55e;font-weight:500;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:rgba(34,197,94,0.15);border-radius:10px;';
+					}
+					if (b.serviceType || b.serviceCategory) {
+						const svc = DOM.append(row1, DOM.$('span'));
+						svc.textContent = String(b.serviceType || b.serviceCategory);
+						svc.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+					}
+
+					// Row 2: Day pattern (calendar icon)
+					const row2 = DOM.append(card, DOM.$('div'));
+					row2.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+					const calIcon = DOM.append(row2, DOM.$('span'));
+					calIcon.textContent = '\u{1F4C5}';
+					calIcon.style.cssText = 'font-size:11px;opacity:0.7;';
+					const daysTxt = DOM.append(row2, DOM.$('span'));
+					const recurrenceWord = frequency === 'DAILY' ? 'Every day' : (frequency === 'MONTHLY' ? 'Every month' : 'Every week');
+					daysTxt.textContent = `${recurrenceWord} · ${days.join(', ') || '(no days)'}`;
+					daysTxt.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+
+					// Row 3: Time (clock icon)
+					const row3 = DOM.append(card, DOM.$('div'));
+					row3.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+					const clockIcon = DOM.append(row3, DOM.$('span'));
+					clockIcon.textContent = '\u{1F552}';
+					clockIcon.style.cssText = 'font-size:11px;opacity:0.7;';
+					const timeTxt = DOM.append(row3, DOM.$('span'));
+					timeTxt.textContent = `${start} - ${end}`;
+					timeTxt.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+
+					// Row 4: Effective dates (only when set)
+					if (startDate || endDate) {
+						const row4 = DOM.append(card, DOM.$('div'));
+						row4.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+						const fmt = (s: string): string => s ? (s.length >= 10 ? s.substring(0, 10) : s) : '';
+						row4.textContent = `Effective: ${fmt(startDate) || '—'} — ${fmt(endDate) || '—'}`;
+					}
 				}
 			};
 			const renderSummary = async (): Promise<void> => {
@@ -2053,33 +2144,38 @@ export class SettingsHubEditor extends EditorPane {
 					overlay.remove();
 					this.notificationService.notify({ severity: Severity.Info, message: `User created for ${selectedSubject.firstName} ${selectedSubject.lastName}.` });
 
-					// The credentials modal must show AFTER the sidebar re-render
-					// — calling _onSidebarClick first wipes contentEl, which used
-					// to nuke any modal we appended before it. Now we refresh the
-					// list THEN open the credentials modal so it stays on screen.
+					// Refresh the user list FIRST so the credentials modal we
+					// open below sits on top of the rendered table (otherwise
+					// _onSidebarClick's render would clear contentEl and nuke
+					// the modal). Delay the modal one tick so the async render
+					// has time to settle.
 					this._onSidebarClick('__users__');
 
-					// Show printable credentials when generatePrint was checked
-					// or the server returned a temporary password. Try multiple
-					// response shapes since the backend wraps this in a few
-					// different ways depending on flow.
-					const tempPwd = json?.data?.temporaryPassword
-						|| json?.data?.password
-						|| json?.temporaryPassword
-						|| json?.password;
-					const newUserId = json?.data?.id || json?.data?.userId || json?.id;
-					const newUserEmail = json?.data?.email || body.email;
-					if (printCb.checked && tempPwd) {
-						this._showCredentialsModal({
-							userId: String(newUserId || ''),
-							username: String(newUserEmail),
-							temporaryPassword: String(tempPwd),
-							resetDate: new Date().toISOString().split('T')[0],
-						});
-					} else if (printCb.checked && !tempPwd) {
-						// Backend didn't return the password (maybe sent only via
-						// email). Tell the user explicitly so they know to check.
-						this.notificationService.notify({ severity: Severity.Info, message: 'User created. Credentials emailed to the user.' });
+					// Pick the temporary password from any of the response
+					// shapes the backend might use, falling back to the value
+					// the admin typed (if any). When `generatePrint` is checked
+					// the modal MUST appear — even if the backend didn't return
+					// a password, we show the username with a "sent via email"
+					// note so the admin gets visible confirmation that their
+					// "print credentials" intent succeeded.
+					if (printCb.checked) {
+						const tempPwd = json?.data?.temporaryPassword
+							|| json?.data?.password
+							|| json?.data?.tempPassword
+							|| json?.temporaryPassword
+							|| json?.password
+							|| body.temporaryPassword
+							|| '';
+						const newUserId = json?.data?.id || json?.data?.userId || json?.id;
+						const newUserEmail = json?.data?.email || body.email;
+						setTimeout(() => {
+							this._showCredentialsModal({
+								userId: String(newUserId || ''),
+								username: String(newUserEmail),
+								temporaryPassword: tempPwd ? String(tempPwd) : '(sent via email — not displayed)',
+								resetDate: new Date().toISOString().split('T')[0],
+							});
+						}, 100);
 					}
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || `Create failed (${res.status})` });
