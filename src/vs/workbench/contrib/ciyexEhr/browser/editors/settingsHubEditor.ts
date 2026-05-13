@@ -1249,12 +1249,20 @@ export class SettingsHubEditor extends EditorPane {
 		);
 		if (isAvailabilityField) {
 			const wrap = DOM.append(cell, DOM.$('div'));
-			wrap.style.cssText = `display:flex;flex-direction:column;gap:8px;padding:8px 10px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:4px;min-height:42px;`;
+			wrap.style.cssText = `display:flex;flex-direction:column;gap:8px;padding:12px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:6px;min-height:60px;`;
 
 			const summary = DOM.append(wrap, DOM.$('div'));
-			summary.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+			summary.style.cssText = 'font-size:13px;color:var(--vscode-foreground);min-height:20px;';
 
 			const recordId = this.selectedRecord ? ((this.selectedRecord as { id?: string | number }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
+
+			// Show an immediate placeholder so the area is never blank — even if
+			// the async API call hangs or the data structure differs from what
+			// we expect, the user always sees something. The renderSummary
+			// below replaces this with the real content.
+			const placeholder = DOM.append(summary, DOM.$('span'));
+			placeholder.textContent = recordId ? 'Loading availability…' : 'Save the provider first to manage availability.';
+			placeholder.style.cssText = 'font-style:italic;color:var(--vscode-descriptionForeground);';
 			const dayLabels: Record<string, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
 			const renderBlocks = (list: Array<Record<string, unknown>>): void => {
 				DOM.clearNode(summary);
@@ -1435,7 +1443,10 @@ export class SettingsHubEditor extends EditorPane {
 		chevron.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--vscode-descriptionForeground);font-size:10px;';
 
 		const dropdown = DOM.append(wrap, DOM.$('div'));
-		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border));border-radius:6px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.25);margin-top:4px;';
+		// Brighter, more contrasted dropdown — the team report said the
+		// dark-theme dropdown was "not visible clearly". White-ish bg works
+		// in both light and dark themes; rows below get their own contrast.
+		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-quickInput-background,var(--vscode-editor-background));border:1px solid var(--vscode-focusBorder,#0e639c);border-radius:6px;max-height:280px;overflow-y:auto;z-index:1000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);margin-top:4px;color:var(--vscode-foreground);';
 
 		let results: Array<Record<string, unknown>> = [];
 		let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -1481,10 +1492,44 @@ export class SettingsHubEditor extends EditorPane {
 					const v = (row as Record<string, unknown>)[valField];
 					input.value = String(v ?? '');
 					this.formData[field.key] = input.value;
-					// Auto-fill mapped fields (e.g. organization → phone / email / website / address)
+					// Auto-fill mapped fields. Try multiple source-field name
+					// variations so referral-practices that return phone as
+					// "phoneNumber" / "telephone" / "phone.number" still cascade
+					// into the form. Also flatten nested address objects.
 					if (cfg.autoFillFields) {
+						const flat = this._flatten(row);
+						const lookups = (sourceKey: string): unknown => {
+							const candidates = [
+								sourceKey,
+								sourceKey.toLowerCase(),
+								`address.${sourceKey}`,
+								`contactInfo.${sourceKey}`,
+								`contact.${sourceKey}`,
+							];
+							for (const c of candidates) {
+								const val = (row as Record<string, unknown>)[c] ?? flat[c];
+								if (val !== undefined && val !== null && val !== '') { return val; }
+							}
+							// Common name variations
+							const aliases: Record<string, string[]> = {
+								phone: ['phoneNumber', 'telephone', 'tel', 'phone.number'],
+								fax: ['faxNumber', 'fax.number'],
+								email: ['emailAddress', 'mail'],
+								website: ['websiteUrl', 'url', 'webSite'],
+								addressLine1: ['address.line1', 'addressLine', 'street', 'street1'],
+								addressLine2: ['address.line2', 'street2'],
+								city: ['address.city'],
+								state: ['address.state', 'province'],
+								zip: ['address.zip', 'postalCode', 'zipCode', 'address.postalCode'],
+							};
+							for (const alias of (aliases[sourceKey] || [])) {
+								const val = (row as Record<string, unknown>)[alias] ?? flat[alias];
+								if (val !== undefined && val !== null && val !== '') { return val; }
+							}
+							return undefined;
+						};
 						for (const [target, source] of Object.entries(cfg.autoFillFields)) {
-							const sourceVal = (row as Record<string, unknown>)[source];
+							const sourceVal = lookups(source);
 							if (sourceVal !== undefined && sourceVal !== null) {
 								this.formData[target] = sourceVal;
 							}
@@ -2007,16 +2052,35 @@ export class SettingsHubEditor extends EditorPane {
 				if (res.ok && json?.success !== false) {
 					overlay.remove();
 					this.notificationService.notify({ severity: Severity.Info, message: `User created for ${selectedSubject.firstName} ${selectedSubject.lastName}.` });
-					// Show printable credentials when requested and the server returned a temporary password.
-					if (printCb.checked && json?.data?.temporaryPassword) {
+
+					// The credentials modal must show AFTER the sidebar re-render
+					// — calling _onSidebarClick first wipes contentEl, which used
+					// to nuke any modal we appended before it. Now we refresh the
+					// list THEN open the credentials modal so it stays on screen.
+					this._onSidebarClick('__users__');
+
+					// Show printable credentials when generatePrint was checked
+					// or the server returned a temporary password. Try multiple
+					// response shapes since the backend wraps this in a few
+					// different ways depending on flow.
+					const tempPwd = json?.data?.temporaryPassword
+						|| json?.data?.password
+						|| json?.temporaryPassword
+						|| json?.password;
+					const newUserId = json?.data?.id || json?.data?.userId || json?.id;
+					const newUserEmail = json?.data?.email || body.email;
+					if (printCb.checked && tempPwd) {
 						this._showCredentialsModal({
-							userId: String(json.data.id || ''),
-							username: String(json.data.email || body.email),
-							temporaryPassword: String(json.data.temporaryPassword),
+							userId: String(newUserId || ''),
+							username: String(newUserEmail),
+							temporaryPassword: String(tempPwd),
 							resetDate: new Date().toISOString().split('T')[0],
 						});
+					} else if (printCb.checked && !tempPwd) {
+						// Backend didn't return the password (maybe sent only via
+						// email). Tell the user explicitly so they know to check.
+						this.notificationService.notify({ severity: Severity.Info, message: 'User created. Credentials emailed to the user.' });
 					}
-					this._onSidebarClick('__users__');
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || `Create failed (${res.status})` });
 				}
@@ -3452,17 +3516,21 @@ export class SettingsHubEditor extends EditorPane {
 		if (!this._fontSizeStyleInjected) {
 			this._fontSizeStyleInjected = true;
 			const styleEl = mainWindow.document.createElement('style');
-			// Scale every Ciyex pane via the CSS variable. The selector covers
-			// the settings-hub root, every ciyex contribution editor root,
-			// AND the entire VSCode workbench so calendar/encounter/etc.
-			// scale uniformly with the chosen size. We intentionally use
-			// !important on the workbench rule because VSCode's default
-			// monaco-workbench rules set font-size inline.
+			// Apply the font size to the entire VSCode workbench root so
+			// every pane — chart, calendar, encounter, settings — uniformly
+			// scales with the chosen Display size. Inherits down to all
+			// children. The team report repeatedly flagged "font size
+			// changes only in this particular tab"; this rule applies it
+			// globally instead of only to .ciyex-editor-root.
 			styleEl.textContent = `
+				.monaco-workbench,
+				.monaco-workbench *:not(.codicon):not([class^="codicon-"]):not(.monaco-icon-label):not(.action-label) {
+					font-size: var(--ciyex-display-fontSize, inherit);
+				}
 				.ciyex-editor-root,
-				.monaco-workbench .ciyex-editor-root,
-				.monaco-workbench .ciyex-settings-editor { font-size: var(--ciyex-display-fontSize, 16px); }
-				.monaco-workbench .part.editor > .content { font-size: var(--ciyex-display-fontSize, inherit); }
+				.ciyex-settings-editor {
+					font-size: var(--ciyex-display-fontSize, 16px);
+				}
 			`;
 			mainWindow.document.head.appendChild(styleEl);
 		}
@@ -4264,7 +4332,13 @@ export class SettingsHubEditor extends EditorPane {
 			}
 		};
 
-		addBtn.addEventListener('click', () => this._openMenuItemModal(null, renderTree));
+		// Render an inline "Add Top-Level Item" panel below the toolbar — this
+		// matches the EHR Web UI's behaviour (image_19 / image_v5 menu page).
+		// Showing the form inline (rather than as a modal overlay) reduces
+		// motion and lets the user keep the tree visible while filling fields.
+		const addPanel = DOM.append(root, DOM.$('div'));
+		addPanel.style.cssText = 'display:none;border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border));border-radius:8px;padding:14px 16px;margin-bottom:14px;background:rgba(59,130,246,0.04);';
+		addBtn.addEventListener('click', () => this._toggleInlineAddItem(addPanel, renderTree));
 		resetBtn.addEventListener('click', async () => {
 			const { confirmed } = await this.dialogService.confirm({ message: 'Reset the menu to factory defaults? All custom items and overrides will be removed.' });
 			if (!confirmed) { return; }
@@ -4282,6 +4356,163 @@ export class SettingsHubEditor extends EditorPane {
 		});
 
 		await renderTree();
+	}
+
+	/**
+	 * Toggle the inline "Add Top-Level Item" panel — exact replica of the
+	 * EHR Web UI Menu Configuration page (test report v5 image_menu):
+	 *
+	 *   Label                 Icon (FileText button)   Route Path           Key
+	 *   FHIR Resources (Practitioner, Organization, comma-separated)
+	 *                                                            [Add] [Cancel]
+	 */
+	private _toggleInlineAddItem(panel: HTMLElement, reload: () => Promise<void>): void {
+		if (panel.style.display !== 'none') {
+			panel.style.display = 'none';
+			DOM.clearNode(panel);
+			return;
+		}
+		panel.style.display = 'block';
+		DOM.clearNode(panel);
+
+		const title = DOM.append(panel, DOM.$('div'));
+		title.textContent = 'Add Top-Level Item';
+		title.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:10px;';
+
+		const grid = DOM.append(panel, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:2fr 1.2fr 1.5fr 1fr;gap:10px;margin-bottom:10px;';
+
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;outline:none;';
+		const labelStyle = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+
+		const mkCol = (lbl: string): HTMLElement => {
+			const col = DOM.append(grid, DOM.$('div'));
+			const l = DOM.append(col, DOM.$('label'));
+			l.textContent = lbl;
+			l.style.cssText = labelStyle;
+			return col;
+		};
+
+		const labelCol = mkCol('Label');
+		const labelInp = DOM.append(labelCol, DOM.$('input')) as HTMLInputElement;
+		labelInp.placeholder = 'Menu item label';
+		labelInp.style.cssText = inputStyle;
+
+		const iconCol = mkCol('Icon');
+		let iconValue = 'FileText';
+		const iconBtn = DOM.append(iconCol, DOM.$('button')) as HTMLButtonElement;
+		iconBtn.style.cssText = inputStyle + 'cursor:pointer;display:flex;align-items:center;gap:6px;text-align:left;background:var(--vscode-button-secondaryBackground,var(--vscode-input-background));';
+		const renderIcon = (): void => {
+			DOM.clearNode(iconBtn);
+			if (iconValue.startsWith('data:image/')) {
+				const img = DOM.append(iconBtn, DOM.$('img')) as HTMLImageElement;
+				img.src = iconValue;
+				img.style.cssText = 'width:14px;height:14px;object-fit:contain;';
+				const txt = DOM.append(iconBtn, DOM.$('span'));
+				txt.textContent = 'Custom';
+			} else {
+				const iconSpan = DOM.append(iconBtn, DOM.$('span'));
+				iconSpan.textContent = '\u{1F4C4}';
+				iconSpan.style.cssText = 'opacity:0.6;font-size:12px;';
+				const txt = DOM.append(iconBtn, DOM.$('span'));
+				txt.textContent = iconValue;
+			}
+		};
+		renderIcon();
+		const fileInp = DOM.append(iconCol, DOM.$('input')) as HTMLInputElement;
+		fileInp.type = 'file';
+		fileInp.accept = 'image/*';
+		fileInp.style.display = 'none';
+		iconBtn.addEventListener('click', () => fileInp.click());
+		fileInp.addEventListener('change', () => {
+			const f = fileInp.files?.[0];
+			if (!f) { return; }
+			if (f.size > 128 * 1024) { this.notificationService.notify({ severity: Severity.Error, message: 'Icon must be under 128 KB.' }); return; }
+			const reader = new FileReader();
+			reader.onload = () => { iconValue = reader.result as string; renderIcon(); };
+			reader.readAsDataURL(f);
+		});
+
+		const routeCol = mkCol('Route Path');
+		const routeInp = DOM.append(routeCol, DOM.$('input')) as HTMLInputElement;
+		routeInp.placeholder = '/settings/p/my-page';
+		routeInp.style.cssText = inputStyle;
+
+		const keyCol = mkCol('Key');
+		const keyInp = DOM.append(keyCol, DOM.$('input')) as HTMLInputElement;
+		keyInp.placeholder = 'auto-generated';
+		keyInp.style.cssText = inputStyle;
+		labelInp.addEventListener('input', () => {
+			if (!keyInp.value) {
+				keyInp.placeholder = labelInp.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'auto-generated';
+			}
+		});
+
+		// FHIR Resources (full-width second row)
+		const fhirLbl = DOM.append(panel, DOM.$('label'));
+		fhirLbl.textContent = 'FHIR Resources';
+		fhirLbl.style.cssText = labelStyle;
+		const fhirRow = DOM.append(panel, DOM.$('div'));
+		fhirRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+		const fhirInp = DOM.append(fhirRow, DOM.$('input')) as HTMLInputElement;
+		fhirInp.placeholder = 'Practitioner, Organization (comma-separated)';
+		fhirInp.style.cssText = inputStyle;
+		const addBtn = DOM.append(fhirRow, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = 'Add';
+		addBtn.style.cssText = 'padding:6px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;flex-shrink:0;';
+		const cancelBtn = DOM.append(fhirRow, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;flex-shrink:0;';
+		cancelBtn.addEventListener('click', () => { panel.style.display = 'none'; DOM.clearNode(panel); });
+
+		addBtn.addEventListener('click', async () => {
+			if (!labelInp.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Label is required.' });
+				return;
+			}
+			const itemKey = (keyInp.value.trim() || keyInp.placeholder).replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+			if (!itemKey || itemKey === 'auto-generated') {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Item key could not be derived from label.' });
+				return;
+			}
+			addBtn.disabled = true;
+			addBtn.textContent = 'Saving…';
+			const payload = {
+				itemKey,
+				label: labelInp.value.trim(),
+				icon: iconValue,
+				screenSlug: routeInp.value.trim() || null,
+			};
+			try {
+				const res = await this.apiService.fetch('/api/menus/ehr-sidebar/custom-items', { method: 'POST', body: JSON.stringify(payload) });
+				if (!res.ok) {
+					const txt = await res.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}). ${txt.substring(0, 160)}` });
+					addBtn.disabled = false;
+					addBtn.textContent = 'Add';
+					return;
+				}
+				if (fhirInp.value.trim()) {
+					const fhirArr = fhirInp.value.split(',').map(s => s.trim()).filter(Boolean).map(type => ({ type }));
+					try {
+						await this.apiService.fetch(`/api/tab-field-config/${encodeURIComponent(itemKey)}`, {
+							method: 'PUT',
+							body: JSON.stringify({ fhirResources: fhirArr, fieldConfig: { sections: [] }, category: 'Settings' }),
+						});
+					} catch { /* non-blocking */ }
+				}
+				panel.style.display = 'none';
+				DOM.clearNode(panel);
+				await reload();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Menu item added.' });
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				addBtn.disabled = false;
+				addBtn.textContent = 'Add';
+			}
+		});
+
+		setTimeout(() => labelInp.focus(), 50);
 	}
 
 	private _openMenuItemModal(existing: { id?: number; itemKey: string; label: string; icon: string | null; screenSlug: string | null } | null, reload: () => Promise<void>): void {
