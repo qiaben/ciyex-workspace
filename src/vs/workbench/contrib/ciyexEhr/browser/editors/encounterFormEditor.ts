@@ -1136,13 +1136,21 @@ export class EncounterFormEditor extends EditorPane {
 		results.style.cssText = 'max-height:200px;overflow-y:auto;display:none;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;margin-top:2px;';
 
 		const fetchCodes = async (codeType: 'CPT' | 'HCPCS', q: string): Promise<Array<Record<string, unknown>>> => {
-			try {
-				const res = await this.apiService.fetch(`/api/app-proxy/ciyex-codes/api/codes/${codeType}/search?q=${encodeURIComponent(q)}&page=0&size=10`);
-				if (!res.ok) { return []; }
-				const data = await res.json();
-				const raw = data?.data?.content || data?.content || data?.data || [];
-				return Array.isArray(raw) ? raw : [];
-			} catch { return []; }
+			// Try the ciyex-codes proxy first, fall back to org-level global_codes
+			const endpoints = [
+				`/api/app-proxy/ciyex-codes/api/codes/${codeType}/search?q=${encodeURIComponent(q)}&page=0&size=10`,
+				`/api/global_codes?codeType=${codeType === 'HCPCS' ? 'HCPCS' : 'CPT4'}&search=${encodeURIComponent(q)}&page=0&size=10`,
+			];
+			for (const url of endpoints) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
+					if (Array.isArray(raw) && raw.length > 0) { return raw; }
+				} catch { /* try next */ }
+			}
+			return [];
 		};
 
 		let timer: ReturnType<typeof setTimeout> | undefined;

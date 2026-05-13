@@ -410,7 +410,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const clickable = filterValue !== undefined;
 				const c = DOM.append(row, DOM.$('div'));
 				const isActive = clickable && this.statusFilter === filterValue;
-				c.style.cssText = `padding:12px 14px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:8px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s,border-color 0.15s;${clickable ? '' : 'opacity:0.85;'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:64px;`;
+				c.style.cssText = `padding:8px 12px;border:1px solid ${isActive ? 'var(--vscode-focusBorder)' : 'var(--vscode-editorWidget-border)'};border-radius:8px;text-align:center;cursor:${clickable ? 'pointer' : 'default'};background:${isActive ? 'rgba(0,122,204,0.12)' : 'transparent'};transition:background 0.15s,border-color 0.15s;${clickable ? '' : 'opacity:0.85;'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;`;
 				if (clickable) {
 					c.addEventListener('mouseenter', () => { if (!isActive) { c.style.background = 'var(--vscode-list-hoverBackground)'; } });
 					c.addEventListener('mouseleave', () => { if (!isActive) { c.style.background = ''; } });
@@ -418,7 +418,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 				const numEl = DOM.append(c, DOM.$('div'));
 				numEl.textContent = String(v);
-				numEl.style.cssText = `font-size:22px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};line-height:1;`;
+				numEl.style.cssText = `font-size:16px;font-weight:700;color:${STATUS_COLORS[k.toLowerCase()] || 'var(--vscode-foreground)'};line-height:1;`;
 				const l = DOM.append(c, DOM.$('div'));
 				l.textContent = k.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim();
 				l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);text-transform:capitalize;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
@@ -786,11 +786,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// only the body scrolls. overflow:hidden on the dialog itself removes the
 		// outer scrollbar the user reported.
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
-		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;';
+		dialog.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);';
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,#252526);z-index:2;';
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background);z-index:2;';
 
 		const title = DOM.append(header, DOM.$('h3'));
 		if (isEdit && cfg.editTitle && this.editingItem) {
@@ -865,7 +865,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
 
 				const dropdown = DOM.append(searchWrapper, DOM.$('div'));
-				dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
+				dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 
 				const searchEndpoint = field.apiPath || field.searchApiPath || '';
 				const displayField = field.searchDisplayField || 'name';
@@ -1016,9 +1016,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || '';
 				if (field.type === 'number') {
-					if (field.minValue !== undefined) { inputEl.min = String(field.minValue); }
-					if (field.maxValue !== undefined) { inputEl.max = String(field.maxValue); }
-					if (field.minValue === undefined) { inputEl.min = '0'; }
+					// Do NOT set HTML5 min/max attributes — Chromium silently clears
+					// the input value when the typed value falls outside [min,max],
+					// which makes our required-check fire with "field is required"
+					// instead of the field-specific range message. All range validation
+					// is handled explicitly in the save-click handler below.
+					inputEl.setAttribute('data-min', String(field.minValue ?? ''));
+					inputEl.setAttribute('data-max', String(field.maxValue ?? ''));
 				}
 			}
 
@@ -1054,7 +1058,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Footer
 		const footer = DOM.append(dialog, DOM.$('div'));
-		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-editorWidget-background,#252526);z-index:2;';
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-editorWidget-background);z-index:2;';
 
 		const cancelBtn = DOM.append(footer, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
@@ -1103,17 +1107,21 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					const v = input?.value.trim() || '';
 					if (v) {
 						const n = Number(v);
-						if (!isFinite(n)) {
-							failValidation(input, `${field.label} must be a number`, field);
+						if (!isFinite(n) || isNaN(n)) {
+							failValidation(input, field.validationMessage || `${field.label} must be a valid number`, field);
 							return;
 						}
-						const minV = field.minValue !== undefined ? field.minValue : 0;
-						if (n < minV) {
-							failValidation(input, `${field.label} must be ${minV} or greater`, field);
+						if (!Number.isInteger(n) && field.validationPattern && /^\[1-9\]/.test(field.validationPattern)) {
+							failValidation(input, field.validationMessage || `${field.label} must be a whole number`, field);
+							return;
+						}
+						const minV = field.minValue !== undefined ? field.minValue : undefined;
+						if (minV !== undefined && n < minV) {
+							failValidation(input, field.validationMessage || `${field.label} must be ${minV} or greater`, field);
 							return;
 						}
 						if (field.maxValue !== undefined && n > field.maxValue) {
-							failValidation(input, `${field.label} must be ${field.maxValue} or less`, field);
+							failValidation(input, field.validationMessage || `${field.label} must be ${field.maxValue} or less`, field);
 							return;
 						}
 					}

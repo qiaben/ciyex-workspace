@@ -392,13 +392,21 @@ export class CalendarEditor extends EditorPane {
 		nextBtn.title = 'Next';
 		nextBtn.style.borderRadius = '0';
 
-		// Calendar header no longer carries its own search bar — the test
-		// team flagged it as redundant with the global "Search patients"
-		// bar in the title bar (next to "Add Patient"). The grid renderer
-		// still honors `patientNameFilter`, so the filter pipeline is
-		// untouched; we just no longer expose a second input here.
+		// Patient name / search filter — restored per issue #1: the search bar
+		// was flagged as missing; it feeds `patientNameFilter` which is already
+		// wired into `_getViewFilteredAppointments()`.
+		const searchBox = DOM.append(this.headerBar, DOM.$('input')) as HTMLInputElement;
+		searchBox.type = 'text';
+		searchBox.placeholder = 'Search patient, provider…';
+		searchBox.value = this.patientNameFilter;
+		searchBox.style.cssText = 'padding:3px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;min-width:160px;outline:none;';
+		searchBox.addEventListener('input', () => {
+			this.patientNameFilter = searchBox.value;
+			this._updateHeaderCount();
+			this._renderGrid();
+		});
 
-		// Plain spacer between filter and view toggles.
+		// Plain spacer between search and view toggles.
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
 		spacer.style.cssText = 'flex:1;';
 

@@ -101,16 +101,6 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Refill', icon: '🔄', handler: async (item, api, reload, dlg) => {
-					const r = await dlg.confirm({ message: `Refill ${item.medicationName}?`, type: 'question' });
-					if (r.confirmed) {
-						await api.fetch(`/api/prescriptions/${item.id}/refill`, { method: 'POST' });
-						reload();
-					}
-				}
-			},
-			{
-				// allow-any-unicode-next-line
 				label: 'Discontinue', icon: '⏹', handler: async (item, api, reload, dlg) => {
 					const r = await dlg.input({ type: 'question', message: 'Reason for discontinuation', inputs: [{ placeholder: 'Reason...' }] });
 					const reason = r.confirmed ? r.values?.[0]?.trim() : undefined;
@@ -301,7 +291,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 	// the sidebar. The web app exposes both Orders and Results as a single
 	// Labs page with a left sidebar (see /labs in ciyex-ehr-ui).
 	private readonly _resultsConfig: ClinicalEditorConfig = {
-		title: 'Lab Results', apiPath: '/api/lab-results/search',
+		title: 'Lab Results', apiPath: '/api/lab-results',
 		searchPlaceholder: 'Search by test name, code, value, panel...',
 		clientSideFilter: ['testName', 'loincCode', 'resultValue', 'units', 'panelName', 'status', 'abnormalFlag', 'id'],
 		editable: true,
@@ -449,7 +439,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 		this._updateSidebarActive();
 
 		const main = DOM.append(wrapper, DOM.$('.labs-main'));
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;';
 		return main;
 	}
 
@@ -1458,7 +1448,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 		this._updateEduSidebarActive();
 
 		const main = DOM.append(wrapper, DOM.$('.education-main'));
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;';
 		return main;
 	}
 
@@ -1819,7 +1809,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 	};
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
-		title: 'Purchase Orders', apiPath: '/api/inventory/orders',
+		title: 'Purchase Orders', apiPath: '/api/orders',
 		searchPlaceholder: 'Search orders...',
 		clientSideFilter: ['orderNumber', 'supplierName', 'status', 'id'],
 		editable: true,
@@ -1851,12 +1841,12 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/orders/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/orders/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 
 	private readonly _suppliersConfig: ClinicalEditorConfig = {
-		title: 'Suppliers', apiPath: '/api/inventory/suppliers',
+		title: 'Suppliers', apiPath: '/api/suppliers',
 		searchPlaceholder: 'Search suppliers...',
 		clientSideFilter: ['name', 'contactName', 'email', 'phone', 'id'],
 		editable: true,
@@ -1889,12 +1879,12 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this supplier?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/suppliers/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this supplier?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/suppliers/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 
 	private readonly _recordsConfig: ClinicalEditorConfig = {
-		title: 'Inventory Records', apiPath: '/api/inventory/records',
+		title: 'Inventory Records', apiPath: '/api/inventory/list',
 		searchPlaceholder: 'Search records...',
 		clientSideFilter: ['itemName', 'adjustmentType', 'reason', 'id'],
 		editable: false,

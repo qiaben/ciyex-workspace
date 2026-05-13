@@ -2097,7 +2097,7 @@ export class PatientChartEditor extends EditorPane {
 								});
 								return { ...s, fields };
 							};
-							const anyHas = sections.some(s => s.fields.some(f => f.key === 'patient' || f.key === 'patientId' || f.key === 'subject'));
+							const anyHas = sections.some(s => s.fields.some(f => ['patient', 'patientId', 'subject', 'patientRef', 'patientReference', 'patientSearch', 'patientName', 'patient_id'].includes(f.key)));
 							if (anyHas) {
 								sections = sections.map(ensurePatientField);
 							} else if (sections.length > 0) {
@@ -2903,29 +2903,51 @@ export class PatientChartEditor extends EditorPane {
 		body.textContent = 'Loading...';
 
 		void (async () => {
+			const renderItems = (items: Record<string, unknown>[]) => {
+				DOM.clearNode(body);
+				if (items.length === 0) { body.textContent = emptyMsg; return; }
+				for (const item of items.slice(0, 3)) {
+					const row = DOM.append(body, DOM.$('div'));
+					row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
+					let text = '';
+					for (const f of fieldList) { text = this._displayText(item[f]); if (text) { break; } }
+					if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || '—'; }
+					row.textContent = text.substring(0, 50);
+				}
+			};
 			try {
 				const ep = FHIR_MAP[resource] || `/api/fhir-resource/${resource.toLowerCase()}s`;
 				const res = await this.apiService.fetch(`${ep}/patient/${this.patientId}?page=0&size=3`);
 				if (res.ok) {
 					const json = await res.json();
-					const items: Record<string, unknown>[] = json?.data?.content || json?.content || [];
-					DOM.clearNode(body);
-					if (items.length === 0) {
-						body.textContent = emptyMsg;
-						return;
-					}
-					for (const item of items.slice(0, 3)) {
-						const row = DOM.append(body, DOM.$('div'));
-						row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
-						let text = '';
-						for (const f of fieldList) {
-							text = this._displayText(item[f]);
-							if (text) { break; }
+					let items: Record<string, unknown>[] = json?.data?.content || json?.content || [];
+					// Legacy API fallback: some endpoints return allergiesList / problemsList
+					if (items.length === 0 && json?.data && typeof json.data === 'object') {
+						const d = json.data as Record<string, unknown>;
+						for (const k of ['allergiesList', 'problemsList', 'list', 'items', 'records']) {
+							if (Array.isArray(d[k]) && (d[k] as unknown[]).length > 0) { items = d[k] as Record<string, unknown>[]; break; }
 						}
-						if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || '—'; }
-						row.textContent = text.substring(0, 50);
 					}
+					renderItems(items);
 				} else {
+					// Try legacy patient-specific endpoints as fallback
+					const legacyMap: Record<string, string> = {
+						'AllergyIntolerance': `/api/allergy-intolerances/${this.patientId}`,
+						'Condition': `/api/medical-problems/${this.patientId}`,
+					};
+					const legacyUrl = legacyMap[resource];
+					if (legacyUrl) {
+						try {
+							const lr = await this.apiService.fetch(legacyUrl);
+							if (lr.ok) {
+								const lj = await lr.json();
+								const d = (lj?.data || lj || {}) as Record<string, unknown>;
+								const items = (d.allergiesList || d.problemsList || d.content || (Array.isArray(d) ? d : [])) as Record<string, unknown>[];
+								renderItems(items);
+								return;
+							}
+						} catch { /* */ }
+					}
 					body.textContent = emptyMsg;
 				}
 			} catch {
@@ -3695,11 +3717,17 @@ export class PatientChartEditor extends EditorPane {
 				// either shape don't regress.
 				if (tab.key === 'education' && !isEdit) {
 					const matId = payload.materialId;
-					if (matId && typeof matId === 'string') {
-						payload.material = { id: matId };
+					// materialId can be string or number; send both flat and nested so
+					// JPA @ManyToOne never sees null.
+					if (matId !== undefined && matId !== null && matId !== '') {
+						const numId = typeof matId === 'number' ? matId : (parseInt(String(matId), 10) || matId);
+						payload.material = { id: numId };
+						payload.materialId = numId;
 					}
 					if (this.patientId && !payload.patient) {
-						payload.patient = { id: this.patientId };
+						const numPid = parseInt(this.patientId, 10) || this.patientId;
+						payload.patient = { id: numPid };
+						payload.patientId = numPid;
 					}
 				}
 				// Documents — the FHIR DocumentReference URI search-parameter
