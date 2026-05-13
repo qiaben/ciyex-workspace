@@ -886,6 +886,10 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient, specialist, reason...',
 		clientSideFilter: ['patientName', 'specialistName', 'specialty', 'facilityName', 'reason', 'urgency', 'referringProvider', 'status', 'id'],
 		editable: true,
+		// Issue #22: Referrals shows 7 KPI cards (Draft / Sent / Acknowledged /
+		// Scheduled / Completed / Cancelled / Denied). compactStats keeps the
+		// strip from dominating the viewport above the table.
+		compactStats: true,
 		// Map each stats-card key to the status filter value it should activate
 		statsFilterMap: {
 			draft: 'draft', sent: 'sent', acknowledged: 'acknowledged',
@@ -1346,6 +1350,9 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authorizationNumber', 'priority', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Issue #22: 7+ KPI cards (Pending / Submitted / Approved / Denied /
+		// Appeal / Expired / Cancelled). compactStats halves the strip height.
+		compactStats: true,
 		// Columns matching ciyex-ehr-ui: Patient, Insurance, Procedure, Diagnosis, Auth#, Units, Expiry, Status
 		// Priority filter removed per QA request (issue #13).
 		columns: [

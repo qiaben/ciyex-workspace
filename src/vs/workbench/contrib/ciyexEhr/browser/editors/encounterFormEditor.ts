@@ -129,7 +129,14 @@ export class EncounterFormEditor extends EditorPane {
 				}
 				const sections = fieldConfig?.sections || cfg?.sections || [];
 				if (Array.isArray(sections) && sections.length > 0) {
-					this.formSections = sections;
+					// Issue #16: the backend's encounter-form config ships
+					// "CPT CODES" and "HCPCS CODES" as plain text inputs that
+					// can't actually search the code databases — the test team
+					// flagged them as non-functional. Replace whichever section
+					// houses those fields with the local Procedures & Coding
+					// section, which uses the procedure-list search widget
+					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
+					this.formSections = EncounterFormEditor._mergeProceduresSection(sections);
 					return;
 				}
 			}
@@ -147,6 +154,37 @@ export class EncounterFormEditor extends EditorPane {
 
 		// 3) Hardcoded default
 		this.formSections = EncounterFormEditor._defaultSections();
+	}
+
+	/**
+	 * Replace the backend's "Procedures & Coding" section (whose CPT/HCPCS
+	 * fields are plain text inputs the user can't search with) with the
+	 * local default's `procedure-list` field. Heuristic match: any section
+	 * whose key/title mentions procedures+coding OR contains a CPT/HCPCS
+	 * code field key. Other sections pass through untouched. (Issue #16)
+	 */
+	private static _mergeProceduresSection(sections: FieldSection[]): FieldSection[] {
+		const localProcedures = EncounterFormEditor._defaultSections().find(s => s.key === 'procedures');
+		if (!localProcedures) { return sections; }
+		const procedureKeyHints = /^(cpt|hcpcs|procedure)/i;
+		const isProceduresSection = (s: FieldSection): boolean => {
+			const t = `${s.key || ''} ${s.title || ''}`.toLowerCase();
+			if (t.includes('procedure') && (t.includes('coding') || t.includes('code'))) { return true; }
+			return (s.fields || []).some(f => procedureKeyHints.test(f.key || ''));
+		};
+		let replaced = false;
+		const out = sections.map(s => {
+			if (!isProceduresSection(s)) { return s; }
+			replaced = true;
+			// Preserve the backend section's key + title so existing data
+			// (procedures_data, procedures_notes) still maps to the right
+			// section name in the TOC, but swap the field set wholesale.
+			return { ...s, fields: localProcedures.fields, columns: 1 };
+		});
+		// Backend didn't ship a Procedures section at all → append the local one
+		// so users still get the CPT/HCPCS search experience.
+		if (!replaced) { out.push(localProcedures); }
+		return out;
 	}
 
 	private static _defaultSections(): FieldSection[] {

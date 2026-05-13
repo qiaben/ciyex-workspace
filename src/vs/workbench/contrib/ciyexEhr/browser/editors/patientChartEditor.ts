@@ -1916,8 +1916,17 @@ export class PatientChartEditor extends EditorPane {
 	 * Web UI which already does this resolution server-side. Loaded once
 	 * per chart open; results are reused across every tab's table render.
 	 */
+	private _lookupsLoadingPromise: Promise<void> | null = null;
 	private async _loadLookups(): Promise<void> {
 		if (this._lookupsLoaded) { return; }
+		// Reuse the in-flight load so concurrent callers (e.g. `_loadTabData`
+		// firing before the constructor's parallel `_loadLookups()` resolves)
+		// don't double-fetch and don't return early before the cache fills.
+		if (this._lookupsLoadingPromise) { return this._lookupsLoadingPromise; }
+		this._lookupsLoadingPromise = this._doLoadLookups();
+		try { await this._lookupsLoadingPromise; } finally { this._lookupsLoadingPromise = null; }
+	}
+	private async _doLoadLookups(): Promise<void> {
 		const safe = async (url: string): Promise<Record<string, unknown>[]> => {
 			try {
 				const r = await this.apiService.fetch(url);
@@ -2087,6 +2096,12 @@ export class PatientChartEditor extends EditorPane {
 	private async _loadTabData(tab: ChartTab): Promise<{ config: FieldConfig | null; data: Record<string, unknown>[] }> {
 		const cached = this._tabDataCache.get(tab.key);
 		if (cached) { return cached; }
+		// Wait for the org / provider / insurance lookup caches before resolving
+		// FK columns. Without this gate, the first tab that renders before
+		// `_loadLookups` completes paints raw IDs (e.g. `Organization/5213`)
+		// because `_resolveIdToName` returns the input unchanged when the map
+		// is still empty (issue #3, #12).
+		await this._loadLookups();
 		let config: FieldConfig | null = null;
 		let data: Record<string, unknown>[] = [];
 
@@ -2101,7 +2116,22 @@ export class PatientChartEditor extends EditorPane {
 		// `report` has its own Diagnostic Report fields in DEFAULT_FIELD_CONFIGS
 		// that the test team wants to see — not Lab Order columns.
 		const backendSlug = tab.key;
+		// Tabs where DEFAULT_FIELD_CONFIGS is the source of truth (issues 6, 7,
+		// 8 from the 12.05.26 test report). The backend's tab_field_config row
+		// for these is a stub — only the bare-minimum columns — so the
+		// workspace form ends up missing every field the EHR Web UI shows.
+		// Force-use the local config and skip the backend fetch so the
+		// workspace renders the same dialog as the web app.
+		const forceLocalConfigTabs = new Set([
+			'payment',     // CollectPaymentModal parity
+			'statements',  // StatementsTab New Statement parity
+			'insurance',   // Insurance NewInsuranceModal parity
+		]);
+		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
+			config = DEFAULT_FIELD_CONFIGS[tab.key];
+		}
 		try {
+			if (config) { throw new Error('local-config-forced'); }
 			const res = await this.apiService.fetch(`/api/tab-field-config/${backendSlug}`);
 			if (res.ok) {
 				const json = await res.json();
@@ -2132,15 +2162,14 @@ export class PatientChartEditor extends EditorPane {
 							'documents', 'education', 'messaging', 'history', 'referrals',
 							'billing', 'claims', 'submissions', 'denials', 'era-remittance',
 							'transactions', 'payment', 'statements', 'issues', 'report',
-							// Encounters opened inside the chart already know the patient
-							// (it's the chart context). The backend tab_field_config V20
-							// ships its own `patient` reference field which produced the
-							// duplicate "PATIENT (Enter patient...)" row the test team
-							// flagged in the New Encounter dialog — strip it like every
-							// other patient-scoped tab.
-							'encounters',
 						]);
-						const patientPrefillTabs = new Set(['appointments']);
+						// 12.05.26 test report (issue 11 v2): the team now wants the
+						// Encounter "Patient" field VISIBLE but as a searchable input
+						// pre-filled with the current chart's patient. Same UX as the
+						// Appointments form. Encounters used to be in `patientScopedTabs`
+						// so the field was stripped entirely — we move it to the
+						// prefill set instead.
+						const patientPrefillTabs = new Set(['appointments', 'encounters']);
 						if (patientScopedTabs.has(tab.key)) {
 							sections = sections.map(s => ({
 								...s,
@@ -2153,25 +2182,39 @@ export class PatientChartEditor extends EditorPane {
 							// already shows the name in the visible textbox AND seeds
 							// the hidden id, so a subsequent save still posts a real
 							// FK reference even when the user never touches the field.
+							// Patient-shaped keys the backend may ship. We promote the
+							// FIRST one to `patient-search` and STRIP the rest so the
+							// encounter form doesn't end up with two "PATIENT" rows.
+							const patientLikeKeys = new Set(['patient', 'patientId', 'subject', 'patientRef', 'patientReference', 'patientSearch', 'patientName', 'patient_id']);
+							let promoted = false;
 							const ensurePatientField = (s: typeof sections[number]): typeof s => {
-								if (!s.fields.some(f => f.key === 'patient' || f.key === 'patientId' || f.key === 'subject')) {
+								if (!s.fields.some(f => patientLikeKeys.has(f.key))) {
 									return s;
 								}
-								const fields = s.fields.map(f => {
-									if (f.key === 'patient' || f.key === 'patientId' || f.key === 'subject') {
-										return {
-											...f,
-											type: 'patient-search',
-											placeholder: 'Search Patient',
-											required: true,
-											defaultValue: this.patientName || this.patientId,
-										};
+								const fields: typeof s.fields = [];
+								for (const f of s.fields) {
+									if (!patientLikeKeys.has(f.key)) {
+										fields.push(f);
+										continue;
 									}
-									return f;
-								});
+									if (promoted) {
+										// Duplicate patient field — skip so the dialog
+										// stays with a single search input.
+										continue;
+									}
+									promoted = true;
+									fields.push({
+										...f,
+										label: f.label || 'Patient',
+										type: 'patient-search',
+										placeholder: 'Search Patient',
+										required: true,
+										defaultValue: this.patientName || this.patientId,
+									});
+								}
 								return { ...s, fields };
 							};
-							const anyHas = sections.some(s => s.fields.some(f => ['patient', 'patientId', 'subject', 'patientRef', 'patientReference', 'patientSearch', 'patientName', 'patient_id'].includes(f.key)));
+							const anyHas = sections.some(s => s.fields.some(f => patientLikeKeys.has(f.key)));
 							if (anyHas) {
 								sections = sections.map(ensurePatientField);
 							} else if (sections.length > 0) {
