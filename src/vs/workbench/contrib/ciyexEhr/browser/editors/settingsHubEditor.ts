@@ -2033,9 +2033,13 @@ export class SettingsHubEditor extends EditorPane {
 					if (ur.ok) {
 						const uj = await ur.json();
 						const users: Array<Record<string, unknown>> = Array.isArray(uj?.data) ? uj.data : (uj?.data?.content || uj?.content || (Array.isArray(uj) ? uj : []));
+						// Backend's UserResponse only exposes `practitionerFhirId` —
+						// the patient FHIR ID lives in Keycloak attributes and isn't
+						// surfaced in this response, so we rely on email match for
+						// patient duplicate detection.
 						for (const u of users) {
 							if (u.email) { existingEmails.add(String(u.email).toLowerCase()); }
-							const linkedFhir = (u as { practitionerFhirId?: string; patientFhirId?: string }).practitionerFhirId || (u as { patientFhirId?: string }).patientFhirId;
+							const linkedFhir = (u as { practitionerFhirId?: string }).practitionerFhirId;
 							if (linkedFhir) { existingFhirIds.add(String(linkedFhir)); }
 						}
 					}
@@ -2133,9 +2137,19 @@ export class SettingsHubEditor extends EditorPane {
 				roleName: roleSel.value,
 				temporaryPassword: passwordInp.value.trim() || undefined,
 				sendWelcomeEmail: sendWelcomeCb.checked,
-				generatePrint: printCb.checked,
-				...(activeTab === 'staff' && selectedSubject.id ? { practitionerFhirId: selectedSubject.id, npi: selectedSubject.npi } : {}),
-				...(activeTab === 'patients' && selectedSubject.id ? { patientFhirId: selectedSubject.id } : {}),
+				// CRITICAL: match the backend's CreateUserRequest DTO exactly.
+				// The backend's UserManagementController checks
+				// `req.isGeneratePrintCredentials()` (the lombok @Data
+				// boolean accessor for `generatePrintCredentials`), NOT
+				// `generatePrint`. With the wrong key the backend never
+				// populates `user.temporaryPassword` in the response, which
+				// is why the Print Credentials modal had nothing to show.
+				generatePrintCredentials: printCb.checked,
+				// Same DTO uses a single `linkedFhirId` field for both
+				// staff (Practitioner) and patient flows — the controller
+				// decides which attribute to attach based on roleName.
+				...(selectedSubject.id ? { linkedFhirId: selectedSubject.id } : {}),
+				...(activeTab === 'staff' && selectedSubject.npi ? { phone: undefined } : {}),
 			};
 			try {
 				const res = await this.apiService.fetch('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
@@ -2221,8 +2235,18 @@ export class SettingsHubEditor extends EditorPane {
 		cancelBtn.addEventListener('click', () => overlay.remove());
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 		saveBtn.addEventListener('click', async () => {
-			const body: Record<string, unknown> = { ...user };
-			for (const [k, inp] of Object.entries(inputs)) { body[k] = inp.value.trim(); }
+			// PUT /api/admin/users/{id} expects exactly the UpdateUserRequest
+			// shape: firstName, lastName, email, phone, roleName, enabled.
+			// Sending the full user record back (with id, roles, etc.) used to
+			// risk Spring validation rejecting unknown keys — restrict it here.
+			const body: Record<string, unknown> = {
+				firstName: inputs.firstName?.value.trim() ?? user.firstName,
+				lastName: inputs.lastName?.value.trim() ?? user.lastName,
+				email: inputs.email?.value.trim() ?? user.email,
+				phone: user.phone,
+				roleName: (user.roles as string[] | undefined)?.[0] ?? user.role,
+				enabled: user.enabled,
+			};
 			const id = user.id as string;
 			try {
 				const res = await this.apiService.fetch(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(body) });
