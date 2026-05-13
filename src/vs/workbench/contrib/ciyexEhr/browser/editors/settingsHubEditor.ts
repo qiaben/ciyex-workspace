@@ -145,7 +145,12 @@ export class SettingsHubEditor extends EditorPane {
 		if (this._scrollbarStyleInjected) { return; }
 		this._scrollbarStyleInjected = true;
 		const styleEl = mainWindow.document.createElement('style');
-		styleEl.textContent = '.ciyex-no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }';
+		styleEl.textContent = `
+			.ciyex-no-scrollbar,
+			.ciyex-no-scrollbar * { scrollbar-width: none; }
+			.ciyex-no-scrollbar::-webkit-scrollbar,
+			.ciyex-no-scrollbar *::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }
+		`;
 		mainWindow.document.head.appendChild(styleEl);
 	}
 
@@ -843,6 +848,9 @@ export class SettingsHubEditor extends EditorPane {
 			return;
 		}
 
+		const isProviderForm = this.activeKey === 'providers' || this.activeKey === 'provider';
+		const formRecId = this.selectedRecord ? ((this.selectedRecord as { id?: string | number }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
+
 		for (const section of fc.sections) {
 			const panel = DOM.append(wrap, DOM.$('.sh-form-panel'));
 			panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;overflow:hidden;';
@@ -859,6 +867,22 @@ export class SettingsHubEditor extends EditorPane {
 			for (const field of section.fields) {
 				if (field.type === 'group') { continue; }
 				this._renderField(body, field, isView);
+			}
+
+			// Provider-specific: inject the inline Schedule Blocks list at the
+			// bottom of any section keyed/titled "availability" or "scheduling".
+			// The backend provider field config has an `availability` section
+			// whose FIELDS are scheduling.onCallStatus / scheduling.acceptingNewPatients
+			// etc. — none of those match the per-field availability renderer, so
+			// without this hook the section renders empty of the actual Schedule
+			// Blocks list the team expects (test report v8: "saved availability
+			// is not showing in this tab").
+			const sectionKey = (section.key || '').toLowerCase();
+			const sectionTitle = ((section as { title?: string }).title || section.label || '').toLowerCase();
+			if (isProviderForm && (/avail|schedule/.test(sectionKey) || /avail|schedule/.test(sectionTitle))) {
+				const scheduleHost = DOM.append(panel, DOM.$('div'));
+				scheduleHost.style.cssText = 'padding:0 16px 16px;border-top:1px solid var(--vscode-editorWidget-border);margin-top:0;';
+				this._renderInlineScheduleBlocks(scheduleHost, formRecId ? String(formRecId) : null, isView);
 			}
 		}
 
@@ -893,6 +917,157 @@ export class SettingsHubEditor extends EditorPane {
 			save.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
 			save.addEventListener('click', () => this._saveRecord());
 		}
+	}
+
+	/**
+	 * Render the saved availability blocks inline inside the Provider form's
+	 * "Availability & Scheduling" section. Matches the EHR Web UI exactly:
+	 * a "Schedule Blocks" header with + Add Block / Save All actions, then
+	 * a vertical stack of cards (Location \u00b7 Active \u00b7 day pattern \u00b7 time
+	 * range \u00b7 effective dates \u00b7 edit/delete). Called from _renderFormBody
+	 * for any provider section keyed/titled with "avail" or "schedule".
+	 */
+	private _renderInlineScheduleBlocks(parent: HTMLElement, providerId: string | null, isView: boolean): void {
+		const wrap = DOM.append(parent, DOM.$('div'));
+		wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;padding-top:14px;';
+
+		// Header row matching the web: "Schedule Blocks" left, + Add Block + Save All right
+		const headerRow = DOM.append(wrap, DOM.$('div'));
+		headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
+		const headerTitle = DOM.append(headerRow, DOM.$('div'));
+		headerTitle.textContent = 'Schedule Blocks';
+		headerTitle.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+		const headerActions = DOM.append(headerRow, DOM.$('div'));
+		headerActions.style.cssText = 'display:flex;gap:6px;';
+		if (!isView) {
+			const addBlockBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+			addBlockBtn.textContent = '+ Add Block';
+			addBlockBtn.style.cssText = 'padding:5px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:11px;font-weight:500;';
+			addBlockBtn.addEventListener('click', () => {
+				if (!providerId) {
+					this.notificationService.notify({ severity: Severity.Warning, message: 'Save the provider first to add a block.' });
+					return;
+				}
+				this._openProviderAvailabilityModal(providerId, () => this._renderContent());
+			});
+			const saveAllBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+			saveAllBtn.textContent = '\u{1F4BE} Save All';
+			saveAllBtn.style.cssText = 'padding:5px 12px;background:#2563eb;color:#ffffff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;';
+			saveAllBtn.addEventListener('click', () => {
+				if (!providerId) {
+					this.notificationService.notify({ severity: Severity.Warning, message: 'Save the provider first.' });
+					return;
+				}
+				this._openProviderAvailabilityModal(providerId, () => this._renderContent());
+			});
+		}
+
+		const list = DOM.append(wrap, DOM.$('div'));
+		list.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+		if (!providerId) {
+			const note = DOM.append(list, DOM.$('div'));
+			note.textContent = 'Save the provider first to manage availability.';
+			note.style.cssText = 'font-style:italic;color:var(--vscode-descriptionForeground);padding:8px 0;font-size:12px;';
+			return;
+		}
+
+		const loading = DOM.append(list, DOM.$('div'));
+		loading.textContent = 'Loading availability\u2026';
+		loading.style.cssText = 'font-style:italic;color:var(--vscode-descriptionForeground);padding:8px 0;font-size:12px;';
+
+		const dayLabels: Record<string, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
+
+		(async () => {
+			try {
+				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(providerId)}/availability`);
+				DOM.clearNode(list);
+				if (!res.ok) {
+					const err = DOM.append(list, DOM.$('div'));
+					err.textContent = `Unable to load availability (${res.status}).`;
+					err.style.cssText = 'font-size:12px;color:var(--vscode-errorForeground,#f48771);';
+					return;
+				}
+				const json = await res.json();
+				const items: Array<Record<string, unknown>> = (json?.data as Array<Record<string, unknown>>) || (Array.isArray(json) ? json : []);
+				if (items.length === 0) {
+					const empty = DOM.append(list, DOM.$('div'));
+					empty.textContent = 'No availability blocks. Click "+ Add Block" to add one.';
+					empty.style.cssText = 'font-style:italic;color:var(--vscode-descriptionForeground);padding:8px 0;font-size:12px;';
+					return;
+				}
+				for (const b of items) {
+					const rec = (b.recurrence as Record<string, unknown>) || {};
+					const days: string[] = ((rec.byWeekday as string[]) || (b.daysOfWeek as string[]) || []).map(d => dayLabels[d] || d);
+					const start = (rec.startTime as string) || (b.startTime as string) || '?';
+					const end = (rec.endTime as string) || (b.endTime as string) || '?';
+					const isActive = String(b.status || 'active').toLowerCase() === 'active';
+					const locationRef = (rec.locationId as string) || (b.locationId as string) || '';
+					const startDate = (rec.startDate as string) || (b.start as string) || '';
+					const endDate = (rec.endDate as string) || (b.end as string) || '';
+					const frequency = (rec.frequency as string) || 'WEEKLY';
+
+					const card = DOM.append(list, DOM.$('div'));
+					card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;background:var(--vscode-editor-background);position:relative;';
+
+					const row1 = DOM.append(card, DOM.$('div'));
+					row1.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+					const locIcon = DOM.append(row1, DOM.$('span'));
+					locIcon.textContent = '\u{1F4CD}';
+					locIcon.style.cssText = 'font-size:12px;opacity:0.7;';
+					const locTxt = DOM.append(row1, DOM.$('span'));
+					locTxt.textContent = locationRef ? `Location #${locationRef}` : 'No location';
+					locTxt.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-foreground);';
+					if (isActive) {
+						const badge = DOM.append(row1, DOM.$('span'));
+						badge.textContent = '\u25cf Active';
+						badge.style.cssText = 'font-size:10px;color:#22c55e;font-weight:500;padding:2px 8px;background:rgba(34,197,94,0.15);border-radius:10px;';
+					}
+					if (b.serviceType || b.serviceCategory) {
+						const svc = DOM.append(row1, DOM.$('span'));
+						svc.textContent = String(b.serviceType || b.serviceCategory);
+						svc.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+					}
+
+					const row2 = DOM.append(card, DOM.$('div'));
+					row2.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+					const calIcon = DOM.append(row2, DOM.$('span'));
+					calIcon.textContent = '\u{1F4C5}';
+					calIcon.style.cssText = 'font-size:11px;opacity:0.7;';
+					const daysTxt = DOM.append(row2, DOM.$('span'));
+					const recurrenceWord = frequency === 'DAILY' ? 'Every day' : (frequency === 'MONTHLY' ? 'Every month' : 'Every week');
+					daysTxt.textContent = `${recurrenceWord} \u00b7 ${days.join(', ') || '(no days)'}`;
+					daysTxt.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+
+					const row3 = DOM.append(card, DOM.$('div'));
+					row3.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+					const clockIcon = DOM.append(row3, DOM.$('span'));
+					clockIcon.textContent = '\u{1F552}';
+					clockIcon.style.cssText = 'font-size:11px;opacity:0.7;';
+					const timeTxt = DOM.append(row3, DOM.$('span'));
+					timeTxt.textContent = `${start} - ${end}`;
+					timeTxt.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+
+					if (startDate || endDate) {
+						const row4 = DOM.append(card, DOM.$('div'));
+						row4.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+						const fmt = (s: string): string => s ? (s.length >= 10 ? s.substring(0, 10) : s) : '';
+						row4.textContent = `Effective: ${fmt(startDate) || '\u2014'} \u2014 ${fmt(endDate) || '\u2014'}`;
+					}
+
+					if (!isView) {
+						const cardActions = DOM.append(card, DOM.$('div'));
+						cardActions.style.cssText = 'position:absolute;top:8px;right:10px;display:flex;gap:4px;';
+						this._tableAction(cardActions, '\u270f', 'Edit', () => this._openProviderAvailabilityModal(providerId, () => this._renderContent()));
+					}
+				}
+			} catch (e) {
+				DOM.clearNode(list);
+				const err = DOM.append(list, DOM.$('div'));
+				err.textContent = `Load failed: ${e}`;
+				err.style.cssText = 'font-size:12px;color:var(--vscode-errorForeground,#f48771);';
+			}
+		})();
 	}
 
 	/**
@@ -1783,8 +1958,18 @@ export class SettingsHubEditor extends EditorPane {
 
 			const tbody = DOM.append(table, DOM.$('tbody'));
 
+			// Client-side pagination state for the users list. Team test
+			// report v8 specifically requested pagination on every settings
+			// tab — Users is loaded all-at-once (size=100) but slicing the
+			// rendered rows keeps the table compact and matches the FHIR
+			// list pagination behaviour.
+			let usersPage = 0;
+			let usersPageSize = 25;
+			const pagFooter = DOM.append(root, DOM.$('div'));
+
 			const renderRows = (filterTerm: string) => {
 				DOM.clearNode(tbody);
+				DOM.clearNode(pagFooter);
 				const list = filterTerm
 					? allList.filter(u => {
 						const s = filterTerm.toLowerCase();
@@ -1804,7 +1989,12 @@ export class SettingsHubEditor extends EditorPane {
 					return;
 				}
 
-				for (const u of list) {
+				const totalPages = Math.max(1, Math.ceil(list.length / usersPageSize));
+				if (usersPage >= totalPages) { usersPage = 0; }
+				const startIdx = usersPage * usersPageSize;
+				const visible = list.slice(startIdx, startIdx + usersPageSize);
+
+				for (const u of visible) {
 					const user = u as {
 						id?: string;
 						username?: string;
@@ -1841,10 +2031,51 @@ export class SettingsHubEditor extends EditorPane {
 					this._tableAction(actionsTd, '\u{1F511}', 'Reset Password', () => this._resetUserPassword(user.id || ''));
 					this._tableAction(actionsTd, '\u{1F6AB}', 'Disable user', () => this._deleteUser(user.id || '', user.username || ''), 'danger');
 				}
+
+				// Pagination footer
+				pagFooter.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px;';
+				const leftCol = DOM.append(pagFooter, DOM.$('div'));
+				leftCol.style.cssText = 'display:flex;align-items:center;gap:14px;';
+				const info = DOM.append(leftCol, DOM.$('span'));
+				const fromIdx = list.length === 0 ? 0 : startIdx + 1;
+				const toIdx = Math.min(list.length, startIdx + visible.length);
+				info.textContent = `${fromIdx}\u2013${toIdx} of ${list.length}`;
+				info.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+
+				const sizeLbl = DOM.append(leftCol, DOM.$('label'));
+				sizeLbl.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:var(--vscode-descriptionForeground);';
+				const sizeTxt = DOM.append(sizeLbl, DOM.$('span'));
+				sizeTxt.textContent = 'Rows per page:';
+				const sizeSel = DOM.append(sizeLbl, DOM.$('select')) as HTMLSelectElement;
+				sizeSel.style.cssText = 'padding:3px 6px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-dropdown-foreground);font-size:11px;cursor:pointer;';
+				for (const sz of [10, 25, 50, 100]) {
+					const o = DOM.append(sizeSel, DOM.$('option')) as HTMLOptionElement;
+					o.value = String(sz);
+					o.textContent = String(sz);
+					if (sz === usersPageSize) { o.selected = true; }
+				}
+				sizeSel.addEventListener('change', () => { usersPageSize = Number(sizeSel.value); usersPage = 0; renderRows(filterTerm); });
+
+				const ctrls = DOM.append(pagFooter, DOM.$('div'));
+				ctrls.style.cssText = 'display:flex;gap:6px;align-items:center;';
+				const pageLbl = DOM.append(ctrls, DOM.$('span'));
+				pageLbl.textContent = `Page ${usersPage + 1} of ${totalPages}`;
+				pageLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-right:8px;';
+				const prev = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
+				prev.textContent = '\u2190 Prev';
+				prev.disabled = usersPage === 0;
+				prev.style.cssText = `padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:${usersPage === 0 ? 'not-allowed' : 'pointer'};font-size:11px;opacity:${usersPage === 0 ? '0.4' : '1'};`;
+				prev.addEventListener('click', () => { if (usersPage === 0) { return; } usersPage--; renderRows(filterTerm); });
+				const next = DOM.append(ctrls, DOM.$('button')) as HTMLButtonElement;
+				next.textContent = 'Next \u2192';
+				next.disabled = usersPage >= totalPages - 1;
+				next.style.cssText = `padding:5px 10px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:${usersPage >= totalPages - 1 ? 'not-allowed' : 'pointer'};font-size:11px;opacity:${usersPage >= totalPages - 1 ? '0.4' : '1'};`;
+				next.addEventListener('click', () => { if (usersPage >= totalPages - 1) { return; } usersPage++; renderRows(filterTerm); });
 			};
 
-			renderRows('');
-			searchInput.addEventListener('input', () => renderRows(searchInput.value));
+			let filterTerm = '';
+			renderRows(filterTerm);
+			searchInput.addEventListener('input', () => { filterTerm = searchInput.value; usersPage = 0; renderRows(filterTerm); });
 
 			if (allList.length === 0) {
 				const empty = DOM.append(root, DOM.$('div'));

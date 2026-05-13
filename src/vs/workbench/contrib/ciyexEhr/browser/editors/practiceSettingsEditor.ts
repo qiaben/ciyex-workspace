@@ -61,7 +61,18 @@ export class PracticeSettingsEditor extends EditorPane {
 		if (this._scrollbarStyleInjected) { return; }
 		this._scrollbarStyleInjected = true;
 		const styleEl = mainWindow.document.createElement('style');
-		styleEl.textContent = '.ciyex-no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }';
+		// Hide scrollbars on the class AND on every descendant inside it.
+		// Some inner scroll containers (forms, lookups) were still painting
+		// a native scrollbar on the right edge of the page even with the
+		// root class set — applying the rule to all descendants covers
+		// every inner overflow:auto pane we render. Also normalize for
+		// Firefox via `scrollbar-width:none` on the class+descendants.
+		styleEl.textContent = `
+			.ciyex-no-scrollbar,
+			.ciyex-no-scrollbar * { scrollbar-width: none; }
+			.ciyex-no-scrollbar::-webkit-scrollbar,
+			.ciyex-no-scrollbar *::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }
+		`;
 		mainWindow.document.head.appendChild(styleEl);
 	}
 
