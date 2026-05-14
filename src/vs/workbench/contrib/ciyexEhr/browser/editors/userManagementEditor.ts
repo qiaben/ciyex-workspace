@@ -388,8 +388,12 @@ export class UserManagementEditor extends EditorPane {
 	 * Print Credentials actions).
 	 */
 	private _showCredentialsModal(data: ResetPasswordData): void {
-		const overlay = DOM.append(this.contentEl, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.55);display:flex;align-items:center;justify-content:center;z-index:1001;';
+		// Attach to document.body, not contentEl: editor panes use CSS
+		// transforms which make `position:fixed` resolve relative to the
+		// editor (causing the backdrop to look "transparent" because it
+		// only covered the editor surface, not the surrounding workbench).
+		const overlay = DOM.append(mainWindow.document.body, DOM.$('div'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);display:flex;align-items:center;justify-content:center;z-index:100000;';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
 		modal.style.cssText = 'background:#ffffff;color:#0f172a;border-radius:14px;width:460px;max-width:92vw;box-shadow:0 24px 48px rgba(15,23,42,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
@@ -432,24 +436,29 @@ export class UserManagementEditor extends EditorPane {
 		pwRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
 		const pwCode = DOM.append(pwRow, DOM.$('code'));
 		pwCode.textContent = data.temporaryPassword;
+		pwCode.title = 'Click to copy';
 		// `user-select:all` lets a single click select the whole password so
 		// users can fall back to Ctrl/Cmd+C if the clipboard API path fails.
-		pwCode.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;user-select:all;-webkit-user-select:all;cursor:text;';
+		pwCode.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;user-select:all;-webkit-user-select:all;cursor:pointer;';
 		const copyBtn = DOM.append(pwRow, DOM.$('button')) as HTMLButtonElement;
 		copyBtn.title = 'Copy to clipboard';
 		copyBtn.textContent = '\u{1F4CB}';
-		copyBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;color:#64748b;padding:6px 8px;border-radius:6px;';
-		copyBtn.addEventListener('mouseenter', () => { copyBtn.style.background = '#e2e8f0'; });
-		copyBtn.addEventListener('mouseleave', () => { copyBtn.style.background = 'transparent'; });
-		copyBtn.addEventListener('click', async () => {
+		copyBtn.style.cssText = 'background:#eff6ff;border:1px solid #bfdbfe;cursor:pointer;font-size:14px;color:#1d4ed8;padding:6px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;';
+		copyBtn.addEventListener('mouseenter', () => { copyBtn.style.background = '#dbeafe'; });
+		copyBtn.addEventListener('mouseleave', () => { copyBtn.style.background = '#eff6ff'; });
+		const doCopy = async (): Promise<void> => {
 			const ok = await this._copyToClipboard(data.temporaryPassword);
 			if (ok) {
 				const prev = copyBtn.textContent;
-				copyBtn.textContent = '\u2713';
+				copyBtn.textContent = '\u2713 Copied';
 				copyBtn.style.color = '#16a34a';
-				setTimeout(() => { copyBtn.textContent = prev; copyBtn.style.color = '#64748b'; }, 1800);
+				setTimeout(() => { copyBtn.textContent = prev; copyBtn.style.color = '#1d4ed8'; }, 1800);
 			}
-		});
+		};
+		copyBtn.addEventListener('click', () => { void doCopy(); });
+		// Single click on the password chip also copies \u2014 matches EHR UI behavior
+		// where the password is highlighted + copied without needing the icon.
+		pwCode.addEventListener('click', () => { void doCopy(); });
 
 		// Warning
 		const warn = DOM.append(card, DOM.$('p'));

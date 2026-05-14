@@ -8,7 +8,7 @@ import { FileAccess } from '../../../../base/common/network.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
 
-type AuthStep = 'email' | 'authenticate' | 'locked' | 'warning';
+type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning';
 
 /**
  * Helper to create a styled element via DOM APIs (no innerHTML, CSP-safe).
@@ -86,6 +86,9 @@ export class CiyexAuthGate extends Disposable {
 	private _step: AuthStep = 'email';
 	private _email = '';
 	private _password = '';
+	private _newPassword = '';
+	private _confirmPassword = '';
+	private _showNewPassword = false;
 	private _showSettings = false;
 	private _showPassword = false;
 	private _loading = false;
@@ -250,6 +253,8 @@ export class CiyexAuthGate extends Disposable {
 			content = this._buildLocked(c);
 		} else if (this._step === 'authenticate') {
 			content = this._buildAuthenticate(c);
+		} else if (this._step === 'change-password') {
+			content = this._buildChangePassword(c);
 		} else {
 			content = this._buildEmailStep(c);
 		}
@@ -557,6 +562,78 @@ export class CiyexAuthGate extends Disposable {
 		return wrapper;
 	}
 
+	private _buildChangePassword(c: ReturnType<typeof this._colors>): HTMLElement {
+		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+
+		// Header
+		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
+		header.appendChild(this._logo(48));
+		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Set New Password'));
+		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Your temporary password was accepted. Please create a new password.'));
+		wrapper.appendChild(header);
+
+		const card = this._buildCard(c);
+
+		// Back button — returns to authenticate step so user can retry the temp pwd.
+		const backBtn = document.createElement('button');
+		backBtn.id = 'ciyex-back-btn';
+		backBtn.textContent = '← Back';
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '13px', padding: '0', marginBottom: '16px', cursor: 'pointer' });
+		card.appendChild(backBtn);
+
+		// New password
+		const newDiv = h('div', { marginBottom: '16px' });
+		newDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'New Password'));
+		const newInput = this._buildInput('ciyex-new-password', this._showNewPassword ? 'text' : 'password', 'Enter new password', this._newPassword, c);
+		newInput.style.paddingRight = '40px';
+		newInput.autocomplete = 'new-password';
+		newInput.minLength = 8;
+		const newWrap = h('div', { position: 'relative' });
+		newWrap.appendChild(newInput);
+		const toggleBtn = document.createElement('button');
+		toggleBtn.id = 'ciyex-toggle-new-pw';
+		// allow-any-unicode-next-line
+		toggleBtn.textContent = this._showNewPassword ? '◉' : '◎';
+		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: c.textSecondary, padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		newWrap.appendChild(toggleBtn);
+		newDiv.appendChild(newWrap);
+		card.appendChild(newDiv);
+
+		// Confirm password
+		const confirmDiv = h('div', { marginBottom: '20px' });
+		confirmDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Confirm Password'));
+		const confirmInput = this._buildInput('ciyex-confirm-password', this._showNewPassword ? 'text' : 'password', 'Confirm new password', this._confirmPassword, c);
+		confirmInput.autocomplete = 'new-password';
+		confirmInput.minLength = 8;
+		confirmDiv.appendChild(confirmInput);
+		card.appendChild(confirmDiv);
+
+		// Error
+		const err = this._buildError(c);
+		if (err) {
+			card.appendChild(err);
+		}
+
+		// Submit
+		const submitBtn = this._buildButton('ciyex-set-pw-btn', this._loading ? 'Setting password…' : 'Set Password & Sign In', true, c, this._loading || !this._newPassword || !this._confirmPassword);
+		card.appendChild(submitBtn);
+
+		wrapper.appendChild(card);
+
+		// Listeners
+		backBtn.addEventListener('click', () => { this._step = 'authenticate'; this._newPassword = ''; this._confirmPassword = ''; this._error = ''; this._render(); });
+		newInput.addEventListener('input', () => { this._newPassword = newInput.value; submitBtn.disabled = !this._newPassword || !this._confirmPassword; });
+		confirmInput.addEventListener('input', () => { this._confirmPassword = confirmInput.value; submitBtn.disabled = !this._newPassword || !this._confirmPassword; });
+		const onEnter = (e: KeyboardEvent): void => { if (e.key === 'Enter') { void this._handleChangePassword(); } };
+		newInput.addEventListener('keydown', onEnter);
+		confirmInput.addEventListener('keydown', onEnter);
+		toggleBtn.addEventListener('click', () => { this._showNewPassword = !this._showNewPassword; this._render(); });
+		submitBtn.addEventListener('click', () => { void this._handleChangePassword(); });
+		setTimeout(() => newInput.focus(), 50);
+
+		return wrapper;
+	}
+
 	private _buildLocked(c: ReturnType<typeof this._colors>): HTMLElement {
 		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
 
@@ -603,10 +680,6 @@ export class CiyexAuthGate extends Disposable {
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		unlockBtn.addEventListener('click', () => this._handleLogin());
 		switchBtn.addEventListener('click', () => this._authService.signOut());
-		// DEV: auto-fill password for testing
-		this._password = 'Test@123';
-		pwInput.value = 'Test@123';
-		unlockBtn.disabled = false;
 		setTimeout(() => pwInput.focus(), 50);
 
 		return wrapper;
@@ -699,10 +772,60 @@ export class CiyexAuthGate extends Disposable {
 		const result = await this._authService.login(this._email, this._password);
 		this._loading = false;
 
-		if (!result.success) {
-			this._error = result.error || 'Login failed';
-			this._render();
+		if (result.success) {
+			// Auth service flips state to Authenticated which hides the gate.
+			return;
 		}
+		if (result.requiresPasswordChange) {
+			// Temporary password accepted — Keycloak requires the user to set
+			// a permanent one before issuing a session token. Switch to the
+			// change-password step (matches ciyex-ehr-ui SignInForm).
+			this._step = 'change-password';
+			this._newPassword = '';
+			this._confirmPassword = '';
+			this._error = '';
+			this._render();
+			return;
+		}
+		this._error = result.error || 'Login failed';
+		this._render();
+	}
+
+	private async _handleChangePassword(): Promise<void> {
+		if (this._loading) {
+			return;
+		}
+		if (!this._newPassword || !this._confirmPassword) {
+			this._error = 'Please fill in both password fields.';
+			this._render();
+			return;
+		}
+		if (this._newPassword !== this._confirmPassword) {
+			this._error = 'Passwords do not match.';
+			this._render();
+			return;
+		}
+		if (this._newPassword.length < 8) {
+			this._error = 'Password must be at least 8 characters.';
+			this._render();
+			return;
+		}
+		this._loading = true;
+		this._error = '';
+		this._render();
+
+		const result = await this._authService.changePassword(this._email, this._password, this._newPassword);
+		this._loading = false;
+
+		if (result.success) {
+			this._password = '';
+			this._newPassword = '';
+			this._confirmPassword = '';
+			// Auth service moves to Authenticated on success.
+			return;
+		}
+		this._error = result.error || 'Failed to set new password.';
+		this._render();
 	}
 
 	private async _handleIdpLogin(idpAlias: string): Promise<void> {

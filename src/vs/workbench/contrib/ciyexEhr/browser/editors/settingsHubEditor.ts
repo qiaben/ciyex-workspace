@@ -95,18 +95,15 @@ const ADMIN_ITEMS: SidebarItem[] = [
 	{ key: '__roles__', label: 'Roles & Permissions', icon: '\u{1F6E1}', kind: 'admin', group: 'user-mgmt' },
 ];
 
-// Mirror the Ciyex web /settings sidebar. Layout & Forms group contains the
-// page-tree settings (Chart, Menu, Encounter, Portal). System group contains
-// the global preferences (Display, Form Options, Template Documents, Calendar
-// Colors). Items with kind:'command' open a dedicated editor rather than
-// rendering inside the hub — same command IDs the gear menu used to expose
-// before the Settings Hub redirect.
+// Mirror the Ciyex web /settings sidebar. Layout & Forms group now contains
+// only Menu and Template Documents — the per-screen tree settings (Chart,
+// Encounter, Portal) live under Layout Configuration instead so users don't
+// see the same item in two places. System group keeps the global preferences
+// (Display, Form Options, Calendar Colors) plus the Layout Configuration and
+// Practice Settings shortcuts.
 const BUILTIN_ITEMS: SidebarItem[] = [
 	// Layout & Forms
-	{ key: '__layout-settings__', label: 'Chart', icon: '\u{1F4CA}', kind: 'command', commandId: 'ciyex.openLayoutSettings', group: 'layout-forms' },
 	{ key: '__menu-config__', label: 'Menu', icon: '\u{1F4DC}', kind: 'builtin', group: 'layout-forms' },
-	{ key: '__encounter-settings__', label: 'Encounter', icon: '\u{1F4CB}', kind: 'builtin', group: 'layout-forms' },
-	{ key: '__portal-settings__', label: 'Portal', icon: '\u{1F310}', kind: 'command', commandId: 'ciyex.openPortalSettings', group: 'layout-forms' },
 	{ key: '__template-documents__', label: 'Template Documents', icon: '\u{1F4DD}', kind: 'builtin', group: 'layout-forms' },
 	// System
 	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin', group: 'system' },
@@ -180,6 +177,9 @@ export class SettingsHubEditor extends EditorPane {
 	private saving: boolean = false;
 	private searchTerm: string = '';
 	private validationErrors: Record<string, string> = {};
+	// Dropdowns/listeners attached to document.body by lookup fields. Cleaned up
+	// on each re-render so we don't leak floating elements.
+	private _bodyAttached: Array<{ el: HTMLElement; cleanup: () => void }> = [];
 
 	constructor(
 		group: IEditorGroup,
@@ -361,6 +361,13 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	private _renderContent(): void {
+		// Drop any floating dropdowns from prior render so they don't leak
+		// into document.body or fire stale event listeners.
+		for (const a of this._bodyAttached) {
+			try { a.cleanup(); } catch { /* ignore */ }
+			a.el.remove();
+		}
+		this._bodyAttached = [];
 		DOM.clearNode(this.contentEl);
 		const key = this.activeKey;
 		if (!key) {
@@ -1749,19 +1756,51 @@ export class SettingsHubEditor extends EditorPane {
 		chevron.textContent = '\u25BE';
 		chevron.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--vscode-descriptionForeground);font-size:10px;';
 
-		const dropdown = DOM.append(wrap, DOM.$('div'));
-		// High-contrast white dropdown so it's clearly visible in dark themes
-		// where the previous quickInput-background blended into the form. Item
-		// rows below override color/background so the white surface stays
-		// readable in both light and dark workbenches.
-		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:#ffffff;border:1px solid #0e639c;border-radius:6px;max-height:280px;overflow-y:auto;z-index:1000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);margin-top:4px;color:#1a1a2e;';
+		// Attach dropdown to the document body with position:fixed so it never
+		// gets clipped by parent overflow:hidden / overflow:auto containers
+		// (which is what was hiding results inside the modal/form scroller).
+		// Position is recomputed each time the dropdown opens, and flips
+		// upward if there isn't enough room below the input.
+		const dropdown = DOM.append(mainWindow.document.body, DOM.$('div'));
+		dropdown.style.cssText = 'position:fixed;background:#ffffff;border:1px solid #0e639c;border-radius:6px;max-height:280px;overflow-y:auto;z-index:100000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);color:#1a1a2e;';
+		const positionDropdown = (): void => {
+			const rect = input.getBoundingClientRect();
+			const viewportH = mainWindow.innerHeight;
+			const spaceBelow = viewportH - rect.bottom;
+			const spaceAbove = rect.top;
+			const desired = 280;
+			dropdown.style.width = `${rect.width}px`;
+			dropdown.style.left = `${rect.left}px`;
+			if (spaceBelow < desired && spaceAbove > spaceBelow) {
+				// Open upward
+				const maxH = Math.min(desired, spaceAbove - 8);
+				dropdown.style.maxHeight = `${maxH}px`;
+				dropdown.style.top = `${rect.top - maxH - 4}px`;
+			} else {
+				const maxH = Math.min(desired, spaceBelow - 8);
+				dropdown.style.maxHeight = `${maxH}px`;
+				dropdown.style.top = `${rect.bottom + 4}px`;
+			}
+		};
 
 		let results: Array<Record<string, unknown>> = [];
 		let debounce: ReturnType<typeof setTimeout> | null = null;
 		let loaded = false;
 
 		const close = (): void => { dropdown.style.display = 'none'; };
-		const open = (): void => { dropdown.style.display = 'block'; };
+		const open = (): void => { positionDropdown(); dropdown.style.display = 'block'; };
+
+		// Reposition on scroll/resize so the dropdown tracks the input.
+		const reflow = (): void => { if (dropdown.style.display !== 'none') { positionDropdown(); } };
+		mainWindow.addEventListener('scroll', reflow, true);
+		mainWindow.addEventListener('resize', reflow);
+		this._bodyAttached.push({
+			el: dropdown,
+			cleanup: () => {
+				mainWindow.removeEventListener('scroll', reflow, true);
+				mainWindow.removeEventListener('resize', reflow);
+			},
+		});
 
 		const renderResults = (): void => {
 			DOM.clearNode(dropdown);
@@ -2624,75 +2663,109 @@ export class SettingsHubEditor extends EditorPane {
 		// because the async sidebar re-render cleared contentEl moments after
 		// the modal was appended. Attaching to body avoids the race entirely.
 		const overlay = DOM.append(mainWindow.document.body, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:99999;';
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);display:flex;align-items:center;justify-content:center;z-index:100000;';
 
+		// Solid white card to match the EHR UI's ResetPasswordModal \u2014 the
+		// editor-background variant looked translucent against dark workbench
+		// themes, which the team report flagged as "showing transparent".
 		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:12px;width:460px;max-width:92vw;box-shadow:0 12px 36px rgba(0,0,0,0.5);overflow:hidden;';
+		modal.style.cssText = 'background:#ffffff;color:#0f172a;border-radius:14px;width:460px;max-width:92vw;box-shadow:0 24px 48px rgba(15,23,42,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
 
 		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid #e2e8f0;';
 		const ht = DOM.append(head, DOM.$('h3'));
 		ht.textContent = 'Password Reset';
-		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;color:var(--vscode-foreground);';
+		ht.style.cssText = 'margin:0;font-size:17px;font-weight:600;color:#1e293b;';
 		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
 		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:14px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;border-radius:4px;';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:18px;color:#64748b;cursor:pointer;padding:4px 8px;border-radius:6px;';
+		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = '#f1f5f9'; });
+		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; });
 		closeBtn.addEventListener('click', () => overlay.remove());
 
-		// Body: matches web's ResetPasswordModal layout exactly \u2014 inner
-		// slate-tinted card with Username + Temporary Password (monospace
-		// blue pill + clipboard copy icon) + red warning under a border.
 		const bodyEl = DOM.append(modal, DOM.$('div'));
 		bodyEl.style.cssText = 'padding:22px;';
 
 		const card = DOM.append(bodyEl, DOM.$('div'));
-		card.style.cssText = 'background:rgba(148,163,184,0.1);border-radius:8px;padding:18px;';
+		card.style.cssText = 'background:#f8fafc;border-radius:10px;padding:18px;';
 
 		const userLabel = DOM.append(card, DOM.$('div'));
 		userLabel.textContent = 'Username';
-		userLabel.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+		userLabel.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;';
 		const userValue = DOM.append(card, DOM.$('div'));
 		userValue.textContent = data.username;
-		userValue.style.cssText = 'font-size:13px;font-weight:500;color:var(--vscode-foreground);margin-bottom:14px;';
+		userValue.style.cssText = 'font-size:14px;font-weight:600;color:#0f172a;margin:4px 0 14px;word-break:break-all;';
 
 		const pwdLabel = DOM.append(card, DOM.$('div'));
 		pwdLabel.textContent = 'Temporary Password';
-		pwdLabel.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
+		pwdLabel.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;';
 
 		const pwdRow = DOM.append(card, DOM.$('div'));
-		pwdRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		pwdRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
 		const pwdPill = DOM.append(pwdRow, DOM.$('code'));
 		pwdPill.textContent = data.temporaryPassword;
-		pwdPill.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:15px;font-weight:700;color:#2563eb;background:rgba(59,130,246,0.12);padding:6px 12px;border-radius:6px;letter-spacing:0.5px;';
+		pwdPill.title = 'Click to copy';
+		// `user-select:all` lets a single click select the whole password so
+		// users can fall back to Ctrl/Cmd+C if the clipboard API path fails.
+		pwdPill.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;user-select:all;-webkit-user-select:all;cursor:pointer;';
 
 		const copyBtn = DOM.append(pwdRow, DOM.$('button')) as HTMLButtonElement;
 		copyBtn.textContent = '\u{1F4CB}';
 		copyBtn.title = 'Copy to clipboard';
-		copyBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:6px;border-radius:4px;color:var(--vscode-descriptionForeground);';
-		copyBtn.addEventListener('click', async () => {
-			try {
-				await mainWindow.navigator.clipboard.writeText(data.temporaryPassword);
-				copyBtn.textContent = '\u2705';
-				setTimeout(() => { copyBtn.textContent = '\u{1F4CB}'; }, 2000);
-			} catch {
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable.' });
+		copyBtn.style.cssText = 'background:#eff6ff;border:1px solid #bfdbfe;cursor:pointer;font-size:14px;color:#1d4ed8;padding:6px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;';
+		copyBtn.addEventListener('mouseenter', () => { copyBtn.style.background = '#dbeafe'; });
+		copyBtn.addEventListener('mouseleave', () => { copyBtn.style.background = '#eff6ff'; });
+		const doCopy = async (): Promise<void> => {
+			// Try multiple paths so this also works inside packaged Electron
+			// where `navigator.clipboard` may be unavailable without a secure
+			// context. Fall back to a textarea + execCommand on failure.
+			let ok = false;
+			try { await mainWindow.navigator.clipboard.writeText(data.temporaryPassword); ok = true; } catch { /* fall through */ }
+			if (!ok) {
+				try {
+					const doc = mainWindow.document;
+					const ta = doc.createElement('textarea');
+					ta.value = data.temporaryPassword;
+					ta.setAttribute('readonly', '');
+					ta.style.position = 'fixed';
+					ta.style.opacity = '0';
+					doc.body.appendChild(ta);
+					ta.focus();
+					ta.select();
+					ok = doc.execCommand('copy');
+					doc.body.removeChild(ta);
+				} catch { /* fall through */ }
 			}
-		});
+			if (ok) {
+				const prev = copyBtn.textContent;
+				copyBtn.textContent = '\u2713 Copied';
+				copyBtn.style.color = '#16a34a';
+				setTimeout(() => { copyBtn.textContent = prev; copyBtn.style.color = '#1d4ed8'; }, 1800);
+			} else {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable. Select the password and press Ctrl/Cmd + C.' });
+			}
+		};
+		copyBtn.addEventListener('click', () => { void doCopy(); });
+		pwdPill.addEventListener('click', () => { void doCopy(); });
 
 		const warn = DOM.append(card, DOM.$('p'));
 		warn.textContent = 'User must change password on first login.';
-		warn.style.cssText = 'color:#dc2626;font-size:11px;font-weight:600;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
+		warn.style.cssText = 'color:#dc2626;font-size:12px;font-weight:600;margin:14px 0 0;padding-top:12px;border-top:1px solid #e2e8f0;';
 
 		const actions = DOM.append(bodyEl, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:22px;';
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:18px;';
 
 		const closeFooter = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
 		closeFooter.textContent = 'Close';
-		closeFooter.style.cssText = 'padding:8px 16px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:8px;color:var(--vscode-foreground);cursor:pointer;font-size:13px;font-weight:500;';
+		closeFooter.style.cssText = 'padding:8px 16px;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;color:#334155;cursor:pointer;font-size:13px;font-weight:500;';
+		closeFooter.addEventListener('mouseenter', () => { closeFooter.style.background = '#f8fafc'; });
+		closeFooter.addEventListener('mouseleave', () => { closeFooter.style.background = '#ffffff'; });
 		closeFooter.addEventListener('click', () => overlay.remove());
 
 		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		printBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;';
+		printBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;';
+		printBtn.addEventListener('mouseenter', () => { printBtn.style.background = '#1d4ed8'; });
+		printBtn.addEventListener('mouseleave', () => { printBtn.style.background = '#2563eb'; });
 		const printIcon = DOM.append(printBtn, DOM.$('span'));
 		printIcon.textContent = '\u{1F5A8}';
 		const printText = DOM.append(printBtn, DOM.$('span'));

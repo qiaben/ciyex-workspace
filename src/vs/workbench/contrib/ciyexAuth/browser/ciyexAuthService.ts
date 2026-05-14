@@ -7,6 +7,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 
 export const ICiyexAuthService = createDecorator<ICiyexAuthService>('ciyexAuthService');
 
@@ -37,6 +38,12 @@ export interface ICiyexAuthService {
 	 * Step 2b: Login with Keycloak IDP (opens popup window for OAuth PKCE)
 	 */
 	keycloakLogin(email: string, idpAlias: string): Promise<CiyexLoginResult>;
+
+	/**
+	 * Step 2c: Set a new password when Keycloak returned requiresPasswordChange.
+	 * On success this also completes the login and stores the session token.
+	 */
+	changePassword(email: string, currentPassword: string, newPassword: string): Promise<CiyexLoginResult>;
 
 	/**
 	 * Refresh the access token
@@ -299,6 +306,34 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		}
 	}
 
+	async changePassword(email: string, currentPassword: string, newPassword: string): Promise<CiyexLoginResult> {
+		try {
+			const res = await fetch(`${this.apiUrl}/api/auth/change-password`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					email: email.trim(),
+					currentPassword,
+					newPassword,
+				}),
+			});
+
+			const data = await res.json();
+
+			if (data.success && data.data?.token) {
+				this._storeAuth(data.data);
+				this._userEmail = email;
+				this._setState(CiyexAuthState.Authenticated);
+				this._scheduleTokenRefresh();
+				this._resetIdleTimer();
+				return { success: true, data: data.data };
+			}
+			return { success: false, error: data.error || 'Failed to set new password.' };
+		} catch {
+			return { success: false, error: 'Unable to connect to server.' };
+		}
+	}
+
 	async keycloakLogin(email: string, idpAlias: string): Promise<CiyexLoginResult> {
 		try {
 			// Generate PKCE code verifier and challenge
@@ -327,7 +362,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			});
 
 			// Open popup for Keycloak login
-			const popup = window.open(
+			const popup = mainWindow.open(
 				`${authUrl}?${params.toString()}`,
 				'ciyex-keycloak-login',
 				'width=500,height=700,menubar=no,toolbar=no'
@@ -339,16 +374,16 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 
 			// Poll popup for redirect with auth code
 			return new Promise<CiyexLoginResult>((resolve) => {
-				const interval = setInterval(() => {
+				const interval = mainWindow.setInterval(() => {
 					try {
 						if (popup.closed) {
-							clearInterval(interval);
+							mainWindow.clearInterval(interval);
 							resolve({ success: false, error: 'Login window was closed.' });
 							return;
 						}
 						const url = popup.location.href;
 						if (url && url.includes('code=')) {
-							clearInterval(interval);
+							mainWindow.clearInterval(interval);
 							popup.close();
 							const code = new URL(url).searchParams.get('code');
 							if (code) {
@@ -365,7 +400,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 
 				// Timeout after 5 minutes
 				setTimeout(() => {
-					clearInterval(interval);
+					mainWindow.clearInterval(interval);
 					if (!popup.closed) {
 						popup.close();
 					}
@@ -610,7 +645,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
 		const handler = () => this.recordActivity();
 		for (const ev of events) {
-			window.addEventListener(ev, handler, { passive: true });
+			mainWindow.addEventListener(ev, handler, { passive: true });
 		}
 	}
 
