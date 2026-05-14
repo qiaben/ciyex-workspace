@@ -221,10 +221,17 @@ export class SettingsHubEditorInput extends EditorInput {
 
 	override getName(): string { return 'Settings'; }
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('settings-gear'); }
-	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/hub' }); }
+	get resource(): URI {
+		// Encode the initial tab into the resource so editors that target a
+		// specific page (e.g. Template Documents) don't collide with the
+		// generic Settings editor. Without this, VS Code's openEditor reused
+		// the existing Settings tab on the default page (Practice) and
+		// ignored the requested tab.
+		return URI.from({ scheme: 'ciyex-settings', path: `/hub/${this.initialTab || ''}` });
+	}
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
-		return other instanceof SettingsHubEditorInput;
+		return other instanceof SettingsHubEditorInput && other.initialTab === this.initialTab;
 	}
 }
 
