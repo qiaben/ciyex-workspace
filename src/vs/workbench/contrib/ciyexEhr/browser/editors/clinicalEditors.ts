@@ -721,7 +721,11 @@ export class LabsEditor extends ClinicalListEditorBase {
 		this._updateSidebarActive();
 
 		const main = DOM.append(wrapper, DOM.$('.labs-main'));
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;';
+		// Hide the vertical + horizontal scrollbars from the OS — the inner
+		// table already scrolls smoothly without the chunky bar (Issue #1, #2).
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;scrollbar-width:none;-ms-overflow-style:none;';
+		const hideStyle = DOM.append(main, DOM.$('style'));
+		hideStyle.textContent = '.labs-main::-webkit-scrollbar{display:none;width:0;height:0;}';
 		return main;
 	}
 
@@ -1736,7 +1740,11 @@ export class EducationEditor extends ClinicalListEditorBase {
 		this._updateEduSidebarActive();
 
 		const main = DOM.append(wrapper, DOM.$('.education-main'));
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;';
+		// Issue #3, #4: hide both scrollbars on the Patient Education main
+		// area so the page mirrors the web ehr-ui's clean layout.
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;scrollbar-width:none;-ms-overflow-style:none;';
+		const hideStyle = DOM.append(main, DOM.$('style'));
+		hideStyle.textContent = '.education-main::-webkit-scrollbar{display:none;width:0;height:0;}';
 		return main;
 	}
 

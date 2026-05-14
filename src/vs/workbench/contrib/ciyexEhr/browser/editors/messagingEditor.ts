@@ -464,13 +464,47 @@ export class MessagingEditor extends EditorPane {
 		const inputRow = DOM.append(this.composeEl, DOM.$('.messaging-input-row'));
 		inputRow.style.cssText = 'display:flex;gap:8px;align-items:flex-end;';
 
-		// Attach button
-		const attachBtn = DOM.append(inputRow, DOM.$('button'));
+		// Attach button — opens a small Image / File / Camera menu instead of
+		// jumping straight to the OS file picker (Issue #7 — matches the
+		// EHR-UI's three-option attachment popover).
+		const attachWrap = DOM.append(inputRow, DOM.$('div'));
+		attachWrap.style.cssText = 'position:relative;flex-shrink:0;';
+		const attachBtn = DOM.append(attachWrap, DOM.$('button'));
 		// allow-any-unicode-next-line
 		attachBtn.textContent = '📎';
-		attachBtn.title = 'Attach file';
-		attachBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;';
-		attachBtn.addEventListener('click', () => this._attachFile());
+		attachBtn.title = 'Attach';
+		attachBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;padding:4px;';
+		const attachMenu = DOM.append(attachWrap, DOM.$('div'));
+		attachMenu.style.cssText = 'position:absolute;bottom:100%;left:0;margin-bottom:6px;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.25);min-width:140px;display:none;z-index:1500;padding:4px 0;';
+		const mkAttachOpt = (icon: string, label: string, onClick: () => void) => {
+			const opt = DOM.append(attachMenu, DOM.$('div'));
+			opt.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
+			const ic = DOM.append(opt, DOM.$('span'));
+			ic.textContent = icon;
+			ic.style.cssText = 'font-size:14px;width:18px;text-align:center;';
+			const tx = DOM.append(opt, DOM.$('span'));
+			tx.textContent = label;
+			opt.addEventListener('mouseenter', () => { opt.style.background = 'var(--vscode-list-hoverBackground)'; });
+			opt.addEventListener('mouseleave', () => { opt.style.background = ''; });
+			opt.addEventListener('click', () => {
+				attachMenu.style.display = 'none';
+				onClick();
+			});
+		};
+		// allow-any-unicode-next-line
+		mkAttachOpt('🖼', 'Image', () => this._attachFile('image/*'));
+		// allow-any-unicode-next-line
+		mkAttachOpt('📄', 'File', () => this._attachFile());
+		// allow-any-unicode-next-line
+		mkAttachOpt('📷', 'Camera', () => this._attachFile('image/*', true));
+		attachBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			attachMenu.style.display = attachMenu.style.display === 'none' ? 'block' : 'none';
+		});
+		// Dismiss the menu on any outside click.
+		DOM.getActiveWindow().document.addEventListener('click', (e) => {
+			if (!attachWrap.contains(e.target as Node)) { attachMenu.style.display = 'none'; }
+		});
 
 		// Input
 		this.inputEl = DOM.append(inputRow, DOM.$('textarea')) as HTMLTextAreaElement;
@@ -597,11 +631,13 @@ export class MessagingEditor extends EditorPane {
 		return this.input instanceof MessagingEditorInput ? this.input : undefined;
 	}
 
-	private _attachFile(): void {
+	private _attachFile(accept?: string, useCamera = false): void {
 		// Create hidden file input
 		const fileInput = document.createElement('input');
 		fileInput.type = 'file';
-		fileInput.multiple = true;
+		fileInput.multiple = !useCamera;
+		if (accept) { fileInput.accept = accept; }
+		if (useCamera) { fileInput.setAttribute('capture', 'environment'); }
 		fileInput.addEventListener('change', async () => {
 			const files = fileInput.files;
 			if (!files || files.length === 0) { return; }

@@ -29,7 +29,7 @@ import {
 	// Hub editors (mirror EHR UI Settings + Layout Settings pages)
 	SettingsHubEditorInput, LayoutHubEditorInput,
 	// Portal Management full-page editors
-	DocumentReviewEditorInput, FormSubmissionEditorInput,
+	DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -59,7 +59,7 @@ import {
 } from './clinicalEditors.js';
 import {
 	ConsentsEditor, FaxEditor, DocScanningEditor, AuditLogEditor,
-	DocumentReviewEditor, FormSubmissionEditor,
+	DocumentReviewEditor, FormSubmissionEditor, PatientApprovalEditor,
 } from './systemEditors.js';
 import { NotificationsEditor } from './notificationsEditor.js';
 import { KioskEditor } from './kioskEditor.js';
@@ -123,8 +123,9 @@ reg.registerEditorPane(EditorPaneDescriptor.create(KioskEditor, KioskEditor.ID, 
 reg.registerEditorPane(EditorPaneDescriptor.create(AuditLogEditor, AuditLogEditor.ID, localize('auditLog', "Audit Log")), [new SyncDescriptor(AuditLogEditorInput)]);
 
 // Portal Management full-page editors
-reg.registerEditorPane(EditorPaneDescriptor.create(DocumentReviewEditor, DocumentReviewEditor.ID, localize('docReview', "Document Review")), [new SyncDescriptor(DocumentReviewEditorInput)]);
-reg.registerEditorPane(EditorPaneDescriptor.create(FormSubmissionEditor, FormSubmissionEditor.ID, localize('formSubmission', "Form Submissions")), [new SyncDescriptor(FormSubmissionEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(DocumentReviewEditor, DocumentReviewEditor.ID, localize('docReview', "Document Reviews")), [new SyncDescriptor(DocumentReviewEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(FormSubmissionEditor, FormSubmissionEditor.ID, localize('formReviews', "Form Reviews")), [new SyncDescriptor(FormSubmissionEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(PatientApprovalEditor, PatientApprovalEditor.ID, localize('patientApprovals', "Patient Approvals")), [new SyncDescriptor(PatientApprovalEditorInput)]);
 
 // Developer Portal
 reg.registerEditorPane(EditorPaneDescriptor.create(DeveloperPortalEditor, DeveloperPortalEditor.ID, localize('developerPortal', "Developer Portal")), [new SyncDescriptor(DeveloperPortalEditorInput)]);

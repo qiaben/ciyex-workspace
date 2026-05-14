@@ -286,7 +286,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'cptCode', label: 'CPT', aliases: ['cptCode', 'cpt'] },
 					{ key: 'icdCode', label: 'Diagnosis', aliases: ['icdCode', 'icd10Code', 'diagnosisCode'] },
 					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
-					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'organizationDisplay', 'insurerId', 'payerId'] },
+					// Issue #11: prefer human-readable display fields BEFORE the bare
+					// id aliases so the cell falls back to the org-cache lookup
+					// only when the FHIR row genuinely lacks a display name.
+					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'insuranceCompanyName', 'companyName', 'organizationDisplay', 'organizationName', 'payor.display', 'payor.0.display', 'coverage.payor.display', 'coverage.payor.0.display', 'insurerDisplay', 'payerDisplay', 'insurerId', 'payerId'] },
 					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
 					{ key: 'status', label: 'Status' },
 				],
@@ -297,7 +300,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'identifier', 'id'] },
 					{ key: 'serviceDate', label: 'Service Date', aliases: ['serviceDate', 'date', 'period.start', 'created'] },
 					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
-					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'organizationDisplay', 'insurerId', 'payerId'] },
+					// Issue #11: prefer human-readable display fields BEFORE the bare
+					// id aliases so the cell falls back to the org-cache lookup
+					// only when the FHIR row genuinely lacks a display name.
+					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'insuranceCompanyName', 'companyName', 'organizationDisplay', 'organizationName', 'payor.display', 'payor.0.display', 'coverage.payor.display', 'coverage.payor.0.display', 'insurerDisplay', 'payerDisplay', 'insurerId', 'payerId'] },
 					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
 					{ key: 'status', label: 'Status' },
 				],
@@ -1963,12 +1969,16 @@ export class PatientChartEditor extends EditorPane {
 		// companies have their own endpoint that the Billing/Claims forms
 		// already use; load it into the org cache so "Organization/5213" rows
 		// resolve to the actual insurance name.
-		const [providers, providersFhir, orgs, orgsFhir, insurance, locations] = await Promise.all([
+		const [providers, providersFhir, orgs, orgsFhir, insurance, insuranceLegacy, locations] = await Promise.all([
 			safe('/api/providers?size=500'),
 			safe('/api/fhir-resource/practitioners?size=500'),
 			safe('/api/organizations?size=500'),
 			safe('/api/fhir-resource/organizations?size=500'),
 			safe('/api/fhir-resource/insurance-companies?size=500'),
+			// Non-FHIR insurance companies endpoint — covers ids that the FHIR
+			// resource view doesn't index. (Issue #11: billing rows showed
+			// "Organization/5213" because the FHIR list missed the row.)
+			safe('/api/insurance-companies?size=500'),
 			safe('/api/locations?size=500'),
 		]);
 		const addProvider = (p: Record<string, unknown>) => {
@@ -1997,6 +2007,7 @@ export class PatientChartEditor extends EditorPane {
 		for (const o of orgs) { addOrg(o); }
 		for (const o of orgsFhir) { addOrg(o); }
 		for (const o of insurance) { addOrg(o); }
+		for (const o of insuranceLegacy) { addOrg(o); }
 		for (const l of locations) {
 			const id = String(l.id ?? l.fhirId ?? '');
 			const name = String(l.name ?? l.locationName ?? '').trim();
@@ -4603,7 +4614,7 @@ export class PatientChartEditor extends EditorPane {
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';
 					inp.style.cssText = inputStyle;
 					this._formInputs.set(f.key, inp);
-				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded') {
+				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded' || (f.type === 'search' && f.apiPath)) {
 					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
 				} else if (f.type === 'file') {
 					// File picker — reads the selected file as base64 data URL and
@@ -4895,7 +4906,12 @@ export class PatientChartEditor extends EditorPane {
 		// payload stay correct. Code-search keeps "store-typed-text"
 		// because the value IS the code, not a foreign key.
 		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
-			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key));
+			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key))
+			// Generic 'search' field where the field key is a foreign-key id —
+			// e.g. Patient Education materialId / educator. Selecting from the
+			// dropdown is required; free text deserialises to null and the
+			// backend rejects with "given id must not be null".
+			|| (f.type === 'search' && f.apiPath !== undefined);
 		if (isIdLookup) {
 			input.addEventListener('input', () => { hidden.value = ''; });
 		} else {
@@ -5042,6 +5058,14 @@ export class PatientChartEditor extends EditorPane {
 									input.value = it.label || it.code;
 									hidden.value = it.code;
 								}
+								// Honor relatedField — fill the companion form field
+								// (e.g. materialTitle for materialId) with the display
+								// label so list rendering and round-trip edits both
+								// keep the human-readable name visible.
+								if (f.relatedField) {
+									const related = this._formInputs.get(f.relatedField) as HTMLInputElement | undefined;
+									if (related) { related.value = it.label || it.code; }
+								}
 								dropdown.style.display = 'none';
 							});
 						}
@@ -5076,6 +5100,14 @@ export class PatientChartEditor extends EditorPane {
 
 	private _buildSearchUrl(f: FieldDef, q: string): string | null {
 		const enc = encodeURIComponent(q);
+		// Generic 'search' field with explicit apiPath (e.g. Education materialId
+		// using /api/education/materials, educator using /api/providers). Send
+		// both `search` and `q` to cover both backend conventions in one request.
+		if (f.type === 'search' && f.apiPath) {
+			const ep = f.apiPath;
+			const sep = ep.includes('?') ? '&' : '?';
+			return `${ep}${sep}search=${enc}&q=${enc}&page=0&size=20`;
+		}
 		switch (f.type) {
 			case 'coded':
 			case 'code-search': {
@@ -5211,6 +5243,20 @@ export class PatientChartEditor extends EditorPane {
 					const codeVal = String(it[valueField] ?? it.id ?? it.fhirId ?? '');
 					const labelVal = String(it[displayField] ?? it.name ?? it.fullName ?? '');
 					return { code: codeVal, label: labelVal || codeVal };
+				}).filter(it => it.code);
+			}
+			case 'search': {
+				// Generic search field — display label uses relatedDisplayFields
+				// joined with spaces, falls back to title / name / fullName.
+				const displayKeys = f.relatedDisplayFields && f.relatedDisplayFields.length > 0
+					? f.relatedDisplayFields
+					: ['title', 'name', 'fullName'];
+				return arr.map(it => {
+					const labelParts = displayKeys
+						.map(k => String((it as Record<string, unknown>)[k] ?? ''))
+						.filter(s => s);
+					const label = labelParts.join(' ').trim() || String(it.name || it.title || '');
+					return { code: String(it.id || it.fhirId || ''), label };
 				}).filter(it => it.code);
 			}
 			default:

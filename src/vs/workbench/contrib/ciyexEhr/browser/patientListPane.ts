@@ -130,8 +130,15 @@ export class PatientListPane extends ViewPane {
 		loadingEl.style.fontSize = '12px';
 		loadingEl.textContent = 'Loading patients...';
 
+		// Wrapper scrolls vertically when the rendered rows exceed the pane,
+		// but hides the OS scrollbar so the patient list stays clean (matches
+		// the web ehr-ui where the list scrolls without a visible track).
 		const listWrap = document.createElement('div');
-		listWrap.style.cssText = 'flex:1;overflow-y:hidden;';
+		listWrap.classList.add('ciyex-patient-list-scroll');
+		listWrap.style.cssText = 'flex:1;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;';
+		const hideScrollbarStyle = document.createElement('style');
+		hideScrollbarStyle.textContent = '.ciyex-patient-list-scroll::-webkit-scrollbar{display:none;width:0;height:0;}';
+		listWrap.appendChild(hideScrollbarStyle);
 		listWrap.appendChild(loadingEl);
 
 		this._listEl = document.createElement('div');

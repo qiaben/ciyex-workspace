@@ -489,8 +489,15 @@ export class DocumentReviewEditorInput extends BaseClinicalEditorInput {
 export class FormSubmissionEditorInput extends BaseClinicalEditorInput {
 	static readonly ID = 'workbench.input.ciyexFormSubmission';
 	readonly clinicalId = FormSubmissionEditorInput.ID;
-	readonly clinicalLabel = 'Form Submissions';
+	readonly clinicalLabel = 'Form Reviews';
 	readonly clinicalIcon = 'checklist';
+}
+
+export class PatientApprovalEditorInput extends BaseClinicalEditorInput {
+	static readonly ID = 'workbench.input.ciyexPatientApproval';
+	readonly clinicalId = PatientApprovalEditorInput.ID;
+	readonly clinicalLabel = 'Patient Approvals';
+	readonly clinicalIcon = 'verified';
 }
 
 // allow-any-unicode-next-line

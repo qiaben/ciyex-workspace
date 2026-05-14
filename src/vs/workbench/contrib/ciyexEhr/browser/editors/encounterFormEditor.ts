@@ -147,7 +147,10 @@ export class EncounterFormEditor extends EditorPane {
 			const file = await this.fileService.readFile(URI.joinPath(this._configHome, 'encounter.json'));
 			const json = JSON.parse(file.value.toString());
 			if (json.sections && json.sections.length > 1) {
-				this.formSections = json.sections;
+				// Apply the same Procedures & Coding merge so legacy local
+				// configs that ship plain CPT/HCPCS text inputs still get the
+				// searchable widget. (Issue #16)
+				this.formSections = EncounterFormEditor._mergeProceduresSection(json.sections);
 				return;
 			}
 		} catch { /* fall through */ }
@@ -166,11 +169,20 @@ export class EncounterFormEditor extends EditorPane {
 	private static _mergeProceduresSection(sections: FieldSection[]): FieldSection[] {
 		const localProcedures = EncounterFormEditor._defaultSections().find(s => s.key === 'procedures');
 		if (!localProcedures) { return sections; }
-		const procedureKeyHints = /^(cpt|hcpcs|procedure)/i;
+		// Match a wider set of section + field shapes from the backend
+		// tab_field_config: section key/title containing any of procedure / cpt
+		// / hcpcs / coding, OR any field whose key or label hints at a
+		// procedure/CPT/HCPCS code. Issue #16: the test team kept seeing the
+		// plain text "Enter cpt codes…" / "Enter hcpcs codes…" widgets because
+		// the previous heuristic missed sections whose title was just "Coding"
+		// or whose fields used camelCase keys like cptCodes / hcpcsCodes.
+		const codeHintsKey = /(^|[^a-z])(cpt|hcpcs|procedure)/i;
+		const codeHintsLabel = /\b(cpt|hcpcs|procedure)\b/i;
 		const isProceduresSection = (s: FieldSection): boolean => {
 			const t = `${s.key || ''} ${s.title || ''}`.toLowerCase();
-			if (t.includes('procedure') && (t.includes('coding') || t.includes('code'))) { return true; }
-			return (s.fields || []).some(f => procedureKeyHints.test(f.key || ''));
+			if (/(procedure|cpt|hcpcs)/.test(t)) { return true; }
+			if (t.includes('coding') || t.includes('code')) { return true; }
+			return (s.fields || []).some(f => codeHintsKey.test(f.key || '') || codeHintsLabel.test(f.label || ''));
 		};
 		let replaced = false;
 		const out = sections.map(s => {
@@ -866,6 +878,11 @@ export class EncounterFormEditor extends EditorPane {
 					inp.style.cssText = inputStyle + 'height:32px;';
 					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
+					// Register text-typed weight/height/BMI fields too — the
+					// backend tab_field_config sometimes ships these as plain
+					// text, which previously prevented BMI auto-calc from
+					// finding them. (Issue #15)
+					renderedInputs.set(f.key, inp);
 				}
 			}
 		}
@@ -882,9 +899,29 @@ export class EncounterFormEditor extends EditorPane {
 			}
 			return undefined;
 		};
-		const weightKg = pickInput('vitals_weight', 'weight', 'weightKg', 'bodyWeight');
-		const heightCm = pickInput('vitals_height', 'height', 'heightCm', 'bodyHeight');
-		const bmi = pickInput('vitals_bmi', 'bmi', 'bodyMassIndex');
+		// Fallback that scans every form section for a field whose label
+		// starts/ends with a given word (case-insensitive). Used when the
+		// backend tab_field_config invents its own field keys (e.g. just
+		// `weight`/`height`/`bmi` without a vitals_ prefix or in some other
+		// custom shape). Issue #15: BMI never auto-calculated because the
+		// hardcoded key list missed those backend variants.
+		const pickByLabel = (rx: RegExp): HTMLInputElement | undefined => {
+			for (const sec of this.formSections) {
+				for (const f of sec.fields || []) {
+					if (rx.test(f.label || '')) {
+						const el = renderedInputs.get(f.key);
+						if (el) { return el; }
+					}
+				}
+			}
+			return undefined;
+		};
+		const weightKg = pickInput('vitals_weight', 'weight', 'weightKg', 'bodyWeight')
+			|| pickByLabel(/^\s*weight\b/i);
+		const heightCm = pickInput('vitals_height', 'height', 'heightCm', 'bodyHeight')
+			|| pickByLabel(/^\s*height\b/i);
+		const bmi = pickInput('vitals_bmi', 'bmi', 'bodyMassIndex')
+			|| pickByLabel(/^\s*bmi\b|body\s*mass\s*index/i);
 		if (weightKg && heightCm && bmi) {
 			bmi.readOnly = true;
 			bmi.style.background = 'rgba(128,128,128,0.06)';

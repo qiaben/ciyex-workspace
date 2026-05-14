@@ -452,9 +452,14 @@ export class TasksEditor extends EditorPane {
 		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
 		backdrop.addEventListener('click', () => { this.formOverlay?.remove(); this.formOverlay = null; });
 
-		// Panel
+		// Panel — flex column so the Cancel/Create button row can stick to the
+		// bottom of the panel rather than the bottom of the form content.
+		// Issue #6: short forms previously left a large empty gap underneath
+		// the buttons because the panel scrolled but the buttons floated
+		// against the form's intrinsic height. `overflow-y:auto` still
+		// scrolls when the form is taller than the viewport.
 		const panel = DOM.append(this.formOverlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:520px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;';
+		panel.style.cssText = 'position:relative;width:520px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;display:flex;flex-direction:column;box-sizing:border-box;';
 
 		// Header
 		const hdr = DOM.append(panel, DOM.$('div'));
@@ -645,7 +650,11 @@ export class TasksEditor extends EditorPane {
 
 		// Buttons
 		const btnRow = DOM.append(panel, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
+		// `margin-top:auto` in the flex-column panel pushes the action row to
+		// the bottom — fills the empty gap that previously appeared under the
+		// buttons on short forms (Issue #6). flex-shrink:0 keeps the row
+		// fully visible even when the form scrolls.
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:auto;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
 
 		// Delete button on the left, only shown for existing tasks
 		const leftGroup = DOM.append(btnRow, DOM.$('div'));

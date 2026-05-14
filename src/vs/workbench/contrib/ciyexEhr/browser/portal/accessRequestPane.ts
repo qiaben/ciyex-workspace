@@ -14,16 +14,20 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface AccessRequest {
-	id: number;
-	patientName: string;
+	id: number | string;
+	patientName?: string;
+	firstName?: string;
+	lastName?: string;
 	email: string;
 	phone?: string;
 	dateOfBirth?: string;
-	status: string;
-	createdAt: string;
+	status?: string;
+	createdAt?: string;
 }
 
 export class AccessRequestPane extends ViewPane {
@@ -46,6 +50,7 @@ export class AccessRequestPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -55,17 +60,33 @@ export class AccessRequestPane extends ViewPane {
 		this.container = DOM.append(parent, DOM.$('.access-request-pane'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
 
+		// "Open full page" button matches DocumentReview / FormSubmission panes —
+		// gives users a one-click path to the Patient Approvals queue editor.
+		const header = DOM.append(this.container, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const lbl = DOM.append(header, DOM.$('span'));
+		lbl.textContent = 'Pending';
+		lbl.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.4px;';
+		const openBtn = DOM.append(header, DOM.$('button'));
+		openBtn.textContent = 'View All';
+		openBtn.title = 'Open Patient Approvals full page';
+		openBtn.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;';
+		openBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.openPatientApprovals'));
+
 		this.listEl = DOM.append(this.container, DOM.$('div'));
 		this.listEl.style.cssText = 'flex:1;overflow-y:auto;';
 		this.listEl.textContent = 'Loading...';
 
 		this._load();
-		const retry = setInterval(() => { if (this.loaded) { clearInterval(retry); return; } this._load(); }, 3000);
+		const retry = mainWindow.setInterval(() => { if (this.loaded) { mainWindow.clearInterval(retry); return; } this._load(); }, 3000);
 	}
 
 	private async _load(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/portal/requests?status=pending&size=50');
+			// Backend exposes pending portal-user link approvals at
+			// /api/portal/approvals/pending — the previous /api/portal/requests
+			// path was a 404 and left the sidebar stuck on "Loading...".
+			const res = await this.apiService.fetch('/api/portal/approvals/pending');
 			if (!res.ok) { this.listEl.textContent = 'Waiting for login...'; return; }
 			const data = await res.json();
 			this.items = (data?.data?.content || data?.data || data?.content || data || []) as AccessRequest[];
@@ -93,14 +114,16 @@ export class AccessRequestPane extends ViewPane {
 			top.style.cssText = 'display:flex;align-items:center;gap:6px;';
 
 			const icon = DOM.append(top, DOM.$('span'));
+			// allow-any-unicode-next-line
 			icon.textContent = '👤';
 
 			const name = DOM.append(top, DOM.$('span'));
-			name.textContent = item.patientName || item.email;
+			const fullName = item.patientName || `${item.firstName || ''} ${item.lastName || ''}`.trim();
+			name.textContent = fullName || item.email;
 			name.style.cssText = 'font-weight:500;flex:1;';
 
 			const date = DOM.append(top, DOM.$('span'));
-			try { date.textContent = new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { /* */ }
+			try { if (item.createdAt) { date.textContent = new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } } catch { /* */ }
 			date.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 			const detail = DOM.append(row, DOM.$('div'));
@@ -114,24 +137,25 @@ export class AccessRequestPane extends ViewPane {
 			actions.style.cssText = 'display:flex;gap:4px;margin-top:4px;padding-left:22px;';
 
 			const approveBtn = DOM.append(actions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			approveBtn.textContent = '✓ Approve';
 			approveBtn.style.cssText = 'padding:2px 8px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;';
 			approveBtn.addEventListener('click', async () => {
-				await this.apiService.fetch(`/api/portal/requests/${item.id}/approve`, { method: 'POST' });
+				await this.apiService.fetch(`/api/portal/approvals/approve/${item.id}`, { method: 'PUT' });
 				this._load();
 			});
 
 			const denyBtn = DOM.append(actions, DOM.$('button'));
+			// allow-any-unicode-next-line
 			denyBtn.textContent = '✗ Deny';
 			denyBtn.style.cssText = 'padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;';
 			denyBtn.addEventListener('click', async () => {
 				const reason = prompt('Denial reason:');
 				if (reason !== null) {
-					await this.apiService.fetch(`/api/portal/requests/${item.id}/deny`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ reason }),
-					});
+					await this.apiService.fetch(
+						`/api/portal/approvals/reject/${item.id}?reason=${encodeURIComponent(reason || 'No reason provided')}`,
+						{ method: 'PUT' },
+					);
 					this._load();
 				}
 			});

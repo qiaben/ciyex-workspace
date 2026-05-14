@@ -24,8 +24,11 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 export class DocumentReviewEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexDocumentReview';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Document Review',
-		apiPath: '/api/portal/document-reviews',
+		title: 'Document Reviews',
+		// Backend exposes only GET /api/portal/document-reviews/pending — calling
+		// the bare collection root returns "No endpoint GET /api/portal/document-reviews"
+		// (HTTP 500). Use /pending for the list source so the page actually loads.
+		apiPath: '/api/portal/document-reviews/pending',
 		searchPlaceholder: 'Search by patient, document type...',
 		clientSideFilter: ['patientName', 'fileName', 'category', 'status', 'id'],
 		editable: false,
@@ -83,8 +86,10 @@ export class DocumentReviewEditor extends ClinicalListEditorBase {
 export class FormSubmissionEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexFormSubmission';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Form Submissions',
-		apiPath: '/api/portal/form-submissions',
+		title: 'Form Reviews',
+		// Backend has both GET / (all) and /pending — use /pending so the staff
+		// reviewer queue mirrors the web /form-submissions default view.
+		apiPath: '/api/portal/form-submissions/pending',
 		searchPlaceholder: 'Search by patient, form title...',
 		clientSideFilter: ['patientName', 'formTitle', 'formKey', 'status', 'id'],
 		editable: false,
@@ -130,6 +135,64 @@ export class FormSubmissionEditor extends ClinicalListEditorBase {
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(FormSubmissionEditor.ID, group, t, th, s, a, d); }
+}
+
+/**
+ * Patient Approval Editor — full-page view of pending patient access requests
+ * (mirrors web /patient-approvals). Backend at /api/portal/approvals.
+ */
+export class PatientApprovalEditor extends ClinicalListEditorBase {
+	static readonly ID = 'workbench.editor.ciyexPatientApproval';
+	protected readonly config: ClinicalEditorConfig = {
+		title: 'Patient Approvals',
+		// Backend exposes only /api/portal/approvals/pending (no list root) —
+		// using the bare collection returns "No endpoint" and 500s.
+		apiPath: '/api/portal/approvals/pending',
+		searchPlaceholder: 'Search by name, email, DOB...',
+		clientSideFilter: ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'patientName', 'id'],
+		editable: false,
+		columns: [
+			{ key: 'patientName', label: 'Patient Name' },
+			{ key: 'email', label: 'Email' },
+			{ key: 'phone', label: 'Phone', width: '120px' },
+			{ key: 'dateOfBirth', label: 'Date of Birth', width: '110px' },
+			{ key: 'createdAt', label: 'Requested', width: '110px' },
+		],
+		cellRenderer: (key, value, item) => {
+			if (key === 'patientName' && !value) {
+				const fn = String(item['firstName'] ?? '');
+				const ln = String(item['lastName'] ?? '');
+				const full = `${fn} ${ln}`.trim();
+				return full || String(item['email'] ?? '');
+			}
+			if ((key === 'createdAt' || key === 'dateOfBirth') && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(value); }
+			}
+			return String(value ?? '');
+		},
+		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'Approve', icon: '\u{2714}', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: `Approve access request for ${item.patientName || item.email}?`, type: 'question' });
+					if (!r.confirmed) { return; }
+					await api.fetch(`/api/portal/approvals/approve/${item.id}`, { method: 'PUT' });
+					reload();
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Reject', icon: '\u{2718}', handler: async (item, api, reload, dlg) => {
+					const res = await dlg.input({ type: 'question', message: 'Rejection reason', inputs: [{ placeholder: 'Reason for rejection...' }] });
+					if (!res.confirmed) { return; }
+					const reason = res.values?.[0]?.trim() || 'No reason provided';
+					await api.fetch(`/api/portal/approvals/reject/${item.id}?reason=${encodeURIComponent(reason)}`, { method: 'PUT' });
+					reload();
+				}
+			},
+		],
+	};
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PatientApprovalEditor.ID, group, t, th, s, a, d); }
 }
 
 // allow-any-unicode-next-line
