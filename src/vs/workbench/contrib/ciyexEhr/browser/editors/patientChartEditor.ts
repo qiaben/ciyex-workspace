@@ -2164,9 +2164,28 @@ export class PatientChartEditor extends EditorPane {
 		// Force-use the local config and skip the backend fetch so the
 		// workspace renders the same dialog as the web app.
 		const forceLocalConfigTabs = new Set([
-			'payment',     // CollectPaymentModal parity
-			'statements',  // StatementsTab New Statement parity
-			'insurance',   // Insurance NewInsuranceModal parity
+			'payment',        // CollectPaymentModal parity
+			'statements',     // StatementsTab New Statement parity
+			'insurance',      // Insurance NewInsuranceModal parity
+			// 12.05.26 test report issue 1: Lot Number / Dose negative test
+			// cases were passing through because the backend's
+			// tab_field_config row for immunizations ships without the
+			// strict validation patterns the local config carries. The
+			// merge logic falls back to local validationPattern only when
+			// the backend row omits the key entirely — backends that
+			// returned an explicit empty string left the form unguarded.
+			// Force-use the rich local config so pure-number lot numbers
+			// ("15") and bare-number doses ("10") are rejected client-side.
+			'immunizations',
+			// 12.05.26 test report issue 4: Education create failed with
+			// "The given id must not be null" because the backend's
+			// tab_field_config for education didn't expose `materialId` as
+			// a `search` field — the merge produced a plain-text Topic /
+			// Title input that bypassed the FK selection check. Force the
+			// local config so the workspace renders a real search picker
+			// bound to /api/education/materials and the save handler can
+			// resolve the chosen material's FK.
+			'education',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
@@ -3966,7 +3985,27 @@ export class PatientChartEditor extends EditorPane {
 		const panel = DOM.append(overlay, DOM.$('div'));
 		const _themeType = this.themeService.getColorTheme().type;
 		const _colorScheme = (_themeType === 'light' || _themeType === 'hcLight') ? 'light' : 'dark';
+		panel.classList.add('ciyex-chart-add-panel');
 		panel.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;box-shadow:-8px 0 24px rgba(0,0,0,0.3);color-scheme:${_colorScheme};`;
+		// Force native <select> and <option> elements inside the chart dialog
+		// to use the workbench dropdown colour vars. Without this, the native
+		// option popup rendered with the OS's default scheme — which the
+		// 12.05.26 test report flagged as the "Add New page is still light"
+		// dropdown leak (issue 18) when the rest of the workspace is dark.
+		const panelStyle = DOM.append(panel, DOM.$('style'));
+		panelStyle.textContent = [
+			'.ciyex-chart-add-panel select, .ciyex-chart-add-panel option {',
+			'  background:var(--vscode-dropdown-background, var(--vscode-input-background));',
+			'  color:var(--vscode-dropdown-foreground, var(--vscode-input-foreground));',
+			'}',
+			'.ciyex-chart-add-panel input, .ciyex-chart-add-panel textarea {',
+			'  background:var(--vscode-input-background);',
+			'  color:var(--vscode-input-foreground);',
+			'}',
+			'.ciyex-chart-add-panel input::placeholder, .ciyex-chart-add-panel textarea::placeholder {',
+			'  color:var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));',
+			'}',
+		].join('\n');
 
 		const hdrRow = DOM.append(panel, DOM.$('div'));
 		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 20px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
@@ -4145,11 +4184,18 @@ export class PatientChartEditor extends EditorPane {
 			// must not be null" save error the test team flagged on the
 			// Education page. Same goes for patient/practitioner pickers.
 			// Catch them up front regardless of the `required` flag.
-			const idLookupRx = /(^|[A-Za-z])(materialId|locationId|providerId|formId|payerId|encounterId|organizationId|insurerId)$/;
+			// Education's `materialId` field is registered as type `search`
+			// (renders a typeahead bound to /api/education/materials). Without
+			// `'search'` in the FK-type set, an un-selected entry slipped past
+			// and reached the backend as a string Topic/Title — which the
+			// PatientEducationService rejected with "The given id must not be
+			// null" because JPA couldn't resolve the materialId FK.
+			const idLookupRx = /(^|[A-Za-z])(materialId|locationId|providerId|formId|payerId|encounterId|organizationId|insurerId|educatorId)$/;
 			for (const sec of (config?.sections || [])) {
 				for (const f of (sec.fields || [])) {
 					const isFkRef = f.type === 'patient-search' || f.type === 'practitioner-search'
-						|| (f.type === 'lookup' && idLookupRx.test(f.key));
+						|| ((f.type === 'lookup' || f.type === 'search') && idLookupRx.test(f.key))
+						|| f.key === 'materialId';
 					if (!isFkRef) { continue; }
 					const el = dialogInputs.get(f.key);
 					if (!el) { continue; }

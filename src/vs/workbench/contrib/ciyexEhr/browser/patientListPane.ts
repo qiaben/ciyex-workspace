@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as DOM from '../../../../base/browser/dom.js';
 import { IViewPaneOptions, ViewPane } from '../../../browser/parts/views/viewPane.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
@@ -339,9 +338,11 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
-			// Action column — View Chart / Edit Patient / Deactivate, mirroring
-			// the EHR Web UI Action column. Clicking the row outside the buttons
-			// still opens the chart, preserving the row's default behavior.
+			// Action column — Open Chart / Record Vitals / Visit Summary, matching
+			// the EHR Web UI patient-list Action column the 12.05.26 test report
+			// flagged as missing (issue 13). Clicking the row outside the buttons
+			// still opens the chart on the default tab, preserving the row's
+			// default behaviour.
 			const actions = document.createElement('span');
 			actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
 			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
@@ -356,19 +357,20 @@ export class PatientListPane extends ViewPane {
 				actions.appendChild(btn);
 			};
 			// allow-any-unicode-next-line
-			mkAction('👁', 'View Chart', '#3b82f6', () => {
+			mkAction('📋', 'Open Chart', '#3b82f6', () => {
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
+			// Record Vitals lands directly on the vitals flowsheet via
+			// PatientChartEditor's `_initialTab` override.
 			// allow-any-unicode-next-line
-			mkAction('✏', 'Edit Patient', '#10b981', () => {
-				// Open the chart on the demographics tab where edit is exposed —
-				// PatientChartEditor.setInput() honors the initialTab override.
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics');
+			mkAction('❤', 'Record Vitals', '#a855f7', () => {
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'vitals');
 			});
-			const isActive = ((patient.status || 'active').toLowerCase() !== 'inactive');
+			// Visit Summary opens the chart on the encounters list, where
+			// the latest encounter summary is reached.
 			// allow-any-unicode-next-line
-			mkAction(isActive ? '🚫' : '✓', isActive ? 'Deactivate' : 'Activate', '#ef4444', () => {
-				void this._toggleActive(patient, !isActive);
+			mkAction('🗒', 'Visit Summary', '#f59e0b', () => {
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'encounters');
 			});
 			row.appendChild(actions);
 
@@ -390,24 +392,6 @@ export class PatientListPane extends ViewPane {
 		el.style.fontSize = '12px';
 		el.textContent = msg;
 		this._listEl.appendChild(el);
-	}
-
-	private async _toggleActive(patient: IPatientRow, makeActive: boolean): Promise<void> {
-		const verb = makeActive ? 'activate' : 'deactivate';
-		const confirmed = DOM.getActiveWindow().confirm(`Are you sure you want to ${verb} ${patient.firstName} ${patient.lastName}?`);
-		if (!confirmed) { return; }
-		try {
-			const response = await this.apiService.fetch(`/api/patients/${patient.id}`, {
-				method: 'PATCH',
-				body: JSON.stringify({ status: makeActive ? 'Active' : 'Inactive' }),
-			});
-			if (response.ok) {
-				patient.status = makeActive ? 'Active' : 'Inactive';
-				this._renderList();
-			}
-		} catch {
-			// API error — leave the row unchanged. The next refresh will reconcile.
-		}
 	}
 
 	private _calcAge(dob: string): number {
