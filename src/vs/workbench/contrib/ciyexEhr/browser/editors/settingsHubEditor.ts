@@ -4156,259 +4156,378 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	/**
-	 * Template Documents — manages reusable document templates for encounter notes
-	 * and patient portal content. Backed by /api/template-documents which returns
-	 * { id, name, context: 'ENCOUNTER' | 'PORTAL', content, options, ... } records.
-	 *
-	 * The Web EHR uses Tiptap for a full WYSIWYG editor; the workspace renders an
-	 * HTML textarea + live preview to keep the footprint manageable while still
-	 * supporting the same workflow (create / edit / delete / context filter).
+	 * Template Documents — mirrors the EHR Web UI `/settings/templateDocument`
+	 * layout: a left sidebar with the saved templates list (search-filtered),
+	 * a centre header with the template title, an Encounter/Portal context
+	 * toggle, action icons (preview/copy/download/upload/save) and a rich-text
+	 * toolbar with a Visual / HTML-Source mode toggle. Backed by
+	 * `/api/template-documents` (same endpoints as ciyex-ehr-ui).
 	 */
 	private async _renderTemplateDocuments(): Promise<void> {
-		const root = DOM.append(this.contentEl, DOM.$('div'));
-		root.style.cssText = 'padding:24px;max-width:1100px;margin:0 auto;';
-
-		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:16px;';
-		const left = DOM.append(header, DOM.$('div'));
-		const title = DOM.append(left, DOM.$('h1'));
-		title.textContent = 'Template Documents';
-		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
-		const sub = DOM.append(left, DOM.$('p'));
-		sub.textContent = 'Reusable document templates for encounters and the patient portal.';
-		sub.style.cssText = 'margin:0;color:var(--vscode-descriptionForeground);font-size:13px;';
-		const newBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-		newBtn.textContent = '+ New Template';
-		newBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
-
-		// Context filter (ENCOUNTER vs PORTAL) — same as the EHR Web UI tabs
-		const filterRow = DOM.append(root, DOM.$('div'));
-		filterRow.style.cssText = 'display:flex;gap:4px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:16px;';
-		type Ctx = '' | 'ENCOUNTER' | 'PORTAL';
-		let activeCtx: Ctx = '';
-		const tabs: Array<[Ctx, string]> = [['', 'All'], ['ENCOUNTER', 'Encounter'], ['PORTAL', 'Portal']];
-		const tabBtns: Record<string, HTMLButtonElement> = {};
-		for (const [val, lbl] of tabs) {
-			const b = DOM.append(filterRow, DOM.$('button')) as HTMLButtonElement;
-			b.textContent = lbl;
-			b.style.cssText = 'padding:8px 16px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;';
-			tabBtns[val] = b;
-			b.addEventListener('click', () => { activeCtx = val; renderTabs(); void load(); });
-		}
-		const renderTabs = (): void => {
-			for (const [val] of tabs) {
-				const b = tabBtns[val];
-				const isActive = activeCtx === val;
-				b.style.cssText = `padding:8px 16px;background:transparent;border:none;border-bottom:2px solid ${isActive ? 'var(--vscode-focusBorder)' : 'transparent'};color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;`;
-			}
-		};
-		renderTabs();
-
-		const body = DOM.append(root, DOM.$('div'));
-
 		interface TemplateDoc {
 			id?: number;
 			name: string;
-			context: string;
+			context: 'ENCOUNTER' | 'PORTAL';
 			content: string;
 			options?: Record<string, unknown>;
-			createdAt?: string;
 			updatedAt?: string;
 		}
 
-		const load = async (): Promise<void> => {
-			DOM.clearNode(body);
-			const loading = DOM.append(body, DOM.$('div'));
-			loading.textContent = 'Loading templates…';
-			loading.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);';
-			try {
-				const url = activeCtx ? `/api/template-documents?context=${activeCtx}` : '/api/template-documents';
-				const res = await this.apiService.fetch(url);
-				if (!res.ok) {
-					loading.textContent = `Failed to load templates (${res.status})`;
-					return;
-				}
-				const json = await res.json();
-				const list: TemplateDoc[] = (Array.isArray(json) ? json : (json.data || json.content || [])) as TemplateDoc[];
-				DOM.clearNode(body);
-				if (list.length === 0) {
-					const empty = DOM.append(body, DOM.$('div'));
-					empty.textContent = 'No templates yet. Click "+ New Template" to create one.';
-					empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);border:1px dashed var(--vscode-editorWidget-border);border-radius:8px;';
-					return;
-				}
-				const grid = DOM.append(body, DOM.$('div'));
-				grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;';
-				for (const tpl of list) {
-					const card = DOM.append(grid, DOM.$('div'));
-					card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;background:var(--vscode-editor-background);position:relative;';
-					const ctxBadge = DOM.append(card, DOM.$('span'));
-					ctxBadge.textContent = tpl.context;
-					ctxBadge.style.cssText = `position:absolute;top:10px;right:10px;font-size:9px;font-weight:600;letter-spacing:0.5px;padding:2px 6px;border-radius:3px;background:${tpl.context === 'ENCOUNTER' ? 'rgba(34,197,94,0.15)' : 'rgba(168,85,247,0.15)'};color:${tpl.context === 'ENCOUNTER' ? '#22c55e' : '#a855f7'};`;
-					const name = DOM.append(card, DOM.$('div'));
-					name.textContent = tpl.name || '(untitled)';
-					name.style.cssText = 'font-weight:600;font-size:14px;margin-bottom:6px;padding-right:80px;';
-					const preview = DOM.append(card, DOM.$('div'));
-					const plain = (tpl.content || '').replace(/<[^>]*>/g, '').trim();
-					preview.textContent = plain.length > 120 ? plain.substring(0, 120) + '…' : (plain || '(empty)');
-					preview.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);line-height:1.4;margin-bottom:10px;min-height:42px;';
-					const cardActions = DOM.append(card, DOM.$('div'));
-					cardActions.style.cssText = 'display:flex;gap:4px;justify-content:flex-end;';
-					this._tableAction(cardActions, '\u270F', 'Edit', () => this._openTemplateDocModal(tpl, load));
-					this._tableAction(cardActions, '\u{1F441}', 'Preview', () => this._previewTemplateDoc(tpl));
-					this._tableAction(cardActions, '\u{1F5D1}', 'Delete', async () => {
-						if (!tpl.id) { return; }
-						const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${tpl.name}"?` });
-						if (!confirmed) { return; }
-						try {
-							const r = await this.apiService.fetch(`/api/template-documents/${tpl.id}`, { method: 'DELETE' });
-							if (r.ok) {
-								await load();
-								this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
-							} else {
-								this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${r.status})` });
-							}
-						} catch (e) {
-							this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
-						}
-					}, 'danger');
-				}
-			} catch {
-				loading.textContent = 'Waiting for login…';
-			}
+		const state = {
+			templates: [] as TemplateDoc[],
+			selectedId: null as number | null,
+			title: '',
+			context: 'ENCOUNTER' as 'ENCOUNTER' | 'PORTAL',
+			content: '',
+			search: '',
+			mode: 'visual' as 'visual' | 'source',
 		};
 
-		newBtn.addEventListener('click', () => this._openTemplateDocModal(null, load));
-		void load();
-	}
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a;';
 
-	private _openTemplateDocModal(tpl: { id?: number; name: string; context: string; content: string; options?: Record<string, unknown> } | null, reload: () => Promise<void>): void {
-		const overlay = DOM.append(this.contentEl, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+		const header = DOM.append(root, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:14px 20px;background:#ffffff;border-bottom:1px solid #e2e8f0;flex-shrink:0;';
 
-		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:880px;max-width:96vw;max-height:90vh;overflow-y:auto;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		const brand = DOM.append(header, DOM.$('div'));
+		brand.style.cssText = 'display:flex;align-items:center;gap:10px;';
+		const brandIcon = DOM.append(brand, DOM.$('div'));
+		brandIcon.textContent = '\u{1F4C4}';
+		brandIcon.style.cssText = 'width:36px;height:36px;background:#dbeafe;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;';
+		const brandTxt = DOM.append(brand, DOM.$('div'));
+		const brandTitle = DOM.append(brandTxt, DOM.$('div'));
+		brandTitle.textContent = 'Template Documents';
+		brandTitle.style.cssText = 'font-size:14px;font-weight:700;color:#0f172a;';
+		const brandSub = DOM.append(brandTxt, DOM.$('div'));
+		brandSub.textContent = 'Rich text template editor';
+		brandSub.style.cssText = 'font-size:11px;color:#64748b;';
 
-		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
-		const ht = DOM.append(head, DOM.$('h3'));
-		ht.textContent = tpl ? 'Edit Template' : 'New Template';
-		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
-		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
-		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
-		closeBtn.addEventListener('click', () => overlay.remove());
+		const titleInp = DOM.append(header, DOM.$('input')) as HTMLInputElement;
+		titleInp.type = 'text';
+		titleInp.placeholder = 'Template title…';
+		titleInp.style.cssText = 'flex:1;min-width:160px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:#ffffff;color:#0f172a;outline:none;';
+		titleInp.addEventListener('input', () => { state.title = titleInp.value; });
 
-		const grid = DOM.append(modal, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px;';
-
-		const nameField = DOM.append(grid, DOM.$('div'));
-		const nameLbl = DOM.append(nameField, DOM.$('label'));
-		nameLbl.textContent = 'Template Name *';
-		nameLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-		const nameInput = DOM.append(nameField, DOM.$('input')) as HTMLInputElement;
-		nameInput.value = tpl?.name || '';
-		nameInput.placeholder = 'e.g. SOAP Note, Welcome Letter';
-		nameInput.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
-
-		const ctxField = DOM.append(grid, DOM.$('div'));
-		const ctxLbl = DOM.append(ctxField, DOM.$('label'));
-		ctxLbl.textContent = 'Context *';
-		ctxLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-		const ctxSel = DOM.append(ctxField, DOM.$('select')) as HTMLSelectElement;
-		ctxSel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:13px;cursor:pointer;';
-		for (const [v, l] of [['ENCOUNTER', 'Encounter'], ['PORTAL', 'Portal']]) {
-			const o = DOM.append(ctxSel, DOM.$('option')) as HTMLOptionElement;
-			o.value = v;
-			o.textContent = l;
-			if (tpl?.context === v) { o.selected = true; }
-		}
-
-		const contentLbl = DOM.append(modal, DOM.$('label'));
-		contentLbl.textContent = 'Content (HTML supported) *';
-		contentLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-
-		const editorRow = DOM.append(modal, DOM.$('div'));
-		editorRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
-
-		const contentArea = DOM.append(editorRow, DOM.$('textarea')) as HTMLTextAreaElement;
-		contentArea.value = tpl?.content || '';
-		contentArea.placeholder = '<p>Your template HTML…</p>';
-		contentArea.rows = 16;
-		contentArea.style.cssText = 'width:100%;padding:8px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;font-family:var(--vscode-editor-font-family,monospace);resize:vertical;min-height:280px;';
-
-		const previewWrap = DOM.append(editorRow, DOM.$('div'));
-		previewWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:4px;padding:10px;background:var(--vscode-editor-background);overflow:auto;min-height:280px;font-size:13px;line-height:1.5;';
-		const previewLabel = DOM.append(previewWrap, DOM.$('div'));
-		previewLabel.textContent = 'Preview';
-		previewLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;font-weight:600;';
-		const previewBody = DOM.append(previewWrap, DOM.$('div'));
-		const renderPreview = (): void => {
-			// Sanitize: render only as plain text inside a structured preview to avoid
-			// CSP / Trusted-Types issues with innerHTML. Iframe srcdoc would also work,
-			// but text rendering is sufficient for confirming the template looks right.
-			DOM.clearNode(previewBody);
-			const lines = contentArea.value.split(/\n+/);
-			for (const line of lines) {
-				const stripped = line.replace(/<[^>]*>/g, '');
-				if (!stripped.trim()) { continue; }
-				const p = DOM.append(previewBody, DOM.$('p'));
-				p.textContent = stripped;
-				p.style.cssText = 'margin:0 0 6px;';
-			}
-			if (!previewBody.firstChild) {
-				const ph = DOM.append(previewBody, DOM.$('div'));
-				ph.textContent = '(empty)';
-				ph.style.cssText = 'color:var(--vscode-descriptionForeground);font-style:italic;';
+		const ctxToggle = DOM.append(header, DOM.$('div'));
+		ctxToggle.style.cssText = 'display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;border:1px solid #e2e8f0;';
+		const mkCtx = (label: string, val: 'ENCOUNTER' | 'PORTAL'): HTMLButtonElement => {
+			const b = DOM.append(ctxToggle, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.dataset.ctx = val;
+			b.style.cssText = 'padding:5px 12px;border:none;background:transparent;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:#64748b;';
+			b.addEventListener('click', () => { state.context = val; renderCtxToggle(); void listLoad(); renderEditorMode(); });
+			return b;
+		};
+		const encBtn = mkCtx('Encounter', 'ENCOUNTER');
+		const portalBtn = mkCtx('Portal', 'PORTAL');
+		const renderCtxToggle = (): void => {
+			for (const b of [encBtn, portalBtn]) {
+				const isActive = b.dataset.ctx === state.context;
+				b.style.background = isActive ? '#ffffff' : 'transparent';
+				b.style.color = isActive ? '#2563eb' : '#64748b';
+				b.style.boxShadow = isActive ? '0 1px 2px rgba(15,23,42,0.06)' : 'none';
 			}
 		};
-		renderPreview();
-		contentArea.addEventListener('input', renderPreview);
+		renderCtxToggle();
 
-		const actions = DOM.append(modal, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;';
-		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		cancelBtn.textContent = 'Cancel';
-		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		cancelBtn.addEventListener('click', () => overlay.remove());
-		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		saveBtn.textContent = tpl ? 'Save' : 'Create';
-		saveBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
-		saveBtn.addEventListener('click', async () => {
-			if (!nameInput.value.trim()) {
-				this.notificationService.notify({ severity: Severity.Error, message: 'Template name is required.' });
-				return;
+		const headerActions = DOM.append(header, DOM.$('div'));
+		headerActions.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		const mkIconBtn = (glyph: string, hint: string, onClick: () => void): void => {
+			const b = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = glyph;
+			b.title = hint;
+			b.style.cssText = 'width:34px;height:34px;border:1px solid #cbd5e1;background:#ffffff;border-radius:8px;cursor:pointer;font-size:14px;color:#475569;display:inline-flex;align-items:center;justify-content:center;';
+			b.addEventListener('mouseenter', () => { b.style.background = '#f1f5f9'; });
+			b.addEventListener('mouseleave', () => { b.style.background = '#ffffff'; });
+			b.addEventListener('click', onClick);
+		};
+		mkIconBtn('+', 'New template', () => { state.selectedId = null; state.title = ''; state.content = ''; titleInp.value = ''; setEditorContent(''); renderEditorMode(); renderList(); });
+		mkIconBtn('\u{1F441}', 'Preview', () => previewCurrent());
+		mkIconBtn('\u29C9', 'Copy HTML', () => { void mainWindow.navigator.clipboard.writeText(getEditorContent()).then(() => this.notificationService.notify({ severity: Severity.Info, message: 'Copied template HTML to clipboard.' })).catch(() => { /* ignore */ }); });
+		mkIconBtn('\u2B07', 'Download HTML', () => downloadCurrent());
+		mkIconBtn('\u2B06', 'Upload HTML', () => uploadHtml());
+
+		const saveBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = '\u{1F4BE} Save';
+		saveBtn.style.cssText = 'padding:8px 18px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;';
+		saveBtn.addEventListener('click', () => void saveCurrent());
+
+		const main = DOM.append(root, DOM.$('div'));
+		main.style.cssText = 'flex:1;display:flex;min-height:0;overflow:hidden;';
+
+		const sidebar = DOM.append(main, DOM.$('div'));
+		sidebar.style.cssText = 'width:260px;flex-shrink:0;background:#ffffff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;';
+		const sbHeader = DOM.append(sidebar, DOM.$('div'));
+		sbHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #e2e8f0;';
+		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
+		sbTitle.textContent = 'TEMPLATES';
+		sbTitle.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1px;color:#64748b;';
+
+		const searchWrap = DOM.append(sidebar, DOM.$('div'));
+		searchWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid #e2e8f0;';
+		const searchInp = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInp.type = 'search';
+		searchInp.placeholder = 'Search…';
+		searchInp.style.cssText = 'width:100%;padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:6px;font-size:12px;outline:none;color:#0f172a;box-sizing:border-box;';
+		searchInp.addEventListener('input', () => { state.search = searchInp.value.toLowerCase(); renderList(); });
+
+		const listEl = DOM.append(sidebar, DOM.$('div'));
+		listEl.style.cssText = 'flex:1;overflow-y:auto;padding:8px 6px;';
+
+		const editorWrap = DOM.append(main, DOM.$('div'));
+		editorWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#ffffff;min-width:0;';
+
+		const toolbar = DOM.append(editorWrap, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;gap:2px;padding:8px 12px;border-bottom:1px solid #e2e8f0;background:#ffffff;flex-wrap:wrap;';
+		const tBtn = (glyph: string, hint: string, action: () => void): void => {
+			const b = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = glyph;
+			b.title = hint;
+			b.style.cssText = 'padding:5px 9px;border:none;background:transparent;cursor:pointer;border-radius:5px;font-size:13px;color:#475569;min-width:28px;font-weight:600;';
+			b.addEventListener('mousedown', e => e.preventDefault());
+			b.addEventListener('mouseenter', () => { b.style.background = '#f1f5f9'; });
+			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+			b.addEventListener('click', () => action());
+		};
+		const sep = (): void => {
+			const s = DOM.append(toolbar, DOM.$('span'));
+			s.style.cssText = 'width:1px;height:18px;background:#e2e8f0;margin:0 4px;';
+		};
+		const exec = (cmd: string, val?: string): void => { mainWindow.document.execCommand(cmd, false, val); editorEl.focus(); state.content = getEditorContent(); };
+		tBtn('B', 'Bold', () => exec('bold'));
+		tBtn('I', 'Italic', () => exec('italic'));
+		tBtn('U', 'Underline', () => exec('underline'));
+		tBtn('S', 'Strikethrough', () => exec('strikethrough'));
+		sep();
+		tBtn('H1', 'Heading 1', () => exec('formatBlock', '<h1>'));
+		tBtn('H2', 'Heading 2', () => exec('formatBlock', '<h2>'));
+		tBtn('H3', 'Heading 3', () => exec('formatBlock', '<h3>'));
+		// allow-any-unicode-next-line
+		tBtn('¶', 'Paragraph', () => exec('formatBlock', '<p>'));
+		sep();
+		// allow-any-unicode-next-line
+		tBtn('•', 'Bullet list', () => exec('insertUnorderedList'));
+		tBtn('1.', 'Numbered list', () => exec('insertOrderedList'));
+		sep();
+		tBtn('\u21E4', 'Align left', () => exec('justifyLeft'));
+		tBtn('\u2630', 'Align center', () => exec('justifyCenter'));
+		tBtn('\u21E5', 'Align right', () => exec('justifyRight'));
+		sep();
+		tBtn('\u{1F517}', 'Link', () => { const url = mainWindow.prompt('URL'); if (url) { exec('createLink', url); } });
+		tBtn('\u{1F5BC}', 'Image', () => { const url = mainWindow.prompt('Image URL'); if (url) { exec('insertImage', url); } });
+		tBtn('\u25A6', 'Table (3x3)', () => exec('insertHTML', '<table border="1" cellpadding="6"><tr><th>H1</th><th>H2</th><th>H3</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></table>'));
+		// allow-any-unicode-next-line
+		tBtn('❝', 'Quote', () => exec('formatBlock', '<blockquote>'));
+		// allow-any-unicode-next-line
+		tBtn('―', 'Horizontal rule', () => exec('insertHorizontalRule'));
+		tBtn('</>', 'Code block', () => exec('formatBlock', '<pre>'));
+		sep();
+		// allow-any-unicode-next-line
+		tBtn('\u21B6', 'Undo', () => exec('undo'));
+		// allow-any-unicode-next-line
+		tBtn('\u21B7', 'Redo', () => exec('redo'));
+
+		const spacer = DOM.append(toolbar, DOM.$('div'));
+		spacer.style.cssText = 'flex:1;';
+		const modeBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		modeBtn.style.cssText = 'padding:5px 12px;background:#0f172a;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		modeBtn.addEventListener('click', () => {
+			if (state.mode === 'visual') {
+				state.content = getEditorContent();
+				state.mode = 'source';
+			} else {
+				state.content = sourceArea.value;
+				state.mode = 'visual';
 			}
-			const payload = {
-				name: nameInput.value.trim(),
-				context: ctxSel.value,
-				content: contentArea.value,
-				options: tpl?.options || {},
-			};
-			saveBtn.disabled = true;
-			saveBtn.textContent = 'Saving…';
-			try {
-				const url = tpl?.id ? `/api/template-documents/${tpl.id}` : '/api/template-documents';
-				const method = tpl?.id ? 'PUT' : 'POST';
-				const r = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
-				if (r.ok) {
-					overlay.remove();
-					await reload();
-					this.notificationService.notify({ severity: Severity.Info, message: 'Template saved.' });
-				} else {
-					const txt = await r.text().catch(() => '');
-					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${r.status}). ${txt.substring(0, 160)}` });
-					saveBtn.disabled = false;
-					saveBtn.textContent = tpl ? 'Save' : 'Create';
-				}
-			} catch (e) {
-				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
-				saveBtn.disabled = false;
-				saveBtn.textContent = tpl ? 'Save' : 'Create';
-			}
+			renderEditorMode();
 		});
 
-		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+		const editorBox = DOM.append(editorWrap, DOM.$('div'));
+		editorBox.style.cssText = 'flex:1;overflow:auto;padding:24px;background:#ffffff;min-height:0;';
+		const editorEl = DOM.append(editorBox, DOM.$('div'));
+		editorEl.contentEditable = 'true';
+		editorEl.style.cssText = 'min-height:300px;outline:none;font-size:14px;line-height:1.6;color:#0f172a;';
+		editorEl.setAttribute('data-placeholder', 'Paste your HTML template here…');
+		editorEl.addEventListener('input', () => { state.content = getEditorContent(); });
+		const sourceArea = DOM.append(editorBox, DOM.$('textarea')) as HTMLTextAreaElement;
+		sourceArea.placeholder = 'Paste your HTML template here…';
+		sourceArea.style.cssText = 'width:100%;min-height:400px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;font-family:"SF Mono","Menlo","Consolas",monospace;font-size:12px;line-height:1.5;color:#0f172a;background:#f8fafc;resize:vertical;outline:none;box-sizing:border-box;display:none;';
+		sourceArea.addEventListener('input', () => { state.content = sourceArea.value; });
+
+		const footer = DOM.append(editorWrap, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;';
+		const footerLeft = DOM.append(footer, DOM.$('span'));
+		const footerRight = DOM.append(footer, DOM.$('span'));
+
+		const setEditorContent = (html: string): void => {
+			state.content = html;
+			editorEl.textContent = html;
+			sourceArea.value = html;
+		};
+		const getEditorContent = (): string => state.mode === 'visual' ? (editorEl.textContent || '') : sourceArea.value;
+		const renderEditorMode = (): void => {
+			modeBtn.textContent = state.mode === 'visual' ? 'Visual Editor' : 'HTML Source';
+			editorEl.style.display = state.mode === 'visual' ? 'block' : 'none';
+			sourceArea.style.display = state.mode === 'visual' ? 'none' : 'block';
+			if (state.mode === 'visual') { editorEl.textContent = state.content; }
+			else { sourceArea.value = state.content; }
+			footerLeft.textContent = state.selectedId ? `Editing template (${state.mode === 'visual' ? 'Visual' : 'HTML Source'})` : `New template (${state.mode === 'visual' ? 'Visual' : 'HTML Source'})`;
+			footerRight.textContent = state.context === 'ENCOUNTER' ? 'Encounter template' : 'Portal template';
+		};
+
+		const renderList = (): void => {
+			DOM.clearNode(listEl);
+			const filtered = state.templates.filter(t => !state.search || (t.name || '').toLowerCase().includes(state.search));
+			if (filtered.length === 0) {
+				const empty = DOM.append(listEl, DOM.$('div'));
+				empty.textContent = state.templates.length === 0 ? 'No templates yet' : 'No matches';
+				empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:12px;';
+				return;
+			}
+			for (const tpl of filtered) {
+				const isSel = state.selectedId !== null && state.selectedId === tpl.id;
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = `padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;background:${isSel ? '#dbeafe' : 'transparent'};display:flex;align-items:center;gap:8px;`;
+				row.addEventListener('mouseenter', () => { if (!isSel) { row.style.background = '#f1f5f9'; } });
+				row.addEventListener('mouseleave', () => { if (!isSel) { row.style.background = 'transparent'; } });
+				const nm = DOM.append(row, DOM.$('div'));
+				nm.textContent = tpl.name || '(untitled)';
+				nm.style.cssText = `flex:1;font-size:13px;font-weight:${isSel ? '600' : '500'};color:${isSel ? '#1e40af' : '#0f172a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+				const del = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+				del.textContent = '\u{1F5D1}';
+				del.title = 'Delete';
+				del.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;color:#94a3b8;padding:2px 4px;';
+				del.addEventListener('click', async e => {
+					e.stopPropagation();
+					if (!tpl.id) { return; }
+					const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${tpl.name}"?` });
+					if (!confirmed) { return; }
+					const r = await this.apiService.fetch(`/api/template-documents/${tpl.id}`, { method: 'DELETE' });
+					if (r.ok) {
+						if (state.selectedId === tpl.id) { state.selectedId = null; state.title = ''; state.content = ''; titleInp.value = ''; setEditorContent(''); }
+						await listLoad();
+						this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
+					} else {
+						this.notificationService.notify({ severity: Severity.Error, message: `Delete failed (${r.status}).` });
+					}
+				});
+				row.addEventListener('click', () => loadTemplate(tpl));
+			}
+		};
+
+		const loadTemplate = (tpl: TemplateDoc): void => {
+			state.selectedId = tpl.id ?? null;
+			state.title = tpl.name || '';
+			state.content = tpl.content || '';
+			state.context = (tpl.context === 'PORTAL' ? 'PORTAL' : 'ENCOUNTER');
+			titleInp.value = state.title;
+			renderCtxToggle();
+			setEditorContent(state.content);
+			renderEditorMode();
+			renderList();
+		};
+
+		const listLoad = async (): Promise<void> => {
+			try {
+				const res = await this.apiService.fetch(`/api/template-documents?context=${state.context}`);
+				if (!res.ok) {
+					this.notificationService.notify({ severity: Severity.Warning, message: `Failed to load templates (${res.status}).` });
+					state.templates = [];
+				} else {
+					const json = await res.json();
+					const list = (Array.isArray(json) ? json : (json.data || json.content || [])) as TemplateDoc[];
+					state.templates = list.filter(t => t.context === state.context);
+				}
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Warning, message: `Templates unavailable: ${e}` });
+				state.templates = [];
+			}
+			renderList();
+		};
+
+		const saveCurrent = async (): Promise<void> => {
+			const name = (titleInp.value || '').trim();
+			if (!name) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Template title is required.' });
+				return;
+			}
+			const html = getEditorContent();
+			const payload = { name, context: state.context, content: html, options: {} };
+			const url = state.selectedId ? `/api/template-documents/${state.selectedId}` : '/api/template-documents';
+			const method = state.selectedId ? 'PUT' : 'POST';
+			saveBtn.disabled = true;
+			const orig = saveBtn.textContent;
+			saveBtn.textContent = 'Saving…';
+			try {
+				const r = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (!r.ok) {
+					const txt = await r.text().catch(() => '');
+					this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${r.status}). ${txt.substring(0, 160)}` });
+					return;
+				}
+				const saved = await r.json().catch(() => null) as TemplateDoc | null;
+				if (saved?.id) { state.selectedId = saved.id; }
+				await listLoad();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Template saved.' });
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+			} finally {
+				saveBtn.disabled = false;
+				saveBtn.textContent = orig;
+			}
+		};
+
+		const previewCurrent = (): void => {
+			const html = getEditorContent();
+			const w = mainWindow.open('', '_blank', 'width=720,height=720');
+			if (!w) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Pop-up blocked. Allow pop-ups to preview templates.' });
+				return;
+			}
+			const doc = w.document;
+			doc.open();
+			doc.close();
+			doc.title = state.title || 'Template Preview';
+			doc.body.style.cssText = 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#0f172a;line-height:1.6;';
+			const frag = doc.createElement('div');
+			frag.textContent = html;
+			doc.body.appendChild(frag);
+		};
+
+		const downloadCurrent = (): void => {
+			const html = getEditorContent();
+			const blob = new Blob([html], { type: 'text/html' });
+			const url = URL.createObjectURL(blob);
+			const a = mainWindow.document.createElement('a');
+			a.href = url;
+			a.download = `${(state.title || 'template').replace(/[^a-z0-9_-]+/gi, '_')}.html`;
+			mainWindow.document.body.appendChild(a);
+			a.click();
+			mainWindow.document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		};
+
+		const uploadHtml = (): void => {
+			const inp = mainWindow.document.createElement('input');
+			inp.type = 'file';
+			inp.accept = '.html,.htm,text/html';
+			inp.addEventListener('change', () => {
+				const f = inp.files?.[0];
+				if (!f) { return; }
+				const reader = new FileReader();
+				reader.onload = () => {
+					const txt = String(reader.result || '');
+					state.content = txt;
+					setEditorContent(txt);
+					renderEditorMode();
+				};
+				reader.readAsText(f);
+			});
+			inp.click();
+		};
+
+		renderEditorMode();
+		await listLoad();
 	}
 
 	/**
@@ -5230,53 +5349,6 @@ export class SettingsHubEditor extends EditorPane {
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
 		}
-	}
-
-	private _previewTemplateDoc(tpl: { name: string; context: string; content: string }): void {
-		const w = mainWindow.open('', '_blank', 'width=800,height=600');
-		if (!w) {
-			this.notificationService.notify({ severity: Severity.Warning, message: 'Pop-up blocked.' });
-			return;
-		}
-		const doc = w.document;
-		const html = doc.createElement('html');
-		const head = doc.createElement('head');
-		const title = doc.createElement('title');
-		title.textContent = `Preview · ${tpl.name}`;
-		head.appendChild(title);
-		const style = doc.createElement('style');
-		style.textContent = `
-			body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px; max-width: 720px; margin: 0 auto; color: #1a1a2e; }
-			.meta { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-			h1 { font-size: 22px; margin: 0 0 16px; }
-			.content { line-height: 1.6; }
-		`;
-		head.appendChild(style);
-		const body = doc.createElement('body');
-		const meta = doc.createElement('div');
-		meta.className = 'meta';
-		meta.textContent = tpl.context;
-		const h1 = doc.createElement('h1');
-		h1.textContent = tpl.name;
-		const wrap = doc.createElement('div');
-		wrap.className = 'content';
-		// Render the template body as plain paragraphs split by newlines. Avoids
-		// HTML injection and Trusted Types issues in the popup window.
-		const plainLines = tpl.content.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '').split(/\n+/);
-		for (const line of plainLines) {
-			const trimmed = line.trim();
-			if (!trimmed) { continue; }
-			const p = doc.createElement('p');
-			p.textContent = trimmed;
-			wrap.appendChild(p);
-		}
-		body.appendChild(meta);
-		body.appendChild(h1);
-		body.appendChild(wrap);
-		html.appendChild(head);
-		html.appendChild(body);
-		doc.documentElement.replaceWith(html);
-		doc.close();
 	}
 
 	private _renderCalendarColors(): void {
