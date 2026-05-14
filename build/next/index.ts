@@ -237,7 +237,12 @@ const commonResourcePatterns = [
 	// SVGs referenced from CSS (needed for transpile/dev builds where CSS is copied as-is)
 	'vs/workbench/browser/media/code-icon.svg',
 	'vs/workbench/browser/parts/editor/media/letterpress*.svg',
-	'vs/sessions/contrib/chat/browser/media/*.svg'
+	'vs/sessions/contrib/chat/browser/media/*.svg',
+
+	// Ciyex branding — login gate, banner, titlebar, getting-started and update
+	// tooltip all reference this PNG; without an explicit include it is not
+	// bundled into packaged Windows builds and the login falls back to an SVG.
+	'vs/workbench/browser/media/ciyex-logo.png'
 ];
 
 // Resources for desktop target

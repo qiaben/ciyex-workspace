@@ -81,6 +81,12 @@ const vscodeResourceIncludes = [
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
 	'out-build/vs/workbench/contrib/debug/browser/media/*.png',
 
+	// Ciyex branding — login gate, banner, titlebar, getting-started and update
+	// tooltip all reference this file. Without explicitly listing it the PNG
+	// is not copied into packaged Windows builds and the login screen falls
+	// back to the SVG "C" mark, which differs from Linux/macOS dev runs.
+	'out-build/vs/workbench/browser/media/ciyex-logo.png',
+
 	// External Terminal
 	'out-build/vs/workbench/contrib/externalTerminal/**/*.scpt',
 

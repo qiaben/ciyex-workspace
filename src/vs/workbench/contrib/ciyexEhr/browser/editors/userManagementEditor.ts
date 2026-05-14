@@ -11,6 +11,7 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -57,6 +58,7 @@ export class UserManagementEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@IClipboardService private readonly clipboardService: IClipboardService,
 	) {
 		super(UserManagementEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -430,7 +432,9 @@ export class UserManagementEditor extends EditorPane {
 		pwRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
 		const pwCode = DOM.append(pwRow, DOM.$('code'));
 		pwCode.textContent = data.temporaryPassword;
-		pwCode.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;';
+		// `user-select:all` lets a single click select the whole password so
+		// users can fall back to Ctrl/Cmd+C if the clipboard API path fails.
+		pwCode.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;user-select:all;-webkit-user-select:all;cursor:text;';
 		const copyBtn = DOM.append(pwRow, DOM.$('button')) as HTMLButtonElement;
 		copyBtn.title = 'Copy to clipboard';
 		copyBtn.textContent = '\u{1F4CB}';
@@ -438,14 +442,12 @@ export class UserManagementEditor extends EditorPane {
 		copyBtn.addEventListener('mouseenter', () => { copyBtn.style.background = '#e2e8f0'; });
 		copyBtn.addEventListener('mouseleave', () => { copyBtn.style.background = 'transparent'; });
 		copyBtn.addEventListener('click', async () => {
-			try {
-				await mainWindow.navigator.clipboard.writeText(data.temporaryPassword);
+			const ok = await this._copyToClipboard(data.temporaryPassword);
+			if (ok) {
 				const prev = copyBtn.textContent;
 				copyBtn.textContent = '\u2713';
 				copyBtn.style.color = '#16a34a';
 				setTimeout(() => { copyBtn.textContent = prev; copyBtn.style.color = '#64748b'; }, 1800);
-			} catch {
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable. Please select and copy manually.' });
 			}
 		});
 
@@ -476,6 +478,45 @@ export class UserManagementEditor extends EditorPane {
 		printBtn.addEventListener('click', () => this._printCredentials(data));
 
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
+	}
+
+	/**
+	 * Copy text to the system clipboard with the highest-success-rate path
+	 * available. Packaged Electron builds sometimes report
+	 * "Clipboard unavailable" from `navigator.clipboard` (no secure context
+	 * or permissions), so we prefer VS Code's own `IClipboardService` which
+	 * uses Electron's native clipboard API, then fall back to a hidden
+	 * textarea + `execCommand('copy')` (works in webviews / older Chromium),
+	 * and finally the `navigator.clipboard` Web API. Notifies the user on
+	 * total failure with the password preselected so they can copy manually.
+	 */
+	private async _copyToClipboard(text: string): Promise<boolean> {
+		try {
+			await this.clipboardService.writeText(text);
+			return true;
+		} catch { /* fall through */ }
+		try {
+			const doc = mainWindow.document;
+			const ta = doc.createElement('textarea');
+			ta.value = text;
+			ta.setAttribute('readonly', '');
+			ta.style.position = 'fixed';
+			ta.style.top = '0';
+			ta.style.left = '0';
+			ta.style.opacity = '0';
+			doc.body.appendChild(ta);
+			ta.focus();
+			ta.select();
+			const ok = doc.execCommand('copy');
+			doc.body.removeChild(ta);
+			if (ok) { return true; }
+		} catch { /* fall through */ }
+		try {
+			await mainWindow.navigator.clipboard.writeText(text);
+			return true;
+		} catch { /* fall through */ }
+		this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable. Select the password text and press Ctrl/Cmd + C to copy.' });
+		return false;
 	}
 
 	/** Open a printable popup with the user's credentials. */
