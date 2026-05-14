@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 
 interface MenuItem {
 	icon: string;
@@ -98,6 +99,9 @@ export class SystemMenuPane extends ViewPane {
 	static readonly ID = 'ciyex.system.menu';
 	private container!: HTMLElement;
 
+	/** Inject the WebKit scrollbar-hider stylesheet exactly once per session. */
+	private static _scrollbarStyleInjected = false;
+
 	constructor(
 		options: IViewPaneOptions,
 		@IKeybindingService k: IKeybindingService,
@@ -117,7 +121,18 @@ export class SystemMenuPane extends ViewPane {
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.system-menu-pane'));
-		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;';
+		// Hide the visible scrollbar but keep wheel/scroll behavior working —
+		// matches the EHR web UI's global "no scrollbar" rule. The `.system-menu-pane`
+		// class lets the WebKit/Firefox-specific rules below target this pane only.
+		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;scrollbar-width:none;-ms-overflow-style:none;';
+		// WebKit scrollbar hider — must be injected via stylesheet since the
+		// `::-webkit-scrollbar` pseudo-element can't be set via element.style.
+		if (!SystemMenuPane._scrollbarStyleInjected) {
+			SystemMenuPane._scrollbarStyleInjected = true;
+			const style = mainWindow.document.createElement('style');
+			style.textContent = '.system-menu-pane::-webkit-scrollbar{display:none;width:0;height:0;}';
+			mainWindow.document.head.appendChild(style);
+		}
 		this._renderSection('System', SYSTEM_ITEMS);
 		this._renderSection('Settings', SETTINGS_ITEMS);
 		this._renderSection('Layout Settings', LAYOUT_ITEMS);

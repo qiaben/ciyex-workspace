@@ -379,71 +379,101 @@ export class UserManagementEditor extends EditorPane {
 		}
 	}
 
-	/** Show a credentials modal with Copy/Print actions matching the EHR UI behavior. */
+	/**
+	 * Show a credentials modal that mirrors the EHR UI's `ResetPasswordModal`
+	 * (Username on top, prominent monospace temporary password with a
+	 * one-click copy icon, red change-on-first-login note, then Close /
+	 * Print Credentials actions).
+	 */
 	private _showCredentialsModal(data: ResetPasswordData): void {
 		const overlay = DOM.append(this.contentEl, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1001;';
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.55);display:flex;align-items:center;justify-content:center;z-index:1001;';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:480px;max-width:92vw;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		modal.style.cssText = 'background:#ffffff;color:#0f172a;border-radius:14px;width:460px;max-width:92vw;box-shadow:0 24px 48px rgba(15,23,42,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
 
+		// Header
 		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid #e2e8f0;';
 		const ht = DOM.append(head, DOM.$('h3'));
-		ht.textContent = 'Login Credentials';
-		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		ht.textContent = 'Password Reset';
+		ht.style.cssText = 'margin:0;font-size:17px;font-weight:600;color:#1e293b;';
 		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
 		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:18px;color:#64748b;cursor:pointer;padding:4px 8px;border-radius:6px;';
+		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = '#f1f5f9'; });
+		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; });
 		closeBtn.addEventListener('click', () => overlay.remove());
 
-		const desc = DOM.append(modal, DOM.$('p'));
-		desc.textContent = 'Share these credentials with the user. The temporary password will need to be changed on first login.';
-		desc.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+		// Body
+		const body = DOM.append(modal, DOM.$('div'));
+		body.style.cssText = 'padding:22px;';
 
-		const credBox = DOM.append(modal, DOM.$('div'));
-		credBox.style.cssText = 'background:rgba(0,122,204,0.08);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:12px;font-family:var(--vscode-editor-font-family,monospace);font-size:13px;line-height:1.7;';
+		const card = DOM.append(body, DOM.$('div'));
+		card.style.cssText = 'background:#f8fafc;border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;';
 
-		const row = (label: string, value: string): HTMLElement => {
-			const r = DOM.append(credBox, DOM.$('div'));
-			r.style.cssText = 'display:flex;gap:8px;';
-			const k = DOM.append(r, DOM.$('span'));
-			k.textContent = label;
-			k.style.cssText = 'font-weight:600;min-width:90px;color:var(--vscode-descriptionForeground);';
-			const v = DOM.append(r, DOM.$('span'));
-			v.textContent = value;
-			v.style.cssText = 'font-weight:500;';
-			return r;
-		};
-		row('Username:', data.username);
-		row('Password:', data.temporaryPassword);
-		if (data.resetDate) { row('Reset Date:', data.resetDate); }
+		// Username block
+		const userBlock = DOM.append(card, DOM.$('div'));
+		const userLabel = DOM.append(userBlock, DOM.$('div'));
+		userLabel.textContent = 'Username';
+		userLabel.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;';
+		const userVal = DOM.append(userBlock, DOM.$('div'));
+		userVal.textContent = data.username;
+		userVal.style.cssText = 'font-size:14px;font-weight:600;color:#0f172a;margin-top:4px;word-break:break-all;';
 
-		const actions = DOM.append(modal, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
-
-		const copyBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		copyBtn.textContent = '\u{1F4CB} Copy';
-		copyBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		// Temporary password block
+		const pwBlock = DOM.append(card, DOM.$('div'));
+		const pwLabel = DOM.append(pwBlock, DOM.$('div'));
+		pwLabel.textContent = 'Temporary Password';
+		pwLabel.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;';
+		const pwRow = DOM.append(pwBlock, DOM.$('div'));
+		pwRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
+		const pwCode = DOM.append(pwRow, DOM.$('code'));
+		pwCode.textContent = data.temporaryPassword;
+		pwCode.style.cssText = 'font-family:"SF Mono","Menlo","Consolas",monospace;font-size:16px;font-weight:700;color:#2563eb;background:#dbeafe;padding:8px 14px;border-radius:6px;letter-spacing:0.5px;';
+		const copyBtn = DOM.append(pwRow, DOM.$('button')) as HTMLButtonElement;
+		copyBtn.title = 'Copy to clipboard';
+		copyBtn.textContent = '\u{1F4CB}';
+		copyBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;color:#64748b;padding:6px 8px;border-radius:6px;';
+		copyBtn.addEventListener('mouseenter', () => { copyBtn.style.background = '#e2e8f0'; });
+		copyBtn.addEventListener('mouseleave', () => { copyBtn.style.background = 'transparent'; });
 		copyBtn.addEventListener('click', async () => {
-			const text = `Username: ${data.username}\nPassword: ${data.temporaryPassword}`;
 			try {
-				await mainWindow.navigator.clipboard.writeText(text);
-				this.notificationService.notify({ severity: Severity.Info, message: 'Credentials copied to clipboard.' });
+				await mainWindow.navigator.clipboard.writeText(data.temporaryPassword);
+				const prev = copyBtn.textContent;
+				copyBtn.textContent = '\u2713';
+				copyBtn.style.color = '#16a34a';
+				setTimeout(() => { copyBtn.textContent = prev; copyBtn.style.color = '#64748b'; }, 1800);
 			} catch {
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable. Please select and copy manually.' });
 			}
 		});
 
-		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		printBtn.textContent = '\u{1F5A8} Print';
-		printBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
-		printBtn.addEventListener('click', () => this._printCredentials(data));
+		// Warning
+		const warn = DOM.append(card, DOM.$('p'));
+		warn.textContent = 'User must change password on first login.';
+		warn.style.cssText = 'margin:0;padding-top:10px;border-top:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#dc2626;';
 
-		const doneBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		doneBtn.textContent = 'Done';
-		doneBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		doneBtn.addEventListener('click', () => overlay.remove());
+		// Footer actions
+		const actions = DOM.append(body, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:18px;';
+
+		const closeAction = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		closeAction.textContent = 'Close';
+		closeAction.style.cssText = 'padding:8px 16px;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;color:#334155;cursor:pointer;font-size:13px;font-weight:500;';
+		closeAction.addEventListener('mouseenter', () => { closeAction.style.background = '#f8fafc'; });
+		closeAction.addEventListener('mouseleave', () => { closeAction.style.background = '#ffffff'; });
+		closeAction.addEventListener('click', () => overlay.remove());
+
+		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		printBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;';
+		printBtn.addEventListener('mouseenter', () => { printBtn.style.background = '#1d4ed8'; });
+		printBtn.addEventListener('mouseleave', () => { printBtn.style.background = '#2563eb'; });
+		const printIcon = DOM.append(printBtn, DOM.$('span'));
+		printIcon.textContent = '\u{1F5A8}';
+		const printText = DOM.append(printBtn, DOM.$('span'));
+		printText.textContent = 'Print Credentials';
+		printBtn.addEventListener('click', () => this._printCredentials(data));
 
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 	}

@@ -73,17 +73,32 @@ export class CiyexPermissionService extends Disposable implements ICiyexPermissi
 
 	async loadPermissions(): Promise<void> {
 		try {
-			const data = await this.apiService.fetchJson<{
-				permissions: string[];
-				writableResources: string[];
-				readableResources: string[];
-				role: string;
-			}>('/api/user/permissions');
+			// The backend wraps every response in `{ success, data: {...} }` —
+			// the EHR UI's PermissionContext reads `json.data.permissions`, so
+			// we mirror that shape here. Earlier code read the top level
+			// directly, leaving permissions empty and gating admin features
+			// (Users / Roles & Permissions) for every newly-created user.
+			interface PermissionPayload {
+				permissions?: string[];
+				writableResources?: string[];
+				readableResources?: string[];
+				role?: string;
+			}
+			interface PermissionEnvelope {
+				success?: boolean;
+				data?: PermissionPayload;
+				permissions?: string[];
+				writableResources?: string[];
+				readableResources?: string[];
+				role?: string;
+			}
+			const raw = await this.apiService.fetchJson<PermissionEnvelope>('/api/user/permissions');
+			const payload: PermissionPayload = raw.data || raw;
 
-			this._permissions = data.permissions || [];
-			this._writableResources = data.writableResources || [];
-			this._readableResources = data.readableResources || [];
-			this._role = data.role || '';
+			this._permissions = payload.permissions || [];
+			this._writableResources = payload.writableResources || [];
+			this._readableResources = payload.readableResources || [];
+			this._role = payload.role || '';
 
 			this._updateContextKeys();
 			this._onDidChangePermissions.fire();

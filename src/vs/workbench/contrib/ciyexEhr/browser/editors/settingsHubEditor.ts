@@ -417,6 +417,17 @@ export class SettingsHubEditor extends EditorPane {
 		const isRefProv = /referral-provider/i.test(tabKey);
 		const isProvider = tabKey === 'providers' || tabKey === 'provider';
 		if (!isRefProv && !isProvider) { return; }
+		const defaultAutoFill = {
+			'phone': 'phone',
+			'fax': 'fax',
+			'email': 'email',
+			'website': 'website',
+			'address.line1': 'address.line1',
+			'address.line2': 'address.line2',
+			'address.city': 'address.city',
+			'address.state': 'address.state',
+			'address.zip': 'address.zip',
+		};
 		for (const section of fc.sections) {
 			for (const f of section.fields) {
 				const keyLower = f.key.toLowerCase();
@@ -434,18 +445,34 @@ export class SettingsHubEditor extends EditorPane {
 					// practice. This matches the backend's V112 field config
 					// for referral-providers and the web's DynamicFormRenderer.
 					if (!f.autoFill) {
-						f.autoFill = {
-							'phone': 'phone',
-							'fax': 'fax',
-							'email': 'email',
-							'website': 'website',
-							'address.line1': 'address.line1',
-							'address.line2': 'address.line2',
-							'address.city': 'address.city',
-							'address.state': 'address.state',
-							'address.zip': 'address.zip',
-						};
+						f.autoFill = { ...defaultAutoFill };
 					}
+				}
+			}
+		}
+		// If the Personal Info section is missing the organization field
+		// entirely (older backends or stripped configs), inject it like the
+		// web's `patchSettingsFieldConfig` does, so users still get the
+		// referral-practice lookup + auto-fill.
+		if (isRefProv) {
+			for (const section of fc.sections) {
+				const hasOrg = section.fields.some(f => /^(organization|organizationId|affiliation|organizationName)$/i.test(f.key));
+				const hasIdentity = section.fields.some(f => ['firstName', 'name', 'lastName', 'npi'].includes(f.key));
+				if (!hasOrg && hasIdentity) {
+					section.fields.push({
+						key: 'organization',
+						label: 'Organization / Affiliation',
+						type: 'lookup',
+						required: false,
+						lookupConfig: {
+							endpoint: '/api/fhir-resource/referral-practices',
+							displayField: 'name',
+							valueField: 'name',
+							searchable: true,
+						},
+						autoFill: { ...defaultAutoFill },
+					});
+					break;
 				}
 			}
 		}
@@ -1723,10 +1750,11 @@ export class SettingsHubEditor extends EditorPane {
 		chevron.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--vscode-descriptionForeground);font-size:10px;';
 
 		const dropdown = DOM.append(wrap, DOM.$('div'));
-		// Brighter, more contrasted dropdown — the team report said the
-		// dark-theme dropdown was "not visible clearly". White-ish bg works
-		// in both light and dark themes; rows below get their own contrast.
-		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-quickInput-background,var(--vscode-editor-background));border:1px solid var(--vscode-focusBorder,#0e639c);border-radius:6px;max-height:280px;overflow-y:auto;z-index:1000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);margin-top:4px;color:var(--vscode-foreground);';
+		// High-contrast white dropdown so it's clearly visible in dark themes
+		// where the previous quickInput-background blended into the form. Item
+		// rows below override color/background so the white surface stays
+		// readable in both light and dark workbenches.
+		dropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:#ffffff;border:1px solid #0e639c;border-radius:6px;max-height:280px;overflow-y:auto;z-index:1000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);margin-top:4px;color:#1a1a2e;';
 
 		let results: Array<Record<string, unknown>> = [];
 		let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -1746,26 +1774,27 @@ export class SettingsHubEditor extends EditorPane {
 			const displayField = cfg.displayField || 'name';
 			for (const row of results) {
 				const item = DOM.append(dropdown, DOM.$('div'));
-				const display = (row as Record<string, unknown>)[displayField];
+				const flatRow = this._flatten(row);
+				const display = (row as Record<string, unknown>)[displayField] ?? flatRow[displayField];
 				const subBits: string[] = [];
-				const city = (row as Record<string, unknown>)['city'];
-				const state = (row as Record<string, unknown>)['state'];
+				const city = flatRow['address.city'] ?? (row as Record<string, unknown>)['city'];
+				const state = flatRow['address.state'] ?? (row as Record<string, unknown>)['state'];
 				if (city) { subBits.push(String(city)); }
 				if (state) { subBits.push(String(state)); }
-				const phone = (row as Record<string, unknown>)['phone'];
+				const phone = flatRow['phone'] ?? (row as Record<string, unknown>)['phone'];
 				if (phone) { subBits.push(String(phone)); }
 
-				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(128,128,128,0.1);';
+				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #e5e7eb;color:#1a1a2e;background:#ffffff;';
 				const nameEl = DOM.append(item, DOM.$('div'));
 				nameEl.textContent = display ? String(display) : '(no name)';
-				nameEl.style.cssText = 'font-weight:500;';
+				nameEl.style.cssText = 'font-weight:600;color:#0f172a;';
 				if (subBits.length > 0) {
 					const subEl = DOM.append(item, DOM.$('div'));
 					subEl.textContent = subBits.join(' · ');
-					subEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
+					subEl.style.cssText = 'font-size:11px;color:#64748b;margin-top:1px;';
 				}
-				item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
-				item.addEventListener('mouseleave', () => { item.style.background = ''; });
+				item.addEventListener('mouseenter', () => { item.style.background = '#eff6ff'; });
+				item.addEventListener('mouseleave', () => { item.style.background = '#ffffff'; });
 				item.addEventListener('mousedown', e => {
 					e.preventDefault();
 					const valField = cfg.valueField || displayField;
@@ -1790,15 +1819,15 @@ export class SettingsHubEditor extends EditorPane {
 							// use camelCase / different prefixes for the same
 							// piece of data.
 							const aliases: Record<string, string[]> = {
-								'phone': ['phoneNumber', 'telephone', 'tel'],
-								'fax': ['faxNumber'],
-								'email': ['emailAddress', 'mail'],
+								'phone': ['phoneNumber', 'telephone', 'tel', 'contactPhone'],
+								'fax': ['faxNumber', 'contactFax'],
+								'email': ['emailAddress', 'mail', 'contactEmail'],
 								'website': ['websiteUrl', 'url', 'webSite'],
-								'address.line1': ['addressLine1', 'addressLine', 'street', 'street1'],
-								'address.line2': ['addressLine2', 'street2'],
+								'address.line1': ['addressLine1', 'addressLine', 'street', 'street1', 'line1', 'address1'],
+								'address.line2': ['addressLine2', 'street2', 'line2', 'address2'],
 								'address.city': ['city'],
 								'address.state': ['state', 'province'],
-								'address.zip': ['zip', 'postalCode', 'zipCode'],
+								'address.zip': ['zip', 'postalCode', 'zipCode', 'postal'],
 							};
 							for (const alias of (aliases[sourceKey] || [])) {
 								const val = flat[alias] ?? (row as Record<string, unknown>)[alias];
@@ -1809,11 +1838,19 @@ export class SettingsHubEditor extends EditorPane {
 						for (const [target, source] of Object.entries(autoFillMap)) {
 							const sourceVal = lookups(source);
 							if (sourceVal !== undefined && sourceVal !== null) {
-								// Store under the exact target key the form
-								// uses (e.g. `address.line1`). The form's
-								// `_renderField` reads `formData[field.key]`
-								// directly, so flat dotted keys work.
+								// Populate every reasonable spelling so the
+								// form picks it up regardless of whether the
+								// backend exposes the field as a dotted key
+								// (e.g. `address.city`) or a flat camelCase
+								// key (e.g. `city`/`addressCity`).
 								this.formData[target] = sourceVal;
+								if (target.includes('.')) {
+									const leaf = target.split('.').pop()!;
+									this.formData[leaf] = sourceVal;
+									// Also try addressLine1/addressCity/etc.
+									const camel = target.replace(/\.([a-z])/g, (_, c) => c.toUpperCase());
+									this.formData[camel] = sourceVal;
+								}
 							}
 						}
 						this._renderContent();
