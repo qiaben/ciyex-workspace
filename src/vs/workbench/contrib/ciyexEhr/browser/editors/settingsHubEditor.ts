@@ -38,6 +38,13 @@ interface FieldDef {
 		searchable?: boolean;
 		autoFillFields?: Record<string, string>;
 	};
+	/**
+	 * Web-format autofill — when a lookup item is picked, copy values from
+	 * the item into the form. Keys are the FORM field keys to set; values
+	 * are dot-paths into the picked item.
+	 * Example: `{ "address.line1": "address.line1", "phone": "phone" }`.
+	 */
+	autoFill?: Record<string, string>;
 }
 
 interface SectionDef {
@@ -420,18 +427,25 @@ export class SettingsHubEditor extends EditorPane {
 						displayField: 'name',
 						valueField: 'name',
 						searchable: true,
-						autoFillFields: {
-							phone: 'phone',
-							fax: 'fax',
-							email: 'email',
-							website: 'website',
-							addressLine1: 'addressLine1',
-							addressLine2: 'addressLine2',
-							city: 'city',
-							state: 'state',
-							zip: 'zip',
-						},
 					};
+					// Use the web's `autoFill` map shape exactly — keys are
+					// the form-field keys to populate (nested with dots), and
+					// values are the dot-paths into the selected referral
+					// practice. This matches the backend's V112 field config
+					// for referral-providers and the web's DynamicFormRenderer.
+					if (!f.autoFill) {
+						f.autoFill = {
+							'phone': 'phone',
+							'fax': 'fax',
+							'email': 'email',
+							'website': 'website',
+							'address.line1': 'address.line1',
+							'address.line2': 'address.line2',
+							'address.city': 'address.city',
+							'address.state': 'address.state',
+							'address.zip': 'address.zip',
+						};
+					}
 				}
 			}
 		}
@@ -1758,45 +1772,47 @@ export class SettingsHubEditor extends EditorPane {
 					const v = (row as Record<string, unknown>)[valField];
 					input.value = String(v ?? '');
 					this.formData[field.key] = input.value;
-					// Auto-fill mapped fields. Try multiple source-field name
-					// variations so referral-practices that return phone as
-					// "phoneNumber" / "telephone" / "phone.number" still cascade
-					// into the form. Also flatten nested address objects.
-					if (cfg.autoFillFields) {
+					// Auto-fill mapped fields. The backend field config uses
+					// `field.autoFill` (web's format from
+					// DynamicFormRenderer.tsx) — top-level field property,
+					// keys are target form keys, values are source dot-paths
+					// into the picked item. The older workspace format under
+					// `lookupConfig.autoFillFields` is still honoured as a
+					// fallback for any custom configs.
+					const autoFillMap = field.autoFill || cfg.autoFillFields;
+					if (autoFillMap) {
 						const flat = this._flatten(row);
 						const lookups = (sourceKey: string): unknown => {
-							const candidates = [
-								sourceKey,
-								sourceKey.toLowerCase(),
-								`address.${sourceKey}`,
-								`contactInfo.${sourceKey}`,
-								`contact.${sourceKey}`,
-							];
-							for (const c of candidates) {
-								const val = (row as Record<string, unknown>)[c] ?? flat[c];
-								if (val !== undefined && val !== null && val !== '') { return val; }
-							}
-							// Common name variations
+							// 1) Exact dot-path in the flattened row
+							const direct = flat[sourceKey] ?? (row as Record<string, unknown>)[sourceKey];
+							if (direct !== undefined && direct !== null && direct !== '') { return direct; }
+							// 2) Common alias mapping for legacy backends that
+							// use camelCase / different prefixes for the same
+							// piece of data.
 							const aliases: Record<string, string[]> = {
-								phone: ['phoneNumber', 'telephone', 'tel', 'phone.number'],
-								fax: ['faxNumber', 'fax.number'],
-								email: ['emailAddress', 'mail'],
-								website: ['websiteUrl', 'url', 'webSite'],
-								addressLine1: ['address.line1', 'addressLine', 'street', 'street1'],
-								addressLine2: ['address.line2', 'street2'],
-								city: ['address.city'],
-								state: ['address.state', 'province'],
-								zip: ['address.zip', 'postalCode', 'zipCode', 'address.postalCode'],
+								'phone': ['phoneNumber', 'telephone', 'tel'],
+								'fax': ['faxNumber'],
+								'email': ['emailAddress', 'mail'],
+								'website': ['websiteUrl', 'url', 'webSite'],
+								'address.line1': ['addressLine1', 'addressLine', 'street', 'street1'],
+								'address.line2': ['addressLine2', 'street2'],
+								'address.city': ['city'],
+								'address.state': ['state', 'province'],
+								'address.zip': ['zip', 'postalCode', 'zipCode'],
 							};
 							for (const alias of (aliases[sourceKey] || [])) {
-								const val = (row as Record<string, unknown>)[alias] ?? flat[alias];
+								const val = flat[alias] ?? (row as Record<string, unknown>)[alias];
 								if (val !== undefined && val !== null && val !== '') { return val; }
 							}
 							return undefined;
 						};
-						for (const [target, source] of Object.entries(cfg.autoFillFields)) {
+						for (const [target, source] of Object.entries(autoFillMap)) {
 							const sourceVal = lookups(source);
 							if (sourceVal !== undefined && sourceVal !== null) {
+								// Store under the exact target key the form
+								// uses (e.g. `address.line1`). The form's
+								// `_renderField` reads `formData[field.key]`
+								// directly, so flat dotted keys work.
 								this.formData[target] = sourceVal;
 							}
 						}
@@ -2361,27 +2377,29 @@ export class SettingsHubEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Pick a role.' });
 				return;
 			}
-			const body = {
+			// Match the EHR Web UI's POST body EXACTLY — see
+			// ciyex-ehr-ui/src/app/settings/user-management/page.tsx
+			// `AddUserLookupPanel.handleCreate()`. Web sends ONLY:
+			//   firstName, lastName, email, roleName,
+			//   sendWelcomeEmail, generatePrintCredentials, linkedFhirId
+			// Extra fields (phone, temporaryPassword) on this endpoint
+			// can shift the backend behaviour because the Keycloak
+			// service treats a present-but-empty `temporaryPassword`
+			// differently from absent, and that was suspected as the
+			// reason newly-created workspace users couldn't sign in.
+			// If the admin typed a password we still include it; if
+			// they left it blank, omit the key entirely.
+			const typedPassword = passwordInp.value.trim();
+			const body: Record<string, unknown> = {
 				firstName: selectedSubject.firstName,
 				lastName: selectedSubject.lastName,
 				email: emailInp.value.trim(),
 				roleName: roleSel.value,
-				temporaryPassword: passwordInp.value.trim() || undefined,
 				sendWelcomeEmail: sendWelcomeCb.checked,
-				// CRITICAL: match the backend's CreateUserRequest DTO exactly.
-				// The backend's UserManagementController checks
-				// `req.isGeneratePrintCredentials()` (the lombok @Data
-				// boolean accessor for `generatePrintCredentials`), NOT
-				// `generatePrint`. With the wrong key the backend never
-				// populates `user.temporaryPassword` in the response, which
-				// is why the Print Credentials modal had nothing to show.
 				generatePrintCredentials: printCb.checked,
-				// Same DTO uses a single `linkedFhirId` field for both
-				// staff (Practitioner) and patient flows — the controller
-				// decides which attribute to attach based on roleName.
-				...(selectedSubject.id ? { linkedFhirId: selectedSubject.id } : {}),
-				...(activeTab === 'staff' && selectedSubject.npi ? { phone: undefined } : {}),
 			};
+			if (selectedSubject.id) { body.linkedFhirId = selectedSubject.id; }
+			if (typedPassword) { body.temporaryPassword = typedPassword; }
 			try {
 				const res = await this.apiService.fetch('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
 				const json = await res.json().catch(() => null);
@@ -2569,67 +2587,80 @@ export class SettingsHubEditor extends EditorPane {
 		// because the async sidebar re-render cleared contentEl moments after
 		// the modal was appended. Attaching to body avoids the race entirely.
 		const overlay = DOM.append(mainWindow.document.body, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;';
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:99999;';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:480px;max-width:92vw;padding:22px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:12px;width:460px;max-width:92vw;box-shadow:0 12px 36px rgba(0,0,0,0.5);overflow:hidden;';
 
 		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 		const ht = DOM.append(head, DOM.$('h3'));
-		ht.textContent = 'Login Credentials';
-		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		ht.textContent = 'Password Reset';
+		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;color:var(--vscode-foreground);';
 		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
 		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:14px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;border-radius:4px;';
 		closeBtn.addEventListener('click', () => overlay.remove());
 
-		const desc = DOM.append(modal, DOM.$('p'));
-		desc.textContent = 'Share these credentials with the user. The temporary password must be changed on first login.';
-		desc.style.cssText = 'margin:0 0 14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+		// Body: matches web's ResetPasswordModal layout exactly \u2014 inner
+		// slate-tinted card with Username + Temporary Password (monospace
+		// blue pill + clipboard copy icon) + red warning under a border.
+		const bodyEl = DOM.append(modal, DOM.$('div'));
+		bodyEl.style.cssText = 'padding:22px;';
 
-		const credBox = DOM.append(modal, DOM.$('div'));
-		credBox.style.cssText = 'background:rgba(0,122,204,0.08);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:12px;font-family:var(--vscode-editor-font-family,monospace);font-size:13px;line-height:1.7;';
+		const card = DOM.append(bodyEl, DOM.$('div'));
+		card.style.cssText = 'background:rgba(148,163,184,0.1);border-radius:8px;padding:18px;';
 
-		const row = (label: string, value: string): void => {
-			const r = DOM.append(credBox, DOM.$('div'));
-			r.style.cssText = 'display:flex;gap:8px;';
-			const k = DOM.append(r, DOM.$('span'));
-			k.textContent = label;
-			k.style.cssText = 'font-weight:600;min-width:90px;color:var(--vscode-descriptionForeground);';
-			const v = DOM.append(r, DOM.$('span'));
-			v.textContent = value;
-			v.style.cssText = 'font-weight:500;';
-		};
-		row('Username:', data.username);
-		row('Password:', data.temporaryPassword);
-		if (data.resetDate) { row('Reset Date:', data.resetDate); }
+		const userLabel = DOM.append(card, DOM.$('div'));
+		userLabel.textContent = 'Username';
+		userLabel.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+		const userValue = DOM.append(card, DOM.$('div'));
+		userValue.textContent = data.username;
+		userValue.style.cssText = 'font-size:13px;font-weight:500;color:var(--vscode-foreground);margin-bottom:14px;';
 
-		const actions = DOM.append(modal, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+		const pwdLabel = DOM.append(card, DOM.$('div'));
+		pwdLabel.textContent = 'Temporary Password';
+		pwdLabel.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
 
-		const copyBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		copyBtn.textContent = '\u{1F4CB} Copy';
-		copyBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		const pwdRow = DOM.append(card, DOM.$('div'));
+		pwdRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		const pwdPill = DOM.append(pwdRow, DOM.$('code'));
+		pwdPill.textContent = data.temporaryPassword;
+		pwdPill.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:15px;font-weight:700;color:#2563eb;background:rgba(59,130,246,0.12);padding:6px 12px;border-radius:6px;letter-spacing:0.5px;';
+
+		const copyBtn = DOM.append(pwdRow, DOM.$('button')) as HTMLButtonElement;
+		copyBtn.textContent = '\u{1F4CB}';
+		copyBtn.title = 'Copy to clipboard';
+		copyBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:6px;border-radius:4px;color:var(--vscode-descriptionForeground);';
 		copyBtn.addEventListener('click', async () => {
-			const text = `Username: ${data.username}\nPassword: ${data.temporaryPassword}`;
 			try {
-				await mainWindow.navigator.clipboard.writeText(text);
-				this.notificationService.notify({ severity: Severity.Info, message: 'Credentials copied to clipboard.' });
+				await mainWindow.navigator.clipboard.writeText(data.temporaryPassword);
+				copyBtn.textContent = '\u2705';
+				setTimeout(() => { copyBtn.textContent = '\u{1F4CB}'; }, 2000);
 			} catch {
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Clipboard unavailable.' });
 			}
 		});
 
-		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		printBtn.textContent = '\u{1F5A8} Print';
-		printBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
-		printBtn.addEventListener('click', () => this._printCredentials(data));
+		const warn = DOM.append(card, DOM.$('p'));
+		warn.textContent = 'User must change password on first login.';
+		warn.style.cssText = 'color:#dc2626;font-size:11px;font-weight:600;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
 
-		const doneBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-		doneBtn.textContent = 'Done';
-		doneBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		doneBtn.addEventListener('click', () => overlay.remove());
+		const actions = DOM.append(bodyEl, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:22px;';
+
+		const closeFooter = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		closeFooter.textContent = 'Close';
+		closeFooter.style.cssText = 'padding:8px 16px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:8px;color:var(--vscode-foreground);cursor:pointer;font-size:13px;font-weight:500;';
+		closeFooter.addEventListener('click', () => overlay.remove());
+
+		const printBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		printBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;';
+		const printIcon = DOM.append(printBtn, DOM.$('span'));
+		printIcon.textContent = '\u{1F5A8}';
+		const printText = DOM.append(printBtn, DOM.$('span'));
+		printText.textContent = 'Print Credentials';
+		printBtn.addEventListener('click', () => this._printCredentials(data));
 
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 	}

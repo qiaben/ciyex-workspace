@@ -95,12 +95,15 @@ export class PracticeSettingsEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.practice-settings-editor.ciyex-editor-root'));
-		// Hide the native vertical scrollbar (team flagged it as visible cruft
-		// on the Practice Settings page) while preserving scroll. The
-		// .ciyex-no-scrollbar class is wired in the shared stylesheet below
-		// — Firefox uses `scrollbar-width:none`, Webkit uses ::-webkit-scrollbar.
+		// Hide the native vertical scrollbar (team flagged it as visible
+		// cruft on the Practice Settings page) while preserving scroll. We
+		// MUST also tag the parent EditorPane container — the scrollbar was
+		// still visible because the outer container painted its own native
+		// bar on top of our hidden inner one.
 		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;scrollbar-width:none;';
 		this.root.classList.add('ciyex-no-scrollbar');
+		parent.classList.add('ciyex-no-scrollbar');
+		parent.style.scrollbarWidth = 'none';
 		PracticeSettingsEditor._injectNoScrollbarStyle();
 
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
