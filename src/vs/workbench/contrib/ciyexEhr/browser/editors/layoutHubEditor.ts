@@ -29,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
 	{ key: 'menu', label: 'Menu', icon: '\u{2630}', commandId: 'ciyex.openMenuConfig', description: 'Sidebar navigation items' },
 	{ key: 'encounter', label: 'Encounter', icon: '\u{1F4CB}', commandId: 'ciyex.openEncounterConfig', description: 'Encounter form sections (CC, HPI, ROS, Plan\u2026)' },
 	{ key: 'portal', label: 'Portal', icon: '\u{1F310}', commandId: 'ciyex.openPortalSettings', description: 'Patient portal \u2014 features, forms, navigation' },
+	{ key: 'template-documents', label: 'Template Documents', icon: '\u{1F4DD}', commandId: 'ciyex.openTemplateDocuments', description: 'Reusable templates for encounter notes and letters' },
 	{ key: 'settings', label: 'Settings', icon: '\u{2699}', commandId: 'ciyex.openSettingsHub', description: 'General settings (Practice, Facilities, Users\u2026)' },
 ];
 

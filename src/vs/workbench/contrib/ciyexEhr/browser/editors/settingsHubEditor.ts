@@ -78,15 +78,16 @@ interface SidebarItem {
 }
 
 /**
- * Sidebar section groups, in display order. Matches the EHR Web UI settings
- * sidebar groups (General resources, User Management, Layout & Forms, System).
+ * Sidebar section groups, in display order. Mirrors the EHR Web UI sidebar
+ * groups. Menu + Template Documents now live under the Layout Configuration
+ * hub instead of a dedicated "Layout & Forms" group, so the settings sidebar
+ * only carries General resources, User Management, and System preferences.
  */
-type SidebarGroup = 'general' | 'user-mgmt' | 'layout-forms' | 'system';
+type SidebarGroup = 'general' | 'user-mgmt' | 'system';
 
 const GROUP_LABELS: Record<SidebarGroup, string> = {
 	'general': 'GENERAL',
 	'user-mgmt': 'USER MANAGEMENT',
-	'layout-forms': 'LAYOUT & FORMS',
 	'system': 'SYSTEM',
 };
 
@@ -95,16 +96,11 @@ const ADMIN_ITEMS: SidebarItem[] = [
 	{ key: '__roles__', label: 'Roles & Permissions', icon: '\u{1F6E1}', kind: 'admin', group: 'user-mgmt' },
 ];
 
-// Mirror the Ciyex web /settings sidebar. Layout & Forms group now contains
-// only Menu and Template Documents — the per-screen tree settings (Chart,
-// Encounter, Portal) live under Layout Configuration instead so users don't
-// see the same item in two places. System group keeps the global preferences
-// (Display, Form Options, Calendar Colors) plus the Layout Configuration and
-// Practice Settings shortcuts.
+// Mirror the Ciyex web /settings sidebar. Menu + Template Documents moved
+// out to the Layout Configuration hub, so the sidebar only carries System
+// preferences (Form Options, Display, Calendar Colors) plus the Layout
+// Configuration and Practice Settings shortcuts.
 const BUILTIN_ITEMS: SidebarItem[] = [
-	// Layout & Forms
-	{ key: '__menu-config__', label: 'Menu', icon: '\u{1F4DC}', kind: 'builtin', group: 'layout-forms' },
-	{ key: '__template-documents__', label: 'Template Documents', icon: '\u{1F4DD}', kind: 'builtin', group: 'layout-forms' },
 	// System
 	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin', group: 'system' },
 	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin', group: 'system' },
@@ -294,7 +290,6 @@ export class SettingsHubEditor extends EditorPane {
 		// once, then all items belonging to that group.
 		const groupedItems: Array<[SidebarGroup, SidebarItem[]]> = [
 			['user-mgmt', ADMIN_ITEMS],
-			['layout-forms', BUILTIN_ITEMS.filter(i => i.group === 'layout-forms')],
 			['system', BUILTIN_ITEMS.filter(i => i.group === 'system')],
 		];
 		for (const [groupKey, items] of groupedItems) {

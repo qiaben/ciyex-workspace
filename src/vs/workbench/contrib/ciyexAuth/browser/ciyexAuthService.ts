@@ -270,67 +270,85 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			});
 
 			if (!res.ok) {
-				return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: 'Unable to verify your account.' };
+				return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: `Unable to verify your account (HTTP ${res.status}).` };
 			}
 
 			return await res.json();
-		} catch {
-			return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: 'Unable to connect to server.' };
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: `Unable to connect to server: ${msg}` };
 		}
 	}
 
 	async login(email: string, password: string): Promise<CiyexLoginResult> {
+		const trimmedEmail = email.trim();
 		try {
 			const res = await fetch(`${this.apiUrl}/api/auth/login`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ email: email.trim(), password }),
+				body: JSON.stringify({ email: trimmedEmail, password }),
 			});
 
-			const data = await res.json();
+			let data: { success?: boolean; error?: string; requiresPasswordChange?: boolean; data?: CiyexLoginResult['data'] };
+			try {
+				data = await res.json();
+			} catch {
+				return { success: false, error: `Server returned ${res.status} with no body. Check API server settings.` };
+			}
 
 			if (data.success && data.data?.token) {
 				this._storeAuth(data.data);
-				this._userEmail = email;
+				this._userEmail = trimmedEmail;
 				this._setState(CiyexAuthState.Authenticated);
 				this._scheduleTokenRefresh();
 				this._resetIdleTimer();
 				return { success: true, data: data.data };
-			} else if (data.requiresPasswordChange) {
-				return { success: false, requiresPasswordChange: true };
-			} else {
-				return { success: false, error: data.error || 'Invalid email or password' };
 			}
-		} catch {
-			return { success: false, error: 'Unable to connect to server.' };
+			if (data.requiresPasswordChange) {
+				// Stash the temp password so the change-password call can use it
+				// as `currentPassword` without asking the user to retype it.
+				this._userEmail = trimmedEmail;
+				return { success: false, requiresPasswordChange: true };
+			}
+			return { success: false, error: data.error || `Invalid email or password (HTTP ${res.status}).` };
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return { success: false, error: `Unable to connect to server: ${msg}` };
 		}
 	}
 
 	async changePassword(email: string, currentPassword: string, newPassword: string): Promise<CiyexLoginResult> {
+		const trimmedEmail = email.trim();
 		try {
 			const res = await fetch(`${this.apiUrl}/api/auth/change-password`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					email: email.trim(),
+					email: trimmedEmail,
 					currentPassword,
 					newPassword,
 				}),
 			});
 
-			const data = await res.json();
+			let data: { success?: boolean; error?: string; data?: CiyexLoginResult['data'] };
+			try {
+				data = await res.json();
+			} catch {
+				return { success: false, error: `Server returned ${res.status} with no body. Check API server settings.` };
+			}
 
 			if (data.success && data.data?.token) {
 				this._storeAuth(data.data);
-				this._userEmail = email;
+				this._userEmail = trimmedEmail;
 				this._setState(CiyexAuthState.Authenticated);
 				this._scheduleTokenRefresh();
 				this._resetIdleTimer();
 				return { success: true, data: data.data };
 			}
-			return { success: false, error: data.error || 'Failed to set new password.' };
-		} catch {
-			return { success: false, error: 'Unable to connect to server.' };
+			return { success: false, error: data.error || `Failed to set new password (HTTP ${res.status}).` };
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return { success: false, error: `Unable to connect to server: ${msg}` };
 		}
 	}
 

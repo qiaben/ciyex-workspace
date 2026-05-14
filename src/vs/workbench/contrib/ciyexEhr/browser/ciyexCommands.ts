@@ -558,6 +558,25 @@ registerAction2(class extends Action2 {
 });
 
 /**
+ * Command: Open Template Documents (opens the Settings Hub on the
+ * template-documents tab). Registered separately so the Layout Hub can wire a
+ * dedicated card without passing tabKey args through executeCommand.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openTemplateDocuments',
+			title: localize2('openTemplateDocuments', "Open Template Documents"),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new SettingsHubEditorInput('__template-documents__'), { pinned: true });
+	}
+});
+
+/**
  * Command: Open Layout Hub.
  * Mirrors the EHR `/settings/layout-settings` sidebar — Chart / Menu /
  * Encounter / Portal / Settings.
