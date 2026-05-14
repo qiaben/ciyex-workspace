@@ -81,6 +81,10 @@ export interface FormFieldDef {
 	/** Render the field off-screen. Used for fields that should only be filled via auto-fill
 	 * from a related `search`-type field (e.g. patientId, materialId). */
 	hidden?: boolean;
+	/** Regex (as string) that each individual typed character must match.
+	 * When set, keydown/paste/input guards enforce this at input time so
+	 * invalid characters never land in the field. */
+	typingPattern?: string;
 }
 
 export interface FilterDropdownDef {
@@ -422,12 +426,19 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Grid layout gives every card an equal width — the previous flex/wrap layout
 		// sized cards to their content, which the QA team flagged as misaligned cards
 		// with inconsistent spacing on the Referrals page.
-		const numericStats = Object.entries(this.stats).filter(([, v]) => typeof v === 'number');
+		let numericStats = Object.entries(this.stats).filter(([, v]) => typeof v === 'number');
 		if (numericStats.length > 0) {
 			const row = DOM.append(this.contentEl, DOM.$('div'));
 			// compactStats halves the vertical footprint for pages like Recall that
 			// surface 7+ KPI cards — otherwise the strip dominates the viewport.
 			const compact = !!cfg.compactStats;
+			// In compact mode, only show stats that map to a filter value (clickable
+			// KPI cards). Info-only aggregates (totals, sums) are omitted to keep
+			// the strip to a single row. Issue #22: authorization/referrals.
+			if (compact && cfg.statsFilterMap) {
+				const mapped = new Set(Object.keys(cfg.statsFilterMap));
+				numericStats = numericStats.filter(([k]) => mapped.has(k));
+			}
 			const cols = Math.min(numericStats.length, compact ? 8 : 6);
 			const gap = compact ? 6 : 8;
 			const marginB = compact ? 8 : 12;
@@ -1096,6 +1107,25 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.type = field.type;
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || '';
+				// typingPattern: enforce allowed characters at keystroke/paste/input level.
+				if (field.typingPattern) {
+					const tpRe = new RegExp(field.typingPattern);
+					const navKeys = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+					inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
+						if (navKeys.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
+						if (!tpRe.test(e.key)) { e.preventDefault(); }
+					});
+					inputEl.addEventListener('paste', (e: ClipboardEvent) => {
+						e.preventDefault();
+						const t = e.clipboardData?.getData('text') ?? '';
+						const filtered = t.split('').filter(c => tpRe.test(c)).join('');
+						if (filtered) { DOM.getActiveWindow().document.execCommand('insertText', false, filtered); }
+					});
+					inputEl.addEventListener('input', () => {
+						const clean = (inputEl as HTMLInputElement).value.split('').filter(c => tpRe.test(c)).join('');
+						if (clean !== (inputEl as HTMLInputElement).value) { (inputEl as HTMLInputElement).value = clean; }
+					});
+				}
 				if (field.type === 'number') {
 					// Do NOT set HTML5 min/max attributes — Chromium silently clears
 					// the input value when the typed value falls outside [min,max],
@@ -1104,6 +1134,35 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					// is handled explicitly in the save-click handler below.
 					inputEl.setAttribute('data-min', String(field.minValue ?? ''));
 					inputEl.setAttribute('data-max', String(field.maxValue ?? ''));
+					// Positive-integer fields (minValue >= 1) must never accept
+					// alphabets, negatives, decimals, or scientific notation.
+					// Three-layer defence:
+					//   1. keydown — blocks individual keystrokes before they land
+					//      (covers -, ., e, E, + and all letter keys).
+					//   2. paste — strips non-digits from pasted content so
+					//      clipboard paste cannot bypass the keydown guard.
+					//   3. input — final backstop that scrubs any character that
+					//      slips through (e.g. IME, drag-and-drop).
+					if ((field.minValue ?? 0) >= 1) {
+						inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
+							const nav = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+								'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+							if (nav.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
+							if (!/^\d$/.test(e.key)) { e.preventDefault(); }
+						});
+						inputEl.addEventListener('paste', (e: ClipboardEvent) => {
+							e.preventDefault();
+							const text = e.clipboardData?.getData('text') ?? '';
+							const digitsOnly = text.replace(/\D/g, '');
+							if (digitsOnly) {
+								DOM.getActiveWindow().document.execCommand('insertText', false, digitsOnly);
+							}
+						});
+						inputEl.addEventListener('input', () => {
+							const clean = inputEl.value.replace(/\D/g, '');
+							if (clean !== inputEl.value) { inputEl.value = clean; }
+						});
+					}
 				}
 			}
 

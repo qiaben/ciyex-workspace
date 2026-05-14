@@ -65,13 +65,12 @@
 	margin-left: 4px;
 }
 
-/* --- Search Dropdown --- */
+/* --- Search Dropdown ---
+ * Uses position:fixed and is appended to document.body so it escapes the
+ * titlebar-container's overflow:hidden. top/left/width are set dynamically
+ * via JS based on searchInput.getBoundingClientRect(). */
 .ehr-search-dropdown {
-	position: absolute;
-	top: 100%;
-	left: 0;
-	right: 0;
-	margin-top: 4px;
+	position: fixed;
 	background: var(--vscode-editorWidget-background, #252526);
 	border: 1px solid var(--vscode-editorWidget-border, #454545);
 	border-radius: 6px;

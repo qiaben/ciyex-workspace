@@ -1174,12 +1174,11 @@ export class CalendarEditor extends EditorPane {
 
 		// Visit Type
 		const visitTypes = [
-			{ value: 'Consultation', label: 'Consultation' }, { value: 'New Patient', label: 'New Patient' },
-			{ value: 'Follow-Up', label: 'Follow-Up' }, { value: 'Sick Visit', label: 'Sick Visit' },
-			{ value: 'Annual Physical', label: 'Annual Physical' }, { value: 'Well Child', label: 'Well Child' },
-			{ value: 'Telehealth', label: 'Telehealth' }, { value: 'Urgent', label: 'Urgent' },
-			{ value: 'Procedure', label: 'Procedure' }, { value: 'Lab Only', label: 'Lab Only' },
-			{ value: 'Injection', label: 'Injection' },
+			{ value: 'Consultation', label: 'Consultation' }, { value: 'Follow-Up', label: 'Follow-Up' },
+			{ value: 'New Patient', label: 'New Patient' }, { value: 'Urgent', label: 'Urgent' },
+			{ value: 'Routine', label: 'Routine' }, { value: 'Annual Physical', label: 'Annual Physical' },
+			{ value: 'Telehealth', label: 'Telehealth' }, { value: 'Lab Work', label: 'Lab Work' },
+			{ value: 'Procedure', label: 'Procedure' }, { value: 'Referral', label: 'Referral' },
 		];
 		const visitTypeEl = field('Visit Type', 'visitType', 'select', 'Consultation', false, visitTypes) as HTMLSelectElement;
 

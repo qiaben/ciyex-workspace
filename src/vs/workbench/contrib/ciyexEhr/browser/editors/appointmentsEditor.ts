@@ -895,10 +895,9 @@ export class AppointmentsEditor extends EditorPane {
 		typeAll.value = ''; typeAll.textContent = 'All Types';
 		if (!this.typeFilter) { typeAll.selected = true; }
 		const PREDEFINED_VISIT_TYPES = [
-			'Consultation', 'New Patient', 'Follow-Up', 'Sick Visit',
-			'Annual Physical', 'Wellness Check', 'Telehealth', 'Procedure',
-			'Lab Only', 'Vaccination', 'Imaging', 'Pre-Op', 'Post-Op',
-			'Urgent Care', 'Specialist Referral', 'Physical Therapy',
+			'Consultation', 'Follow-Up', 'New Patient', 'Urgent',
+			'Routine', 'Annual Physical', 'Telehealth', 'Lab Work',
+			'Procedure', 'Referral',
 		];
 		const mergedTypes = Array.from(new Set([...PREDEFINED_VISIT_TYPES, ...this.visitTypes])).sort();
 		// Ensure the currently-selected filter value is always present in the

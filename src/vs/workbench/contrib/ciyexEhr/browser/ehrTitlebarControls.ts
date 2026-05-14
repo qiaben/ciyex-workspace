@@ -74,7 +74,8 @@ export class EhrTitlebarControls extends Disposable {
 		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, DOM.EventType.MOUSE_DOWN, (e) => {
 			if (!this.element.contains(e.target as Node) &&
 				!this.patientOverlay.contains(e.target as Node) &&
-				!this.appointmentOverlay.contains(e.target as Node)) {
+				!this.appointmentOverlay.contains(e.target as Node) &&
+				!this.searchDropdown.contains(e.target as Node)) {
 				this._closeAllOverlays();
 			}
 		}));
@@ -98,12 +99,16 @@ export class EhrTitlebarControls extends Disposable {
 		const kbdHint = DOM.append(searchContainer, DOM.$('span.ehr-kbd-hint'));
 		kbdHint.textContent = '\u2318K';
 
-		this.searchDropdown = DOM.append(searchContainer, DOM.$('.ehr-search-dropdown'));
+		// Appended to body (not inside searchContainer) so it escapes the
+		// titlebar-container's overflow:hidden. Position is set via _positionSearchDropdown().
+		this.searchDropdown = DOM.$('.ehr-search-dropdown');
 		this.searchDropdown.style.display = 'none';
+		DOM.getActiveWindow().document.body.appendChild(this.searchDropdown);
 
 		this._register(DOM.addDisposableListener(this.searchInput, 'input', () => this._onSearchInput()));
 		this._register(DOM.addDisposableListener(this.searchInput, 'focus', () => {
 			if (this.searchInput.value.trim().length > 0) {
+				this._positionSearchDropdown();
 				this.searchDropdown.style.display = '';
 			}
 		}));
@@ -113,6 +118,13 @@ export class EhrTitlebarControls extends Disposable {
 				this.searchDropdown.style.display = 'none';
 			}
 		}));
+	}
+
+	private _positionSearchDropdown(): void {
+		const rect = this.searchInput.getBoundingClientRect();
+		this.searchDropdown.style.top = `${rect.bottom + 4}px`;
+		this.searchDropdown.style.left = `${rect.left}px`;
+		this.searchDropdown.style.width = `${Math.max(rect.width, 300)}px`;
 	}
 
 	private _onSearchInput(): void {
@@ -133,6 +145,7 @@ export class EhrTitlebarControls extends Disposable {
 		DOM.clearNode(this.searchDropdown);
 		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
 		loading.textContent = `Searching for "${value}"…`;
+		this._positionSearchDropdown();
 		this.searchDropdown.style.display = '';
 
 		this.searchTimer = setTimeout(async () => {
@@ -187,6 +200,7 @@ export class EhrTitlebarControls extends Disposable {
 
 	private _renderSearchResults(patients: PatientResult[]): void {
 		DOM.clearNode(this.searchDropdown);
+		this._positionSearchDropdown();
 
 		if (patients.length === 0) {
 			const empty = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
@@ -508,12 +522,13 @@ export class EhrTitlebarControls extends Disposable {
 			{ value: 'Consultation', label: 'Consultation' },
 			{ value: 'Follow-Up', label: 'Follow-Up' },
 			{ value: 'New Patient', label: 'New Patient' },
+			{ value: 'Urgent', label: 'Urgent' },
+			{ value: 'Routine', label: 'Routine' },
 			{ value: 'Annual Physical', label: 'Annual Physical' },
-			{ value: 'Sick Visit', label: 'Sick Visit' },
 			{ value: 'Telehealth', label: 'Telehealth' },
 			{ value: 'Lab Work', label: 'Lab Work' },
 			{ value: 'Procedure', label: 'Procedure' },
-			{ value: 'Routine', label: 'Routine' },
+			{ value: 'Referral', label: 'Referral' },
 		]);
 
 		// Patient search field
@@ -983,6 +998,7 @@ export class EhrTitlebarControls extends Disposable {
 	override dispose(): void {
 		this.patientOverlay?.remove();
 		this.appointmentOverlay?.remove();
+		this.searchDropdown?.remove();
 		super.dispose();
 	}
 }

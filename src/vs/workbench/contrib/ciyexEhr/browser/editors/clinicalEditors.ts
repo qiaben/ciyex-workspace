@@ -825,7 +825,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				],
 			},
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-			{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters (no leading hyphen, no symbols, no spaces)' },
+			{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters (no leading hyphen, no symbols, no spaces)', typingPattern: '^[A-Za-z0-9\\-]$' },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 			// Administration Details
 			{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
@@ -2402,10 +2402,35 @@ export class InventoryEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }
 }
 
+interface CreditCardRecord {
+	id: number;
+	patientId?: number;
+	cardHolderName: string;
+	cardType: string;
+	expiryMonth: number;
+	expiryYear: number;
+	billingAddress?: string;
+	billingCity?: string;
+	billingState?: string;
+	billingZip?: string;
+	billingCountry?: string;
+	isDefault?: boolean;
+	isActive?: boolean;
+	maskedCardNumber?: string;
+	isExpired?: boolean;
+}
+
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
 	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' = 'transactions';
+	// allow-any-unicode-next-line
+	// ── Credit-card grid state ──────────────────────────────────────────────
+	private _cards: CreditCardRecord[] = [];
+	private _cardsSearch = '';
+	private _cardsLoading = false;
+	private _cardFormOverlay: HTMLElement | null = null;
+	private _cardFormBackdrop: HTMLElement | null = null;
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
@@ -2555,59 +2580,405 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 		],
 	};
+	// allow-any-unicode-next-line
+	// ── Credit-card grid rendering ─────────────────────────────────────────
 
-	private readonly _methodsConfig: ClinicalEditorConfig = {
-		title: 'Payment Methods', apiPath: '/api/payments/methods',
-		searchPlaceholder: 'Search by patient, type...',
-		clientSideFilter: ['patientName', 'methodType', 'last4', 'status', 'id'],
-		editable: true,
-		columns: [
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'methodType', label: 'Type', width: '110px' },
-			{ key: 'last4', label: 'Last 4', width: '70px' },
-			{ key: 'expiryMonth', label: 'Expiry', width: '80px' },
-			{ key: 'cardHolderName', label: 'Card Holder' },
-			{ key: 'isDefault', label: 'Default', width: '70px' },
-			{ key: 'status', label: 'Status', width: '90px' },
-		],
-		cellRenderer: (key, value) => {
-			if (key === 'isDefault') { return value ? 'Yes' : 'No'; }
-			if (key === 'methodType' && typeof value === 'string') {
-				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+	private async _loadAndRenderCards(): Promise<void> {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+
+		// Toolbar
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Payment Methods';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const right = DOM.append(toolbar, DOM.$('div'));
+		right.style.cssText = 'display:flex;align-items:center;gap:10px;';
+		const searchEl = DOM.append(right, DOM.$('input')) as HTMLInputElement;
+		searchEl.placeholder = 'Search cards…';
+		searchEl.value = this._cardsSearch;
+		searchEl.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;min-width:200px;';
+		const addBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Card';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+
+		// Card grid container
+		const grid = DOM.append(this.contentEl, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;';
+
+		const renderGrid = () => {
+			DOM.clearNode(grid);
+			const q = this._cardsSearch.toLowerCase();
+			const filtered = this._cards.filter(c =>
+				!q ||
+				(c.cardHolderName || '').toLowerCase().includes(q) ||
+				(c.cardType || '').toLowerCase().includes(q) ||
+				(c.maskedCardNumber || '').toLowerCase().includes(q) ||
+				(c.billingCity || '').toLowerCase().includes(q)
+			);
+			if (filtered.length === 0) {
+				const empty = DOM.append(grid, DOM.$('div'));
+				empty.style.cssText = 'grid-column:1/-1;text-align:center;padding:48px;color:var(--vscode-descriptionForeground);font-size:13px;';
+				empty.textContent = this._cardsLoading ? 'Loading…' : 'No payment methods found.';
+				return;
 			}
-			return String(value ?? '');
-		},
-		statusTabs: [
-			{ label: 'Active', value: 'active' }, { label: 'Expired', value: 'expired' }, { label: 'Removed', value: 'removed' },
-		],
-		formFields: [
-			{
-				key: 'patientName', label: 'Patient', type: 'search', required: true,
-				placeholder: 'Search patient...', apiPath: '/api/patients',
-				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
-			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled' },
-			{
-				key: 'methodType', label: 'Method Type', type: 'select', required: true, options: [
-					{ label: 'Credit Card', value: 'credit_card' }, { label: 'Debit Card', value: 'debit_card' },
-					{ label: 'ACH / Bank', value: 'ach' }, { label: 'FSA / HSA', value: 'fsa_hsa' },
-				]
-			},
-			{ key: 'cardHolderName', label: 'Card Holder Name', type: 'text', placeholder: 'Name on card' },
-			{ key: 'last4', label: 'Last 4 Digits', type: 'text', placeholder: '1234' },
-			{ key: 'expiryMonth', label: 'Expiry (MM/YY)', type: 'text', placeholder: '12/26' },
-			{ key: 'billingAddress', label: 'Billing Address', type: 'text' },
-			{
-				key: 'isDefault', label: 'Set as Default', type: 'select', options: [
-					{ label: 'Yes', value: 'true' }, { label: 'No', value: 'false' },
-				], defaultValue: 'false'
-			},
-		],
-		actions: [
-			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Remove this payment method?', type: 'warning', primaryButton: 'Remove' }); if (r.confirmed) { await api.fetch(`/api/payments/methods/${item.id}`, { method: 'DELETE' }); reload(); } } },
-		],
-	};
+			for (const card of filtered) { this._renderCardItem(grid, card, renderGrid); }
+		};
+
+		searchEl.addEventListener('input', () => { this._cardsSearch = searchEl.value; renderGrid(); });
+		addBtn.addEventListener('click', () => this._openCardForm(null, renderGrid));
+
+		// Load data
+		this._cardsLoading = true;
+		renderGrid();
+		try {
+			const res = await this.apiService.fetch('/api/credit-cards?page=0&size=200');
+			if (res.ok) {
+				const data = await res.json();
+				this._cards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as CreditCardRecord[];
+			} else {
+				this._cards = [];
+			}
+		} catch { this._cards = []; }
+		this._cardsLoading = false;
+		renderGrid();
+	}
+
+	private _cardTypeBadge(type: string): string {
+		const t = (type || '').toUpperCase();
+		if (t.includes('VISA')) { return 'VISA'; }
+		if (t.includes('MASTER')) { return 'MC'; }
+		if (t.includes('AMEX') || t.includes('AMERICAN')) { return 'AMEX'; }
+		if (t.includes('DISCOVER')) { return 'DISC'; }
+		return t.slice(0, 4) || '????';
+	}
+
+	private _isCardExpired(card: CreditCardRecord): boolean {
+		if (card.isExpired) { return true; }
+		const now = new Date();
+		return (card.expiryYear < now.getFullYear()) ||
+			(card.expiryYear === now.getFullYear() && card.expiryMonth < now.getMonth() + 1);
+	}
+
+	private _renderCardItem(grid: HTMLElement, card: CreditCardRecord, refresh: () => void): void {
+		const expired = this._isCardExpired(card);
+		const inactive = card.isActive === false;
+		const isDefault = !!card.isDefault;
+
+		let borderColor: string;
+		let bgColor: string;
+		let opacity = '1';
+		if (expired) { borderColor = '#fca5a5'; bgColor = 'rgba(254,202,202,0.12)'; }
+		else if (inactive) { borderColor = 'var(--vscode-editorWidget-border,#555)'; bgColor = 'rgba(128,128,128,0.06)'; opacity = '0.65'; }
+		else if (isDefault) { borderColor = '#3b82f6'; bgColor = 'rgba(59,130,246,0.08)'; }
+		else { borderColor = 'var(--vscode-editorWidget-border,#555)'; bgColor = 'var(--vscode-editor-background)'; }
+
+		const cardEl = DOM.append(grid, DOM.$('div'));
+		cardEl.style.cssText = `border:1.5px solid ${borderColor};border-radius:10px;padding:14px 16px;background:${bgColor};opacity:${opacity};display:flex;flex-direction:column;gap:8px;position:relative;transition:box-shadow 0.15s;`;
+
+		// Header row: icon + type badge + status badges
+		const headerRow = DOM.append(cardEl, DOM.$('div'));
+		headerRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+		const icon = DOM.append(headerRow, DOM.$('span'));
+		// allow-any-unicode-next-line
+		icon.textContent = '💳';
+		icon.style.cssText = 'font-size:20px;line-height:1;';
+		const typeBadge = DOM.append(headerRow, DOM.$('span'));
+		typeBadge.textContent = this._cardTypeBadge(card.cardType);
+		typeBadge.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;background:var(--vscode-badge-background,#4d4d4d);color:var(--vscode-badge-foreground,#fff);';
+		if (isDefault) {
+			const defBadge = DOM.append(headerRow, DOM.$('span'));
+			defBadge.textContent = 'Default';
+			defBadge.style.cssText = 'font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(59,130,246,0.15);color:#3b82f6;margin-left:auto;';
+		}
+		if (inactive) {
+			const inBadge = DOM.append(headerRow, DOM.$('span'));
+			inBadge.textContent = 'Inactive';
+			inBadge.style.cssText = 'font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(128,128,128,0.15);color:var(--vscode-descriptionForeground);margin-left:auto;';
+		}
+
+		// Masked card number
+		const numEl = DOM.append(cardEl, DOM.$('div'));
+		numEl.textContent = card.maskedCardNumber || '•••• •••• •••• ****';
+		numEl.style.cssText = 'font-size:14px;font-weight:600;letter-spacing:2px;color:var(--vscode-foreground);font-family:monospace;';
+
+		// Holder name
+		const holderEl = DOM.append(cardEl, DOM.$('div'));
+		holderEl.textContent = card.cardHolderName || '';
+		holderEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);';
+
+		// Expiry row
+		const expiryRow = DOM.append(cardEl, DOM.$('div'));
+		expiryRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;color:var(--vscode-descriptionForeground);';
+		const mm = String(card.expiryMonth || 1).padStart(2, '0');
+		const yy = String(card.expiryYear || new Date().getFullYear());
+		expiryRow.textContent = `Expires ${mm}/${yy}`;
+		if (expired) {
+			const expTag = DOM.append(expiryRow, DOM.$('span'));
+			expTag.textContent = 'EXPIRED';
+			expTag.style.cssText = 'font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(239,68,68,0.15);color:#ef4444;letter-spacing:0.5px;';
+		}
+
+		// Billing info
+		if (card.billingCity || card.billingState || card.billingZip) {
+			const billEl = DOM.append(cardEl, DOM.$('div'));
+			billEl.textContent = [card.billingCity, card.billingState, card.billingZip].filter(Boolean).join(', ');
+			billEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
+
+		// Action buttons
+		const actions = DOM.append(cardEl, DOM.$('div'));
+		actions.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap;';
+
+		if (!isDefault && !inactive) {
+			const defBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			defBtn.textContent = 'Set Default';
+			defBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#3b82f6;padding:0;font-weight:500;';
+			defBtn.addEventListener('click', async () => {
+				try {
+					const pid = card.patientId;
+					await this.apiService.fetch(
+						pid ? `/api/credit-cards/${card.id}/patient/${pid}/set-default` : `/api/credit-cards/${card.id}/set-default`,
+						{ method: 'PUT' }
+					);
+					await this._reloadCards();
+					refresh();
+				} catch { /* ignore */ }
+			});
+		}
+
+		const editBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		editBtn.textContent = 'Edit';
+		editBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:var(--vscode-descriptionForeground);padding:0;';
+		editBtn.addEventListener('click', () => this._openCardForm(card, async () => { await this._reloadCards(); refresh(); }));
+
+		if (!inactive) {
+			const deactBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			deactBtn.textContent = 'Deactivate';
+			deactBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#f97316;padding:0;';
+			deactBtn.addEventListener('click', async () => {
+				const ok = DOM.getActiveWindow().confirm('Deactivate this card?');
+				if (!ok) { return; }
+				try {
+					await this.apiService.fetch(`/api/credit-cards/${card.id}/deactivate`, { method: 'PUT' });
+					await this._reloadCards();
+					refresh();
+				} catch { /* ignore */ }
+			});
+		}
+
+		const delBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		delBtn.textContent = 'Delete';
+		delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#ef4444;padding:0;margin-left:auto;';
+		delBtn.addEventListener('click', async () => {
+			const ok = DOM.getActiveWindow().confirm('Delete this payment method? This cannot be undone.');
+			if (!ok) { return; }
+			try {
+				await this.apiService.fetch(`/api/credit-cards/${card.id}`, { method: 'DELETE' });
+				this._cards = this._cards.filter(c => c.id !== card.id);
+				refresh();
+			} catch { /* ignore */ }
+		});
+	}
+
+	private async _reloadCards(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/credit-cards?page=0&size=200');
+			if (res.ok) {
+				const data = await res.json();
+				this._cards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as CreditCardRecord[];
+			}
+		} catch { /* ignore */ }
+	}
+
+	private _openCardForm(card: CreditCardRecord | null, onSaved: () => void): void {
+		// Remove any existing overlay
+		this._cardFormOverlay?.remove();
+		this._cardFormBackdrop?.remove();
+
+		const doc = DOM.getActiveWindow().document;
+		const backdrop = doc.createElement('div');
+		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
+		doc.body.appendChild(backdrop);
+		this._cardFormBackdrop = backdrop;
+
+		const overlay = doc.createElement('div');
+		overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:10000;width:560px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
+		doc.body.appendChild(overlay);
+		this._cardFormOverlay = overlay;
+
+		const close = () => { overlay.remove(); backdrop.remove(); this._cardFormOverlay = null; this._cardFormBackdrop = null; };
+		backdrop.addEventListener('click', close);
+
+		// Header
+		const hdr = DOM.append(overlay, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const titleEl = DOM.append(hdr, DOM.$('h3'));
+		titleEl.textContent = card ? 'Edit Card' : 'Add Payment Method';
+		titleEl.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--vscode-foreground);';
+		const closeBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '×';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:22px;cursor:pointer;color:var(--vscode-descriptionForeground);line-height:1;padding:0 4px;';
+		closeBtn.addEventListener('click', close);
+
+		// Scrollable form body
+		const body = DOM.append(overlay, DOM.$('div'));
+		body.style.cssText = 'flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;scrollbar-width:none;';
+
+		const inp = (label: string, key: string, span2 = false, opts: Partial<HTMLInputElement> = {}): HTMLInputElement => {
+			const grp = DOM.append(body, DOM.$('div'));
+			if (span2) { grp.style.gridColumn = 'span 2'; }
+			const lbl = DOM.append(grp, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const el = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
+			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+			Object.assign(el, opts);
+			return el;
+		};
+
+		const sel = (label: string, options: Array<{ value: string; label: string }>, span2 = false): HTMLSelectElement => {
+			const grp = DOM.append(body, DOM.$('div'));
+			if (span2) { grp.style.gridColumn = 'span 2'; }
+			const lbl = DOM.append(grp, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const el = DOM.append(grp, DOM.$('select')) as HTMLSelectElement;
+			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;';
+			for (const o of options) {
+				const opt = DOM.append(el, DOM.$('option')) as HTMLOptionElement;
+				opt.value = o.value; opt.textContent = o.label;
+			}
+			return el;
+		};
+
+		const chk = (label: string, span2 = false): HTMLInputElement => {
+			const grp = DOM.append(body, DOM.$('div'));
+			if (span2) { grp.style.gridColumn = 'span 2'; }
+			grp.style.display = 'flex';
+			grp.style.alignItems = 'center';
+			grp.style.gap = '8px';
+			const el = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
+			el.type = 'checkbox';
+			el.style.accentColor = 'var(--vscode-focusBorder,#007fd4)';
+			const lbl = DOM.append(grp, DOM.$('label'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);cursor:pointer;';
+			lbl.addEventListener('click', () => { el.checked = !el.checked; });
+			return el;
+		};
+
+		// Form fields matching PaymentFlat.tsx exactly
+		const holderEl = inp('Card Holder Name *', 'cardHolderName', true, { maxLength: 100, placeholder: 'John Doe' });
+		const numberEl = inp('Card Number *', 'cardNumber', true, { maxLength: 16, placeholder: '1234567890123456' });
+		// digits only for card number
+		numberEl.addEventListener('input', () => { numberEl.value = numberEl.value.replace(/\D/g, ''); });
+
+		const typeEl = sel('Card Type', [
+			{ value: 'VISA', label: 'Visa' }, { value: 'MASTERCARD', label: 'Mastercard' },
+			{ value: 'AMEX', label: 'Amex' }, { value: 'DISCOVER', label: 'Discover' },
+		]);
+
+		const now = new Date();
+		const monthEl = sel('Expiry Month *', Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') })));
+		const yearEl = sel('Expiry Year *', Array.from({ length: 16 }, (_, i) => {
+			const y = now.getFullYear() + i; return { value: String(y), label: String(y) };
+		}));
+
+		const cvvEl = inp('CVV *', 'cvv', false, { maxLength: 4, placeholder: '123' });
+		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, ''); });
+
+		const addrEl = inp('Billing Address', 'billingAddress', true, { placeholder: '123 Main St' });
+		const cityEl = inp('City', 'billingCity', false, { maxLength: 50, placeholder: 'New York' });
+		const stateEl = inp('State', 'billingState', false, { maxLength: 50, placeholder: 'NY' });
+		const zipEl = inp('Zip Code', 'billingZip', false, { maxLength: 10, placeholder: '10001' });
+		const countryEl = inp('Country', 'billingCountry', false, { maxLength: 50, placeholder: 'USA' });
+		const isDefaultEl = chk('Set as default payment method', true);
+		const isActiveEl = chk('Active', true);
+
+		// Pre-fill for edit
+		if (card) {
+			holderEl.value = card.cardHolderName || '';
+			// Card number not pre-filled for security (matches PaymentFlat.tsx)
+			typeEl.value = card.cardType || 'VISA';
+			monthEl.value = String(card.expiryMonth || 1);
+			yearEl.value = String(card.expiryYear || now.getFullYear());
+			addrEl.value = card.billingAddress || '';
+			cityEl.value = card.billingCity || '';
+			stateEl.value = card.billingState || '';
+			zipEl.value = card.billingZip || '';
+			countryEl.value = card.billingCountry || 'USA';
+			isDefaultEl.checked = !!card.isDefault;
+			isActiveEl.checked = card.isActive !== false;
+		} else {
+			typeEl.value = 'VISA';
+			monthEl.value = String(now.getMonth() + 1);
+			yearEl.value = String(now.getFullYear());
+			countryEl.value = 'USA';
+			isActiveEl.checked = true;
+		}
+
+		// Error
+		const errEl = DOM.append(body, DOM.$('div'));
+		errEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;padding:6px 10px;background:rgba(244,135,113,0.1);border:1px solid rgba(244,135,113,0.3);border-radius:4px;display:none;';
+
+		// Footer
+		const footer = DOM.append(overlay, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:4px;cursor:pointer;font-size:13px;';
+		cancelBtn.addEventListener('click', close);
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = card ? 'Update' : 'Save';
+		saveBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+
+		saveBtn.addEventListener('click', async () => {
+			errEl.style.display = 'none';
+			const holder = holderEl.value.trim();
+			const num = numberEl.value.trim();
+			const cvv = cvvEl.value.trim();
+			if (!holder) { errEl.textContent = 'Card holder name is required.'; errEl.style.display = ''; return; }
+			if (!card && !num) { errEl.textContent = 'Card number is required.'; errEl.style.display = ''; return; }
+			if (!card && !cvv) { errEl.textContent = 'CVV is required.'; errEl.style.display = ''; return; }
+
+			const payload: Record<string, unknown> = {
+				cardHolderName: holder,
+				cardType: typeEl.value,
+				expiryMonth: Number(monthEl.value),
+				expiryYear: Number(yearEl.value),
+				billingAddress: addrEl.value.trim() || undefined,
+				billingCity: cityEl.value.trim() || undefined,
+				billingState: stateEl.value.trim() || undefined,
+				billingZip: zipEl.value.trim() || undefined,
+				billingCountry: countryEl.value.trim() || 'USA',
+				isDefault: isDefaultEl.checked,
+				isActive: isActiveEl.checked,
+			};
+			if (num) { payload['cardNumber'] = num; }
+			if (cvv) { payload['cvv'] = cvv; }
+
+			saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+			try {
+				const url = card ? `/api/credit-cards/${card.id}` : '/api/credit-cards';
+				const method = card ? 'PUT' : 'POST';
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (res.ok) {
+					close();
+					onSaved();
+				} else {
+					const errData = await res.json().catch(() => ({})) as Record<string, string>;
+					errEl.textContent = errData['message'] || `Error ${res.status}`;
+					errEl.style.display = '';
+				}
+			} catch {
+				errEl.textContent = 'Failed to save. Please try again.';
+				errEl.style.display = '';
+			}
+			saveBtn.disabled = false; saveBtn.textContent = card ? 'Update' : 'Save';
+		});
+	}
 
 	private readonly _plansConfig: ClinicalEditorConfig = {
 		title: 'Payment Plans', apiPath: '/api/payments/plans',
@@ -2686,6 +3057,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		actions: [],
 	};
 
+	// Thin stub used only when payView === 'methods' to satisfy the abstract
+	// config getter — actual rendering is done by _loadAndRenderCards().
+	private readonly _methodsConfig: ClinicalEditorConfig = {
+		title: 'Payment Methods', apiPath: '/api/credit-cards',
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+	};
+
 	// @ts-ignore — override abstract readonly with getter
 	protected get config(): ClinicalEditorConfig {
 		switch (this.payView) {
@@ -2693,6 +3071,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			case 'plans': return this._plansConfig;
 			case 'ledger': return this._ledgerConfig;
 			default: return this._transactionsConfig;
+		}
+	}
+
+	protected override _resetAndReload(): void {
+		if (this.payView === 'methods') {
+			this._loadAndRenderCards();
+		} else {
+			super._resetAndReload();
 		}
 	}
 

@@ -28,7 +28,7 @@ interface FieldSection { key: string; title: string; columns: number; visible: b
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean }
+interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[] }
 interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -1026,13 +1026,23 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		tabKey: 'education',
 		sections: [
 			{
-				key: 'details', title: 'Education Assignment', columns: 3, visible: true, collapsible: false, fields: [
-					// materialId picks an existing material from the catalog. The backend's
-					// PatientEducationService.assign requires it (else "id must not be null").
-					{ key: 'materialId', label: 'Education Material', type: 'lookup', required: true, placeholder: 'Search materials…', lookupConfig: { endpoint: '/api/education/materials', displayField: 'title', valueField: 'id' } },
-					{ key: 'materialTitle', label: 'Material Title', type: 'text', required: false, placeholder: 'Auto-filled from material' },
+				key: 'details', title: 'Patient Education', columns: 2, visible: true, collapsible: false, fields: [
+					// materialId: 'search' type lets the user pick an existing education material.
+					// The save handler posts to /api/patient-education-assignments/{materialId}
+					// so this value becomes the path variable — required by the backend.
+					{ key: 'materialId', label: 'Topic / Title', type: 'search', required: true, placeholder: 'Search topic / title…', apiPath: '/api/education/materials', relatedDisplayFields: ['title'], relatedField: 'materialTitle' },
 					{
-						key: 'materialCategory', label: 'Category', type: 'select', options: [
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Select Status…', value: '' },
+							{ label: 'Assigned', value: 'assigned' },
+							{ label: 'Viewed', value: 'viewed' },
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Dismissed', value: 'dismissed' },
+						]
+					},
+					{
+						key: 'category', label: 'Category', type: 'select', options: [
+							{ label: 'Select Category…', value: '' },
 							{ label: 'Disease Management', value: 'disease-management' },
 							{ label: 'Medication', value: 'medication' },
 							{ label: 'Procedure', value: 'procedure' },
@@ -1042,35 +1052,42 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
+					{ key: 'dateProvided', label: 'Date Provided', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{
-						key: 'materialContentType', label: 'Content Type', type: 'select', options: [
-							{ label: 'Article', value: 'article' },
+						key: 'deliveryMethod', label: 'Delivery Method', type: 'select', options: [
+							{ label: 'Select Delivery Method…', value: '' },
+							{ label: 'In Person', value: 'in_person' },
+							{ label: 'Written', value: 'written' },
 							{ label: 'Video', value: 'video' },
-							{ label: 'PDF', value: 'pdf' },
-							{ label: 'Handout', value: 'handout' },
-							{ label: 'Link', value: 'link' },
+							{ label: 'Online', value: 'online' },
+							{ label: 'Phone', value: 'phone' },
 						]
 					},
-					{ key: 'assignedBy', label: 'Assigned By', type: 'text', placeholder: 'Provider name' },
-					// Default Assigned Date to today so the form satisfies its
-					// required validator without the user clicking the date picker.
-					{ key: 'assignedDate', label: 'Assigned Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'dueDate', label: 'Due Date', type: 'date' },
-					// URL link is required for "Link" content type — the EHR-UI
-					// shows it on the assignment form. Stored alongside the
-					// existing materialContentType select.
-					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://...', colSpan: 3, localOnly: true },
+					{ key: 'educator', label: 'Educator', type: 'search', placeholder: 'Search educator…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+					{ key: 'content', label: 'Content / Summary', type: 'textarea', placeholder: 'Enter content / summary…', colSpan: 2 },
+					{ key: 'reasonCondition', label: 'Reason / Condition', type: 'text', placeholder: 'Enter reason / condition…' },
 					{
-						key: 'status', label: 'Status', type: 'select', required: true, options: [
-							{ label: 'Assigned', value: 'assigned' },
-							{ label: 'Viewed', value: 'viewed' },
-							{ label: 'Completed', value: 'completed' },
-							{ label: 'Dismissed', value: 'dismissed' },
+						key: 'language', label: 'Language', type: 'select', options: [
+							{ label: 'Select Language…', value: '' },
+							{ label: 'English', value: 'english' },
+							{ label: 'Spanish', value: 'spanish' },
+							{ label: 'French', value: 'french' },
+							{ label: 'Mandarin', value: 'mandarin' },
+							{ label: 'Arabic', value: 'arabic' },
+							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
-					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Notes', colSpan: 3 },
-					{ key: 'patientFeedback', label: 'Patient Feedback', type: 'textarea', placeholder: 'Feedback from the patient', colSpan: 3 },
+					{
+						key: 'readingLevel', label: 'Reading Level', type: 'select', options: [
+							{ label: 'Select Reading Level…', value: '' },
+							{ label: '3rd Grade', value: '3rd' },
+							{ label: '5th Grade', value: '5th' },
+							{ label: '8th Grade', value: '8th' },
+							{ label: 'High School', value: 'high_school' },
+							{ label: 'College', value: 'college' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes…', colSpan: 2 },
 				],
 			},
 		],
@@ -1718,8 +1735,12 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'encounter-details', title: 'Encounter', columns: 2, visible: true, collapsible: false, fields: [
+					// Always put patient-search first so the deduplication in the
+					// patientPrefillTabs path promotes this one and strips any
+					// duplicate `patient` field the backend tab_field_config sends.
+					{ key: 'patient', label: 'Patient', type: 'patient-search', required: true, placeholder: 'Search patient' },
 					{
-						key: 'type', label: 'Visit Type', type: 'select', required: true, options: [
+						key: 'type', label: 'Encounter Type', type: 'select', required: true, options: [
 							{ label: 'Ambulatory', value: 'AMB' },
 							{ label: 'Emergency', value: 'EMER' },
 							{ label: 'Home Health', value: 'HH' },
@@ -1951,16 +1972,25 @@ export class PatientChartEditor extends EditorPane {
 			safe('/api/locations?size=500'),
 		]);
 		const addProvider = (p: Record<string, unknown>) => {
-			const id = String(p.id ?? p.fhirId ?? '');
-			const first = String(p.firstName ?? '').trim();
-			const last = String(p.lastName ?? '').trim();
-			const name = (`${first} ${last}`.trim()) || String(p.displayName ?? p.name ?? p.fullName ?? '').trim();
-			if (id && name) { this._providerNameById.set(id, name); }
+			const id = String(p.id ?? p.fhirId ?? p.providerId ?? p.practitionerId ?? '');
+			const prefix = (p as Record<string, Record<string, unknown>>).identification;
+			const first = String(prefix?.firstName ?? p.firstName ?? p['identification.firstName'] ?? '').trim();
+			const last = String(prefix?.lastName ?? p.lastName ?? p['identification.lastName'] ?? '').trim();
+			const name = (`${first} ${last}`.trim()) || String(p.displayName ?? p.name ?? p.fullName ?? p.username ?? '').trim();
+			if (id && name) {
+				this._providerNameById.set(id, name);
+				this._providerNameById.set(`Practitioner/${id}`, name);
+				this._providerNameById.set(`PractitionerRole/${id}`, name);
+			}
 		};
 		const addOrg = (o: Record<string, unknown>) => {
-			const id = String(o.id ?? o.fhirId ?? '');
-			const name = String(o.name ?? o.organizationName ?? o.payerName ?? o.companyName ?? '').trim();
-			if (id && name) { this._orgNameById.set(id, name); }
+			const id = String(o.id ?? o.fhirId ?? o.organizationId ?? o.insurerId ?? o.payerId ?? o.companyId ?? '');
+			const name = String(o.name ?? o.organizationName ?? o.payerName ?? o.companyName ?? o.insuranceName ?? o.displayName ?? o.insuranceCompanyName ?? '').trim();
+			if (id && name) {
+				this._orgNameById.set(id, name);
+				// Also index the FHIR-prefixed form so "Organization/5213" resolves directly.
+				this._orgNameById.set(`Organization/${id}`, name);
+			}
 		};
 		for (const p of providers) { addProvider(p); }
 		for (const p of providersFhir) { addProvider(p); }
@@ -2207,7 +2237,7 @@ export class PatientChartEditor extends EditorPane {
 										...f,
 										label: f.label || 'Patient',
 										type: 'patient-search',
-										placeholder: 'Search Patient',
+										placeholder: 'Search patient',
 										required: true,
 										defaultValue: this.patientName || this.patientId,
 									});
@@ -2226,7 +2256,7 @@ export class PatientChartEditor extends EditorPane {
 												key: 'patientId',
 												label: 'Patient',
 												type: 'patient-search',
-												placeholder: 'Search Patient',
+												placeholder: 'Search patient',
 												required: true,
 												defaultValue: this.patientName || this.patientId,
 											},
@@ -2236,20 +2266,18 @@ export class PatientChartEditor extends EditorPane {
 									: s);
 							}
 						}
-						// Documents: drop ALL backend attachment-shaped fields except
-						// the local `attachment` file picker. The previous filter
-						// only stripped `fileUrl` and the new dialog showed
-						// "ATTACHMENT" twice — once beside AUTHOR (backend `content`
-						// / `data`) and once below (local picker). The local
-						// `localOnly: true` attachment is appended afterwards.
+						// Documents: drop ALL backend attachment-shaped fields AND any
+						// field rendered as type 'file'. Only the localOnly attachment
+						// picker (appended below) should survive, avoiding duplicates.
 						if (tab.key === 'documents') {
 							const dupAttachKeys = new Set([
 								'fileUrl', 'attachment', 'content', 'data', 'fileData', 'fileContent',
 								'url', 'documentUrl', 'attachmentUrl', 'fileBase64', 'documentData',
+								'file', 'fileContent', 'fileAttachment', 'contentData',
 							]);
 							sections = sections.map(s => ({
 								...s,
-								fields: s.fields.filter(f => !dupAttachKeys.has(f.key)),
+								fields: s.fields.filter(f => !dupAttachKeys.has(f.key) && f.type !== 'file'),
 							}));
 						}
 						// Per-field overlays: backend tab_field_config often omits the
@@ -3346,34 +3374,16 @@ export class PatientChartEditor extends EditorPane {
 				saveBtn.style.display = 'none';
 				cancelBtn.style.display = 'none';
 			});
+		} else if (tab.key === 'payment') {
+			// Financial > Payment: render credit-card grid matching ciyex-ehr-ui PaymentFlat
+			this._renderPatientCreditCards(content, actionSlot);
 		} else {
 			// List tab: show "+ Add" unless the tab is read-only (ledgers, system reports, etc.).
 			if (!tab.readOnly) {
-				// Payment tab gets the EHR-UI's two-button bar — Post Payment
-				// (insurance / ERA payment posting) vs. Collect Payment
-				// (patient-side cash / card collection). Both open the same
-				// add-record form but pre-select the matching `method` so the
-				// downstream invoice category lines up. The test team flagged
-				// the missing two-button posture as "completely different"
-				// from the web UI.
-				if (tab.key === 'payment') {
-					const postBtn = DOM.append(actionSlot, DOM.$('button'));
-					postBtn.textContent = '+ Post Payment';
-					postBtn.title = 'Apply an insurance or ERA payment to a claim';
-					postBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-					postBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config, { method: 'insurance', status: 'posted' }));
-
-					const collectBtn = DOM.append(actionSlot, DOM.$('button'));
-					collectBtn.textContent = '+ Collect Payment';
-					collectBtn.title = 'Record a patient-side cash / card payment';
-					collectBtn.style.cssText = 'padding:4px 10px;margin-left:6px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background);';
-					collectBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config, { method: 'credit-card', status: 'posted' }));
-				} else {
-					const addBtn = DOM.append(actionSlot, DOM.$('button'));
-					addBtn.textContent = '+ Add';
-					addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-					addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
-				}
+				const addBtn = DOM.append(actionSlot, DOM.$('button'));
+				addBtn.textContent = '+ Add';
+				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+				addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
 			}
 
 			this._renderListWithFilters(content, tab, config, data);
@@ -3428,6 +3438,375 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Resolved', value: 'resolved' },
 				];
 		}
+	}
+	// allow-any-unicode-next-line
+	// ── Financial > Payment — credit-card grid (matches ciyex-ehr-ui PaymentFlat) ──
+
+	private _chartCards: Array<Record<string, unknown>> = [];
+	private _chartCardFormOverlay: HTMLElement | null = null;
+	private _chartCardFormBackdrop: HTMLElement | null = null;
+
+	private _cardTypeBadge(type: string): string {
+		const t = (type || '').toUpperCase();
+		if (t.includes('VISA')) { return 'VISA'; }
+		if (t.includes('MASTER')) { return 'MC'; }
+		if (t.includes('AMEX') || t.includes('AMERICAN')) { return 'AMEX'; }
+		if (t.includes('DISCOVER')) { return 'DISC'; }
+		return t.slice(0, 4) || '????';
+	}
+
+	private _isExpired(card: Record<string, unknown>): boolean {
+		if (card['isExpired']) { return true; }
+		const now = new Date();
+		const m = Number(card['expiryMonth'] ?? 0);
+		const y = Number(card['expiryYear'] ?? 0);
+		return y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth() + 1);
+	}
+
+	private async _renderPatientCreditCards(container: HTMLElement, actionSlot: HTMLElement): Promise<void> {
+		DOM.clearNode(container);
+		DOM.clearNode(actionSlot);
+
+		// "+ Add Card" in the action slot
+		const addBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Card';
+		addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+
+		// Search bar
+		const filterBar = DOM.append(container, DOM.$('div'));
+		filterBar.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:14px;';
+		const searchEl = DOM.append(filterBar, DOM.$('input')) as HTMLInputElement;
+		searchEl.placeholder = 'Search cards…';
+		searchEl.style.cssText = 'flex:1;max-width:280px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:5px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+
+		// Card grid
+		const grid = DOM.append(container, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;';
+
+		const renderGrid = (q = '') => {
+			DOM.clearNode(grid);
+			const filtered = this._chartCards.filter(c => {
+				if (!q) { return true; }
+				const lq = q.toLowerCase();
+				return (String(c['cardHolderName'] || '')).toLowerCase().includes(lq)
+					|| (String(c['cardType'] || '')).toLowerCase().includes(lq)
+					|| (String(c['maskedCardNumber'] || '')).toLowerCase().includes(lq)
+					|| (String(c['billingCity'] || '')).toLowerCase().includes(lq);
+			});
+
+			if (filtered.length === 0) {
+				const empty = DOM.append(grid, DOM.$('div'));
+				empty.style.cssText = 'grid-column:1/-1;text-align:center;padding:40px;color:var(--vscode-descriptionForeground);font-size:13px;';
+				empty.textContent = 'No payment methods on file.';
+				return;
+			}
+
+			for (const card of filtered) {
+				const expired = this._isExpired(card);
+				const inactive = card['isActive'] === false;
+				const isDefault = !!card['isDefault'];
+
+				let border: string; let bg: string; let opacity = '1';
+				if (expired) { border = '#fca5a5'; bg = 'rgba(254,202,202,0.10)'; }
+				else if (inactive) { border = 'var(--vscode-editorWidget-border,#555)'; bg = 'rgba(128,128,128,0.06)'; opacity = '0.60'; }
+				else if (isDefault) { border = '#3b82f6'; bg = 'rgba(59,130,246,0.08)'; }
+				else { border = 'var(--vscode-editorWidget-border,#555)'; bg = 'var(--vscode-editor-background)'; }
+
+				const cardEl = DOM.append(grid, DOM.$('div'));
+				cardEl.style.cssText = `border:1.5px solid ${border};border-radius:10px;padding:12px 14px;background:${bg};opacity:${opacity};display:flex;flex-direction:column;gap:7px;`;
+
+				// Header: icon + type badge + status badges
+				const hdr = DOM.append(cardEl, DOM.$('div'));
+				hdr.style.cssText = 'display:flex;align-items:center;gap:7px;flex-wrap:wrap;';
+				const icon = DOM.append(hdr, DOM.$('span'));
+				// allow-any-unicode-next-line
+				icon.textContent = '💳';
+				icon.style.cssText = 'font-size:18px;line-height:1;';
+				const typeBadge = DOM.append(hdr, DOM.$('span'));
+				typeBadge.textContent = this._cardTypeBadge(String(card['cardType'] || ''));
+				typeBadge.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;background:var(--vscode-badge-background,#4d4d4d);color:var(--vscode-badge-foreground,#fff);';
+				if (isDefault) {
+					const db = DOM.append(hdr, DOM.$('span'));
+					db.textContent = 'Default';
+					db.style.cssText = 'font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#3b82f6;margin-left:auto;';
+				}
+				if (inactive) {
+					const ib = DOM.append(hdr, DOM.$('span'));
+					ib.textContent = 'Inactive';
+					ib.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(128,128,128,0.15);color:var(--vscode-descriptionForeground);margin-left:auto;';
+				}
+
+				// Masked number
+				const numEl = DOM.append(cardEl, DOM.$('div'));
+				numEl.textContent = String(card['maskedCardNumber'] || '•••• •••• •••• ****');
+				numEl.style.cssText = 'font-size:13px;font-weight:600;letter-spacing:2px;color:var(--vscode-foreground);font-family:monospace;';
+
+				// Holder name
+				const holderEl = DOM.append(cardEl, DOM.$('div'));
+				holderEl.textContent = String(card['cardHolderName'] || '');
+				holderEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);';
+
+				// Expiry
+				const mm = String(card['expiryMonth'] || 1).padStart(2, '0');
+				const yy = String(card['expiryYear'] || new Date().getFullYear());
+				const expRow = DOM.append(cardEl, DOM.$('div'));
+				expRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--vscode-descriptionForeground);';
+				expRow.textContent = `Expires ${mm}/${yy}`;
+				if (expired) {
+					const et = DOM.append(expRow, DOM.$('span'));
+					et.textContent = 'EXPIRED';
+					et.style.cssText = 'font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(239,68,68,0.15);color:#ef4444;letter-spacing:0.5px;';
+				}
+
+				// Billing city/state/zip
+				const billing = [card['billingCity'], card['billingState'], card['billingZip']].filter(Boolean).join(', ');
+				if (billing) {
+					const billEl = DOM.append(cardEl, DOM.$('div'));
+					billEl.textContent = billing;
+					billEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+				}
+
+				// Actions row
+				const acts = DOM.append(cardEl, DOM.$('div'));
+				acts.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:2px;flex-wrap:wrap;';
+
+				if (!isDefault && !inactive) {
+					const defBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+					defBtn.textContent = 'Set Default';
+					defBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#3b82f6;padding:0;font-weight:500;';
+					defBtn.addEventListener('click', async () => {
+						try {
+							await this.apiService.fetch(`/api/credit-cards/${card['id']}/patient/${this.patientId}/set-default`, { method: 'PUT' });
+							await this._reloadChartCards();
+							renderGrid(searchEl.value);
+						} catch { /* ignore */ }
+					});
+				}
+
+				const editBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+				editBtn.textContent = 'Edit';
+				editBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:var(--vscode-descriptionForeground);padding:0;';
+				editBtn.addEventListener('click', () => this._openChartCardForm(card, async () => { await this._reloadChartCards(); renderGrid(searchEl.value); }));
+
+				if (!inactive) {
+					const deactBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+					deactBtn.textContent = 'Deactivate';
+					deactBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#f97316;padding:0;';
+					deactBtn.addEventListener('click', async () => {
+						if (!DOM.getActiveWindow().confirm('Deactivate this card?')) { return; }
+						try {
+							await this.apiService.fetch(`/api/credit-cards/${card['id']}/deactivate`, { method: 'PUT' });
+							await this._reloadChartCards();
+							renderGrid(searchEl.value);
+						} catch { /* ignore */ }
+					});
+				}
+
+				const delBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+				delBtn.textContent = 'Delete';
+				delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;color:#ef4444;padding:0;margin-left:auto;';
+				delBtn.addEventListener('click', async () => {
+					if (!DOM.getActiveWindow().confirm('Delete this payment method?')) { return; }
+					try {
+						await this.apiService.fetch(`/api/credit-cards/${card['id']}`, { method: 'DELETE' });
+						this._chartCards = this._chartCards.filter(c => c['id'] !== card['id']);
+						renderGrid(searchEl.value);
+					} catch { /* ignore */ }
+				});
+			}
+		};
+
+		searchEl.addEventListener('input', () => renderGrid(searchEl.value));
+		addBtn.addEventListener('click', () => this._openChartCardForm(null, async () => { await this._reloadChartCards(); renderGrid(searchEl.value); }));
+
+		// Initial load
+		const loadingEl = DOM.append(grid, DOM.$('div'));
+		loadingEl.style.cssText = 'grid-column:1/-1;text-align:center;padding:32px;color:var(--vscode-descriptionForeground);font-size:12px;';
+		loadingEl.textContent = 'Loading…';
+		await this._reloadChartCards();
+		renderGrid();
+	}
+
+	private async _reloadChartCards(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`/api/credit-cards/patient/${this.patientId}?page=0&size=200`);
+			if (res.ok) {
+				const data = await res.json();
+				this._chartCards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
+			} else {
+				this._chartCards = [];
+			}
+		} catch { this._chartCards = []; }
+	}
+
+	private _openChartCardForm(card: Record<string, unknown> | null, onSaved: () => void): void {
+		this._chartCardFormOverlay?.remove();
+		this._chartCardFormBackdrop?.remove();
+
+		const doc = DOM.getActiveWindow().document;
+		const backdrop = doc.createElement('div');
+		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
+		doc.body.appendChild(backdrop);
+		this._chartCardFormBackdrop = backdrop;
+
+		const overlay = doc.createElement('div');
+		overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:10000;width:540px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
+		doc.body.appendChild(overlay);
+		this._chartCardFormOverlay = overlay;
+
+		const close = () => { overlay.remove(); backdrop.remove(); this._chartCardFormOverlay = null; this._chartCardFormBackdrop = null; };
+		backdrop.addEventListener('click', close);
+
+		// Header
+		const hdr = DOM.append(overlay, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const titleEl = DOM.append(hdr, DOM.$('h3'));
+		titleEl.textContent = card ? 'Edit Card' : 'Add Payment Method';
+		titleEl.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--vscode-foreground);';
+		const xBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		xBtn.textContent = '×';
+		xBtn.style.cssText = 'background:none;border:none;font-size:22px;cursor:pointer;color:var(--vscode-descriptionForeground);padding:0 4px;';
+		xBtn.addEventListener('click', close);
+
+		// Body
+		const body = DOM.append(overlay, DOM.$('div'));
+		body.style.cssText = 'flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;scrollbar-width:none;';
+
+		const makeInput = (label: string, span2 = false, opts: Partial<HTMLInputElement> = {}): HTMLInputElement => {
+			const g = DOM.append(body, DOM.$('div'));
+			if (span2) { g.style.gridColumn = 'span 2'; }
+			const lb = DOM.append(g, DOM.$('label'));
+			lb.textContent = label;
+			lb.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const el = DOM.append(g, DOM.$('input')) as HTMLInputElement;
+			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+			Object.assign(el, opts);
+			return el;
+		};
+		const makeSelect = (label: string, opts: Array<{ value: string; label: string }>, span2 = false): HTMLSelectElement => {
+			const g = DOM.append(body, DOM.$('div'));
+			if (span2) { g.style.gridColumn = 'span 2'; }
+			const lb = DOM.append(g, DOM.$('label'));
+			lb.textContent = label;
+			lb.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const el = DOM.append(g, DOM.$('select')) as HTMLSelectElement;
+			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;';
+			for (const o of opts) { const op = DOM.append(el, DOM.$('option')) as HTMLOptionElement; op.value = o.value; op.textContent = o.label; }
+			return el;
+		};
+		const makeCheckbox = (label: string, span2 = false): HTMLInputElement => {
+			const g = DOM.append(body, DOM.$('div'));
+			if (span2) { g.style.gridColumn = 'span 2'; }
+			g.style.cssText = 'display:flex;align-items:center;gap:8px;';
+			const el = DOM.append(g, DOM.$('input')) as HTMLInputElement;
+			el.type = 'checkbox';
+			el.style.accentColor = 'var(--vscode-focusBorder,#007fd4)';
+			const lb = DOM.append(g, DOM.$('label'));
+			lb.textContent = label;
+			lb.style.cssText = 'font-size:12px;color:var(--vscode-foreground);cursor:pointer;';
+			lb.addEventListener('click', () => { el.checked = !el.checked; });
+			return el;
+		};
+
+		const now = new Date();
+		const holderEl = makeInput('Card Holder Name *', true, { maxLength: 100, placeholder: 'John Doe' });
+		const numberEl = makeInput('Card Number *', true, { maxLength: 16, placeholder: '1234567890123456' });
+		numberEl.addEventListener('input', () => { numberEl.value = numberEl.value.replace(/\D/g, ''); });
+		const typeEl = makeSelect('Card Type', [
+			{ value: 'VISA', label: 'Visa' }, { value: 'MASTERCARD', label: 'Mastercard' },
+			{ value: 'AMEX', label: 'Amex' }, { value: 'DISCOVER', label: 'Discover' },
+		]);
+		const monthEl = makeSelect('Expiry Month *', Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') })));
+		const yearEl = makeSelect('Expiry Year *', Array.from({ length: 16 }, (_, i) => { const y = now.getFullYear() + i; return { value: String(y), label: String(y) }; }));
+		const cvvEl = makeInput('CVV *', false, { maxLength: 4, placeholder: '123' });
+		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, ''); });
+		const addrEl = makeInput('Billing Address', true, { placeholder: '123 Main St' });
+		const cityEl = makeInput('City', false, { maxLength: 50, placeholder: 'New York' });
+		const stateEl = makeInput('State', false, { maxLength: 50, placeholder: 'NY' });
+		const zipEl = makeInput('Zip Code', false, { maxLength: 10, placeholder: '10001' });
+		const countryEl = makeInput('Country', false, { maxLength: 50, placeholder: 'USA' });
+		const isDefaultEl = makeCheckbox('Set as default payment method', true);
+		const isActiveEl = makeCheckbox('Active', true);
+
+		// Pre-fill on edit
+		if (card) {
+			holderEl.value = String(card['cardHolderName'] || '');
+			typeEl.value = String(card['cardType'] || 'VISA');
+			monthEl.value = String(card['expiryMonth'] || 1);
+			yearEl.value = String(card['expiryYear'] || now.getFullYear());
+			addrEl.value = String(card['billingAddress'] || '');
+			cityEl.value = String(card['billingCity'] || '');
+			stateEl.value = String(card['billingState'] || '');
+			zipEl.value = String(card['billingZip'] || '');
+			countryEl.value = String(card['billingCountry'] || 'USA');
+			isDefaultEl.checked = !!card['isDefault'];
+			isActiveEl.checked = card['isActive'] !== false;
+		} else {
+			typeEl.value = 'VISA';
+			monthEl.value = String(now.getMonth() + 1);
+			yearEl.value = String(now.getFullYear());
+			countryEl.value = 'USA';
+			isActiveEl.checked = true;
+		}
+
+		// Error
+		const errEl = DOM.append(body, DOM.$('div'));
+		errEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;padding:6px 10px;background:rgba(244,135,113,0.1);border:1px solid rgba(244,135,113,0.3);border-radius:4px;display:none;';
+
+		// Footer
+		const footer = DOM.append(overlay, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:4px;cursor:pointer;font-size:13px;';
+		cancelBtn.addEventListener('click', close);
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = card ? 'Update' : 'Save';
+		saveBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+
+		saveBtn.addEventListener('click', async () => {
+			errEl.style.display = 'none';
+			const holder = holderEl.value.trim();
+			const num = numberEl.value.trim();
+			const cvv = cvvEl.value.trim();
+			if (!holder) { errEl.textContent = 'Card holder name is required.'; errEl.style.display = ''; return; }
+			if (!card && !num) { errEl.textContent = 'Card number is required.'; errEl.style.display = ''; return; }
+			if (!card && !cvv) { errEl.textContent = 'CVV is required.'; errEl.style.display = ''; return; }
+
+			const payload: Record<string, unknown> = {
+				patientId: this.patientId,
+				cardHolderName: holder,
+				cardType: typeEl.value,
+				expiryMonth: Number(monthEl.value),
+				expiryYear: Number(yearEl.value),
+				billingAddress: addrEl.value.trim() || undefined,
+				billingCity: cityEl.value.trim() || undefined,
+				billingState: stateEl.value.trim() || undefined,
+				billingZip: zipEl.value.trim() || undefined,
+				billingCountry: countryEl.value.trim() || 'USA',
+				isDefault: isDefaultEl.checked,
+				isActive: isActiveEl.checked,
+			};
+			if (num) { payload['cardNumber'] = num; }
+			if (cvv) { payload['cvv'] = cvv; }
+
+			saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+			try {
+				const url = card ? `/api/credit-cards/${card['id']}` : '/api/credit-cards';
+				const method = card ? 'PUT' : 'POST';
+				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				if (res.ok) { close(); onSaved(); }
+				else {
+					const errData = await res.json().catch(() => ({})) as Record<string, string>;
+					errEl.textContent = errData['message'] || `Error ${res.status}`;
+					errEl.style.display = '';
+				}
+			} catch {
+				errEl.textContent = 'Failed to save. Please try again.';
+				errEl.style.display = '';
+			}
+			saveBtn.disabled = false; saveBtn.textContent = card ? 'Update' : 'Save';
+		});
 	}
 
 	// List tab render: search + clinical-status filter + table, all applied client-side.
@@ -3574,7 +3953,9 @@ export class PatientChartEditor extends EditorPane {
 		backdrop.addEventListener('click', () => overlay.remove());
 
 		const panel = DOM.append(overlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;box-shadow:-8px 0 24px rgba(0,0,0,0.3);';
+		const _themeType = this.themeService.getColorTheme().type;
+		const _colorScheme = (_themeType === 'light' || _themeType === 'hcLight') ? 'light' : 'dark';
+		panel.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;z-index:1;box-shadow:-8px 0 24px rgba(0,0,0,0.3);color-scheme:${_colorScheme};`;
 
 		const hdrRow = DOM.append(panel, DOM.$('div'));
 		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 20px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
@@ -3969,11 +4350,19 @@ export class PatientChartEditor extends EditorPane {
 				// Org-level FHIR resources (Facility / Location) skip the
 				// /patient/{id} prefix — they are not patient-scoped.
 				const fhirPatient = isFhir && this._isPatientScoped(tab);
-				const url = isFhir
+				let url = isFhir
 					? (fhirPatient
 						? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
 						: (isEdit ? `${ep}/${recordId}` : ep))
 					: (isEdit ? `${ep}/${recordId}` : ep);
+				// Education assignments: backend expects POST /api/patient-education-assignments/{educationId}
+				// with patientId in the body — override the generic URL.
+				if (tab.key === 'education' && !isEdit) {
+					const matId = payload.materialId;
+					if (matId) {
+						url = `/api/patient-education-assignments/${matId}`;
+					}
+				}
 				const method = isEdit ? 'PUT' : 'POST';
 				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
 				if (res.ok) {
@@ -4256,9 +4645,10 @@ export class PatientChartEditor extends EditorPane {
 		}
 
 		// Vitals: auto-calculate BMI = weight(kg) / (height(m))^2 whenever weight or height changes.
-		const weightInput = this._formInputs.get('weightKg') as HTMLInputElement | undefined;
-		const heightInput = this._formInputs.get('heightCm') as HTMLInputElement | undefined;
-		const bmiInput = this._formInputs.get('bmi') as HTMLInputElement | undefined;
+		// Try both the local key and common backend alias variants.
+		const weightInput = (this._formInputs.get('weightKg') ?? this._formInputs.get('weight') ?? this._formInputs.get('weightLbs')) as HTMLInputElement | undefined;
+		const heightInput = (this._formInputs.get('heightCm') ?? this._formInputs.get('height') ?? this._formInputs.get('heightIn')) as HTMLInputElement | undefined;
+		const bmiInput = (this._formInputs.get('bmi') ?? this._formInputs.get('bodyMassIndex')) as HTMLInputElement | undefined;
 		if (weightInput && heightInput && bmiInput) {
 			bmiInput.readOnly = true;
 			bmiInput.style.background = 'rgba(128,128,128,0.06)';
