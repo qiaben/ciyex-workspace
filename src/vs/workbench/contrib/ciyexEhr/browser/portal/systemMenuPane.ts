@@ -51,49 +51,49 @@ const SYSTEM_ITEMS: MenuItem[] = [
 //   then built-ins (Form Options / Display / Calendar Colors).
 // Each item opens the Settings Hub editor (`ciyex.openSettingsHub`) on the
 // matching tab so the right pane is the same form/list the EHR UI shows.
-const SETTINGS_ITEMS: MenuItem[] = [
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F3E5}', label: 'Practice', description: 'Practice info, contact, logo', command: 'ciyex.openSettingsHub', args: ['practice'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F3E2}', label: 'Facilities', description: 'Locations and facility records', command: 'ciyex.openSettingsHub', args: ['facilities'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1FA7A}', label: 'Providers', description: 'Practitioners and credentials', command: 'ciyex.openSettingsHub', args: ['providers'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F6E1}️', label: 'Insurance', description: 'Payer directory and coverage rules', command: 'ciyex.openSettingsHub', args: ['insurance'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F3EB}', label: 'Referral Practices', description: 'External practices for referrals', command: 'ciyex.openSettingsHub', args: ['referral-practices'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F464}', label: 'Referral Providers', description: 'External providers for referrals', command: 'ciyex.openSettingsHub', args: ['referral-providers'] },
-	// allow-any-unicode-next-line
-	{ icon: '#', label: 'Codes', description: 'ICD-10, CPT, HCPCS, CDT lookups', command: 'ciyex.openSettingsHub', args: ['codes'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F4BC}', label: 'Services', description: 'Service catalog and pricing', command: 'ciyex.openSettingsHub', args: ['services'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F4C4}', label: 'Template Documents', description: 'Document templates and merge fields', command: 'ciyex.openSettingsHub', args: ['template-documents'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F465}', label: 'Users', description: 'User accounts and access', command: 'ciyex.openSettingsHub', args: ['__users__'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F6E1}', label: 'Roles & Permissions', description: 'RBAC, FHIR scopes', command: 'ciyex.openSettingsHub', args: ['__roles__'] },
-	// allow-any-unicode-next-line
-	{ icon: '⚙', label: 'Form Options', description: 'Option lists for select / radio fields', command: 'ciyex.openSettingsHub', args: ['__form-options__'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F5A5}', label: 'Display', description: 'Theme, font size, layout preferences', command: 'ciyex.openSettingsHub', args: ['__display__'] },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F3A8}', label: 'Calendar Colors', description: 'Customize calendar appointment colors', command: 'ciyex.openSettingsHub', args: ['__calendar-colors__'] },
-];
+// const SETTINGS_ITEMS: MenuItem[] = [
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F3E5}', label: 'Practice', description: 'Practice info, contact, logo', command: 'ciyex.openSettingsHub', args: ['practice'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F3E2}', label: 'Facilities', description: 'Locations and facility records', command: 'ciyex.openSettingsHub', args: ['facilities'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1FA7A}', label: 'Providers', description: 'Practitioners and credentials', command: 'ciyex.openSettingsHub', args: ['providers'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F6E1}️', label: 'Insurance', description: 'Payer directory and coverage rules', command: 'ciyex.openSettingsHub', args: ['insurance'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F3EB}', label: 'Referral Practices', description: 'External practices for referrals', command: 'ciyex.openSettingsHub', args: ['referral-practices'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F464}', label: 'Referral Providers', description: 'External providers for referrals', command: 'ciyex.openSettingsHub', args: ['referral-providers'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '#', label: 'Codes', description: 'ICD-10, CPT, HCPCS, CDT lookups', command: 'ciyex.openSettingsHub', args: ['codes'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F4BC}', label: 'Services', description: 'Service catalog and pricing', command: 'ciyex.openSettingsHub', args: ['services'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F4C4}', label: 'Template Documents', description: 'Document templates and merge fields', command: 'ciyex.openSettingsHub', args: ['template-documents'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F465}', label: 'Users', description: 'User accounts and access', command: 'ciyex.openSettingsHub', args: ['__users__'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F6E1}', label: 'Roles & Permissions', description: 'RBAC, FHIR scopes', command: 'ciyex.openSettingsHub', args: ['__roles__'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '⚙', label: 'Form Options', description: 'Option lists for select / radio fields', command: 'ciyex.openSettingsHub', args: ['__form-options__'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F5A5}', label: 'Display', description: 'Theme, font size, layout preferences', command: 'ciyex.openSettingsHub', args: ['__display__'] },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F3A8}', label: 'Calendar Colors', description: 'Customize calendar appointment colors', command: 'ciyex.openSettingsHub', args: ['__calendar-colors__'] },
+// ];
 
-// allow-any-unicode-next-line
-// "Layout Settings" section — mirrors EHR Web UI /settings/layout-settings sidebar
-const LAYOUT_ITEMS: MenuItem[] = [
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F4CA}', label: 'Chart', description: 'Patient chart tabs and field mappings', command: 'ciyex.openLayoutSettings' },
-	// allow-any-unicode-next-line
-	{ icon: '☰', label: 'Menu', description: 'Sidebar navigation items', command: 'ciyex.openMenuConfig' },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F4CB}', label: 'Encounter', description: 'Encounter form sections (CC, HPI, ROS, Plan)', command: 'ciyex.openEncounterConfig' },
-	// allow-any-unicode-next-line
-	{ icon: '\u{1F310}', label: 'Portal', description: 'Patient portal — features, forms, navigation', command: 'ciyex.openPortalSettings' },
-];
+// // allow-any-unicode-next-line
+// // "Layout Settings" section — mirrors EHR Web UI /settings/layout-settings sidebar
+// const LAYOUT_ITEMS: MenuItem[] = [
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F4CA}', label: 'Chart', description: 'Patient chart tabs and field mappings', command: 'ciyex.openLayoutSettings' },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '☰', label: 'Menu', description: 'Sidebar navigation items', command: 'ciyex.openMenuConfig' },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F4CB}', label: 'Encounter', description: 'Encounter form sections (CC, HPI, ROS, Plan)', command: 'ciyex.openEncounterConfig' },
+// 	// allow-any-unicode-next-line
+// 	{ icon: '\u{1F310}', label: 'Portal', description: 'Patient portal — features, forms, navigation', command: 'ciyex.openPortalSettings' },
+// ];
 
 export class SystemMenuPane extends ViewPane {
 	static readonly ID = 'ciyex.system.menu';
@@ -134,8 +134,8 @@ export class SystemMenuPane extends ViewPane {
 			mainWindow.document.head.appendChild(style);
 		}
 		this._renderSection('System', SYSTEM_ITEMS);
-		this._renderSection('Settings', SETTINGS_ITEMS);
-		this._renderSection('Layout Settings', LAYOUT_ITEMS);
+		// this._renderSection('Settings', SETTINGS_ITEMS);
+		// this._renderSection('Layout Settings', LAYOUT_ITEMS);
 	}
 
 	private _renderSection(title: string, items: MenuItem[]): void {
