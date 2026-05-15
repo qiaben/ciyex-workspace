@@ -99,7 +99,7 @@ GET /api/update/{platform}/{quality}/{commit}
   - `win32-x64-user` — Windows user-mode installer (default)
   - `win32-x64` — Windows system-mode installer (also returns the user installer)
   - `win32-x64-archive` — Windows portable zip
-- `quality` — release channel. Always `stable` today.
+- `quality` — release channel. Always `oss` today (matches `VSCODE_QUALITY` in the build workflow).
 - `commit` — SHA of the running build (auto-injected by gulp at build time).
 
 Responses:

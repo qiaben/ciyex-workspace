@@ -67,7 +67,7 @@ export default {
 
 		const [, platform, quality, currentCommit] = match;
 
-		const allowedQualities = (env.ALLOWED_QUALITIES ?? 'stable').split(',').map(s => s.trim());
+		const allowedQualities = (env.ALLOWED_QUALITIES ?? 'oss,stable').split(',').map(s => s.trim());
 		if (!allowedQualities.includes(quality)) {
 			return NO_CONTENT;
 		}

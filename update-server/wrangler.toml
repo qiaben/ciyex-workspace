@@ -5,7 +5,7 @@ workers_dev = true
 
 [vars]
 GITHUB_REPO = "qiaben/ciyex-workspace"
-ALLOWED_QUALITIES = "stable"
+ALLOWED_QUALITIES = "oss,stable"
 
 # Bind to a custom domain after first deploy:
 #   wrangler deploy
