@@ -125,6 +125,51 @@ jobs:
             Move-Item ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe" "artifacts\CiyexWorkspaceSetup-x64-$Version.exe"
           }
 
+      - name: Generate update manifest
+        shell: pwsh
+        run: |
+          $Version = $env:APP_VERSION
+          $Tag = "v$Version-build.${{ github.run_number }}"
+          $BaseUrl = "https://github.com/${{ github.repository }}/releases/download/$Tag"
+
+          function Get-Sha256($path) {
+            if (-not (Test-Path $path)) { return $null }
+            return (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+          }
+
+          $installer = "artifacts/CiyexWorkspaceSetup-x64-$Version.exe"
+          $archive = "artifacts/CiyexWorkspace-win32-x64-$Version.zip"
+
+          $platforms = [ordered]@{}
+
+          if (Test-Path $installer) {
+            $platforms['win32-x64-user'] = [ordered]@{
+              url = "$BaseUrl/CiyexWorkspaceSetup-x64-$Version.exe"
+              sha256 = Get-Sha256 $installer
+            }
+            $platforms['win32-x64'] = [ordered]@{
+              url = "$BaseUrl/CiyexWorkspaceSetup-x64-$Version.exe"
+              sha256 = Get-Sha256 $installer
+            }
+          }
+          if (Test-Path $archive) {
+            $platforms['win32-x64-archive'] = [ordered]@{
+              url = "$BaseUrl/CiyexWorkspace-win32-x64-$Version.zip"
+              sha256 = Get-Sha256 $archive
+            }
+          }
+
+          $manifest = [ordered]@{
+            version = $Version
+            commit = "${{ github.sha }}"
+            buildNumber = [int]${{ github.run_number }}
+            publishedAt = [int][double]::Parse((Get-Date -UFormat %s))
+            platforms = $platforms
+          }
+
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path "artifacts/metadata.json" -Encoding utf8
+          Get-Content artifacts/metadata.json
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -148,6 +193,8 @@ jobs:
             1. Download `CiyexWorkspaceSetup-x64-${{ env.APP_VERSION }}.exe`
             2. Run the installer
             3. Launch "Ciyex Workspace" from Start Menu
+
+            > Already running an older build? Open Help → Check for Updates and click "Restart to Update". Auto-update polls every hour.
 
             ---
             Built from commit ${{ github.sha }}

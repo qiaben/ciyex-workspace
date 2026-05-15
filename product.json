@@ -32,6 +32,10 @@
 	"reportIssueUrl": "https://github.com/qiaben/ciyex-workspace/issues/new",
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "ciyex-workspace",
+	"updateUrl": "https://updates.ciyex.org",
+	"quality": "stable",
+	"downloadUrl": "https://github.com/qiaben/ciyex-workspace/releases/latest",
+	"win32VersionedUpdate": false,
 	"builtInExtensions": [],
 	"defaultChatAgent": {
 		"extensionId": "",

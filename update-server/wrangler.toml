@@ -1,0 +1,23 @@
+name = "ciyex-workspace-updates"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+GITHUB_REPO = "qiaben/ciyex-workspace"
+ALLOWED_QUALITIES = "stable"
+
+# Bind to a custom domain after first deploy:
+#   wrangler deploy
+#   wrangler deployments list
+# Then in the Cloudflare dashboard:
+#   Workers & Pages -> ciyex-workspace-updates -> Settings -> Domains & Routes
+#   Add Custom Domain: updates.ciyex.org
+#
+# Or uncomment below (requires the zone to be on this Cloudflare account):
+# routes = [
+#   { pattern = "updates.ciyex.org/*", zone_name = "ciyex.org" }
+# ]
+#
+# Set GITHUB_TOKEN as a secret to lift API rate limits:
+#   wrangler secret put GITHUB_TOKEN
