@@ -569,7 +569,8 @@ function _resolveSettingsTree(tocData: ITOCEntry<string>, allSettings: Set<ISett
 		children = tocData.children
 			.filter(child => child.hide !== true)
 			.map(child => _resolveSettingsTree(child, allSettings, filter, logService))
-			.filter(child => child.children?.length || child.settings?.length);
+			// Ciyex EHR: also keep command-only entries (no settings, no children).
+			.filter(child => child.children?.length || child.settings?.length || child.command);
 	}
 
 	let settings: ISetting[] | undefined;
@@ -584,7 +585,7 @@ function _resolveSettingsTree(tocData: ITOCEntry<string>, allSettings: Set<ISett
 		sortSettings(settings);
 	}
 
-	if (!children && !settings) {
+	if (!children && !settings && !tocData.command) {
 		throw new Error(`TOC node has no child groups or settings: ${tocData.id}`);
 	}
 
@@ -592,7 +593,8 @@ function _resolveSettingsTree(tocData: ITOCEntry<string>, allSettings: Set<ISett
 		id: tocData.id,
 		label: tocData.label,
 		children,
-		settings
+		settings,
+		command: tocData.command
 	};
 }
 
@@ -2464,6 +2466,13 @@ export class SettingsTreeFilter implements ITreeFilter<SettingsTreeElement> {
 				// For groups related to the category, skip the count check and recurse
 				// to let child settings be filtered
 				return TreeVisibility.Recurse;
+			}
+
+			// Ciyex EHR: command-bound groups have no settings of their own
+			// (they exist only to dispatch a command on focus), so the
+			// count-based visibility check would hide them. Always show them.
+			if (element.command) {
+				return true;
 			}
 
 			if (typeof element.count === 'number') {

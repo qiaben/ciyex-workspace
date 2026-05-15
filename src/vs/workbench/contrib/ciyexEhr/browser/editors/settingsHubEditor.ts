@@ -177,6 +177,15 @@ export class SettingsHubEditor extends EditorPane {
 	// on each re-render so we don't leak floating elements.
 	private _bodyAttached: Array<{ el: HTMLElement; cleanup: () => void }> = [];
 
+	// Ciyex EHR: when this hub is hosted inline inside the User Settings page,
+	// SettingsEditor2 installs an embed handler so sidebar/command clicks mount
+	// another editor inline rather than dispatching the command (which would
+	// open a new tab).
+	private ciyexEmbedHandler?: (commandId: string) => void;
+	setCiyexEmbedHandler(handler: ((commandId: string) => void) | undefined): void {
+		this.ciyexEmbedHandler = handler;
+	}
+
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
@@ -335,6 +344,10 @@ export class SettingsHubEditor extends EditorPane {
 			// Practice Settings / Menu Configuration / Layout Hub) instead
 			// of swapping the hub's right pane.
 			if (item.kind === 'command' && item.commandId) {
+				if (this.ciyexEmbedHandler) {
+					this.ciyexEmbedHandler(item.commandId);
+					return;
+				}
 				void this.commandService.executeCommand(item.commandId);
 				return;
 			}

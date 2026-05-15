@@ -50,7 +50,11 @@ import { IUserDataSyncEnablementService, IUserDataSyncService, SyncStatus } from
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { registerNavigableContainer } from '../../../browser/actions/widgetNavigationCommands.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { IEditorMemento, IEditorOpenContext, IEditorPane } from '../../../common/editor.js';
+import { EditorExtensions, IEditorMemento, IEditorOpenContext, IEditorPane } from '../../../common/editor.js';
+import { IEditorPaneRegistry } from '../../../browser/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { createCiyexInlineEditorInput } from './ciyexInlineEditors.js';
 import { IChatEntitlementService } from '../../../services/chat/common/chatEntitlementService.js';
 import { APPLICATION_SCOPES, IWorkbenchConfigurationService } from '../../../services/configuration/common/configuration.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
@@ -228,6 +232,16 @@ export class SettingsEditor2 extends EditorPane {
 	private settingsTreeScrollTop = 0;
 	private dimension!: DOM.Dimension;
 
+	// Ciyex EHR: CIYEX CONFIG entries (in the User Settings TOC) embed their
+	// editors inline in the right pane instead of opening as a new tab.
+	private ciyexEmbedContainer?: HTMLElement;
+	private ciyexEmbeddedPane?: EditorPane;
+	private ciyexEmbeddedInput?: EditorInput;
+	// Tracks which command's editor is currently embedded. Lets us detect
+	// "user re-clicked the parent TOC entry while a nested editor is shown"
+	// and re-mount the parent so they can navigate back.
+	private ciyexEmbeddedCommandId?: string;
+
 	private installedExtensionIds: string[] = [];
 	private dismissedExtensionSettings: string[] = [];
 
@@ -262,7 +276,9 @@ export class SettingsEditor2 extends EditorPane {
 		@IEditorProgressService private readonly editorProgressService: IEditorProgressService,
 		@IUserDataProfileService userDataProfileService: IUserDataProfileService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
-		@IChatEntitlementService private readonly chatEntitlementService: IChatEntitlementService
+		@IChatEntitlementService private readonly chatEntitlementService: IChatEntitlementService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IEnvironmentService private readonly environmentService: IEnvironmentService
 	) {
 		super(SettingsEditor2.ID, group, telemetryService, themeService, storageService);
 		this.searchDelayer = this._register(new Delayer(200));
@@ -966,9 +982,16 @@ export class SettingsEditor2 extends EditorPane {
 
 		this.tocTreeContainer = $('.settings-toc-container');
 		this.settingsTreeContainer = $('.settings-tree-container');
+		this.settingsTreeContainer.style.position = 'relative';
 
 		this.createTOC(this.tocTreeContainer);
 		this.createSettingsTree(this.settingsTreeContainer);
+
+		// Ciyex EHR: overlay container that hosts embedded Ciyex editors when a
+		// CIYEX CONFIG entry is selected in the TOC. Sits inside the same
+		// splitView pane as the settings tree and is shown/hidden as needed.
+		this.ciyexEmbedContainer = DOM.append(this.settingsTreeContainer, $('.ciyex-inline-editor-container'));
+		this.ciyexEmbedContainer.style.cssText = 'position:absolute;inset:0;display:none;overflow:auto;background:var(--vscode-editor-background);';
 
 		this.splitView = this._register(new SplitView(this.bodyContainer, {
 			orientation: Orientation.HORIZONTAL,
@@ -993,6 +1016,10 @@ export class SettingsEditor2 extends EditorPane {
 			layout: (width, _, height) => {
 				this.settingsTreeContainer.style.width = `${width}px`;
 				this.settingsTree.layout(height, width);
+				// Ciyex EHR: keep any embedded editor sized to the same pane.
+				if (this.ciyexEmbeddedPane && this.ciyexEmbedContainer?.style.display !== 'none') {
+					this.ciyexEmbeddedPane.layout(new DOM.Dimension(width, height ?? 0));
+				}
 			}
 		}, Sizing.Distribute, undefined, true);
 		this._register(this.splitView.onDidSashReset(() => {
@@ -1040,11 +1067,29 @@ export class SettingsEditor2 extends EditorPane {
 		this._register(this.tocTree.onDidChangeFocus(e => {
 			const element: SettingsTreeGroupElement | null = e.elements?.[0] ?? null;
 			if (this.tocFocusedElement === element) {
+				// Ciyex EHR: re-clicking the same TOC entry while a nested
+				// editor is embedded (e.g. clicked a card inside Layout
+				// Settings) should re-mount the parent hub so the user can
+				// navigate back without leaving the dialog.
+				if (element?.command && this.ciyexEmbeddedCommandId && this.ciyexEmbeddedCommandId !== element.command) {
+					this.embedCiyexEditor(element.command);
+				}
 				return;
 			}
 
 			this.tocFocusedElement = element;
 			this.tocTree.setSelection(element ? [element] : []);
+
+			// Ciyex EHR: command-bound entries (CIYEX CONFIG items surfaced in
+			// the User Settings page) embed their editor inline in the right
+			// pane instead of opening as a new tab.
+			if (element?.command) {
+				this.embedCiyexEditor(element.command);
+				return;
+			}
+
+			// Leaving a CIYEX CONFIG entry — restore the normal settings list.
+			this.disposeCiyexEmbeddedEditor();
 
 			// Filter to show only the selected category
 			if (this.viewState.categoryFilter !== element) {
@@ -1067,6 +1112,97 @@ export class SettingsEditor2 extends EditorPane {
 		this._register(this.tocTree.onDidDispose(() => {
 			this.tocTreeDisposed = true;
 		}));
+	}
+
+	// Ciyex EHR: mount a CIYEX CONFIG editor inline in the right pane.
+	// Each entry's command is mapped to an EditorInput by
+	// `createCiyexInlineEditorInput`; the matching EditorPane is instantiated
+	// against this settings editor's group and hosted in ciyexEmbedContainer.
+	private async embedCiyexEditor(commandId: string): Promise<void> {
+		if (!this.ciyexEmbedContainer) {
+			this.commandService.executeCommand(commandId);
+			return;
+		}
+
+		const input = createCiyexInlineEditorInput(commandId, this.instantiationService, this.environmentService);
+		if (!input) {
+			// Unknown command — fall back to opening as a new tab.
+			this.commandService.executeCommand(commandId);
+			return;
+		}
+
+		// Avoid re-mounting the same input on repeated focus events.
+		if (this.ciyexEmbeddedInput && this.ciyexEmbeddedInput.matches(input)) {
+			input.dispose();
+			return;
+		}
+
+		this.disposeCiyexEmbeddedEditor();
+
+		const paneRegistry = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
+		const descriptor = paneRegistry.getEditorPane(input);
+		if (!descriptor) {
+			input.dispose();
+			this.commandService.executeCommand(commandId);
+			return;
+		}
+
+		const pane = descriptor.instantiate(this.instantiationService, this.group);
+		this.ciyexEmbeddedPane = pane;
+		this.ciyexEmbeddedInput = input;
+		this.ciyexEmbeddedCommandId = commandId;
+
+		pane.create(this.ciyexEmbedContainer);
+
+		// Ciyex EHR: hub editors host their own nested editors when running in
+		// embedded mode (sidebar stays visible). For Settings hub we keep the
+		// older "re-embed via parent" behaviour because its sidebar entries
+		// switch tabs internally rather than mounting child editors.
+		const embeddable = pane as unknown as {
+			setCiyexEmbeddedMode?: (enabled: boolean) => void;
+			setCiyexEmbedHandler?: (handler: (commandId: string) => void) => void;
+		};
+		if (typeof embeddable.setCiyexEmbeddedMode === 'function') {
+			embeddable.setCiyexEmbeddedMode(true);
+		}
+		if (typeof embeddable.setCiyexEmbedHandler === 'function') {
+			embeddable.setCiyexEmbedHandler((nestedCommandId: string) => this.embedCiyexEditor(nestedCommandId));
+		}
+
+		// Hide the normal settings tree DOM, reveal our overlay.
+		const settingsTreeEl = this.settingsTree.getHTMLElement();
+		settingsTreeEl.style.display = 'none';
+		this.ciyexEmbedContainer.style.display = 'block';
+
+		try {
+			await pane.setInput(input, undefined, Object.create(null) as IEditorOpenContext, CancellationToken.None);
+			pane.setVisible(true);
+			const rect = this.ciyexEmbedContainer.getBoundingClientRect();
+			pane.layout(new DOM.Dimension(rect.width || this.dimension?.width || 800, rect.height || this.dimension?.height || 600));
+		} catch (err) {
+			this.logService.error('[SettingsEditor2] Failed to embed Ciyex editor', err as Error);
+		}
+	}
+
+	private disposeCiyexEmbeddedEditor(): void {
+		if (this.ciyexEmbeddedPane) {
+			try { this.ciyexEmbeddedPane.clearInput(); } catch { /* ignore */ }
+			try { this.ciyexEmbeddedPane.setVisible(false); } catch { /* ignore */ }
+			try { this.ciyexEmbeddedPane.dispose(); } catch { /* ignore */ }
+			this.ciyexEmbeddedPane = undefined;
+		}
+		if (this.ciyexEmbeddedInput) {
+			this.ciyexEmbeddedInput.dispose();
+			this.ciyexEmbeddedInput = undefined;
+		}
+		this.ciyexEmbeddedCommandId = undefined;
+		if (this.ciyexEmbedContainer) {
+			this.ciyexEmbedContainer.style.display = 'none';
+			DOM.clearNode(this.ciyexEmbedContainer);
+		}
+		if (this.settingsTree) {
+			this.settingsTree.getHTMLElement().style.display = '';
+		}
 	}
 
 	private applyFilter(filter: string) {

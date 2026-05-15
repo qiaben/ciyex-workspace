@@ -68,6 +68,9 @@ export class SettingsTreeGroupElement extends SettingsTreeElement {
 	label: string;
 	level: number;
 	isFirstGroup: boolean;
+	// Ciyex EHR: if set, focusing this group dispatches the command instead of
+	// filtering settings (used for CIYEX CONFIG entries in the User Settings).
+	command?: string;
 
 	private _childSettingKeys: Set<string> = new Set();
 	private _children: SettingsTreeGroupChild[] = [];
@@ -640,6 +643,7 @@ export class SettingsTreeModel implements IDisposable {
 		const depth = parent ? this.getDepth(parent) + 1 : 0;
 		const element = new SettingsTreeGroupElement(tocEntry.id, undefined, tocEntry.label, depth, false);
 		element.parent = parent;
+		element.command = tocEntry.command;
 
 		const children: SettingsTreeGroupChild[] = [];
 		if (tocEntry.settings) {
