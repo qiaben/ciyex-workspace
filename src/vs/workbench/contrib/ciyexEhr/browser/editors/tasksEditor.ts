@@ -459,7 +459,7 @@ export class TasksEditor extends EditorPane {
 		// against the form's intrinsic height. `overflow-y:auto` still
 		// scrolls when the form is taller than the viewport.
 		const panel = DOM.append(this.formOverlay, DOM.$('div'));
-		panel.style.cssText = 'position:relative;width:520px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px;z-index:1;display:flex;flex-direction:column;box-sizing:border-box;';
+		panel.style.cssText = 'position:relative;width:520px;max-width:95vw;height:100%;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);overflow-y:auto;padding:20px 20px 0;z-index:1;display:flex;flex-direction:column;scrollbar-width:none;';
 
 		// Header
 		const hdr = DOM.append(panel, DOM.$('div'));
@@ -654,7 +654,7 @@ export class TasksEditor extends EditorPane {
 		// the bottom — fills the empty gap that previously appeared under the
 		// buttons on short forms (Issue #6). flex-shrink:0 keeps the row
 		// fully visible even when the form scrolls.
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:auto;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:auto;padding:16px 0 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));';
 
 		// Delete button on the left, only shown for existing tasks
 		const leftGroup = DOM.append(btnRow, DOM.$('div'));

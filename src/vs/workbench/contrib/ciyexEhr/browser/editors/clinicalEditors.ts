@@ -585,7 +585,19 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'abnormalFlag', label: 'Flag', width: '70px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 			{ key: 'collectedDate', label: 'Collected', width: '110px' },
-			{ key: 'units', label: 'Units', width: '70px' },
+			{
+				key: 'signedAt', label: 'Signed', width: '90px', emptyLabel: 'Sign',
+				onClick: async (item, api, reload, dlg) => {
+					if (item.signedAt) { return; }
+					const r = await dlg.confirm({ message: 'Sign this lab result?', type: 'question', primaryButton: 'Sign' });
+					if (!r.confirmed) { return; }
+					await api.fetch(`/api/lab-results/${item.id}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ ...item, signedAt: new Date().toISOString() }),
+					});
+					reload();
+				},
+			},
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
@@ -602,7 +614,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 			},
 		],
 		cellRenderer: (key, value) => {
-			if (key === 'collectedDate' && typeof value === 'string') {
+			if ((key === 'collectedDate' || key === 'signedAt') && typeof value === 'string' && value) {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
 			}
 			if (key === 'abnormalFlag' && typeof value === 'string') {
@@ -641,31 +653,6 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
 		],
 		actions: [
-			{
-				// allow-any-unicode-next-line
-				label: 'Mark Final', icon: '\u{2705}', handler: async (item, api, reload, dlg) => {
-					if (String(item.status).toLowerCase() === 'final') { await dlg.info('Result is already Final.'); return; }
-					const r = await dlg.confirm({ message: 'Mark this result as Final?', type: 'question' });
-					if (!r.confirmed) { return; }
-					await api.fetch(`/api/lab-results/${item.id}`, {
-						method: 'PUT', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ ...item, status: 'final' }),
-					});
-					reload();
-				}
-			},
-			{
-				// allow-any-unicode-next-line
-				label: 'Flag Abnormal', icon: '\u{26A0}', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Abnormal flag', inputs: [{ placeholder: 'high / low / critical / abnormal' }] });
-					if (!res.confirmed || !res.values?.[0]?.trim()) { return; }
-					await api.fetch(`/api/lab-results/${item.id}`, {
-						method: 'PUT', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ ...item, abnormalFlag: res.values[0].trim().toLowerCase() }),
-					});
-					reload();
-				}
-			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab result?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-results/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
@@ -682,7 +669,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 		wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;width:100%;';
 
 		const sidebar = DOM.append(wrapper, DOM.$('.labs-sidebar'));
-		sidebar.style.cssText = 'width:220px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;display:flex;flex-direction:column;';
+		sidebar.style.cssText = 'width:220px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;display:flex;flex-direction:column;';
 
 		const sbHeader = DOM.append(sidebar, DOM.$('div'));
 		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;';
@@ -723,9 +710,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 		const main = DOM.append(wrapper, DOM.$('.labs-main'));
 		// Hide the vertical + horizontal scrollbars from the OS — the inner
 		// table already scrolls smoothly without the chunky bar (Issue #1, #2).
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;scrollbar-width:none;-ms-overflow-style:none;';
-		const hideStyle = DOM.append(main, DOM.$('style'));
-		hideStyle.textContent = '.labs-main::-webkit-scrollbar{display:none;width:0;height:0;}';
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
 		return main;
 	}
 
@@ -759,7 +744,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient by name...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			// Vaccine Information
-			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Influenza, inactivated' },
+			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Influenza, inactivated' },
 			{
 				key: 'cvxCode', label: 'CVX Code', type: 'search', required: true,
 				placeholder: 'Search CVX vaccine code...',
@@ -829,7 +814,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 				],
 			},
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-			{ key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'ABC123', aliases: ['lot'], validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{1,31}$', validationMessage: 'Lot Number must be 2-32 alphanumeric characters (no leading hyphen, no symbols, no spaces)', typingPattern: '^[A-Za-z0-9\\-]$' },
+			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'] },
 			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 			// Administration Details
 			{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
@@ -848,20 +833,13 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 					{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
 				]
 			},
-			{ key: 'doseNumber', label: 'Dose Number', type: 'number', required: true, placeholder: '1', validationPattern: '^[1-9]\\d?$', validationMessage: 'Dose Number must be a positive whole number between 1 and 99 (no negatives, no decimals)', minValue: 1, maxValue: 99 },
-			{ key: 'doseSeries', label: 'Dose Series', type: 'text', placeholder: '1 of 3 or booster' },
+			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1', minValue: 1, maxValue: 99 },
 			// Provider Information
 			{
-				key: 'administeredBy', label: 'Administered By', type: 'search', required: true,
+				key: 'administeredBy', label: 'Administered By', type: 'search',
 				placeholder: 'Search provider...', apiPath: '/api/providers',
 				relatedDisplayFields: ['firstName', 'lastName'],
 				aliases: ['provider', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
-			},
-			{
-				key: 'orderingProvider', label: 'Ordering Provider', type: 'search',
-				placeholder: 'Search provider...', apiPath: '/api/providers',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				aliases: ['orderedBy', 'orderingProviderName'],
 			},
 			// Status & Notes
 			{
@@ -870,9 +848,6 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 					{ label: 'Entered in Error', value: 'entered_in_error' },
 				], defaultValue: 'completed'
 			},
-			{ key: 'visDate', label: 'VIS Date', type: 'date' },
-			{ key: 'refusalReason', label: 'Refusal Reason', type: 'text', placeholder: 'Patient declined...' },
-			{ key: 'reaction', label: 'Reaction', type: 'text', placeholder: 'None observed' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 		],
 		actions: [
@@ -1742,9 +1717,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 		const main = DOM.append(wrapper, DOM.$('.education-main'));
 		// Issue #3, #4: hide both scrollbars on the Patient Education main
 		// area so the page mirrors the web ehr-ui's clean layout.
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:auto;scrollbar-width:none;-ms-overflow-style:none;';
-		const hideStyle = DOM.append(main, DOM.$('style'));
-		hideStyle.textContent = '.education-main::-webkit-scrollbar{display:none;width:0;height:0;}';
+		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
 		return main;
 	}
 
@@ -1929,20 +1902,12 @@ export class CodesEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['code', 'codeType', 'modifier', 'shortDescription', 'description', 'category', 'relateTo', 'id'],
 		editable: true,
 		refetchOnEdit: true,
-		// Columns mirror ciyex-ehr-ui CodesPage table:
-		// Code | Type | Modifier | Category | Description | Short Desc | Relate To | Active | Dx Rep | Serv Rep | Fee
 		columns: [
-			{ key: 'code', label: 'Code', width: '90px' },
-			{ key: 'codeType', label: 'Type', width: '70px' },
-			{ key: 'modifier', label: 'Modifier', width: '80px' },
-			{ key: 'category', label: 'Category', width: '110px' },
+			{ key: 'code', label: 'Code', width: '100px' },
+			{ key: 'codeType', label: 'Type', width: '80px' },
 			{ key: 'description', label: 'Description', width: '2fr' },
-			{ key: 'shortDescription', label: 'Short Desc', width: '1fr' },
-			{ key: 'relateTo', label: 'Relate To', width: '90px' },
-			{ key: 'active', label: 'Active', width: '70px' },
-			{ key: 'diagnosisReporting', label: 'Dx Rep', width: '65px' },
-			{ key: 'serviceReporting', label: 'Serv Rep', width: '70px' },
-			{ key: 'feeStandard', label: 'Fee', width: '70px' },
+			{ key: 'category', label: 'Category', width: '130px' },
+			{ key: 'active', label: 'Active', width: '80px' },
 		],
 		statusTabs: [
 			{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
@@ -2030,16 +1995,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		editable: true,
 		mergeOnEdit: true,
 		refetchOnEdit: true,
-		// Columns mirror ciyex-ehr-ui Inventory.tsx:
-		// Name | SKU | Stock | Min | Unit | Category | Location | Status
 		columns: [
-			{ key: 'name', label: 'Name', width: '1.5fr' },
-			{ key: 'sku', label: 'SKU', width: '110px' },
-			{ key: 'stockOnHand', label: 'Stock', width: '70px' },
-			{ key: 'minStock', label: 'Min', width: '60px' },
-			{ key: 'unit', label: 'Unit', width: '70px' },
+			{ key: 'name', label: 'Item', width: '1.5fr' },
+			{ key: 'supplierName', label: 'Supplier', width: '120px' },
 			{ key: 'categoryName', label: 'Category', width: '110px' },
-			{ key: 'locationName', label: 'Location', width: '110px' },
+			{ key: 'lotNumber', label: 'Lot', width: '90px' },
+			{ key: 'expirationDate', label: 'Expiry', width: '100px' },
+			{ key: 'stockOnHand', label: 'On Hand', width: '80px' },
+			{ key: 'locationName', label: 'Clinic', width: '100px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
@@ -2147,15 +2110,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by PO #, supplier...',
 		clientSideFilter: ['orderNumber', 'poNumber', 'supplierName', 'status', 'id'],
 		editable: true,
-		// Order: PO# | Supplier | Status | Date | Total | Lines (matches web app)
 		columns: [
 			{ key: 'orderNumber', label: 'PO #', width: '120px' },
-			{ key: 'supplierName', label: 'Supplier' },
+			{ key: 'supplierName', label: 'Supplier', width: '1.2fr' },
+			{ key: 'itemName', label: 'Item Name', width: '1fr' },
+			{ key: 'categoryName', label: 'Category', width: '110px' },
+			{ key: 'orderDate', label: 'Date', width: '100px' },
 			{ key: 'status', label: 'Status', width: '100px' },
-			{ key: 'orderDate', label: 'Order Date', width: '110px' },
-			{ key: 'expectedDate', label: 'Expected', width: '110px' },
-			{ key: 'totalCost', label: 'Total', width: '100px' },
-			{ key: 'totalItems', label: 'Lines', width: '70px' },
+			{ key: 'totalCost', label: 'Amount', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
@@ -2202,7 +2164,6 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		filterKey: 'isActive',
 		columns: [
 			{ key: 'name', label: 'Name', width: '1.5fr' },
-			{ key: 'contactName', label: 'Contact' },
 			{ key: 'phone', label: 'Phone', width: '130px' },
 			{ key: 'email', label: 'Email' },
 			{ key: 'isActive', label: 'Status', width: '90px' },
@@ -2296,11 +2257,12 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		filterKey: 'status',
 		columns: [
 			{ key: 'equipmentName', label: 'Equipment', width: '1.5fr' },
-			{ key: 'location', label: 'Location', width: '120px' },
+			{ key: 'category', label: 'Category', width: '110px' },
 			{ key: 'priority', label: 'Priority', width: '90px' },
+			{ key: 'location', label: 'Location', width: '110px' },
+			{ key: 'scheduledDate', label: 'Due', width: '100px' },
 			{ key: 'assignee', label: 'Assignee', width: '120px' },
-			{ key: 'scheduledDate', label: 'Scheduled', width: '110px' },
-			{ key: 'status', label: 'Status', width: '110px' },
+			{ key: 'status', label: 'Status', width: '100px' },
 		],
 		statusTabs: [
 			{ label: 'Scheduled', value: 'scheduled' },

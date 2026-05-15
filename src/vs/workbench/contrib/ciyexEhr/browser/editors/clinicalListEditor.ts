@@ -17,7 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 
-interface ColumnDef { key: string; label: string; width?: string }
+interface ColumnDef { key: string; label: string; width?: string; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
 interface ActionDef {
 	label: string;
@@ -273,12 +273,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		this.root = DOM.append(contentHost, DOM.$('.clinical-list-editor.ciyex-editor-root'));
 		// Outer container hides scrollbars by default; the inner content scrolls only
 		// when it actually overflows. Matches ciyex-ehr-ui where pages don't double-scroll.
-		this.root.style.cssText = 'height:100%;overflow:auto;background:var(--vscode-editor-background);position:relative;scrollbar-width:none;-ms-overflow-style:none;';
-		// Hide WebKit scrollbar on the root pane
-		const styleEl = DOM.append(this.root, DOM.$('style'));
-		styleEl.textContent = '.clinical-list-editor::-webkit-scrollbar{display:none;width:0;height:0;}';
+		this.root.style.cssText = 'height:100%;overflow:hidden;display:flex;flex-direction:column;background:var(--vscode-editor-background);position:relative;';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
-		this.contentEl.style.cssText = 'width:100%;padding:20px 24px;box-sizing:border-box;';
+		this.contentEl.style.cssText = 'flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;width:100%;padding:20px 24px;box-sizing:border-box;';
 	}
 
 	/**
@@ -594,11 +591,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// editor root.
 		const tbl = DOM.append(this.contentEl, DOM.$('div'));
 		tbl.className = 'cle-table-wrap';
-		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
-		// Override the global rule that hides horizontal scrollbars so users can
-		// see and use the scroll affordance on wide tables.
+		tbl.style.cssText = 'flex:1;min-height:0;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;';
 		const tblStyle = DOM.append(tbl, DOM.$('style'));
-		tblStyle.textContent = '.cle-table-wrap{scrollbar-width:thin;}.cle-table-wrap::-webkit-scrollbar{display:block;height:8px;}.cle-table-wrap::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background);border-radius:4px;}';
+		tblStyle.textContent = '.cle-table-wrap{scrollbar-width:none;-ms-overflow-style:none;}.cle-table-wrap::-webkit-scrollbar{display:none;width:0;height:0;}';
 		// `minmax(0,1fr)` lets flexible columns shrink below their content width.
 		// Without this, an overflowing cell on one row would expand its column and
 		// shift the others, so the header and data rows no longer aligned
@@ -615,7 +610,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Header
 		const hr = DOM.append(tbl, DOM.$('div'));
-		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);text-transform:uppercase;letter-spacing:0.3px;${tableMinW}`;
+		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,var(--vscode-editor-background));text-transform:uppercase;letter-spacing:0.3px;position:sticky;top:0;z-index:2;${tableMinW}`;
 		for (const c of cfg.columns) { DOM.append(hr, DOM.$('span')).textContent = c.label; }
 		if (cfg.actions || cfg.editable) { DOM.append(hr, DOM.$('span')).textContent = 'Actions'; }
 
@@ -668,13 +663,24 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				} else {
 					displayVal = String(rawVal ?? '');
 				}
-				cell.textContent = displayVal;
-				cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-				const lowerKey = c.key.toLowerCase();
-				const v = displayVal;
-				if (lowerKey === 'status' || lowerKey === 'priority' || lowerKey === 'severity' || lowerKey === 'urgency') {
-					const clr = STATUS_COLORS[v.toLowerCase().replace(/\s+/g, '_')] || '#6b7280';
-					cell.style.cssText += `color:${clr};font-weight:500;text-transform:capitalize;`;
+				if (c.onClick) {
+					const isEmpty = !rawVal || String(rawVal).trim() === '';
+					const linkText = isEmpty ? (c.emptyLabel || '') : displayVal;
+					cell.textContent = linkText;
+					cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+					if (linkText) {
+						cell.style.cssText += 'color:#3b82f6;cursor:pointer;font-weight:500;';
+						cell.addEventListener('click', (ev) => { ev.stopPropagation(); c.onClick!(item, this.apiService, () => { this._loadStats(); this._loadData(); }, this.dialogService); });
+					}
+				} else {
+					cell.textContent = displayVal;
+					cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+					const lowerKey = c.key.toLowerCase();
+					const v = displayVal;
+					if (lowerKey === 'status' || lowerKey === 'priority' || lowerKey === 'severity' || lowerKey === 'urgency') {
+						const clr = STATUS_COLORS[v.toLowerCase().replace(/\s+/g, '_')] || '#6b7280';
+						cell.style.cssText += `color:${clr};font-weight:500;text-transform:capitalize;`;
+					}
 				}
 			}
 
@@ -706,7 +712,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Pagination ───
 		const pg = DOM.append(this.contentEl, DOM.$('div'));
-		pg.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;padding:0 4px;';
+		pg.style.cssText = 'flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 4px 0;border-top:1px solid var(--vscode-editorWidget-border);margin-top:4px;';
 
 		const recordsInfo = DOM.append(pg, DOM.$('span'));
 		recordsInfo.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
@@ -858,7 +864,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
 		dialog.className = 'cle-form-dialog';
-		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background);border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
+		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
 		// Force native <option> backgrounds to use the VS Code dropdown vars so
 		// the dropdown popup matches the rest of the dialog rather than rendering
 		// white on dark themes.
@@ -879,7 +885,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background);z-index:2;';
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));z-index:2;';
 
 		const title = DOM.append(header, DOM.$('h3'));
 		if (isEdit && cfg.editTitle && this.editingItem) {
@@ -1205,7 +1211,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		// Footer
 		const footer = DOM.append(dialog, DOM.$('div'));
-		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-editorWidget-background);z-index:2;';
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);position:sticky;bottom:0;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));z-index:2;';
 
 		const cancelBtn = DOM.append(footer, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
@@ -1387,6 +1393,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	override layout(dimension: DOM.Dimension): void {
 		this.root.style.height = `${dimension.height}px`;
 		this.root.style.width = `${dimension.width}px`;
+		const parentW = this.root.parentElement ? this.root.parentElement.clientWidth : dimension.width;
+		if (parentW > 0 && parentW < dimension.width) {
+			this.root.style.width = `${parentW}px`;
+		}
 	}
 
 	override dispose(): void {

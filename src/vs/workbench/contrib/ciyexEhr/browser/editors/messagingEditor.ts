@@ -429,7 +429,8 @@ export class MessagingEditor extends EditorPane {
 			b.style.cssText = 'background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 8px;color:var(--vscode-foreground);min-width:28px;' + extraStyle;
 			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(255,255,255,0.08))'; });
 			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
-			b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+			b.addEventListener('mousedown', (e) => { e.preventDefault(); });
+			b.addEventListener('click', () => { onClick(); if (this.inputEl) { this.inputEl.focus(); } });
 			return b;
 		};
 		mkFmtBtn('B', 'Bold (Ctrl+B)', 'font-weight:700;', () => this._wrapSelection('**', '**'));
@@ -494,9 +495,9 @@ export class MessagingEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		mkAttachOpt('🖼', 'Image', () => this._attachFile('image/*'));
 		// allow-any-unicode-next-line
-		mkAttachOpt('📄', 'File', () => this._attachFile());
+		mkAttachOpt('📄', 'File', () => this._attachFile('*/*'));
 		// allow-any-unicode-next-line
-		mkAttachOpt('📷', 'Camera', () => this._attachFile('image/*', true));
+		mkAttachOpt('📷', 'Camera', () => this._attachFile('image/*', true)); // capture=true
 		attachBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			attachMenu.style.display = attachMenu.style.display === 'none' ? 'block' : 'none';
@@ -631,13 +632,13 @@ export class MessagingEditor extends EditorPane {
 		return this.input instanceof MessagingEditorInput ? this.input : undefined;
 	}
 
-	private _attachFile(accept?: string, useCamera = false): void {
+	private _attachFile(accept = '*/*', capture = false): void {
 		// Create hidden file input
 		const fileInput = document.createElement('input');
 		fileInput.type = 'file';
-		fileInput.multiple = !useCamera;
-		if (accept) { fileInput.accept = accept; }
-		if (useCamera) { fileInput.setAttribute('capture', 'environment'); }
+		fileInput.accept = accept;
+		if (capture) { fileInput.setAttribute('capture', 'environment'); }
+		fileInput.multiple = !capture;
 		fileInput.addEventListener('change', async () => {
 			const files = fileInput.files;
 			if (!files || files.length === 0) { return; }

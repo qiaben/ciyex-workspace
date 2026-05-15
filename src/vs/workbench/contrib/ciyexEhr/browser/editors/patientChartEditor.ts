@@ -4378,13 +4378,15 @@ export class PatientChartEditor extends EditorPane {
 				// either shape don't regress.
 				if (tab.key === 'education' && !isEdit) {
 					const matId = payload.materialId;
-					// materialId can be string or number; send both flat and nested so
-					// JPA @ManyToOne never sees null.
-					if (matId !== undefined && matId !== null && matId !== '') {
-						const numId = typeof matId === 'number' ? matId : (parseInt(String(matId), 10) || matId);
-						payload.material = { id: numId };
-						payload.materialId = numId;
+					if (!matId || matId === '' || matId === null || matId === undefined) {
+						saveBtn.disabled = false;
+						saveBtn.textContent = 'Save';
+						this.notificationService.error('Please select a Topic / Title from the search dropdown before saving.');
+						return;
 					}
+					const numId = typeof matId === 'number' ? matId : (parseInt(String(matId), 10) || matId);
+					payload.material = { id: numId };
+					payload.materialId = numId;
 					if (this.patientId && !payload.patient) {
 						const numPid = parseInt(this.patientId, 10) || this.patientId;
 						payload.patient = { id: numPid };
