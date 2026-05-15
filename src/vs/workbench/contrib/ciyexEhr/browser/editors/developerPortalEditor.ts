@@ -83,7 +83,7 @@ export class DeveloperPortalEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.developer-portal-editor.ciyex-editor-root'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);';
+		this.root.style.cssText = 'height:100%;overflow-y:auto;overflow-x:hidden;background:var(--vscode-editor-background);scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior:contain;';
 
 		const wrapper = DOM.append(this.root, DOM.$('div'));
 		wrapper.style.cssText = 'max-width:1200px;margin:0 auto;padding:20px 24px;';

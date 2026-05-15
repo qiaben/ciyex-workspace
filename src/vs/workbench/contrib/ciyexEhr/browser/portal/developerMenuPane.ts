@@ -58,7 +58,7 @@ export class DeveloperMenuPane extends ViewPane {
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.developer-menu-pane'));
-		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;';
+		this.container.style.cssText = 'height:100%;overflow-y:auto;overflow-x:hidden;font-size:12px;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior:contain;';
 
 		// Overview button
 		const overviewRow = DOM.append(this.container, DOM.$('div'));
