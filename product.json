@@ -32,7 +32,7 @@
 	"reportIssueUrl": "https://github.com/qiaben/ciyex-workspace/issues/new",
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "ciyex-workspace",
-	"updateUrl": "https://updates.ciyex.org",
+	"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/latest/download/metadata.json",
 	"quality": "oss",
 	"downloadUrl": "https://github.com/qiaben/ciyex-workspace/releases/latest",
 	"win32VersionedUpdate": false,

@@ -183,6 +183,16 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
+		const updateUrl = this.productService.updateUrl!;
+
+		// Ciyex: when updateUrl points at a static JSON manifest (e.g. a GitHub
+		// release asset), use it directly. We pick the per-platform asset and
+		// compare commits inside transformResponse() rather than relying on a
+		// dynamic update server. Lets us auto-update with zero server infra.
+		if (updateUrl.endsWith('.json')) {
+			return updateUrl;
+		}
+
 		let platform = `win32-${process.arch}`;
 
 		if (getUpdateType() === UpdateType.Archive) {
@@ -191,7 +201,69 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 			platform += '-user';
 		}
 
-		return createUpdateURL(this.productService.updateUrl!, platform, quality, commit, options);
+		return createUpdateURL(updateUrl, platform, quality, commit, options);
+	}
+
+	/**
+	 * Ciyex: convert a static manifest response into the IUpdate shape that the
+	 * rest of the update flow expects. Passes through a standard server response
+	 * unchanged. Returns null when the running build is already the latest.
+	 */
+	private transformResponse(raw: unknown): IUpdate | null {
+		if (!raw || typeof raw !== 'object') {
+			return null;
+		}
+		const r = raw as { url?: string; version?: string; productVersion?: string; commit?: string; platforms?: Record<string, { url?: string; sha256?: string }>; publishedAt?: number };
+		if (r.url && r.version && r.productVersion) {
+			return r as IUpdate;
+		}
+		if (!r.commit || !r.platforms) {
+			return null;
+		}
+		if (r.commit === this.productService.commit) {
+			return null;
+		}
+		let platform = `win32-${process.arch}`;
+		if (getUpdateType() === UpdateType.Archive) {
+			platform += '-archive';
+		} else if (this.productService.target === 'user') {
+			platform += '-user';
+		}
+		const asset = r.platforms[platform];
+		if (!asset?.url) {
+			return null;
+		}
+		return {
+			url: asset.url,
+			version: r.commit,
+			productVersion: r.version ?? this.productService.version,
+			sha256hash: asset.sha256,
+			timestamp: r.publishedAt ? r.publishedAt * 1000 : Date.now(),
+		};
+	}
+
+	/**
+	 * Ciyex: AbstractUpdateService.isLatestVersion treats HTTP 204 as "up to
+	 * date". A static manifest never returns 204, so for that case we compare
+	 * the manifest's commit to the requested commit.
+	 */
+	override async isLatestVersion(commit?: string, token: CancellationToken = CancellationToken.None): Promise<boolean | undefined> {
+		const updateUrl = this.productService.updateUrl;
+		if (!updateUrl?.endsWith('.json')) {
+			return super.isLatestVersion(commit, token);
+		}
+		if (!this.quality) {
+			return undefined;
+		}
+		try {
+			const context = await this.requestService.request({ url: updateUrl, callSite: 'updateService.win32.isLatestVersion' }, token);
+			const raw = await asJson<{ commit?: string }>(context);
+			const checkCommit = commit ?? this.productService.commit!;
+			return raw?.commit === checkCommit;
+		} catch (error) {
+			this.logService.error('update#isLatestVersion(): failed to check static manifest', error);
+			return undefined;
+		}
 	}
 
 	protected doCheckForUpdates(explicit: boolean, pendingCommit?: string): void {
@@ -210,8 +282,9 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 
 		const headers = getUpdateRequestHeaders(this.productService.version);
 		this.requestService.request({ url, headers, callSite: 'updateService.win32.checkForUpdates' }, CancellationToken.None)
-			.then<IUpdate | null>(asJson)
-			.then(update => {
+			.then<unknown>(asJson)
+			.then(raw => {
+				const update = this.transformResponse(raw);
 				const updateType = getUpdateType();
 
 				if (!update || !update.url || !update.version || !update.productVersion) {
