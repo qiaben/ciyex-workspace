@@ -730,27 +730,19 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
 					{
-						key: 'vaccineName', label: 'Vaccine Name', type: 'text', required: true, placeholder: 'Vaccine name',
-						// Letters first, then any name-safe characters — same shape as the
-						// shared `namePattern` so the negative-test inputs (pure numbers,
-						// leading specials) are rejected before save.
-						validationPattern: '^[A-Za-z][A-Za-z0-9 ,.\\-/()+&\']{1,119}$',
-						validationMessage: 'Vaccine name must start with a letter and be 2-120 characters',
+						key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Vaccine name'
 					},
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
 					{
-						key: 'lotNumber', label: 'Lot Number', type: 'text', required: true, placeholder: 'Lot #',
-						// Lot numbers must have at least one letter AND be 3-30 chars —
-						// "15" / "123" should fail the negative test; "AB12-34" passes.
-						validationPattern: '^(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9\\-]{2,29}$',
-						validationMessage: 'Lot number must contain letters and digits, 3-30 characters',
+						key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'Lot #',
+						validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{2,29}$',
+						validationMessage: 'Lot number must be 3-30 alphanumeric characters',
 					},
 					{
-						key: 'dose', label: 'Dose', type: 'text', required: true, placeholder: 'e.g., 0.5 mL',
-						// Dose MUST have a unit suffix — bare numbers like "1" must fail.
-						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?\\s*(mL|mg|mcg|units|IU|cc|g|%)$',
-						validationMessage: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU, cc, g, %)',
+						key: 'dose', label: 'Dose', type: 'text', placeholder: 'e.g., 0.5 mL',
+						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?(?:\\s*(mL|mg|mcg|units|IU|cc|g|%))?$',
+						validationMessage: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)',
 					},
 					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
 					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
@@ -4214,16 +4206,13 @@ export class PatientChartEditor extends EditorPane {
 			// proper name (allergen, medication, vaccine, procedure, condition, alert,
 			// test, document title).
 			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
-			// Lot numbers must contain BOTH letters and digits, length 3-30. Pure
-			// numbers like "15" / "123" must fail the negative test the team flagged.
-			const lotPattern = /^(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
-			// Dose REQUIRES a unit suffix — bare numbers like "1" / "0.5" must fail.
-			// Units mirror the immunization FieldDef validationPattern.
-			const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?\s*(mL|mg|mcg|units|IU|cc|g|%)$/i;
+			// Lot numbers: alphanumeric plus hyphens, 3-30 chars (pure numbers allowed).
+			const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
+			// Dose: positive number, unit suffix is optional (e.g., "1.5" or "0.5 mL").
+			const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?(?:\s*(mL|mg|mcg|units|IU|cc|g|%))?$/i;
 			const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
 				allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				vaccineName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				procedureName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
@@ -4236,9 +4225,9 @@ export class PatientChartEditor extends EditorPane {
 				description: { rx: namePattern, msg: 'No special characters allowed' },
 				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
 				subject: { rx: namePattern, msg: 'No special characters allowed' },
-				lotNumber: { rx: lotPattern, msg: 'Lot number must contain letters and digits, 3-30 characters' },
-				lot_number: { rx: lotPattern, msg: 'Lot number must contain letters and digits, 3-30 characters' },
-				dose: { rx: dosePattern, msg: 'Dose must be a positive number followed by a unit (mL, mg, mcg, units, IU, cc, g, %)' },
+				lotNumber: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
+				lot_number: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
+				dose: { rx: dosePattern, msg: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)' },
 				doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 				dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			};

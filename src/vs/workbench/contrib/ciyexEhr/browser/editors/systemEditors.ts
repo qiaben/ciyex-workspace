@@ -25,10 +25,9 @@ export class DocumentReviewEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexDocumentReview';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Document Reviews',
-		// Backend exposes only GET /api/portal/document-reviews/pending — calling
-		// the bare collection root returns "No endpoint GET /api/portal/document-reviews"
-		// (HTTP 500). Use /pending for the list source so the page actually loads.
-		apiPath: '/api/portal/document-reviews/pending',
+		// Use the collection root; the backend now supports GET /api/portal/document-reviews.
+		// Client-side filtering on `status` handles the Pending/Accepted/Rejected tabs.
+		apiPath: '/api/portal/document-reviews',
 		searchPlaceholder: 'Search by patient, document type...',
 		clientSideFilter: ['patientName', 'fileName', 'category', 'status', 'id'],
 		editable: false,
@@ -87,9 +86,8 @@ export class FormSubmissionEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexFormSubmission';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Form Reviews',
-		// Backend has both GET / (all) and /pending — use /pending so the staff
-		// reviewer queue mirrors the web /form-submissions default view.
-		apiPath: '/api/portal/form-submissions/pending',
+		// Use the collection root for full list; status tabs filter client-side.
+		apiPath: '/api/portal/form-submissions',
 		searchPlaceholder: 'Search by patient, form title...',
 		clientSideFilter: ['patientName', 'formTitle', 'formKey', 'status', 'id'],
 		editable: false,
@@ -145,9 +143,8 @@ export class PatientApprovalEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPatientApproval';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Approvals',
-		// Backend exposes only /api/portal/approvals/pending (no list root) —
-		// using the bare collection returns "No endpoint" and 500s.
-		apiPath: '/api/portal/approvals/pending',
+		// Use the collection root; client-side filtering handles status tabs.
+		apiPath: '/api/portal/approvals',
 		searchPlaceholder: 'Search by name, email, DOB...',
 		clientSideFilter: ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'patientName', 'id'],
 		editable: false,

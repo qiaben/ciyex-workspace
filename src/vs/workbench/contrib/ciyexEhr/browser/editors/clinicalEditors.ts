@@ -833,7 +833,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 					{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
 				]
 			},
-			{ key: 'doseNumber', label: 'Dose Number', type: 'number', placeholder: '1', minValue: 1, maxValue: 99 },
+			{ key: 'doseNumber', label: 'Dose Number', type: 'text', placeholder: 'e.g., 0.5 mL or 1' },
 			// Provider Information
 			{
 				key: 'administeredBy', label: 'Administered By', type: 'search',
@@ -2329,20 +2329,25 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		}
 	}
 
-	protected override createEditor(parent: HTMLElement): void {
-		const tabRow = parent.ownerDocument.createElement('div');
-		tabRow.style.cssText = 'display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);overflow-x:auto;';
-		parent.appendChild(tabRow);
+	private _invTabBtns: HTMLButtonElement[] = [];
 
-		const invTabBtns: HTMLButtonElement[] = [];
+	protected override wrapContent(parent: HTMLElement): HTMLElement {
+		// Flex-column wrapper so the tab row and the editor content share the full
+		// height correctly — using createEditor + parent.appendChild caused the
+		// root's height:100% to overlap the tab row, clipping the pagination bar.
+		const wrapper = DOM.append(parent, DOM.$('div'));
+		wrapper.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;';
+
+		const tabRow = DOM.append(wrapper, DOM.$('div'));
+		tabRow.style.cssText = 'flex-shrink:0;display:flex;border-bottom:2px solid var(--vscode-editorWidget-border);padding:0 24px;background:var(--vscode-editor-background);overflow-x:auto;';
+
+		this._invTabBtns = [];
 		const styleInvBtn = (btn: HTMLButtonElement, active: boolean) => {
 			btn.style.borderBottomColor = active ? '#0e639c' : 'transparent';
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
-		// Match ciyex-ehr-ui inventory-management module sub-tabs (issue #27).
-		// Dashboard/Settings are EHR-UI extras with no API-driven list — they
-		// stay in the web app only for now.
+
 		const invTabs: Array<{ view: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings'; label: string }> = [
 			{ view: 'inventory', label: 'Inventory' },
 			{ view: 'orders', label: 'Orders' },
@@ -2351,22 +2356,23 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			{ view: 'maintenance', label: 'Maintenance' },
 		];
 		invTabs.forEach(({ view, label }) => {
-			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
+			const btn = DOM.append(tabRow, DOM.$('button')) as HTMLButtonElement;
 			btn.textContent = label;
 			const isActive = this.invView === view;
 			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${isActive ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${isActive ? '600' : '400'};white-space:nowrap;`;
 			btn.addEventListener('click', () => {
 				if (this.invView !== view) {
 					this.invView = view;
-					invTabBtns.forEach(b => { styleInvBtn(b, b === btn); });
+					this._invTabBtns.forEach(b => { styleInvBtn(b, b === btn); });
 					this._resetAndReload();
 				}
 			});
-			invTabBtns.push(btn);
-			tabRow.appendChild(btn);
+			this._invTabBtns.push(btn);
 		});
 
-		super.createEditor(parent);
+		const main = DOM.append(wrapper, DOM.$('div'));
+		main.style.cssText = 'flex:1;min-height:0;overflow:hidden;position:relative;';
+		return main;
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }
