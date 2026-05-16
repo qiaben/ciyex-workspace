@@ -6,15 +6,24 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      create_release:
-        description: 'Create GitHub Release'
+      channel:
+        description: 'Release channel'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: dev
+      ref:
+        description: 'Commit SHA to build (leave blank to use HEAD). Use this to promote a tested dev/stage commit up to the next channel.'
         required: false
-        default: true
-        type: boolean
+        type: string
+        default: ''
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.inputs.channel || 'dev' }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -22,16 +31,24 @@ permissions:
 env:
   VSCODE_ARCH: x64
   VSCODE_QUALITY: 'oss'
+  CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
+  BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
 
 jobs:
   build:
-    name: Build Windows x64
+    name: Build ${{ github.event.inputs.channel || 'dev' }} (Windows x64)
     runs-on: windows-2022
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_REF }}
+
+      - name: Apply channel overlay
+        shell: pwsh
+        run: node build/channels/apply.mjs $env:CHANNEL
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -104,64 +121,76 @@ jobs:
         shell: pwsh
         run: npm run gulp "vscode-win32-x64-user-setup"
 
-      - name: Create portable zip
+      - name: Compute version + filenames
         shell: pwsh
         run: |
           $Version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $Channel = $env:CHANNEL
+          $Suffix = if ($Channel -eq 'prod') { '' } else { (Get-Culture).TextInfo.ToTitleCase($Channel) }
+          $ExeName = "CiyexWorkspace${Suffix}Setup-x64-$Version.exe"
+          $ZipName = "CiyexWorkspace${Suffix}-win32-x64-$Version.zip"
+
           echo "APP_VERSION=$Version" >> $env:GITHUB_ENV
-          7z.exe a -tzip "CiyexWorkspace-win32-x64-$Version.zip" "..\VSCode-win32-x64\*"
+          echo "CHANNEL_SUFFIX=$Suffix" >> $env:GITHUB_ENV
+          echo "EXE_NAME=$ExeName" >> $env:GITHUB_ENV
+          echo "ZIP_NAME=$ZipName" >> $env:GITHUB_ENV
+
+          Write-Host "Channel: $Channel"
+          Write-Host "Version: $Version"
+          Write-Host "Installer: $ExeName"
+          Write-Host "Archive: $ZipName"
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          7z.exe a -tzip "$env:ZIP_NAME" "..\VSCode-win32-x64\*"
 
       - name: Prepare artifacts
         shell: pwsh
         run: |
-          $Version = $env:APP_VERSION
           mkdir artifacts -Force
-
-          # Portable zip
-          Move-Item "CiyexWorkspace-win32-x64-$Version.zip" artifacts/
-
-          # User installer
+          Move-Item $env:ZIP_NAME artifacts/
           if (Test-Path ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe") {
-            Move-Item ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe" "artifacts\CiyexWorkspaceSetup-x64-$Version.exe"
+            Move-Item ".build\win32-x64\user-setup\CiyexWorkspaceSetup.exe" "artifacts/$env:EXE_NAME"
+          } else {
+            Write-Error "Installer not found at .build\win32-x64\user-setup\CiyexWorkspaceSetup.exe"
+            exit 1
           }
 
       - name: Generate update manifest
         shell: pwsh
         run: |
           $Version = $env:APP_VERSION
-          $Tag = "v$Version-build.${{ github.run_number }}"
+          $Channel = $env:CHANNEL
+          $Tag = "v$Version-$Channel.${{ github.run_number }}"
           $BaseUrl = "https://github.com/${{ github.repository }}/releases/download/$Tag"
 
           function Get-Sha256($path) {
-            if (-not (Test-Path $path)) { return $null }
             return (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
           }
 
-          $installer = "artifacts/CiyexWorkspaceSetup-x64-$Version.exe"
-          $archive = "artifacts/CiyexWorkspace-win32-x64-$Version.zip"
+          $installer = "artifacts/$env:EXE_NAME"
+          $archive = "artifacts/$env:ZIP_NAME"
 
-          $platforms = [ordered]@{}
-
-          if (Test-Path $installer) {
-            $platforms['win32-x64-user'] = [ordered]@{
-              url = "$BaseUrl/CiyexWorkspaceSetup-x64-$Version.exe"
+          $platforms = [ordered]@{
+            'win32-x64-user' = [ordered]@{
+              url = "$BaseUrl/$env:EXE_NAME"
               sha256 = Get-Sha256 $installer
             }
-            $platforms['win32-x64'] = [ordered]@{
-              url = "$BaseUrl/CiyexWorkspaceSetup-x64-$Version.exe"
+            'win32-x64' = [ordered]@{
+              url = "$BaseUrl/$env:EXE_NAME"
               sha256 = Get-Sha256 $installer
             }
-          }
-          if (Test-Path $archive) {
-            $platforms['win32-x64-archive'] = [ordered]@{
-              url = "$BaseUrl/CiyexWorkspace-win32-x64-$Version.zip"
+            'win32-x64-archive' = [ordered]@{
+              url = "$BaseUrl/$env:ZIP_NAME"
               sha256 = Get-Sha256 $archive
             }
           }
 
           $manifest = [ordered]@{
             version = $Version
-            commit = "${{ github.sha }}"
+            commit = "$env:BUILD_REF"
+            channel = $Channel
             buildNumber = [int]${{ github.run_number }}
             publishedAt = [int][double]::Parse((Get-Date -UFormat %s))
             platforms = $platforms
@@ -170,34 +199,51 @@ jobs:
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path "artifacts/metadata.json" -Encoding utf8
           Get-Content artifacts/metadata.json
 
-      - name: Upload artifacts
+      - name: Upload artifacts (CI)
         uses: actions/upload-artifact@v4
         with:
-          name: ciyex-workspace-win32-x64
+          name: ciyex-workspace-${{ env.CHANNEL }}-win32-x64
           path: artifacts/*
 
-      - name: Create GitHub Release
-        if: github.event_name == 'workflow_dispatch' && inputs.create_release || github.event_name == 'push'
+      - name: Create per-build release (immutable)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
-          name: Ciyex Workspace v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}.${{ github.run_number }}
+          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          target_commitish: ${{ env.BUILD_REF }}
+          prerelease: ${{ env.CHANNEL != 'prod' }}
+          files: artifacts/*
           body: |
-            ## Ciyex Workspace - Windows x64
+            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — Windows x64
+
+            **Channel:** `${{ env.CHANNEL }}`
+            **Build:** #${{ github.run_number }}
+            **Commit:** ${{ env.BUILD_REF }}
 
             ### Downloads
-            - **Installer (.exe)** — Double-click to install (recommended)
-            - **Portable (.zip)** — Extract and run, no installation needed
+            - **Installer:** `${{ env.EXE_NAME }}`
+            - **Portable:** `${{ env.ZIP_NAME }}`
 
-            ### Install
-            1. Download `CiyexWorkspaceSetup-x64-${{ env.APP_VERSION }}.exe`
-            2. Run the installer
-            3. Launch "Ciyex Workspace" from Start Menu
+            ### First install
+            Download and run the installer. From then on the app polls
+            `${{ env.CHANNEL }}-latest` every hour and auto-updates — no more
+            manual `.exe` distribution. Trigger a check immediately via
+            **Help → Check for Updates**.
 
-            > Already running an older build? Open Help → Check for Updates and click "Restart to Update". Auto-update polls every hour.
-
-            ---
-            Built from commit ${{ github.sha }}
-          files: artifacts/*
-          draft: false
-          prerelease: false
+      - name: Update channel pointer release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $Tag = "$env:CHANNEL-latest"
+          gh release view $Tag --repo ${{ github.repository }} 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $Tag `
+              --repo ${{ github.repository }} `
+              --title "Ciyex Workspace ($env:CHANNEL) — latest pointer" `
+              --notes "Auto-updated pointer release. The metadata.json asset always describes the latest $env:CHANNEL build." `
+              --prerelease `
+              --target ${{ env.BUILD_REF }}
+          }
+          gh release upload $Tag "artifacts/metadata.json" --repo ${{ github.repository }} --clobber
+          Write-Host "Pointer $Tag updated -> build ${{ github.run_number }}"
