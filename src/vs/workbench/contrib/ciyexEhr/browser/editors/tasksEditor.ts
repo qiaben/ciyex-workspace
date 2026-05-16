@@ -98,9 +98,12 @@ export class TasksEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.tasks-editor.ciyex-editor-root'));
-		this.root.style.cssText = 'height:100%;overflow-y:auto;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;position:relative;';
+		// overflow:hidden + flex-column so stats/toolbar/tabs are fixed at the
+		// top, the table scrolls in the middle, and pagination is fixed at the
+		// bottom (issue #8 — matches the ClinicalListEditorBase sticky pattern).
+		this.root.style.cssText = 'height:100%;overflow:hidden;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;position:relative;';
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
-		this.contentEl.style.cssText = 'max-width:1100px;margin:0 auto;padding:20px 24px;';
+		this.contentEl.style.cssText = 'flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;max-width:1100px;width:100%;margin:0 auto;padding:20px 24px;box-sizing:border-box;';
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -190,7 +193,7 @@ export class TasksEditor extends EditorPane {
 
 	private _renderStats(): void {
 		const row = DOM.append(this.contentEl, DOM.$('div'));
-		row.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;';
+		row.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;';
 
 		const card = (label: string, count: number, color: string, icon: string) => {
 			const c = DOM.append(row, DOM.$('div'));
@@ -216,7 +219,7 @@ export class TasksEditor extends EditorPane {
 
 	private _renderToolbar(): void {
 		const bar = DOM.append(this.contentEl, DOM.$('div'));
-		bar.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center;';
+		bar.style.cssText = 'flex-shrink:0;display:flex;gap:8px;margin-bottom:12px;align-items:center;';
 
 		const inputStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
@@ -276,7 +279,7 @@ export class TasksEditor extends EditorPane {
 
 	private _renderStatusTabs(): void {
 		const tabs = DOM.append(this.contentEl, DOM.$('div'));
-		tabs.style.cssText = 'display:flex;gap:0;border-bottom:2px solid var(--vscode-editorWidget-border);margin-bottom:12px;';
+		tabs.style.cssText = 'flex-shrink:0;display:flex;gap:0;border-bottom:2px solid var(--vscode-editorWidget-border);margin-bottom:12px;';
 
 		const tabItems: Array<{ label: string; value: string }> = [
 			{ label: 'All', value: '' }, { label: 'Pending', value: 'pending' }, { label: 'In Progress', value: 'in_progress' },
@@ -293,17 +296,21 @@ export class TasksEditor extends EditorPane {
 	}
 
 	private _renderTable(): void {
+		// Scrollable wrapper — takes remaining flex space so header stays sticky
+		// at the top of this wrapper and records scroll inside it (issue #8).
+		const tableWrap = DOM.append(this.contentEl, DOM.$('div'));
+		tableWrap.style.cssText = 'flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+
 		if (this.tasks.length === 0) {
-			const empty = DOM.append(this.contentEl, DOM.$('div'));
+			const empty = DOM.append(tableWrap, DOM.$('div'));
 			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 			empty.textContent = 'No tasks found';
 			return;
 		}
 
-		// Table header
-		const table = DOM.append(this.contentEl, DOM.$('div'));
-		const headerRow = DOM.append(table, DOM.$('div'));
-		headerRow.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		// Table header — sticky within tableWrap
+		const headerRow = DOM.append(tableWrap, DOM.$('div'));
+		headerRow.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;z-index:2;background:var(--vscode-sideBar-background,var(--vscode-editor-background));';
 		for (const col of ['', 'Title', 'Type', 'Assigned To', 'Patient', 'Due', 'Status', 'Actions']) {
 			const h = DOM.append(headerRow, DOM.$('span'));
 			h.textContent = col;
@@ -311,7 +318,7 @@ export class TasksEditor extends EditorPane {
 
 		// Rows
 		for (const task of this.tasks) {
-			const row = DOM.append(table, DOM.$('div'));
+			const row = DOM.append(tableWrap, DOM.$('div'));
 			row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;cursor:pointer;';
 			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
@@ -413,7 +420,7 @@ export class TasksEditor extends EditorPane {
 	private _renderPagination(): void {
 		if (this.totalPages <= 1) { return; }
 		const bar = DOM.append(this.contentEl, DOM.$('div'));
-		bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:12px;color:var(--vscode-descriptionForeground);';
+		bar.style.cssText = 'flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:12px 0 0;border-top:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-descriptionForeground);';
 
 		const info = DOM.append(bar, DOM.$('span'));
 		const start = this.currentPage * 20 + 1;

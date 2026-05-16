@@ -1666,15 +1666,18 @@ export class EducationEditor extends ClinicalListEditorBase {
 	}
 
 	private _eduSidebarItems: Map<string, HTMLElement> = new Map();
+	private _eduLibraryMain!: HTMLElement;
+	private _eduAssignPanel!: HTMLElement;
+	private _eduAssignListEl!: HTMLElement;
+	private _eduAssignPatientId: number | null = null;
+	private _eduAssignPatientName = '';
 
-	/**
-	 * Render a left sidebar with "Education Library" and "Patient Assignments"
-	 * sections, matching the web app's /patient_education split view.
-	 */
 	protected override wrapContent(parent: HTMLElement): HTMLElement {
 		const wrapper = DOM.append(parent, DOM.$('.education-wrapper'));
 		wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;width:100%;';
 
+		// allow-any-unicode-next-line
+		// ── Sidebar ──────────────────────────────────────────────────────────
 		const sidebar = DOM.append(wrapper, DOM.$('.education-sidebar'));
 		sidebar.style.cssText = 'width:230px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;display:flex;flex-direction:column;';
 
@@ -1708,17 +1711,160 @@ export class EducationEditor extends ClinicalListEditorBase {
 				if (this.eduView === it.key) { return; }
 				this.eduView = it.key;
 				this._updateEduSidebarActive();
-				this._resetAndReload();
+				if (it.key === 'assignments') {
+					// Switch to the custom patient-search panel — matching ehr-ui layout.
+					this._eduLibraryMain.style.display = 'none';
+					this._eduAssignPanel.style.display = 'flex';
+				} else {
+					this._eduLibraryMain.style.display = '';
+					this._eduAssignPanel.style.display = 'none';
+					this._resetAndReload();
+				}
 			});
 			this._eduSidebarItems.set(it.key, navEl);
 		}
 		this._updateEduSidebarActive();
 
-		const main = DOM.append(wrapper, DOM.$('.education-main'));
-		// Issue #3, #4: hide both scrollbars on the Patient Education main
-		// area so the page mirrors the web ehr-ui's clean layout.
-		main.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
-		return main;
+		// allow-any-unicode-next-line
+		// ── Library main area (returned as base-class content host) ──────────
+		this._eduLibraryMain = DOM.append(wrapper, DOM.$('.education-main'));
+		this._eduLibraryMain.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+
+		// allow-any-unicode-next-line
+		// ── Patient Assignments panel (ehr-ui search-by-patient approach) ────
+		this._eduAssignPanel = DOM.append(wrapper, DOM.$('.education-assign-panel'));
+		this._eduAssignPanel.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;display:none;flex-direction:column;background:var(--vscode-editor-background);';
+		this._buildAssignPanel();
+
+		return this._eduLibraryMain;
+	}
+
+	private _buildAssignPanel(): void {
+		const hdr = DOM.append(this._eduAssignPanel, DOM.$('div'));
+		hdr.style.cssText = 'flex-shrink:0;padding:16px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;';
+		const hdrTitle = DOM.append(hdr, DOM.$('h2'));
+		hdrTitle.textContent = 'Patient Assignments';
+		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;color:var(--vscode-foreground);';
+
+		const searchWrap = DOM.append(this._eduAssignPanel, DOM.$('div'));
+		searchWrap.style.cssText = 'flex-shrink:0;padding:12px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);position:relative;';
+		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInput.type = 'text';
+		searchInput.placeholder = 'Search patient by name or DOB...';
+		searchInput.style.cssText = 'width:100%;padding:8px 12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+
+		const dropdown = DOM.append(searchWrap, DOM.$('div'));
+		dropdown.style.cssText = 'position:absolute;top:calc(100% - 12px);left:24px;right:24px;max-height:200px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 6px 6px;z-index:200;display:none;';
+
+		let patTimer: ReturnType<typeof setTimeout> | undefined;
+		searchInput.addEventListener('input', () => {
+			if (patTimer) { clearTimeout(patTimer); }
+			const q = searchInput.value.trim();
+			if (q.length < 2) { dropdown.style.display = 'none'; return; }
+			patTimer = setTimeout(async () => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+					if (!res.ok) { return; }
+					const data = await res.json();
+					const patients: Record<string, unknown>[] = data?.data?.content || data?.content || data?.data || [];
+					DOM.clearNode(dropdown);
+					for (const p of patients) {
+						const item = DOM.append(dropdown, DOM.$('div'));
+						item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+						const fn = String(p['firstName'] || '');
+						const ln = String(p['lastName'] || '');
+						const dob = p['dateOfBirth'] ? ` — DOB: ${p['dateOfBirth']}` : '';
+						item.textContent = `${fn} ${ln}`.trim() + dob;
+						item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+						item.addEventListener('mouseleave', () => { item.style.background = ''; });
+						item.addEventListener('click', () => {
+							this._eduAssignPatientId = typeof p['id'] === 'number' ? p['id'] : parseInt(String(p['id'] || '0'), 10);
+							this._eduAssignPatientName = `${fn} ${ln}`.trim();
+							searchInput.value = this._eduAssignPatientName;
+							dropdown.style.display = 'none';
+							this._loadPatientAssignments();
+						});
+					}
+					dropdown.style.display = patients.length > 0 ? 'block' : 'none';
+				} catch { /* ignore */ }
+			}, 250);
+		});
+		searchInput.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+
+		this._eduAssignListEl = DOM.append(this._eduAssignPanel, DOM.$('div'));
+		this._eduAssignListEl.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:20px 24px;';
+		this._renderAssignEmpty();
+	}
+
+	private _renderAssignEmpty(): void {
+		DOM.clearNode(this._eduAssignListEl);
+		const empty = DOM.append(this._eduAssignListEl, DOM.$('div'));
+		empty.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);gap:12px;';
+		const icon = DOM.append(empty, DOM.$('div'));
+		// allow-any-unicode-next-line
+		icon.textContent = '👤';
+		icon.style.cssText = 'font-size:48px;opacity:0.35;';
+		const msg = DOM.append(empty, DOM.$('div'));
+		msg.textContent = 'Search for a patient to view their education assignments';
+		msg.style.cssText = 'font-size:13px;text-align:center;max-width:280px;';
+	}
+
+	private async _loadPatientAssignments(): Promise<void> {
+		if (!this._eduAssignPatientId) { return; }
+		DOM.clearNode(this._eduAssignListEl);
+		const loading = DOM.append(this._eduAssignListEl, DOM.$('div'));
+		loading.style.cssText = 'padding:20px;color:var(--vscode-descriptionForeground);font-size:13px;';
+		loading.textContent = `Loading assignments for ${this._eduAssignPatientName}...`;
+		try {
+			const res = await this.apiService.fetch(`/api/patient-education-assignments?patientId=${this._eduAssignPatientId}&size=100`);
+			if (!res.ok) { loading.textContent = 'Failed to load assignments.'; return; }
+			const raw = await res.json();
+			const items: Record<string, unknown>[] = Array.isArray(raw) ? raw : (raw?.data?.content || raw?.content || raw?.data || []);
+			DOM.clearNode(this._eduAssignListEl);
+			this._renderAssignTable(items);
+		} catch {
+			loading.textContent = 'Error loading assignments.';
+		}
+	}
+
+	private _renderAssignTable(items: Record<string, unknown>[]): void {
+		if (items.length === 0) {
+			const empty = DOM.append(this._eduAssignListEl, DOM.$('div'));
+			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+			empty.textContent = `No education assignments found for ${this._eduAssignPatientName}`;
+			return;
+		}
+		const cols = '2fr 120px 110px 110px 130px';
+		const tbl = DOM.append(this._eduAssignListEl, DOM.$('div'));
+		const hr = DOM.append(tbl, DOM.$('div'));
+		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--vscode-editorWidget-border);`;
+		for (const lbl of ['Topic', 'Category', 'Type', 'Status', 'Assigned By']) {
+			DOM.append(hr, DOM.$('span')).textContent = lbl;
+		}
+		const STATUS_COLORS: Record<string, string> = { assigned: '#3b82f6', viewed: '#f59e0b', completed: '#22c55e', dismissed: '#6b7280' };
+		for (const item of items) {
+			const row = DOM.append(tbl, DOM.$('div'));
+			row.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;align-items:center;`;
+			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+			row.addEventListener('mouseleave', () => { row.style.background = ''; });
+			const fmt = (v: unknown) => String(v || '—').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+			const cellValues = [
+				String(item['materialTitle'] || item['title'] || '—'),
+				fmt(item['materialCategory'] || item['category']),
+				fmt(item['materialContentType'] || item['contentType']),
+				String(item['status'] || '—'),
+				String(item['assignedBy'] || '—'),
+			];
+			cellValues.forEach((text, i) => {
+				const cell = DOM.append(row, DOM.$('span'));
+				cell.textContent = text;
+				cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+				if (i === 3) {
+					const clr = STATUS_COLORS[text.toLowerCase()] || '#6b7280';
+					cell.style.cssText += `color:${clr};font-weight:500;text-transform:capitalize;`;
+				}
+			});
+		}
 	}
 
 	private _updateEduSidebarActive(): void {
