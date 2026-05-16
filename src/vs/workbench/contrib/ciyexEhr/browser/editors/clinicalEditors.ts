@@ -1741,10 +1741,30 @@ export class EducationEditor extends ClinicalListEditorBase {
 
 	private _buildAssignPanel(): void {
 		const hdr = DOM.append(this._eduAssignPanel, DOM.$('div'));
-		hdr.style.cssText = 'flex-shrink:0;padding:16px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;';
+		hdr.style.cssText = 'flex-shrink:0;padding:16px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:space-between;gap:12px;';
 		const hdrTitle = DOM.append(hdr, DOM.$('h2'));
-		hdrTitle.textContent = 'Patient Assignments';
-		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;color:var(--vscode-foreground);';
+		// allow-any-unicode-next-line
+		hdrTitle.textContent = '✉ Patient Assignments';
+		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;color:var(--vscode-foreground);display:flex;align-items:center;gap:8px;';
+
+		// "+ Assign Material" button — mirrors ciyex-ehr-ui green action button so
+		// users can assign a material without leaving the Patient Assignments view.
+		// Reuses the assignmentsConfig.formFields via the base class _openForm
+		// hook; the assignmentsConfig is active because eduView === 'assignments'
+		// while this panel is visible.
+		const assignBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		assignBtn.textContent = '+ Assign Material';
+		assignBtn.style.cssText = 'padding:6px 14px;background:#16a34a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;flex-shrink:0;';
+		assignBtn.addEventListener('mouseenter', () => { assignBtn.style.background = '#15803d'; });
+		assignBtn.addEventListener('mouseleave', () => { assignBtn.style.background = '#16a34a'; });
+		assignBtn.addEventListener('click', () => {
+			// Pre-fill the assignment form with the currently selected patient
+			// (if any) so the user doesn't have to retype it.
+			const seed: Record<string, unknown> | null = this._eduAssignPatientId
+				? { patientId: this._eduAssignPatientId, patientName: this._eduAssignPatientName }
+				: null;
+			void this._openForm(seed);
+		});
 
 		const searchWrap = DOM.append(this._eduAssignPanel, DOM.$('div'));
 		searchWrap.style.cssText = 'flex-shrink:0;padding:12px 24px;border-bottom:1px solid var(--vscode-editorWidget-border);position:relative;';

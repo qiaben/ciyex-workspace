@@ -794,7 +794,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	// allow-any-unicode-next-line
 	// ─── Form Dialog ───
 
-	private async _openForm(item: Record<string, unknown> | null): Promise<void> {
+	protected async _openForm(item: Record<string, unknown> | null): Promise<void> {
 		if (!this.config.formFields) { return; }
 		// Optionally refetch full record by ID so the edit form has all relational fields.
 		if (item && this.config.refetchOnEdit && item.id !== undefined && item.id !== null) {
