@@ -25,18 +25,34 @@ interface Channel {
 	type: 'public' | 'private' | 'dm' | 'group_dm';
 	topic?: string;
 	unreadCount?: number;
+	mentionsCount?: number;
+	pinned?: boolean;
+	muted?: boolean;
 	lastMessage?: { content: string; senderName: string; createdAt: string };
-	members?: Array<{ displayName: string }>;
+	members?: Array<{ displayName: string; status?: 'online' | 'offline' | 'away' | 'busy' }>;
+	otherUserStatus?: 'online' | 'offline' | 'away' | 'busy';
 }
+
+type ChannelFilter = 'all' | 'unread' | 'mentions' | 'pinned';
+
+const STATUS_COLORS: Record<string, string> = {
+	online: '#22c55e',
+	away: '#f59e0b',
+	busy: '#ef4444',
+	offline: '#6b7280',
+};
 
 export class ChannelListPane extends ViewPane {
 	static readonly ID = 'ciyex.messaging.channels';
 
 	private container!: HTMLElement;
 	private listEl!: HTMLElement;
+	private searchInput?: HTMLInputElement;
+	private filterTabsEl?: HTMLElement;
 	private channels: Channel[] = [];
 	private loaded = false;
 	private searchValue = '';
+	private filter: ChannelFilter = 'all';
 
 	constructor(
 		options: IViewPaneOptions,
@@ -58,23 +74,31 @@ export class ChannelListPane extends ViewPane {
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.channel-list-pane'));
-		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
+		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;position:relative;';
 
-		// Toolbar
-		const toolbar = DOM.append(this.container, DOM.$('div'));
-		toolbar.style.cssText = 'display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		// Toolbar header + new button
+		const header = DOM.append(this.container, DOM.$('div'));
+		header.style.cssText = 'display:flex;gap:4px;padding:8px 10px 6px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;flex-shrink:0;';
 
-		const search = DOM.append(toolbar, DOM.$('input')) as HTMLInputElement;
+		const title = DOM.append(header, DOM.$('span'));
+		title.textContent = 'MESSAGING';
+		title.style.cssText = 'flex:1;font-size:11px;font-weight:600;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+
+		this._headerBtn(header, '\u{1F50D}', 'Search Messages', () => { this.searchInput?.focus(); });
+		this._headerBtn(header, '+', 'New Channel / DM', () => this._createChannel());
+
+		// Search row
+		const searchRow = DOM.append(this.container, DOM.$('div'));
+		searchRow.style.cssText = 'padding:4px 10px 6px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const search = DOM.append(searchRow, DOM.$('input')) as HTMLInputElement;
+		this.searchInput = search;
 		search.type = 'text';
-		search.placeholder = 'Search channels...';
-		search.style.cssText = 'flex:1;padding:3px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;height:24px;box-sizing:border-box;';
+		search.placeholder = 'Search channels and users...';
+		search.style.cssText = 'width:100%;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;height:24px;box-sizing:border-box;';
 		search.addEventListener('input', () => { this.searchValue = search.value; this._renderList(); });
 
-		const addBtn = DOM.append(toolbar, DOM.$('button'));
-		addBtn.textContent = '+';
-		addBtn.title = 'New Channel / DM';
-		addBtn.style.cssText = 'padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:12px;height:24px;width:24px;';
-		addBtn.addEventListener('click', () => this._createChannel());
+		// Filter tabs
+		this._renderFilterTabs();
 
 		// List
 		this.listEl = DOM.append(this.container, DOM.$('div'));
@@ -87,8 +111,60 @@ export class ChannelListPane extends ViewPane {
 			this._loadChannels();
 		}, 3000);
 
-		// Poll unread every 30s
 		mainWindow.setInterval(() => { if (this.loaded) { this._loadChannels(); } }, 30000);
+	}
+
+	private _headerBtn(parent: HTMLElement, symbol: string, label: string, fn: () => void): void {
+		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		btn.textContent = symbol;
+		btn.title = label;
+		btn.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);height:24px;min-width:24px;';
+		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
+		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+		btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+	}
+
+	private _renderFilterTabs(): void {
+		// Remove the previously rendered filter bar (if any) and create a fresh one.
+		this.filterTabsEl?.remove();
+		const bar = DOM.$('.filter-tabs') as HTMLElement;
+		this.filterTabsEl = bar;
+		bar.style.cssText = 'display:flex;gap:2px;padding:4px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+
+		const unreadCount = this.channels.filter(c => (c.unreadCount || 0) > 0).length;
+		const mentionsCount = this.channels.filter(c => (c.mentionsCount || 0) > 0).length;
+
+		const filters: Array<{ id: ChannelFilter; label: string; badge?: number }> = [
+			{ id: 'all', label: 'All' },
+			{ id: 'unread', label: 'Unread', badge: unreadCount > 0 ? unreadCount : undefined },
+			{ id: 'mentions', label: '@', badge: mentionsCount > 0 ? mentionsCount : undefined },
+			{ id: 'pinned', label: 'Pinned' },
+		];
+
+		for (const f of filters) {
+			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+			const isActive = this.filter === f.id;
+			btn.style.cssText = `flex:1;padding:3px 6px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:4px;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
+
+			const lbl = DOM.append(btn, DOM.$('span'));
+			lbl.textContent = f.label;
+
+			if (typeof f.badge === 'number') {
+				const badge = DOM.append(btn, DOM.$('span'));
+				badge.textContent = String(f.badge);
+				badge.style.cssText = `font-size:9px;padding:0 5px;border-radius:8px;background:${isActive ? 'rgba(255,255,255,0.25)' : '#ef4444'};color:#fff;font-weight:600;`;
+			}
+
+			btn.addEventListener('click', () => { this.filter = f.id; this._renderFilterTabs(); this._renderList(); });
+		}
+
+		// Insert after the search row (3rd child)
+		const searchRow = this.container.children[1];
+		if (searchRow && searchRow.nextSibling) {
+			this.container.insertBefore(bar, searchRow.nextSibling);
+		} else {
+			this.container.appendChild(bar);
+		}
 	}
 
 	private async _loadChannels(): Promise<void> {
@@ -98,6 +174,7 @@ export class ChannelListPane extends ViewPane {
 			const data = await res.json();
 			this.channels = (data?.data || data?.content || data || []) as Channel[];
 			this.loaded = true;
+			this._renderFilterTabs();
 			this._renderList();
 		} catch {
 			this.listEl.textContent = 'Waiting for login...';
@@ -108,21 +185,27 @@ export class ChannelListPane extends ViewPane {
 		DOM.clearNode(this.listEl);
 		const q = this.searchValue.toLowerCase();
 
-		const filtered = this.channels.filter(ch => {
+		let filtered = this.channels.filter(ch => {
 			if (!q) { return true; }
 			return ch.name.toLowerCase().includes(q);
 		});
 
+		if (this.filter === 'unread') {
+			filtered = filtered.filter(c => (c.unreadCount || 0) > 0);
+		} else if (this.filter === 'mentions') {
+			filtered = filtered.filter(c => (c.mentionsCount || 0) > 0);
+		} else if (this.filter === 'pinned') {
+			filtered = filtered.filter(c => c.pinned);
+		}
+
 		const publicChannels = filtered.filter(ch => ch.type === 'public' || ch.type === 'private');
 		const dms = filtered.filter(ch => ch.type === 'dm' || ch.type === 'group_dm');
 
-		// CHANNELS section
-		if (publicChannels.length > 0 || !q) {
+		if (publicChannels.length > 0 || (!q && this.filter === 'all')) {
 			this._renderSection('CHANNELS', publicChannels);
 		}
 
-		// DIRECT MESSAGES section
-		if (dms.length > 0 || !q) {
+		if (dms.length > 0 || (!q && this.filter === 'all')) {
 			this._renderSection('DIRECT MESSAGES', dms);
 		}
 
@@ -134,79 +217,164 @@ export class ChannelListPane extends ViewPane {
 	}
 
 	private _renderSection(title: string, channels: Channel[]): void {
-		// Section header
 		const header = DOM.append(this.listEl, DOM.$('div'));
-		header.style.cssText = 'padding:8px 10px 4px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);letter-spacing:0.5px;';
-		header.textContent = title;
+		header.style.cssText = 'padding:8px 10px 4px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);letter-spacing:0.5px;display:flex;align-items:center;gap:6px;';
+		const t = DOM.append(header, DOM.$('span'));
+		t.textContent = title;
+		t.style.cssText = 'flex:1;';
+		const addBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+';
+		addBtn.title = title === 'CHANNELS' ? 'New Channel' : 'New DM';
+		addBtn.style.cssText = 'padding:0 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-descriptionForeground);height:16px;line-height:16px;';
+		addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
+		addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; });
+		addBtn.addEventListener('click', (e) => { e.stopPropagation(); this._createChannel(); });
 
 		for (const ch of channels) {
-			const row = DOM.append(this.listEl, DOM.$('div'));
-			const hasUnread = (ch.unreadCount || 0) > 0;
-			row.style.cssText = `padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;${hasUnread ? 'font-weight:600;' : ''}`;
-			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-			row.addEventListener('mouseleave', () => { row.style.background = ''; });
-
-			if (ch.type === 'dm' || ch.type === 'group_dm') {
-				// Avatar for DMs
-				const initials = ch.name.split(' ').map(w => (w[0] || '')).join('').substring(0, 2).toUpperCase() || '?';
-				const hue = Math.abs(ch.name.split('').reduce((h, c) => (h << 5) - h + c.charCodeAt(0), 0)) % 360;
-				const av = DOM.append(row, DOM.$('span'));
-				av.textContent = initials;
-				av.style.cssText = `width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#fff;flex-shrink:0;background:hsl(${hue},45%,45%);`;
-			} else {
-				// # icon for channels
-				const icon = DOM.append(row, DOM.$('span'));
-				// allow-any-unicode-next-line
-				icon.textContent = ch.type === 'private' ? '\u{1F512}' : '#';
-				icon.style.cssText = 'width:22px;text-align:center;flex-shrink:0;font-weight:600;color:var(--vscode-descriptionForeground);';
-			}
-
-			// Name + preview column
-			const col = DOM.append(row, DOM.$('div'));
-			col.style.cssText = 'flex:1;min-width:0;overflow:hidden;';
-
-			const nameEl = DOM.append(col, DOM.$('div'));
-			nameEl.textContent = ch.name;
-			nameEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;';
-
-			if (ch.lastMessage) {
-				const preview = DOM.append(col, DOM.$('div'));
-				preview.textContent = `${ch.lastMessage.senderName}: ${ch.lastMessage.content}`;
-				preview.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--vscode-descriptionForeground);font-weight:400;';
-			}
-
-			// Right side: unread badge + time
-			const right = DOM.append(row, DOM.$('div'));
-			right.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;';
-
-			if (ch.lastMessage) {
-				const time = DOM.append(right, DOM.$('span'));
-				try {
-					time.textContent = new Date(ch.lastMessage.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-				} catch {
-					time.textContent = '';
-				}
-				time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);font-weight:400;';
-			}
-
-			if (hasUnread) {
-				const badge = DOM.append(right, DOM.$('span'));
-				badge.textContent = String(ch.unreadCount);
-				badge.style.cssText = 'font-size:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);padding:1px 5px;border-radius:8px;font-weight:600;';
-			}
-
-			// Click → open in editor
-			row.addEventListener('click', () => {
-				const input = new MessagingEditorInput(ch.id, ch.name, ch.type);
-				this.editorService.openEditor(input, { pinned: true });
-			});
+			this._renderChannelRow(ch);
 		}
+	}
+
+	private _renderChannelRow(ch: Channel): void {
+		const row = DOM.append(this.listEl, DOM.$('div'));
+		const hasUnread = (ch.unreadCount || 0) > 0;
+		const hasMention = (ch.mentionsCount || 0) > 0;
+		row.style.cssText = `padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;position:relative;${hasUnread ? 'font-weight:600;' : ''}`;
+		row.addEventListener('mouseenter', () => {
+			row.style.background = 'var(--vscode-list-hoverBackground)';
+			actions.style.opacity = '1';
+		});
+		row.addEventListener('mouseleave', () => {
+			row.style.background = '';
+			actions.style.opacity = '0';
+		});
+
+		if (ch.type === 'dm' || ch.type === 'group_dm') {
+			// Avatar with status dot
+			const avWrap = DOM.append(row, DOM.$('div'));
+			avWrap.style.cssText = 'position:relative;flex-shrink:0;width:22px;height:22px;';
+
+			const initials = ch.name.split(' ').map(w => (w[0] || '')).join('').substring(0, 2).toUpperCase() || '?';
+			const hue = Math.abs(ch.name.split('').reduce((h, c) => (h << 5) - h + c.charCodeAt(0), 0)) % 360;
+			const av = DOM.append(avWrap, DOM.$('span'));
+			av.textContent = initials;
+			av.style.cssText = `width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#fff;background:hsl(${hue},45%,45%);`;
+
+			// Status indicator dot
+			const status = ch.otherUserStatus || (ch.members?.[0]?.status) || 'offline';
+			const dot = DOM.append(avWrap, DOM.$('span'));
+			dot.style.cssText = `position:absolute;bottom:-1px;right:-1px;width:8px;height:8px;border-radius:50%;background:${STATUS_COLORS[status]};border:2px solid var(--vscode-sideBar-background, #252526);`;
+			dot.title = status.charAt(0).toUpperCase() + status.slice(1);
+		} else {
+			const icon = DOM.append(row, DOM.$('span'));
+			// allow-any-unicode-next-line
+			icon.textContent = ch.type === 'private' ? '\u{1F512}' : '#';
+			icon.style.cssText = 'width:22px;text-align:center;flex-shrink:0;font-weight:600;color:var(--vscode-descriptionForeground);';
+		}
+
+		// Name + preview column
+		const col = DOM.append(row, DOM.$('div'));
+		col.style.cssText = 'flex:1;min-width:0;overflow:hidden;';
+
+		const nameRow = DOM.append(col, DOM.$('div'));
+		nameRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+		const nameEl = DOM.append(nameRow, DOM.$('span'));
+		nameEl.textContent = ch.name;
+		nameEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;flex:1;';
+
+		if (ch.pinned) {
+			const pin = DOM.append(nameRow, DOM.$('span'));
+			// allow-any-unicode-next-line
+			pin.textContent = '\u{1F4CC}';
+			pin.style.cssText = 'font-size:9px;flex-shrink:0;';
+			pin.title = 'Pinned';
+		}
+		if (ch.muted) {
+			const mute = DOM.append(nameRow, DOM.$('span'));
+			// allow-any-unicode-next-line
+			mute.textContent = '\u{1F507}';
+			mute.style.cssText = 'font-size:9px;flex-shrink:0;opacity:0.6;';
+			mute.title = 'Muted';
+		}
+
+		if (ch.lastMessage) {
+			const preview = DOM.append(col, DOM.$('div'));
+			preview.textContent = `${ch.lastMessage.senderName}: ${ch.lastMessage.content}`;
+			preview.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--vscode-descriptionForeground);font-weight:400;';
+		}
+
+		// Right side: badges + time
+		const right = DOM.append(row, DOM.$('div'));
+		right.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;';
+
+		if (ch.lastMessage) {
+			const time = DOM.append(right, DOM.$('span'));
+			try {
+				time.textContent = new Date(ch.lastMessage.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+			} catch {
+				time.textContent = '';
+			}
+			time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);font-weight:400;';
+		}
+
+		if (hasMention) {
+			const badge = DOM.append(right, DOM.$('span'));
+			badge.textContent = `@${ch.mentionsCount}`;
+			badge.style.cssText = 'font-size:9px;background:#ef4444;color:#fff;padding:1px 5px;border-radius:8px;font-weight:600;';
+		} else if (hasUnread) {
+			const badge = DOM.append(right, DOM.$('span'));
+			badge.textContent = String(ch.unreadCount);
+			badge.style.cssText = 'font-size:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);padding:1px 5px;border-radius:8px;font-weight:600;';
+		}
+
+		// Action icons (hover)
+		const actions = DOM.append(row, DOM.$('div'));
+		actions.style.cssText = 'position:absolute;right:6px;top:6px;display:flex;gap:2px;opacity:0;transition:opacity 0.1s;background:var(--vscode-list-hoverBackground);padding:2px;border-radius:3px;';
+
+		const actionBtn = (sym: string, lbl: string, color: string, fn: () => void) => {
+			const btn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			btn.textContent = sym;
+			btn.title = lbl;
+			btn.style.cssText = `padding:2px 4px;border:none;border-radius:3px;cursor:pointer;font-size:10px;background:transparent;color:${color};`;
+			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+		};
+
+		actionBtn('\u{1F4CC}', ch.pinned ? 'Unpin' : 'Pin', '#3b82f6', () => this._togglePin(ch));
+		actionBtn('\u{1F515}', ch.muted ? 'Unmute' : 'Mute', '#f59e0b', () => this._toggleMute(ch));
+		actionBtn('\u{2713}', 'Mark as read', '#22c55e', () => this._markRead(ch));
+
+		row.addEventListener('click', () => {
+			const input = new MessagingEditorInput(ch.id, ch.name, ch.type);
+			this.editorService.openEditor(input, { pinned: true });
+		});
+	}
+
+	private async _togglePin(ch: Channel): Promise<void> {
+		ch.pinned = !ch.pinned;
+		this._renderList();
+		try { await this.apiService.fetch(`/api/channels/${ch.id}/pin`, { method: 'PUT', body: JSON.stringify({ pinned: ch.pinned }) }); } catch { /* */ }
+	}
+
+	private async _toggleMute(ch: Channel): Promise<void> {
+		ch.muted = !ch.muted;
+		this._renderList();
+		try { await this.apiService.fetch(`/api/channels/${ch.id}/mute`, { method: 'PUT', body: JSON.stringify({ muted: ch.muted }) }); } catch { /* */ }
+	}
+
+	private async _markRead(ch: Channel): Promise<void> {
+		ch.unreadCount = 0;
+		ch.mentionsCount = 0;
+		this._renderFilterTabs();
+		this._renderList();
+		try { await this.apiService.fetch(`/api/channels/${ch.id}/read`, { method: 'PUT' }); } catch { /* */ }
 	}
 
 	private _formEl: HTMLElement | null = null;
 
 	private _createChannel(): void {
-		// Inline form overlay so we don't rely on browser prompt() which can be blocked in Electron
 		if (this._formEl) { this._formEl.remove(); this._formEl = null; return; }
 
 		const form = DOM.append(this.container, DOM.$('div'));
@@ -215,11 +383,9 @@ export class ChannelListPane extends ViewPane {
 
 		const inputStyle = 'width:100%;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;margin-bottom:6px;';
 
-		// Type selector (tabs)
 		const typeRow = DOM.append(form, DOM.$('div'));
 		typeRow.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;';
 		let selectedType = 'channel';
-		// Track type buttons directly to avoid querySelectorAll
 		const typeBtns: Array<{ btn: HTMLButtonElement; type: string }> = [];
 		const refreshTypeBtns = () => {
 			for (const entry of typeBtns) {

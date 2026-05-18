@@ -13,6 +13,8 @@ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js'
 import { PatientListPane } from './patientListPane.js';
 import { GenericListPane } from './genericListPane.js';
 import { ScheduleSidebarPane } from './scheduleSidebarPane.js';
+import { TasksSidebarPane } from './tasksSidebarPane.js';
+import { AppointmentsSidebarPane } from './appointmentsSidebarPane.js';
 
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
@@ -211,12 +213,12 @@ GenericListPane.configs.set('ciyex.system.auditlog', {
 
 // Calendar - rich schedule sidebar (today's timeline + upcoming + stats)
 viewsRegistry.registerViews([{ id: ScheduleSidebarPane.ID, name: localize2('schedule', "Schedule"), ctorDescriptor: new SyncDescriptor(ScheduleSidebarPane) }], CALENDAR_CONTAINER);
-// Appointments flat list kept as secondary view
-viewsRegistry.registerViews([{ id: 'ciyex.appointments.view', name: localize2('allAppts', "All Appointments"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], APPOINTMENTS_CONTAINER);
+// Appointments — rich sidebar with date filters, status filter, per-row actions, pagination
+viewsRegistry.registerViews([{ id: AppointmentsSidebarPane.ID, name: localize2('allAppts', "All Appointments"), ctorDescriptor: new SyncDescriptor(AppointmentsSidebarPane) }], APPOINTMENTS_CONTAINER);
 viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('patientList', "Patient List"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
 import { EncounterListPane } from './encounterListPane.js';
 viewsRegistry.registerViews([{ id: EncounterListPane.ID, name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(EncounterListPane) }], ENCOUNTERS_CONTAINER);
-viewsRegistry.registerViews([{ id: 'ciyex.tasks.view', name: localize2('tasks', "Tasks"), ctorDescriptor: new SyncDescriptor(GenericListPane) }], TASKS_CONTAINER);
+viewsRegistry.registerViews([{ id: TasksSidebarPane.ID, name: localize2('tasks', "Tasks"), ctorDescriptor: new SyncDescriptor(TasksSidebarPane) }], TASKS_CONTAINER);
 import { ChannelListPane } from './messaging/channelListPane.js';
 viewsRegistry.registerViews([{ id: ChannelListPane.ID, name: localize2('channels', "Channels"), ctorDescriptor: new SyncDescriptor(ChannelListPane) }], MESSAGING_CONTAINER);
 

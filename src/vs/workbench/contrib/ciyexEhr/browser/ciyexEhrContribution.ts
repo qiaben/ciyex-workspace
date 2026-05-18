@@ -129,10 +129,10 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Container ID -> view ID inside it (force-open view when container activates)
 		const containerToView: Record<string, string> = {
 			'ciyex.calendar': 'ciyex.calendar.schedule',
-			'ciyex.appointments': 'ciyex.appointments.view',
+			'ciyex.appointments': 'ciyex.appointments.sidebar',
 			'ciyex.patients': 'ciyex.patients.list',
 			'ciyex.encounters': 'ciyex.encounters.view',
-			'ciyex.tasks': 'ciyex.tasks.view',
+			'ciyex.tasks': 'ciyex.tasks.sidebar',
 			'ciyex.messaging': 'ciyex.messaging.channels',
 			'ciyex.portal-management': 'ciyex.portal.docreviews',
 			'ciyex.clinical': 'ciyex.clinical.menu',

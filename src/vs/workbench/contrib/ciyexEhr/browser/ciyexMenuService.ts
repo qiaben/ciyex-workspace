@@ -18,10 +18,10 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 // Item key → sidebar view ID (for items that open sidebar views)
 const ITEM_KEY_TO_VIEW: Record<string, string> = {
 	'calendar': 'ciyex.calendar.schedule',
-	'appointments': 'ciyex.appointments.view',
+	'appointments': 'ciyex.appointments.sidebar',
 	'patients': 'ciyex.patients.list',
 	'encounters': 'ciyex.encounters.view',
-	'tasks': 'ciyex.tasks.view',
+	'tasks': 'ciyex.tasks.sidebar',
 	'messaging': 'ciyex.messaging.channels',
 	'reports': 'ciyex.reports.view',
 	'developer-portal': 'ciyex.developer.menu',
