@@ -558,7 +558,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
 		if (vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video')) {
 			iconBtn(actions, 'Video Call', '\u{1F4F9}', '#22c55e', () => {
-				this.commandService.executeCommand('ciyex.openTelehealth', apt.id);
+				this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
 			});
 		}
 

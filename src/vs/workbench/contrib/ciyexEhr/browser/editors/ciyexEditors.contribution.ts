@@ -30,6 +30,8 @@ import {
 	SettingsHubEditorInput, LayoutHubEditorInput,
 	// Portal Management full-page editors
 	DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput,
+	// Telehealth
+	TelehealthEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -66,6 +68,7 @@ import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
+import { TelehealthEditor } from './telehealthEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -113,6 +116,9 @@ reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.
 
 // Appointments
 reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, AppointmentsEditor.ID, localize('appointments', "Appointments")), [new SyncDescriptor(AppointmentsEditorInput)]);
+
+// Telehealth
+reg.registerEditorPane(EditorPaneDescriptor.create(TelehealthEditor, TelehealthEditor.ID, localize('telehealth', "Telehealth")), [new SyncDescriptor(TelehealthEditorInput)]);
 
 // System editors
 reg.registerEditorPane(EditorPaneDescriptor.create(ConsentsEditor, ConsentsEditor.ID, localize('consents', "Consents")), [new SyncDescriptor(ConsentsEditorInput)]);

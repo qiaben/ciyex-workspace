@@ -528,5 +528,30 @@ export class DeveloperPortalEditorInput extends EditorInput {
 	}
 }
 
+// allow-any-unicode-next-line
+// ─── Telehealth EditorInput (per-appointment) ───
+
+export class TelehealthEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexTelehealth';
+	override get typeId(): string { return TelehealthEditorInput.ID; }
+
+	constructor(
+		readonly appointmentId: string,
+		readonly patientName: string = '',
+		readonly providerName: string = '',
+	) { super(); }
+
+	override getName(): string {
+		return this.patientName ? `Telehealth: ${this.patientName}` : 'Telehealth Session';
+	}
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('device-camera-video'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-telehealth', path: `/${this.appointmentId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof TelehealthEditorInput && this.appointmentId === other.appointmentId;
+	}
+}
+
 // Keep backward compat alias
 export const CiyexConfigEditorInput = LayoutEditorInput;
