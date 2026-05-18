@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 
@@ -50,8 +51,26 @@ export class EncounterListPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Wipe encounters on logout and refetch on next sign-in so user-2
+		// never sees user-1's encounter list.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this.allItems = [];
+				this.loaded = false;
+				this.currentPage = 0;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this.allItems = [];
+				this.loaded = false;
+				this.currentPage = 0;
+				if (this.listEl) {
+					void this._loadData();
+				}
+			}
+		}));
 	}
 
 	protected override renderBody(parent: HTMLElement): void {

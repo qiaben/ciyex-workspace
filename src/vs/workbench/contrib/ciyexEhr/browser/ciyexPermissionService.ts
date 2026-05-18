@@ -22,6 +22,7 @@ export interface ICiyexPermissionService {
 	canWriteResource(resourceType: string): boolean;
 	canReadResource(resourceType: string): boolean;
 	loadPermissions(): Promise<void>;
+	reset(): void;
 }
 
 const PERMISSION_CATEGORIES = [
@@ -60,7 +61,13 @@ export class CiyexPermissionService extends Disposable implements ICiyexPermissi
 	}
 
 	hasCategoryWrite(category: string): boolean {
-		return this._permissions.includes(`${category}.write`);
+		// Matches the ciyex-ehr-ui PermissionContext semantics: any non-`.read`
+		// permission in the category counts as "write". The backend seeds keys
+		// like `orders.create`, `orders.sign`, `chart.sign`, `billing.submit`
+		// in addition to plain `.write`, so a literal `.write` check would
+		// under-grant against the same backend the EHR UI uses.
+		const prefix = `${category}.`;
+		return this._permissions.some(p => p.startsWith(prefix) && !p.endsWith('.read'));
 	}
 
 	canWriteResource(resourceType: string): boolean {
@@ -108,11 +115,29 @@ export class CiyexPermissionService extends Disposable implements ICiyexPermissi
 		}
 	}
 
+	reset(): void {
+		this._permissions = [];
+		this._writableResources = [];
+		this._readableResources = [];
+		this._role = '';
+		// Unset every context key we previously set so menus/views guarded by
+		// `ciyex.perm.*`, `ciyex.fhir.*`, `ciyex.role.*`, `ciyex.authenticated`
+		// don't leak from the signed-out user into the next sign-in.
+		for (const key of this._contextKeys.keys()) {
+			this._contextKeys.get(key)!.set(false);
+		}
+		this._onDidChangePermissions.fire();
+	}
+
 	private _updateContextKeys(): void {
-		// Set permission category context keys
+		// Set permission category context keys. `.write` mirrors
+		// `hasCategoryWrite` (any non-`.read` perm in the category) so menu
+		// items gated on roles like PROVIDER (whose seed has `orders.create`,
+		// `chart.sign`, etc. instead of plain `.write`) still light up.
 		for (const cat of PERMISSION_CATEGORIES) {
-			const hasRead = this._permissions.some(p => p.startsWith(`${cat}.`));
-			const hasWrite = this._permissions.includes(`${cat}.write`);
+			const prefix = `${cat}.`;
+			const hasRead = this._permissions.some(p => p.startsWith(prefix));
+			const hasWrite = this._permissions.some(p => p.startsWith(prefix) && !p.endsWith('.read'));
 			this._setKey(`ciyex.perm.${cat}`, hasRead);
 			this._setKey(`ciyex.perm.${cat}.write`, hasWrite);
 		}

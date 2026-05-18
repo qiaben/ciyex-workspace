@@ -14,6 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
@@ -59,6 +60,7 @@ export class GenericListPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -67,6 +69,23 @@ export class GenericListPane extends ViewPane {
 			apiPath: '/api/patients',
 			columns: [{ key: 'name' }],
 		};
+
+		// Reset cached rows on auth state change so the second user never
+		// sees data fetched under the first user's token + tenant.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this._allItems = [];
+				this._loaded = false;
+				this._currentPage = 0;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this._allItems = [];
+				this._loaded = false;
+				this._currentPage = 0;
+				if (this._listEl) {
+					void this._loadData();
+				}
+			}
+		}));
 	}
 
 	// Static config registry - set before view is instantiated

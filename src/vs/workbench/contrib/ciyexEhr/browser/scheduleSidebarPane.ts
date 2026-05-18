@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { ICiyexApiService } from './ciyexApiService.js';
-import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
@@ -88,12 +88,35 @@ export class ScheduleSidebarPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
-		@ICiyexAuthService _authService: ICiyexAuthService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@ILogService private readonly logService: ILogService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Clear the cached schedule + cached lookup options on logout so a
+		// re-login as a different user doesn't keep the prior schedule.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this.appointments = [];
+				this.statusOptions = [];
+				this.roomOptions = [];
+				this.waitlist = [];
+				this.currentPage = 0;
+				this.totalAppointments = 0;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this.appointments = [];
+				this.statusOptions = [];
+				this.roomOptions = [];
+				this.waitlist = [];
+				this.currentPage = 0;
+				this.totalAppointments = 0;
+				if (this.container) {
+					void this._loadAndRender();
+				}
+			}
+		}));
 	}
 
 	// View mode + reference date sourced from the calendar editor's published

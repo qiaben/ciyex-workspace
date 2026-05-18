@@ -14,6 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 interface IPatientRow {
@@ -54,8 +55,26 @@ export class PatientListPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Drop cached patients when the user signs out, and refetch on the
+		// next sign-in so the second user never sees the first user's roster.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this._patients = [];
+				this._loaded = false;
+				this._page = 0;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this._loaded = false;
+				this._patients = [];
+				this._page = 0;
+				if (this._listEl) {
+					void this._loadPatients();
+				}
+			}
+		}));
 	}
 
 	protected override renderBody(container: HTMLElement): void {

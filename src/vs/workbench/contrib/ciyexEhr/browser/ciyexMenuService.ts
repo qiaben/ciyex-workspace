@@ -84,6 +84,7 @@ export interface ICiyexMenuService {
 	readonly onDidChangeMenus: Event<void>;
 	readonly menuItems: ICiyexMenuItemEntry[];
 	loadMenus(): Promise<void>;
+	reset(): void;
 }
 
 // --- Static MenuIds for EHR menus (registered at module load) ----------
@@ -196,6 +197,15 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
+	}
+
+	reset(): void {
+		// Drop registered commands + menu entries so the next user's menu load
+		// starts from a clean slate (otherwise the previous user's items stick
+		// around in the Ciyex / Clinical / Operations / System menus).
+		this._menuDisposables.clear();
+		this._menuItems = [];
+		this._onDidChangeMenus.fire();
 	}
 
 	async loadMenus(): Promise<void> {

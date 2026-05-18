@@ -64,6 +64,8 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		this._register(this.authService.onDidChangeAuthState(state => {
 			if (state === CiyexAuthState.Authenticated) {
 				this._onAuthenticated();
+			} else if (state === CiyexAuthState.NotAuthenticated) {
+				this._onSignedOut();
 			}
 		}));
 
@@ -179,6 +181,26 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	}
 
 	private _authenticated = false;
+	private _statusBarEntries: { dispose(): void }[] = [];
+	private _unreadPollTimer: number | undefined;
+
+	private _onSignedOut(): void {
+		// Tear down everything tied to the previous user so the next login
+		// fully re-bootstraps. Without this, a second user logging in after
+		// sign-out keeps the first user's permissions, menus, role badge,
+		// and any cached service state.
+		this._authenticated = false;
+		this.permissionService.reset();
+		this.menuService.reset();
+		for (const entry of this._statusBarEntries) { entry.dispose(); }
+		this._statusBarEntries = [];
+		if (this._unreadEntry) { this._unreadEntry.dispose(); this._unreadEntry = null; }
+		if (this._unreadPollTimer !== undefined) {
+			const win = DOM.getActiveWindow();
+			win.clearInterval(this._unreadPollTimer);
+			this._unreadPollTimer = undefined;
+		}
+	}
 
 	private async _onAuthenticated(): Promise<void> {
 		if (this._authenticated) { return; }
@@ -255,34 +277,34 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		// User info
 		if (userName) {
-			this.statusbarService.addEntry({
+			this._statusBarEntries.push(this.statusbarService.addEntry({
 				name: 'Ciyex User',
 				text: `$(account) ${userName}`,
 				tooltip: `Signed in as ${email}`,
 				ariaLabel: `User: ${userName}`,
-			}, 'ciyex.user', StatusbarAlignment.RIGHT, 100);
+			}, 'ciyex.user', StatusbarAlignment.RIGHT, 100));
 		}
 
 		// Practice/tenant
 		const tenant = this._getTenant();
 		if (tenant) {
-			this.statusbarService.addEntry({
+			this._statusBarEntries.push(this.statusbarService.addEntry({
 				name: 'Ciyex Practice',
 				text: `$(organization) ${tenant}`,
 				tooltip: `Practice: ${tenant}`,
 				ariaLabel: `Practice: ${tenant}`,
-			}, 'ciyex.practice', StatusbarAlignment.RIGHT, 99);
+			}, 'ciyex.practice', StatusbarAlignment.RIGHT, 99));
 		}
 
 		// Role
 		const role = this.permissionService.role;
 		if (role) {
-			this.statusbarService.addEntry({
+			this._statusBarEntries.push(this.statusbarService.addEntry({
 				name: 'Ciyex Role',
 				text: `$(shield) ${role}`,
 				tooltip: `Role: ${role}`,
 				ariaLabel: `Role: ${role}`,
-			}, 'ciyex.role', StatusbarAlignment.RIGHT, 98);
+			}, 'ciyex.role', StatusbarAlignment.RIGHT, 98));
 		}
 	}
 
@@ -313,7 +335,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		poll();
 		const win = DOM.getActiveWindow();
-		win.setInterval(poll, 30000);
+		this._unreadPollTimer = win.setInterval(poll, 30000);
 	}
 
 	private _getUserName(): string {

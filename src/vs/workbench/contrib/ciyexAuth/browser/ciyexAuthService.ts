@@ -566,6 +566,10 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		localStorage.removeItem('ciyex_user_name');
 		localStorage.removeItem('ciyex_user_id');
 		localStorage.removeItem('ciyex_groups');
+		// Clear tenant scope so the next user's API requests don't carry
+		// the previous user's X-Tenant-Name header.
+		localStorage.removeItem('ciyex_selected_tenant');
+		localStorage.removeItem('ciyex_tenant');
 	}
 
 	/** Clear tokens only - keep email and user name for password-only re-login */

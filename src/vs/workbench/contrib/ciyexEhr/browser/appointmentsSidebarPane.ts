@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
@@ -133,8 +134,28 @@ export class AppointmentsSidebarPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ILogService private readonly logService: ILogService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Clear cached appointments + status options on logout so a re-login
+		// as a different user doesn't surface the previous user's schedule.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this.appointments = [];
+				this.loaded = false;
+				this.statusOptions = [];
+				this.currentPage = 0;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this.appointments = [];
+				this.loaded = false;
+				this.statusOptions = [];
+				this.currentPage = 0;
+				if (this.container) {
+					void this._loadAll();
+				}
+			}
+		}));
 	}
 
 	protected override renderBody(parent: HTMLElement): void {

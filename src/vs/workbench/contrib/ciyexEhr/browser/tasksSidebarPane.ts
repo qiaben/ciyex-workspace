@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
@@ -84,8 +85,24 @@ export class TasksSidebarPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ILogService private readonly logService: ILogService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Reset task cache on logout / re-login so the next user gets their
+		// own tasks rather than the previous user's queue.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this.tasks = [];
+				this.loaded = false;
+			} else if (state === CiyexAuthState.Authenticated) {
+				this.tasks = [];
+				this.loaded = false;
+				if (this.container) {
+					void this._loadAndRender();
+				}
+			}
+		}));
 	}
 
 	protected override renderBody(parent: HTMLElement): void {
