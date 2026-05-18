@@ -4360,11 +4360,10 @@ export class PatientChartEditor extends EditorPane {
 					payload.recordedAt = new Date().toISOString();
 				}
 				// Education assignments — the backend's PatientEducationService
-				// expects nested foreign-key objects ({ material: { id }, patient:
-				// { id } }) rather than flat ID fields, otherwise JPA's @ManyToOne
-				// relations fall through with "The given id must not be null".
-				// Keep the flat ids in the payload too so callers that accept
-				// either shape don't regress.
+				// expects flat numeric materialId + patientId in the body. The
+				// route is POST /api/education/assignments (handled below); the
+				// `material: { id }` / `patient: { id }` nested shape we used
+				// previously was rejected with "The given id must not be null".
 				if (tab.key === 'education' && !isEdit) {
 					const matId = payload.materialId;
 					if (!matId || matId === '' || matId === null || matId === undefined) {
@@ -4374,13 +4373,13 @@ export class PatientChartEditor extends EditorPane {
 						return;
 					}
 					const numId = typeof matId === 'number' ? matId : (parseInt(String(matId), 10) || matId);
-					payload.material = { id: numId };
 					payload.materialId = numId;
-					if (this.patientId && !payload.patient) {
+					if (this.patientId && !payload.patientId) {
 						const numPid = parseInt(this.patientId, 10) || this.patientId;
-						payload.patient = { id: numPid };
 						payload.patientId = numPid;
 					}
+					delete payload.material;
+					delete payload.patient;
 				}
 				// Documents — the FHIR DocumentReference URI search-parameter
 				// has a uniqueness constraint on HAPI's hfj_spidx_uri index.
@@ -4403,13 +4402,10 @@ export class PatientChartEditor extends EditorPane {
 						? (isEdit ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/patient/${this.patientId}`)
 						: (isEdit ? `${ep}/${recordId}` : ep))
 					: (isEdit ? `${ep}/${recordId}` : ep);
-				// Education assignments: backend expects POST /api/patient-education-assignments/{educationId}
-				// with patientId in the body — override the generic URL.
+				// Education assignments: backend route is POST /api/education/assignments
+				// — flat materialId + patientId go in the body (not the URL path).
 				if (tab.key === 'education' && !isEdit) {
-					const matId = payload.materialId;
-					if (matId) {
-						url = `/api/patient-education-assignments/${matId}`;
-					}
+					url = '/api/education/assignments';
 				}
 				const method = isEdit ? 'PUT' : 'POST';
 				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });

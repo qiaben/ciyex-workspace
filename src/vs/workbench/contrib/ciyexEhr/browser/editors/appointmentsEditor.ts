@@ -1073,13 +1073,16 @@ export class AppointmentsEditor extends EditorPane {
 		}
 
 		const thead = DOM.append(table, DOM.$('thead'));
+		thead.style.cssText = 'position:sticky;top:0;z-index:2;';
 		const headRow = DOM.append(thead, DOM.$('tr'));
 		headRow.style.cssText = 'background:var(--vscode-editorWidget-background,#252526);';
 		const columns = ['DATE', 'PATIENT', 'PROVIDER', 'LOCATION', 'TYPE', 'STATUS', 'ROOM', 'WAIT', 'ACTIONS'];
 		for (const col of columns) {
 			const th = DOM.append(headRow, DOM.$('th'));
 			th.textContent = col;
-			th.style.cssText = 'padding:10px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--vscode-foreground);letter-spacing:0.5px;border-bottom:2px solid var(--vscode-focusBorder,#0e639c);white-space:nowrap;';
+			// Sticky-friendly background: each <th> repeats the row background so the
+			// header looks solid as it stays pinned during vertical scroll.
+			th.style.cssText = 'padding:10px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--vscode-foreground);letter-spacing:0.5px;border-bottom:2px solid var(--vscode-focusBorder,#0e639c);white-space:nowrap;background:var(--vscode-editorWidget-background,#252526);';
 		}
 
 		this.tableBody = DOM.append(table, DOM.$('tbody'));

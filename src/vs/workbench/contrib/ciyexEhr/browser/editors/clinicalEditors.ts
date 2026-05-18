@@ -1558,7 +1558,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 	};
 
 	private readonly _assignmentsConfig: ClinicalEditorConfig = {
-		title: 'Patient Assignments', apiPath: '/api/patient-education',
+		title: 'Patient Assignments', apiPath: '/api/education/assignments',
 		searchPlaceholder: 'Search by topic, patient, category...',
 		// Column keys mirror PatientEducationAssignmentDto field names. The
 		// previous config used `category`/`priority` which the backend doesn't
@@ -1836,7 +1836,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 		loading.style.cssText = 'padding:20px;color:var(--vscode-descriptionForeground);font-size:13px;';
 		loading.textContent = `Loading assignments for ${this._eduAssignPatientName}...`;
 		try {
-			const res = await this.apiService.fetch(`/api/patient-education-assignments?patientId=${this._eduAssignPatientId}&size=100`);
+			const res = await this.apiService.fetch(`/api/education/assignments/patient/${this._eduAssignPatientId}`);
 			if (!res.ok) { loading.textContent = 'Failed to load assignments.'; return; }
 			const raw = await res.json();
 			const items: Record<string, unknown>[] = Array.isArray(raw) ? raw : (raw?.data?.content || raw?.content || raw?.data || []);
@@ -2156,41 +2156,47 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _inventoryConfig: ClinicalEditorConfig = {
 		title: 'Inventory', apiPath: '/api/inventory',
-		searchPlaceholder: 'Search by name, SKU, barcode, category...',
+		searchPlaceholder: 'Search items...',
 		clientSideFilter: ['name', 'sku', 'barcode', 'description', 'categoryName', 'locationName', 'manufacturer', 'unit', 'status', 'id'],
 		editable: true,
 		mergeOnEdit: true,
 		refetchOnEdit: true,
+		// Mirrors ciyex-ehr-ui Inventory.tsx columns exactly: Name | SKU | Stock |
+		// Min | Unit | Category | Location | Status (Actions provided automatically).
 		columns: [
-			{ key: 'name', label: 'Item', width: '1.5fr' },
-			{ key: 'supplierName', label: 'Supplier', width: '120px' },
+			{ key: 'name', label: 'Name', width: '1.4fr' },
+			{ key: 'sku', label: 'SKU', width: '110px' },
+			{ key: 'stockOnHand', label: 'Stock', width: '70px' },
+			{ key: 'minStock', label: 'Min', width: '60px' },
+			{ key: 'unit', label: 'Unit', width: '80px' },
 			{ key: 'categoryName', label: 'Category', width: '110px' },
-			{ key: 'lotNumber', label: 'Lot', width: '90px' },
-			{ key: 'expirationDate', label: 'Expiry', width: '100px' },
-			{ key: 'stockOnHand', label: 'On Hand', width: '80px' },
-			{ key: 'locationName', label: 'Clinic', width: '100px' },
+			{ key: 'locationName', label: 'Location', width: '110px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Active', value: 'active' },
 			{ label: 'Inactive', value: 'inactive' },
 		],
+		// Match the EHR UI Inventory toolbar: Status (covered by statusTabs above),
+		// Category, Location — three dropdown filters next to the search box.
 		additionalFilters: [
 			{
-				key: 'itemType', placeholder: 'All Types',
+				key: 'categoryName', placeholder: 'All Categories',
 				options: [
-					{ label: 'Consumable', value: 'consumable' },
-					{ label: 'Durable', value: 'durable' },
-					{ label: 'Medication', value: 'medication' },
-					{ label: 'Equipment', value: 'equipment' },
+					{ label: 'Consumable', value: 'Consumable' },
+					{ label: 'Implant', value: 'Implant' },
+					{ label: 'PPE', value: 'PPE' },
+					{ label: 'Medication', value: 'Medication' },
+					{ label: 'Equipment', value: 'Equipment' },
 				],
 			},
 			{
-				key: 'costMethod', placeholder: 'All Cost Methods',
+				key: 'locationName', placeholder: 'All Locations',
 				options: [
-					{ label: 'FIFO', value: 'fifo' },
-					{ label: 'LIFO', value: 'lifo' },
-					{ label: 'Average', value: 'avg' },
+					{ label: 'Main Storage', value: 'Main Storage' },
+					{ label: 'Pharmacy', value: 'Pharmacy' },
+					{ label: 'Front Desk', value: 'Front Desk' },
+					{ label: 'Exam Room', value: 'Exam Room' },
 				],
 			},
 		],
@@ -2271,19 +2277,18 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
 		title: 'Purchase Orders', apiPath: '/api/orders',
-		// Mirrors ciyex-ehr-ui Orders.tsx — search by PO #/supplier, status tabs
-		// include `partial`, supplier dropdown filter.
+		// Mirrors ciyex-ehr-ui Orders.tsx columns exactly: PO # | Supplier | Status
+		// | Date | Total | Lines. Search box covers PO# / supplier name.
 		searchPlaceholder: 'Search by PO #, supplier...',
 		clientSideFilter: ['orderNumber', 'poNumber', 'supplierName', 'status', 'id'],
 		editable: true,
 		columns: [
-			{ key: 'orderNumber', label: 'PO #', width: '120px' },
-			{ key: 'supplierName', label: 'Supplier', width: '1.2fr' },
-			{ key: 'itemName', label: 'Item Name', width: '1fr' },
-			{ key: 'categoryName', label: 'Category', width: '110px' },
-			{ key: 'orderDate', label: 'Date', width: '100px' },
-			{ key: 'status', label: 'Status', width: '100px' },
-			{ key: 'totalCost', label: 'Amount', width: '90px' },
+			{ key: 'orderNumber', label: 'PO #', width: '130px' },
+			{ key: 'supplierName', label: 'Supplier', width: '1.5fr' },
+			{ key: 'status', label: 'Status', width: '110px' },
+			{ key: 'orderDate', label: 'Date', width: '110px' },
+			{ key: 'totalCost', label: 'Total', width: '100px' },
+			{ key: 'lineCount', label: 'Lines', width: '70px' },
 		],
 		statusTabs: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
@@ -2366,21 +2371,19 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _recordsConfig: ClinicalEditorConfig = {
 		title: 'Inventory Records', apiPath: '/api/inventory/list',
-		// Web Records page has two sub-tabs (Adjustments / Waste Log) plus per-item
-		// search. Surfacing those as status tabs + reason dropdown gives the desktop
-		// the same filtering affordances.
+		// Mirrors ciyex-ehr-ui Records.tsx — Date | Qty | Reason | Notes | By | Ref.
+		// Per-item search + Adjustments / Waste Log status tabs.
 		searchPlaceholder: 'Search by item, reason, notes...',
 		clientSideFilter: ['itemName', 'adjustmentType', 'reasonCode', 'reason', 'notes', 'id'],
 		editable: false,
 		filterKey: 'recordType',
 		columns: [
-			{ key: 'itemName', label: 'Item', width: '1.5fr' },
-			{ key: 'adjustmentType', label: 'Type', width: '100px' },
+			{ key: 'createdAt', label: 'Date', width: '130px' },
 			{ key: 'quantity', label: 'Qty', width: '70px' },
-			{ key: 'reasonCode', label: 'Reason', width: '110px' },
+			{ key: 'reasonCode', label: 'Reason', width: '120px' },
 			{ key: 'notes', label: 'Notes' },
 			{ key: 'performedBy', label: 'By', width: '120px' },
-			{ key: 'createdAt', label: 'Date', width: '130px' },
+			{ key: 'referenceId', label: 'Ref', width: '110px' },
 		],
 		statusTabs: [
 			{ label: 'Adjustments', value: 'adjustment' },
@@ -2421,14 +2424,15 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		editable: true,
 		refetchOnEdit: true,
 		filterKey: 'status',
+		// Mirrors ciyex-ehr-ui Maintenance.tsx columns: Equipment | Category |
+		// Priority | Due | Assignee | Status (Actions provided automatically).
 		columns: [
 			{ key: 'equipmentName', label: 'Equipment', width: '1.5fr' },
-			{ key: 'category', label: 'Category', width: '110px' },
+			{ key: 'category', label: 'Category', width: '120px' },
 			{ key: 'priority', label: 'Priority', width: '90px' },
-			{ key: 'location', label: 'Location', width: '110px' },
-			{ key: 'scheduledDate', label: 'Due', width: '100px' },
-			{ key: 'assignee', label: 'Assignee', width: '120px' },
-			{ key: 'status', label: 'Status', width: '100px' },
+			{ key: 'scheduledDate', label: 'Due', width: '110px' },
+			{ key: 'assignee', label: 'Assignee', width: '130px' },
+			{ key: 'status', label: 'Status', width: '110px' },
 		],
 		statusTabs: [
 			{ label: 'Scheduled', value: 'scheduled' },

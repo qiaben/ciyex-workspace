@@ -56,7 +56,10 @@ export class MessagingEditor extends EditorPane {
 	private headerEl!: HTMLElement;
 	private messageListEl!: HTMLElement;
 	private composeEl!: HTMLElement;
-	private inputEl!: HTMLTextAreaElement;
+	// Compose input is a `contentEditable` div so the format buttons (B/I/U/lists)
+	// can drive `document.execCommand` for true WYSIWYG rich-text — matches the
+	// EHR-UI ComposeBar (textareas show only markdown markers, not actual formatting).
+	private inputEl!: HTMLDivElement;
 	private messages: Message[] = [];
 	private channelInfo: ChannelInfo | null = null;
 	private currentUserId = '';
@@ -433,29 +436,29 @@ export class MessagingEditor extends EditorPane {
 			b.addEventListener('click', () => { onClick(); if (this.inputEl) { this.inputEl.focus(); } });
 			return b;
 		};
-		mkFmtBtn('B', 'Bold (Ctrl+B)', 'font-weight:700;', () => this._wrapSelection('**', '**'));
-		mkFmtBtn('I', 'Italic (Ctrl+I)', 'font-style:italic;', () => this._wrapSelection('_', '_'));
-		mkFmtBtn('U', 'Underline (Ctrl+U)', 'text-decoration:underline;', () => this._wrapSelection('__', '__'));
-		mkFmtBtn('S', 'Strikethrough', 'text-decoration:line-through;', () => this._wrapSelection('~~', '~~'));
+		mkFmtBtn('B', 'Bold (Ctrl+B)', 'font-weight:700;', () => this._execFormat('bold'));
+		mkFmtBtn('I', 'Italic (Ctrl+I)', 'font-style:italic;', () => this._execFormat('italic'));
+		mkFmtBtn('U', 'Underline (Ctrl+U)', 'text-decoration:underline;', () => this._execFormat('underline'));
+		mkFmtBtn('S', 'Strikethrough', 'text-decoration:line-through;', () => this._execFormat('strikeThrough'));
 
 		// Separator
 		const sep1 = DOM.append(toolbar, DOM.$('span'));
 		sep1.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border);margin:0 4px;';
 
 		// allow-any-unicode-next-line
-		mkFmtBtn('🔗', 'Insert link', '', () => this._wrapSelection('[', '](url)'));
-		mkFmtBtn('1.', 'Numbered list', 'font-family:monospace;', () => this._insertAtLineStart('1. '));
+		mkFmtBtn('🔗', 'Insert link', '', () => this._insertLink());
+		mkFmtBtn('1.', 'Numbered list', 'font-family:monospace;', () => this._execFormat('insertOrderedList'));
 		// allow-any-unicode-next-line
-		mkFmtBtn('☰', 'Bullet list', '', () => this._insertAtLineStart('- '));
+		mkFmtBtn('☰', 'Bullet list', '', () => this._execFormat('insertUnorderedList'));
 
 		// Separator
 		const sep2 = DOM.append(toolbar, DOM.$('span'));
 		sep2.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border);margin:0 4px;';
 
-		mkFmtBtn('"', 'Quote', '', () => this._insertAtLineStart('> '));
+		mkFmtBtn('"', 'Quote', '', () => this._execFormat('formatBlock', 'blockquote'));
 		// allow-any-unicode-next-line
-		mkFmtBtn('<>', 'Inline code', 'font-family:monospace;', () => this._wrapSelection('`', '`'));
-		mkFmtBtn('{}', 'Code block', 'font-family:monospace;', () => this._wrapSelection('\n```\n', '\n```\n'));
+		mkFmtBtn('<>', 'Inline code', 'font-family:monospace;', () => this._wrapInlineCode());
+		mkFmtBtn('{}', 'Code block', 'font-family:monospace;', () => this._execFormat('formatBlock', 'pre'));
 
 		// Spacer pushes attach to the right (kept inline with toolbar for compactness)
 		const spacer = DOM.append(toolbar, DOM.$('span'));
@@ -507,32 +510,36 @@ export class MessagingEditor extends EditorPane {
 			if (!attachWrap.contains(e.target as Node)) { attachMenu.style.display = 'none'; }
 		});
 
-		// Input
-		this.inputEl = DOM.append(inputRow, DOM.$('textarea')) as HTMLTextAreaElement;
-		this.inputEl.placeholder = 'Type a message... (**bold**, _italic_, __underline__)';
-		this.inputEl.style.cssText = 'flex:1;padding:8px 12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;font-family:inherit;resize:none;min-height:36px;max-height:120px;line-height:1.4;';
-		this.inputEl.rows = 1;
+		// Input — contentEditable div drives true WYSIWYG (B/I/U/lists render
+		// inline instead of inserting markdown markers).
+		this.inputEl = DOM.append(inputRow, DOM.$('div.messaging-input')) as HTMLDivElement;
+		this.inputEl.contentEditable = 'true';
+		this.inputEl.setAttribute('data-placeholder', 'Type a message...');
+		this.inputEl.style.cssText = 'flex:1;padding:8px 12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;font-family:inherit;min-height:36px;max-height:120px;overflow-y:auto;line-height:1.4;outline:none;';
+		// Placeholder via CSS — contentEditable doesn't honour the standard one.
+		const phStyle = DOM.append(this.composeEl, DOM.$('style'));
+		phStyle.textContent = '.messaging-input:empty:before{content:attr(data-placeholder);color:var(--vscode-input-placeholderForeground,var(--vscode-descriptionForeground));pointer-events:none;}'
+			+ '.messaging-input blockquote{border-left:2px solid var(--vscode-editorWidget-border,#3c3c3c);padding-left:8px;color:var(--vscode-descriptionForeground);margin:4px 0;}'
+			+ '.messaging-input ol{padding-left:20px;list-style:decimal;}'
+			+ '.messaging-input ul{padding-left:20px;list-style:disc;}'
+			+ '.messaging-input pre{background:var(--vscode-textCodeBlock-background);padding:6px 8px;border-radius:4px;font-family:monospace;font-size:12px;white-space:pre-wrap;}'
+			+ '.messaging-input code{background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;font-family:monospace;font-size:12px;}';
 		this.inputEl.addEventListener('keydown', (e) => {
 			// Keyboard shortcuts for formatting
 			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
-				if (e.key === 'b' || e.key === 'B') { e.preventDefault(); this._wrapSelection('**', '**'); return; }
-				if (e.key === 'i' || e.key === 'I') { e.preventDefault(); this._wrapSelection('_', '_'); return; }
-				if (e.key === 'u' || e.key === 'U') { e.preventDefault(); this._wrapSelection('__', '__'); return; }
+				if (e.key === 'b' || e.key === 'B') { e.preventDefault(); this._execFormat('bold'); return; }
+				if (e.key === 'i' || e.key === 'I') { e.preventDefault(); this._execFormat('italic'); return; }
+				if (e.key === 'u' || e.key === 'U') { e.preventDefault(); this._execFormat('underline'); return; }
 			}
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
 				this._sendMessage();
 			}
 			// Up arrow in empty input → edit last own message
-			if (e.key === 'ArrowUp' && !this.inputEl.value.trim()) {
+			if (e.key === 'ArrowUp' && !(this.inputEl.textContent || '').trim()) {
 				e.preventDefault();
 				this._editLastMessage();
 			}
-		});
-		this.inputEl.addEventListener('input', () => {
-			// Auto-resize
-			this.inputEl.style.height = 'auto';
-			this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
 		});
 
 		// Send button
@@ -545,49 +552,68 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	/**
-	 * Wrap the current textarea selection with the given before/after markers.
-	 * If nothing is selected, place the markers around the caret with the caret
-	 * positioned between them so the user can immediately type the styled content.
+	 * Apply a rich-text formatting command (bold, italic, underline, lists, etc.)
+	 * to the current selection within the contentEditable input — matches the
+	 * EHR-UI ComposeBar which also uses document.execCommand for WYSIWYG editing.
 	 */
-	private _wrapSelection(before: string, after: string): void {
+	private _execFormat(command: string, value?: string): void {
 		if (!this.inputEl) { return; }
-		const start = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const end = this.inputEl.selectionEnd ?? this.inputEl.value.length;
-		const value = this.inputEl.value;
-		const selected = value.substring(start, end);
-		const newValue = value.substring(0, start) + before + selected + after + value.substring(end);
-		this.inputEl.value = newValue;
-		const newCaret = selected.length > 0 ? start + before.length + selected.length + after.length : start + before.length;
 		this.inputEl.focus();
-		this.inputEl.setSelectionRange(
-			selected.length > 0 ? newCaret : newCaret,
-			selected.length > 0 ? newCaret : newCaret,
-		);
-		// Trigger auto-resize
-		this.inputEl.style.height = 'auto';
-		this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+		try { mainWindow.document.execCommand(command, false, value); } catch { /* ignore */ }
 	}
 
-	/** Insert text at the start of the current line (for bullet/quote markers). */
-	private _insertAtLineStart(prefix: string): void {
+	private _insertLink(): void {
+		const url = mainWindow.prompt('Enter URL:');
+		if (!url) { return; }
+		this._execFormat('createLink', url);
+	}
+
+	private _wrapInlineCode(): void {
 		if (!this.inputEl) { return; }
-		const value = this.inputEl.value;
-		const caret = this.inputEl.selectionStart ?? value.length;
-		const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
-		const newValue = value.substring(0, lineStart) + prefix + value.substring(lineStart);
-		this.inputEl.value = newValue;
-		const newCaret = caret + prefix.length;
 		this.inputEl.focus();
-		this.inputEl.setSelectionRange(newCaret, newCaret);
+		const sel = mainWindow.getSelection();
+		if (!sel || sel.rangeCount === 0) { return; }
+		const range = sel.getRangeAt(0);
+		const code = mainWindow.document.createElement('code');
+		const selected = range.toString();
+		if (selected) {
+			code.textContent = selected;
+			range.deleteContents();
+			range.insertNode(code);
+			sel.collapseToEnd();
+		} else {
+			// allow-any-unicode-next-line
+			code.textContent = '​';
+			range.insertNode(code);
+			const tn = code.firstChild!;
+			range.setStart(tn, 1);
+			range.setEnd(tn, 1);
+			sel.removeAllRanges();
+			sel.addRange(range);
+		}
+	}
+
+	private _getInputText(): string {
+		// Read the contentEditable as plain text — innerText preserves line breaks
+		// from <br>/<div> while stripping inline formatting tags. Receivers render
+		// the message as plain text (or via the existing markdown-style parser),
+		// so the wire format stays compatible with prior textarea-based history.
+		return (this.inputEl.innerText || this.inputEl.textContent || '').trim();
+	}
+
+	private _clearInput(): void {
+		// Empty both representations so the `:empty:before` placeholder shows again
+		// (an empty <div></div> still satisfies `:empty`, but a stray <br> won't).
+		this.inputEl.textContent = '';
 	}
 
 	private async _sendMessage(): Promise<void> {
 		const input = this._getInput();
-		if (!input || !this.inputEl.value.trim()) { return; }
+		const text = this._getInputText();
+		if (!input || !text) { return; }
 
-		const content = this.inputEl.value.trim();
-		this.inputEl.value = '';
-		this.inputEl.style.height = 'auto';
+		const content = text;
+		this._clearInput();
 
 		try {
 			const body: Record<string, string> = { content };
@@ -646,8 +672,8 @@ export class MessagingEditor extends EditorPane {
 			if (!input) { return; }
 
 			// Send a message first, then attach files
-			const content = this.inputEl.value.trim() || `Attached ${files.length} file(s)`;
-			this.inputEl.value = '';
+			const content = this._getInputText() || `Attached ${files.length} file(s)`;
+			this._clearInput();
 
 			try {
 				const msgRes = await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
@@ -687,18 +713,15 @@ export class MessagingEditor extends EditorPane {
 
 	private async _editMessage(messageId: string, currentContent: string): Promise<void> {
 		// Put current content in input for editing
-		this.inputEl.value = currentContent;
+		this.inputEl.textContent = currentContent;
 		this.inputEl.focus();
-		this.inputEl.style.height = 'auto';
-		this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
 
 		// Replace the send handler temporarily
 		const originalSend = this._sendMessage.bind(this);
 		this._sendMessage = async () => {
-			const newContent = this.inputEl.value.trim();
+			const newContent = this._getInputText();
 			if (!newContent) { return; }
-			this.inputEl.value = '';
-			this.inputEl.style.height = 'auto';
+			this._clearInput();
 
 			try {
 				await this.apiService.fetch(`/api/messages/${messageId}`, {

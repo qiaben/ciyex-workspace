@@ -79,7 +79,7 @@ export class DocumentReviewPane extends ViewPane {
 
 	private async _load(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/portal/document-reviews');
+			const res = await this.apiService.fetch('/api/portal/document-reviews/pending');
 			if (!res.ok) { this.listEl.textContent = 'Waiting for login...'; return; }
 			const data = await res.json();
 			this.items = (data?.data || data?.content || data || []) as DocumentReview[];

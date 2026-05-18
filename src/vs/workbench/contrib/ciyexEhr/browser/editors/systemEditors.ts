@@ -25,9 +25,12 @@ export class DocumentReviewEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexDocumentReview';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Document Reviews',
-		// Use the collection root; the backend now supports GET /api/portal/document-reviews.
-		// Client-side filtering on `status` handles the Pending/Accepted/Rejected tabs.
-		apiPath: '/api/portal/document-reviews',
+		// Mirror the EHR UI's /document-reviews page which fetches /pending. The
+		// deployed backend's collection root (`GET /api/portal/document-reviews`)
+		// may not yet be available in older environments and returns
+		// "No endpoint GET /api/portal/document-reviews" (HTTP 500); /pending has
+		// always been there.
+		apiPath: '/api/portal/document-reviews/pending',
 		searchPlaceholder: 'Search by patient, document type...',
 		clientSideFilter: ['patientName', 'fileName', 'category', 'status', 'id'],
 		editable: false,
@@ -86,8 +89,9 @@ export class FormSubmissionEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexFormSubmission';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Form Reviews',
-		// Use the collection root for full list; status tabs filter client-side.
-		apiPath: '/api/portal/form-submissions',
+		// Mirror the EHR UI: it fetches /pending. Collection-root listing isn't
+		// guaranteed in older deployed backends.
+		apiPath: '/api/portal/form-submissions/pending',
 		searchPlaceholder: 'Search by patient, form title...',
 		clientSideFilter: ['patientName', 'formTitle', 'formKey', 'status', 'id'],
 		editable: false,
@@ -143,8 +147,9 @@ export class PatientApprovalEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPatientApproval';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Patient Approvals',
-		// Use the collection root; client-side filtering handles status tabs.
-		apiPath: '/api/portal/approvals',
+		// Mirror the EHR UI: /patient-approvals fetches /pending. The collection
+		// root isn't guaranteed in older deployed backends.
+		apiPath: '/api/portal/approvals/pending',
 		searchPlaceholder: 'Search by name, email, DOB...',
 		clientSideFilter: ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'patientName', 'id'],
 		editable: false,
@@ -323,16 +328,17 @@ export class FaxEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by sender, recipient, subject...',
 		clientSideFilter: ['direction', 'faxNumber', 'senderName', 'recipientName', 'subject', 'category', 'status', 'patientName', 'id'],
 		editable: true,
+		// Mirrors ciyex-ehr-ui FaxTable.tsx columns: From/To | Fax Number | Subject
+		// | Pages | Category | Patient | Status | Date (Actions auto-rendered).
 		columns: [
-			{ key: 'direction', label: 'Direction', width: '80px' },
-			{ key: 'faxNumber', label: 'Fax Number', width: '120px' },
-			{ key: 'senderName', label: 'Sender', width: '1fr' },
-			{ key: 'recipientName', label: 'Recipient', width: '1fr' },
+			{ key: 'contact', label: 'From / To', width: '1fr' },
+			{ key: 'faxNumber', label: 'Fax Number', width: '130px' },
 			{ key: 'subject', label: 'Subject', width: '1.3fr' },
-			{ key: 'pageCount', label: 'Pages', width: '55px' },
-			{ key: 'category', label: 'Category', width: '100px' },
+			{ key: 'pageCount', label: 'Pages', width: '60px' },
+			{ key: 'category', label: 'Category', width: '110px' },
+			{ key: 'patientName', label: 'Patient', width: '120px' },
 			{ key: 'status', label: 'Status', width: '90px' },
-			{ key: 'sentAt', label: 'Sent At', width: '130px' },
+			{ key: 'date', label: 'Date', width: '140px' },
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' },
@@ -379,16 +385,28 @@ export class FaxEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
 		],
-		cellRenderer: (key, value) => {
-			if (key === 'direction' && typeof value === 'string') {
+		cellRenderer: (key, value, item) => {
+			// Derived columns: From/To shows senderName for inbound faxes and
+			// recipientName for outbound (matching FaxTable.tsx). Date pulls
+			// receivedAt for inbound or sentAt/createdAt for outbound.
+			if (key === 'contact') {
+				const dir = String(item['direction'] || '').toLowerCase();
+				const fallback = item['senderName'] || item['recipientName'] || '';
+				const name = dir === 'inbound' ? (item['senderName'] || fallback) : (item['recipientName'] || fallback);
 				// allow-any-unicode-next-line
-				return value === 'inbound' ? '📥 Inbound' : '📤 Outbound';
+				const arrow = dir === 'inbound' ? '📥' : '📤';
+				return `${arrow} ${String(name || '—')}`;
+			}
+			if (key === 'date') {
+				const dir = String(item['direction'] || '').toLowerCase();
+				const raw = dir === 'inbound'
+					? (item['receivedAt'] || item['createdAt'])
+					: (item['sentAt'] || item['createdAt']);
+				if (!raw) { return '—'; }
+				try { return new Date(String(raw)).toLocaleString(); } catch { return String(raw); }
 			}
 			if (key === 'category' && typeof value === 'string') {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-			}
-			if (key === 'sentAt' && typeof value === 'string') {
-				try { return new Date(value).toLocaleString(); } catch { return String(value); }
 			}
 			return String(value ?? '');
 		},
