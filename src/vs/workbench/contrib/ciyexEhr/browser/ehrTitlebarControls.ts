@@ -902,18 +902,19 @@ export class EhrTitlebarControls extends Disposable {
 		// the hidden ISO input is what code reads as `.value`.
 		if (type === 'date') {
 			const wrap = DOM.append(group, DOM.$('.ehr-date-wrap'));
-			wrap.style.cssText = 'position:relative;display:flex;';
+			// Visible text input — padding-right handled by CSS .ehr-date-wrap > input[type="text"]
 			const visible = DOM.append(wrap, DOM.$('input.ehr-form-input')) as HTMLInputElement;
 			visible.type = 'text';
 			visible.placeholder = 'MM/DD/YYYY';
 			visible.maxLength = 10;
-			visible.style.flex = '1';
+			// Hidden ISO value input
 			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			hidden.type = 'hidden';
 			hidden.name = name;
+			// Native date picker hidden off-screen — triggered programmatically via icon click
 			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			picker.type = 'date';
-			picker.style.cssText = 'position:absolute;right:0;top:0;width:32px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;';
+			picker.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;';
 			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
 			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
 			visible.addEventListener('input', () => {
@@ -924,12 +925,17 @@ export class EhrTitlebarControls extends Disposable {
 			picker.addEventListener('change', () => {
 				visible.value = isoToUs(picker.value);
 				hidden.value = picker.value;
+				visible.dispatchEvent(new Event('input'));
 			});
+			// Calendar icon — CSS positions it inside the input (right: 8px, top: 50%)
 			const icon = DOM.append(wrap, DOM.$('span'));
 			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground);pointer-events:none;';
-			// Return the hidden ISO input so callers reading `.value` still see
-			// yyyy-mm-dd, matching the previous native-date-input contract.
+			icon.style.cursor = 'pointer';
+			icon.addEventListener('click', () => picker.showPicker?.());
+			visible.addEventListener('click', (e) => {
+				const rect = visible.getBoundingClientRect();
+				if (e.clientX > rect.right - 30) { picker.showPicker?.(); }
+			});
 			return hidden;
 		}
 

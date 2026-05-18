@@ -312,6 +312,29 @@
 	color: var(--vscode-input-placeholderForeground, #888);
 }
 
+/* Date field: icon sits inside the input on the right */
+.ehr-date-wrap {
+	position: relative;
+	display: block;
+}
+
+.ehr-date-wrap > input[type="text"] {
+	width: 100%;
+	box-sizing: border-box;
+	padding-right: 30px;
+}
+
+.ehr-date-wrap > span {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 13px;
+	color: var(--vscode-input-placeholderForeground, #888);
+	pointer-events: none;
+	line-height: 1;
+}
+
 .ehr-form-textarea {
 	resize: vertical;
 	min-height: 50px;

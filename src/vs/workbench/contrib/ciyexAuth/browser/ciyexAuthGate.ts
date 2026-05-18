@@ -188,8 +188,20 @@ export class CiyexAuthGate extends Disposable {
 
 	// --- theme helpers ---
 	private _isDark(): boolean {
-		// Ciyex Workspace: always use dark theme for auth gate
-		return true;
+		// Read the VS Code theme from the body background colour that the
+		// workbench injects via the ThemeService (e.g. background-color:#1e1e1e).
+		try {
+			const bg = mainWindow.document.body.style.backgroundColor;
+			if (bg) {
+				// Parse rgb/rgba or hex and check luminance
+				const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+				if (m) {
+					const lum = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3]);
+					return lum < 128;
+				}
+			}
+		} catch { }
+		return mainWindow.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
 	}
 
 	private _colors() {
@@ -306,97 +318,188 @@ export class CiyexAuthGate extends Disposable {
 		return h('div', { background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' });
 	}
 
-	private _buildInput(id: string, type: string, placeholder: string, value: string, c: ReturnType<typeof this._colors>): HTMLInputElement {
-		const input = document.createElement('input');
-		input.id = id;
-		input.type = type;
-		input.placeholder = placeholder;
-		input.value = value;
-		if (this._loading) {
-			input.disabled = true;
-		}
-		Object.assign(input.style, {
-			width: '100%', padding: '10px 12px', borderRadius: '8px',
-			border: `1px solid ${c.border}`, background: c.inputBg,
-			color: c.textPrimary, fontSize: '14px', boxSizing: 'border-box',
-			outline: 'none',
-		});
-		return input;
-	}
 
-	private _buildButton(id: string, label: string, primary: boolean, c: ReturnType<typeof this._colors>, disabled?: boolean): HTMLButtonElement {
-		const btn = document.createElement('button');
-		btn.id = id;
-		btn.disabled = !!disabled;
-		btn.textContent = label;
-		Object.assign(btn.style, {
-			width: '100%', padding: '10px', borderRadius: '8px',
-			fontSize: '14px', fontWeight: '700',
-			display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-			border: primary ? 'none' : `1px solid ${c.border}`,
-			background: primary ? c.brand : 'none',
-			color: primary ? 'white' : c.textSecondary,
-		});
-		return btn;
-	}
-
-	private _buildError(c: ReturnType<typeof this._colors>): HTMLElement | null {
-		if (!this._error) {
-			return null;
+	// --- Feature icons for the brand panel ---
+	private _featureIcon(type: 'shield' | 'database' | 'doc' | 'cloud'): HTMLElement {
+		const wrap = h('div', { flexShrink: '0', width: '20px', height: '20px', opacity: '0.92' });
+		const NS = 'http://www.w3.org/2000/svg';
+		const svg = document.createElementNS(NS, 'svg');
+		svg.setAttribute('width', '20');
+		svg.setAttribute('height', '20');
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('fill', 'none');
+		svg.setAttribute('stroke', 'currentColor');
+		svg.setAttribute('stroke-width', '2');
+		svg.setAttribute('stroke-linecap', 'round');
+		svg.setAttribute('stroke-linejoin', 'round');
+		if (type === 'shield') {
+			const p = document.createElementNS(NS, 'path');
+			p.setAttribute('d', 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z');
+			svg.appendChild(p);
+		} else if (type === 'database') {
+			const e = document.createElementNS(NS, 'ellipse');
+			e.setAttribute('cx', '12'); e.setAttribute('cy', '5'); e.setAttribute('rx', '9'); e.setAttribute('ry', '3');
+			svg.appendChild(e);
+			const p1 = document.createElementNS(NS, 'path'); p1.setAttribute('d', 'M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'); svg.appendChild(p1);
+			const p2 = document.createElementNS(NS, 'path'); p2.setAttribute('d', 'M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5'); svg.appendChild(p2);
+		} else if (type === 'doc') {
+			const p1 = document.createElementNS(NS, 'path'); p1.setAttribute('d', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'); svg.appendChild(p1);
+			const p2 = document.createElementNS(NS, 'polyline'); p2.setAttribute('points', '14 2 14 8 20 8'); svg.appendChild(p2);
+			const p3 = document.createElementNS(NS, 'line'); p3.setAttribute('x1', '16'); p3.setAttribute('y1', '13'); p3.setAttribute('x2', '8'); p3.setAttribute('y2', '13'); svg.appendChild(p3);
+			const p4 = document.createElementNS(NS, 'line'); p4.setAttribute('x1', '16'); p4.setAttribute('y1', '17'); p4.setAttribute('x2', '8'); p4.setAttribute('y2', '17'); svg.appendChild(p4);
+		} else {
+			const p = document.createElementNS(NS, 'polyline');
+			p.setAttribute('points', '22 12 18 12 15 21 9 3 6 12 2 12');
+			svg.appendChild(p);
 		}
-		const div = h('div', {
-			background: c.errorBg, border: `1px solid ${c.errorBorder}`,
-			borderRadius: '8px', padding: '10px 14px', marginBottom: '16px',
-			fontSize: '13px', color: c.errorText,
-		});
-		div.textContent = this._error;
-		return div;
+		wrap.appendChild(svg);
+		return wrap;
 	}
 
 	// --- Step builders ---
-	private _buildEmailStep(c: ReturnType<typeof this._colors>): HTMLElement {
-		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+	private _buildEmailStep(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const dark = this._isDark();
+		const rightBg = dark ? '#1e1e1e' : '#F4F5F7';
+		const cardBg = dark ? '#252526' : '#ffffff';
+		const cardShadow = dark ? '0 4px 32px rgba(0,0,0,0.4)' : '0 4px 32px rgba(0,0,0,0.08)';
+		const titleColor = dark ? '#F9FAFB' : '#111827';
+		const subColor = dark ? '#9CA3AF' : '#6B7280';
+		const labelColor = dark ? '#D1D5DB' : '#374151';
+		const inputBorder = dark ? '1.5px solid #3c3c3c' : '1.5px solid #D1D5DB';
+		const inputBg = dark ? '#3c3c3c' : '#fff';
+		const inputColor = dark ? '#cccccc' : '#111827';
+		const legalColor = dark ? '#6B7280' : '#9CA3AF';
 
-		// Header
-		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
-		header.appendChild(this._logo(48));
-		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Ciyex Workspace'));
-		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Sign in to continue'));
-		wrapper.appendChild(header);
+		// Full-screen two-panel layout matching app-dev.ciyex.org/signin
+		const wrapper = h('div', { position: 'absolute', inset: '0', display: 'flex' });
 
-		// Card
-		const card = this._buildCard(c);
+		// \u2500\u2500 Left brand panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+		const left = h('div', {
+			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
+			alignItems: 'center', justifyContent: 'center',
+			padding: '48px 56px', color: '#fff',
+			background: 'linear-gradient(145deg, #5B5FEE 0%, #3730C8 55%, #2B27A8 100%)',
+		});
 
-		// Email label + input
-		const labelDiv = h('div', { marginBottom: '20px' });
-		labelDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Email'));
-		const emailInput = this._buildInput('ciyex-email', 'email', 'you@example.com', this._email, c);
+		left.appendChild(this._logo(80));
+		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: '#fff' }), 'Ciyex EHR'));
+		left.appendChild(text(h('p', { fontSize: '15px', opacity: '0.82', marginBottom: '44px', textAlign: 'center', color: '#fff' }), 'Open Source Public Health Infrastructure'));
+
+		const featureList = h('div', { display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '380px' });
+		const features: Array<{ icon: 'shield' | 'database' | 'doc' | 'cloud'; label: string }> = [
+			{ icon: 'shield', label: 'HIPAA-compliant with enterprise-grade security' },
+			{ icon: 'database', label: 'FHIR R4 interoperable health data exchange' },
+			{ icon: 'doc', label: 'Patient charting, scheduling & e-prescribing' },
+			{ icon: 'cloud', label: 'Cloud-native with self-hosting option' },
+		];
+		for (const f of features) {
+			const item = h('div', {
+				display: 'flex', alignItems: 'center', gap: '14px',
+				background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.18)',
+				borderRadius: '10px', padding: '13px 18px', fontSize: '14px', fontWeight: '500', color: '#fff',
+			});
+			item.appendChild(this._featureIcon(f.icon));
+			const span = document.createElement('span');
+			span.textContent = f.label;
+			item.appendChild(span);
+			featureList.appendChild(item);
+		}
+		left.appendChild(featureList);
+		wrapper.appendChild(left);
+
+		// \u2500\u2500 Right sign-in panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+		const right = h('div', {
+			flex: '1', background: rightBg, display: 'flex',
+			alignItems: 'center', justifyContent: 'center',
+			padding: '48px 32px', position: 'relative',
+		});
+
+		const card = h('div', {
+			background: cardBg, borderRadius: '16px', boxShadow: cardShadow,
+			padding: '48px 44px 40px', width: '100%', maxWidth: '400px',
+		});
+
+		card.appendChild(text(h('h1', { fontSize: '24px', fontWeight: '700', color: titleColor, textAlign: 'center', marginBottom: '6px' }), 'Sign In'));
+		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '32px' }), 'Enter your email to continue'));
+
+		// Email field
+		const labelDiv = h('div', {});
+		labelDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: labelColor, marginBottom: '8px' }), 'Email'));
+		const emailInput = document.createElement('input');
+		emailInput.id = 'ciyex-email';
+		emailInput.type = 'email';
+		emailInput.placeholder = 'you@example.com';
+		emailInput.value = this._email;
 		emailInput.autocomplete = 'email';
+		if (this._loading) { emailInput.disabled = true; }
+		Object.assign(emailInput.style, {
+			width: '100%', padding: '11px 14px', border: inputBorder,
+			borderRadius: '8px', fontSize: '14px', color: inputColor,
+			outline: 'none', boxSizing: 'border-box', background: inputBg,
+		});
 		labelDiv.appendChild(emailInput);
 		card.appendChild(labelDiv);
 
 		// Error
-		const err = this._buildError(c);
-		if (err) {
+		if (this._error) {
+			const c = this._colors();
+			const err = h('div', {
+				background: c.errorBg, border: `1px solid ${c.errorBorder}`, borderRadius: '8px',
+				padding: '10px 14px', marginTop: '12px', fontSize: '13px', color: c.errorText,
+			});
+			err.textContent = this._error;
 			card.appendChild(err);
 		}
 
 		// Continue button
-		const btn = this._buildButton('ciyex-discover-btn', this._loading ? 'Checking...' : 'Continue', true, c, this._loading || !this._email.trim());
+		const btn = document.createElement('button');
+		btn.id = 'ciyex-discover-btn';
+		btn.textContent = this._loading ? 'Checking...' : 'Continue';
+		btn.disabled = this._loading || !this._email.trim();
+		Object.assign(btn.style, {
+			display: 'block', width: '100%', marginTop: '20px', padding: '13px',
+			background: '#4F6AF0', color: '#fff', fontSize: '15px', fontWeight: '600',
+			border: 'none', borderRadius: '8px', cursor: 'pointer',
+		});
 		card.appendChild(btn);
-		wrapper.appendChild(card);
 
-		// Server Settings link (opens popup)
+		// Register link
+		const registerLink = document.createElement('a');
+		registerLink.href = '#';
+		registerLink.textContent = 'Register a new practice';
+		Object.assign(registerLink.style, {
+			display: 'block', textAlign: 'center', marginTop: '22px',
+			fontSize: '14px', color: '#4F6AF0', fontWeight: '500', textDecoration: 'none',
+		});
+		card.appendChild(registerLink);
+
+		// Legal
+		const legal = h('p', { marginTop: '14px', textAlign: 'center', fontSize: '12px', color: legalColor });
+		legal.appendChild(document.createTextNode('By signing in, you agree to our '));
+		const termsA = document.createElement('a'); termsA.href = '#'; termsA.textContent = 'Terms';
+		Object.assign(termsA.style, { color: '#4F6AF0', textDecoration: 'none' });
+		legal.appendChild(termsA);
+		legal.appendChild(document.createTextNode(' & '));
+		const privacyA = document.createElement('a'); privacyA.href = '#'; privacyA.textContent = 'Privacy Policy';
+		Object.assign(privacyA.style, { color: '#4F6AF0', textDecoration: 'none' });
+		legal.appendChild(privacyA);
+		legal.appendChild(document.createTextNode('.'));
+		card.appendChild(legal);
+
+		right.appendChild(card);
+
+		// Server Settings link (bottom-right corner)
 		const settingsLink = document.createElement('button');
 		settingsLink.id = 'ciyex-settings-toggle';
 		settingsLink.textContent = 'Server Settings';
 		Object.assign(settingsLink.style, {
-			background: 'none', border: 'none', color: c.textSecondary,
-			fontSize: '12px', padding: '8px 4px', cursor: 'pointer',
-			display: 'block', margin: '12px auto 0', textAlign: 'center',
-			textDecoration: 'underline',
+			position: 'absolute', bottom: '16px', right: '20px',
+			background: 'none', border: 'none', color: '#9CA3AF',
+			fontSize: '11px', padding: '4px 8px', cursor: 'pointer', textDecoration: 'underline',
 		});
-		wrapper.appendChild(settingsLink);
+		right.appendChild(settingsLink);
+
+		wrapper.appendChild(right);
 
 		// Settings popup overlay (modal on top of login)
 		if (this._showSettings) {
@@ -405,59 +508,56 @@ export class CiyexAuthGate extends Disposable {
 				display: 'flex', alignItems: 'center', justifyContent: 'center',
 				background: 'rgba(0,0,0,0.5)',
 			});
-
 			const popup = h('div', {
-				background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px',
+				background: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px',
 				padding: '24px', width: '380px', maxWidth: '90vw',
-				boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+				boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
 			});
-
-			// Popup header
 			const headerRow = h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' });
-			headerRow.appendChild(text(h('h3', { fontSize: '15px', fontWeight: '600', color: c.textPrimary, margin: '0' }), 'Server Settings'));
+			headerRow.appendChild(text(h('h3', { fontSize: '15px', fontWeight: '600', color: '#111827', margin: '0' }), 'Server Settings'));
 			const closeBtn = document.createElement('button');
 			closeBtn.textContent = '\u2715';
-			Object.assign(closeBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '16px', cursor: 'pointer', padding: '0 4px' });
+			Object.assign(closeBtn.style, { background: 'none', border: 'none', color: '#6B7280', fontSize: '16px', cursor: 'pointer', padding: '0 4px' });
 			headerRow.appendChild(closeBtn);
 			popup.appendChild(headerRow);
-
 			const fields: Array<{ label: string; key: string; value: string; placeholder: string }> = [
 				{ label: 'API Server', key: 'ciyex_api_url', value: this._authService.apiUrl, placeholder: 'https://api-dev.ciyex.org' },
 				{ label: 'Keycloak URL', key: 'ciyex_keycloak_url', value: this._authService.keycloakUrl, placeholder: 'https://dev.aran.me' },
 				{ label: 'Keycloak Realm', key: 'ciyex_keycloak_realm', value: this._authService.keycloakRealm, placeholder: 'ciyex' },
 				{ label: 'Keycloak Client ID', key: 'ciyex_keycloak_client_id', value: this._authService.keycloakClientId, placeholder: 'ciyex-app' },
 			];
-
 			const inputs: HTMLInputElement[] = [];
 			for (const f of fields) {
 				const row = h('div', { marginBottom: '12px' });
-				row.appendChild(text(h('label', { display: 'block', fontSize: '12px', fontWeight: '500', color: c.textSecondary, marginBottom: '4px' }), f.label));
-				const inp = this._buildInput(`ciyex-cfg-${f.key}`, 'text', f.placeholder, f.value, c);
-				inp.style.fontSize = '13px';
-				inp.style.padding = '8px 10px';
+				row.appendChild(text(h('label', { display: 'block', fontSize: '12px', fontWeight: '500', color: '#6B7280', marginBottom: '4px' }), f.label));
+				const inp = document.createElement('input');
+				inp.id = `ciyex-cfg-${f.key}`; inp.type = 'text';
+				inp.placeholder = f.placeholder; inp.value = f.value;
+				Object.assign(inp.style, {
+					width: '100%', padding: '8px 10px', borderRadius: '8px',
+					border: '1px solid #D1D5DB', background: '#f9fafb',
+					color: '#111827', fontSize: '13px', boxSizing: 'border-box', outline: 'none',
+				});
 				row.appendChild(inp);
 				popup.appendChild(row);
 				inputs.push(inp);
 			}
-
-			// Save button
-			const saveBtn = this._buildButton('ciyex-settings-save', 'Save', true, c);
-			saveBtn.style.marginTop = '4px';
+			const saveBtn = document.createElement('button');
+			saveBtn.textContent = 'Save';
+			Object.assign(saveBtn.style, {
+				width: '100%', padding: '10px', marginTop: '4px', background: '#4F6AF0',
+				color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer',
+			});
 			popup.appendChild(saveBtn);
-
 			backdrop.appendChild(popup);
 			this._overlay!.appendChild(backdrop);
-
-			// Popup listeners
 			const closePopup = () => { this._showSettings = false; this._render(); };
 			closeBtn.addEventListener('click', closePopup);
 			backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { closePopup(); } });
 			saveBtn.addEventListener('click', () => {
 				for (let i = 0; i < fields.length; i++) {
 					const val = inputs[i].value.trim();
-					if (val) {
-						localStorage.setItem(fields[i].key, fields[i].key === 'ciyex_api_url' ? val.replace(/\/$/, '') : val);
-					}
+					if (val) { localStorage.setItem(fields[i].key, fields[i].key === 'ciyex_api_url' ? val.replace(/\/$/, '') : val); }
 				}
 				closePopup();
 			});
@@ -468,71 +568,163 @@ export class CiyexAuthGate extends Disposable {
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
 		settingsLink.addEventListener('click', () => { this._showSettings = true; this._render(); });
+		registerLink.addEventListener('click', (e) => e.preventDefault());
+		termsA.addEventListener('click', (e) => e.preventDefault());
+		privacyA.addEventListener('click', (e) => e.preventDefault());
 		setTimeout(() => emailInput.focus(), 50);
 
 		return wrapper;
 	}
 
-	private _buildAuthenticate(c: ReturnType<typeof this._colors>): HTMLElement {
-		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+	// --- Shared two-panel skeleton (left brand + right card) ---
+	private _buildTwoPanel(title: string, subtitle: string): { wrapper: HTMLElement; card: HTMLElement } {
+		const dark = this._isDark();
+		const rightBg = dark ? '#1e1e1e' : '#F4F5F7';
+		const cardBg = dark ? '#252526' : '#ffffff';
+		const cardShadow = dark ? '0 4px 32px rgba(0,0,0,0.4)' : '0 4px 32px rgba(0,0,0,0.08)';
+		const titleColor = dark ? '#F9FAFB' : '#111827';
+		const subColor = dark ? '#9CA3AF' : '#6B7280';
 
-		// Header
-		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
-		header.appendChild(this._logo(48));
-		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Welcome back'));
-		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), this._email));
-		if (this._discoverResult?.orgName) {
-			header.appendChild(text(h('p', { fontSize: '12px', color: c.textSecondary, margin: '2px 0 0' }), this._discoverResult.orgName));
+		const wrapper = h('div', { position: 'absolute', inset: '0', display: 'flex' });
+
+		// -- Left brand panel --
+		const left = h('div', {
+			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
+			alignItems: 'center', justifyContent: 'center',
+			padding: '48px 56px', color: '#fff',
+			background: 'linear-gradient(145deg, #5B5FEE 0%, #3730C8 55%, #2B27A8 100%)',
+		});
+		left.appendChild(this._logo(80));
+		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: '#fff' }), 'Ciyex EHR'));
+		left.appendChild(text(h('p', { fontSize: '15px', opacity: '0.82', marginBottom: '44px', textAlign: 'center', color: '#fff' }), 'Open Source Public Health Infrastructure'));
+		const featureList = h('div', { display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '380px' });
+		const features: Array<{ icon: 'shield' | 'database' | 'doc' | 'cloud'; label: string }> = [
+			{ icon: 'shield', label: 'HIPAA-compliant with enterprise-grade security' },
+			{ icon: 'database', label: 'FHIR R4 interoperable health data exchange' },
+			{ icon: 'doc', label: 'Patient charting, scheduling & e-prescribing' },
+			{ icon: 'cloud', label: 'Cloud-native with self-hosting option' },
+		];
+		for (const f of features) {
+			const item = h('div', {
+				display: 'flex', alignItems: 'center', gap: '14px',
+				background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.18)',
+				borderRadius: '10px', padding: '13px 18px', fontSize: '14px', fontWeight: '500', color: '#fff',
+			});
+			item.appendChild(this._featureIcon(f.icon));
+			const span = document.createElement('span'); span.textContent = f.label;
+			item.appendChild(span);
+			featureList.appendChild(item);
 		}
-		wrapper.appendChild(header);
+		left.appendChild(featureList);
+		wrapper.appendChild(left);
 
-		// Card
-		const card = this._buildCard(c);
+		// -- Right panel --
+		const right = h('div', {
+			flex: '1', background: rightBg, display: 'flex',
+			alignItems: 'center', justifyContent: 'center',
+			padding: '48px 32px', position: 'relative',
+		});
+		const card = h('div', {
+			background: cardBg, borderRadius: '16px',
+			boxShadow: cardShadow,
+			padding: '48px 44px 40px', width: '100%', maxWidth: '400px',
+		});
+		card.appendChild(text(h('h1', { fontSize: '24px', fontWeight: '700', color: titleColor, textAlign: 'center', marginBottom: '6px' }), title));
+		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '28px' }), subtitle));
+		right.appendChild(card);
+		wrapper.appendChild(right);
+		return { wrapper, card };
+	}
+
+	private _lightInput(id: string, type: string, placeholder: string, value: string): HTMLInputElement {
+		const dark = this._isDark();
+		const input = document.createElement('input');
+		input.id = id; input.type = type; input.placeholder = placeholder; input.value = value;
+		if (this._loading) { input.disabled = true; }
+		Object.assign(input.style, {
+			width: '100%', padding: '11px 14px',
+			border: dark ? '1.5px solid #3c3c3c' : '1.5px solid #D1D5DB',
+			borderRadius: '8px', fontSize: '14px',
+			color: dark ? '#cccccc' : '#111827',
+			outline: 'none', boxSizing: 'border-box',
+			background: dark ? '#3c3c3c' : '#fff',
+		});
+		return input;
+	}
+
+	private _lightButton(id: string, label: string, primary: boolean, disabled?: boolean): HTMLButtonElement {
+		const dark = this._isDark();
+		const btn = document.createElement('button');
+		btn.id = id; btn.disabled = !!disabled; btn.textContent = label;
+		Object.assign(btn.style, {
+			display: 'block', width: '100%', padding: '13px', marginTop: '16px',
+			background: primary ? '#4F6AF0' : 'none',
+			color: primary ? '#fff' : (dark ? '#858585' : '#6B7280'),
+			border: primary ? 'none' : `1px solid ${dark ? '#3c3c3c' : '#D1D5DB'}`,
+			fontSize: '15px', fontWeight: '600', borderRadius: '8px', cursor: 'pointer',
+		});
+		return btn;
+	}
+
+	private _lightError(): HTMLElement | null {
+		const dark = this._isDark();
+		if (!this._error) { return null; }
+		const div = h('div', {
+			background: dark ? 'rgba(239,68,68,0.15)' : '#fef2f2',
+			border: `1px solid ${dark ? '#5a1d1d' : '#fecaca'}`,
+			borderRadius: '8px', padding: '10px 14px', marginTop: '12px',
+			fontSize: '13px', color: dark ? '#f48771' : '#dc2626',
+		});
+		div.textContent = this._error;
+		return div;
+	}
+
+	private _buildAuthenticate(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const dark = this._isDark();
+		const { wrapper, card } = this._buildTwoPanel(
+			'Welcome back',
+			this._discoverResult?.orgName ? `${this._email} · ${this._discoverResult.orgName}` : this._email
+		);
 
 		// Back button
 		const backBtn = document.createElement('button');
 		backBtn.id = 'ciyex-back-btn';
-		backBtn.textContent = '\u2190 Back';
-		Object.assign(backBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '13px', padding: '0', marginBottom: '16px', cursor: 'pointer' });
+		backBtn.textContent = '← Back';
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: dark ? '#858585' : '#6B7280', fontSize: '13px', padding: '0 0 16px', cursor: 'pointer', display: 'block' });
 		card.appendChild(backBtn);
 
 		// Password field
-		const pwDiv = h('div', { marginBottom: '20px' });
-		pwDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Password'));
-		const pwInput = this._buildInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password, c);
+		const pwLabel = h('div', {});
+		pwLabel.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: dark ? '#D1D5DB' : '#374151', marginBottom: '8px' }), 'Password'));
+		const pwWrap = h('div', { position: 'relative' });
+		const pwInput = this._lightInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password);
 		pwInput.style.paddingRight = '40px';
 		pwInput.autocomplete = 'current-password';
-		const pwWrap = h('div', { position: 'relative' });
-		pwWrap.appendChild(pwInput);
-
 		const toggleBtn = document.createElement('button');
 		toggleBtn.id = 'ciyex-toggle-pw';
-		toggleBtn.textContent = this._showPassword ? '\u25C9' : '\u25CE';
-		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: c.textSecondary, padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		// allow-any-unicode-next-line
+		toggleBtn.textContent = this._showPassword ? '◉' : '◎';
+		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#9CA3AF', padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		pwWrap.appendChild(pwInput);
 		pwWrap.appendChild(toggleBtn);
-		pwDiv.appendChild(pwWrap);
-		card.appendChild(pwDiv);
+		pwLabel.appendChild(pwWrap);
+		card.appendChild(pwLabel);
 
-		// Error
-		const err = this._buildError(c);
-		if (err) {
-			card.appendChild(err);
-		}
+		const err = this._lightError();
+		if (err) { card.appendChild(err); }
 
-		// Sign In button
-		const loginBtn = this._buildButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Sign In', true, c, this._loading || !this._password);
+		const loginBtn = this._lightButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Sign In', true, this._loading || !this._password);
 		card.appendChild(loginBtn);
 
-		// IDP buttons (Google, Microsoft, etc.) from discover response
+		// IDP buttons
 		const idpButtons: HTMLButtonElement[] = [];
 		if (this._discoverResult?.idps?.length) {
-			const divider = h('div', { marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${c.border}`, textAlign: 'center' });
-			divider.appendChild(text(h('span', { fontSize: '11px', color: c.textSecondary, opacity: '0.6' }), 'or sign in with'));
+			const divider = h('div', { marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #E5E7EB', textAlign: 'center' });
+			divider.appendChild(text(h('span', { fontSize: '11px', color: '#9CA3AF' }), 'or sign in with'));
 			card.appendChild(divider);
-
 			const idpRow = h('div', { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' });
 			for (const idp of this._discoverResult.idps) {
-				const idpBtn = this._buildButton(`ciyex-idp-${idp.alias}`, `Continue with ${idp.displayName || idp.alias}`, false, c);
+				const idpBtn = this._lightButton(`ciyex-idp-${idp.alias}`, `Continue with ${idp.displayName || idp.alias}`, false);
 				idpBtn.style.fontSize = '13px';
 				idpRow.appendChild(idpBtn);
 				idpButtons.push(idpBtn);
@@ -540,85 +732,63 @@ export class CiyexAuthGate extends Disposable {
 			card.appendChild(idpRow);
 		}
 
-		wrapper.appendChild(card);
-
 		// Listeners
 		backBtn.addEventListener('click', () => { this._step = 'email'; this._password = ''; this._error = ''; this._discoverResult = null; this._render(); });
 		pwInput.addEventListener('input', () => { this._password = pwInput.value; loginBtn.disabled = !this._password; });
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		toggleBtn.addEventListener('click', () => { this._showPassword = !this._showPassword; this._render(); });
 		loginBtn.addEventListener('click', () => this._handleLogin());
-
-		// IDP button listeners
 		if (this._discoverResult?.idps) {
 			for (let i = 0; i < idpButtons.length; i++) {
 				const alias = this._discoverResult.idps[i].alias;
 				idpButtons[i].addEventListener('click', () => this._handleIdpLogin(alias));
 			}
 		}
-
 		setTimeout(() => pwInput.focus(), 50);
-
 		return wrapper;
 	}
 
-	private _buildChangePassword(c: ReturnType<typeof this._colors>): HTMLElement {
-		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+	private _buildChangePassword(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const { wrapper, card } = this._buildTwoPanel(
+			'Set New Password',
+			'Your temporary password was accepted. Please create a new password.'
+		);
 
-		// Header
-		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
-		header.appendChild(this._logo(48));
-		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Set New Password'));
-		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Your temporary password was accepted. Please create a new password.'));
-		wrapper.appendChild(header);
-
-		const card = this._buildCard(c);
-
-		// Back button — returns to authenticate step so user can retry the temp pwd.
+		// Back button
 		const backBtn = document.createElement('button');
 		backBtn.id = 'ciyex-back-btn';
 		backBtn.textContent = '← Back';
-		Object.assign(backBtn.style, { background: 'none', border: 'none', color: c.textSecondary, fontSize: '13px', padding: '0', marginBottom: '16px', cursor: 'pointer' });
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: '#6B7280', fontSize: '13px', padding: '0 0 16px', cursor: 'pointer', display: 'block' });
 		card.appendChild(backBtn);
 
 		// New password
 		const newDiv = h('div', { marginBottom: '16px' });
-		newDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'New Password'));
-		const newInput = this._buildInput('ciyex-new-password', this._showNewPassword ? 'text' : 'password', 'Enter new password', this._newPassword, c);
-		newInput.style.paddingRight = '40px';
-		newInput.autocomplete = 'new-password';
-		newInput.minLength = 8;
+		newDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px' }), 'New Password'));
 		const newWrap = h('div', { position: 'relative' });
-		newWrap.appendChild(newInput);
+		const newInput = this._lightInput('ciyex-new-password', this._showNewPassword ? 'text' : 'password', 'Enter new password', this._newPassword);
+		newInput.style.paddingRight = '40px'; newInput.autocomplete = 'new-password'; newInput.minLength = 8;
 		const toggleBtn = document.createElement('button');
 		toggleBtn.id = 'ciyex-toggle-new-pw';
 		// allow-any-unicode-next-line
 		toggleBtn.textContent = this._showNewPassword ? '◉' : '◎';
-		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: c.textSecondary, padding: '2px', fontSize: '16px', cursor: 'pointer' });
-		newWrap.appendChild(toggleBtn);
+		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#9CA3AF', padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		newWrap.appendChild(newInput); newWrap.appendChild(toggleBtn);
 		newDiv.appendChild(newWrap);
 		card.appendChild(newDiv);
 
 		// Confirm password
-		const confirmDiv = h('div', { marginBottom: '20px' });
-		confirmDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Confirm Password'));
-		const confirmInput = this._buildInput('ciyex-confirm-password', this._showNewPassword ? 'text' : 'password', 'Confirm new password', this._confirmPassword, c);
-		confirmInput.autocomplete = 'new-password';
-		confirmInput.minLength = 8;
+		const confirmDiv = h('div', {});
+		confirmDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px' }), 'Confirm Password'));
+		const confirmInput = this._lightInput('ciyex-confirm-password', this._showNewPassword ? 'text' : 'password', 'Confirm new password', this._confirmPassword);
+		confirmInput.autocomplete = 'new-password'; confirmInput.minLength = 8;
 		confirmDiv.appendChild(confirmInput);
 		card.appendChild(confirmDiv);
 
-		// Error
-		const err = this._buildError(c);
-		if (err) {
-			card.appendChild(err);
-		}
+		const err = this._lightError();
+		if (err) { card.appendChild(err); }
 
-		// Submit
-		const submitBtn = this._buildButton('ciyex-set-pw-btn', this._loading ? 'Setting password…' : 'Set Password & Sign In', true, c, this._loading || !this._newPassword || !this._confirmPassword);
+		const submitBtn = this._lightButton('ciyex-set-pw-btn', this._loading ? 'Setting password…' : 'Set Password & Sign In', true, this._loading || !this._newPassword || !this._confirmPassword);
 		card.appendChild(submitBtn);
-
-		wrapper.appendChild(card);
 
 		// Listeners
 		backBtn.addEventListener('click', () => { this._step = 'authenticate'; this._newPassword = ''; this._confirmPassword = ''; this._error = ''; this._render(); });
@@ -630,50 +800,32 @@ export class CiyexAuthGate extends Disposable {
 		toggleBtn.addEventListener('click', () => { this._showNewPassword = !this._showNewPassword; this._render(); });
 		submitBtn.addEventListener('click', () => { void this._handleChangePassword(); });
 		setTimeout(() => newInput.focus(), 50);
-
 		return wrapper;
 	}
 
-	private _buildLocked(c: ReturnType<typeof this._colors>): HTMLElement {
-		const wrapper = h('div', { width: '100%', maxWidth: '400px', padding: '16px' });
+	private _buildLocked(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const subtitle = this._email
+			? `Session locked · ${this._email}`
+			: 'Your session has expired. Sign in again.';
+		const { wrapper, card } = this._buildTwoPanel('Session Locked', subtitle);
 
-		// Header with lock icon
-		const header = h('div', { textAlign: 'center', marginBottom: '32px' });
-		header.appendChild(createSvg(48, '0 0 24 24', (svg) => {
-			svg.setAttribute('stroke', '#465FFF');
-			svg.setAttribute('stroke-width', '1.5');
-			svgRect(svg, { x: '3', y: '11', width: '18', height: '11', rx: '2', ry: '2', fill: 'none' });
-			svgPath(svg, 'M7 11V7a5 5 0 0110 0v4', { fill: 'none' });
-			svgCircle(svg, { cx: '12', cy: '16', r: '1', fill: 'none' });
-		}));
-		header.appendChild(text(h('h1', { fontSize: '22px', fontWeight: '700', color: c.textPrimary, margin: '12px 0 4px' }), 'Session Locked'));
-		header.appendChild(text(h('p', { fontSize: '13px', color: c.textSecondary, margin: '0' }), 'Your session has expired. Sign in again.'));
-		if (this._email) {
-			header.appendChild(text(h('p', { fontSize: '13px', color: c.textPrimary, margin: '8px 0 0', fontWeight: '500' }), this._email));
-		}
-		wrapper.appendChild(header);
-
-		// Card
-		const card = this._buildCard(c);
-		const pwDiv = h('div', { marginBottom: '20px' });
-		pwDiv.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '500', color: c.textPrimary, marginBottom: '6px' }), 'Password'));
-		const pwInput = this._buildInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password, c);
+		// Password field
+		const pwLabel = h('div', {});
+		pwLabel.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px' }), 'Password'));
+		const pwInput = this._lightInput('ciyex-password', this._showPassword ? 'text' : 'password', 'Enter your password', this._password);
 		pwInput.autocomplete = 'current-password';
-		pwDiv.appendChild(pwInput);
-		card.appendChild(pwDiv);
+		pwLabel.appendChild(pwInput);
+		card.appendChild(pwLabel);
 
-		const err = this._buildError(c);
-		if (err) {
-			card.appendChild(err);
-		}
+		const err = this._lightError();
+		if (err) { card.appendChild(err); }
 
-		const unlockBtn = this._buildButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Unlock', true, c, this._loading || !this._password);
-		unlockBtn.style.marginBottom = '12px';
+		const unlockBtn = this._lightButton('ciyex-login-btn', this._loading ? 'Signing in...' : 'Unlock', true, this._loading || !this._password);
 		card.appendChild(unlockBtn);
 
-		const switchBtn = this._buildButton('ciyex-switch-account-btn', 'Sign in with a different account', false, c);
+		const switchBtn = this._lightButton('ciyex-switch-account-btn', 'Sign in with a different account', false);
+		switchBtn.style.marginTop = '8px';
 		card.appendChild(switchBtn);
-		wrapper.appendChild(card);
 
 		// Listeners
 		pwInput.addEventListener('input', () => { this._password = pwInput.value; unlockBtn.disabled = !this._password; });
@@ -681,7 +833,6 @@ export class CiyexAuthGate extends Disposable {
 		unlockBtn.addEventListener('click', () => this._handleLogin());
 		switchBtn.addEventListener('click', () => this._authService.signOut());
 		setTimeout(() => pwInput.focus(), 50);
-
 		return wrapper;
 	}
 
@@ -717,10 +868,10 @@ export class CiyexAuthGate extends Disposable {
 
 		// Buttons
 		const btnRow = h('div', { display: 'flex', gap: '10px' });
-		const stayBtn = this._buildButton('ciyex-stay-btn', 'Stay Logged In', true, c);
-		stayBtn.style.flex = '1';
-		const signOutBtn = this._buildButton('ciyex-signout-btn', 'Sign Out', false, c);
-		signOutBtn.style.flex = '1';
+		const stayBtn = this._lightButton('ciyex-stay-btn', 'Stay Logged In', true);
+		stayBtn.style.flex = '1'; stayBtn.style.marginTop = '0';
+		const signOutBtn = this._lightButton('ciyex-signout-btn', 'Sign Out', false);
+		signOutBtn.style.flex = '1'; signOutBtn.style.marginTop = '0';
 		btnRow.appendChild(stayBtn);
 		btnRow.appendChild(signOutBtn);
 		card.appendChild(btnRow);

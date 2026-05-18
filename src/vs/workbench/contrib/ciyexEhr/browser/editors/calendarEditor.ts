@@ -1023,7 +1023,7 @@ export class CalendarEditor extends EditorPane {
 		// same regardless of how the user types.
 		const buildDateField = (parent: HTMLElement, id: string, isoValue: string): void => {
 			const wrap = DOM.append(parent, DOM.$('div'));
-			wrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+			wrap.style.cssText = 'position:relative;display:block;';
 
 			const isoToUs = (iso: string): string => {
 				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -1040,13 +1040,19 @@ export class CalendarEditor extends EditorPane {
 			visible.placeholder = 'MM/DD/YYYY';
 			visible.maxLength = 10;
 			visible.value = isoToUs(isoValue);
-			visible.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+			visible.style.cssText = 'width:100%;padding:6px 32px 6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 
 			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			hidden.type = 'hidden';
 			hidden.id = id;
 			hidden.value = isoValue;
 			formFields.set(id, hidden);
+
+			// Native picker hidden off-screen — triggered by icon click
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue;
+			picker.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;';
 
 			const sync = () => {
 				const iso = usToIso(visible.value);
@@ -1055,15 +1061,20 @@ export class CalendarEditor extends EditorPane {
 			};
 			visible.addEventListener('input', sync);
 			visible.addEventListener('blur', sync);
-
-			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
-			picker.type = 'date';
-			picker.value = isoValue;
-			picker.title = 'Open calendar';
-			picker.style.cssText = 'width:28px;height:30px;padding:0;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);cursor:pointer;color-scheme:dark light;';
 			picker.addEventListener('change', () => {
 				visible.value = isoToUs(picker.value);
 				hidden.value = picker.value;
+				sync();
+			});
+
+			// Calendar icon inside the input on the right
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);cursor:pointer;pointer-events:auto;line-height:1;';
+			icon.addEventListener('click', () => picker.showPicker?.());
+			visible.addEventListener('click', (e) => {
+				const rect = visible.getBoundingClientRect();
+				if (e.clientX > rect.right - 30) { picker.showPicker?.(); }
 			});
 		};
 
