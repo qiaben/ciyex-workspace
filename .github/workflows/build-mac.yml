@@ -108,24 +108,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run gulp "vscode-darwin-${VSCODE_ARCH}-min-ci"
 
-      - name: Compute version + filenames
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          SUFFIX=""
-          if [ "$CHANNEL" != "prod" ]; then
-            SUFFIX=$(echo "$CHANNEL" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-          fi
-          ZIP_NAME="CiyexWorkspace${SUFFIX}-darwin-${VSCODE_ARCH}-${VERSION}.zip"
-
-          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "CHANNEL_SUFFIX=$SUFFIX" >> "$GITHUB_ENV"
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-
-          echo "Channel: $CHANNEL"
-          echo "Version: $VERSION"
-          echo "Archive: $ZIP_NAME"
-
-      - name: Package .app as zip
+      - name: Package .app as tarball (preserves perms/symlinks for universal merge)
         run: |
           set -e
           APP_ROOT="../VSCode-darwin-${VSCODE_ARCH}"
@@ -135,17 +118,96 @@ jobs:
             exit 1
           fi
           mkdir -p artifacts
-          (cd "$APP_ROOT" && zip -Xry "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" *)
+          tar -cf "artifacts/VSCode-darwin-${VSCODE_ARCH}.tar" -C .. "VSCode-darwin-${VSCODE_ARCH}"
+
+      - name: Upload .app artifact (for universal merge)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-app-${{ matrix.arch }}
+          path: artifacts/VSCode-darwin-${{ matrix.arch }}.tar
+          retention-days: 1
+
+  universal:
+    name: Merge universal (arm64 + x64) macOS bundle
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      VSCODE_ARCH: universal
+      VSCODE_QUALITY: 'oss'
+      CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
+      BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      - name: Verify channel + write channel marker
+        run: node build/channels/apply.mjs "$CHANNEL"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download arm64 .app
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-app-arm64
+          path: in-arm64
+
+      - name: Download x64 .app
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-app-x64
+          path: in-x64
+
+      - name: Unpack into universal merger layout
+        run: |
+          set -e
+          BUILDDIR="$RUNNER_TEMP/build"
+          mkdir -p "$BUILDDIR"
+          tar -xf in-arm64/VSCode-darwin-arm64.tar -C "$BUILDDIR"
+          tar -xf in-x64/VSCode-darwin-x64.tar -C "$BUILDDIR"
+          ls -la "$BUILDDIR"
+          echo "BUILDDIR=$BUILDDIR" >> "$GITHUB_ENV"
+
+      - name: Install build/ deps (vscode-universal-bundler, minimatch)
+        run: npm ci --prefix build
+
+      - name: Run universal merger
+        run: node build/darwin/create-universal-app.ts "$BUILDDIR"
+
+      - name: Compute version + zip universal app
+        run: |
+          set -e
+          VERSION=$(node -p "require('./package.json').version")
+          SUFFIX=""
+          if [ "$CHANNEL" != "prod" ]; then
+            SUFFIX=$(echo "$CHANNEL" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+          fi
+          ZIP_NAME="CiyexWorkspace${SUFFIX}-darwin-universal-${VERSION}.zip"
+          mkdir -p out
+          UNI_DIR="$BUILDDIR/VSCode-darwin-universal"
+          if [ ! -d "$UNI_DIR" ]; then
+            echo "Universal output not found at $UNI_DIR"
+            ls -la "$BUILDDIR"
+            exit 1
+          fi
+          (cd "$UNI_DIR" && zip -Xry "$GITHUB_WORKSPACE/out/$ZIP_NAME" *)
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CHANNEL_SUFFIX=$SUFFIX" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
       - name: Generate update manifest
         run: |
           set -e
-          TAG="v${APP_VERSION}-${CHANNEL}-darwin-${VSCODE_ARCH}.${{ github.run_number }}"
+          TAG="v${APP_VERSION}-${CHANNEL}-darwin-universal.${{ github.run_number }}"
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
-          ARCHIVE="artifacts/${ZIP_NAME}"
-          ZIP_SHA=$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')
-
-          cat > artifacts/metadata.json <<EOF
+          ZIP_SHA=$(shasum -a 256 "out/${ZIP_NAME}" | awk '{print $1}')
+          cat > out/metadata.json <<EOF
           {
             "version": "${APP_VERSION}",
             "commit": "${BUILD_REF}",
@@ -153,59 +215,56 @@ jobs:
             "buildNumber": ${{ github.run_number }},
             "publishedAt": $(date +%s),
             "platforms": {
-              "darwin-${VSCODE_ARCH}-archive": {
+              "darwin-universal-archive": {
                 "url": "${BASE_URL}/${ZIP_NAME}",
                 "sha256": "${ZIP_SHA}"
               }
             }
           }
           EOF
-          cat artifacts/metadata.json
-
-      - name: Upload artifacts (CI)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ciyex-workspace-${{ env.CHANNEL }}-darwin-${{ matrix.arch }}
-          path: artifacts/*
+          cat out/metadata.json
 
       - name: Create per-build release (immutable)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}-darwin-${{ matrix.arch }}.${{ github.run_number }}
-          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} macOS ${{ matrix.arch }} (Build ${{ github.run_number }})
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}-darwin-universal.${{ github.run_number }}
+          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} macOS universal (Build ${{ github.run_number }})
           target_commitish: ${{ env.BUILD_REF }}
           prerelease: ${{ env.CHANNEL != 'prod' }}
-          files: artifacts/*
+          files: out/*
           body: |
-            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — macOS ${{ matrix.arch }}
+            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — macOS (Universal)
 
             **Channel:** `${{ env.CHANNEL }}`
             **Build:** #${{ github.run_number }}
             **Commit:** ${{ env.BUILD_REF }}
-            **Architecture:** ${{ matrix.arch == 'arm64' && 'Apple Silicon (M1/M2/M3/M4)' || 'Intel x86_64' }}
+            **Compatibility:** Apple Silicon (M1/M2/M3/M4) and Intel x86_64 — **one binary, every Mac**.
 
             ### Downloads
             - **Archive:** `${{ env.ZIP_NAME }}`
 
             ### First install
-            Download the `.zip`, double-click to unpack the `Ciyex Workspace.app`,
-            then drag it into `/Applications`. Right-click → Open the first time
-            so macOS Gatekeeper accepts the unsigned build. After signing in, pick
-            the **Environment** (Dev / Stage / Prod) on the login screen.
+            Download the `.zip`, double-click to unpack `Ciyex Workspace.app`,
+            then drag it into `/Applications`. Right-click → **Open** the first
+            time so macOS Gatekeeper accepts the unsigned build. If macOS still
+            blocks it, run:
+            ```
+            xattr -dr com.apple.quarantine "/Applications/Ciyex Workspace.app"
+            ```
 
       - name: Update channel pointer release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          TAG="${CHANNEL}-latest-darwin-${VSCODE_ARCH}"
+          TAG="${CHANNEL}-latest-darwin-universal"
           if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "Ciyex Workspace (${CHANNEL}) macOS ${VSCODE_ARCH} — latest pointer" \
-              --notes "Auto-updated pointer release. The metadata.json asset always describes the latest ${CHANNEL} macOS ${VSCODE_ARCH} build." \
+              --title "Ciyex Workspace (${CHANNEL}) macOS universal — latest pointer" \
+              --notes "Auto-updated pointer release. The metadata.json asset always describes the latest ${CHANNEL} macOS universal build." \
               --prerelease \
               --target "${BUILD_REF}"
           fi
-          gh release upload "$TAG" "artifacts/metadata.json" --repo "${{ github.repository }}" --clobber
+          gh release upload "$TAG" "out/metadata.json" --repo "${{ github.repository }}" --clobber
           echo "Pointer $TAG updated -> build ${{ github.run_number }}"
