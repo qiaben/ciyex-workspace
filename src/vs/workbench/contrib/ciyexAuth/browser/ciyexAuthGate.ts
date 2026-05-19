@@ -420,7 +420,50 @@ export class CiyexAuthGate extends Disposable {
 		});
 
 		card.appendChild(text(h('h1', { fontSize: '24px', fontWeight: '700', color: titleColor, textAlign: 'center', marginBottom: '6px' }), 'Sign In'));
-		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '32px' }), 'Enter your email to continue'));
+		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '24px' }), 'Enter your email to continue'));
+
+		// Channel picker — only shown when product.json declares channels.
+		// Selecting a channel re-routes API/Keycloak endpoints and tells the
+		// auto-updater which release manifest to watch.
+		const channels = this._authService.availableChannels;
+		const channelKeys = Object.keys(channels) as Array<keyof typeof channels>;
+		if (channelKeys.length > 0) {
+			const channelWrap = h('div', { marginBottom: '14px' });
+			channelWrap.appendChild(text(
+				h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: labelColor, marginBottom: '8px' }),
+				'Environment'
+			));
+			const channelSelect = document.createElement('select');
+			channelSelect.id = 'ciyex-channel';
+			Object.assign(channelSelect.style, {
+				width: '100%', padding: '11px 14px', border: inputBorder,
+				borderRadius: '8px', fontSize: '14px', color: inputColor,
+				outline: 'none', boxSizing: 'border-box', background: inputBg,
+				appearance: 'auto', cursor: this._loading ? 'not-allowed' : 'pointer',
+			});
+			if (this._loading) { channelSelect.disabled = true; }
+			const currentChannel = this._authService.selectedChannel;
+			for (const key of channelKeys) {
+				const opt = document.createElement('option');
+				opt.value = String(key);
+				opt.textContent = channels[key].label || String(key);
+				if (key === currentChannel) { opt.selected = true; }
+				channelSelect.appendChild(opt);
+			}
+			channelSelect.addEventListener('change', async () => {
+				const next = channelSelect.value as 'dev' | 'stage' | 'prod';
+				if (next === this._authService.selectedChannel) { return; }
+				channelSelect.disabled = true;
+				try {
+					await this._authService.setChannel(next);
+				} finally {
+					this._error = '';
+					this._render();
+				}
+			});
+			channelWrap.appendChild(channelSelect);
+			card.appendChild(channelWrap);
+		}
 
 		// Email field
 		const labelDiv = h('div', {});

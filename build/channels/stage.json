@@ -1,26 +1,3 @@
 {
-	"_comment": "Overlay applied on top of product.json for the stage channel.",
-	"nameShort": "Ciyex Workspace Stage",
-	"nameLong": "Ciyex Workspace Stage",
-	"applicationName": "ciyex-workspace-stage",
-	"dataFolderName": ".ciyex-workspace-stage",
-	"win32MutexName": "ciyexworkspacestage",
-	"serverApplicationName": "ciyex-workspace-stage-server",
-	"serverDataFolderName": ".ciyex-workspace-stage-server",
-	"tunnelApplicationName": "ciyex-workspace-stage-tunnel",
-	"win32DirName": "Ciyex Workspace Stage",
-	"win32NameVersion": "Ciyex Workspace Stage",
-	"win32RegValueName": "CiyexWorkspaceStage",
-	"win32x64AppId": "{{1C37F731-028B-4BF7-808E-D06B2923E15F}",
-	"win32arm64AppId": "{{882C6932-429F-4422-A585-EF659B5C40ED}",
-	"win32x64UserAppId": "{{5E8EFF98-A4D8-4939-A609-06F0FBF5E70F}",
-	"win32arm64UserAppId": "{{E78C11E7-8867-4196-97EA-12645CA4D9B7}",
-	"win32AppUserModelId": "Qiaben.CiyexWorkspaceStage",
-	"win32ShellNameShort": "Ciyex Workspace &Stage",
-	"win32TunnelServiceMutex": "ciyexworkspacestage-tunnelservice",
-	"win32TunnelMutex": "ciyexworkspacestage-tunnel",
-	"darwinBundleIdentifier": "com.qiaben.ciyex-workspace-stage",
-	"linuxIconName": "ciyex-workspace-stage",
-	"urlProtocol": "ciyex-workspace-stage",
-	"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/stage-latest/metadata.json"
+	"_comment": "Channel marker for the stage build target. See dev.json for details — identity is unified across dev/stage/prod and the channel is a runtime choice made on the login screen."
 }

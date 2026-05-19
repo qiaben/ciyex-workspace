@@ -1,4 +1,3 @@
 {
-	"_comment": "Prod overlay. The base product.json is already prod-flavored (existing app names + AppIds preserved so prod auto-update upgrades existing installations in-place). Only updateUrl needs to change to point at the prod-latest pointer release.",
-	"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/prod-latest/metadata.json"
+	"_comment": "Channel marker for the prod build target. See dev.json for details — identity is unified across dev/stage/prod and the channel is a runtime choice made on the login screen."
 }

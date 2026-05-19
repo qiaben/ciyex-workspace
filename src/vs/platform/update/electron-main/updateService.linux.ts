@@ -15,7 +15,7 @@ import { asJson, IRequestService } from '../../request/common/request.js';
 import { IApplicationStorageMainService } from '../../storage/electron-main/storageMainService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, IUpdate, State, UpdateType } from '../common/update.js';
-import { AbstractUpdateService, createUpdateURL, IUpdateURLOptions } from './abstractUpdateService.js';
+import { AbstractUpdateService, createUpdateURL, getCiyexUpdateUrl, IUpdateURLOptions } from './abstractUpdateService.js';
 
 export class LinuxUpdateService extends AbstractUpdateService {
 
@@ -35,7 +35,8 @@ export class LinuxUpdateService extends AbstractUpdateService {
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string {
-		return createUpdateURL(this.productService.updateUrl!, `linux-${process.arch}`, quality, commit, options);
+		const updateUrl = getCiyexUpdateUrl(this.productService, this.configurationService) ?? this.productService.updateUrl!;
+		return createUpdateURL(updateUrl, `linux-${process.arch}`, quality, commit, options);
 	}
 
 	protected doCheckForUpdates(explicit: boolean, _pendingCommit?: string): void {

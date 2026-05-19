@@ -14,6 +14,17 @@ export interface IBuiltInExtension {
 	readonly metadata: unknown;
 }
 
+export type CiyexChannelName = 'dev' | 'stage' | 'prod';
+
+export interface ICiyexChannel {
+	readonly label: string;
+	readonly apiUrl: string;
+	readonly keycloakUrl: string;
+	readonly keycloakRealm: string;
+	readonly keycloakClientId: string;
+	readonly updateUrl: string;
+}
+
 export interface IProductWalkthrough {
 	id: string;
 	steps: IProductWalkthroughStep[];
@@ -90,6 +101,8 @@ export interface IProductConfiguration {
 
 	readonly downloadUrl?: string;
 	readonly updateUrl?: string;
+	readonly defaultChannel?: CiyexChannelName;
+	readonly channels?: Readonly<Record<CiyexChannelName, ICiyexChannel>>;
 	readonly webUrl?: string;
 	readonly webEndpointUrlTemplate?: string;
 	readonly webviewContentExternalBaseUrlTemplate?: string;

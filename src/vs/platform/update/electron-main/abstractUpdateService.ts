@@ -41,6 +41,28 @@ export function createUpdateURL(baseUpdateUrl: string, platform: string, quality
 }
 
 /**
+ * Resolve which channel manifest the auto-updater should poll for this
+ * install. Reads `ciyex.channel` from user settings (the login page writes
+ * here when a user picks an environment) and looks the URL up in
+ * product.json's `channels` map. Falls back to product.updateUrl so the
+ * legacy single-channel build keeps working unchanged.
+ */
+export function getCiyexUpdateUrl(productService: IProductService, configurationService: IConfigurationService): string | undefined {
+	const channels = productService.channels;
+	if (channels) {
+		const selected = configurationService.getValue<string>('ciyex.channel');
+		const defaultChannel = productService.defaultChannel;
+		const channelKey = (selected === 'dev' || selected === 'stage' || selected === 'prod')
+			? selected
+			: (defaultChannel === 'dev' || defaultChannel === 'stage' || defaultChannel === 'prod') ? defaultChannel : undefined;
+		if (channelKey && channels[channelKey]?.updateUrl) {
+			return channels[channelKey].updateUrl;
+		}
+	}
+	return productService.updateUrl;
+}
+
+/**
  * Builds common headers for update requests, including those issued
  * via Electron's auto-updater (e.g. setFeedURL({ url, headers })) and
  * manual HTTP requests that bypass the auto-updater. The headers include

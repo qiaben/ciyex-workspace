@@ -1,26 +1,3 @@
 {
-	"_comment": "Overlay applied on top of product.json for the dev channel. Different app name, install path, mutex names, and Windows AppIds so a Dev install lives side-by-side with Stage and Prod.",
-	"nameShort": "Ciyex Workspace Dev",
-	"nameLong": "Ciyex Workspace Dev",
-	"applicationName": "ciyex-workspace-dev",
-	"dataFolderName": ".ciyex-workspace-dev",
-	"win32MutexName": "ciyexworkspacedev",
-	"serverApplicationName": "ciyex-workspace-dev-server",
-	"serverDataFolderName": ".ciyex-workspace-dev-server",
-	"tunnelApplicationName": "ciyex-workspace-dev-tunnel",
-	"win32DirName": "Ciyex Workspace Dev",
-	"win32NameVersion": "Ciyex Workspace Dev",
-	"win32RegValueName": "CiyexWorkspaceDev",
-	"win32x64AppId": "{{8EE0B597-96B7-45F1-BFA4-4C5083F651D7}",
-	"win32arm64AppId": "{{28E8BF79-AD12-4C6B-AD54-DB17CD062F34}",
-	"win32x64UserAppId": "{{5C0E6047-8E37-464F-A860-2EBD10C6884C}",
-	"win32arm64UserAppId": "{{46F5EDD4-4611-4D5C-B829-FCC153C8CBDA}",
-	"win32AppUserModelId": "Qiaben.CiyexWorkspaceDev",
-	"win32ShellNameShort": "Ciyex Workspace &Dev",
-	"win32TunnelServiceMutex": "ciyexworkspacedev-tunnelservice",
-	"win32TunnelMutex": "ciyexworkspacedev-tunnel",
-	"darwinBundleIdentifier": "com.qiaben.ciyex-workspace-dev",
-	"linuxIconName": "ciyex-workspace-dev",
-	"urlProtocol": "ciyex-workspace-dev",
-	"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/dev-latest/metadata.json"
+	"_comment": "Channel marker for the dev build target. Identity (applicationName, AppIds, dataFolderName, mutex names, updateUrl) is intentionally NOT overridden — a single unified installer serves all 3 channels and the user picks the channel at the login screen. The auto-updater then reads product.channels[<selected>].updateUrl. This file exists only so the build workflow can pass `dev` as the channel argument without erroring."
 }

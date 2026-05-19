@@ -33,7 +33,7 @@ import { asJson, IRequestService } from '../../request/common/request.js';
 import { IApplicationStorageMainService } from '../../storage/electron-main/storageMainService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
-import { AbstractUpdateService, createUpdateURL, getUpdateRequestHeaders, IUpdateURLOptions, UpdateErrorClassification } from './abstractUpdateService.js';
+import { AbstractUpdateService, createUpdateURL, getCiyexUpdateUrl, getUpdateRequestHeaders, IUpdateURLOptions, UpdateErrorClassification } from './abstractUpdateService.js';
 import { INodeProcess } from '../../../base/common/platform.js';
 
 interface IAvailableUpdate {
@@ -183,7 +183,9 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
-		const updateUrl = this.productService.updateUrl!;
+		// Ciyex: resolve the user's selected channel's manifest. Falls back to
+		// product.updateUrl when product.json declares no channels (legacy build).
+		const updateUrl = getCiyexUpdateUrl(this.productService, this.configurationService) ?? this.productService.updateUrl!;
 
 		// Ciyex: when updateUrl points at a static JSON manifest (e.g. a GitHub
 		// release asset), use it directly. We pick the per-platform asset and
@@ -248,7 +250,7 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	 * the manifest's commit to the requested commit.
 	 */
 	override async isLatestVersion(commit?: string, token: CancellationToken = CancellationToken.None): Promise<boolean | undefined> {
-		const updateUrl = this.productService.updateUrl;
+		const updateUrl = getCiyexUpdateUrl(this.productService, this.configurationService) ?? this.productService.updateUrl;
 		if (!updateUrl?.endsWith('.json')) {
 			return super.isLatestVersion(commit, token);
 		}

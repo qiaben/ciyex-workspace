@@ -36,6 +36,33 @@
 	"quality": "oss",
 	"downloadUrl": "https://github.com/qiaben/ciyex-workspace/releases/latest",
 	"win32VersionedUpdate": false,
+	"defaultChannel": "prod",
+	"channels": {
+		"dev": {
+			"label": "Development",
+			"apiUrl": "https://api-dev.ciyex.org",
+			"keycloakUrl": "https://dev.aran.me",
+			"keycloakRealm": "ciyex",
+			"keycloakClientId": "ciyex-app",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/dev-latest/metadata.json"
+		},
+		"stage": {
+			"label": "Staging",
+			"apiUrl": "https://api-stage.ciyex.org",
+			"keycloakUrl": "https://stage.aran.me",
+			"keycloakRealm": "ciyex",
+			"keycloakClientId": "ciyex-app",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/stage-latest/metadata.json"
+		},
+		"prod": {
+			"label": "Production",
+			"apiUrl": "https://api.ciyex.org",
+			"keycloakUrl": "https://aran.me",
+			"keycloakRealm": "ciyex",
+			"keycloakClientId": "ciyex-app",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/prod-latest/metadata.json"
+		}
+	},
 	"builtInExtensions": [],
 	"defaultChatAgent": {
 		"extensionId": "",

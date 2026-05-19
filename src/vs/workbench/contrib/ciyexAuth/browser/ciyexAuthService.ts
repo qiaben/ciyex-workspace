@@ -6,7 +6,9 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IConfigurationService, ConfigurationTarget } from '../../../../platform/configuration/common/configuration.js';
+import { IProductService } from '../../../../platform/product/common/productService.js';
+import { CiyexChannelName, ICiyexChannel } from '../../../../base/common/product.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 
 export const ICiyexAuthService = createDecorator<ICiyexAuthService>('ciyexAuthService');
@@ -23,6 +25,24 @@ export interface ICiyexAuthService {
 	readonly keycloakUrl: string;
 	readonly keycloakRealm: string;
 	readonly keycloakClientId: string;
+
+	/**
+	 * Currently selected channel (dev/stage/prod). Drives the default
+	 * API/Keycloak endpoints and which update manifest the auto-updater watches.
+	 */
+	readonly selectedChannel: CiyexChannelName;
+
+	/**
+	 * Channels declared in product.json — used by the login UI to render
+	 * the channel dropdown. Empty object if product.json does not declare any.
+	 */
+	readonly availableChannels: Readonly<Record<CiyexChannelName, ICiyexChannel>>;
+
+	/**
+	 * Persist the channel selection and clear any per-field URL overrides that
+	 * would otherwise shadow the new channel's defaults.
+	 */
+	setChannel(channel: CiyexChannelName): Promise<void>;
 
 	/**
 	 * Step 1: Discover account by email
@@ -151,6 +171,27 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		return this._userEmail;
 	}
 
+	get availableChannels(): Readonly<Record<CiyexChannelName, ICiyexChannel>> {
+		const channels: Record<CiyexChannelName, ICiyexChannel> = Object.create(null);
+		return this.productService.channels ?? channels;
+	}
+
+	get selectedChannel(): CiyexChannelName {
+		const stored = this.configurationService.getValue<CiyexChannelName>('ciyex.channel');
+		if (stored === 'dev' || stored === 'stage' || stored === 'prod') {
+			return stored;
+		}
+		const fallback = this.productService.defaultChannel;
+		if (fallback === 'dev' || fallback === 'stage' || fallback === 'prod') {
+			return fallback;
+		}
+		return 'prod';
+	}
+
+	private get _channel(): ICiyexChannel | undefined {
+		return this.availableChannels[this.selectedChannel];
+	}
+
 	get apiUrl(): string {
 		try {
 			const stored = localStorage.getItem('ciyex_api_url');
@@ -158,7 +199,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return stored;
 			}
 		} catch { }
-		return 'https://api-dev.ciyex.org';
+		return this._channel?.apiUrl ?? 'https://api-dev.ciyex.org';
 	}
 
 	get keycloakUrl(): string {
@@ -168,7 +209,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return stored;
 			}
 		} catch { }
-		return 'https://dev.aran.me';
+		return this._channel?.keycloakUrl ?? 'https://dev.aran.me';
 	}
 
 	get keycloakRealm(): string {
@@ -178,7 +219,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return stored;
 			}
 		} catch { }
-		return 'ciyex';
+		return this._channel?.keycloakRealm ?? 'ciyex';
 	}
 
 	get keycloakClientId(): string {
@@ -188,11 +229,27 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return stored;
 			}
 		} catch { }
-		return 'ciyex-app';
+		return this._channel?.keycloakClientId ?? 'ciyex-app';
+	}
+
+	async setChannel(channel: CiyexChannelName): Promise<void> {
+		// Wipe the per-field URL overrides so the channel's defaults take effect.
+		// Without this, a Server-Settings override from a previous channel would
+		// silently shadow the new selection.
+		try {
+			localStorage.removeItem('ciyex_api_url');
+			localStorage.removeItem('ciyex_keycloak_url');
+			localStorage.removeItem('ciyex_keycloak_realm');
+			localStorage.removeItem('ciyex_keycloak_client_id');
+		} catch { }
+		// Clear tokens — different channel = different identity provider.
+		this._clearStoredAuth();
+		await this.configurationService.updateValue('ciyex.channel', channel, ConfigurationTarget.APPLICATION);
 	}
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IProductService private readonly productService: IProductService,
 	) {
 		super();
 

@@ -9,7 +9,7 @@ import { localize } from '../../../../nls.js';
 
 const configRegistry = Registry.as<IConfigurationRegistry>(ConfigExtensions.Configuration);
 
-// ─── Server Connection Settings ──────────────────────────────────────
+// --- Server Connection Settings --------------------------------------
 
 configRegistry.registerConfiguration({
 	id: 'ciyex.server',
@@ -55,7 +55,7 @@ configRegistry.registerConfiguration({
 	},
 });
 
-// ─── Display Settings ────────────────────────────────────────────────
+// --- Display Settings ------------------------------------------------
 
 configRegistry.registerConfiguration({
 	id: 'ciyex.display',
@@ -93,7 +93,7 @@ configRegistry.registerConfiguration({
 	},
 });
 
-// ─── Calendar Settings ───────────────────────────────────────────────
+// --- Calendar Settings -----------------------------------------------
 
 configRegistry.registerConfiguration({
 	id: 'ciyex.calendar',
@@ -145,7 +145,29 @@ configRegistry.registerConfiguration({
 	},
 });
 
-// ─── Session Settings ────────────────────────────────────────────────
+// --- Channel (dev/stage/prod) ----------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.channel',
+	order: 0,
+	title: localize('ciyexChannel', "Ciyex: Channel"),
+	properties: {
+		'ciyex.channel': {
+			type: 'string',
+			enum: ['dev', 'stage', 'prod'],
+			enumDescriptions: [
+				localize('ciyexChannelDev', "Development — newest unstable builds, dev backend."),
+				localize('ciyexChannelStage', "Staging — pre-release builds, stage backend."),
+				localize('ciyexChannelProd', "Production — stable builds, production backend."),
+			],
+			default: 'prod',
+			description: localize('ciyexChannelDesc', "Which environment this workspace talks to. Determines the API/Keycloak endpoints and which update channel the app auto-updates from. Pick the channel at the login screen — changing it requires signing out."),
+			scope: ConfigurationScope.APPLICATION,
+		},
+	},
+});
+
+// --- Session Settings ------------------------------------------------
 
 configRegistry.registerConfiguration({
 	id: 'ciyex.session',
@@ -187,7 +209,7 @@ configRegistry.registerConfiguration({
 	},
 });
 
-// ─── EHR Features ────────────────────────────────────────────────────
+// --- EHR Features ----------------------------------------------------
 
 configRegistry.registerConfiguration({
 	id: 'ciyex.features',
@@ -627,7 +649,7 @@ configRegistry.registerConfiguration({
 configRegistry.registerConfiguration({
 	id: 'ciyex.telehealth',
 	order: 18,
-	title: localize('ciyexTelehealth', "Ciyex: Telehealth"),
+	title: localize('ciyexTelehealthSection', "Ciyex: Telehealth"),
 	properties: {
 		'ciyex.telehealth.provider': { type: 'string', enum: ['built-in', 'zoom', 'doxy', 'custom'], default: 'built-in', description: localize('teleProvider', "Video visit platform provider."), scope: ConfigurationScope.APPLICATION },
 		'ciyex.telehealth.waitingRoomEnabled': { type: 'boolean', default: true, description: localize('teleWaiting', "Enable virtual waiting room for patients."), scope: ConfigurationScope.WINDOW },
@@ -716,7 +738,7 @@ configRegistry.registerConfiguration({
 configRegistry.registerConfiguration({
 	id: 'ciyex.kiosk',
 	order: 24,
-	title: localize('ciyexKiosk', "Ciyex: Patient Kiosk"),
+	title: localize('ciyexKioskSection', "Ciyex: Patient Kiosk"),
 	properties: {
 		'ciyex.kiosk.demographicsVerification': { type: 'boolean', default: true, description: localize('kioskDemo', "Require demographics verification at check-in."), scope: ConfigurationScope.WINDOW },
 		'ciyex.kiosk.insuranceCapture': { type: 'boolean', default: true, description: localize('kioskIns', "Allow insurance card photo capture at kiosk."), scope: ConfigurationScope.WINDOW },

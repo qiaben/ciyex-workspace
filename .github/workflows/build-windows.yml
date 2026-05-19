@@ -46,7 +46,12 @@ jobs:
         with:
           ref: ${{ env.BUILD_REF }}
 
-      - name: Apply channel overlay
+      - name: Verify channel + write channel marker
+        # Identity (applicationName, AppIds, dataFolderName, mutex, install
+        # paths) is unified across dev/stage/prod — a single installer serves
+        # all 3 channels and the user picks the channel at the login screen.
+        # This step only validates the channel name and records it to
+        # .build/channel.txt for downstream steps.
         shell: pwsh
         run: node build/channels/apply.mjs $env:CHANNEL
 
@@ -225,10 +230,14 @@ jobs:
             - **Portable:** `${{ env.ZIP_NAME }}`
 
             ### First install
-            Download and run the installer. From then on the app polls
-            `${{ env.CHANNEL }}-latest` every hour and auto-updates — no more
-            manual `.exe` distribution. Trigger a check immediately via
-            **Help → Check for Updates**.
+            Download and run the installer. This is the unified Ciyex Workspace
+            installer — the binary is the same across all channels. After
+            installing, sign in and pick the **Environment** (Dev / Stage /
+            Prod) on the login screen. The app then polls that channel's
+            `<channel>-latest` pointer every hour and auto-updates — no more
+            manual `.exe` distribution. Switching channels later only requires
+            signing out, picking a different environment, and signing back in.
+            Trigger a check immediately via **Help → Check for Updates**.
 
       - name: Update channel pointer release
         env:
