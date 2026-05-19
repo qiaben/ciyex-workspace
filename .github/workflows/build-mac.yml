@@ -31,7 +31,7 @@ permissions:
 jobs:
   build:
     name: Build ${{ github.event.inputs.channel || 'dev' }} (macOS ${{ matrix.arch }})
-    runs-on: ${{ matrix.arch == 'x64' && 'macos-13' || 'macos-14' }}
+    runs-on: macos-14
     timeout-minutes: 90
     strategy:
       fail-fast: false
