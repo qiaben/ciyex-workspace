@@ -76,13 +76,9 @@ export class ChannelListPane extends ViewPane {
 		this.container = DOM.append(parent, DOM.$('.channel-list-pane'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;position:relative;';
 
-		// Toolbar header + new button
+		// Toolbar header — title is already shown by the VS Code view container + view pane headers.
 		const header = DOM.append(this.container, DOM.$('div'));
-		header.style.cssText = 'display:flex;gap:4px;padding:8px 10px 6px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;flex-shrink:0;';
-
-		const title = DOM.append(header, DOM.$('span'));
-		title.textContent = 'MESSAGING';
-		title.style.cssText = 'flex:1;font-size:11px;font-weight:600;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+		header.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;justify-content:flex-end;flex-shrink:0;';
 
 		this._headerBtn(header, '\u{1F50D}', 'Search Messages', () => { this.searchInput?.focus(); });
 		this._headerBtn(header, '+', 'New Channel / DM', () => this._createChannel());

@@ -222,11 +222,9 @@ export class OperationsMenuPane extends ViewPane {
 	}
 
 	private _renderHeader(): void {
+		// Title is already shown by the VS Code view container + view pane headers.
 		const header = DOM.append(this.container, DOM.$('.menu-header'));
-		header.style.cssText = 'padding:8px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:6px;';
-		const title = DOM.append(header, DOM.$('span'));
-		title.textContent = 'Operations';
-		title.style.cssText = 'flex:1;';
+		header.style.cssText = 'padding:6px 10px;display:flex;align-items:center;justify-content:flex-end;gap:6px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 		this._headerBtn(header, '\u{21BB}', 'Refresh', () => this._loadAllData());
 		this._headerBtn(header, '\u{21D5}', 'Collapse / Expand All', () => {
 			if (this.collapsed.size === ITEMS.length) { this.collapsed.clear(); }

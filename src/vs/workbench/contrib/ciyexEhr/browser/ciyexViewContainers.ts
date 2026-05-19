@@ -44,7 +44,11 @@ function reg(id: string, title: ReturnType<typeof localize2>, icon: ReturnType<t
 	return viewContainerRegistry.registerViewContainer({
 		id,
 		title,
-		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [id, {}]),
+		// Merge the inner view's title with the container title when there is only
+		// one view, matching VS Code's built-in containers (Search, Debug, Output…).
+		// Without this, both container and view titles render and the sidebar shows
+		// the section name twice.
+		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [id, { mergeViewWithContainerWhenSingleView: true }]),
 		icon,
 		order,
 	}, ViewContainerLocation.Sidebar);
@@ -55,7 +59,10 @@ function reg(id: string, title: ReturnType<typeof localize2>, icon: ReturnType<t
 // Settings is in gear menu only, not sidebar
 
 // Leaf items (no children - single GenericListPane each)
-export const CALENDAR_CONTAINER = reg('ciyex.calendar', localize2('ciyex.calendar', "Calendar"), icons.calendar, 1);
+// User-facing label is "Schedule" so the sidebar shows a single title instead
+// of "Calendar / Schedule" stacked together. The id stays `ciyex.calendar` to
+// preserve user state (pinned position, visibility prefs, etc.).
+export const CALENDAR_CONTAINER = reg('ciyex.calendar', localize2('ciyex.schedule', "Schedule"), icons.calendar, 1);
 export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', localize2('ciyex.appointments', "Appointments"), icons.appointments, 2);
 export const PATIENTS_CONTAINER = reg('ciyex.patients', localize2('ciyex.patients', "Patients"), icons.patients, 3);
 export const ENCOUNTERS_CONTAINER = reg('ciyex.encounters', localize2('ciyex.encounters', "Encounters"), icons.encounters, 4);
@@ -214,13 +221,15 @@ GenericListPane.configs.set('ciyex.system.auditlog', {
 // Calendar - rich schedule sidebar (today's timeline + upcoming + stats)
 viewsRegistry.registerViews([{ id: ScheduleSidebarPane.ID, name: localize2('schedule', "Schedule"), ctorDescriptor: new SyncDescriptor(ScheduleSidebarPane) }], CALENDAR_CONTAINER);
 // Appointments — rich sidebar with date filters, status filter, per-row actions, pagination
-viewsRegistry.registerViews([{ id: AppointmentsSidebarPane.ID, name: localize2('allAppts', "All Appointments"), ctorDescriptor: new SyncDescriptor(AppointmentsSidebarPane) }], APPOINTMENTS_CONTAINER);
-viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('patientList', "Patient List"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
+// View names match their container titles so the sidebar shows a single
+// merged title (e.g. "Appointments") instead of "Appointments: All Appointments".
+viewsRegistry.registerViews([{ id: AppointmentsSidebarPane.ID, name: localize2('ciyex.appointments.view', "Appointments"), ctorDescriptor: new SyncDescriptor(AppointmentsSidebarPane) }], APPOINTMENTS_CONTAINER);
+viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('ciyex.patients.view', "Patients"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
 import { EncounterListPane } from './encounterListPane.js';
 viewsRegistry.registerViews([{ id: EncounterListPane.ID, name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(EncounterListPane) }], ENCOUNTERS_CONTAINER);
 viewsRegistry.registerViews([{ id: TasksSidebarPane.ID, name: localize2('tasks', "Tasks"), ctorDescriptor: new SyncDescriptor(TasksSidebarPane) }], TASKS_CONTAINER);
 import { ChannelListPane } from './messaging/channelListPane.js';
-viewsRegistry.registerViews([{ id: ChannelListPane.ID, name: localize2('channels', "Channels"), ctorDescriptor: new SyncDescriptor(ChannelListPane) }], MESSAGING_CONTAINER);
+viewsRegistry.registerViews([{ id: ChannelListPane.ID, name: localize2('ciyex.messaging.view', "Messaging"), ctorDescriptor: new SyncDescriptor(ChannelListPane) }], MESSAGING_CONTAINER);
 
 // Portal Management — dedicated panes replacing GenericListPane
 import { DocumentReviewPane } from './portal/documentReviewPane.js';

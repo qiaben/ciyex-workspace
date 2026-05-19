@@ -22,6 +22,16 @@
 
 .monaco-workbench .part.sidebar > .title > .title-label h2 {
 	text-transform: uppercase;
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.5px;
+}
+
+/* Inner pane section headers (e.g. multi-view containers like Portal Management) */
+.monaco-workbench .part.sidebar .monaco-pane-view .pane > .pane-header h3.title {
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.4px;
 }
 
 .monaco-workbench .viewlet .collapsible.header .title {

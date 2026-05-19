@@ -192,12 +192,10 @@ export class TasksSidebarPane extends ViewPane {
 	}
 
 	private _renderQuickActions(): void {
+		// Title is already shown by the VS Code view container + view pane headers;
+		// here we only need the action toolbar (new + refresh) aligned to the right.
 		const bar = DOM.append(this.container, DOM.$('.quick-actions'));
-		bar.style.cssText = 'display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;';
-
-		const title = DOM.append(bar, DOM.$('span'));
-		title.textContent = 'TASKS';
-		title.style.cssText = 'flex:1;font-size:11px;font-weight:600;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
+		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;justify-content:flex-end;';
 
 		this._iconBtn(bar, '+', 'New Task', '#3b82f6', () => this.commandService.executeCommand('ciyex.openTasks'));
 		this._iconBtn(bar, '\u{21BB}', 'Refresh', 'var(--vscode-foreground)', () => this._loadAndRender());
