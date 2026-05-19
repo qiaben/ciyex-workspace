@@ -15,14 +15,6 @@ on:
           - stage
           - prod
         default: dev
-      arch:
-        description: 'Target architecture'
-        required: true
-        type: choice
-        options:
-          - arm64
-          - x64
-        default: arm64
       ref:
         description: 'Commit SHA to build (leave blank to use HEAD). Use this to promote a tested dev/stage commit up to the next channel.'
         required: false
@@ -30,29 +22,32 @@ on:
         default: ''
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.channel || 'dev' }}-${{ github.event.inputs.arch || 'arm64' }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.channel || 'dev' }}
   cancel-in-progress: false
 
 permissions:
   contents: write
 
-env:
-  VSCODE_ARCH: ${{ github.event.inputs.arch || 'arm64' }}
-  VSCODE_QUALITY: 'oss'
-  CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
-  BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
-
 jobs:
   build:
-    name: Build ${{ github.event.inputs.channel || 'dev' }} (macOS ${{ github.event.inputs.arch || 'arm64' }})
-    runs-on: ${{ (github.event.inputs.arch == 'x64') && 'macos-13' || 'macos-14' }}
+    name: Build ${{ github.event.inputs.channel || 'dev' }} (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'x64' && 'macos-13' || 'macos-14' }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    env:
+      VSCODE_ARCH: ${{ matrix.arch }}
+      VSCODE_QUALITY: 'oss'
+      CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
+      BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.BUILD_REF }}
+          ref: ${{ github.event.inputs.ref || github.sha }}
 
       - name: Verify channel + write channel marker
         run: node build/channels/apply.mjs "$CHANNEL"
@@ -77,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build/node_modules_cache
-          key: node_modules-darwin-${{ env.VSCODE_ARCH }}-${{ hashFiles('.build/packagelockhash') }}
+          key: node_modules-darwin-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}
 
       - name: Extract node_modules cache
         if: steps.cache-node-modules.outputs.cache-hit == 'true'
@@ -86,7 +81,7 @@ jobs:
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         env:
-          npm_config_arch: ${{ env.VSCODE_ARCH }}
+          npm_config_arch: ${{ matrix.arch }}
           npm_config_foreground_scripts: 'true'
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
@@ -170,23 +165,24 @@ jobs:
       - name: Upload artifacts (CI)
         uses: actions/upload-artifact@v4
         with:
-          name: ciyex-workspace-${{ env.CHANNEL }}-darwin-${{ env.VSCODE_ARCH }}
+          name: ciyex-workspace-${{ env.CHANNEL }}-darwin-${{ matrix.arch }}
           path: artifacts/*
 
       - name: Create per-build release (immutable)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}-darwin-${{ env.VSCODE_ARCH }}.${{ github.run_number }}
-          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}-darwin-${{ matrix.arch }}.${{ github.run_number }}
+          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} macOS ${{ matrix.arch }} (Build ${{ github.run_number }})
           target_commitish: ${{ env.BUILD_REF }}
           prerelease: ${{ env.CHANNEL != 'prod' }}
           files: artifacts/*
           body: |
-            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — macOS ${{ env.VSCODE_ARCH }}
+            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — macOS ${{ matrix.arch }}
 
             **Channel:** `${{ env.CHANNEL }}`
             **Build:** #${{ github.run_number }}
             **Commit:** ${{ env.BUILD_REF }}
+            **Architecture:** ${{ matrix.arch == 'arm64' && 'Apple Silicon (M1/M2/M3/M4)' || 'Intel x86_64' }}
 
             ### Downloads
             - **Archive:** `${{ env.ZIP_NAME }}`
