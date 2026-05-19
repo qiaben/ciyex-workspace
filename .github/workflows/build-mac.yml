@@ -1,0 +1,212 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: dev
+      arch:
+        description: 'Target architecture'
+        required: true
+        type: choice
+        options:
+          - arm64
+          - x64
+        default: arm64
+      ref:
+        description: 'Commit SHA to build (leave blank to use HEAD). Use this to promote a tested dev/stage commit up to the next channel.'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.channel || 'dev' }}-${{ github.event.inputs.arch || 'arm64' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  VSCODE_ARCH: ${{ github.event.inputs.arch || 'arm64' }}
+  VSCODE_QUALITY: 'oss'
+  CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
+  BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.channel || 'dev' }} (macOS ${{ github.event.inputs.arch || 'arm64' }})
+    runs-on: ${{ (github.event.inputs.arch == 'x64') && 'macos-13' || 'macos-14' }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_REF }}
+
+      - name: Verify channel + write channel marker
+        run: node build/channels/apply.mjs "$CHANNEL"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Prepare node_modules cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts darwin "$VSCODE_ARCH" $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: .build/node_modules_cache
+          key: node_modules-darwin-${{ env.VSCODE_ARCH }}-${{ hashFiles('.build/packagelockhash') }}
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: tar -xzf .build/node_modules_cache/cache.tgz
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        env:
+          npm_config_arch: ${{ env.VSCODE_ARCH }}
+          npm_config_foreground_scripts: 'true'
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Create node_modules archive
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt
+          mkdir -p .build/node_modules_cache
+          tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
+
+      - name: Download Electron
+        run: npm run electron "$VSCODE_ARCH"
+
+      - name: Compile core and extensions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp core-ci
+
+      - name: Build client (minified)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp "vscode-darwin-${VSCODE_ARCH}-min-ci"
+
+      - name: Compute version + filenames
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SUFFIX=""
+          if [ "$CHANNEL" != "prod" ]; then
+            SUFFIX=$(echo "$CHANNEL" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+          fi
+          ZIP_NAME="CiyexWorkspace${SUFFIX}-darwin-${VSCODE_ARCH}-${VERSION}.zip"
+
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CHANNEL_SUFFIX=$SUFFIX" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
+          echo "Channel: $CHANNEL"
+          echo "Version: $VERSION"
+          echo "Archive: $ZIP_NAME"
+
+      - name: Package .app as zip
+        run: |
+          set -e
+          APP_ROOT="../VSCode-darwin-${VSCODE_ARCH}"
+          if [ ! -d "$APP_ROOT" ]; then
+            echo "Expected app folder not found: $APP_ROOT"
+            ls -la ..
+            exit 1
+          fi
+          mkdir -p artifacts
+          (cd "$APP_ROOT" && zip -Xry "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" *)
+
+      - name: Generate update manifest
+        run: |
+          set -e
+          TAG="v${APP_VERSION}-${CHANNEL}.${{ github.run_number }}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          ARCHIVE="artifacts/${ZIP_NAME}"
+          ZIP_SHA=$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')
+
+          cat > artifacts/metadata.json <<EOF
+          {
+            "version": "${APP_VERSION}",
+            "commit": "${BUILD_REF}",
+            "channel": "${CHANNEL}",
+            "buildNumber": ${{ github.run_number }},
+            "publishedAt": $(date +%s),
+            "platforms": {
+              "darwin-${VSCODE_ARCH}-archive": {
+                "url": "${BASE_URL}/${ZIP_NAME}",
+                "sha256": "${ZIP_SHA}"
+              }
+            }
+          }
+          EOF
+          cat artifacts/metadata.json
+
+      - name: Upload artifacts (CI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ciyex-workspace-${{ env.CHANNEL }}-darwin-${{ env.VSCODE_ARCH }}
+          path: artifacts/*
+
+      - name: Create per-build release (immutable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}.${{ github.run_number }}
+          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          target_commitish: ${{ env.BUILD_REF }}
+          prerelease: ${{ env.CHANNEL != 'prod' }}
+          files: artifacts/*
+          body: |
+            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — macOS ${{ env.VSCODE_ARCH }}
+
+            **Channel:** `${{ env.CHANNEL }}`
+            **Build:** #${{ github.run_number }}
+            **Commit:** ${{ env.BUILD_REF }}
+
+            ### Downloads
+            - **Archive:** `${{ env.ZIP_NAME }}`
+
+            ### First install
+            Download the `.zip`, double-click to unpack the `Ciyex Workspace.app`,
+            then drag it into `/Applications`. Right-click → Open the first time
+            so macOS Gatekeeper accepts the unsigned build. After signing in, pick
+            the **Environment** (Dev / Stage / Prod) on the login screen.
+
+      - name: Update channel pointer release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${CHANNEL}-latest-darwin-${VSCODE_ARCH}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Ciyex Workspace (${CHANNEL}) macOS ${VSCODE_ARCH} — latest pointer" \
+              --notes "Auto-updated pointer release. The metadata.json asset always describes the latest ${CHANNEL} macOS ${VSCODE_ARCH} build." \
+              --prerelease \
+              --target "${BUILD_REF}"
+          fi
+          gh release upload "$TAG" "artifacts/metadata.json" --repo "${{ github.repository }}" --clobber
+          echo "Pointer $TAG updated -> build ${{ github.run_number }}"

@@ -1,0 +1,244 @@
+name: Build Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: dev
+      ref:
+        description: 'Commit SHA to build (leave blank to use HEAD). Use this to promote a tested dev/stage commit up to the next channel.'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.channel || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  VSCODE_ARCH: x64
+  NPM_ARCH: x64
+  VSCODE_QUALITY: 'oss'
+  CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
+  BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.channel || 'dev' }} (Linux x64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_REF }}
+
+      - name: Verify channel + write channel marker
+        run: node build/channels/apply.mjs "$CHANNEL"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            fakeroot rpm libkrb5-dev libsecret-1-dev libx11-dev libxkbfile-dev \
+            libnss3 libasound2 libgbm1 libgtk-3-0 libxss1 xvfb
+
+      - name: Prepare node_modules cache key
+        run: |
+          mkdir -p .build
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.ts linux "$VSCODE_ARCH" $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: .build/node_modules_cache
+          key: node_modules-linux-${{ env.VSCODE_ARCH }}-${{ hashFiles('.build/packagelockhash') }}
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: tar -xzf .build/node_modules_cache/cache.tgz
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          npm_config_foreground_scripts: 'true'
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Create node_modules archive
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          node build/azure-pipelines/common/listNodeModules.ts .build/node_modules_list.txt
+          mkdir -p .build/node_modules_cache
+          tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
+
+      - name: Download Electron
+        run: npm run electron "$VSCODE_ARCH"
+
+      - name: Compile core and extensions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp core-ci
+
+      - name: Build client (minified)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run gulp "vscode-linux-${VSCODE_ARCH}-min-ci"
+
+      - name: Compute version + filenames
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SUFFIX=""
+          if [ "$CHANNEL" != "prod" ]; then
+            SUFFIX=$(echo "$CHANNEL" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+          fi
+          TGZ_NAME="CiyexWorkspace${SUFFIX}-linux-${VSCODE_ARCH}-${VERSION}.tar.gz"
+
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CHANNEL_SUFFIX=$SUFFIX" >> "$GITHUB_ENV"
+          echo "TGZ_NAME=$TGZ_NAME" >> "$GITHUB_ENV"
+
+          echo "Channel: $CHANNEL"
+          echo "Version: $VERSION"
+          echo "Archive: $TGZ_NAME"
+
+      - name: Package tarball
+        run: |
+          set -e
+          APP_ROOT="../VSCode-linux-${VSCODE_ARCH}"
+          if [ ! -d "$APP_ROOT" ]; then
+            echo "Expected app folder not found: $APP_ROOT"
+            ls -la ..
+            exit 1
+          fi
+          mkdir -p artifacts
+          tar --owner=0 --group=0 -czf "artifacts/${TGZ_NAME}" -C .. "VSCode-linux-${VSCODE_ARCH}"
+
+      - name: Build .deb package
+        id: deb
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          npm run gulp "vscode-linux-${VSCODE_ARCH}-prepare-deb"
+          npm run gulp "vscode-linux-${VSCODE_ARCH}-build-deb"
+          DEB_FILE=$(ls .build/linux/deb/*/deb/*.deb 2>/dev/null | head -n 1)
+          if [ -z "$DEB_FILE" ]; then
+            echo "deb not produced"
+            exit 1
+          fi
+          DEB_TARGET="artifacts/$(basename "$DEB_FILE")"
+          cp "$DEB_FILE" "$DEB_TARGET"
+          echo "DEB_NAME=$(basename "$DEB_FILE")" >> "$GITHUB_ENV"
+          echo "produced=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate update manifest
+        run: |
+          set -e
+          TAG="v${APP_VERSION}-${CHANNEL}.${{ github.run_number }}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          ARCHIVE="artifacts/${TGZ_NAME}"
+          TGZ_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+
+          DEB_BLOCK=""
+          if [ -n "${DEB_NAME:-}" ] && [ -f "artifacts/${DEB_NAME}" ]; then
+            DEB_SHA=$(sha256sum "artifacts/${DEB_NAME}" | awk '{print $1}')
+            DEB_BLOCK=$(cat <<DEB
+              ,
+              "linux-${VSCODE_ARCH}-deb": {
+                "url": "${BASE_URL}/${DEB_NAME}",
+                "sha256": "${DEB_SHA}"
+              }
+          DEB
+          )
+          fi
+
+          cat > artifacts/metadata.json <<EOF
+          {
+            "version": "${APP_VERSION}",
+            "commit": "${BUILD_REF}",
+            "channel": "${CHANNEL}",
+            "buildNumber": ${{ github.run_number }},
+            "publishedAt": $(date +%s),
+            "platforms": {
+              "linux-${VSCODE_ARCH}-archive": {
+                "url": "${BASE_URL}/${TGZ_NAME}",
+                "sha256": "${TGZ_SHA}"
+              }${DEB_BLOCK}
+            }
+          }
+          EOF
+          cat artifacts/metadata.json
+
+      - name: Upload artifacts (CI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ciyex-workspace-${{ env.CHANNEL }}-linux-${{ env.VSCODE_ARCH }}
+          path: artifacts/*
+
+      - name: Create per-build release (immutable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}.${{ github.run_number }}
+          name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
+          target_commitish: ${{ env.BUILD_REF }}
+          prerelease: ${{ env.CHANNEL != 'prod' }}
+          files: artifacts/*
+          body: |
+            ## Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} — Linux x64
+
+            **Channel:** `${{ env.CHANNEL }}`
+            **Build:** #${{ github.run_number }}
+            **Commit:** ${{ env.BUILD_REF }}
+
+            ### Downloads
+            - **Tarball:** `${{ env.TGZ_NAME }}`
+            - **Debian/Ubuntu:** `${{ env.DEB_NAME }}` (if produced)
+
+            ### First install
+            - **Tarball:** unpack `tar -xzf <file>.tar.gz`, then run `./VSCode-linux-x64/ciyex-workspace`.
+            - **.deb:** `sudo apt install ./<file>.deb`. After signing in, pick the
+              **Environment** (Dev / Stage / Prod) on the login screen.
+
+      - name: Update channel pointer release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${CHANNEL}-latest-linux-${VSCODE_ARCH}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Ciyex Workspace (${CHANNEL}) Linux ${VSCODE_ARCH} — latest pointer" \
+              --notes "Auto-updated pointer release. The metadata.json asset always describes the latest ${CHANNEL} Linux ${VSCODE_ARCH} build." \
+              --prerelease \
+              --target "${BUILD_REF}"
+          fi
+          gh release upload "$TAG" "artifacts/metadata.json" --repo "${{ github.repository }}" --clobber
+          echo "Pointer $TAG updated -> build ${{ github.run_number }}"
