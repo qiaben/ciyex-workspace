@@ -164,7 +164,7 @@ jobs:
       - name: Generate update manifest
         run: |
           set -e
-          TAG="v${APP_VERSION}-${CHANNEL}.${{ github.run_number }}"
+          TAG="v${APP_VERSION}-${CHANNEL}-linux-${VSCODE_ARCH}.${{ github.run_number }}"
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
           ARCHIVE="artifacts/${TGZ_NAME}"
           TGZ_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
@@ -208,7 +208,7 @@ jobs:
       - name: Create per-build release (immutable)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}.${{ github.run_number }}
+          tag_name: v${{ env.APP_VERSION }}-${{ env.CHANNEL }}-linux-${{ env.VSCODE_ARCH }}.${{ github.run_number }}
           name: Ciyex Workspace ${{ env.CHANNEL_SUFFIX }} v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
           target_commitish: ${{ env.BUILD_REF }}
           prerelease: ${{ env.CHANNEL != 'prod' }}
