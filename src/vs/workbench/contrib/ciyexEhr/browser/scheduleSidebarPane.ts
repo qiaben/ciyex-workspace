@@ -17,6 +17,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
@@ -88,6 +89,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@ILogService private readonly logService: ILogService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
@@ -116,6 +118,14 @@ export class ScheduleSidebarPane extends ViewPane {
 					void this._loadAndRender();
 				}
 			}
+		}));
+
+		// When the org installs or uninstalls a marketplace extension at runtime
+		// (e.g. ciyex-telehealth purchased from the Hub), re-render so the
+		// gated row actions like Video Call appear or disappear without
+		// requiring a sign-out.
+		this._register(this.installationsService.onDidChangeInstallations(() => {
+			if (this.container) { void this._loadAndRender(); }
 		}));
 	}
 
@@ -578,8 +588,12 @@ export class ScheduleSidebarPane extends ViewPane {
 		}
 
 		// Telehealth (if visit type includes telehealth/virtual)
+		// The Video Call button only appears when the org has purchased + installed
+		// the `ciyex-telehealth` marketplace extension. Until then, the
+		// ciyex.openTelehealth command itself redirects to the Hub to purchase.
 		const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
-		if (vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video')) {
+		const isTelehealthAppt = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+		if (isTelehealthAppt && this.installationsService.isInstalled('ciyex-telehealth')) {
 			iconBtn(actions, 'Video Call', '\u{1F4F9}', '#22c55e', () => {
 				this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
 			});

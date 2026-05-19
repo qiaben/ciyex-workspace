@@ -10,6 +10,7 @@ import { IStatusbarService, StatusbarAlignment } from '../../../services/statusb
 import { ICiyexPermissionService } from './ciyexPermissionService.js';
 import { ICiyexMenuService } from './ciyexMenuService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { PatientListDataProvider } from './patientListDataProvider.js';
 import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation, IViewDescriptorService } from '../../../common/views.js';
@@ -40,6 +41,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@ICiyexPermissionService private readonly permissionService: ICiyexPermissionService,
 		@ICiyexMenuService private readonly menuService: ICiyexMenuService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
@@ -192,6 +194,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		this._authenticated = false;
 		this.permissionService.reset();
 		this.menuService.reset();
+		this.installationsService.reset();
 		for (const entry of this._statusBarEntries) { entry.dispose(); }
 		this._statusBarEntries = [];
 		if (this._unreadEntry) { this._unreadEntry.dispose(); this._unreadEntry = null; }
@@ -216,10 +219,14 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Open the Schedule sidebar panel
 		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { });
 
-		// Load permissions, menus, patient list, and status bar in parallel
+		// Load permissions, menus, marketplace installations, patient list, and
+		// status bar in parallel. Installations gate paid extensions such as
+		// telehealth — once an org purchases + installs the app from the Hub,
+		// `/api/app-installations` returns it as active and the feature unlocks.
 		Promise.all([
 			this.permissionService.loadPermissions(),
 			this.menuService.loadMenus(),
+			this.installationsService.loadInstallations(),
 		]).then(() => {
 			this._registerStatusBarItems();
 			this._startUnreadPolling();

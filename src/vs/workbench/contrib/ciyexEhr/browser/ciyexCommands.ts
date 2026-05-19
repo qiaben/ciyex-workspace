@@ -8,6 +8,9 @@ import { ServicesAccessor, IInstantiationService } from '../../../../platform/in
 import { localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, TelehealthEditorInput } from './editors/ciyexEditorInput.js';
@@ -670,11 +673,35 @@ registerAction2(class extends Action2 {
 
 /**
  * Command: Open Telehealth Video Session for an appointment.
- * Mirrors the ciyex-ehr-ui flow at /telehealth/{appointmentId}: creates or
- * retrieves a session via the SDK-routed backend, then opens it in a new
- * editor pane. Triggered from the schedule sidebar "Video Call" action when
- * the appointment's visit type includes telehealth/virtual/video.
+ *
+ * Telehealth is a paid marketplace extension (`ciyex-telehealth`). This command
+ * is gated on the org having purchased + installed that extension from the Hub.
+ * If not installed, the user gets a notification with an action to open the
+ * Hub product page so they can complete the purchase. After install, the
+ * marketplace webhook → ciyex-api creates an active app_installation row;
+ * CiyexInstallationsService picks it up on next load (or via runtime refresh)
+ * and the Video Call action lights up.
+ *
+ * Once installed, mirrors the ciyex-ehr-ui flow at /telehealth/{appointmentId}:
+ * creates or retrieves a session via the SDK-routed backend, then opens it in
+ * the TelehealthEditor pane.
  */
+const TELEHEALTH_APP_SLUG = 'ciyex-telehealth';
+
+/** Derive the Hub URL from the API URL by swapping `api` → `app`. */
+function _deriveHubUrl(apiUrl: string, slug: string): string {
+	try {
+		const u = new URL(apiUrl);
+		u.hostname = u.hostname.replace(/(^|\.)api(-|\.)/, '$1app$2');
+		u.pathname = `/hub/${slug}`;
+		u.search = '';
+		u.hash = '';
+		return u.toString();
+	} catch {
+		return `https://app.ciyex.org/hub/${slug}`;
+	}
+}
+
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
@@ -685,6 +712,40 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor, appointmentId?: string | number, patientName?: string, providerName?: string): Promise<void> {
 		if (!appointmentId) { return; }
+
+		const installations = accessor.get(ICiyexInstallationsService);
+		const notifications = accessor.get(INotificationService);
+		const opener = accessor.get(IOpenerService);
+		const apiService = accessor.get(ICiyexApiService);
+
+		// If installations haven't loaded yet (e.g. command fired immediately
+		// after login), pull them now so first-click after install also works.
+		if (!installations.loaded) {
+			await installations.loadInstallations();
+		}
+
+		if (!installations.isInstalled(TELEHEALTH_APP_SLUG)) {
+			const hubUrl = _deriveHubUrl(apiService.apiUrl, TELEHEALTH_APP_SLUG);
+			notifications.notify({
+				severity: Severity.Info,
+				message: localize2(
+					'telehealthNotInstalled',
+					"Telehealth requires the Ciyex Telehealth extension. Purchase and install it from the Hub to enable video visits.",
+				).value,
+				actions: {
+					primary: [{
+						id: 'ciyex.openTelehealthHub',
+						label: localize2('openHub', "Open Hub").value,
+						tooltip: hubUrl,
+						class: undefined,
+						enabled: true,
+						run: async () => { await opener.open(URI.parse(hubUrl), { openExternal: true }); },
+					}],
+				},
+			});
+			return;
+		}
+
 		const input = new TelehealthEditorInput(String(appointmentId), patientName || '', providerName || '');
 		await accessor.get(IEditorService).openEditor(input, { pinned: true });
 	}
