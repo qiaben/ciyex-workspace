@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 import { ICiyexAuthService } from './ciyexAuthService.js';
@@ -21,10 +22,11 @@ export class CiyexAuthGateContribution extends Disposable implements IWorkbenchC
 	constructor(
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@ICiyexAuthService authService: ICiyexAuthService,
+		@IOpenerService openerService: IOpenerService,
 	) {
 		super();
 
 		// Attach the auth gate to the document body so it overlays everything
-		this._register(new CiyexAuthGate(mainWindow.document.body, authService));
+		this._register(new CiyexAuthGate(mainWindow.document.body, authService, openerService));
 	}
 }

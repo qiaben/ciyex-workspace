@@ -286,6 +286,43 @@ export class CodeApplication extends Disposable {
 			return false;
 		};
 
+		// Ciyex: Cloudflare in front of the Ciyex API + Keycloak hosts
+		// blocks Electron's default User-Agent (which contains
+		// "Electron/<version>" + the app name) with a 502/Bot-Manager
+		// challenge. Rewrite outbound headers for those hosts to look
+		// like a vanilla Chrome browser so auth + REST calls succeed.
+		// Only applied to channel-declared hosts so VS Code's own
+		// telemetry/marketplace requests are untouched.
+		const ciyexHosts = new Set<string>();
+		try {
+			const channels = (this.productService as { channels?: Record<string, { apiUrl?: string; keycloakUrl?: string }> }).channels;
+			if (channels) {
+				for (const ch of Object.values(channels)) {
+					for (const u of [ch.apiUrl, ch.keycloakUrl]) {
+						if (!u) { continue; }
+						try { ciyexHosts.add(new URL(u).host.toLowerCase()); } catch { }
+					}
+				}
+			}
+		} catch { }
+		if (ciyexHosts.size > 0) {
+			const browserUa = process.platform === 'win32'
+				? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+				: process.platform === 'darwin'
+					? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+					: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+			session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+				try {
+					const host = new URL(details.url).host.toLowerCase();
+					if (ciyexHosts.has(host)) {
+						const headers = { ...details.requestHeaders, 'User-Agent': browserUa };
+						return callback({ requestHeaders: headers });
+					}
+				} catch { }
+				callback({ requestHeaders: details.requestHeaders });
+			});
+		}
+
 		session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
 			const uri = URI.parse(details.url);
 			if (uri.scheme === Schemas.vscodeWebview) {

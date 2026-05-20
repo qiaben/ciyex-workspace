@@ -100,8 +100,18 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
-		const assetID = this.productService.darwinUniversalAssetId ?? (process.arch === 'x64' ? 'darwin' : 'darwin-arm64');
 		const baseUpdateUrl = getCiyexUpdateUrl(this.productService, this.configurationService) ?? this.productService.updateUrl!;
+
+		// Ciyex: when updateUrl points at a static JSON manifest (a GitHub
+		// release asset published by CI), skip Electron's autoUpdater
+		// (Squirrel.Mac can't parse GitHub-flavoured manifests) and return
+		// the raw URL. doCheckForUpdates() detects this and uses the manual
+		// HTTP path instead.
+		if (baseUpdateUrl.endsWith('.json')) {
+			return baseUpdateUrl;
+		}
+
+		const assetID = this.productService.darwinUniversalAssetId ?? (process.arch === 'x64' ? 'darwin' : 'darwin-arm64');
 		const url = createUpdateURL(baseUpdateUrl, assetID, quality, commit, options);
 		const headers = getUpdateRequestHeaders(this.productService.version);
 		try {
@@ -113,6 +123,39 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			return undefined;
 		}
 		return url;
+	}
+
+	/**
+	 * Ciyex: convert a static manifest response into the IUpdate shape the
+	 * rest of the update flow expects. Pass-through for dynamic update-server
+	 * responses. Returns null when the running build is already the latest.
+	 */
+	private transformResponse(raw: unknown): IUpdate | null {
+		if (!raw || typeof raw !== 'object') {
+			return null;
+		}
+		const r = raw as { url?: string; version?: string; productVersion?: string; commit?: string; platforms?: Record<string, { url?: string; sha256?: string }>; publishedAt?: number };
+		if (r.url && r.version && r.productVersion) {
+			return r as IUpdate;
+		}
+		if (!r.commit || !r.platforms) {
+			return null;
+		}
+		if (r.commit === this.productService.commit) {
+			return null;
+		}
+		const platform = `darwin-${process.arch}`;
+		const asset = r.platforms[platform] ?? r.platforms[process.arch === 'x64' ? 'darwin' : 'darwin-arm64'];
+		if (!asset?.url) {
+			return null;
+		}
+		return {
+			url: asset.url,
+			version: r.commit,
+			productVersion: r.version ?? this.productService.version,
+			sha256hash: asset.sha256,
+			timestamp: r.publishedAt ? r.publishedAt * 1000 : Date.now(),
+		};
 	}
 
 	override async checkForUpdates(explicit: boolean): Promise<void> {
@@ -137,6 +180,15 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		const url = this.buildUpdateFeedUrl(this.quality, pendingCommit ?? this.productService.commit!, { background, internalOrg });
 
 		if (!url) {
+			return;
+		}
+
+		// Ciyex: static GitHub manifests cannot be consumed by Electron's
+		// autoUpdater (Squirrel.Mac expects a server response, not a flat
+		// release asset). For those URLs always take the manual HTTP path.
+		if (url.endsWith('.json')) {
+			this.logService.info('update#doCheckForUpdates - static manifest: using manual HTTP path');
+			this.checkForUpdateNoDownload(url, /* canInstall */ false);
 			return;
 		}
 
@@ -172,7 +224,8 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			const statusCode = context.res.statusCode;
 			this.logService.trace('update#checkForUpdateNoDownload - response', { statusCode });
 
-			const update = await asJson<IUpdate>(context);
+			const raw = await asJson<unknown>(context);
+			const update = this.transformResponse(raw);
 			if (!update || !update.url || !update.version || !update.productVersion) {
 				this.logService.trace('update#checkForUpdateNoDownload - no update available');
 				const notAvailable = this.state.type === StateType.CheckingForUpdates && this.state.explicit;

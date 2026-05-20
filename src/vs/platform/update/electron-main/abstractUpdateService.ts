@@ -41,11 +41,35 @@ export function createUpdateURL(baseUpdateUrl: string, platform: string, quality
 }
 
 /**
+ * Build the platform suffix used to look up per-platform pointer releases.
+ *  - Windows: ""        (matches the existing `dev-latest` tag layout)
+ *  - Linux:   "-linux-<arch>"
+ *  - macOS:   "-darwin-<arch>"
+ * Keeping Windows empty preserves backwards compatibility with the original
+ * channel-pointer tags from before we added Linux + Mac CI jobs.
+ */
+function getPlatformSuffix(): string {
+	if (process.platform === 'win32') {
+		return '';
+	}
+	if (process.platform === 'linux') {
+		return `-linux-${process.arch}`;
+	}
+	if (process.platform === 'darwin') {
+		return `-darwin-${process.arch}`;
+	}
+	return '';
+}
+
+/**
  * Resolve which channel manifest the auto-updater should poll for this
  * install. Reads `ciyex.channel` from user settings (the login page writes
  * here when a user picks an environment) and looks the URL up in
- * product.json's `channels` map. Falls back to product.updateUrl so the
- * legacy single-channel build keeps working unchanged.
+ * product.json's `channels` map. The URL may contain a `{platformSuffix}`
+ * placeholder which is substituted at runtime so a single channel entry
+ * covers every per-platform pointer release published by CI. Falls back to
+ * product.updateUrl so the legacy single-channel build keeps working
+ * unchanged.
  */
 export function getCiyexUpdateUrl(productService: IProductService, configurationService: IConfigurationService): string | undefined {
 	const channels = productService.channels;
@@ -56,7 +80,7 @@ export function getCiyexUpdateUrl(productService: IProductService, configuration
 			? selected
 			: (defaultChannel === 'dev' || defaultChannel === 'stage' || defaultChannel === 'prod') ? defaultChannel : undefined;
 		if (channelKey && channels[channelKey]?.updateUrl) {
-			return channels[channelKey].updateUrl;
+			return channels[channelKey].updateUrl.replace('{platformSuffix}', getPlatformSuffix());
 		}
 	}
 	return productService.updateUrl;

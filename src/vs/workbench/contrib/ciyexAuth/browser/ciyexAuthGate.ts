@@ -5,10 +5,12 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../../base/common/network.js';
+import { URI } from '../../../../base/common/uri.js';
 import { mainWindow } from '../../../../base/browser/window.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
 
-type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning';
+type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning' | 'signup-org' | 'signup-admin';
 
 /**
  * Helper to create a styled element via DOM APIs (no innerHTML, CSP-safe).
@@ -93,13 +95,26 @@ export class CiyexAuthGate extends Disposable {
 	private _showPassword = false;
 	private _loading = false;
 	private _error = '';
+	// Signup form state — held across the two-step flow so going Back
+	// preserves what the user typed.
+	private _signupOrgName = '';
+	private _signupOrgAlias = '';
+	private _signupOrgAliasEdited = false;
+	private _signupSpecialty = '';
+	private _signupFirstName = '';
+	private _signupLastName = '';
+	private _signupEmail = '';
+	private _signupPassword = '';
+	private _signupConfirmPassword = '';
+	private _showSignupPassword = false;
 	private _discoverResult: { exists: boolean; authMethods: string[]; orgName: string; idps: Array<{ alias: string; displayName: string; providerId: string }> } | null = null;
 	private _countdown = 120;
 	private _countdownInterval: number | null = null;
 
 	constructor(
 		private readonly _parent: HTMLElement,
-		private readonly _authService: ICiyexAuthService
+		private readonly _authService: ICiyexAuthService,
+		private readonly _openerService: IOpenerService,
 	) {
 		super();
 
@@ -114,6 +129,20 @@ export class CiyexAuthGate extends Disposable {
 			this._show();
 		} else if (this._authService.state !== CiyexAuthState.Authenticated) {
 			this._show();
+		}
+	}
+
+	/**
+	 * Open the given http(s) URL in the user's default external browser.
+	 * Used for the "Register", "Terms", and "Privacy" links on the login
+	 * card — these intentionally leave the desktop app rather than render
+	 * marketing content inline.
+	 */
+	private _openExternal(url: string): void {
+		try {
+			void this._openerService.open(URI.parse(url), { openExternal: true });
+		} catch {
+			// Best-effort: silently ignore a malformed URL rather than crash the gate.
 		}
 	}
 
@@ -267,6 +296,10 @@ export class CiyexAuthGate extends Disposable {
 			content = this._buildAuthenticate(c);
 		} else if (this._step === 'change-password') {
 			content = this._buildChangePassword(c);
+		} else if (this._step === 'signup-org') {
+			content = this._buildSignupOrgStep(c);
+		} else if (this._step === 'signup-admin') {
+			content = this._buildSignupAdminStep(c);
 		} else {
 			content = this._buildEmailStep(c);
 		}
@@ -611,9 +644,22 @@ export class CiyexAuthGate extends Disposable {
 		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleDiscover(); } });
 		btn.addEventListener('click', () => this._handleDiscover());
 		settingsLink.addEventListener('click', () => { this._showSettings = true; this._render(); });
-		registerLink.addEventListener('click', (e) => e.preventDefault());
-		termsA.addEventListener('click', (e) => e.preventDefault());
-		privacyA.addEventListener('click', (e) => e.preventDefault());
+		registerLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			// Render the in-app signup flow rather than punting to the
+			// marketing site — matches ciyex-ehr-ui /signup behaviour.
+			this._step = 'signup-org';
+			this._error = '';
+			this._render();
+		});
+		termsA.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._openExternal('https://ciyex.org/terms');
+		});
+		privacyA.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._openExternal('https://ciyex.org/privacy');
+		});
 		setTimeout(() => emailInput.focus(), 50);
 
 		return wrapper;
@@ -927,6 +973,265 @@ export class CiyexAuthGate extends Disposable {
 		return wrapper;
 	}
 
+	// --- Signup step builders ---
+
+	/** Slugify a practice name into a URL-safe org alias (matches the backend normalizer). */
+	private _slugify(name: string): string {
+		return name
+			.toLowerCase()
+			.replace(/[^a-z0-9\s-]/g, '')
+			.replace(/\s+/g, '-')
+			.replace(/-+/g, '-')
+			.replace(/^-|-$/g, '');
+	}
+
+	/** Visual step indicator (two pills) for the two-step signup flow. */
+	private _signupStepIndicator(step: 1 | 2): HTMLElement {
+		const dark = this._isDark();
+		const inactive = dark ? '#3c3c3c' : '#E5E7EB';
+		const wrap = h('div', { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' });
+		const pill1 = h('div', { flex: '1', height: '4px', borderRadius: '999px', background: step >= 1 ? '#4F6AF0' : inactive });
+		const pill2 = h('div', { flex: '1', height: '4px', borderRadius: '999px', background: step >= 2 ? '#4F6AF0' : inactive });
+		wrap.appendChild(pill1);
+		wrap.appendChild(pill2);
+		return wrap;
+	}
+
+	/** Standard labelled input used inside the signup cards. */
+	private _labelledInput(
+		labelText: string,
+		required: boolean,
+		input: HTMLInputElement,
+		hint?: string,
+	): HTMLElement {
+		const dark = this._isDark();
+		const wrap = h('div', {});
+		const label = h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: dark ? '#D1D5DB' : '#374151', marginBottom: '6px' });
+		label.appendChild(document.createTextNode(labelText));
+		if (required) {
+			const star = document.createElement('span');
+			star.textContent = ' *';
+			star.style.color = '#EF4444';
+			label.appendChild(star);
+		}
+		wrap.appendChild(label);
+		wrap.appendChild(input);
+		if (hint) {
+			const p = h('p', { fontSize: '12px', color: dark ? '#6B7280' : '#9CA3AF', marginTop: '4px' });
+			p.textContent = hint;
+			wrap.appendChild(p);
+		}
+		return wrap;
+	}
+
+	private _buildSignupOrgStep(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const dark = this._isDark();
+		const { wrapper, card } = this._buildTwoPanel('Create your practice', 'Step 1 of 2 — Practice information');
+
+		// Reset & re-insert step indicator above the title so its spacing
+		// matches the ehr-ui /signup layout. _buildTwoPanel already appended
+		// the title/subtitle, so we prepend the indicator at the top.
+		card.insertBefore(this._signupStepIndicator(1), card.firstChild);
+
+		const form = h('div', { display: 'flex', flexDirection: 'column', gap: '14px' });
+
+		// Practice name
+		const orgNameInput = this._lightInput('ciyex-signup-org-name', 'text', 'e.g., Sunrise Family Medicine', this._signupOrgName);
+		orgNameInput.autocomplete = 'organization';
+		form.appendChild(this._labelledInput('Practice Name', true, orgNameInput));
+
+		// Organization ID
+		const orgAliasInput = this._lightInput('ciyex-signup-org-alias', 'text', 'sunrise-family-medicine', this._signupOrgAlias);
+		orgAliasInput.autocomplete = 'off';
+		form.appendChild(this._labelledInput('Organization ID', true, orgAliasInput, 'This will be your unique identifier'));
+
+		// Specialty (optional)
+		const specialtyInput = this._lightInput('ciyex-signup-specialty', 'text', 'e.g., Family Medicine, Cardiology', this._signupSpecialty);
+		specialtyInput.autocomplete = 'off';
+		form.appendChild(this._labelledInput('Specialty', false, specialtyInput));
+
+		const err = this._lightError();
+		if (err) { form.appendChild(err); }
+
+		const continueBtn = this._lightButton('ciyex-signup-continue', 'Continue', true, !this._signupOrgName.trim() || !this._signupOrgAlias.trim());
+		form.appendChild(continueBtn);
+
+		card.appendChild(form);
+
+		// "Already have an account? Sign in" footer
+		const footer = h('p', { marginTop: '18px', textAlign: 'center', fontSize: '13px', color: dark ? '#9CA3AF' : '#6B7280' });
+		footer.appendChild(document.createTextNode('Already have an account? '));
+		const signInLink = document.createElement('a');
+		signInLink.href = '#';
+		signInLink.textContent = 'Sign in';
+		Object.assign(signInLink.style, { color: '#4F6AF0', textDecoration: 'none', fontWeight: '500' });
+		footer.appendChild(signInLink);
+		card.appendChild(footer);
+
+		// Listeners
+		orgNameInput.addEventListener('input', () => {
+			this._signupOrgName = orgNameInput.value;
+			// Auto-derive the alias from the practice name until the user
+			// edits the alias field manually (matches SignUpForm.tsx UX).
+			if (!this._signupOrgAliasEdited) {
+				this._signupOrgAlias = this._slugify(orgNameInput.value);
+				orgAliasInput.value = this._signupOrgAlias;
+			}
+			continueBtn.disabled = !this._signupOrgName.trim() || !this._signupOrgAlias.trim();
+		});
+		orgAliasInput.addEventListener('input', () => {
+			this._signupOrgAliasEdited = true;
+			this._signupOrgAlias = orgAliasInput.value.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+			if (orgAliasInput.value !== this._signupOrgAlias) {
+				orgAliasInput.value = this._signupOrgAlias;
+			}
+			continueBtn.disabled = !this._signupOrgName.trim() || !this._signupOrgAlias.trim();
+		});
+		specialtyInput.addEventListener('input', () => { this._signupSpecialty = specialtyInput.value; });
+		const goNext = (): void => {
+			if (!this._signupOrgName.trim() || !this._signupOrgAlias.trim()) { return; }
+			this._error = '';
+			this._step = 'signup-admin';
+			this._render();
+		};
+		continueBtn.addEventListener('click', goNext);
+		const onEnter = (e: KeyboardEvent): void => { if (e.key === 'Enter') { goNext(); } };
+		orgNameInput.addEventListener('keydown', onEnter);
+		orgAliasInput.addEventListener('keydown', onEnter);
+		specialtyInput.addEventListener('keydown', onEnter);
+		signInLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._step = 'email';
+			this._error = '';
+			this._render();
+		});
+
+		setTimeout(() => orgNameInput.focus(), 50);
+		return wrapper;
+	}
+
+	private _buildSignupAdminStep(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const dark = this._isDark();
+		const { wrapper, card } = this._buildTwoPanel('Admin account', '');
+
+		// _buildTwoPanel appends [h1, subtitle p] to card; replace the
+		// placeholder subtitle with the org-name-aware variant. Accessing
+		// childNodes by index keeps us off querySelector (banned by hygiene).
+		const subtitleEl = card.childNodes[1] as HTMLElement | undefined;
+		if (subtitleEl) {
+			subtitleEl.textContent = '';
+			subtitleEl.appendChild(document.createTextNode('Step 2 of 2 — Your admin credentials for '));
+			const strong = h('span', { fontWeight: '600', color: dark ? '#E5E7EB' : '#374151' });
+			strong.textContent = this._signupOrgName || 'your practice';
+			subtitleEl.appendChild(strong);
+		}
+
+		card.insertBefore(this._signupStepIndicator(2), card.firstChild);
+
+		// Back button just above the form
+		const backBtn = document.createElement('button');
+		backBtn.id = 'ciyex-signup-back-btn';
+		backBtn.textContent = '← Back';
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: dark ? '#9CA3AF' : '#6B7280', fontSize: '13px', padding: '0 0 12px', cursor: 'pointer', display: 'block' });
+		card.appendChild(backBtn);
+
+		const form = h('div', { display: 'flex', flexDirection: 'column', gap: '14px' });
+
+		// First / Last name row
+		const nameRow = h('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' });
+		const firstInput = this._lightInput('ciyex-signup-first-name', 'text', 'John', this._signupFirstName);
+		firstInput.autocomplete = 'given-name';
+		const lastInput = this._lightInput('ciyex-signup-last-name', 'text', 'Doe', this._signupLastName);
+		lastInput.autocomplete = 'family-name';
+		nameRow.appendChild(this._labelledInput('First Name', true, firstInput));
+		nameRow.appendChild(this._labelledInput('Last Name', true, lastInput));
+		form.appendChild(nameRow);
+
+		// Email
+		const emailInput = this._lightInput('ciyex-signup-email', 'email', 'john@example.com', this._signupEmail);
+		emailInput.autocomplete = 'email';
+		form.appendChild(this._labelledInput('Email', true, emailInput));
+
+		// Password (with show/hide toggle)
+		const pwWrap = h('div', { position: 'relative' });
+		const pwInput = this._lightInput('ciyex-signup-password', this._showSignupPassword ? 'text' : 'password', 'At least 8 characters', this._signupPassword);
+		pwInput.autocomplete = 'new-password';
+		pwInput.minLength = 8;
+		pwInput.style.paddingRight = '40px';
+		const toggleBtn = document.createElement('button');
+		toggleBtn.id = 'ciyex-signup-toggle-pw';
+		toggleBtn.type = 'button';
+		// allow-any-unicode-next-line
+		toggleBtn.textContent = this._showSignupPassword ? '◉' : '◎';
+		Object.assign(toggleBtn.style, { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#9CA3AF', padding: '2px', fontSize: '16px', cursor: 'pointer' });
+		pwWrap.appendChild(pwInput);
+		pwWrap.appendChild(toggleBtn);
+		const pwField = h('div', {});
+		const pwLabel = h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: dark ? '#D1D5DB' : '#374151', marginBottom: '6px' });
+		pwLabel.appendChild(document.createTextNode('Password'));
+		const pwStar = document.createElement('span'); pwStar.textContent = ' *'; pwStar.style.color = '#EF4444';
+		pwLabel.appendChild(pwStar);
+		pwField.appendChild(pwLabel);
+		pwField.appendChild(pwWrap);
+		form.appendChild(pwField);
+
+		// Confirm password
+		const confirmInput = this._lightInput('ciyex-signup-confirm', this._showSignupPassword ? 'text' : 'password', 'Confirm your password', this._signupConfirmPassword);
+		confirmInput.autocomplete = 'new-password';
+		confirmInput.minLength = 8;
+		form.appendChild(this._labelledInput('Confirm Password', true, confirmInput));
+
+		const err = this._lightError();
+		if (err) { form.appendChild(err); }
+
+		const submitBtn = this._lightButton(
+			'ciyex-signup-submit',
+			this._loading ? 'Creating your practice…' : 'Create Account',
+			true,
+			this._loading || !this._signupFirstName.trim() || !this._signupLastName.trim() || !this._signupEmail.trim() || !this._signupPassword || !this._signupConfirmPassword,
+		);
+		form.appendChild(submitBtn);
+		card.appendChild(form);
+
+		// Footer link
+		const footer = h('p', { marginTop: '18px', textAlign: 'center', fontSize: '13px', color: dark ? '#9CA3AF' : '#6B7280' });
+		footer.appendChild(document.createTextNode('Already have an account? '));
+		const signInLink = document.createElement('a');
+		signInLink.href = '#';
+		signInLink.textContent = 'Sign in';
+		Object.assign(signInLink.style, { color: '#4F6AF0', textDecoration: 'none', fontWeight: '500' });
+		footer.appendChild(signInLink);
+		card.appendChild(footer);
+
+		// Listeners
+		const refreshDisabled = (): void => {
+			submitBtn.disabled = this._loading || !this._signupFirstName.trim() || !this._signupLastName.trim() || !this._signupEmail.trim() || !this._signupPassword || !this._signupConfirmPassword;
+		};
+		firstInput.addEventListener('input', () => { this._signupFirstName = firstInput.value; refreshDisabled(); });
+		lastInput.addEventListener('input', () => { this._signupLastName = lastInput.value; refreshDisabled(); });
+		emailInput.addEventListener('input', () => { this._signupEmail = emailInput.value; refreshDisabled(); });
+		pwInput.addEventListener('input', () => { this._signupPassword = pwInput.value; refreshDisabled(); });
+		confirmInput.addEventListener('input', () => { this._signupConfirmPassword = confirmInput.value; refreshDisabled(); });
+		toggleBtn.addEventListener('click', () => { this._showSignupPassword = !this._showSignupPassword; this._render(); });
+		const onEnter = (e: KeyboardEvent): void => { if (e.key === 'Enter') { void this._handleSignup(); } };
+		firstInput.addEventListener('keydown', onEnter);
+		lastInput.addEventListener('keydown', onEnter);
+		emailInput.addEventListener('keydown', onEnter);
+		pwInput.addEventListener('keydown', onEnter);
+		confirmInput.addEventListener('keydown', onEnter);
+		submitBtn.addEventListener('click', () => { void this._handleSignup(); });
+		backBtn.addEventListener('click', () => { this._step = 'signup-org'; this._error = ''; this._render(); });
+		signInLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._step = 'email';
+			this._error = '';
+			this._render();
+		});
+
+		setTimeout(() => firstInput.focus(), 50);
+		return wrapper;
+	}
+
 	// --- API handlers ---
 	private async _handleDiscover(): Promise<void> {
 		if (!this._email.trim() || this._loading) {
@@ -1019,6 +1324,60 @@ export class CiyexAuthGate extends Disposable {
 			return;
 		}
 		this._error = result.error || 'Failed to set new password.';
+		this._render();
+	}
+
+	private async _handleSignup(): Promise<void> {
+		if (this._loading) {
+			return;
+		}
+		if (!this._signupFirstName.trim() || !this._signupLastName.trim() || !this._signupEmail.trim() || !this._signupPassword) {
+			this._error = 'Please fill in all required fields.';
+			this._render();
+			return;
+		}
+		if (this._signupPassword !== this._signupConfirmPassword) {
+			this._error = 'Passwords do not match.';
+			this._render();
+			return;
+		}
+		if (this._signupPassword.length < 8) {
+			this._error = 'Password must be at least 8 characters.';
+			this._render();
+			return;
+		}
+
+		this._loading = true;
+		this._error = '';
+		this._render();
+
+		const result = await this._authService.signup({
+			orgName: this._signupOrgName,
+			orgAlias: this._signupOrgAlias,
+			firstName: this._signupFirstName,
+			lastName: this._signupLastName,
+			email: this._signupEmail,
+			password: this._signupPassword,
+			specialty: this._signupSpecialty,
+		});
+		this._loading = false;
+
+		if (result.success) {
+			// Auth service flips state to Authenticated which hides the gate.
+			// Wipe the in-memory form fields so they don't leak into a future
+			// signout-and-resignup flow on the same machine.
+			this._signupOrgName = '';
+			this._signupOrgAlias = '';
+			this._signupOrgAliasEdited = false;
+			this._signupSpecialty = '';
+			this._signupFirstName = '';
+			this._signupLastName = '';
+			this._signupEmail = '';
+			this._signupPassword = '';
+			this._signupConfirmPassword = '';
+			return;
+		}
+		this._error = result.error || 'Signup failed';
 		this._render();
 	}
 

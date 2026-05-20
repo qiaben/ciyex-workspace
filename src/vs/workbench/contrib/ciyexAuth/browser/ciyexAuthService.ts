@@ -27,6 +27,13 @@ export interface ICiyexAuthService {
 	readonly keycloakClientId: string;
 
 	/**
+	 * External URL where new practices sign up. Channel-aware so dev users
+	 * land on the dev marketing site, prod users on the prod site.
+	 * Falls back to `<apiUrl>/register` if product.json does not declare one.
+	 */
+	readonly registerUrl: string;
+
+	/**
 	 * Currently selected channel (dev/stage/prod). Drives the default
 	 * API/Keycloak endpoints and which update manifest the auto-updater watches.
 	 */
@@ -64,6 +71,14 @@ export interface ICiyexAuthService {
 	 * On success this also completes the login and stores the session token.
 	 */
 	changePassword(email: string, currentPassword: string, newPassword: string): Promise<CiyexLoginResult>;
+
+	/**
+	 * Register a new practice + admin account. On success this also completes
+	 * the login and stores the session token (mirrors the SignUpForm flow in
+	 * ciyex-ehr-ui — calls POST /api/auth/signup which creates the Keycloak
+	 * organization, FHIR partition, admin user, and returns a JWT).
+	 */
+	signup(input: CiyexSignupInput): Promise<CiyexLoginResult>;
 
 	/**
 	 * Refresh the access token
@@ -120,6 +135,16 @@ export interface CiyexLoginResult {
 		groups: string[];
 		userId: string;
 	};
+}
+
+export interface CiyexSignupInput {
+	orgName: string;
+	orgAlias: string;
+	firstName: string;
+	lastName: string;
+	email: string;
+	password: string;
+	specialty?: string;
 }
 
 // How early (in seconds) before JWT expiry to proactively refresh
@@ -230,6 +255,10 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			}
 		} catch { }
 		return this._channel?.keycloakClientId ?? 'ciyex-app';
+	}
+
+	get registerUrl(): string {
+		return this._channel?.registerUrl ?? `${this.apiUrl}/register`;
 	}
 
 	async setChannel(channel: CiyexChannelName): Promise<void> {
@@ -403,6 +432,61 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return { success: true, data: data.data };
 			}
 			return { success: false, error: data.error || `Failed to set new password (HTTP ${res.status}).` };
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return { success: false, error: `Unable to connect to server: ${msg}` };
+		}
+	}
+
+	async signup(input: CiyexSignupInput): Promise<CiyexLoginResult> {
+		const trimmedEmail = input.email.trim();
+		// Normalize org alias the same way the backend does so what the user
+		// sees in the form matches what gets stored.
+		const orgAlias = input.orgAlias
+			.toLowerCase()
+			.replace(/[^a-z0-9-]/g, '-')
+			.replace(/-+/g, '-')
+			.replace(/^-|-$/g, '');
+
+		try {
+			const res = await fetch(`${this.apiUrl}/api/auth/signup`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					orgName: input.orgName.trim(),
+					orgAlias,
+					firstName: input.firstName.trim(),
+					lastName: input.lastName.trim(),
+					email: trimmedEmail,
+					password: input.password,
+					specialty: (input.specialty ?? '').trim(),
+				}),
+			});
+
+			let data: { success?: boolean; error?: string; requiresLogin?: boolean; data?: CiyexLoginResult['data'] & { orgAlias?: string } };
+			try {
+				data = await res.json();
+			} catch {
+				return { success: false, error: `Server returned ${res.status} with no body. Check API server settings.` };
+			}
+
+			if (data.success && data.data?.token) {
+				this._storeAuth(data.data);
+				this._userEmail = trimmedEmail;
+				// Remember the new tenant so the next API call carries the
+				// correct X-Tenant-Name header without a manual switch.
+				try {
+					const alias = data.data.orgAlias || orgAlias;
+					if (alias) {
+						localStorage.setItem('ciyex_selected_tenant', alias);
+					}
+				} catch { }
+				this._setState(CiyexAuthState.Authenticated);
+				this._scheduleTokenRefresh();
+				this._resetIdleTimer();
+				return { success: true, data: data.data };
+			}
+			return { success: false, error: data.error || `Signup failed (HTTP ${res.status}).` };
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			return { success: false, error: `Unable to connect to server: ${msg}` };

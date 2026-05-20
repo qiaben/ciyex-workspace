@@ -36,7 +36,50 @@ export class LinuxUpdateService extends AbstractUpdateService {
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string {
 		const updateUrl = getCiyexUpdateUrl(this.productService, this.configurationService) ?? this.productService.updateUrl!;
+
+		// Ciyex: when updateUrl points at a static JSON manifest (a GitHub
+		// release asset published by CI), use it directly. We pick the
+		// per-platform asset and compare commits inside transformResponse()
+		// rather than relying on a dynamic update server. Same approach the
+		// win32 service uses.
+		if (updateUrl.endsWith('.json')) {
+			return updateUrl;
+		}
+
 		return createUpdateURL(updateUrl, `linux-${process.arch}`, quality, commit, options);
+	}
+
+	/**
+	 * Ciyex: convert a static manifest response into the IUpdate shape the
+	 * rest of the update flow expects. Pass-through for dynamic update-server
+	 * responses. Returns null when the running build is already the latest.
+	 */
+	private transformResponse(raw: unknown): IUpdate | null {
+		if (!raw || typeof raw !== 'object') {
+			return null;
+		}
+		const r = raw as { url?: string; version?: string; productVersion?: string; commit?: string; platforms?: Record<string, { url?: string; sha256?: string }>; publishedAt?: number };
+		if (r.url && r.version && r.productVersion) {
+			return r as IUpdate;
+		}
+		if (!r.commit || !r.platforms) {
+			return null;
+		}
+		if (r.commit === this.productService.commit) {
+			return null;
+		}
+		const platform = `linux-${process.arch}`;
+		const asset = r.platforms[platform];
+		if (!asset?.url) {
+			return null;
+		}
+		return {
+			url: asset.url,
+			version: r.commit,
+			productVersion: r.version ?? this.productService.version,
+			sha256hash: asset.sha256,
+			timestamp: r.publishedAt ? r.publishedAt * 1000 : Date.now(),
+		};
 	}
 
 	protected doCheckForUpdates(explicit: boolean, _pendingCommit?: string): void {
@@ -50,8 +93,9 @@ export class LinuxUpdateService extends AbstractUpdateService {
 		this.setState(State.CheckingForUpdates(explicit));
 
 		this.requestService.request({ url, callSite: 'updateService.linux.checkForUpdates' }, CancellationToken.None)
-			.then<IUpdate | null>(asJson)
-			.then(update => {
+			.then<unknown>(asJson)
+			.then(raw => {
+				const update = this.transformResponse(raw);
 				if (!update || !update.url || !update.version || !update.productVersion) {
 					this.setState(State.Idle(UpdateType.Archive, undefined, explicit || undefined));
 				} else {

@@ -22,7 +22,20 @@ export interface ICiyexChannel {
 	readonly keycloakUrl: string;
 	readonly keycloakRealm: string;
 	readonly keycloakClientId: string;
+	/**
+	 * URL where the auto-updater reads the channel's release manifest.
+	 * `{platformSuffix}` is substituted at runtime with the active build's
+	 * platform tag — `""` for win32-x64, `"-linux-x64"`, `"-linux-arm64"`,
+	 * `"-darwin-x64"`, `"-darwin-arm64"`. This lets one channel entry cover
+	 * every per-platform pointer release published by CI.
+	 */
 	readonly updateUrl: string;
+	/**
+	 * External signup URL for new practices. Opened in the user's default
+	 * browser when the "Register a new practice" link is clicked on the
+	 * login screen.
+	 */
+	readonly registerUrl?: string;
 }
 
 export interface IProductWalkthrough {

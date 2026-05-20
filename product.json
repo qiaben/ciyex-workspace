@@ -44,7 +44,8 @@
 			"keycloakUrl": "https://dev.aran.me",
 			"keycloakRealm": "ciyex",
 			"keycloakClientId": "ciyex-app",
-			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/dev-latest/metadata.json"
+			"registerUrl": "https://app-dev.ciyex.org/register",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/dev-latest{platformSuffix}/metadata.json"
 		},
 		"stage": {
 			"label": "Staging",
@@ -52,7 +53,8 @@
 			"keycloakUrl": "https://stage.aran.me",
 			"keycloakRealm": "ciyex",
 			"keycloakClientId": "ciyex-app",
-			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/stage-latest/metadata.json"
+			"registerUrl": "https://app-stage.ciyex.org/register",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/stage-latest{platformSuffix}/metadata.json"
 		},
 		"prod": {
 			"label": "Production",
@@ -60,7 +62,8 @@
 			"keycloakUrl": "https://aran.me",
 			"keycloakRealm": "ciyex",
 			"keycloakClientId": "ciyex-app",
-			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/prod-latest/metadata.json"
+			"registerUrl": "https://app.ciyex.org/register",
+			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/prod-latest{platformSuffix}/metadata.json"
 		}
 	},
 	"builtInExtensions": [],
