@@ -109,6 +109,32 @@ const BUILTIN_ITEMS: SidebarItem[] = [
 	{ key: '__practice-settings__', label: 'Practice Settings', icon: '\u{1F3E2}', kind: 'command', commandId: 'ciyex.openPracticeSettings', group: 'system' },
 ];
 
+/**
+ * Per-tab descriptive subtitle shown under the page H1 in the FHIR resource
+ * panes. Matches the EHR Web UI which pairs a short orientation line with the
+ * record count so users immediately know what each section manages.
+ */
+const TAB_DESCRIPTIONS: Record<string, string> = {
+	'practice': 'Practice information, contact details, and branding',
+	'facilities': 'Locations, addresses, and operating hours',
+	'facility': 'Locations, addresses, and operating hours',
+	'locations': 'Locations, addresses, and operating hours',
+	'location': 'Locations, addresses, and operating hours',
+	'providers': 'Clinicians, NPI, and scheduling profiles',
+	'provider': 'Clinicians, NPI, and scheduling profiles',
+	'insurance': 'Carriers and payer relationships',
+	'referral-practices': 'External practices for referrals in and out',
+	'referral-providers': 'External providers for referrals in and out',
+	'codes': 'Custom code sets used across the chart',
+	'services': 'Billable services and CPT/HCPCS mappings',
+	'template-documents': 'Reusable document templates for the chart',
+	'__users__': 'Manage user accounts, roles, and portal access',
+	'__roles__': 'Roles, permissions, and access policies',
+	'__form-options__': 'Default options for chart and intake forms',
+	'__display__': 'Theme, density, and display preferences',
+	'__calendar-colors__': 'Color scheme for calendar appointments and providers',
+};
+
 const ICON_MAP: Record<string, string> = {
 	'Building2': '\u{1F3E2}',
 	'Building': '\u{1F3E2}',
@@ -629,7 +655,9 @@ export class SettingsHubEditor extends EditorPane {
 		title.textContent = item?.label || this._titleCase(tabKey);
 		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
 		const sub = DOM.append(left, DOM.$('p'));
-		sub.textContent = `${this.totalElements} record${this.totalElements === 1 ? '' : 's'}`;
+		const desc = TAB_DESCRIPTIONS[tabKey] || TAB_DESCRIPTIONS[tabKey.toLowerCase()] || '';
+		const countTxt = `${this.totalElements} record${this.totalElements === 1 ? '' : 's'}`;
+		sub.textContent = desc ? `${desc} · ${countTxt}` : countTxt;
 		sub.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
 
 		const right = DOM.append(header, DOM.$('div'));
@@ -2043,9 +2071,9 @@ export class SettingsHubEditor extends EditorPane {
 			const HIDDEN_ROLES = new Set(['default-roles-ciyex', 'offline_access', 'uma_authorization']);
 
 			const tableWrap = DOM.append(root, DOM.$('div'));
-			tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+			tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
 			const table = DOM.append(tableWrap, DOM.$('table'));
-			table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
+			table.style.cssText = 'width:100%;min-width:880px;border-collapse:collapse;font-size:12px;';
 
 			const thead = DOM.append(table, DOM.$('thead'));
 			const tr = DOM.append(thead, DOM.$('tr'));

@@ -103,10 +103,15 @@ export class UserManagementEditor extends EditorPane {
 	private _render(): void {
 		DOM.clearNode(this.contentEl);
 
-		// Title
-		const title = DOM.append(this.contentEl, DOM.$('h2'));
-		title.textContent = 'User Management';
-		title.style.cssText = 'font-size:20px;font-weight:600;margin:0 0 16px;';
+		// Header (title + subtitle)
+		const header = DOM.append(this.contentEl, DOM.$('div'));
+		header.style.cssText = 'margin:0 0 16px;';
+		const title = DOM.append(header, DOM.$('h1'));
+		title.textContent = 'Users';
+		title.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const subtitle = DOM.append(header, DOM.$('p'));
+		subtitle.textContent = 'Manage user accounts, roles, and portal access';
+		subtitle.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
 
 		// Toolbar
 		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
@@ -124,13 +129,15 @@ export class UserManagementEditor extends EditorPane {
 		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
 		addBtn.addEventListener('click', () => this._openUserModal(null));
 
-		// Table
-		const table = DOM.append(this.contentEl, DOM.$('div'));
-		table.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		// Table — wrapped so horizontal overflow is scrollable
+		const tableScroll = DOM.append(this.contentEl, DOM.$('div'));
+		tableScroll.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
+		const table = DOM.append(tableScroll, DOM.$('div'));
+		table.style.cssText = 'min-width:760px;';
 
 		// Header
 		const headerRow = DOM.append(table, DOM.$('div'));
-		headerRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 120px 80px 140px;gap:8px;padding:10px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);';
+		headerRow.style.cssText = 'display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1fr) 120px 80px 140px;gap:8px;padding:10px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);';
 		for (const col of ['Name', 'Email', 'Role', 'Status', 'Actions']) {
 			DOM.append(headerRow, DOM.$('span')).textContent = col;
 		}
@@ -144,7 +151,7 @@ export class UserManagementEditor extends EditorPane {
 
 		for (const user of this.users) {
 			const row = DOM.append(table, DOM.$('div'));
-			row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 120px 80px 140px;gap:8px;padding:8px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:13px;';
+			row.style.cssText = 'display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1fr) 120px 80px 140px;gap:8px;padding:8px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:13px;';
 			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
 

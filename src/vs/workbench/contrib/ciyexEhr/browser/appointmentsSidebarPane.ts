@@ -460,24 +460,43 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 		const actionBtn = (sym: string, label: string, color: string, fn: () => void) => {
 			const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			b.type = 'button';
 			b.textContent = sym;
 			b.title = label;
 			b.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;`;
 			b.addEventListener('mouseenter', () => { b.style.background = `${color}30`; });
 			b.addEventListener('mouseleave', () => { b.style.background = `${color}15`; });
-			b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+			b.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+			b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
 		};
 
-		// allow-any-unicode-next-line
-		actionBtn('\u{1F4CB}', 'Open Chart', '#3b82f6', () => this._openChart(apt));
-		// allow-any-unicode-next-line
-		actionBtn('\u{2764}', 'Record Vitals', '#a855f7', () => this._recordVitals(apt));
-		// allow-any-unicode-next-line
-		actionBtn('\u{1F5D2}', 'Visit Summary', '#f59e0b', () => this._visitSummary(apt));
+		const isTele = (getAppointmentType(apt) || '').toLowerCase() === 'telehealth';
+		if (isTele) {
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F4DE}', 'Join Video Visit', '#10b981', () => this._joinTelehealth(apt));
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F4CB}', 'Open Chart', '#3b82f6', () => this._openChart(apt));
+		} else {
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F4CB}', 'Open Chart', '#3b82f6', () => this._openChart(apt));
+			// allow-any-unicode-next-line
+			actionBtn('\u{2764}', 'Record Vitals', '#a855f7', () => this._recordVitals(apt));
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F5D2}', 'Visit Summary', '#f59e0b', () => this._visitSummary(apt));
+		}
 		if (!apt.encounterId) {
 			// allow-any-unicode-next-line
 			actionBtn('+', 'New Encounter', '#22c55e', () => this._newEncounter(apt));
 		}
+	}
+
+	private _joinTelehealth(apt: Appointment): void {
+		this.commandService.executeCommand(
+			'ciyex.openTelehealth',
+			String(apt.id),
+			patientNameOf(apt),
+			providerNameOf(apt),
+		);
 	}
 
 	private _renderPagination(): void {
@@ -523,7 +542,11 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		if (apt.patientId !== undefined) {
 			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name);
+			return;
 		}
+		// No patient linked yet — fall back to the appointments editor so the
+		// user can finish booking or attach a patient.
+		this.commandService.executeCommand('ciyex.openAppointments');
 	}
 
 	private _recordVitals(apt: Appointment): void {
@@ -534,7 +557,9 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		if (apt.patientId !== undefined) {
 			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name, 'vitals');
+			return;
 		}
+		this.commandService.executeCommand('ciyex.openAppointments');
 	}
 
 	private _visitSummary(apt: Appointment): void {
@@ -545,7 +570,9 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		if (apt.patientId !== undefined) {
 			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name, 'encounters');
+			return;
 		}
+		this.commandService.executeCommand('ciyex.openAppointments');
 	}
 
 	private async _newEncounter(apt: Appointment): Promise<void> {

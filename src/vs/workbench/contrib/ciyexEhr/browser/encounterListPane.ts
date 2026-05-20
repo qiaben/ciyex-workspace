@@ -285,6 +285,39 @@ export class EncounterListPane extends ViewPane {
 				const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
 				this.commandService.executeCommand('ciyex.openEncounter', patientId, id, patName, `${provName}`);
 			});
+
+			// Per-row action buttons — kept consistent with the patient and
+			// appointment sidebars so the encounter pane doesn't feel out of
+			// place. Sit on their own line below the primary row.
+			const encId = String(item.id || item.fhirId || '');
+			const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
+			const actions = DOM.append(row, DOM.$('div'));
+			actions.style.cssText = 'display:flex;gap:3px;margin-left:auto;flex-shrink:0;';
+
+			const actionBtn = (sym: string, label: string, color: string, fn: () => void) => {
+				const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+				b.type = 'button';
+				b.textContent = sym;
+				b.title = label;
+				b.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;line-height:1;`;
+				b.addEventListener('mouseenter', () => { b.style.background = `${color}30`; });
+				b.addEventListener('mouseleave', () => { b.style.background = `${color}15`; });
+				b.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+				b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
+			};
+
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F4CB}', 'Open Encounter', '#3b82f6', () => {
+				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`);
+			});
+			// allow-any-unicode-next-line
+			actionBtn('\u{2764}', 'Record Vitals', '#a855f7', () => {
+				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals');
+			});
+			// allow-any-unicode-next-line
+			actionBtn('\u{1F5D2}', 'Visit Summary', '#f59e0b', () => {
+				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan');
+			});
 		}
 
 		// Pagination

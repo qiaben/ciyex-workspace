@@ -38,9 +38,12 @@ export class RolesEditor extends EditorPane {
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.ciyex-settings-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font-size:13px;';
-		const header = DOM.append(this.root, DOM.$('.h')); header.style.cssText = 'padding:12px 24px;max-width:1000px;width:100%;margin:0 auto;';
+		const header = DOM.append(this.root, DOM.$('.h')); header.style.cssText = 'padding:16px 24px 12px;max-width:1000px;width:100%;margin:0 auto;';
+		const titleWrap = DOM.append(header, DOM.$('div')); titleWrap.style.cssText = 'margin-bottom:8px;';
+		const h1 = DOM.append(titleWrap, DOM.$('h1')); h1.textContent = 'Roles & Permissions'; h1.style.cssText = 'margin:0 0 4px;font-size:22px;font-weight:600;';
+		const sub = DOM.append(titleWrap, DOM.$('p')); sub.textContent = 'Define roles and the FHIR scopes / permissions each role can use'; sub.style.cssText = 'margin:0;font-size:13px;color:var(--vscode-descriptionForeground);';
 		const tb = DOM.append(header, DOM.$('.tb')); tb.style.cssText = 'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		DOM.append(tb, DOM.$('span')).textContent = 'Roles & Permissions'; (tb.lastChild as HTMLElement).style.cssText = 'font-weight:600;font-size:14px;flex:1;';
+		const spacer = DOM.append(tb, DOM.$('span')); spacer.style.cssText = 'flex:1;';
 		this._link(tb, 'Add Role', () => this._addRole()); this._link(tb, 'Save', () => this._save()); this._link(tb, 'Open JSON', () => this._openJson());
 		const bc = DOM.append(this.root, DOM.$('.bc')); bc.style.cssText = 'flex:1;overflow-y:auto;';
 		this.body = DOM.append(bc, DOM.$('.b')); this.body.style.cssText = 'max-width:1000px;width:100%;margin:0 auto;padding:0 24px 24px;';

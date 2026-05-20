@@ -1338,13 +1338,32 @@ export class AppointmentsEditor extends EditorPane {
 				return b;
 			};
 
-			// allow-any-unicode-next-line
-			iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
-			// allow-any-unicode-next-line
-			iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
-			// allow-any-unicode-next-line
-			iconBtn('🗒', 'Visit Summary', '#f59e0b', () => this._openVisitSummary(row));
+			// Telehealth visits only get the join + start-session controls so the
+			// user is funnelled into the video session instead of paper-chart flows.
+			if ((row.visitType || '').toLowerCase() === 'telehealth') {
+				// allow-any-unicode-next-line
+				iconBtn('📞', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
+				// allow-any-unicode-next-line
+				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
+			} else {
+				// allow-any-unicode-next-line
+				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
+				// allow-any-unicode-next-line
+				iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
+				// allow-any-unicode-next-line
+				iconBtn('🗒', 'Visit Summary', '#f59e0b', () => this._openVisitSummary(row));
+			}
 		}
+	}
+
+	/** Join the telehealth video session for an appointment row. */
+	private _joinTelehealth(row: AppointmentDTO): void {
+		this.commandService.executeCommand(
+			'ciyex.openTelehealth',
+			String(row.id),
+			row.patientName || '',
+			row.providerName || '',
+		);
 	}
 
 	/** "Open Chart" — for an appointment row, opens the encounter form (parity

@@ -900,24 +900,43 @@ export class CalendarEditor extends EditorPane {
 			numEl.textContent = String(day);
 			numEl.style.cssText = `font-size:13px;font-weight:${isToday ? '700' : '500'};${isToday ? 'color:var(--vscode-textLink-foreground);' : ''}margin-bottom:2px;`;
 
-			// Appointment count + previews
+			// Appointment count + previews — each chip shows time + provider so
+			// multiple providers on the same day are distinguishable per row,
+			// matching the ciyex-ehr-ui month-view chip layout.
 			if (dayAppts.length > 0) {
 				const countBadge = DOM.append(cell, DOM.$('div'));
 				countBadge.textContent = `${dayAppts.length} appt${dayAppts.length > 1 ? 's' : ''}`;
 				countBadge.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
 
+				// Stable provider→color mapping shared with day/week views so
+				// the same provider keeps the same color across all view modes.
+				const PROVIDER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#e11d48', '#0891b2', '#a855f7'];
+				const providerColorFor = (apt: Appointment): string => {
+					const key = String(apt.providerId || apt.providerName || apt.practitionerName || '');
+					if (!key) { return '#607D8B'; }
+					const idx = this.providers.findIndex(p => p.id === key || p.name === key);
+					if (idx >= 0) { return PROVIDER_COLORS[idx % PROVIDER_COLORS.length]; }
+					let h = 0;
+					for (let i = 0; i < key.length; i++) { h = ((h << 5) - h) + key.charCodeAt(i); }
+					return PROVIDER_COLORS[Math.abs(h) % PROVIDER_COLORS.length];
+				};
+
 				// Show first 3 appointments
 				for (const apt of dayAppts.slice(0, 3)) {
 					const aptEl = DOM.append(cell, DOM.$('div'));
-					const typeColor = TYPE_COLORS[(getAppointmentType(apt) || '').toLowerCase()] || '#607D8B';
-					aptEl.style.cssText = `font-size:9px;padding:1px 3px;border-radius:2px;margin-bottom:1px;background:${typeColor}20;border-left:2px solid ${typeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+					const provColor = providerColorFor(apt);
+					aptEl.style.cssText = `font-size:9px;padding:1px 4px;border-radius:3px;margin-bottom:1px;background:${provColor}25;border-left:2px solid ${provColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;`;
 					const parsedTime = this._parseAptDate(apt);
+					const provName = this._resolveProviderName(apt);
+					const parts: string[] = [];
 					if (parsedTime) {
-						const time = parsedTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-						aptEl.textContent = `${time} ${apt.patientName || ''}`;
-					} else {
-						aptEl.textContent = apt.patientName || '';
+						parts.push(parsedTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
 					}
+					if (provName) { parts.push(provName); }
+					if (apt.patientName) { parts.push(apt.patientName); }
+					aptEl.textContent = parts.join(' · ') || (apt.patientName || '');
+					aptEl.title = aptEl.textContent;
+					aptEl.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
 				}
 				if (dayAppts.length > 3) {
 					const more = DOM.append(cell, DOM.$('div'));

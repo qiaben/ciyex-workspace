@@ -357,14 +357,14 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
-			// Action column — Open Chart / Record Vitals / Visit Summary, matching
-			// the EHR Web UI patient-list Action column the 12.05.26 test report
-			// flagged as missing (issue 13). Clicking the row outside the buttons
-			// still opens the chart on the default tab, preserving the row's
-			// default behaviour.
+			// Action column — View Chart / Edit / Toggle Active. Mirrors the
+			// EHR Web UI patient-list action column (eye + pencil + circle-X).
+			// Clicking the row outside the buttons still opens the chart on
+			// the default tab, preserving the row's default behaviour.
 			const actions = document.createElement('span');
 			actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
 			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
+			const isActive = (patient.status || 'active').toLowerCase() !== 'inactive';
 			const mkAction = (icon: string, title: string, color: string, onClick: () => void) => {
 				const btn = document.createElement('button');
 				btn.textContent = icon;
@@ -376,21 +376,19 @@ export class PatientListPane extends ViewPane {
 				actions.appendChild(btn);
 			};
 			// allow-any-unicode-next-line
-			mkAction('📋', 'Open Chart', '#3b82f6', () => {
+			mkAction('👁', 'View Chart', '#3b82f6', () => {
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
-			// Record Vitals lands directly on the vitals flowsheet via
-			// PatientChartEditor's `_initialTab` override.
 			// allow-any-unicode-next-line
-			mkAction('❤', 'Record Vitals', '#a855f7', () => {
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'vitals');
+			mkAction('✎', 'Edit Patient', '#f59e0b', () => {
+				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics');
 			});
-			// Visit Summary opens the chart on the encounters list, where
-			// the latest encounter summary is reached.
-			// allow-any-unicode-next-line
-			mkAction('🗒', 'Visit Summary', '#f59e0b', () => {
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'encounters');
-			});
+			mkAction(
+				isActive ? '\u{2298}' : '\u{2713}',
+				isActive ? 'Deactivate' : 'Activate',
+				isActive ? '#ef4444' : '#22c55e',
+				() => this._togglePatientStatus(patient, isActive),
+			);
 			row.appendChild(actions);
 
 			row.addEventListener('click', () => {
@@ -398,6 +396,21 @@ export class PatientListPane extends ViewPane {
 			});
 
 			this._listEl.appendChild(row);
+		}
+	}
+
+	private async _togglePatientStatus(patient: IPatientRow, isActive: boolean): Promise<void> {
+		const next = isActive ? 'inactive' : 'active';
+		try {
+			await this.apiService.fetch(`/api/patients/${patient.id}/status`, {
+				method: 'PUT',
+				body: JSON.stringify({ status: next }),
+			});
+			patient.status = next;
+			this._renderList();
+		} catch {
+			// Swallow errors here — toggle is a soft action and the next list
+			// reload will pick up the canonical status from the backend anyway.
 		}
 	}
 

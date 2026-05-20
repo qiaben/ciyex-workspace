@@ -9,6 +9,7 @@ import { localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
+import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
@@ -421,10 +422,8 @@ registerAction2(class extends Action2 {
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
-		// Import auth service dynamically to avoid circular dependency
-		const { ICiyexAuthService } = await import('../../ciyexAuth/browser/ciyexAuthService.js');
 		const authService = accessor.get(ICiyexAuthService);
-		authService.signOut();
+		await authService.signOut();
 	}
 });
 

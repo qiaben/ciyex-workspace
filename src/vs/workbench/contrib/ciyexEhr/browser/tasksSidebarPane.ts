@@ -261,10 +261,11 @@ export class TasksSidebarPane extends ViewPane {
 		bar.style.cssText = 'display:flex;gap:2px;padding:4px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 		for (const f of ['active', 'overdue', 'done', 'all'] as const) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+			btn.type = 'button';
 			btn.textContent = f === 'active' ? 'Active' : f === 'overdue' ? 'Late' : f === 'done' ? 'Done' : 'All';
 			const isActive = this.filter === f;
 			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
-			btn.addEventListener('click', () => { this.filter = f; this._render(); });
+			btn.addEventListener('click', (e) => { e.preventDefault(); this.filter = f; this._render(); });
 		}
 	}
 
@@ -347,16 +348,20 @@ export class TasksSidebarPane extends ViewPane {
 
 		// Action icons (always visible)
 		const actions = DOM.append(row, DOM.$('.actions'));
-		actions.style.cssText = 'display:flex;gap:3px;margin-top:4px;';
+		actions.style.cssText = 'display:flex;gap:3px;margin-top:4px;flex-wrap:wrap;';
 
 		const rowIconBtn = (sym: string, lbl: string, color: string, fn: () => void) => {
 			const btn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			// Explicit type so the button never submits a parent <form> and
+			// triggers a page reload that swallows the click.
+			btn.type = 'button';
 			btn.textContent = sym;
 			btn.title = lbl;
 			btn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;`;
 			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
 			btn.addEventListener('mouseleave', () => { btn.style.background = `${color}15`; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+			btn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
 		};
 
 		if (task.status !== 'completed' && task.status !== 'cancelled') {
@@ -373,20 +378,37 @@ export class TasksSidebarPane extends ViewPane {
 	}
 
 	private async _deleteTask(task: Task): Promise<void> {
-		try {
-			await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
-		} catch { /* */ }
+		// Optimistic update so the user sees the row disappear immediately
+		// even when the API is slow.
+		const prev = this.tasks;
 		this.tasks = this.tasks.filter(t => t.id !== task.id);
 		this._render();
+		try {
+			await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
+		} catch (err) {
+			this.logService.warn('[Tasks] Delete failed, reverting:', err);
+			this.tasks = prev;
+			this._render();
+		}
 	}
 
 	private async _updateStatus(task: Task, status: string): Promise<void> {
+		// Optimistic update — flip status locally and re-render so the user
+		// gets immediate visual feedback (status pill / badge color change).
+		const prev = task.status;
+		task.status = status;
+		this._render();
 		try {
-			await this.apiService.fetch(`/api/tasks/${task.id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
-		} catch {
-			try { await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ ...task, status }) }); } catch { /* */ }
+			const res = await this.apiService.fetch(`/api/tasks/${task.id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+			if (!res.ok) {
+				const res2 = await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ ...task, status }) });
+				if (!res2.ok) { throw new Error(`status ${res2.status}`); }
+			}
+		} catch (err) {
+			this.logService.warn('[Tasks] Status update failed, reverting:', err);
+			task.status = prev;
+			this._render();
 		}
-		await this._loadAndRender();
 	}
 
 	private _renderCategories(): void {
