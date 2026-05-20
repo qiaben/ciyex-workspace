@@ -175,6 +175,8 @@ jobs:
           echo "BUILDDIR=$BUILDDIR" >> "$GITHUB_ENV"
 
       - name: Install build/ deps (vscode-universal-bundler, minimatch)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci --prefix build
 
       - name: Run universal merger
