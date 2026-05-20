@@ -1375,7 +1375,8 @@ export class AppointmentsEditor extends EditorPane {
 			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label);
 			return;
 		}
-		this._openPatientChart(row.patientId, row.patientName || '');
+		// Always open on encounters tab so payment/billing tab is never shown unexpectedly.
+		this._openPatientChartTab(row.patientId, row.patientName || '', 'encounters');
 	}
 
 	/** "Record Vitals" — opens the encounter form (which has a Vitals

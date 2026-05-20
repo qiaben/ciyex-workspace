@@ -19,6 +19,16 @@ import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyex
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
 
+interface FhirActor {
+	reference?: string;
+	display?: string;
+}
+
+interface FhirParticipant {
+	actor?: FhirActor;
+	type?: Array<{ coding?: Array<{ code?: string; system?: string }> }>;
+}
+
 interface Appointment {
 	id: number | string;
 	patientId?: number | string;
@@ -26,10 +36,8 @@ interface Appointment {
 	patientFirstName?: string;
 	patientLastName?: string;
 	providerName?: string;
-	providerDisplay?: string;
 	practitionerName?: string;
 	locationName?: string;
-	locationDisplay?: string;
 	visitType?: string;
 	appointmentType?: string | { text?: string; coding?: Array<{ display?: string; code?: string }> };
 	type?: string;
@@ -42,6 +50,16 @@ interface Appointment {
 	startTime?: string;
 	end?: string;
 	encounterId?: string;
+	// FHIR fields — flat format returned by /api/fhir-resource/appointments
+	patient?: string;          // e.g. "Patient/1146"
+	provider?: string;         // e.g. "Practitioner/12"
+	location?: string;
+	patientDisplay?: string;   // human-readable patient name
+	providerDisplay?: string;
+	locationDisplay?: string;
+	// Full FHIR participant/subject format (alternative response shape)
+	participant?: FhirParticipant[];
+	subject?: FhirActor;
 }
 
 type DateFilter = 'all' | 'today' | 'past' | 'upcoming' | 'last7' | 'thisMonth' | 'lastMonth';
@@ -78,15 +96,55 @@ function getAppointmentType(apt: Appointment): string {
 }
 
 function patientNameOf(apt: Appointment): string {
-	return apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown';
+	// Flat FHIR format: patientDisplay field
+	if (apt.patientDisplay) { return apt.patientDisplay; }
+	// Legacy direct fields
+	if (apt.patientName) { return apt.patientName; }
+	const fromNames = `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
+	if (fromNames) { return fromNames; }
+	// Full FHIR participant array
+	if (apt.participant) {
+		for (const p of apt.participant) {
+			const ref = p.actor?.reference || '';
+			if (ref.startsWith('Patient/') && p.actor?.display) { return p.actor.display; }
+		}
+		for (const p of apt.participant) {
+			if (p.actor?.display) { return p.actor.display; }
+		}
+	}
+	if (apt.subject?.display) { return apt.subject.display; }
+	return 'Unknown';
+}
+
+/** Resolve the patient ID from any supported field or FHIR reference string. */
+function resolvePatientId(apt: Appointment): string | undefined {
+	// Flat FHIR format: "patient": "Patient/1146"
+	if (apt.patient) {
+		const match = /^Patient\/(.+)$/.exec(apt.patient);
+		if (match) { return match[1]; }
+	}
+	if (apt.patientId !== undefined && apt.patientId !== null && String(apt.patientId).trim() !== '') {
+		return String(apt.patientId);
+	}
+	if (apt.participant) {
+		for (const p of apt.participant) {
+			const match = /^Patient\/(.+)$/.exec(p.actor?.reference || '');
+			if (match) { return match[1]; }
+		}
+	}
+	if (apt.subject?.reference) {
+		const match = /^Patient\/(.+)$/.exec(apt.subject.reference);
+		if (match) { return match[1]; }
+	}
+	return undefined;
 }
 
 function providerNameOf(apt: Appointment): string {
-	return apt.providerName || apt.practitionerName || apt.providerDisplay || '';
+	return apt.providerDisplay || apt.providerName || apt.practitionerName || '';
 }
 
 function locationOf(apt: Appointment): string {
-	return apt.locationName || apt.locationDisplay || '';
+	return apt.locationDisplay || apt.locationName || '';
 }
 
 function parseStart(apt: Appointment): Date | null {
@@ -181,6 +239,38 @@ export class AppointmentsSidebarPane extends ViewPane {
 	private async _loadAll(): Promise<void> {
 		await Promise.all([this._loadAppointments(), this._loadStatusOptions()]);
 		this._render();
+		// Fetch names for any appointments still showing Unknown (FHIR responses
+		// sometimes omit display text — fall back to the patient demographics API)
+		await this._enrichPatientNames();
+		this._render();
+	}
+
+	private async _enrichPatientNames(): Promise<void> {
+		const missing = this.appointments.filter(a => patientNameOf(a) === 'Unknown');
+		const ids = [...new Set(missing.map(a => resolvePatientId(a)).filter((id): id is string => !!id))];
+		if (ids.length === 0) { return; }
+
+		const batchSize = 10;
+		for (let i = 0; i < ids.length; i += batchSize) {
+			const batch = ids.slice(i, i + batchSize);
+			await Promise.all(batch.map(async (pid) => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients/${pid}`);
+					if (res.ok) {
+						const d = await res.json();
+						const p = d?.data || d || {};
+						const name = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+						if (name) {
+							for (const apt of this.appointments) {
+								if (resolvePatientId(apt) === pid && patientNameOf(apt) === 'Unknown') {
+									apt.patientName = name;
+								}
+							}
+						}
+					}
+				} catch { /* non-critical */ }
+			}));
+		}
 	}
 
 	private async _loadAppointments(): Promise<void> {
@@ -535,28 +625,31 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private _openChart(apt: Appointment): void {
 		const name = patientNameOf(apt);
+		const pid = resolvePatientId(apt);
 		const label = `Visit — ${name}`;
-		if (apt.encounterId && apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(apt.patientId), String(apt.encounterId), name, label);
+		if (apt.encounterId && pid) {
+			this.commandService.executeCommand('ciyex.openEncounter', pid, String(apt.encounterId), name, label);
 			return;
 		}
-		if (apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name);
+		if (pid) {
+			// Pass 'encounters' so the chart always opens on the encounters tab
+			// rather than the last-visited tab (which could be payment/billing).
+			this.commandService.executeCommand('ciyex.openPatientChart', pid, name, 'encounters');
 			return;
 		}
-		// No patient linked yet — fall back to the appointments editor so the
-		// user can finish booking or attach a patient.
+		// No patient linked yet — fall back to the appointments editor.
 		this.commandService.executeCommand('ciyex.openAppointments');
 	}
 
 	private _recordVitals(apt: Appointment): void {
 		const name = patientNameOf(apt);
-		if (apt.encounterId && apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(apt.patientId), String(apt.encounterId), name, `Vitals — ${name}`, 'vitals');
+		const pid = resolvePatientId(apt);
+		if (apt.encounterId && pid) {
+			this.commandService.executeCommand('ciyex.openEncounter', pid, String(apt.encounterId), name, `Vitals — ${name}`, 'vitals');
 			return;
 		}
-		if (apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name, 'vitals');
+		if (pid) {
+			this.commandService.executeCommand('ciyex.openPatientChart', pid, name, 'vitals');
 			return;
 		}
 		this.commandService.executeCommand('ciyex.openAppointments');
@@ -564,12 +657,13 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private _visitSummary(apt: Appointment): void {
 		const name = patientNameOf(apt);
-		if (apt.encounterId && apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(apt.patientId), String(apt.encounterId), name, `Summary — ${name}`, 'plan');
+		const pid = resolvePatientId(apt);
+		if (apt.encounterId && pid) {
+			this.commandService.executeCommand('ciyex.openEncounter', pid, String(apt.encounterId), name, `Summary — ${name}`, 'plan');
 			return;
 		}
-		if (apt.patientId !== undefined) {
-			this.commandService.executeCommand('ciyex.openPatientChart', String(apt.patientId), name, 'encounters');
+		if (pid) {
+			this.commandService.executeCommand('ciyex.openPatientChart', pid, name, 'encounters');
 			return;
 		}
 		this.commandService.executeCommand('ciyex.openAppointments');

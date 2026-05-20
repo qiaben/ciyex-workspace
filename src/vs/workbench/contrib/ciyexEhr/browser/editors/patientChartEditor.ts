@@ -764,7 +764,7 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'proc', title: 'Procedure', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'procedureName', label: 'Procedure Name', type: 'text', required: true, placeholder: 'Procedure name' },
-					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT code', lookupConfig: { system: 'CPT' } },
+					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT code', lookupConfig: { system: 'CPT' }, relatedField: 'procedureName' },
 					{ key: 'datePerformed', label: 'Date Performed', type: 'date', required: true },
 					{ key: 'performerId', label: 'Performer', type: 'practitioner-search', placeholder: 'Search Performer' },
 					{
@@ -4738,7 +4738,7 @@ export class PatientChartEditor extends EditorPane {
 		const durationInput = (this._formInputs.get('minutesDuration') || this._formInputs.get('duration')) as HTMLInputElement | undefined;
 
 		// Default start/end on a fresh form — start = now (rounded to next 5min),
-		// end = start + 30min. Reads existing record values via the hidden ISO
+		// end = start + 15min. Reads existing record values via the hidden ISO
 		// field's value so it doesn't clobber an in-progress edit.
 		if (startInput && !startInput.value) {
 			const now = new Date();
@@ -4747,7 +4747,7 @@ export class PatientChartEditor extends EditorPane {
 			const iso = now.toISOString().slice(0, 16);
 			startInput.value = iso;
 			if (endInput && !endInput.value) {
-				const e = new Date(now.getTime() + 30 * 60 * 1000);
+				const e = new Date(now.getTime() + 15 * 60 * 1000);
 				endInput.value = e.toISOString().slice(0, 16);
 			}
 		}
@@ -5033,7 +5033,6 @@ export class PatientChartEditor extends EditorPane {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const search = (q: string) => {
 			if (timer) { clearTimeout(timer); }
-			if (q.trim().length < 2) { dropdown.style.display = 'none'; return; }
 			timer = setTimeout(async () => {
 				try {
 					const url = this._buildSearchUrl(f, q.trim());
@@ -5110,7 +5109,7 @@ export class PatientChartEditor extends EditorPane {
 			}, 300);
 		};
 		input.addEventListener('input', () => search(input.value));
-		input.addEventListener('focus', () => { if (input.value.trim().length >= 2) { search(input.value); } });
+		input.addEventListener('focus', () => { search(input.value); });
 		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
 		input.addEventListener('keydown', (e: KeyboardEvent) => {
 			if (dropdown.style.display === 'none' || rows.length === 0) { return; }

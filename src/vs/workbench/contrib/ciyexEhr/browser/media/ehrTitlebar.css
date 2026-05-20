@@ -3,7 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* --- EHR Titlebar Controls Container --- */
+/* --- EHR Titlebar Search Wrapper (placed in titlebar centre) --- */
+.ehr-titlebar-search-wrapper {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	-webkit-app-region: no-drag;
+}
+
+/* --- EHR Titlebar Controls Container (action buttons, right side) --- */
 .ehr-titlebar-controls {
 	display: flex;
 	align-items: center;
@@ -21,11 +30,11 @@
 	align-items: center;
 	background: var(--vscode-input-background, #3c3c3c);
 	border: 1px solid var(--vscode-input-border, #555);
-	border-radius: 6px;
-	padding: 0 8px;
-	height: 26px;
-	min-width: 220px;
-	max-width: 340px;
+	border-radius: 10px;
+	padding: 0 14px;
+	height: 38px;
+	min-width: 420px;
+	max-width: 600px;
 }
 
 .ehr-search-container:focus-within {
@@ -35,8 +44,8 @@
 
 .ehr-search-icon {
 	color: var(--vscode-input-placeholderForeground, #888);
-	font-size: 14px;
-	margin-right: 6px;
+	font-size: 16px;
+	margin-right: 8px;
 	flex-shrink: 0;
 }
 
@@ -45,7 +54,7 @@
 	border: none;
 	outline: none;
 	color: var(--vscode-input-foreground, #ccc);
-	font-size: 12px;
+	font-size: 14px;
 	flex: 1;
 	min-width: 0;
 	font-family: inherit;
@@ -57,12 +66,12 @@
 
 .ehr-kbd-hint {
 	color: var(--vscode-input-placeholderForeground, #888);
-	font-size: 10px;
-	padding: 1px 4px;
+	font-size: 12px;
+	padding: 2px 6px;
 	border: 1px solid var(--vscode-input-border, #555);
-	border-radius: 3px;
+	border-radius: 4px;
 	flex-shrink: 0;
-	margin-left: 4px;
+	margin-left: 8px;
 }
 
 /* --- Search Dropdown ---
@@ -114,50 +123,74 @@
 	font-size: 12px;
 }
 
-/* --- Action Buttons (+Patient, +Appointment) ---
- * Icon-only — same titlebar treatment as the editor split / layout
- * actions (transparent background, foreground icon, hover tint). The
- * test team asked for the colored gradients to go and for the labels
- * to be dropped so the buttons read as plain titlebar icons.
- *
- * Layout: two stacked codicons (plus + topic). The `gap` is tight so
- * the pair reads as a single icon-pair rather than two separate
- * controls. Tooltip / aria-label still convey the full action text. */
+/* --- Action Buttons — pill/badge style (Patient, Appointment, Currency) --- */
 .ehr-action-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 2px;
-	padding: 3px 8px;
-	border-radius: 6px;
+	justify-content: center;
+	gap: 6px;
+	padding: 0 36px;
+	border-radius: 24px;
 	cursor: pointer;
-	color: var(--vscode-titleBar-activeForeground, #ccc);
+	color: #fff;
 	background: transparent;
 	border: none;
-	height: 24px;
-	transition: background-color 0.15s, color 0.15s, transform 0.05s;
+	height: 28px;
+	font-size: 16px;
+	font-weight: 700;
+	font-family: inherit;
+	transition: filter 0.15s, transform 0.05s;
 	-webkit-app-region: no-drag;
-	margin-left: 2px;
+	margin-left: 6px;
+	white-space: nowrap;
 }
 
 .ehr-action-btn .codicon {
-	font-size: 14px;
+	font-size: 20px;
 	line-height: 1;
+	color: #fff;
 }
 
-/* The leading `+` icon should read a touch smaller so the pair looks
- * like "add <thing>" rather than two equal-weight icons. */
-.ehr-action-btn .codicon-add {
-	font-size: 11px;
-	opacity: 0.85;
+/* Emoji / text icon inside action buttons */
+.ehr-action-icon {
+	font-size: 20px;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+	color: #fff;
 }
 
-.ehr-action-btn:hover {
-	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
-	color: var(--vscode-titleBar-activeForeground, #fff);
+/* Patient button — emerald green (like "Completed" badge) */
+.ehr-action-btn-patient {
+	background: #36c98e;
 }
 
-.ehr-action-btn:hover .codicon-add {
-	opacity: 1;
+.ehr-action-btn-patient:hover {
+	filter: brightness(1.15);
+}
+
+/* Force the patient emoji to render grey */
+.ehr-action-btn-patient .ehr-action-icon {
+	filter: grayscale(1) brightness(0.55);
+}
+
+/* Appointment button — vivid blue */
+.ehr-action-btn-appointment {
+	background: #3b82f6;
+}
+
+.ehr-action-btn-appointment:hover {
+	filter: brightness(1.15);
+}
+
+/* Currency / Billing button — warm orange */
+.ehr-action-btn-currency {
+	background: #f97316;
+	font-weight: 700;
+}
+
+.ehr-action-btn-currency:hover {
+	filter: brightness(1.15);
 }
 
 .ehr-action-btn:active {

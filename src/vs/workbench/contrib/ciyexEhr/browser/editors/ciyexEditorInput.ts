@@ -89,7 +89,13 @@ export class PatientChartEditorInput extends EditorInput {
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		if (super.matches(other)) { return true; }
-		return other instanceof PatientChartEditorInput && this.patientId === other.patientId;
+		// Include initialTab in equality so that opening the same patient with a
+		// different tab (e.g. 'vitals' vs 'encounters') triggers a fresh setInput
+		// call and lands on the correct tab, rather than reusing the open editor
+		// and silently keeping whatever tab was last active.
+		return other instanceof PatientChartEditorInput
+			&& this.patientId === other.patientId
+			&& (this.initialTab || '') === (other.initialTab || '');
 	}
 }
 

@@ -808,7 +808,7 @@ export class CalendarEditor extends EditorPane {
 					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
 
 					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-					cell.addEventListener('click', () => this._createAppointment(dateStr, timeStr));
+					cell.addEventListener('click', () => this._createAppointment(dateStr, timeStr, prov.id));
 
 					// O(1) lookup from pre-built index
 					const slotAppts = [
@@ -999,7 +999,7 @@ export class CalendarEditor extends EditorPane {
 		this._renderGrid();
 	}
 
-	private async _createAppointment(date: string, time: string): Promise<void> {
+	private async _createAppointment(date: string, time: string, providerId?: string): Promise<void> {
 		// Calculate end time (default 30 min)
 		const [h, m] = time.split(':').map(Number);
 		const endH = m + 30 >= 60 ? h + 1 : h;
@@ -1067,12 +1067,6 @@ export class CalendarEditor extends EditorPane {
 			hidden.value = isoValue;
 			formFields.set(id, hidden);
 
-			// Native picker hidden off-screen — triggered by icon click
-			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
-			picker.type = 'date';
-			picker.value = isoValue;
-			picker.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;';
-
 			const sync = () => {
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
@@ -1080,21 +1074,23 @@ export class CalendarEditor extends EditorPane {
 			};
 			visible.addEventListener('input', sync);
 			visible.addEventListener('blur', sync);
+
+			// Native picker overlays the calendar icon area — opacity:0 but fully
+			// clickable so a direct click opens the native calendar in Electron.
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.value = isoValue;
+			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			picker.addEventListener('change', () => {
 				visible.value = isoToUs(picker.value);
 				hidden.value = picker.value;
 				sync();
 			});
 
-			// Calendar icon inside the input on the right
+			// Calendar icon — visual only, clicks pass through to picker overlay
 			const icon = DOM.append(wrap, DOM.$('span'));
 			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);cursor:pointer;pointer-events:auto;line-height:1;';
-			icon.addEventListener('click', () => picker.showPicker?.());
-			visible.addEventListener('click', (e) => {
-				const rect = visible.getBoundingClientRect();
-				if (e.clientX > rect.right - 30) { picker.showPicker?.(); }
-			});
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);pointer-events:none;line-height:1;';
 		};
 
 		// Helper: create form field
@@ -1168,38 +1164,43 @@ export class CalendarEditor extends EditorPane {
 		const patIdHidden = DOM.append(patientGroup, DOM.$('input')) as HTMLInputElement;
 		patIdHidden.type = 'hidden'; patIdHidden.id = 'patientId';
 
+		const _searchPatients = async (q: string) => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+				if (!res.ok) { return; }
+				const data = await res.json();
+				let patients: Array<Record<string, string>> = [];
+				if (Array.isArray(data?.data?.content)) { patients = data.data.content; }
+				else if (Array.isArray(data?.data)) { patients = data.data; }
+				else if (Array.isArray(data?.content)) { patients = data.content; }
+				else if (Array.isArray(data)) { patients = data as Array<Record<string, string>>; }
+				DOM.clearNode(patResults);
+				for (const p of patients) {
+					const item = DOM.append(patResults, DOM.$('div'));
+					item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+					item.textContent = `${p.firstName || ''} ${p.lastName || ''} — DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`;
+					item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
+					item.addEventListener('mouseleave', () => { item.style.background = ''; });
+					item.addEventListener('click', () => {
+						patInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+						patIdHidden.value = p.id || '';
+						patResults.style.display = 'none';
+					});
+				}
+				patResults.style.display = patients.length > 0 ? 'block' : 'none';
+			} catch { /* */ }
+		};
+
 		let searchTimer: ReturnType<typeof setTimeout> | undefined;
+		// Show dropdown immediately on focus
+		patInput.addEventListener('focus', () => {
+			if (searchTimer) { clearTimeout(searchTimer); }
+			searchTimer = setTimeout(() => _searchPatients(patInput.value), 150);
+		});
 		patInput.addEventListener('input', () => {
 			if (searchTimer) { clearTimeout(searchTimer); }
 			const q = patInput.value;
-			if (q.length < 2) { patResults.style.display = 'none'; return; }
-			searchTimer = setTimeout(async () => {
-				try {
-					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
-					if (!res.ok) { return; }
-					const data = await res.json();
-					// Handle {data:[...]}, {data:{content:[...]}}, {content:[...]}, or bare array
-					let patients: Array<Record<string, string>> = [];
-					if (Array.isArray(data?.data?.content)) { patients = data.data.content; }
-					else if (Array.isArray(data?.data)) { patients = data.data; }
-					else if (Array.isArray(data?.content)) { patients = data.content; }
-					else if (Array.isArray(data)) { patients = data as Array<Record<string, string>>; }
-					DOM.clearNode(patResults);
-					for (const p of patients) {
-						const item = DOM.append(patResults, DOM.$('div'));
-						item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-						item.textContent = `${p.firstName || ''} ${p.lastName || ''} — DOB: ${p.dateOfBirth || ''} | MRN: ${p.mrn || p.id || ''}`;
-						item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
-						item.addEventListener('mouseleave', () => { item.style.background = ''; });
-						item.addEventListener('click', () => {
-							patInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
-							patIdHidden.value = p.id || '';
-							patResults.style.display = 'none';
-						});
-					}
-					patResults.style.display = patients.length > 0 ? 'block' : 'none';
-				} catch (err) { console.error('Patient search failed', err); }
-			}, 250);
+			searchTimer = setTimeout(() => _searchPatients(q), 250);
 		});
 
 		// Visit Type
@@ -1232,9 +1233,9 @@ export class CalendarEditor extends EditorPane {
 		}
 		formFields.set('priority', prioritySel);
 
-		// Provider
+		// Provider — pre-select the column that was clicked (if any)
 		const provOptions = [{ value: '', label: 'Select provider...' }, ...this.providers.map(p => ({ value: p.id, label: p.name }))];
-		const providerIdEl = field('Provider', 'providerId', 'select', '', true, provOptions) as HTMLSelectElement;
+		const providerIdEl = field('Provider', 'providerId', 'select', providerId || '', true, provOptions) as HTMLSelectElement;
 
 		// Location
 		const locOptions = [{ value: '', label: 'Select location...' }, ...this.locations.map(l => ({ value: l.id, label: l.name }))];

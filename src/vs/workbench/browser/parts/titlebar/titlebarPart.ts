@@ -260,6 +260,7 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 
 	protected dragRegion: HTMLElement | undefined;
 	private title!: HTMLElement;
+	private _ehrSearchElement: HTMLElement | undefined;
 
 	private leftContent!: HTMLElement;
 	private centerContent!: HTMLElement;
@@ -486,11 +487,14 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		this.title = append(this.centerContent, $('div.window-title'));
 		this.createTitle();
 
-		// EHR Titlebar Controls (search, +patient, +appointment)
+		// EHR Titlebar Controls — search bar goes to centre, action buttons go to right
 		try {
 			const apiService = this.instantiationService.invokeFunction(accessor => accessor.get(ICiyexApiService));
 			const ehrControls = this._register(new EhrTitlebarControls(apiService, this.commandService, this.notificationService));
 			append(this.rightContent, ehrControls.element);
+			// Place the EHR search bar in the title centre, replacing the command centre
+			this._ehrSearchElement = ehrControls.searchElement;
+			reset(this.title, this._ehrSearchElement);
 		} catch {
 			// CiyexApiService not available (e.g., not in EHR context) — skip
 		}
@@ -589,6 +593,12 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 
 	private createTitle(): void {
 		this.titleDisposables.clear();
+
+		// When the EHR search bar is present it replaces the default command centre
+		if (this._ehrSearchElement) {
+			reset(this.title, this._ehrSearchElement);
+			return;
+		}
 
 		const isShowingTitleInNativeTitlebar = hasNativeTitlebar(this.configurationService, this.titleBarStyle);
 

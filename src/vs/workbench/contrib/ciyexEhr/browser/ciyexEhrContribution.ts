@@ -25,6 +25,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 
 /**
  * Main EHR workbench contribution.
@@ -52,8 +53,12 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IViewsService private readonly viewsService: IViewsService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IEditorService private readonly editorService: IEditorService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 	) {
 		super();
+
+		// Hide the bottom panel (Terminal/Problems/Output) — not needed in the EHR app
+		this.layoutService.setPartHidden(true, Parts.PANEL_PART);
 
 		this._ciyexConfigHome = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex');
 		this._ensureDefaultConfigs();
@@ -313,6 +318,23 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 				ariaLabel: `Role: ${role}`,
 			}, 'ciyex.role', StatusbarAlignment.RIGHT, 98));
 		}
+
+		// Zoom controls
+		this._statusBarEntries.push(this.statusbarService.addEntry({
+			name: 'Zoom In',
+			text: '$(zoom-in)',
+			tooltip: 'Zoom In',
+			ariaLabel: 'Zoom In',
+			command: 'workbench.action.zoomIn',
+		}, 'ciyex.zoomIn', StatusbarAlignment.RIGHT, 95));
+
+		this._statusBarEntries.push(this.statusbarService.addEntry({
+			name: 'Zoom Out',
+			text: '$(zoom-out)',
+			tooltip: 'Zoom Out',
+			ariaLabel: 'Zoom Out',
+			command: 'workbench.action.zoomOut',
+		}, 'ciyex.zoomOut', StatusbarAlignment.RIGHT, 94));
 	}
 
 	private _unreadEntry: { dispose(): void } | null = null;

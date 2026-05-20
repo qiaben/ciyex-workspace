@@ -45,6 +45,10 @@ interface LocationResult {
  */
 export class EhrTitlebarControls extends Disposable {
 
+	/** Search bar — placed in the titlebar centre. */
+	readonly searchElement: HTMLElement;
+
+	/** Action buttons (patient, appointment, currency) — placed in the titlebar right. */
 	readonly element: HTMLElement;
 
 	private searchInput!: HTMLInputElement;
@@ -63,16 +67,19 @@ export class EhrTitlebarControls extends Disposable {
 	) {
 		super();
 
+		this.searchElement = DOM.$('.ehr-titlebar-search-wrapper');
 		this.element = DOM.$('.ehr-titlebar-controls');
 		this._buildSearchBar();
 		this._buildAddPatientButton();
 		this._buildAddAppointmentButton();
+		this._buildCurrencyButton();
 		this._buildPatientOverlay();
 		this._buildAppointmentOverlay();
 
 		// Close overlays on outside click
 		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, DOM.EventType.MOUSE_DOWN, (e) => {
 			if (!this.element.contains(e.target as Node) &&
+				!this.searchElement.contains(e.target as Node) &&
 				!this.patientOverlay.contains(e.target as Node) &&
 				!this.appointmentOverlay.contains(e.target as Node) &&
 				!this.searchDropdown.contains(e.target as Node)) {
@@ -84,7 +91,7 @@ export class EhrTitlebarControls extends Disposable {
 	// --- Search Bar ---
 
 	private _buildSearchBar(): void {
-		const searchContainer = DOM.append(this.element, DOM.$('.ehr-search-container'));
+		const searchContainer = DOM.append(this.searchElement, DOM.$('.ehr-search-container'));
 
 		const searchIcon = DOM.append(searchContainer, DOM.$('span.ehr-search-icon'));
 		searchIcon.textContent = '\uEB51'; // codicon search
@@ -107,10 +114,7 @@ export class EhrTitlebarControls extends Disposable {
 
 		this._register(DOM.addDisposableListener(this.searchInput, 'input', () => this._onSearchInput()));
 		this._register(DOM.addDisposableListener(this.searchInput, 'focus', () => {
-			if (this.searchInput.value.trim().length > 0) {
-				this._positionSearchDropdown();
-				this.searchDropdown.style.display = '';
-			}
+			this._onSearchInput();
 		}));
 		this._register(DOM.addDisposableListener(this.searchInput, 'keydown', (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
@@ -132,29 +136,16 @@ export class EhrTitlebarControls extends Disposable {
 		if (this.searchCts) { this.searchCts.cancel(); }
 
 		const value = this.searchInput.value.trim();
-		if (!value) {
-			this.searchDropdown.style.display = 'none';
-			DOM.clearNode(this.searchDropdown);
-			return;
-		}
 
-		// Issue #1: show an immediate "Searching..." indicator so users know
-		// the bar IS working while the API call is in flight. Without this
-		// the dropdown only appeared after the 300ms debounce + response
-		// time, and the test team reported the bar as "not fetching".
 		DOM.clearNode(this.searchDropdown);
 		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
-		loading.textContent = `Searching for "${value}"…`;
+		loading.textContent = value ? `Searching for "${value}"…` : 'Loading patients…';
 		this._positionSearchDropdown();
 		this.searchDropdown.style.display = '';
 
 		this.searchTimer = setTimeout(async () => {
 			this.searchCts = new CancellationTokenSource();
 			try {
-				// Some backend builds ignore the `search` query param and just
-				// return the unfiltered first page; the test team reported the
-				// bar "not working" on those builds. Fetch a larger window and
-				// always re-filter client-side so the UX is deterministic.
 				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(value)}&page=0&size=100`);
 				if (this.searchCts.token.isCancellationRequested) { return; }
 				if (res.ok) {
@@ -169,7 +160,8 @@ export class EhrTitlebarControls extends Disposable {
 						|| data?.content
 						|| (Array.isArray(data) ? data : null);
 					const raw: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
-					const filtered = this._clientFilterPatients(raw, value).slice(0, 10);
+					// When query is empty show first 10 patients; otherwise filter client-side
+					const filtered = value ? this._clientFilterPatients(raw, value).slice(0, 10) : raw.slice(0, 10);
 					this._renderSearchResults(filtered);
 				} else {
 					// Show "No patients found" rather than silently doing nothing —
@@ -229,15 +221,13 @@ export class EhrTitlebarControls extends Disposable {
 	// --- Add Patient Button ---
 
 	private _buildAddPatientButton(): void {
-		// Icon-only per the test team's request — drop the "+ Patient" label
-		// and the colored gradient. The `add` codicon (plus-in-square) carries
-		// the create affordance; the `person` icon identifies the action.
 		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-patient'));
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-add'));
-		DOM.append(btn, DOM.$('span.codicon.codicon-person'));
+		// allow-any-unicode-next-line
+		const patientIcon = DOM.append(btn, DOM.$('span.ehr-action-icon'));
+		patientIcon.textContent = '\u{1F464}';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -248,19 +238,31 @@ export class EhrTitlebarControls extends Disposable {
 	// --- Add Appointment Button ---
 
 	private _buildAddAppointmentButton(): void {
-		// Icon-only per the test team's request — drop the "+ Appointment"
-		// label and the colored gradient. Same shape as the patient button
-		// (plus codicon + topic icon).
 		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-appointment'));
 		btn.title = 'Add Appointment';
 		btn.setAttribute('aria-label', 'Add Appointment');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-add'));
 		DOM.append(btn, DOM.$('span.codicon.codicon-calendar'));
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
 			this._toggleAppointmentOverlay();
+		}));
+	}
+
+	// --- Currency Button ---
+
+	private _buildCurrencyButton(): void {
+		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-currency'));
+		btn.title = 'Billing';
+		btn.setAttribute('aria-label', 'Billing');
+
+		const currencyIcon = DOM.append(btn, DOM.$('span.ehr-action-icon'));
+		currencyIcon.textContent = '$';
+
+		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
+			e.stopPropagation();
+			this.commandService.executeCommand('ciyex.openPayments').catch(() => { });
 		}));
 	}
 
@@ -547,41 +549,63 @@ export class EhrTitlebarControls extends Disposable {
 		let selectedPatientId = '';
 		let patientSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
+		const _fetchPatients = async (q: string) => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+				if (res.ok) {
+					const data = await res.json();
+					const patients: PatientResult[] = data?.data?.content || data?.content || [];
+					DOM.clearNode(patientDropdown);
+					for (const p of patients) {
+						const item = DOM.append(patientDropdown, DOM.$('.ehr-search-item'));
+						const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
+						nameEl.textContent = `${p.firstName} ${p.lastName}`;
+						const dobEl = DOM.append(item, DOM.$('.ehr-search-dob'));
+						dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)}` : '';
+						this._register(DOM.addDisposableListener(item, 'click', () => {
+							selectedPatientId = p.fhirId || p.id;
+							patientSearchInput.value = `${p.firstName} ${p.lastName}`;
+							patientDropdown.style.display = 'none';
+						}));
+					}
+					patientDropdown.style.display = patients.length > 0 ? '' : 'none';
+				}
+			} catch { /* */ }
+		};
+
+		// Show dropdown immediately on focus (even with empty input)
+		this._register(DOM.addDisposableListener(patientSearchInput, 'focus', () => {
+			if (patientSearchTimer) { clearTimeout(patientSearchTimer); }
+			patientSearchTimer = setTimeout(() => _fetchPatients(patientSearchInput.value.trim()), 150);
+		}));
+
 		this._register(DOM.addDisposableListener(patientSearchInput, 'input', () => {
 			if (patientSearchTimer) { clearTimeout(patientSearchTimer); }
 			selectedPatientId = '';
 			const q = patientSearchInput.value.trim();
-			if (q.length < 2) { patientDropdown.style.display = 'none'; return; }
-
-			patientSearchTimer = setTimeout(async () => {
-				try {
-					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
-					if (res.ok) {
-						const data = await res.json();
-						const patients: PatientResult[] = data?.data?.content || data?.content || [];
-						DOM.clearNode(patientDropdown);
-						for (const p of patients) {
-							const item = DOM.append(patientDropdown, DOM.$('.ehr-search-item'));
-							const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
-							nameEl.textContent = `${p.firstName} ${p.lastName}`;
-							const dobEl = DOM.append(item, DOM.$('.ehr-search-dob'));
-							dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)}` : '';
-							this._register(DOM.addDisposableListener(item, 'click', () => {
-								selectedPatientId = p.fhirId || p.id;
-								patientSearchInput.value = `${p.firstName} ${p.lastName}`;
-								patientDropdown.style.display = 'none';
-							}));
-						}
-						patientDropdown.style.display = patients.length > 0 ? '' : 'none';
-					}
-				} catch { /* */ }
-			}, 250);
+			patientSearchTimer = setTimeout(() => _fetchPatients(q), 250);
 		}));
 
 		// Row 2: Start Date, End Date
 		const row2 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const startDate = this._createField(row2, 'Start Date', 'date', false, 'startDate') as HTMLInputElement;
 		const endDate = this._createField(row2, 'End Date', 'date', false, 'endDate') as HTMLInputElement;
+
+		// When start date is picked, default end date to the same day
+		this._register(DOM.addDisposableListener(startDate, 'change', () => {
+			if (startDate.value && !endDate.value) {
+				endDate.value = startDate.value;
+				const endWrap = endDate.parentElement;
+				if (endWrap) {
+					// The visible text input is always the first child of the date wrap
+					const vis = endWrap.firstElementChild as HTMLInputElement | null;
+					if (vis && vis.type === 'text') {
+						const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(startDate.value);
+						if (m) { vis.value = `${m[2]}/${m[3]}/${m[1]}`; }
+					}
+				}
+			}
+		}));
 
 		// Row 3: Start Time, End Time, Duration
 		const row3 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-3'));
@@ -618,10 +642,7 @@ export class EhrTitlebarControls extends Disposable {
 				endTime.value = `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
 				calcDuration();
 			}
-			// Sync start date to end date
-			if (startDate.value && !endDate.value) {
-				endDate.value = startDate.value;
-			}
+			// end date already synced by startDate change listener above
 		}));
 
 		// Row 4: Priority, Provider
@@ -911,31 +932,30 @@ export class EhrTitlebarControls extends Disposable {
 			const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			hidden.type = 'hidden';
 			hidden.name = name;
-			// Native date picker hidden off-screen — triggered programmatically via icon click
-			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
-			picker.type = 'date';
-			picker.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;';
 			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
 			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			// Native date picker overlays the calendar icon area (right 30 px) —
+			// opacity:0 but fully clickable so a direct user click opens the native
+			// calendar without needing showPicker() (which is unreliable in Electron).
+			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			picker.type = 'date';
+			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			visible.addEventListener('input', () => {
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
 				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				if (iso) { hidden.dispatchEvent(new Event('change', { bubbles: false })); }
 			});
 			picker.addEventListener('change', () => {
 				visible.value = isoToUs(picker.value);
 				hidden.value = picker.value;
 				visible.dispatchEvent(new Event('input'));
+				hidden.dispatchEvent(new Event('change', { bubbles: false }));
 			});
-			// Calendar icon — CSS positions it inside the input (right: 8px, top: 50%)
+			// Calendar emoji icon — visual only (pointer-events:none); clicks go through to the picker overlay above
 			const icon = DOM.append(wrap, DOM.$('span'));
 			icon.textContent = '\u{1F4C5}';
-			icon.style.cursor = 'pointer';
-			icon.addEventListener('click', () => picker.showPicker?.());
-			visible.addEventListener('click', (e) => {
-				const rect = visible.getBoundingClientRect();
-				if (e.clientX > rect.right - 30) { picker.showPicker?.(); }
-			});
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none;line-height:1;';
 			return hidden;
 		}
 
@@ -1005,6 +1025,7 @@ export class EhrTitlebarControls extends Disposable {
 		this.patientOverlay?.remove();
 		this.appointmentOverlay?.remove();
 		this.searchDropdown?.remove();
+		this.searchElement?.remove();
 		super.dispose();
 	}
 }
