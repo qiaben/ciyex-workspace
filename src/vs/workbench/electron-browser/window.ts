@@ -1186,16 +1186,8 @@ class ZoomStatusEntry extends Disposable {
 		super();
 	}
 
-	updateZoomEntry(visibleOrText: false | string, targetWindowId: number): void {
-		if (typeof visibleOrText === 'string') {
-			if (!this.disposable.value) {
-				this.createZoomEntry(visibleOrText);
-			}
-
-			this.updateZoomLevelLabel(targetWindowId);
-		} else {
-			this.disposable.clear();
-		}
+	updateZoomEntry(_visibleOrText: false | string, _targetWindowId: number): void {
+		this.disposable.clear();
 	}
 
 	private createZoomEntry(visibleOrText: string): void {

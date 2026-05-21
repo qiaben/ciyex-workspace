@@ -137,6 +137,7 @@ export class EhrTitlebarControls extends Disposable {
 
 		const value = this.searchInput.value.trim();
 
+		this._ensureInWorkbench(this.searchDropdown);
 		DOM.clearNode(this.searchDropdown);
 		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
 		loading.textContent = value ? `Searching for "${value}"…` : 'Type to search patients or providers';
@@ -301,8 +302,8 @@ export class EhrTitlebarControls extends Disposable {
 
 	private _buildCurrencyButton(): void {
 		const btn = DOM.append(this.element, DOM.$('.ehr-action-btn.ehr-action-btn-currency'));
-		btn.title = 'Billing';
-		btn.setAttribute('aria-label', 'Billing');
+		btn.title = 'Donate';
+		btn.setAttribute('aria-label', 'Donate');
 
 		const currencyIcon = DOM.append(btn, DOM.$('span.ehr-action-icon'));
 		currencyIcon.textContent = '$';
@@ -335,6 +336,7 @@ export class EhrTitlebarControls extends Disposable {
 		const closeBtn = DOM.append(header, DOM.$('.ehr-overlay-close'));
 		closeBtn.textContent = '\u00D7';
 		this._register(DOM.addDisposableListener(closeBtn, 'click', () => this._closePatientOverlay()));
+		this._makeDraggable(this.patientOverlay, header);
 
 		const form = DOM.append(this.patientOverlay, DOM.$('.ehr-overlay-form'));
 
@@ -555,6 +557,7 @@ export class EhrTitlebarControls extends Disposable {
 		const closeBtn = DOM.append(header, DOM.$('.ehr-overlay-close'));
 		closeBtn.textContent = '\u00D7';
 		this._register(DOM.addDisposableListener(closeBtn, 'click', () => this._closeAppointmentOverlay()));
+		this._makeDraggable(this.appointmentOverlay, header);
 
 		const subtitle = DOM.append(this.appointmentOverlay, DOM.$('p.ehr-overlay-subtitle'));
 		subtitle.textContent = 'Schedule or edit an appointment to stay on track';
@@ -903,10 +906,33 @@ export class EhrTitlebarControls extends Disposable {
 
 	// --- Overlay Toggle ---
 
+	private _resetOverlayPosition(overlay: HTMLElement): void {
+		overlay.style.transform = 'translate(-50%, -50%)';
+		overlay.style.left = '50%';
+		overlay.style.top = '50%';
+	}
+
+	// Lazily move overlays into .monaco-workbench so they inherit theme CSS variables.
+	// The constructor runs before .monaco-workbench exists, so we do this on first open.
+	private _ensureInWorkbench(el: HTMLElement): void {
+		// Walk up from the titlebar controls element to find .monaco-workbench
+		// without using fragile selector APIs.
+		let wb: HTMLElement | null = this.element.parentElement;
+		while (wb && !wb.classList.contains('monaco-workbench')) {
+			wb = wb.parentElement;
+		}
+		if (wb && !wb.contains(el)) {
+			wb.appendChild(el);
+		}
+	}
+
 	private _togglePatientOverlay(): void {
 		const isOpen = this.patientOverlay.style.display !== 'none';
 		this._closeAllOverlays();
 		if (!isOpen) {
+			this._ensureInWorkbench(this.overlayBackdrop);
+			this._ensureInWorkbench(this.patientOverlay);
+			this._resetOverlayPosition(this.patientOverlay);
 			this.patientOverlay.style.display = '';
 			this._showBackdrop();
 		}
@@ -916,6 +942,9 @@ export class EhrTitlebarControls extends Disposable {
 		const isOpen = this.appointmentOverlay.style.display !== 'none';
 		this._closeAllOverlays();
 		if (!isOpen) {
+			this._ensureInWorkbench(this.overlayBackdrop);
+			this._ensureInWorkbench(this.appointmentOverlay);
+			this._resetOverlayPosition(this.appointmentOverlay);
 			this.appointmentOverlay.style.display = '';
 			this._showBackdrop();
 			this._loadProvidersAndLocations();
@@ -1059,6 +1088,53 @@ export class EhrTitlebarControls extends Disposable {
 			el.value = '';
 		}
 		if (elements.errorEl) { elements.errorEl.style.display = 'none'; }
+	}
+
+	private _makeDraggable(overlay: HTMLElement, handle: HTMLElement): void {
+		let dragging = false;
+		let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!dragging) { return; }
+			const targetWindow = DOM.getActiveWindow();
+			const dx = e.clientX - startX;
+			const dy = e.clientY - startY;
+			const newLeft = Math.max(0, Math.min(origLeft + dx, targetWindow.innerWidth - overlay.offsetWidth));
+			const newTop = Math.max(0, Math.min(origTop + dy, targetWindow.innerHeight - overlay.offsetHeight));
+			overlay.style.left = `${newLeft}px`;
+			overlay.style.top = `${newTop}px`;
+		};
+
+		const onMouseUp = () => {
+			if (!dragging) { return; }
+			dragging = false;
+			handle.style.cursor = 'grab';
+			overlay.style.userSelect = '';
+			DOM.getActiveWindow().removeEventListener('mousemove', onMouseMove);
+			DOM.getActiveWindow().removeEventListener('mouseup', onMouseUp);
+		};
+
+		this._register(DOM.addDisposableListener(handle, 'mousedown', (e: MouseEvent) => {
+			if ((e.target as HTMLElement).closest('.ehr-overlay-close')) { return; }
+			// Resolve current position — first drag converts from transform-center to explicit px
+			const rect = overlay.getBoundingClientRect();
+			overlay.style.transform = 'none';
+			overlay.style.left = `${rect.left}px`;
+			overlay.style.top = `${rect.top}px`;
+
+			dragging = true;
+			startX = e.clientX;
+			startY = e.clientY;
+			origLeft = rect.left;
+			origTop = rect.top;
+			handle.style.cursor = 'grabbing';
+			overlay.style.userSelect = 'none';
+			DOM.getActiveWindow().addEventListener('mousemove', onMouseMove);
+			DOM.getActiveWindow().addEventListener('mouseup', onMouseUp);
+			e.preventDefault();
+		}));
+
+		handle.style.cursor = 'grab';
 	}
 
 	private _formatDisplayDate(dateStr: string): string {

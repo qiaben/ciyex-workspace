@@ -329,12 +329,20 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		}, 'ciyex.zoomIn', StatusbarAlignment.RIGHT, 95));
 
 		this._statusBarEntries.push(this.statusbarService.addEntry({
+			name: 'Reset Zoom',
+			text: '$(screen-full)',
+			tooltip: 'Reset Zoom',
+			ariaLabel: 'Reset Zoom',
+			command: 'workbench.action.zoomReset',
+		}, 'ciyex.zoomReset', StatusbarAlignment.RIGHT, 94));
+
+		this._statusBarEntries.push(this.statusbarService.addEntry({
 			name: 'Zoom Out',
 			text: '$(zoom-out)',
 			tooltip: 'Zoom Out',
 			ariaLabel: 'Zoom Out',
 			command: 'workbench.action.zoomOut',
-		}, 'ciyex.zoomOut', StatusbarAlignment.RIGHT, 94));
+		}, 'ciyex.zoomOut', StatusbarAlignment.RIGHT, 93));
 	}
 
 	private _unreadEntry: { dispose(): void } | null = null;

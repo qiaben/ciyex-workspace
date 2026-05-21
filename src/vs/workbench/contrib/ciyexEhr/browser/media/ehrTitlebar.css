@@ -75,25 +75,67 @@
 }
 
 /* --- Search Dropdown ---
- * Uses position:fixed and is appended to document.body so it escapes the
- * titlebar-container's overflow:hidden. top/left/width are set dynamically
- * via JS based on searchInput.getBoundingClientRect(). */
+ * position:fixed so it escapes titlebar overflow:hidden.
+ * top/left/width are set dynamically via JS. */
 .ehr-search-dropdown {
 	position: fixed;
-	background: var(--vscode-editorWidget-background, #252526);
-	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	background: var(--vscode-editorWidget-background, #fff);
+	border: 1px solid var(--vscode-editorWidget-border, #ddd);
 	border-radius: 6px;
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 	z-index: 10000;
 	max-height: 300px;
 	overflow-y: auto;
 	min-width: 300px;
 }
 
+/* Light theme */
+.vs .ehr-search-dropdown {
+	background: var(--vscode-editorWidget-background, #fff);
+	border-color: var(--vscode-editorWidget-border, #ddd);
+}
+.vs .ehr-search-item:hover {
+	background: var(--vscode-list-hoverBackground, #f0f0f0);
+}
+.vs .ehr-search-name {
+	color: var(--vscode-editor-foreground, #111);
+}
+.vs .ehr-search-dob {
+	color: var(--vscode-descriptionForeground, #666);
+}
+.vs .ehr-search-empty {
+	color: var(--vscode-descriptionForeground, #888);
+}
+.vs .ehr-search-item {
+	border-bottom-color: var(--vscode-editorWidget-border, #eee);
+}
+
+/* Dark theme */
+.vs-dark .ehr-search-dropdown {
+	background: var(--vscode-editorWidget-background, #252526);
+	border-color: var(--vscode-editorWidget-border, #454545);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.vs-dark .ehr-search-item:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+.vs-dark .ehr-search-name {
+	color: var(--vscode-editor-foreground, #d4d4d4);
+}
+.vs-dark .ehr-search-dob {
+	color: var(--vscode-descriptionForeground, #888);
+}
+.vs-dark .ehr-search-empty {
+	color: var(--vscode-descriptionForeground, #888);
+}
+.vs-dark .ehr-search-item {
+	border-bottom-color: var(--vscode-editorWidget-border, #3c3c3c);
+}
+
 .ehr-search-item {
 	padding: 8px 12px;
 	cursor: pointer;
-	border-bottom: 1px solid var(--vscode-editorWidget-border, #3c3c3c);
+	border-bottom: 1px solid var(--vscode-editorWidget-border, #eee);
 }
 
 .ehr-search-item:last-child {
@@ -101,18 +143,18 @@
 }
 
 .ehr-search-item:hover {
-	background: var(--vscode-list-hoverBackground, #2a2d2e);
+	background: var(--vscode-list-hoverBackground, #f0f0f0);
 }
 
 .ehr-search-name {
 	font-weight: 600;
 	font-size: 13px;
-	color: var(--vscode-editor-foreground, #ccc);
+	color: var(--vscode-editor-foreground, #111);
 }
 
 .ehr-search-dob {
 	font-size: 11px;
-	color: var(--vscode-descriptionForeground, #888);
+	color: var(--vscode-descriptionForeground, #666);
 	margin-top: 2px;
 }
 
@@ -132,14 +174,14 @@
 	padding: 0 36px;
 	border-radius: 24px;
 	cursor: pointer;
-	color: #fff;
+	color: var(--vscode-button-foreground, #fff);
 	background: transparent;
 	border: none;
 	height: 28px;
 	font-size: 16px;
 	font-weight: 700;
 	font-family: inherit;
-	transition: filter 0.15s, transform 0.05s;
+	transition: background 0.15s, transform 0.05s;
 	-webkit-app-region: no-drag;
 	margin-left: 6px;
 	white-space: nowrap;
@@ -148,7 +190,7 @@
 .ehr-action-btn .codicon {
 	font-size: 20px;
 	line-height: 1;
-	color: #fff;
+	color: var(--vscode-button-foreground, #fff);
 }
 
 /* Emoji / text icon inside action buttons */
@@ -157,43 +199,44 @@
 	line-height: 1;
 	display: flex;
 	align-items: center;
-	color: #fff;
+	color: var(--vscode-button-foreground, #fff);
 }
 
-/* Patient button — black */
+/* Patient button */
 .ehr-action-btn-patient {
-	background: #000000;
-	border: 1px solid #2a2a2a;
+	background: var(--vscode-button-background, #0078d4);
+	border: 1px solid var(--vscode-button-border, transparent);
 }
 
 .ehr-action-btn-patient:hover {
-	background: #1a1a1a;
+	background: var(--vscode-button-hoverBackground, #026ec1);
 }
 
-/* Force the patient emoji to render grey */
+/* Patient emoji — smaller and white */
 .ehr-action-btn-patient .ehr-action-icon {
-	filter: grayscale(1) brightness(0.85);
+	font-size: 14px;
+	filter: brightness(0) invert(1);
 }
 
-/* Appointment button — black */
+/* Appointment button */
 .ehr-action-btn-appointment {
-	background: #000000;
-	border: 1px solid #2a2a2a;
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	border: 1px solid var(--vscode-button-border, transparent);
 }
 
 .ehr-action-btn-appointment:hover {
-	background: #1a1a1a;
+	background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
-/* Currency / Billing button — black */
+/* Currency / Billing button */
 .ehr-action-btn-currency {
-	background: #000000;
+	background: var(--vscode-extensionButton-prominentBackground, var(--vscode-button-background, #0078d4));
 	font-weight: 700;
-	border: 1px solid #2a2a2a;
+	border: 1px solid var(--vscode-button-border, transparent);
 }
 
 .ehr-action-btn-currency:hover {
-	background: #1a1a1a;
+	background: var(--vscode-extensionButton-prominentHoverBackground, var(--vscode-button-hoverBackground, #026ec1));
 }
 
 .ehr-action-btn:active {
@@ -205,80 +248,152 @@
 	outline-offset: -1px;
 }
 
-/* --- Overlay (Patient Form / Appointment Form) ---
- * Right-side slide-in panel — matches the Tasks "+ New Task" pattern so every
- * create/edit form across the EHR uses the same shape. */
-.ehr-overlay {
-	position: fixed;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	z-index: 10000;
-	background: var(--vscode-editorWidget-background, #252526);
-	border-left: 1px solid var(--vscode-editorWidget-border, #454545);
-	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3);
-	padding: 20px;
-	width: 560px;
-	max-width: 95vw;
-	height: 100vh;
-	overflow-y: auto;
-	font-size: 13px;
-	color: var(--vscode-editor-foreground, #ccc);
-	box-sizing: border-box;
-	/* Test team asked for the visible scrollbar on add-new forms (denials,
-	 * relationships) to be removed. Scrolling still works via wheel/trackpad
-	 * — only the visual scrollbar is hidden. */
-	scrollbar-width: none;
+/* --- Dark-theme overrides for overlay (applied via .monaco-workbench.vs-dark) --- */
+.vs-dark .ehr-overlay {
+	background: var(--vscode-editor-background, #1e1e1e);
+	border-color: var(--vscode-editorWidget-border, #454545);
+	color: var(--vscode-editor-foreground, #d4d4d4);
+}
+.vs-dark .ehr-overlay-header {
+	border-bottom-color: var(--vscode-editorWidget-border, #3c3c3c);
+}
+.vs-dark .ehr-overlay-header h3 {
+	color: var(--vscode-editor-foreground, #e0e0e0);
+}
+.vs-dark .ehr-form-input,
+.vs-dark .ehr-form-select,
+.vs-dark .ehr-form-textarea {
+	background: var(--vscode-input-background, #3c3c3c);
+	border-color: var(--vscode-input-border, #555);
+	color: var(--vscode-input-foreground, #d4d4d4);
+}
+.vs-dark .ehr-form-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, #777);
+}
+.vs-dark .ehr-form-label {
+	color: var(--vscode-descriptionForeground, #999);
+}
+.vs-dark .ehr-form-buttons {
+	border-top-color: var(--vscode-editorWidget-border, #3c3c3c);
+}
+.vs-dark .ehr-btn-cancel {
+	color: var(--vscode-foreground, #ccc);
+	border-color: var(--vscode-input-border, #555);
+}
+.vs-dark .ehr-btn-cancel:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08));
+}
+.vs-dark .ehr-patient-dropdown {
+	background: var(--vscode-editor-background, #1e1e1e);
+	border-color: var(--vscode-editorWidget-border, #454545);
 }
 
-.ehr-overlay.ehr-overlay-wide {
-	width: 620px;
-}
-
+/* --- Overlay (Patient Form / Appointment Form) — centred modal dialog --- */
 .ehr-overlay-backdrop {
 	position: fixed;
 	inset: 0;
 	z-index: 9999;
-	background: rgba(0, 0, 0, 0.4);
+	background: rgba(0, 0, 0, 0.5);
+	backdrop-filter: blur(2px);
+	animation: ehr-backdrop-in 0.15s ease;
+}
+
+@keyframes ehr-backdrop-in {
+	from { opacity: 0; }
+	to   { opacity: 1; }
+}
+
+.ehr-overlay {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	z-index: 10000;
+	background: var(--vscode-editor-background, #fff);
+	border: 1px solid var(--vscode-editorWidget-border, #ddd);
+	border-radius: 10px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
+	width: 580px;
+	max-width: 96vw;
+	max-height: 90vh;
+	overflow-y: auto;
+	font-size: 13px;
+	color: var(--vscode-editor-foreground, #333);
+	box-sizing: border-box;
+	scrollbar-width: none;
+	animation: ehr-modal-in 0.18s cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+
+@keyframes ehr-modal-in {
+	from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+	to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.ehr-overlay.ehr-overlay-wide {
+	width: 680px;
+}
+
+/* Coloured top accent bar */
+.ehr-overlay::before {
+	content: '';
+	display: block;
+	height: 4px;
+	border-radius: 10px 10px 0 0;
+	background: var(--vscode-button-background, #0078d4);
+	margin: 0;
 }
 
 .ehr-overlay-header {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
-	margin-bottom: 4px;
+	padding: 16px 20px 12px;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, #eee);
 }
 
 .ehr-overlay-header h3 {
 	margin: 0;
-	font-size: 16px;
+	font-size: 15px;
 	font-weight: 600;
-	color: var(--vscode-editor-foreground, #fff);
+	color: var(--vscode-editor-foreground, #111);
+	letter-spacing: 0.01em;
 }
 
 .ehr-overlay-close {
-	font-size: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 6px;
+	font-size: 18px;
 	cursor: pointer;
 	color: var(--vscode-descriptionForeground, #888);
-	padding: 0 4px;
-	line-height: 1;
+	transition: background 0.1s, color 0.1s;
 }
 
 .ehr-overlay-close:hover {
-	color: var(--vscode-editor-foreground, #ccc);
+	background: var(--vscode-toolbar-hoverBackground, rgba(0,0,0,0.08));
+	color: var(--vscode-editor-foreground, #333);
 }
 
 .ehr-overlay-subtitle {
-	margin: 0 0 16px 0;
+	margin: 0;
+	padding: 6px 20px 0;
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground, #888);
+}
+
+/* Wrap the form body in padding */
+.ehr-overlay-form {
+	padding: 16px 20px 20px;
 }
 
 /* --- Form Elements --- */
 .ehr-overlay-form {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 14px;
 }
 
 .ehr-form-row {
@@ -301,9 +416,11 @@
 }
 
 .ehr-form-label {
-	font-size: 12px;
+	font-size: 11px;
 	font-weight: 600;
-	color: var(--vscode-editor-foreground, #ccc);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--vscode-descriptionForeground, #666);
 }
 
 .ehr-required-star {
@@ -328,24 +445,26 @@
 	width: 100%;
 	box-sizing: border-box;
 	min-width: 0;
-	background: var(--vscode-input-background, #3c3c3c);
-	border: 1px solid var(--vscode-input-border, #555);
-	border-radius: 4px;
-	color: var(--vscode-input-foreground, #ccc);
+	background: var(--vscode-input-background, #f7f7f7);
+	border: 1px solid var(--vscode-input-border, #ddd);
+	border-radius: 6px;
+	color: var(--vscode-input-foreground, #222);
 	font-size: 13px;
-	padding: 6px 8px;
+	padding: 7px 10px;
 	font-family: inherit;
 	outline: none;
+	transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .ehr-form-input:focus,
 .ehr-form-select:focus,
 .ehr-form-textarea:focus {
-	border-color: var(--vscode-focusBorder, #007fd4);
+	border-color: var(--vscode-focusBorder, #0078d4);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-focusBorder, #0078d4) 20%, transparent);
 }
 
 .ehr-form-input::placeholder {
-	color: var(--vscode-input-placeholderForeground, #888);
+	color: var(--vscode-input-placeholderForeground, #aaa);
 }
 
 /* Date field: icon sits inside the input on the right */
@@ -426,11 +545,11 @@
 	top: 100%;
 	left: 0;
 	right: 0;
-	margin-top: 2px;
-	background: var(--vscode-editorWidget-background, #252526);
-	border: 1px solid var(--vscode-editorWidget-border, #454545);
-	border-radius: 4px;
-	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+	margin-top: 4px;
+	background: var(--vscode-editor-background, #fff);
+	border: 1px solid var(--vscode-editorWidget-border, #ddd);
+	border-radius: 6px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 	z-index: 10001;
 	max-height: 200px;
 	overflow-y: auto;
@@ -441,43 +560,50 @@
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
-	margin-top: 8px;
+	margin-top: 4px;
+	padding-top: 14px;
+	border-top: 1px solid var(--vscode-editorWidget-border, #eee);
 }
 
 .ehr-btn-cancel {
-	background: var(--vscode-button-secondaryBackground, #3a3d41);
-	color: var(--vscode-button-secondaryForeground, #ccc);
-	border: 1px solid var(--vscode-input-border, #555);
-	border-radius: 4px;
-	padding: 6px 16px;
+	background: transparent;
+	color: var(--vscode-foreground, #555);
+	border: 1px solid var(--vscode-input-border, #ccc);
+	border-radius: 6px;
+	padding: 7px 18px;
 	font-size: 13px;
 	cursor: pointer;
 	font-family: inherit;
+	transition: background 0.12s;
 }
 
 .ehr-btn-cancel:hover {
-	background: var(--vscode-button-secondaryHoverBackground, #45494e);
+	background: var(--vscode-toolbar-hoverBackground, rgba(0,0,0,0.06));
 }
 
 .ehr-btn-save {
-	background: var(--vscode-button-background, #0e639c);
+	background: var(--vscode-button-background, #0078d4);
 	color: var(--vscode-button-foreground, #fff);
 	border: none;
-	border-radius: 4px;
-	padding: 6px 16px;
+	border-radius: 6px;
+	padding: 7px 22px;
 	font-size: 13px;
 	font-weight: 600;
 	cursor: pointer;
 	font-family: inherit;
+	transition: background 0.12s, box-shadow 0.12s;
+	box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
 
 .ehr-btn-save:hover {
-	background: var(--vscode-button-hoverBackground, #1177bb);
+	background: var(--vscode-button-hoverBackground, #106ebe);
+	box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
 .ehr-btn-save[disabled] {
-	opacity: 0.6;
+	opacity: 0.55;
 	cursor: not-allowed;
+	box-shadow: none;
 }
 
 /* --- Calendar editor: hide native scrollbars (vertical + horizontal) --- */

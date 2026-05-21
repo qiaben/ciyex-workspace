@@ -315,7 +315,19 @@ export class CodeApplication extends Disposable {
 				try {
 					const host = new URL(details.url).host.toLowerCase();
 					if (ciyexHosts.has(host)) {
-						const headers = { ...details.requestHeaders, 'User-Agent': browserUa };
+						const headers = { ...details.requestHeaders };
+						// Rewrite User-Agent to vanilla Chrome so Cloudflare bot-manager passes
+						headers['User-Agent'] = browserUa;
+						// Remove vscode-file:// Origin — Cloudflare flags non-http(s) origins
+						delete headers['Origin'];
+						delete headers['origin'];
+						// Add Chrome client-hint headers expected by Cloudflare
+						headers['Sec-CH-UA'] = '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"';
+						headers['Sec-CH-UA-Mobile'] = '?0';
+						headers['Sec-CH-UA-Platform'] = process.platform === 'win32' ? '"Windows"' : process.platform === 'darwin' ? '"macOS"' : '"Linux"';
+						headers['Sec-Fetch-Dest'] = 'empty';
+						headers['Sec-Fetch-Mode'] = 'cors';
+						headers['Sec-Fetch-Site'] = 'cross-site';
 						return callback({ requestHeaders: headers });
 					}
 				} catch { }
