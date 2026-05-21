@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
 	id: string;
@@ -37,10 +38,9 @@ export class PatientListPane extends ViewPane {
 	private _searchQuery = '';
 	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
 	private _genderFilter: 'all' | 'male' | 'female' | 'unknown' = 'all';
-	// Pagination state — pageSize matches the EHR-UI patient list (20/page).
-	// _page is zero-indexed; the footer renders page-indicator + prev/next.
-	private _page = 0;
-	private readonly _pageSize = 20;
+	// Side-pane pagination — initial small batch + Show More to match the
+	// other sidebars (Tasks / Appointments / Encounters).
+	private _visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -65,11 +65,11 @@ export class PatientListPane extends ViewPane {
 			if (state === CiyexAuthState.NotAuthenticated) {
 				this._patients = [];
 				this._loaded = false;
-				this._page = 0;
+				this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this._loaded = false;
 				this._patients = [];
-				this._page = 0;
+				this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 				if (this._listEl) {
 					void this._loadPatients();
 				}
@@ -96,7 +96,7 @@ export class PatientListPane extends ViewPane {
 		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;outline:none;';
 		searchInput.addEventListener('input', () => {
 			this._searchQuery = searchInput.value.trim();
-			this._page = 0;
+			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._renderList();
 		});
 		filterBar.appendChild(searchInput);
@@ -117,7 +117,7 @@ export class PatientListPane extends ViewPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this._statusFilter = statusSel.value as 'all' | 'active' | 'inactive';
-			this._page = 0;
+			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._renderList();
 		});
 		filterRow.appendChild(statusSel);
@@ -133,7 +133,7 @@ export class PatientListPane extends ViewPane {
 		}
 		genderSel.addEventListener('change', () => {
 			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'unknown';
-			this._page = 0;
+			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._renderList();
 		});
 		filterRow.appendChild(genderSel);
@@ -180,45 +180,12 @@ export class PatientListPane extends ViewPane {
 		while (this._footerEl.firstChild) {
 			this._footerEl.removeChild(this._footerEl.firstChild);
 		}
-		const totalPages = Math.max(1, Math.ceil(filteredTotal / this._pageSize));
-		if (this._page >= totalPages) { this._page = totalPages - 1; }
-		if (this._page < 0) { this._page = 0; }
-
-		const info = document.createElement('span');
-		info.style.color = 'var(--vscode-descriptionForeground)';
-		info.textContent = filteredTotal === 0
-			? 'No patients'
-			// allow-any-unicode-next-line
-			: `Page ${this._page + 1} of ${totalPages} · ${filteredTotal} total`;
-		this._footerEl.appendChild(info);
-
-		const nav = document.createElement('div');
-		nav.style.cssText = 'display:flex;gap:4px;align-items:center;';
-		const btnStyle = 'padding:2px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;cursor:pointer;font-size:11px;';
-
-		const prev = document.createElement('button');
-		// allow-any-unicode-next-line
-		prev.textContent = '‹';
-		prev.title = 'Previous page';
-		prev.style.cssText = btnStyle;
-		prev.disabled = this._page === 0;
-		prev.style.opacity = prev.disabled ? '0.5' : '1';
-		prev.style.cursor = prev.disabled ? 'not-allowed' : 'pointer';
-		prev.addEventListener('click', () => { if (this._page > 0) { this._page--; this._renderList(); } });
-		nav.appendChild(prev);
-
-		const next = document.createElement('button');
-		// allow-any-unicode-next-line
-		next.textContent = '›';
-		next.title = 'Next page';
-		next.style.cssText = btnStyle;
-		next.disabled = this._page >= totalPages - 1;
-		next.style.opacity = next.disabled ? '0.5' : '1';
-		next.style.cursor = next.disabled ? 'not-allowed' : 'pointer';
-		next.addEventListener('click', () => { if (this._page < totalPages - 1) { this._page++; this._renderList(); } });
-		nav.appendChild(next);
-
-		this._footerEl.appendChild(nav);
+		renderShowMoreFooter(
+			this._footerEl,
+			{ visibleCount: Math.min(this._visibleCount, filteredTotal), totalCount: filteredTotal },
+			(next) => { this._visibleCount = next; this._renderList(); },
+			() => { this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(); },
+		);
 	}
 
 	private _filteredPatients(): IPatientRow[] {
@@ -299,10 +266,9 @@ export class PatientListPane extends ViewPane {
 			return;
 		}
 
-		// Apply pagination — render only the current page slice. The footer is
-		// updated below with the unfiltered total + page count.
-		const start = this._page * this._pageSize;
-		const pageRows = rows.slice(start, start + this._pageSize);
+		// Render only the first `_visibleCount` rows; the footer (Show More)
+		// reveals the rest.
+		const pageRows = rows.slice(0, Math.min(this._visibleCount, rows.length));
 		this._renderFooter(rows.length);
 		for (const patient of pageRows) {
 			const row = document.createElement('div');
@@ -357,39 +323,23 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
-			// Action column — View Chart / Edit / Toggle Active. Mirrors the
-			// EHR Web UI patient-list action column (eye + pencil + circle-X).
-			// Clicking the row outside the buttons still opens the chart on
-			// the default tab, preserving the row's default behaviour.
-			const actions = document.createElement('span');
-			actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+			// Actions hide behind a Teams-style ⋯ overflow menu — opens a
+			// labelled popup with big icons + names per action.
 			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
 			const isActive = (patient.status || 'active').toLowerCase() !== 'inactive';
-			const mkAction = (icon: string, title: string, color: string, onClick: () => void) => {
-				const btn = document.createElement('button');
-				btn.textContent = icon;
-				btn.title = title;
-				btn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}1a;color:${color};line-height:1;`;
-				btn.addEventListener('mouseenter', () => { btn.style.background = `${color}33`; });
-				btn.addEventListener('mouseleave', () => { btn.style.background = `${color}1a`; });
-				btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-				actions.appendChild(btn);
-			};
-			// allow-any-unicode-next-line
-			mkAction('👁', 'View Chart', '#3b82f6', () => {
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
-			});
-			// allow-any-unicode-next-line
-			mkAction('✎', 'Edit Patient', '#f59e0b', () => {
-				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics');
-			});
-			mkAction(
-				isActive ? '\u{2298}' : '\u{2713}',
-				isActive ? 'Deactivate' : 'Activate',
-				isActive ? '#ef4444' : '#22c55e',
-				() => this._togglePatientStatus(patient, isActive),
-			);
-			row.appendChild(actions);
+			const actions = createRowActionsContainer(row);
+			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
+				// allow-any-unicode-next-line
+				{ symbol: '👁', label: 'View Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName) },
+				// allow-any-unicode-next-line
+				{ symbol: '✎', label: 'Edit Patient', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics') },
+				{ separator: true },
+				{
+					symbol: isActive ? '\u{2298}' : '\u{2713}',
+					label: isActive ? 'Deactivate Patient' : 'Activate Patient',
+					onClick: () => this._togglePatientStatus(patient, isActive),
+				},
+			]);
 
 			row.addEventListener('click', () => {
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);

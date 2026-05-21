@@ -21,6 +21,7 @@ import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
+import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 // Storage key the calendar editor writes to so the sidebar can mirror its
 // view mode + selected date. Keep in sync with CalendarEditor.STORAGE_KEY.
@@ -211,6 +212,7 @@ export class ScheduleSidebarPane extends ViewPane {
 	private pageSize = 25;
 	private totalAppointments = 0;
 	private hasMore = false;
+	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	private async _loadAndRender(append = false): Promise<void> {
 		// Range matches the calendar editor's view (day = today, week =
@@ -417,7 +419,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			btn.textContent = f === 'active' ? 'Active' : f === 'completed' ? 'Done' : 'All';
 			const isActive = this.showFilter === f;
 			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
-			btn.addEventListener('click', () => { this.showFilter = f; this._render(); });
+			btn.addEventListener('click', () => { this.showFilter = f; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); });
 		}
 	}
 
@@ -449,9 +451,16 @@ export class ScheduleSidebarPane extends ViewPane {
 			return;
 		}
 
-		for (const apt of filtered) {
-			this._renderAppointmentRow(section, apt);
+		const visible = Math.min(this.visibleCount, filtered.length);
+		for (let i = 0; i < visible; i++) {
+			this._renderAppointmentRow(section, filtered[i]);
 		}
+		renderShowMoreFooter(
+			section,
+			{ visibleCount: visible, totalCount: filtered.length },
+			(next) => { this.visibleCount = next; this._render(); },
+			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
+		);
 	}
 
 	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {
@@ -544,65 +553,53 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (pick) { await this._assignRoom(apt, pick.label); }
 		});
 
-		// Action icons row
-		const actions = DOM.append(row, DOM.$('.actions'));
-		actions.style.cssText = 'display:flex;gap:3px;opacity:0;transition:opacity 0.1s;';
-		row.addEventListener('mouseenter', () => { actions.style.opacity = '1'; });
-		row.addEventListener('mouseleave', () => { actions.style.opacity = '0'; });
+		// Actions live behind a Teams-style \u22ef overflow menu \u2014 opens a labelled
+		// popup with one icon + name per action.
+		const actions = createRowActionsContainer(row);
+		actions.style.marginLeft = 'auto';
+		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
+			const items: IOverflowMenuItem[] = [];
+			const status = apt.status?.toLowerCase();
+			const isTerminal = this.terminalStatuses.has(status);
 
-		const iconBtn = (parent: HTMLElement, label: string, symbol: string, color: string, onClick: () => void) => {
-			const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = symbol;
-			btn.title = label;
-			btn.style.cssText = `padding:2px 5px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};`;
-			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = `${color}15`; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-		};
-
-		// Check-in (if not already checked in)
-		if (!this.terminalStatuses.has(apt.status?.toLowerCase()) && apt.status?.toLowerCase() !== 'checked-in' && apt.status?.toLowerCase() !== 'in-room' && apt.status?.toLowerCase() !== 'with-provider') {
-			iconBtn(actions, 'Check In', '\u2713', '#22c55e', () => this._changeStatus(apt, 'Checked-in'));
-		}
-
-		// Open Patient Chart
-		iconBtn(actions, 'Patient Chart', '\u{1F4CB}', '#3b82f6', () => {
-			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId); }
+			if (!isTerminal && status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
+				items.push({ symbol: '\u2713', label: 'Check In', onClick: () => this._changeStatus(apt, 'Checked-in') });
+			}
+			items.push({
+				// allow-any-unicode-next-line
+				symbol: '\u{1F4CB}', label: 'Open Patient Chart', onClick: () => {
+					if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId); }
+				},
+			});
+			if (apt.encounterId) {
+				items.push({ symbol: '\u2764', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId) });
+			}
+			if (!apt.encounterId && !isTerminal) {
+				items.push({
+					symbol: '\u2795', label: 'Create Encounter', onClick: async () => {
+						try {
+							await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+							await this._loadAndRender();
+						} catch { /* */ }
+					},
+				});
+			}
+			const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
+			const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+			if (isTele && this.installationsService.isInstalled('ciyex-telehealth')) {
+				items.push({
+					// allow-any-unicode-next-line
+					symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => {
+						this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
+					},
+				});
+			}
+			if (!isTerminal) {
+				items.push({ separator: true });
+				items.push({ symbol: '\u2716', label: 'No Show', onClick: () => this._changeStatus(apt, 'No Show') });
+			}
+			return items;
 		});
-
-		// Record Vitals
-		if (apt.encounterId) {
-			iconBtn(actions, 'Record Vitals', '\u2764', '#a855f7', () => {
-				this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId);
-			});
-		}
-
-		// Create Encounter (if none exists)
-		if (!apt.encounterId && !this.terminalStatuses.has(apt.status?.toLowerCase())) {
-			iconBtn(actions, 'Create Encounter', '\u2795', '#22c55e', async () => {
-				try {
-					await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-					await this._loadAndRender();
-				} catch { /* */ }
-			});
-		}
-
-		// Telehealth (if visit type includes telehealth/virtual)
-		// The Video Call button only appears when the org has purchased + installed
-		// the `ciyex-telehealth` marketplace extension. Until then, the
-		// ciyex.openTelehealth command itself redirects to the Hub to purchase.
-		const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
-		const isTelehealthAppt = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
-		if (isTelehealthAppt && this.installationsService.isInstalled('ciyex-telehealth')) {
-			iconBtn(actions, 'Video Call', '\u{1F4F9}', '#22c55e', () => {
-				this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
-			});
-		}
-
-		// No Show
-		if (!this.terminalStatuses.has(apt.status?.toLowerCase())) {
-			iconBtn(actions, 'No Show', '\u2716', '#ef4444', () => this._changeStatus(apt, 'No Show'));
-		}
 	}
 
 	private _renderLoadMore(): void {

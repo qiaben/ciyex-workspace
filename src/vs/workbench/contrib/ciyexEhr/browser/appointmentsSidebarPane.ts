@@ -18,6 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 interface FhirActor {
 	reference?: string;
@@ -173,8 +174,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 	private searchValue = '';
 	private dateFilter: DateFilter = 'all';
 	private statusFilter = '';
-	private currentPage = 0;
-	private pageSize = 10;
+	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 	private statusOptions: string[] = [];
 	private refreshTimer: number | undefined;
 
@@ -203,12 +203,12 @@ export class AppointmentsSidebarPane extends ViewPane {
 				this.appointments = [];
 				this.loaded = false;
 				this.statusOptions = [];
-				this.currentPage = 0;
+				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this.appointments = [];
 				this.loaded = false;
 				this.statusOptions = [];
-				this.currentPage = 0;
+				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 				if (this.container) {
 					void this._loadAll();
 				}
@@ -370,18 +370,8 @@ export class AppointmentsSidebarPane extends ViewPane {
 		// here we only need the action toolbar (new + refresh) aligned to the right.
 		const header = DOM.append(this.container, DOM.$('.menu-header'));
 		header.style.cssText = 'padding:6px 10px;display:flex;align-items:center;justify-content:flex-end;gap:6px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
-		this._headerBtn(header, '+', 'New Appointment', () => this.commandService.executeCommand('ciyex.openAppointments'));
-		this._headerBtn(header, '\u{21BB}', 'Refresh', () => this._loadAll());
-	}
-
-	private _headerBtn(parent: HTMLElement, symbol: string, label: string, fn: () => void): void {
-		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		btn.textContent = symbol;
-		btn.title = label;
-		btn.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
-		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-		btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+		createActionIconButton(header, '+', 'New Appointment', () => this.commandService.executeCommand('ciyex.openAppointments'));
+		createActionIconButton(header, '\u{21BB}', 'Refresh', () => this._loadAll());
 	}
 
 	private _renderStats(): void {
@@ -421,7 +411,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 		input.style.cssText = 'width:100%;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;box-sizing:border-box;';
 		input.addEventListener('input', () => {
 			this.searchValue = input.value;
-			this.currentPage = 0;
+			this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._render();
 			if (this.searchInput) { this.searchInput.focus(); this.searchInput.setSelectionRange(this.searchValue.length, this.searchValue.length); }
 		});
@@ -442,7 +432,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		dateSel.addEventListener('change', () => {
 			this.dateFilter = dateSel.value as DateFilter;
-			this.currentPage = 0;
+			this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._render();
 		});
 
@@ -460,7 +450,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this.statusFilter = statusSel.value;
-			this.currentPage = 0;
+			this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._render();
 		});
 	}
@@ -477,10 +467,8 @@ export class AppointmentsSidebarPane extends ViewPane {
 			return;
 		}
 
-		// Pagination slice
-		const start = this.currentPage * this.pageSize;
-		const pageItems = filtered.slice(start, start + this.pageSize);
-		for (const apt of pageItems) { this._renderRow(apt); }
+		const visible = Math.min(this.visibleCount, filtered.length);
+		for (let i = 0; i < visible; i++) { this._renderRow(filtered[i]); }
 	}
 
 	private _renderRow(apt: Appointment): void {
@@ -544,40 +532,32 @@ export class AppointmentsSidebarPane extends ViewPane {
 			room.style.cssText = 'margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(99,102,241,0.15);color:#818cf8;font-weight:500;';
 		}
 
-		// Bottom: ACTIONS Open Chart, Record Vitals, Visit Summary, New Encounter
-		const actions = DOM.append(row, DOM.$('.actions'));
-		actions.style.cssText = 'display:flex;gap:3px;';
-
-		const actionBtn = (sym: string, label: string, color: string, fn: () => void) => {
-			const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-			b.type = 'button';
-			b.textContent = sym;
-			b.title = label;
-			b.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;`;
-			b.addEventListener('mouseenter', () => { b.style.background = `${color}30`; });
-			b.addEventListener('mouseleave', () => { b.style.background = `${color}15`; });
-			b.addEventListener('mousedown', (e) => { e.stopPropagation(); });
-			b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
-		};
-
-		const isTele = (getAppointmentType(apt) || '').toLowerCase() === 'telehealth';
-		if (isTele) {
+		// All row actions live behind a Teams-style ⋯ overflow menu — opens a
+		// labelled popup with one icon + name per action.
+		const actions = createRowActionsContainer(row);
+		actions.style.marginTop = '2px';
+		actions.style.marginLeft = 'auto';
+		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
+			const items: IOverflowMenuItem[] = [];
+			const isTele = (getAppointmentType(apt) || '').toLowerCase() === 'telehealth';
+			if (isTele) {
+				// allow-any-unicode-next-line
+				items.push({ symbol: '\u{1F4DE}', label: 'Join Video Visit', onClick: () => this._joinTelehealth(apt) });
+			}
 			// allow-any-unicode-next-line
-			actionBtn('\u{1F4DE}', 'Join Video Visit', '#10b981', () => this._joinTelehealth(apt));
-			// allow-any-unicode-next-line
-			actionBtn('\u{1F4CB}', 'Open Chart', '#3b82f6', () => this._openChart(apt));
-		} else {
-			// allow-any-unicode-next-line
-			actionBtn('\u{1F4CB}', 'Open Chart', '#3b82f6', () => this._openChart(apt));
-			// allow-any-unicode-next-line
-			actionBtn('\u{2764}', 'Record Vitals', '#a855f7', () => this._recordVitals(apt));
-			// allow-any-unicode-next-line
-			actionBtn('\u{1F5D2}', 'Visit Summary', '#f59e0b', () => this._visitSummary(apt));
-		}
-		if (!apt.encounterId) {
-			// allow-any-unicode-next-line
-			actionBtn('+', 'New Encounter', '#22c55e', () => this._newEncounter(apt));
-		}
+			items.push({ symbol: '\u{1F4CB}', label: 'Open Chart', onClick: () => this._openChart(apt) });
+			if (!isTele) {
+				// allow-any-unicode-next-line
+				items.push({ symbol: '\u{2764}', label: 'Record Vitals', onClick: () => this._recordVitals(apt) });
+				// allow-any-unicode-next-line
+				items.push({ symbol: '\u{1F5D2}', label: 'Visit Summary', onClick: () => this._visitSummary(apt) });
+			}
+			if (!apt.encounterId) {
+				items.push({ separator: true });
+				items.push({ symbol: '+', label: 'New Encounter', onClick: () => this._newEncounter(apt) });
+			}
+			return items;
+		});
 	}
 
 	private _joinTelehealth(apt: Appointment): void {
@@ -591,34 +571,14 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private _renderPagination(): void {
 		const filtered = this._getFiltered();
-		const totalPages = Math.max(1, Math.ceil(filtered.length / this.pageSize));
-		if (this.currentPage >= totalPages) { this.currentPage = totalPages - 1; }
-
 		const bar = DOM.append(this.container, DOM.$('.pagination'));
-		bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 10px;border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;background:var(--vscode-sideBar-background);';
-
-		const info = DOM.append(bar, DOM.$('span'));
-		const start = filtered.length === 0 ? 0 : this.currentPage * this.pageSize + 1;
-		const end = Math.min(filtered.length, (this.currentPage + 1) * this.pageSize);
-		info.textContent = `${start}-${end} of ${filtered.length}`;
-		info.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
-
-		const nav = DOM.append(bar, DOM.$('div'));
-		nav.style.cssText = 'display:flex;gap:4px;align-items:center;';
-
-		const navBtn = (label: string, disabled: boolean, fn: () => void) => {
-			const b = DOM.append(nav, DOM.$('button')) as HTMLButtonElement;
-			b.textContent = label;
-			b.disabled = disabled;
-			b.style.cssText = `padding:2px 8px;border:1px solid var(--vscode-editorWidget-border);border-radius:3px;background:transparent;color:var(--vscode-foreground);font-size:11px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? '0.4' : '1'};`;
-			b.addEventListener('click', (e) => { e.stopPropagation(); if (!disabled) { fn(); } });
-		};
-
-		navBtn('\u{2039}', this.currentPage <= 0, () => { this.currentPage--; this._render(); });
-		const pageLbl = DOM.append(nav, DOM.$('span'));
-		pageLbl.textContent = `${this.currentPage + 1}/${totalPages}`;
-		pageLbl.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);padding:0 2px;';
-		navBtn('\u{203A}', this.currentPage >= totalPages - 1, () => { this.currentPage++; this._render(); });
+		bar.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;background:var(--vscode-sideBar-background);';
+		renderShowMoreFooter(
+			bar,
+			{ visibleCount: Math.min(this.visibleCount, filtered.length), totalCount: filtered.length },
+			(next) => { this.visibleCount = next; this._render(); },
+			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
+		);
 	}
 
 	// Action handlers match appointmentsEditor.ts row actions 
@@ -681,12 +641,6 @@ export class AppointmentsSidebarPane extends ViewPane {
 		super.layoutBody(height, width);
 		if (this.container) {
 			this.container.style.height = `${height}px`;
-		}
-		// Size page to fit visible area roughly: ~70px per row, minus header+stats+search+filters+pagination (~210px)
-		const rows = Math.max(5, Math.floor((height - 220) / 70));
-		if (rows !== this.pageSize) {
-			this.pageSize = rows;
-			if (this.loaded) { this._render(); }
 		}
 	}
 

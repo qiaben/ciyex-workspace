@@ -18,6 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 interface Task {
 	id: string;
@@ -70,6 +71,7 @@ export class TasksSidebarPane extends ViewPane {
 	private searchValue = '';
 	private refreshTimer: number | undefined;
 	private loaded = false;
+	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -197,19 +199,8 @@ export class TasksSidebarPane extends ViewPane {
 		const bar = DOM.append(this.container, DOM.$('.quick-actions'));
 		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);align-items:center;justify-content:flex-end;';
 
-		this._iconBtn(bar, '+', 'New Task', '#3b82f6', () => this.commandService.executeCommand('ciyex.openTasks'));
-		this._iconBtn(bar, '\u{21BB}', 'Refresh', 'var(--vscode-foreground)', () => this._loadAndRender());
-	}
-
-	private _iconBtn(parent: HTMLElement, symbol: string, label: string, color: string, onClick: () => void): HTMLButtonElement {
-		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		btn.textContent = symbol;
-		btn.title = label;
-		btn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:${color};`;
-		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
-		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-		btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-		return btn;
+		createActionIconButton(bar, '+', 'New Task', () => this.commandService.executeCommand('ciyex.openTasks'));
+		createActionIconButton(bar, '\u{21BB}', 'Refresh', () => this._loadAndRender());
 	}
 
 	private _renderStats(): void {
@@ -251,6 +242,7 @@ export class TasksSidebarPane extends ViewPane {
 		input.style.cssText = 'width:100%;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;box-sizing:border-box;';
 		input.addEventListener('input', () => {
 			this.searchValue = input.value;
+			this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			this._render();
 			if (this.searchInput) { this.searchInput.focus(); this.searchInput.setSelectionRange(this.searchValue.length, this.searchValue.length); }
 		});
@@ -265,7 +257,7 @@ export class TasksSidebarPane extends ViewPane {
 			btn.textContent = f === 'active' ? 'Active' : f === 'overdue' ? 'Late' : f === 'done' ? 'Done' : 'All';
 			const isActive = this.filter === f;
 			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
-			btn.addEventListener('click', (e) => { e.preventDefault(); this.filter = f; this._render(); });
+			btn.addEventListener('click', (e) => { e.preventDefault(); this.filter = f; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); });
 		}
 	}
 
@@ -290,7 +282,14 @@ export class TasksSidebarPane extends ViewPane {
 			empty.style.cssText = 'padding:12px 10px;color:var(--vscode-descriptionForeground);text-align:center;font-size:12px;';
 			empty.textContent = this.loaded ? 'No tasks' : 'Loading...';
 		} else {
-			for (const t of filtered) { this._renderTaskRow(section, t); }
+			const visible = Math.min(this.visibleCount, filtered.length);
+			for (let i = 0; i < visible; i++) { this._renderTaskRow(section, filtered[i]); }
+			renderShowMoreFooter(
+				section,
+				{ visibleCount: visible, totalCount: filtered.length },
+				(next) => { this.visibleCount = next; this._render(); },
+				() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
+			);
 		}
 	}
 
@@ -346,35 +345,27 @@ export class TasksSidebarPane extends ViewPane {
 		status.textContent = overdue ? 'OVERDUE' : (task.status || '').replace(/_/g, ' ');
 		status.style.cssText = `margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;text-transform:capitalize;background:${statusColor}22;color:${statusColor};font-weight:500;white-space:nowrap;`;
 
-		// Action icons (always visible)
-		const actions = DOM.append(row, DOM.$('.actions'));
-		actions.style.cssText = 'display:flex;gap:3px;margin-top:4px;flex-wrap:wrap;';
-
-		const rowIconBtn = (sym: string, lbl: string, color: string, fn: () => void) => {
-			const btn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-			// Explicit type so the button never submits a parent <form> and
-			// triggers a page reload that swallows the click.
-			btn.type = 'button';
-			btn.textContent = sym;
-			btn.title = lbl;
-			btn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;`;
-			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = `${color}15`; });
-			btn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
-		};
-
-		if (task.status !== 'completed' && task.status !== 'cancelled') {
-			rowIconBtn('\u{2713}', 'Mark Complete', '#22c55e', () => this._updateStatus(task, 'completed'));
-		}
-		if (task.status === 'pending') {
-			rowIconBtn('\u{25B6}', 'Start Task', '#3b82f6', () => this._updateStatus(task, 'in_progress'));
-		}
-		rowIconBtn('\u{270E}', 'Edit', '#a855f7', () => this.commandService.executeCommand('ciyex.openTasks'));
-		if (task.status !== 'completed' && task.status !== 'cancelled') {
-			rowIconBtn('\u{2298}', 'Void / Cancel', '#f97316', () => this._updateStatus(task, 'cancelled'));
-		}
-		rowIconBtn('\u{1F5D1}', 'Delete', '#ef4444', () => this._deleteTask(task));
+		// Actions land behind a Teams-style ⋯ overflow menu. The popup lists
+		// each action with its full name + a large icon so users can find them
+		// at a glance (per /sort-out spec from 2026-05-21).
+		const actions = createRowActionsContainer(row);
+		actions.style.marginLeft = 'auto';
+		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
+			const items: IOverflowMenuItem[] = [];
+			if (task.status !== 'completed' && task.status !== 'cancelled') {
+				items.push({ symbol: '\u{2713}', label: 'Mark Complete', onClick: () => this._updateStatus(task, 'completed') });
+			}
+			if (task.status === 'pending') {
+				items.push({ symbol: '\u{25B6}', label: 'Start Task', onClick: () => this._updateStatus(task, 'in_progress') });
+			}
+			items.push({ symbol: '\u{270E}', label: 'Edit Task', onClick: () => this.commandService.executeCommand('ciyex.openTasks') });
+			if (task.status !== 'completed' && task.status !== 'cancelled') {
+				items.push({ symbol: '\u{2298}', label: 'Void / Cancel', onClick: () => this._updateStatus(task, 'cancelled') });
+			}
+			items.push({ separator: true });
+			items.push({ symbol: '\u{1F5D1}', label: 'Delete', onClick: () => this._deleteTask(task) });
+			return items;
+		});
 	}
 
 	private async _deleteTask(task: Task): Promise<void> {

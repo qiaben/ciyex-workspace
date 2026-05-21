@@ -17,6 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -159,6 +160,7 @@ export class OperationsMenuPane extends ViewPane {
 	private counts = new Map<string, number>();
 	private data = new Map<string, DataRow[]>();
 	private loading = new Set<string>();
+	private visibleCounts = new Map<string, number>();
 
 	constructor(
 		options: IViewPaneOptions,
@@ -225,22 +227,12 @@ export class OperationsMenuPane extends ViewPane {
 		// Title is already shown by the VS Code view container + view pane headers.
 		const header = DOM.append(this.container, DOM.$('.menu-header'));
 		header.style.cssText = 'padding:6px 10px;display:flex;align-items:center;justify-content:flex-end;gap:6px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		this._headerBtn(header, '\u{21BB}', 'Refresh', () => this._loadAllData());
-		this._headerBtn(header, '\u{21D5}', 'Collapse / Expand All', () => {
+		createActionIconButton(header, '\u{21BB}', 'Refresh', () => this._loadAllData());
+		createActionIconButton(header, '\u{21D5}', 'Collapse / Expand All', () => {
 			if (this.collapsed.size === ITEMS.length) { this.collapsed.clear(); }
 			else { ITEMS.forEach(i => this.collapsed.add(i.id)); }
 			this._render();
 		});
-	}
-
-	private _headerBtn(parent: HTMLElement, symbol: string, label: string, fn: () => void): void {
-		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		btn.textContent = symbol;
-		btn.title = label;
-		btn.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);';
-		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
-		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-		btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
 	}
 
 	private _renderSearch(): void {
@@ -328,31 +320,10 @@ export class OperationsMenuPane extends ViewPane {
 		desc.textContent = item.description;
 		desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
-		const actionsEl = DOM.append(row, DOM.$('.row-actions'));
-		actionsEl.style.cssText = 'display:flex;gap:2px;flex-shrink:0;';
-
-		const newBtn = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
-		newBtn.textContent = '+';
-		newBtn.title = `New ${item.label}`;
-		newBtn.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${item.color}15;color:${item.color};font-weight:600;`;
-		newBtn.addEventListener('mouseenter', () => { newBtn.style.background = `${item.color}30`; });
-		newBtn.addEventListener('mouseleave', () => { newBtn.style.background = `${item.color}15`; });
-		newBtn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(item.command); });
-
-		const refreshBtn = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
-		refreshBtn.textContent = '\u{21BB}';
-		refreshBtn.title = `Reload ${item.label}`;
-		refreshBtn.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:transparent;color:var(--vscode-descriptionForeground);';
-		refreshBtn.addEventListener('mouseenter', () => { refreshBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
-		refreshBtn.addEventListener('mouseleave', () => { refreshBtn.style.background = 'transparent'; });
-		refreshBtn.addEventListener('click', (e) => { e.stopPropagation(); this._loadItemData(item); });
-
-		const arrow = DOM.append(actionsEl, DOM.$('button')) as HTMLButtonElement;
-		arrow.textContent = isCollapsed ? '\u{203A}' : '\u{2304}';
-		arrow.title = isCollapsed ? 'Expand' : 'Collapse';
-		arrow.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:14px;background:transparent;color:var(--vscode-descriptionForeground);';
-		arrow.addEventListener('click', (e) => {
-			e.stopPropagation();
+		const actionsEl = createRowActionsContainer(row);
+		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this.commandService.executeCommand(item.command));
+		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
+		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
 				this.collapsed.delete(item.id);
 				if (!this.data.has(item.id)) { this._loadItemData(item); }
@@ -379,7 +350,14 @@ export class OperationsMenuPane extends ViewPane {
 			empty.textContent = `No ${item.label.toLowerCase()} yet`;
 			return;
 		}
-		for (const data of rows) { this._renderDataRow(sub, item, data); }
+		const visible = Math.min(this.visibleCounts.get(item.id) ?? SIDEBAR_INITIAL_PAGE_SIZE, rows.length);
+		for (let i = 0; i < visible; i++) { this._renderDataRow(sub, item, rows[i]); }
+		renderShowMoreFooter(
+			sub,
+			{ visibleCount: visible, totalCount: rows.length },
+			(next) => { this.visibleCounts.set(item.id, next); this._render(); },
+			() => { this.visibleCounts.set(item.id, SIDEBAR_INITIAL_PAGE_SIZE); this._render(); },
+		);
 	}
 
 	private _getField(row: DataRow, fields: string[]): string {
@@ -418,18 +396,12 @@ export class OperationsMenuPane extends ViewPane {
 			badge.style.cssText = `font-size:8px;padding:1px 5px;border-radius:3px;background:${statusColor}22;color:${statusColor};font-weight:600;text-transform:capitalize;flex-shrink:0;`;
 		}
 
-		const actions = DOM.append(dataRow, DOM.$('.row-actions'));
-		actions.style.cssText = 'display:flex;gap:2px;flex-shrink:0;';
-
-		for (const a of item.actions) {
-			const btn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = a.symbol;
-			btn.title = a.label;
-			btn.style.cssText = `padding:2px 5px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${a.color}15;color:${a.color};font-weight:600;`;
-			btn.addEventListener('mouseenter', () => { btn.style.background = `${a.color}30`; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = `${a.color}15`; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); this._executeAction(item, row, a); });
-		}
+		const actions = createRowActionsContainer(dataRow);
+		createOverflowMenuButton(actions, () => item.actions.map(a => ({
+			symbol: a.symbol,
+			label: a.label,
+			onClick: () => this._executeAction(item, row, a),
+		})));
 	}
 
 	private async _executeAction(item: OperationsItem, row: DataRow, a: RowAction): Promise<void> {

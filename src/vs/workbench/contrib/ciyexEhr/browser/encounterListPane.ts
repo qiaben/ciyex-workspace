@@ -18,6 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
+import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 export class EncounterListPane extends ViewPane {
 	static readonly ID = 'ciyex.encounters.view';
@@ -29,8 +30,7 @@ export class EncounterListPane extends ViewPane {
 	private filterValue = '';
 	private dateFrom = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
 	private dateTo = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-	private currentPage = 0;
-	private pageSize = 15;
+	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	// FHIR type code → readable label
 	private static TYPE_MAP: Record<string, string> = {
@@ -61,11 +61,11 @@ export class EncounterListPane extends ViewPane {
 			if (state === CiyexAuthState.NotAuthenticated) {
 				this.allItems = [];
 				this.loaded = false;
-				this.currentPage = 0;
+				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this.allItems = [];
 				this.loaded = false;
-				this.currentPage = 0;
+				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 				if (this.listEl) {
 					void this._loadData();
 				}
@@ -86,7 +86,7 @@ export class EncounterListPane extends ViewPane {
 		search.type = 'text';
 		search.placeholder = 'Search...';
 		search.style.cssText = 'flex:1;min-width:60px;padding:3px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;height:24px;box-sizing:border-box;';
-		search.addEventListener('input', () => { this.currentPage = 0; this._renderList(search.value); });
+		search.addEventListener('input', () => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search.value); });
 
 		const selectStyle = 'padding:2px 4px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;height:24px;cursor:pointer;';
 
@@ -98,7 +98,7 @@ export class EncounterListPane extends ViewPane {
 			o.value = opt === 'All' ? '' : opt;
 			o.textContent = opt;
 		}
-		filter.addEventListener('change', () => { this.filterValue = filter.value; this.currentPage = 0; this._renderList(search.value); });
+		filter.addEventListener('change', () => { this.filterValue = filter.value; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search.value); });
 
 		const addBtn = DOM.append(toolbar, DOM.$('button'));
 		addBtn.textContent = '+';
@@ -140,12 +140,12 @@ export class EncounterListPane extends ViewPane {
 		const fromLabel = DOM.append(dateRow, DOM.$('span'));
 		fromLabel.textContent = 'From';
 		fromLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0;';
-		buildIconDateInput(dateRow, this.dateFrom, (iso) => { this.dateFrom = iso; this.currentPage = 0; this._renderList(search.value); });
+		buildIconDateInput(dateRow, this.dateFrom, (iso) => { this.dateFrom = iso; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search.value); });
 
 		const toLabel = DOM.append(dateRow, DOM.$('span'));
 		toLabel.textContent = 'To';
 		toLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0;';
-		buildIconDateInput(dateRow, this.dateTo, (iso) => { this.dateTo = iso; this.currentPage = 0; this._renderList(search.value); });
+		buildIconDateInput(dateRow, this.dateTo, (iso) => { this.dateTo = iso; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search.value); });
 
 		// List
 		this.listEl = DOM.append(this.container, DOM.$('div'));
@@ -161,14 +161,6 @@ export class EncounterListPane extends ViewPane {
 
 	protected override layoutBody(height: number, width: number): void {
 		super.layoutBody(height, width);
-		const rowH = 34;
-		const newSize = Math.max(5, Math.floor((height - 60) / rowH));
-		if (newSize !== this.pageSize && this.loaded) {
-			this.pageSize = newSize;
-			this._renderList('');
-		} else {
-			this.pageSize = newSize;
-		}
 	}
 
 	private async _loadData(): Promise<void> {
@@ -230,8 +222,8 @@ export class EncounterListPane extends ViewPane {
 			return;
 		}
 
-		const start = this.currentPage * this.pageSize;
-		const page = filtered.slice(start, start + this.pageSize);
+		const visible = Math.min(this.visibleCount, filtered.length);
+		const page = filtered.slice(0, visible);
 
 		for (const item of page) {
 			const row = DOM.append(this.listEl, DOM.$('div'));
@@ -286,60 +278,31 @@ export class EncounterListPane extends ViewPane {
 				this.commandService.executeCommand('ciyex.openEncounter', patientId, id, patName, `${provName}`);
 			});
 
-			// Per-row action buttons — kept consistent with the patient and
-			// appointment sidebars so the encounter pane doesn't feel out of
-			// place. Sit on their own line below the primary row.
+			// Actions go behind a Teams-style ⋯ overflow menu — labelled popup
+			// shared with the patient + appointment sidebars.
 			const encId = String(item.id || item.fhirId || '');
 			const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
-			const actions = DOM.append(row, DOM.$('div'));
-			actions.style.cssText = 'display:flex;gap:3px;margin-left:auto;flex-shrink:0;';
-
-			const actionBtn = (sym: string, label: string, color: string, fn: () => void) => {
-				const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-				b.type = 'button';
-				b.textContent = sym;
-				b.title = label;
-				b.style.cssText = `padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;background:${color}15;color:${color};font-weight:600;line-height:1;`;
-				b.addEventListener('mouseenter', () => { b.style.background = `${color}30`; });
-				b.addEventListener('mouseleave', () => { b.style.background = `${color}15`; });
-				b.addEventListener('mousedown', (e) => { e.stopPropagation(); });
-				b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
-			};
-
-			// allow-any-unicode-next-line
-			actionBtn('\u{1F4CB}', 'Open Encounter', '#3b82f6', () => {
-				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`);
-			});
-			// allow-any-unicode-next-line
-			actionBtn('\u{2764}', 'Record Vitals', '#a855f7', () => {
-				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals');
-			});
-			// allow-any-unicode-next-line
-			actionBtn('\u{1F5D2}', 'Visit Summary', '#f59e0b', () => {
-				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan');
-			});
+			const actions = createRowActionsContainer(row);
+			actions.style.marginLeft = 'auto';
+			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
+				// allow-any-unicode-next-line
+				{ symbol: '\u{1F4CB}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
+				// allow-any-unicode-next-line
+				{ symbol: '\u{2764}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
+				// allow-any-unicode-next-line
+				{ symbol: '\u{1F5D2}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan') },
+			]);
 		}
 
-		// Pagination
-		const totalPages = Math.ceil(filtered.length / this.pageSize);
-		if (totalPages > 1) {
-			const pag = DOM.append(this.listEl, DOM.$('div'));
-			pag.style.cssText = 'display:flex;align-items:center;gap:4px;padding:6px 10px;font-size:11px;color:var(--vscode-descriptionForeground);border-top:1px solid var(--vscode-editorWidget-border);';
-			const info = DOM.append(pag, DOM.$('span'));
-			info.textContent = `${start + 1}-${Math.min(start + this.pageSize, filtered.length)} of ${filtered.length}`;
-			info.style.flex = '1';
-			const prev = DOM.append(pag, DOM.$('button')) as HTMLButtonElement;
-			prev.textContent = '\u25C0';
-			prev.disabled = this.currentPage === 0;
-			prev.style.cssText = `background:none;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:11px;opacity:${this.currentPage === 0 ? '0.3' : '1'};`;
-			prev.addEventListener('click', () => { this.currentPage--; this._renderList(search); });
-			const pg = DOM.append(pag, DOM.$('span'));
-			pg.textContent = `${this.currentPage + 1}/${totalPages}`;
-			const next = DOM.append(pag, DOM.$('button')) as HTMLButtonElement;
-			next.textContent = '\u25B6';
-			next.disabled = this.currentPage >= totalPages - 1;
-			next.style.cssText = `background:none;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:11px;opacity:${this.currentPage >= totalPages - 1 ? '0.3' : '1'};`;
-			next.addEventListener('click', () => { this.currentPage++; this._renderList(search); });
-		}
+		// Show More footer \u2014 replaces prev/next pagination so this rail
+		// matches the unified sidebar convention.
+		const footerWrap = DOM.append(this.listEl, DOM.$('div'));
+		footerWrap.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);';
+		renderShowMoreFooter(
+			footerWrap,
+			{ visibleCount: visible, totalCount: filtered.length },
+			(next) => { this.visibleCount = next; this._renderList(search); },
+			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search); },
+		);
 	}
 }
