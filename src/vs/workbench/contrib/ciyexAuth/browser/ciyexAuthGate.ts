@@ -411,7 +411,7 @@ export class CiyexAuthGate extends Disposable {
 			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
 			alignItems: 'center', justifyContent: 'center',
 			padding: '48px 56px', color: '#fff',
-			background: 'linear-gradient(145deg, #5B5FEE 0%, #3730C8 55%, #2B27A8 100%)',
+			background: '#000000',
 		});
 
 		left.appendChild(this._logo(80));
@@ -681,7 +681,7 @@ export class CiyexAuthGate extends Disposable {
 			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
 			alignItems: 'center', justifyContent: 'center',
 			padding: '48px 56px', color: '#fff',
-			background: 'linear-gradient(145deg, #5B5FEE 0%, #3730C8 55%, #2B27A8 100%)',
+			background: '#000000',
 		});
 		left.appendChild(this._logo(80));
 		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: '#fff' }), 'Ciyex EHR'));

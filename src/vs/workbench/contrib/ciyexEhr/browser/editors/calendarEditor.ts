@@ -452,47 +452,11 @@ export class CalendarEditor extends EditorPane {
 		this._filterWraps = [];
 		this._filterPanels = [];
 
-		// Nav group: [Prev | Date (click jumps to today) | Next] — no separate "Today" button
-		const navGroup = DOM.append(this.headerBar, DOM.$('.cal-nav-group'));
-		navGroup.style.cssText = 'display:flex;align-items:stretch;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
-		const prevBtn = this._btn(navGroup, '\u25C0', () => { this._navigate(-1); });
-		prevBtn.title = 'Previous';
-		prevBtn.style.borderRadius = '0';
-		prevBtn.style.borderRight = '1px solid var(--vscode-editorWidget-border)';
+		// Date picker — calendar popup replaces the old prev/date/next arrow nav
+		this._buildDatePicker(this.headerBar);
 
-		// Inline date label between prev and next; clicking it jumps to today
-		const label = DOM.append(navGroup, DOM.$('button')) as HTMLButtonElement;
-		label.title = 'Click to jump to today';
-		label.style.cssText = 'padding:3px 16px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border-right:1px solid var(--vscode-editorWidget-border);min-width:220px;text-align:center;';
-		label.addEventListener('click', () => { this.currentDate = new Date(); this._publishCalendarState(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
-		if (this.viewMode === 'day') {
-			label.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-		} else if (this.viewMode === 'month') {
-			label.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-		} else {
-			const { startDate, endDate } = this._getDateRange();
-			const s = new Date(startDate + 'T00:00:00');
-			const e = new Date(endDate + 'T00:00:00');
-			label.textContent = `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} \u2013 ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-		}
-
-		const nextBtn = this._btn(navGroup, '\u25B6', () => { this._navigate(1); });
-		nextBtn.title = 'Next';
-		nextBtn.style.borderRadius = '0';
-
-		// Patient name / search filter — restored per issue #1: the search bar
-		// was flagged as missing; it feeds `patientNameFilter` which is already
-		// wired into `_getViewFilteredAppointments()`.
-		const searchBox = DOM.append(this.headerBar, DOM.$('input')) as HTMLInputElement;
-		searchBox.type = 'text';
-		searchBox.placeholder = 'Search patient, provider…';
-		searchBox.value = this.patientNameFilter;
-		searchBox.style.cssText = 'padding:3px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;min-width:160px;outline:none;';
-		searchBox.addEventListener('input', () => {
-			this.patientNameFilter = searchBox.value;
-			this._updateHeaderCount();
-			this._renderGrid();
-		});
+		// Patient / provider search with a live dropdown of matches
+		this._buildPatientProviderSearch(this.headerBar);
 
 		// Plain spacer between search and view toggles.
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
@@ -976,23 +940,6 @@ export class CalendarEditor extends EditorPane {
 		return days;
 	}
 
-	private _navigate(dir: number): void {
-		if (this.viewMode === 'day') {
-			this.currentDate.setDate(this.currentDate.getDate() + dir);
-		} else if (this.viewMode === 'month') {
-			this.currentDate.setMonth(this.currentDate.getMonth() + dir);
-		} else {
-			this.currentDate.setDate(this.currentDate.getDate() + dir * 7);
-		}
-		this._publishCalendarState();
-		this._headerRendered = false;
-		this._renderHeader();
-		this._renderGrid();
-		// Reload appointments for the new date range in the background
-		this.appointments = [];
-		this._loadAppointments().then(() => this._renderGrid());
-	}
-
 	private async _refresh(): Promise<void> {
 		await this._loadAppointments();
 		this._renderHeader();
@@ -1467,12 +1414,263 @@ export class CalendarEditor extends EditorPane {
 			}
 		}
 	}
-	private _btn(parent: HTMLElement, text: string, onClick: () => void): HTMLButtonElement {
-		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-		btn.textContent = text;
-		btn.style.cssText = 'padding:3px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;cursor:pointer;font-size:11px;';
-		btn.addEventListener('click', onClick);
-		return btn;
+	/** Date picker with calendar grid popup — replaces the prev/date/next arrow
+	 *  nav. Clicking the trigger button opens a month grid; selecting a day
+	 *  sets `currentDate` and re-renders the calendar. Today is highlighted. */
+	private _buildDatePicker(parent: HTMLElement): void {
+		const wrap = DOM.append(parent, DOM.$('.cal-date-picker'));
+		wrap.style.cssText = 'position:relative;';
+		this._filterWraps.push(wrap);
+
+		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+		trigger.title = 'Pick a date';
+		trigger.style.cssText = 'padding:3px 16px;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);min-width:220px;text-align:center;';
+		const updateTriggerLabel = () => {
+			if (this.viewMode === 'day') {
+				trigger.textContent = this.currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+			} else if (this.viewMode === 'month') {
+				trigger.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+			} else {
+				const { startDate, endDate } = this._getDateRange();
+				const s = new Date(startDate + 'T00:00:00');
+				const e = new Date(endDate + 'T00:00:00');
+				trigger.textContent = `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} \u2013 ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+			}
+		};
+		updateTriggerLabel();
+
+		const panel = DOM.append(wrap, DOM.$('.cal-date-panel'));
+		panel.style.cssText = 'position:absolute;top:100%;left:0;margin-top:4px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;box-shadow:0 6px 16px rgba(0,0,0,0.35);z-index:50;display:none;padding:10px;width:260px;';
+		this._filterPanels.push(panel);
+
+		// Local view state: month being browsed inside the picker (independent of currentDate)
+		let viewMonth = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
+
+		const renderPanel = () => {
+			DOM.clearNode(panel);
+
+			// allow-any-unicode-next-line
+			// Header: ◀ / Month Year / ▶
+			const header = DOM.append(panel, DOM.$('.cal-date-header'));
+			header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+			const prev = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+			prev.textContent = '\u25C0';
+			prev.title = 'Previous month';
+			prev.style.cssText = 'padding:2px 8px;background:transparent;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:13px;';
+			prev.addEventListener('click', (e) => { e.stopPropagation(); viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderPanel(); });
+			const title = DOM.append(header, DOM.$('span'));
+			title.textContent = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+			title.style.cssText = 'font-weight:600;font-size:13px;';
+			const next = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
+			next.textContent = '\u25B6';
+			next.title = 'Next month';
+			next.style.cssText = 'padding:2px 8px;background:transparent;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:13px;';
+			next.addEventListener('click', (e) => { e.stopPropagation(); viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderPanel(); });
+
+			// allow-any-unicode-next-line
+			// Weekday header row (Sun–Sat)
+			const grid = DOM.append(panel, DOM.$('.cal-date-grid'));
+			grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px;';
+			for (const dow of ['S', 'M', 'T', 'W', 'T', 'F', 'S']) {
+				const cell = DOM.append(grid, DOM.$('div'));
+				cell.textContent = dow;
+				cell.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:4px 0;';
+			}
+
+			// Day cells — start with the leading blanks so weekday columns align
+			const firstDow = viewMonth.getDay();
+			const daysInMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
+			const today = new Date(); today.setHours(0, 0, 0, 0);
+			for (let i = 0; i < firstDow; i++) {
+				const blank = DOM.append(grid, DOM.$('div'));
+				blank.style.cssText = 'height:28px;';
+			}
+			for (let d = 1; d <= daysInMonth; d++) {
+				const dayBtn = DOM.append(grid, DOM.$('button')) as HTMLButtonElement;
+				dayBtn.textContent = String(d);
+				const cellDate = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), d);
+				const isToday = cellDate.getTime() === today.getTime();
+				const isSelected = cellDate.toDateString() === this.currentDate.toDateString();
+				const base = 'height:28px;border:none;border-radius:14px;cursor:pointer;font-size:12px;';
+				let extra = 'background:transparent;color:var(--vscode-foreground);';
+				if (isSelected) {
+					extra = 'background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-weight:600;';
+				} else if (isToday) {
+					extra = 'background:transparent;color:var(--vscode-textLink-foreground);font-weight:700;';
+				}
+				dayBtn.style.cssText = base + extra;
+				dayBtn.addEventListener('mouseenter', () => { if (!isSelected) { dayBtn.style.background = 'var(--vscode-list-hoverBackground)'; } });
+				dayBtn.addEventListener('mouseleave', () => { if (!isSelected) { dayBtn.style.background = 'transparent'; } });
+				dayBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					this.currentDate = cellDate;
+					this._publishCalendarState();
+					updateTriggerLabel();
+					panel.style.display = 'none';
+					this._headerRendered = false;
+					this._renderHeader();
+					this._renderGrid();
+				});
+			}
+
+			// Footer: Today shortcut
+			const footer = DOM.append(panel, DOM.$('.cal-date-footer'));
+			footer.style.cssText = 'display:flex;justify-content:center;margin-top:8px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
+			const todayBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+			todayBtn.textContent = 'Today';
+			todayBtn.style.cssText = 'padding:4px 14px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			todayBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this.currentDate = new Date();
+				this._publishCalendarState();
+				updateTriggerLabel();
+				panel.style.display = 'none';
+				this._headerRendered = false;
+				this._renderHeader();
+				this._renderGrid();
+			});
+		};
+
+		trigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const isOpen = panel.style.display !== 'none';
+			for (const p of this._filterPanels) { if (p !== panel) { p.style.display = 'none'; } }
+			if (isOpen) {
+				panel.style.display = 'none';
+			} else {
+				viewMonth = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
+				renderPanel();
+				panel.style.display = 'block';
+			}
+		});
+
+		const dismiss = (ev: Event) => {
+			const target = ev.target as Node;
+			if (!wrap.contains(target)) { panel.style.display = 'none'; }
+		};
+		DOM.getActiveWindow().document.addEventListener('click', dismiss);
+	}
+
+	/** Search input with live patient/provider dropdown. Selecting a result
+	 *  applies the filter and (for patients) opens the patient chart so the
+	 *  user sees the related appointment context. */
+	private _buildPatientProviderSearch(parent: HTMLElement): void {
+		const wrap = DOM.append(parent, DOM.$('.cal-search-wrap'));
+		wrap.style.cssText = 'position:relative;';
+		this._filterWraps.push(wrap);
+
+		const searchBox = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		searchBox.type = 'text';
+		searchBox.placeholder = 'Search patient, provider…';
+		searchBox.value = this.patientNameFilter;
+		searchBox.style.cssText = 'padding:3px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;min-width:200px;outline:none;';
+
+		const panel = DOM.append(wrap, DOM.$('.cal-search-panel'));
+		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:40;display:none;max-height:280px;overflow-y:auto;min-width:260px;';
+		this._filterPanels.push(panel);
+
+		const renderResults = () => {
+			DOM.clearNode(panel);
+			const q = searchBox.value.trim().toLowerCase();
+			if (!q) {
+				panel.style.display = 'none';
+				return;
+			}
+
+			// Patient matches — derive from appointments (name+id pairs)
+			const patientMap = new Map<string, { id: string; name: string }>();
+			for (const a of this.appointments) {
+				const name = (a.patientName || `${a.patientFirstName || ''} ${a.patientLastName || ''}`).trim();
+				if (!name) { continue; }
+				if (!name.toLowerCase().includes(q)) { continue; }
+				const id = (a as unknown as { patientId?: string }).patientId || name;
+				if (!patientMap.has(id)) { patientMap.set(id, { id, name }); }
+			}
+			const patients = Array.from(patientMap.values()).slice(0, 8);
+
+			// Provider matches — from the cached providers list
+			const providers = this.providers.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
+
+			if (patients.length === 0 && providers.length === 0) {
+				const empty = DOM.append(panel, DOM.$('div'));
+				empty.textContent = 'No matches';
+				empty.style.cssText = 'padding:10px;text-align:center;font-size:12px;color:var(--vscode-descriptionForeground);';
+				panel.style.display = 'block';
+				return;
+			}
+
+			const sectionLabel = (text: string) => {
+				const el = DOM.append(panel, DOM.$('div'));
+				el.textContent = text;
+				el.style.cssText = 'padding:6px 10px 2px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+				return el;
+			};
+			const row = (label: string, sub: string, onClick: () => void) => {
+				const r = DOM.append(panel, DOM.$('.cal-search-row'));
+				r.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;';
+				const name = DOM.append(r, DOM.$('div'));
+				name.textContent = label;
+				name.style.cssText = 'font-weight:600;color:var(--vscode-foreground);';
+				if (sub) {
+					const s = DOM.append(r, DOM.$('div'));
+					s.textContent = sub;
+					s.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+				}
+				r.addEventListener('mouseenter', () => { r.style.background = 'var(--vscode-list-hoverBackground)'; });
+				r.addEventListener('mouseleave', () => { r.style.background = ''; });
+				r.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+			};
+
+			if (patients.length > 0) {
+				sectionLabel('Patients');
+				for (const p of patients) {
+					row(p.name, 'View appointments', () => {
+						searchBox.value = p.name;
+						this.patientNameFilter = p.name;
+						panel.style.display = 'none';
+						this._updateHeaderCount();
+						this._renderGrid();
+					});
+				}
+			}
+			if (providers.length > 0) {
+				sectionLabel('Providers');
+				for (const p of providers) {
+					row(p.name, 'Filter by provider', () => {
+						this.providerFilter.clear();
+						this.providerFilter.add(p.id);
+						this.patientNameFilter = '';
+						searchBox.value = '';
+						panel.style.display = 'none';
+						this._headerRendered = false;
+						this._renderHeader();
+						this._renderGrid();
+					});
+				}
+			}
+
+			panel.style.display = 'block';
+		};
+
+		searchBox.addEventListener('input', () => {
+			this.patientNameFilter = searchBox.value;
+			this._updateHeaderCount();
+			this._renderGrid();
+			renderResults();
+		});
+		searchBox.addEventListener('focus', renderResults);
+		searchBox.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				panel.style.display = 'none';
+				searchBox.blur();
+			}
+		});
+
+		const dismiss = (ev: Event) => {
+			const target = ev.target as Node;
+			if (!wrap.contains(target)) { panel.style.display = 'none'; }
+		};
+		DOM.getActiveWindow().document.addEventListener('click', dismiss);
 	}
 
 	/** Searchable single-select dropdown — replacement for plain <select>.

@@ -160,37 +160,40 @@
 	color: #fff;
 }
 
-/* Patient button — emerald green (like "Completed" badge) */
+/* Patient button — black */
 .ehr-action-btn-patient {
-	background: #36c98e;
+	background: #000000;
+	border: 1px solid #2a2a2a;
 }
 
 .ehr-action-btn-patient:hover {
-	filter: brightness(1.15);
+	background: #1a1a1a;
 }
 
 /* Force the patient emoji to render grey */
 .ehr-action-btn-patient .ehr-action-icon {
-	filter: grayscale(1) brightness(0.55);
+	filter: grayscale(1) brightness(0.85);
 }
 
-/* Appointment button — vivid blue */
+/* Appointment button — black */
 .ehr-action-btn-appointment {
-	background: #3b82f6;
+	background: #000000;
+	border: 1px solid #2a2a2a;
 }
 
 .ehr-action-btn-appointment:hover {
-	filter: brightness(1.15);
+	background: #1a1a1a;
 }
 
-/* Currency / Billing button — warm orange */
+/* Currency / Billing button — black */
 .ehr-action-btn-currency {
-	background: #f97316;
+	background: #000000;
 	font-weight: 700;
+	border: 1px solid #2a2a2a;
 }
 
 .ehr-action-btn-currency:hover {
-	filter: brightness(1.15);
+	background: #1a1a1a;
 }
 
 .ehr-action-btn:active {

@@ -139,41 +139,54 @@ export class EhrTitlebarControls extends Disposable {
 
 		DOM.clearNode(this.searchDropdown);
 		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
-		loading.textContent = value ? `Searching for "${value}"…` : 'Loading patients…';
+		loading.textContent = value ? `Searching for "${value}"…` : 'Type to search patients or providers';
 		this._positionSearchDropdown();
 		this.searchDropdown.style.display = '';
 
 		this.searchTimer = setTimeout(async () => {
 			this.searchCts = new CancellationTokenSource();
 			try {
-				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(value)}&page=0&size=100`);
+				const extract = (data: unknown): unknown[] => {
+					const d = data as { data?: { content?: unknown[] } | unknown[]; content?: unknown[] } | unknown[];
+					if (Array.isArray(d)) { return d; }
+					const dObj = d as { data?: { content?: unknown[] } | unknown[]; content?: unknown[] };
+					if (dObj?.data && typeof dObj.data === 'object' && !Array.isArray(dObj.data) && Array.isArray((dObj.data as { content?: unknown[] }).content)) {
+						return (dObj.data as { content: unknown[] }).content;
+					}
+					if (Array.isArray(dObj?.data)) { return dObj.data as unknown[]; }
+					if (Array.isArray(dObj?.content)) { return dObj.content; }
+					return [];
+				};
+
+				const [patRes, provRes] = await Promise.all([
+					this.apiService.fetch(`/api/patients?search=${encodeURIComponent(value)}&page=0&size=50`).catch(() => null),
+					this.apiService.fetch(`/api/fhir-resource/providers?page=0&size=100`).catch(() => null),
+				]);
+
 				if (this.searchCts.token.isCancellationRequested) { return; }
-				if (res.ok) {
-					const data = await res.json();
-					// Handle every response shape the backend may emit:
-					//   {data:{content:[…]}} (paginated wrapper)
-					//   {data:[…]}            (unwrapped page)
-					//   {content:[…]}         (raw page)
-					//   […]                   (bare array)
-					const candidate = data?.data?.content
-						|| (Array.isArray(data?.data) ? data.data : null)
-						|| data?.content
-						|| (Array.isArray(data) ? data : null);
-					const raw: PatientResult[] = Array.isArray(candidate) ? candidate as PatientResult[] : [];
-					// When query is empty show first 10 patients; otherwise filter client-side
-					const filtered = value ? this._clientFilterPatients(raw, value).slice(0, 10) : raw.slice(0, 10);
-					this._renderSearchResults(filtered);
-				} else {
-					// Show "No patients found" rather than silently doing nothing —
-					// the test team flagged the search bar as "not working" when
-					// the API errored without any visible feedback.
-					this._renderSearchResults([]);
-				}
+
+				const rawPatients = patRes && patRes.ok ? extract(await patRes.json()) as PatientResult[] : [];
+				const rawProviders = provRes && provRes.ok ? extract(await provRes.json()) as ProviderResult[] : [];
+
+				const patients = value ? this._clientFilterPatients(rawPatients, value).slice(0, 8) : [];
+				const providers = value ? this._clientFilterProviders(rawProviders, value).slice(0, 8) : [];
+
+				this._renderSearchResults(patients, providers);
 			} catch {
 				if (this.searchCts.token.isCancellationRequested) { return; }
-				this._renderSearchResults([]);
+				this._renderSearchResults([], []);
 			}
 		}, 300);
+	}
+
+	private _clientFilterProviders(rows: ProviderResult[], rawQuery: string): ProviderResult[] {
+		const q = rawQuery.toLowerCase();
+		return rows.filter(p => {
+			const first = p.firstName || p['identification.firstName'] || '';
+			const last = p.lastName || p['identification.lastName'] || '';
+			const name = (p.name || p.fullName || `${first} ${last}`.trim() || p.username || '').toLowerCase();
+			return name.includes(q);
+		});
 	}
 
 	private _clientFilterPatients(rows: PatientResult[], rawQuery: string): PatientResult[] {
@@ -190,31 +203,65 @@ export class EhrTitlebarControls extends Disposable {
 		});
 	}
 
-	private _renderSearchResults(patients: PatientResult[]): void {
+	private _renderSearchResults(patients: PatientResult[], providers: ProviderResult[] = []): void {
 		DOM.clearNode(this.searchDropdown);
 		this._positionSearchDropdown();
 
-		if (patients.length === 0) {
+		if (patients.length === 0 && providers.length === 0) {
 			const empty = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
-			empty.textContent = 'No patients found';
+			empty.textContent = 'No matches';
 			this.searchDropdown.style.display = '';
 			return;
 		}
 
-		for (const p of patients) {
-			const item = DOM.append(this.searchDropdown, DOM.$('.ehr-search-item'));
-			const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
-			nameEl.textContent = `${p.firstName} ${p.lastName}`;
-			const dobEl = DOM.append(item, DOM.$('.ehr-search-dob'));
-			dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)}` : '';
+		const section = (label: string) => {
+			const el = DOM.append(this.searchDropdown, DOM.$('.ehr-search-section'));
+			el.textContent = label;
+			el.style.cssText = 'padding:6px 12px 2px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground,#888);';
+		};
 
-			this._register(DOM.addDisposableListener(item, 'click', () => {
-				const patientId = p.fhirId || p.id;
-				this.commandService.executeCommand('ciyex.openPatientChart', patientId, `${p.firstName} ${p.lastName}`);
-				this.searchDropdown.style.display = 'none';
-				this.searchInput.value = '';
-			}));
+		if (patients.length > 0) {
+			section('Patients');
+			for (const p of patients) {
+				const item = DOM.append(this.searchDropdown, DOM.$('.ehr-search-item'));
+				const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
+				nameEl.textContent = `${p.firstName} ${p.lastName}`;
+				const dobEl = DOM.append(item, DOM.$('.ehr-search-dob'));
+				dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)} · View appointments` : 'View appointments';
+
+				const patientName = `${p.firstName} ${p.lastName}`.trim();
+				this._register(DOM.addDisposableListener(item, 'click', () => {
+					this.searchDropdown.style.display = 'none';
+					this.searchInput.value = patientName;
+					// Push the value into the calendar filter bridge as well so the
+					// calendar grid filters immediately.
+					this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+					this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
+				}));
+			}
 		}
+
+		if (providers.length > 0) {
+			section('Providers');
+			for (const p of providers) {
+				const item = DOM.append(this.searchDropdown, DOM.$('.ehr-search-item'));
+				const first = p.firstName || p['identification.firstName'] || '';
+				const last = p.lastName || p['identification.lastName'] || '';
+				const display = p.name || p.fullName || `${first} ${last}`.trim() || p.username || '';
+				const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
+				nameEl.textContent = display;
+				const subEl = DOM.append(item, DOM.$('.ehr-search-dob'));
+				subEl.textContent = 'View appointments';
+
+				this._register(DOM.addDisposableListener(item, 'click', () => {
+					this.searchDropdown.style.display = 'none';
+					this.searchInput.value = display;
+					this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+					this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
+				}));
+			}
+		}
+
 		this.searchDropdown.style.display = '';
 	}
 
