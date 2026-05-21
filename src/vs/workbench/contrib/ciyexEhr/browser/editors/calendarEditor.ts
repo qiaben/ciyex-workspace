@@ -287,7 +287,29 @@ export class CalendarEditor extends EditorPane {
 
 			const loadProviders = async () => {
 				if (this.providers.length > 0) { return; }
-				const providerUrls = ['/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
+				// Derive providers from the appointments API — it is already scoped
+				// to the logged-in user's organisation, so only their practice's
+				// providers appear (unlike /api/fhir-resource/providers which returns
+				// all system-wide providers).
+				try {
+					const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=500');
+					if (res.ok) {
+						const data = await res.json();
+						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
+						const provMap = new Map<string, string>();
+						for (const a of list as Record<string, unknown>[]) {
+							const pName = String(a.providerName || a.providerDisplay || a.practitionerName || '').trim();
+							const pId = String(a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : '') || '').trim();
+							if (pName) { provMap.set(pId || pName, pName); }
+						}
+						if (provMap.size > 0) {
+							this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
+							return;
+						}
+					}
+				} catch { /* fall through to API */ }
+				// Fallback: if no appointments found, try org-scoped provider endpoints
+				const providerUrls = ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
 				for (const url of providerUrls) {
 					try {
 						const res = await this.apiService.fetch(url);
