@@ -103,7 +103,8 @@ export class PatientListDataProvider extends Disposable implements ITreeViewData
 		if (!dob) {
 			return 0;
 		}
-		const birth = new Date(dob);
+		const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob);
+		const birth = iso ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])) : new Date(dob);
 		const today = new Date();
 		let age = today.getFullYear() - birth.getFullYear();
 		const m = today.getMonth() - birth.getMonth();

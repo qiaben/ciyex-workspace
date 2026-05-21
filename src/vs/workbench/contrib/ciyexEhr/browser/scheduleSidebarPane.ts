@@ -14,14 +14,13 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, IOverflowMenuItem } from './sidebarActions.js';
 
 // Storage key the calendar editor writes to so the sidebar can mirror its
 // view mode + selected date. Keep in sync with CalendarEditor.STORAGE_KEY.
@@ -89,11 +88,11 @@ export class ScheduleSidebarPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IContextMenuService private readonly ctxMenuService: IContextMenuService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@ILogService private readonly logService: ILogService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
@@ -106,15 +105,11 @@ export class ScheduleSidebarPane extends ViewPane {
 				this.statusOptions = [];
 				this.roomOptions = [];
 				this.waitlist = [];
-				this.currentPage = 0;
-				this.totalAppointments = 0;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this.appointments = [];
 				this.statusOptions = [];
 				this.roomOptions = [];
 				this.waitlist = [];
-				this.currentPage = 0;
-				this.totalAppointments = 0;
 				if (this.container) {
 					void this._loadAndRender();
 				}
@@ -208,11 +203,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		}, 2000);
 	}
 
-	private currentPage = 0;
 	private pageSize = 25;
-	private totalAppointments = 0;
-	private hasMore = false;
-	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	private async _loadAndRender(append = false): Promise<void> {
 		// Range matches the calendar editor's view (day = today, week =
@@ -257,8 +248,6 @@ export class ScheduleSidebarPane extends ViewPane {
 					} else {
 						this.appointments = filtered;
 					}
-					this.totalAppointments = this.appointments.length;
-					this.hasMore = false;
 				}
 			} catch (err) {
 				this.logService.warn('[Schedule] Failed to load appointments:', err);
@@ -351,116 +340,303 @@ export class ScheduleSidebarPane extends ViewPane {
 		return filtered;
 	}
 
+	private _miniCalendarCollapsed = false;
+
 	private _render(): void {
 		DOM.clearNode(this.container);
-
-		// -- Quick Stats Bar (very top) --
-		this._renderStats();
-
-		// -- Filter Bar --
-		this._renderFilterBar();
-
-		// -- Today's Timeline --
+		this._renderMiniCalendar();
 		this._renderTimeline();
-
-		// -- Load More --
-		if (this.hasMore) {
-			this._renderLoadMore();
-		}
-
-		// -- Waitlist --
 		this._renderWaitlist();
 	}
 
-	private _renderStats(): void {
-		const stats = DOM.append(this.container, DOM.$('.stats-bar'));
-		stats.style.cssText = 'display:flex;gap:2px;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+	private _renderMiniCalendar(): void {
+		const wrap = DOM.append(this.container, DOM.$('.mini-cal'));
+		wrap.style.cssText = 'padding:10px 8px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
-		const total = this.appointments.length;
-		const completed = this.appointments.filter(a => ['fulfilled', 'completed', 'checked-out'].includes(a.status?.toLowerCase())).length;
-		const noShows = this.appointments.filter(a => ['noshow', 'no-show'].includes(a.status?.toLowerCase())).length;
-		const remaining = total - completed - noShows;
+		// Header row: month name + +/... buttons
+		const hdr = DOM.append(wrap, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:8px;';
+		const monthName = DOM.append(hdr, DOM.$('span'));
+		const today = this.currentDate;
+		monthName.textContent = today.toLocaleDateString('en-US', { month: 'long' });
+		monthName.style.cssText = 'font-size:14px;font-weight:600;flex:1;color:var(--vscode-editor-foreground);';
+		// + add button
+		const addBtn = DOM.append(hdr, DOM.$('div'));
+		addBtn.textContent = '+';
+		addBtn.title = 'New Appointment';
+		addBtn.style.cssText = 'width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:300;cursor:pointer;color:var(--vscode-editor-foreground);transition:background 0.1s;flex-shrink:0;';
+		addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		addBtn.addEventListener('mouseleave', () => { addBtn.style.background = ''; });
+		addBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.showAddAppointmentForm').catch(() => { }));
 
-		this._statBadge(stats, String(total), 'Total', 'var(--vscode-foreground)');
-		this._statBadge(stats, String(completed), 'Done', '#22c55e');
-		this._statBadge(stats, String(remaining), 'Left', '#3b82f6');
-		if (noShows > 0) {
-			this._statBadge(stats, String(noShows), 'No-Show', '#ef4444');
-		}
-
-		// Average wait time (estimate from arrived appointments)
-		const arrived = this.appointments.filter(a => {
-			const s = a.status?.toLowerCase();
-			return s === 'arrived' || s === 'checked-in' || s === 'in-room';
+		// ... actions button
+		const moreBtn = DOM.append(hdr, DOM.$('div'));
+		moreBtn.textContent = '···';
+		moreBtn.title = 'More actions';
+		moreBtn.style.cssText = 'width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;color:var(--vscode-editor-foreground);letter-spacing:1px;transition:background 0.1s;margin-left:2px;flex-shrink:0;';
+		moreBtn.addEventListener('mouseenter', () => { moreBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		moreBtn.addEventListener('mouseleave', () => { moreBtn.style.background = ''; });
+		moreBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.ctxMenuService.showContextMenu({
+				getAnchor: () => moreBtn,
+				getActions: () => [
+					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._render(); } },
+					{ id: 'week', label: 'View Week', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'week'; this._render(); } },
+					{ id: 'month', label: 'View Month', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'month'; this._render(); } },
+					{ id: 'refresh', label: 'Refresh', tooltip: '', class: '', enabled: true, run: () => this._loadAndRender() },
+				],
+			});
 		});
-		if (arrived.length > 0) {
-			const avgWait = Math.round(arrived.length * 8); // estimate 8 min per waiting patient
-			this._statBadge(stats, `${avgWait}m`, 'Avg Wait', '#f59e0b');
+
+		if (this._miniCalendarCollapsed) { return; }
+
+		// Day-of-week headers
+		const dayHdr = DOM.append(wrap, DOM.$('div'));
+		dayHdr.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:4px;';
+		for (const d of ['S', 'M', 'T', 'W', 'T', 'F', 'S']) {
+			const cell = DOM.append(dayHdr, DOM.$('span'));
+			cell.textContent = d;
+			cell.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:2px 0;';
 		}
-	}
 
-	private _statBadge(parent: HTMLElement, value: string, label: string, color: string): void {
-		const badge = DOM.append(parent, DOM.$('.stat'));
-		badge.style.cssText = `flex:1;text-align:center;padding:4px 2px;border-radius:4px;background:rgba(128,128,128,0.08);`;
-		const val = DOM.append(badge, DOM.$('div'));
-		val.textContent = value;
-		val.style.cssText = `font-size:16px;font-weight:700;color:${color};line-height:1.2;`;
-		const lbl = DOM.append(badge, DOM.$('div'));
-		lbl.textContent = label;
-		lbl.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
-	}
+		// Build 2-week grid: week containing today + next week
+		const now = new Date();
+		const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		const startSunday = new Date(now);
+		startSunday.setDate(now.getDate() - now.getDay()); // this Sunday
+		const grid = DOM.append(wrap, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;';
 
-	private _renderFilterBar(): void {
-		const bar = DOM.append(this.container, DOM.$('.filter-bar'));
-		bar.style.cssText = 'display:flex;gap:2px;padding:4px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-
-		for (const f of ['active', 'completed', 'all'] as const) {
-			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = f === 'active' ? 'Active' : f === 'completed' ? 'Done' : 'All';
-			const isActive = this.showFilter === f;
-			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
-			btn.addEventListener('click', () => { this.showFilter = f; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); });
+		for (let i = 0; i < 14; i++) {
+			const d = new Date(startSunday);
+			d.setDate(startSunday.getDate() + i);
+			const dIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+			const isToday = dIso === todayIso;
+			const isSelected = dIso === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+			const cell = DOM.append(grid, DOM.$('span'));
+			cell.textContent = String(d.getDate());
+			cell.style.cssText = `text-align:center;font-size:12px;padding:3px 0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:1px auto;${isToday ? 'background:#0078d4;color:#fff;font-weight:700;' : isSelected && !isToday ? 'background:var(--vscode-toolbar-hoverBackground);color:var(--vscode-editor-foreground);' : 'color:var(--vscode-editor-foreground);'}`;
+			cell.addEventListener('click', () => {
+				this.currentDate = new Date(d);
+				this.viewMode = 'day';
+				this._render();
+			});
+			cell.addEventListener('mouseenter', () => { if (!isToday) { cell.style.background = 'var(--vscode-toolbar-hoverBackground)'; } });
+			cell.addEventListener('mouseleave', () => { if (!isToday) { cell.style.background = isSelected && !isToday ? 'var(--vscode-toolbar-hoverBackground)' : ''; } });
 		}
+
+		// Chevron at bottom to collapse
+		const chevWrap = DOM.append(wrap, DOM.$('div'));
+		chevWrap.style.cssText = 'text-align:center;margin-top:6px;cursor:pointer;';
+		const chev = DOM.append(chevWrap, DOM.$('span'));
+		// allow-any-unicode-next-line
+		chev.textContent = '∨';
+		chev.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		chevWrap.addEventListener('click', () => { this._miniCalendarCollapsed = true; this._render(); });
 	}
 
 	private _renderTimeline(): void {
 		const section = DOM.append(this.container, DOM.$('.timeline-section'));
-		section.style.cssText = 'padding:4px 0;';
+		section.style.cssText = 'padding:0;overflow-y:auto;';
 
 		const filtered = this._getFilteredAppointments();
+		const now = new Date();
+		const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-		// Section header — reflects the calendar editor's current view + range
-		// instead of always saying "today" so users can tell at a glance which
-		// span the sidebar list represents (Day / Week of MMM dd-dd / MMM YYYY).
-		const header = DOM.append(section, DOM.$('.section-header'));
-		header.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;gap:6px;';
-		const headerText = DOM.append(header, DOM.$('span'));
-		headerText.textContent = this._getRange().rangeLabel;
-		headerText.style.cssText = 'flex:1;';
-		const modeBadge = DOM.append(header, DOM.$('span'));
-		modeBadge.textContent = this.viewMode;
-		modeBadge.style.cssText = 'padding:1px 6px;border-radius:8px;background:rgba(128,128,128,0.18);color:var(--vscode-foreground);font-size:9px;letter-spacing:0.4px;';
-		const countText = DOM.append(header, DOM.$('span'));
-		countText.textContent = `${filtered.length} appts`;
-		countText.style.cssText = 'font-size:10px;';
-
-		if (filtered.length === 0) {
-			const empty = DOM.append(section, DOM.$('.empty'));
-			empty.style.cssText = 'padding:12px 10px;color:var(--vscode-descriptionForeground);text-align:center;font-size:12px;';
-			empty.textContent = this.showFilter === 'active' ? 'No active appointments' : this.showFilter === 'completed' ? 'No completed appointments' : 'No appointments';
-			return;
+		// Group appointments by local date
+		const byDay = new Map<string, Appointment[]>();
+		for (const apt of filtered) {
+			const raw = apt.start || apt.startTime;
+			if (!raw) { continue; }
+			const d = new Date(String(raw));
+			if (isNaN(d.getTime())) { continue; }
+			const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+			if (!byDay.has(iso)) { byDay.set(iso, []); }
+			byDay.get(iso)!.push(apt);
 		}
 
-		const visible = Math.min(this.visibleCount, filtered.length);
-		for (let i = 0; i < visible; i++) {
-			this._renderAppointmentRow(section, filtered[i]);
+		// For day view show today; for week/month show the range days
+		const { startDate, endDate } = this._getRange();
+		const daysToShow: string[] = [];
+		const cursor = new Date(startDate + 'T00:00:00');
+		const end = new Date(endDate + 'T00:00:00');
+		while (cursor <= end) {
+			daysToShow.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
+			cursor.setDate(cursor.getDate() + 1);
 		}
-		renderShowMoreFooter(
-			section,
-			{ visibleCount: visible, totalCount: filtered.length },
-			(next) => { this.visibleCount = next; this._render(); },
-			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
-		);
+
+		for (const dayIso of daysToShow) {
+			const dayDate = new Date(dayIso + 'T00:00:00');
+			const apts = byDay.get(dayIso) || [];
+
+			// Day header label
+			const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+			const tomorrowIso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+			let dayLabel: string;
+			if (dayIso === todayIso) {
+				dayLabel = `Today • ${dayDate.toLocaleDateString('en-US', { weekday: 'long' })} • ${dayDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
+			} else if (dayIso === tomorrowIso) {
+				dayLabel = `Tomorrow • ${dayDate.toLocaleDateString('en-US', { weekday: 'long' })} • ${dayDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
+			} else {
+				dayLabel = `${dayDate.toLocaleDateString('en-US', { weekday: 'long' })} • ${dayDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
+			}
+
+			const dayHdr = DOM.append(section, DOM.$('div'));
+			const isToday = dayIso === todayIso;
+			dayHdr.style.cssText = `padding:8px 12px 4px;font-size:12px;font-weight:600;${isToday ? 'color:#0078d4;' : 'color:var(--vscode-foreground);'}`;
+			dayHdr.textContent = dayLabel;
+
+			if (apts.length === 0) {
+				const empty = DOM.append(section, DOM.$('div'));
+				empty.style.cssText = 'padding:4px 12px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
+				empty.textContent = 'No events scheduled';
+			} else {
+				for (const apt of apts) {
+					this._renderTeamsStyleRow(section, apt);
+				}
+			}
+		}
+	}
+
+	private _renderTeamsStyleRow(parent: HTMLElement, apt: Appointment): void {
+		const row = DOM.append(parent, DOM.$('.apt-row'));
+		row.style.cssText = 'display:flex;gap:10px;padding:8px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.12));cursor:pointer;align-items:flex-start;';
+
+		// Left: time + duration column
+		const timeCol = DOM.append(row, DOM.$('div'));
+		timeCol.style.cssText = 'width:52px;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;padding-top:2px;';
+		const rawTime = apt.start || apt.startTime;
+		let timeStr = '';
+		let durStr = '';
+		if (rawTime) {
+			try {
+				const d = new Date(String(rawTime));
+				if (!isNaN(d.getTime())) {
+					timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+					const dur = apt.duration || 30;
+					durStr = `${dur}m`;
+				}
+			} catch { /* */ }
+		}
+		const timeEl = DOM.append(timeCol, DOM.$('span'));
+		timeEl.textContent = timeStr || '--:--';
+		timeEl.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-editor-foreground);white-space:nowrap;';
+		const durEl = DOM.append(timeCol, DOM.$('span'));
+		durEl.textContent = durStr;
+		durEl.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+
+		// Colored accent bar
+		const bar = DOM.append(row, DOM.$('div'));
+		const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#f97316';
+		bar.style.cssText = `width:3px;border-radius:2px;background:${statusColor};flex-shrink:0;min-height:36px;align-self:stretch;`;
+
+		// Right: content
+		const content = DOM.append(row, DOM.$('div'));
+		content.style.cssText = 'flex:1;min-width:0;';
+
+		const title = DOM.append(content, DOM.$('div'));
+		title.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown Patient';
+		title.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-editor-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+		const sub = DOM.append(content, DOM.$('div'));
+		sub.textContent = getAppointmentType(apt) || (apt.providerName || apt.practitionerName || '');
+		sub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+		// Status badge
+		const statusBadge = DOM.append(content, DOM.$('span'));
+		statusBadge.textContent = (apt.status || 'Scheduled').replace(/-/g, ' ');
+		statusBadge.style.cssText = `display:inline-block;margin-top:4px;font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;background:${statusColor}22;color:${statusColor};font-weight:600;letter-spacing:0.3px;`;
+
+		// Provider avatar row
+		if (apt.providerName || apt.practitionerName) {
+			const avatarRow = DOM.append(content, DOM.$('div'));
+			avatarRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
+			const av = DOM.append(avatarRow, DOM.$('div'));
+			const provName = apt.providerName || apt.practitionerName || '';
+			av.textContent = provName.split(' ').map((p: string) => p[0] || '').slice(0, 2).join('').toUpperCase();
+			av.style.cssText = `width:18px;height:18px;border-radius:50%;background:${statusColor};color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;`;
+			av.title = provName;
+			const provLabel = DOM.append(avatarRow, DOM.$('span'));
+			provLabel.textContent = provName;
+			provLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+		}
+
+		// Actions container — hidden until row hover
+		const actionsWrap = createRowActionsContainer(row);
+		actionsWrap.style.cssText = 'display:flex;gap:2px;flex-shrink:0;align-items:center;opacity:0;transition:opacity 0.1s;padding-top:2px;';
+
+		createOverflowMenuButton(actionsWrap, (): IOverflowMenuItem[] => {
+			const status = apt.status?.toLowerCase() || '';
+			const isTerminal = this.terminalStatuses.has(status);
+			const items: IOverflowMenuItem[] = [];
+
+			// Status progression
+			if (!isTerminal) {
+				if (status !== 'arrived' && status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
+					items.push({ symbol: '\u{1F6B6}', label: 'Mark Arrived', onClick: () => this._changeStatus(apt, 'Arrived') });
+				}
+				if (status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
+					items.push({ symbol: '\u{2713}', label: 'Check In', onClick: () => this._changeStatus(apt, 'Checked-in') });
+				}
+				if (status === 'checked-in' || status === 'arrived') {
+					items.push({ symbol: '\u{1F6AA}', label: 'Move to Room', onClick: () => this._changeStatus(apt, 'In Room') });
+				}
+				if (status !== 'with-provider') {
+					items.push({ symbol: '\u{1FA7A}', label: 'With Provider', onClick: () => this._changeStatus(apt, 'With Provider') });
+				}
+				items.push({ symbol: '\u{2714}', label: 'Mark Completed', onClick: () => this._changeStatus(apt, 'Completed') });
+				items.push({ separator: true });
+			}
+
+			// Navigation
+			if (apt.patientId) {
+				items.push({ symbol: '\u{1F5C2}', label: 'Open Patient Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
+			}
+			if (apt.encounterId) {
+				items.push({ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId) });
+				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals') });
+			} else if (!isTerminal) {
+				items.push({
+					symbol: '\u{1F4C3}', label: 'Create Encounter', onClick: async () => {
+						try {
+							await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+							await this._loadAndRender();
+						} catch { /* */ }
+					}
+				});
+			}
+
+			// Telehealth
+			const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
+			const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+			if (isTele && this.installationsService.isInstalled('ciyex-telehealth')) {
+				items.push({ symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName) });
+			}
+
+			// Destructive actions
+			if (!isTerminal) {
+				items.push({ separator: true });
+				items.push({ symbol: '\u{1F6B7}', label: 'No Show', onClick: () => this._changeStatus(apt, 'No Show') });
+				items.push({ symbol: '\u{1F5D1}', label: 'Cancel Appointment', onClick: () => this._changeStatus(apt, 'Cancelled') });
+			}
+
+			return items;
+		});
+
+		// Show/hide actions on row hover; click row to open chart (not when clicking actions)
+		row.addEventListener('mouseenter', () => {
+			row.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.06))';
+			actionsWrap.style.opacity = '1';
+		});
+		row.addEventListener('mouseleave', () => {
+			row.style.background = '';
+			actionsWrap.style.opacity = '0';
+		});
+		row.addEventListener('click', (e) => {
+			if (actionsWrap.contains(e.target as Node)) { return; }
+			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }); }
+		});
 	}
 
 	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {
@@ -470,151 +646,6 @@ export class ScheduleSidebarPane extends ViewPane {
 			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, status: newStatus }) }); } catch { /* */ }
 		}
 		await this._loadAndRender();
-	}
-
-	private async _assignRoom(apt: Appointment, room: string): Promise<void> {
-		try {
-			await this.apiService.fetch(`/api/appointments/${apt.id}/room`, { method: 'PUT', body: JSON.stringify({ room }) });
-		} catch {
-			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, room }) }); } catch { /* */ }
-		}
-		await this._loadAndRender();
-	}
-
-	private _renderAppointmentRow(parent: HTMLElement, apt: Appointment): void {
-		const row = DOM.append(parent, DOM.$('.apt-row'));
-		row.style.cssText = 'padding:6px 10px;border-left:3px solid transparent;border-bottom:1px solid rgba(128,128,128,0.06);';
-
-		const statusColor = STATUS_COLORS[apt.status?.toLowerCase()] || '#6b7280';
-		row.style.borderLeftColor = statusColor;
-		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground, rgba(255,255,255,0.04))'; });
-		row.addEventListener('mouseleave', () => { row.style.background = ''; });
-
-		// Top line: time + name + status badge
-		const topLine = DOM.append(row, DOM.$('.top'));
-		topLine.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:2px;';
-
-		const time = DOM.append(topLine, DOM.$('span'));
-		time.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-foreground);width:50px;flex-shrink:0;';
-		// Try direct date parsing
-		const rawTime = apt.start || apt.startTime;
-		if (rawTime && typeof rawTime === 'string') {
-			try {
-				const d = new Date(rawTime);
-				if (!isNaN(d.getTime())) {
-					time.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-				} else {
-					time.textContent = '--:--';
-				}
-			} catch {
-				time.textContent = '--:--';
-			}
-		} else {
-			time.textContent = '--:--';
-		}
-
-		const name = DOM.append(topLine, DOM.$('span'));
-		name.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown';
-		name.style.cssText = 'flex:1;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-
-		// Status badge (clickable - advances to next status)
-		const badge = DOM.append(topLine, DOM.$('span'));
-		badge.textContent = (apt.status || 'scheduled').replace(/-/g, ' ');
-		badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:3px;text-transform:capitalize;cursor:pointer;background:${statusColor}22;color:${statusColor};font-weight:500;white-space:nowrap;`;
-		badge.title = 'Click to advance status';
-		// Find next status in workflow
-		const currentIdx = this.statusOptions.findIndex(s => s.toLowerCase() === apt.status?.toLowerCase());
-		const nextStatus = currentIdx >= 0 && currentIdx < this.statusOptions.length - 1 ? this.statusOptions[currentIdx + 1] : null;
-		if (nextStatus && !this.terminalStatuses.has(apt.status?.toLowerCase())) {
-			badge.addEventListener('click', () => this._changeStatus(apt, nextStatus));
-		}
-
-		// Middle line: type + provider + room
-		const midLine = DOM.append(row, DOM.$('.mid'));
-		midLine.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
-
-		const typeEl = DOM.append(midLine, DOM.$('span'));
-		typeEl.textContent = getAppointmentType(apt);
-
-		if (apt.providerName || apt.practitionerName) {
-			DOM.append(midLine, DOM.$('span')).textContent = '\u00B7';
-			const provEl = DOM.append(midLine, DOM.$('span'));
-			provEl.textContent = apt.providerName || apt.practitionerName || '';
-		}
-
-		// Room badge (clickable to assign)
-		const roomBadge = DOM.append(midLine, DOM.$('span'));
-		roomBadge.style.cssText = `margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;cursor:pointer;${apt.room ? 'background:rgba(99,102,241,0.15);color:#818cf8;' : 'background:rgba(128,128,128,0.1);color:var(--vscode-descriptionForeground);'}`;
-		roomBadge.textContent = apt.room || 'Room';
-		roomBadge.title = 'Click to assign room';
-		roomBadge.addEventListener('click', async () => {
-			const items = this.roomOptions.map(r => ({ label: r }));
-			const pick = await this.quickInputService.pick(items, { placeHolder: 'Assign room' });
-			if (pick) { await this._assignRoom(apt, pick.label); }
-		});
-
-		// Actions live behind a Teams-style \u22ef overflow menu \u2014 opens a labelled
-		// popup with one icon + name per action.
-		const actions = createRowActionsContainer(row);
-		actions.style.marginLeft = 'auto';
-		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
-			const items: IOverflowMenuItem[] = [];
-			const status = apt.status?.toLowerCase();
-			const isTerminal = this.terminalStatuses.has(status);
-
-			if (!isTerminal && status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
-				items.push({ symbol: '\u2713', label: 'Check In', onClick: () => this._changeStatus(apt, 'Checked-in') });
-			}
-			items.push({
-				// allow-any-unicode-next-line
-				symbol: '\u{1F4CB}', label: 'Open Patient Chart', onClick: () => {
-					if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId); }
-				},
-			});
-			if (apt.encounterId) {
-				items.push({ symbol: '\u2764', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId) });
-			}
-			if (!apt.encounterId && !isTerminal) {
-				items.push({
-					symbol: '\u2795', label: 'Create Encounter', onClick: async () => {
-						try {
-							await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-							await this._loadAndRender();
-						} catch { /* */ }
-					},
-				});
-			}
-			const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
-			const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
-			if (isTele && this.installationsService.isInstalled('ciyex-telehealth')) {
-				items.push({
-					// allow-any-unicode-next-line
-					symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => {
-						this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
-					},
-				});
-			}
-			if (!isTerminal) {
-				items.push({ separator: true });
-				items.push({ symbol: '\u2716', label: 'No Show', onClick: () => this._changeStatus(apt, 'No Show') });
-			}
-			return items;
-		});
-	}
-
-	private _renderLoadMore(): void {
-		const loadMore = DOM.append(this.container, DOM.$('.load-more'));
-		loadMore.style.cssText = 'padding:8px 10px;text-align:center;border-top:1px solid var(--vscode-editorWidget-border);';
-
-		const btn = DOM.append(loadMore, DOM.$('button')) as HTMLButtonElement;
-		btn.textContent = `Load More (${this.appointments.length} of ${this.totalAppointments})`;
-		btn.style.cssText = 'padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;width:100%;';
-		btn.addEventListener('click', async () => {
-			this.currentPage++;
-			btn.textContent = 'Loading...';
-			btn.disabled = true;
-			await this._loadAndRender(true);
-		});
 	}
 
 	private _renderWaitlist(): void {

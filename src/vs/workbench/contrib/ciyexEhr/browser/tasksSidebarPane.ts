@@ -299,10 +299,7 @@ export class TasksSidebarPane extends ViewPane {
 		const priorityColor = PRIORITY_COLORS[task.priority || 'normal'] || '#3b82f6';
 
 		const row = DOM.append(parent, DOM.$('.task-row'));
-		row.style.cssText = `padding:6px 10px;border-left:3px solid ${statusColor};border-bottom:1px solid rgba(128,128,128,0.06);cursor:pointer;`;
-		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-		row.addEventListener('mouseleave', () => { row.style.background = ''; });
-		row.addEventListener('click', () => this.commandService.executeCommand('ciyex.openTasks'));
+		row.style.cssText = `padding:6px 10px;border-left:3px solid ${statusColor};border-bottom:1px solid rgba(128,128,128,0.06);cursor:pointer;position:relative;`;
 
 		const top = DOM.append(row, DOM.$('.top'));
 		top.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:2px;';
@@ -343,28 +340,41 @@ export class TasksSidebarPane extends ViewPane {
 
 		const status = DOM.append(mid, DOM.$('span'));
 		status.textContent = overdue ? 'OVERDUE' : (task.status || '').replace(/_/g, ' ');
-		status.style.cssText = `margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;text-transform:capitalize;background:${statusColor}22;color:${statusColor};font-weight:500;white-space:nowrap;`;
+		status.style.cssText = `margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;text-transform:capitalize;background:${statusColor};color:#fff;font-weight:500;white-space:nowrap;flex-shrink:0;`;
 
-		// Actions land behind a Teams-style ⋯ overflow menu. The popup lists
-		// each action with its full name + a large icon so users can find them
-		// at a glance (per /sort-out spec from 2026-05-21).
-		const actions = createRowActionsContainer(row);
-		actions.style.marginLeft = 'auto';
+		// ⋯ actions — placed in the top flex row at the far right so the popup
+		// opens to the right of the sidebar (outside the bar), not mid-row.
+		const actions = createRowActionsContainer(top);
+		actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
+
 		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
 			const items: IOverflowMenuItem[] = [];
 			if (task.status !== 'completed' && task.status !== 'cancelled') {
-				items.push({ symbol: '\u{2713}', label: 'Mark Complete', onClick: () => this._updateStatus(task, 'completed') });
+				items.push({ symbol: '\u{2714}', label: 'Mark Complete', onClick: () => this._updateStatus(task, 'completed') });
 			}
 			if (task.status === 'pending') {
 				items.push({ symbol: '\u{25B6}', label: 'Start Task', onClick: () => this._updateStatus(task, 'in_progress') });
 			}
-			items.push({ symbol: '\u{270E}', label: 'Edit Task', onClick: () => this.commandService.executeCommand('ciyex.openTasks') });
+			items.push({ symbol: '\u{1F4DD}', label: 'Edit Task', onClick: () => this.commandService.executeCommand('ciyex.openTasks') });
 			if (task.status !== 'completed' && task.status !== 'cancelled') {
-				items.push({ symbol: '\u{2298}', label: 'Void / Cancel', onClick: () => this._updateStatus(task, 'cancelled') });
+				items.push({ symbol: '\u{1F6AB}', label: 'Cancel Task', onClick: () => this._updateStatus(task, 'cancelled') });
 			}
 			items.push({ separator: true });
 			items.push({ symbol: '\u{1F5D1}', label: 'Delete', onClick: () => this._deleteTask(task) });
 			return items;
+		});
+
+		row.addEventListener('mouseenter', () => {
+			row.style.background = 'var(--vscode-list-hoverBackground)';
+			actions.style.opacity = '1';
+		});
+		row.addEventListener('mouseleave', () => {
+			row.style.background = '';
+			actions.style.opacity = '0';
+		});
+		row.addEventListener('click', (e) => {
+			if (actions.contains(e.target as Node)) { return; }
+			this.commandService.executeCommand('ciyex.openTasks');
 		});
 	}
 

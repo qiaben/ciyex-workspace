@@ -476,10 +476,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 		const statusColor = STATUS_COLORS[statusKey] || '#6b7280';
 
 		const row = DOM.append(this.listEl, DOM.$('.appt-row'));
-		row.style.cssText = `padding:7px 10px;border-left:3px solid ${statusColor};border-bottom:1px solid rgba(128,128,128,0.06);cursor:pointer;`;
-		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-		row.addEventListener('mouseleave', () => { row.style.background = ''; });
-		row.addEventListener('click', () => this._openChart(apt));
+		row.style.cssText = `padding:7px 10px;border-left:3px solid ${statusColor};border-bottom:1px solid rgba(128,128,128,0.06);cursor:pointer;position:relative;`;
 
 		// Top: DATE/TIME PATIENT STATUS
 		const top = DOM.append(row, DOM.$('.top'));
@@ -502,7 +499,24 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 		const badge = DOM.append(top, DOM.$('span'));
 		badge.textContent = (apt.status || 'scheduled').replace(/-/g, ' ');
-		badge.style.cssText = `font-size:9px;padding:1px 5px;border-radius:3px;text-transform:capitalize;background:${statusColor}22;color:${statusColor};font-weight:500;white-space:nowrap;`;
+		badge.style.cssText = `font-size:9px;padding:1px 5px;border-radius:3px;text-transform:capitalize;background:${statusColor};color:#fff;font-weight:500;white-space:nowrap;flex-shrink:0;`;
+
+		// ⋯ actions button — hidden until row hover, placed at far-right of the top bar
+		const actions = createRowActionsContainer(top);
+		actions.style.cssText = 'display:flex;gap:2px;align-items:center;margin-left:4px;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
+
+		row.addEventListener('mouseenter', () => {
+			row.style.background = 'var(--vscode-list-hoverBackground)';
+			actions.style.opacity = '1';
+		});
+		row.addEventListener('mouseleave', () => {
+			row.style.background = '';
+			actions.style.opacity = '0';
+		});
+		row.addEventListener('click', (e) => {
+			if (actions.contains(e.target as Node)) { return; }
+			this._openChart(apt);
+		});
 
 		// Middle: TYPE PROVIDER LOCATION ROOM
 		const mid = DOM.append(row, DOM.$('.mid'));
@@ -529,32 +543,23 @@ export class AppointmentsSidebarPane extends ViewPane {
 		if (apt.room) {
 			const room = DOM.append(mid, DOM.$('span'));
 			room.textContent = apt.room;
-			room.style.cssText = 'margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(99,102,241,0.15);color:#818cf8;font-weight:500;';
+			room.style.cssText = 'margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(99,102,241,0.8);color:#fff;font-weight:500;';
 		}
 
-		// All row actions live behind a Teams-style ⋯ overflow menu — opens a
-		// labelled popup with one icon + name per action.
-		const actions = createRowActionsContainer(row);
-		actions.style.marginTop = '2px';
-		actions.style.marginLeft = 'auto';
 		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
 			const items: IOverflowMenuItem[] = [];
 			const isTele = (getAppointmentType(apt) || '').toLowerCase() === 'telehealth';
 			if (isTele) {
-				// allow-any-unicode-next-line
-				items.push({ symbol: '\u{1F4DE}', label: 'Join Video Visit', onClick: () => this._joinTelehealth(apt) });
+				items.push({ symbol: '\u{1F4F9}', label: 'Join Video Visit', onClick: () => this._joinTelehealth(apt) });
 			}
-			// allow-any-unicode-next-line
-			items.push({ symbol: '\u{1F4CB}', label: 'Open Chart', onClick: () => this._openChart(apt) });
+			items.push({ symbol: '\u{1F5C2}', label: 'Open Chart', onClick: () => this._openChart(apt) });
 			if (!isTele) {
-				// allow-any-unicode-next-line
-				items.push({ symbol: '\u{2764}', label: 'Record Vitals', onClick: () => this._recordVitals(apt) });
-				// allow-any-unicode-next-line
-				items.push({ symbol: '\u{1F5D2}', label: 'Visit Summary', onClick: () => this._visitSummary(apt) });
+				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this._recordVitals(apt) });
+				items.push({ symbol: '\u{1F4DD}', label: 'Visit Summary', onClick: () => this._visitSummary(apt) });
 			}
 			if (!apt.encounterId) {
 				items.push({ separator: true });
-				items.push({ symbol: '+', label: 'New Encounter', onClick: () => this._newEncounter(apt) });
+				items.push({ symbol: '\u{1F4C3}', label: 'New Encounter', onClick: () => this._newEncounter(apt) });
 			}
 			return items;
 		});

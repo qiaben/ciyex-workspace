@@ -217,12 +217,14 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Hide developer sidebar containers immediately (no API call)
 		this._hideDevSidebarContainers();
 
-		// Open Calendar editor + expand the Schedule sidebar panel
-		this.commandService.executeCommand('ciyex.openCalendar').catch(() => { /* command may not be ready */ });
-		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { /* view may not be ready */ });
-
-		// Open the Schedule sidebar panel
-		this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { });
+		// Open Calendar editor + expand the Schedule sidebar panel.
+		// Retry with increasing delays in case the editor service isn't ready yet.
+		const openCalendar = () => this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
+		const openSchedule = () => this.viewsService.openView('ciyex.calendar.schedule', false).catch(() => { });
+		openCalendar();
+		openSchedule();
+		setTimeout(() => { openCalendar(); openSchedule(); }, 500);
+		setTimeout(() => { openCalendar(); openSchedule(); }, 1500);
 
 		// Load permissions, menus, marketplace installations, patient list, and
 		// status bar in parallel. Installations gate paid extensions such as

@@ -227,9 +227,7 @@ export class EncounterListPane extends ViewPane {
 
 		for (const item of page) {
 			const row = DOM.append(this.listEl, DOM.$('div'));
-			row.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(128,128,128,0.06);';
-			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-			row.addEventListener('mouseleave', () => { row.style.background = ''; });
+			row.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(128,128,128,0.06);position:relative;';
 
 			// Avatar (patient initials)
 			const patName = String(item.patientRefDisplay || item.patientDisplay || item.patientName || item.subjectDisplay || '');
@@ -264,34 +262,37 @@ export class EncounterListPane extends ViewPane {
 				secEl.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			}
 
-			// Status badge (SIGNED=green, UNSIGNED=red, INCOMPLETE=amber — matching EHR UI)
+			// Status badge — solid colour background with white text
 			const status = String(item.status || 'UNSIGNED');
 			const color = status === 'SIGNED' ? '#22c55e' : status === 'UNSIGNED' ? '#ef4444' : status === 'INCOMPLETE' ? '#f59e0b' : '#6b7280';
 			const badge = DOM.append(row, DOM.$('span'));
 			badge.textContent = status;
-			badge.style.cssText = `font-size:9px;padding:1px 5px;border-radius:3px;background:${color}18;color:${color};white-space:nowrap;flex-shrink:0;`;
+			badge.style.cssText = `font-size:9px;padding:1px 5px;border-radius:3px;background:${color};color:#fff;white-space:nowrap;flex-shrink:0;`;
 
-			// Click → open encounter
-			row.addEventListener('click', () => {
-				const id = String(item.id || item.fhirId || '');
-				const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
-				this.commandService.executeCommand('ciyex.openEncounter', patientId, id, patName, `${provName}`);
-			});
-
-			// Actions go behind a Teams-style ⋯ overflow menu — labelled popup
-			// shared with the patient + appointment sidebars.
+			// ⋯ actions — hidden until hover, Teams-style
 			const encId = String(item.id || item.fhirId || '');
 			const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
 			const actions = createRowActionsContainer(row);
-			actions.style.marginLeft = 'auto';
+			actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
+
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
-				// allow-any-unicode-next-line
-				{ symbol: '\u{1F4CB}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
-				// allow-any-unicode-next-line
-				{ symbol: '\u{2764}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
-				// allow-any-unicode-next-line
-				{ symbol: '\u{1F5D2}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan') },
+				{ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
+				{ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
+				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan') },
 			]);
+
+			row.addEventListener('mouseenter', () => {
+				row.style.background = 'var(--vscode-list-hoverBackground)';
+				actions.style.opacity = '1';
+			});
+			row.addEventListener('mouseleave', () => {
+				row.style.background = '';
+				actions.style.opacity = '0';
+			});
+			row.addEventListener('click', (e) => {
+				if (actions.contains(e.target as Node)) { return; }
+				this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`);
+			});
 		}
 
 		// Show More footer \u2014 replaces prev/next pagination so this rail

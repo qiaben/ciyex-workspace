@@ -16,7 +16,7 @@ import { ICiyexAuthService, CiyexAuthState } from '../../../ciyexAuth/browser/ci
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { BaseCiyexInput } from './ciyexEditorInput.js';
+import { BaseCiyexInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface Appointment {
@@ -505,6 +505,7 @@ export class CalendarEditor extends EditorPane {
 
 		// Refresh
 		iconBtn(actionsGroup, '\u21BB', 'Refresh', false, () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); });
+		iconBtn(actionsGroup, '\u2630', 'Appointment List', false, () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
 
 		// Appointment count (filtered by current view date range + provider/location)
 		const { startDate, endDate } = this._getDateRange();

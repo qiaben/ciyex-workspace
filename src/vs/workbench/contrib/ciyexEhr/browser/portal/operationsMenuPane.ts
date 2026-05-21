@@ -265,14 +265,14 @@ export class OperationsMenuPane extends ViewPane {
 		for (const a of actions) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
 			btn.title = `Quick: ${a.label}`;
-			btn.style.cssText = `flex:1;padding:4px 6px;border:1px solid var(--vscode-editorWidget-border);border-radius:3px;background:transparent;color:${a.color};cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;`;
+			btn.style.cssText = `flex:1;padding:4px 6px;border:none;border-radius:3px;background:${a.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;`;
 			const ic = DOM.append(btn, DOM.$('span'));
 			ic.textContent = a.icon;
 			const lbl = DOM.append(btn, DOM.$('span'));
 			lbl.textContent = a.label;
 			lbl.style.cssText = 'font-weight:600;';
-			btn.addEventListener('mouseenter', () => { btn.style.background = `${a.color}15`; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
+			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
 			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(a.command); });
 		}
 	}
@@ -313,7 +313,7 @@ export class OperationsMenuPane extends ViewPane {
 		if (typeof count === 'number') {
 			const badge = DOM.append(labelRow, DOM.$('span'));
 			badge.textContent = String(count);
-			badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:8px;background:${item.color}22;color:${item.color};font-weight:600;`;
+			badge.style.cssText = `font-size:9px;padding:1px 6px;border-radius:8px;background:${item.color};color:#fff;font-weight:600;`;
 		}
 
 		const desc = DOM.append(col, DOM.$('div'));
@@ -393,7 +393,7 @@ export class OperationsMenuPane extends ViewPane {
 			const statusColor = status.includes('active') || status.includes('completed') || status.includes('approved') || status.includes('paid') ? '#22c55e'
 				: status.includes('cancel') || status.includes('void') || status.includes('denied') ? '#ef4444'
 					: status.includes('pending') || status.includes('hold') ? '#f59e0b' : '#6b7280';
-			badge.style.cssText = `font-size:8px;padding:1px 5px;border-radius:3px;background:${statusColor}22;color:${statusColor};font-weight:600;text-transform:capitalize;flex-shrink:0;`;
+			badge.style.cssText = `font-size:8px;padding:1px 5px;border-radius:3px;background:${statusColor};color:#fff;font-weight:600;text-transform:capitalize;flex-shrink:0;`;
 		}
 
 		const actions = createRowActionsContainer(dataRow);

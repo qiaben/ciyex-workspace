@@ -18,6 +18,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { MessagingEditorInput } from '../editors/ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { createOverflowMenuButton, createRowActionsContainer, IOverflowMenuItem } from '../sidebarActions.js';
 
 interface Channel {
 	id: string;
@@ -236,14 +237,6 @@ export class ChannelListPane extends ViewPane {
 		const hasUnread = (ch.unreadCount || 0) > 0;
 		const hasMention = (ch.mentionsCount || 0) > 0;
 		row.style.cssText = `padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;position:relative;${hasUnread ? 'font-weight:600;' : ''}`;
-		row.addEventListener('mouseenter', () => {
-			row.style.background = 'var(--vscode-list-hoverBackground)';
-			actions.style.opacity = '1';
-		});
-		row.addEventListener('mouseleave', () => {
-			row.style.background = '';
-			actions.style.opacity = '0';
-		});
 
 		if (ch.type === 'dm' || ch.type === 'group_dm') {
 			// Avatar with status dot
@@ -324,25 +317,28 @@ export class ChannelListPane extends ViewPane {
 			badge.style.cssText = 'font-size:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);padding:1px 5px;border-radius:8px;font-weight:600;';
 		}
 
-		// Action icons (hover)
-		const actions = DOM.append(row, DOM.$('div'));
-		actions.style.cssText = 'position:absolute;right:6px;top:6px;display:flex;gap:2px;opacity:0;transition:opacity 0.1s;background:var(--vscode-list-hoverBackground);padding:2px;border-radius:3px;';
+		// ⋯ overflow menu — hidden until hover, opens outside the bar
+		const actions = createRowActionsContainer(row);
+		actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
 
-		const actionBtn = (sym: string, lbl: string, color: string, fn: () => void) => {
-			const btn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = sym;
-			btn.title = lbl;
-			btn.style.cssText = `padding:2px 4px;border:none;border-radius:3px;cursor:pointer;font-size:10px;background:transparent;color:${color};`;
-			btn.addEventListener('mouseenter', () => { btn.style.background = `${color}30`; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
-		};
+		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
+			{ symbol: ch.pinned ? '\u{1F4CC}' : '\u{1F4CD}', label: ch.pinned ? 'Unpin' : 'Pin', onClick: () => this._togglePin(ch) },
+			{ symbol: ch.muted ? '\u{1F515}' : '\u{1F507}', label: ch.muted ? 'Unmute' : 'Mute', onClick: () => this._toggleMute(ch) },
+			{ symbol: '\u{2713}', label: 'Mark as Read', onClick: () => this._markRead(ch) },
+			{ separator: true },
+			{ symbol: '\u{1F4AC}', label: 'Open Channel', onClick: () => { const input = new MessagingEditorInput(ch.id, ch.name, ch.type); this.editorService.openEditor(input, { pinned: true }); } },
+		]);
 
-		actionBtn('\u{1F4CC}', ch.pinned ? 'Unpin' : 'Pin', '#3b82f6', () => this._togglePin(ch));
-		actionBtn('\u{1F515}', ch.muted ? 'Unmute' : 'Mute', '#f59e0b', () => this._toggleMute(ch));
-		actionBtn('\u{2713}', 'Mark as read', '#22c55e', () => this._markRead(ch));
-
-		row.addEventListener('click', () => {
+		row.addEventListener('mouseenter', () => {
+			row.style.background = 'var(--vscode-list-hoverBackground)';
+			actions.style.opacity = '1';
+		});
+		row.addEventListener('mouseleave', () => {
+			row.style.background = '';
+			actions.style.opacity = '0';
+		});
+		row.addEventListener('click', (e) => {
+			if (actions.contains(e.target as Node)) { return; }
 			const input = new MessagingEditorInput(ch.id, ch.name, ch.type);
 			this.editorService.openEditor(input, { pinned: true });
 		});

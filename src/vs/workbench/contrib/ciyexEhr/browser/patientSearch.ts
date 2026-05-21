@@ -118,7 +118,8 @@ function calcAge(dob: string): number {
 	if (!dob) {
 		return 0;
 	}
-	const b = new Date(dob);
+	const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob);
+	const b = iso ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])) : new Date(dob);
 	const t = new Date();
 	let a = t.getFullYear() - b.getFullYear();
 	if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) {

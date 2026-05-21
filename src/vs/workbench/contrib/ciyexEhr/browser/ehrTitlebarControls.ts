@@ -6,7 +6,7 @@
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { ICiyexApiService } from './ciyexApiService.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 
@@ -75,6 +75,11 @@ export class EhrTitlebarControls extends Disposable {
 		this._buildCurrencyButton();
 		this._buildPatientOverlay();
 		this._buildAppointmentOverlay();
+
+		// Allow other components (e.g. schedule sidebar) to open the appointment form
+		this._register(CommandsRegistry.registerCommand('ciyex.showAddAppointmentForm', () => {
+			this._toggleAppointmentOverlay();
+		}));
 
 		// Close overlays on outside click
 		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, DOM.EventType.MOUSE_DOWN, (e) => {
@@ -273,9 +278,9 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		// allow-any-unicode-next-line
-		const patientIcon = DOM.append(btn, DOM.$('span.ehr-action-icon'));
-		patientIcon.textContent = '\u{1F464}';
+		DOM.append(btn, DOM.$('span.codicon.codicon-account'));
+		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
+		label.textContent = 'Patient';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -291,6 +296,8 @@ export class EhrTitlebarControls extends Disposable {
 		btn.setAttribute('aria-label', 'Add Appointment');
 
 		DOM.append(btn, DOM.$('span.codicon.codicon-calendar'));
+		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
+		label.textContent = 'Appointment';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -305,8 +312,10 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Donate';
 		btn.setAttribute('aria-label', 'Donate');
 
-		const currencyIcon = DOM.append(btn, DOM.$('span.ehr-action-icon'));
-		currencyIcon.textContent = '$';
+		const icon = DOM.append(btn, DOM.$('span.ehr-currency-icon'));
+		icon.textContent = '$';
+		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
+		label.textContent = 'Donate';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -424,13 +433,15 @@ export class EhrTitlebarControls extends Disposable {
 		};
 		this._register(DOM.addDisposableListener(dobVisible, 'input', () => {
 			const iso = usToIso(dobVisible.value);
-			dob.value = iso && iso <= todayIso ? iso : (iso > todayIso ? todayIso : '');
-			dobVisible.style.borderColor = dobVisible.value && !iso ? '#ef4444' : '';
+			// Never silently cap to today — keep hidden value empty if invalid/future so
+			// save-time validation shows the correct error message.
+			dob.value = (iso && iso <= todayIso) ? iso : '';
+			dobVisible.style.borderColor = dobVisible.value && !dob.value ? '#ef4444' : '';
 		}));
 		this._register(DOM.addDisposableListener(dobPicker, 'change', () => {
-			const v = dobPicker.value > todayIso ? todayIso : dobPicker.value;
-			dob.value = v;
-			dobVisible.value = isoToUs(v);
+			// Picker enforces max=todayIso at the OS level; just use the raw value.
+			dob.value = dobPicker.value;
+			dobVisible.value = isoToUs(dobPicker.value);
 			dobVisible.style.borderColor = '';
 		}));
 		const email = this._createField(row3, 'Email', 'email', true, 'email') as HTMLInputElement;
@@ -1139,6 +1150,10 @@ export class EhrTitlebarControls extends Disposable {
 
 	private _formatDisplayDate(dateStr: string): string {
 		if (!dateStr) { return ''; }
+		// Use string splitting for ISO date-only values (YYYY-MM-DD) to avoid the
+		// UTC-midnight timezone shift that new Date("YYYY-MM-DD") causes.
+		const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+		if (iso) { return `${iso[2]}/${iso[3]}/${iso[1]}`; }
 		const d = new Date(dateStr);
 		if (isNaN(d.getTime())) { return dateStr; }
 		return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;

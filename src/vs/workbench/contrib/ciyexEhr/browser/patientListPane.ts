@@ -16,7 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
 	id: string;
@@ -38,9 +38,10 @@ export class PatientListPane extends ViewPane {
 	private _searchQuery = '';
 	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
 	private _genderFilter: 'all' | 'male' | 'female' | 'unknown' = 'all';
-	// Side-pane pagination — initial small batch + Show More to match the
-	// other sidebars (Tasks / Appointments / Encounters).
-	private _visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+	// Patient list shows more rows by default than other sidebars since users
+	// need to scroll a roster, not just a day's schedule.
+	private _visibleCount = 25;
+	private _searchTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -65,11 +66,11 @@ export class PatientListPane extends ViewPane {
 			if (state === CiyexAuthState.NotAuthenticated) {
 				this._patients = [];
 				this._loaded = false;
-				this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+				this._visibleCount = 25;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this._loaded = false;
 				this._patients = [];
-				this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+				this._visibleCount = 25;
 				if (this._listEl) {
 					void this._loadPatients();
 				}
@@ -96,8 +97,14 @@ export class PatientListPane extends ViewPane {
 		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;outline:none;';
 		searchInput.addEventListener('input', () => {
 			this._searchQuery = searchInput.value.trim();
-			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+			this._visibleCount = 25;
 			this._renderList();
+			// Debounce server-side search for queries that might not be in the
+			// already-loaded batch (e.g. large patient rosters > 500).
+			if (this._searchTimer !== undefined) { clearTimeout(this._searchTimer); }
+			if (this._searchQuery.length >= 2) {
+				this._searchTimer = setTimeout(() => this._searchPatients(this._searchQuery), 300);
+			}
 		});
 		filterBar.appendChild(searchInput);
 
@@ -117,7 +124,7 @@ export class PatientListPane extends ViewPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this._statusFilter = statusSel.value as 'all' | 'active' | 'inactive';
-			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+			this._visibleCount = 25;
 			this._renderList();
 		});
 		filterRow.appendChild(statusSel);
@@ -133,7 +140,7 @@ export class PatientListPane extends ViewPane {
 		}
 		genderSel.addEventListener('change', () => {
 			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'unknown';
-			this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+			this._visibleCount = 25;
 			this._renderList();
 		});
 		filterRow.appendChild(genderSel);
@@ -184,7 +191,7 @@ export class PatientListPane extends ViewPane {
 			this._footerEl,
 			{ visibleCount: Math.min(this._visibleCount, filteredTotal), totalCount: filteredTotal },
 			(next) => { this._visibleCount = next; this._renderList(); },
-			() => { this._visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(); },
+			() => { this._visibleCount = 25; this._renderList(); },
 		);
 	}
 
@@ -230,7 +237,7 @@ export class PatientListPane extends ViewPane {
 			return;
 		}
 		try {
-			const response = await this.apiService.fetch('/api/patients?page=0&size=100&sort=lastName,asc');
+			const response = await this.apiService.fetch('/api/patients?page=0&size=500&sort=lastName,asc');
 			if (!response.ok) {
 				this._showMessage('Failed to load patients');
 				return;
@@ -243,6 +250,27 @@ export class PatientListPane extends ViewPane {
 		} catch {
 			this._showMessage('Unable to connect to server');
 		}
+	}
+
+	private async _searchPatients(query: string): Promise<void> {
+		if (!query || query.length < 2) { return; }
+		try {
+			const encoded = encodeURIComponent(query);
+			const res = await this.apiService.fetch(`/api/patients?page=0&size=500&search=${encoded}&sort=lastName,asc`);
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const content = data?.data?.content || data?.content || [];
+			if (content.length > 0 && this._searchQuery === query) {
+				// Merge server results with local list (de-duplicate by id)
+				const existing = new Set(this._patients.map((p: IPatientRow) => p.id));
+				const merged = [...this._patients];
+				for (const p of content) {
+					if (!existing.has(p.id)) { merged.push(p); }
+				}
+				this._patients = merged;
+				this._renderList();
+			}
+		} catch { /* silent — local filter still works */ }
 	}
 
 	private _renderList(): void {
@@ -272,22 +300,7 @@ export class PatientListPane extends ViewPane {
 		this._renderFooter(rows.length);
 		for (const patient of pageRows) {
 			const row = document.createElement('div');
-			Object.assign(row.style, {
-				padding: '6px 16px',
-				cursor: 'pointer',
-				display: 'flex',
-				alignItems: 'center',
-				gap: '8px',
-				fontSize: '12px',
-				borderBottom: '1px solid var(--vscode-list-hoverBackground, rgba(255,255,255,0.04))',
-			});
-
-			row.addEventListener('mouseenter', () => {
-				row.style.background = 'var(--vscode-list-hoverBackground)';
-			});
-			row.addEventListener('mouseleave', () => {
-				row.style.background = '';
-			});
+			row.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid var(--vscode-list-hoverBackground,rgba(255,255,255,0.04));position:relative;';
 
 			// Avatar circle with initials. Guard against missing first/last name —
 			// `charCodeAt` returns NaN on an empty string and breaks the hue calc.
@@ -323,25 +336,34 @@ export class PatientListPane extends ViewPane {
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
-			// Actions hide behind a Teams-style ⋯ overflow menu — opens a
-			// labelled popup with big icons + names per action.
 			const fullName = `${patient.firstName} ${patient.lastName}`.trim();
 			const isActive = (patient.status || 'active').toLowerCase() !== 'inactive';
+
+			// ⋯ actions — hidden until hover, placed in the name row at the far right
 			const actions = createRowActionsContainer(row);
+			actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
+
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
-				// allow-any-unicode-next-line
-				{ symbol: '👁', label: 'View Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName) },
-				// allow-any-unicode-next-line
-				{ symbol: '✎', label: 'Edit Patient', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics') },
+				{ symbol: '\u{1F5C2}', label: 'View Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName) },
+				{ symbol: '\u{1F4DD}', label: 'Edit Patient', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics') },
 				{ separator: true },
 				{
-					symbol: isActive ? '\u{2298}' : '\u{2713}',
+					symbol: isActive ? '\u{1F6AB}' : '\u{2713}',
 					label: isActive ? 'Deactivate Patient' : 'Activate Patient',
 					onClick: () => this._togglePatientStatus(patient, isActive),
 				},
 			]);
 
-			row.addEventListener('click', () => {
+			row.addEventListener('mouseenter', () => {
+				row.style.background = 'var(--vscode-list-hoverBackground)';
+				actions.style.opacity = '1';
+			});
+			row.addEventListener('mouseleave', () => {
+				row.style.background = '';
+				actions.style.opacity = '0';
+			});
+			row.addEventListener('click', (e) => {
+				if (actions.contains(e.target as Node)) { return; }
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
 
@@ -380,7 +402,9 @@ export class PatientListPane extends ViewPane {
 		if (!dob) {
 			return 0;
 		}
-		const b = new Date(dob);
+		// Parse ISO date-only strings as local dates to avoid UTC-midnight timezone shift.
+		const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob);
+		const b = iso ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])) : new Date(dob);
 		const t = new Date();
 		let a = t.getFullYear() - b.getFullYear();
 		if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) {

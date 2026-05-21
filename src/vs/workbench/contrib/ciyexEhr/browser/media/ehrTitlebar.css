@@ -165,88 +165,77 @@
 	font-size: 12px;
 }
 
-/* --- Action Buttons — pill/badge style (Patient, Appointment, Currency) --- */
+/* --- Action Buttons — Teams-style: icon + label, transparent bg --- */
 .ehr-action-btn {
 	display: inline-flex;
+	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 6px;
-	padding: 0 36px;
-	border-radius: 24px;
+	gap: 3px;
+	padding: 3px 10px;
+	border-radius: 6px;
 	cursor: pointer;
-	color: var(--vscode-button-foreground, #fff);
+	color: var(--vscode-titleBar-activeForeground, #ccc);
 	background: transparent;
 	border: none;
-	height: 28px;
-	font-size: 16px;
-	font-weight: 700;
+	height: 100%;
 	font-family: inherit;
-	transition: background 0.15s, transform 0.05s;
+	transition: background 0.12s;
 	-webkit-app-region: no-drag;
-	margin-left: 6px;
+	margin-left: 1px;
 	white-space: nowrap;
 }
 
-.ehr-action-btn .codicon {
-	font-size: 20px;
-	line-height: 1;
-	color: var(--vscode-button-foreground, #fff);
-}
-
-/* Emoji / text icon inside action buttons */
-.ehr-action-icon {
-	font-size: 20px;
-	line-height: 1;
-	display: flex;
-	align-items: center;
-	color: var(--vscode-button-foreground, #fff);
-}
-
-/* Patient button */
-.ehr-action-btn-patient {
-	background: var(--vscode-button-background, #0078d4);
-	border: 1px solid var(--vscode-button-border, transparent);
-}
-
-.ehr-action-btn-patient:hover {
-	background: var(--vscode-button-hoverBackground, #026ec1);
-}
-
-/* Patient emoji — smaller and white */
-.ehr-action-btn-patient .ehr-action-icon {
-	font-size: 14px;
-	filter: brightness(0) invert(1);
-}
-
-/* Appointment button */
-.ehr-action-btn-appointment {
-	background: var(--vscode-button-secondaryBackground, #3a3d41);
-	border: 1px solid var(--vscode-button-border, transparent);
-}
-
-.ehr-action-btn-appointment:hover {
-	background: var(--vscode-button-secondaryHoverBackground, #45494e);
-}
-
-/* Currency / Billing button */
-.ehr-action-btn-currency {
-	background: var(--vscode-extensionButton-prominentBackground, var(--vscode-button-background, #0078d4));
-	font-weight: 700;
-	border: 1px solid var(--vscode-button-border, transparent);
-}
-
-.ehr-action-btn-currency:hover {
-	background: var(--vscode-extensionButton-prominentHoverBackground, var(--vscode-button-hoverBackground, #026ec1));
+.ehr-action-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15));
 }
 
 .ehr-action-btn:active {
-	transform: translateY(1px);
+	background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.25));
 }
 
 .ehr-action-btn:focus-visible {
 	outline: 1px solid var(--vscode-focusBorder, #007acc);
-	outline-offset: -1px;
+	outline-offset: -2px;
 }
+
+/* Icon */
+.ehr-action-btn .codicon {
+	font-size: 22px;
+	line-height: 1;
+	color: inherit;
+}
+
+.ehr-action-icon {
+	font-size: 22px;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+	color: inherit;
+}
+
+/* Label */
+.ehr-action-label {
+	font-size: 11px;
+	line-height: 1;
+	color: inherit;
+	font-weight: 400;
+}
+
+/* Currency $ icon — match codicon visual size */
+.ehr-currency-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	font-size: 18px;
+	font-weight: 300;
+	line-height: 1;
+	color: inherit;
+	font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
 
 /* --- Dark-theme overrides for overlay (applied via .monaco-workbench.vs-dark) --- */
 .vs-dark .ehr-overlay {

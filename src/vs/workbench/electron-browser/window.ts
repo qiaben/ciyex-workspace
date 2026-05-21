@@ -7,8 +7,8 @@ import './media/window.css';
 import { localize } from '../../nls.js';
 import { URI } from '../../base/common/uri.js';
 import { equals } from '../../base/common/objects.js';
-import { EventType, EventHelper, addDisposableListener, ModifierKeyEmitter, getActiveElement, hasWindow, getWindowById, getWindows, $ } from '../../base/browser/dom.js';
-import { Action, Separator, WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../base/common/actions.js';
+import { EventType, EventHelper, addDisposableListener, ModifierKeyEmitter, getActiveElement, hasWindow, getWindowById, getWindows } from '../../base/browser/dom.js';
+import { Separator, WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../base/common/actions.js';
 import { IFileService } from '../../platform/files/common/files.js';
 import { EditorResourceAccessor, IUntitledTextResourceEditorInput, SideBySideEditor, pathsToEditors, IResourceDiffEditorInput, IUntypedEditorInput, IEditorPane, isResourceEditorInput, IResourceMergeEditorInput } from '../common/editor.js';
 import { IEditorService } from '../services/editor/common/editorService.js';
@@ -17,7 +17,7 @@ import { WindowMinimumSize, IOpenFileRequest, IAddRemoveFoldersRequest, INativeR
 import { ITitleService } from '../services/title/browser/titleService.js';
 import { IWorkbenchThemeService } from '../services/themes/common/workbenchThemeService.js';
 import { ApplyZoomTarget, applyZoom } from '../../platform/window/electron-browser/window.js';
-import { setFullscreen, getZoomLevel, onDidChangeZoomLevel, getZoomFactor } from '../../base/browser/browser.js';
+import { setFullscreen, getZoomLevel, onDidChangeZoomLevel } from '../../base/browser/browser.js';
 import { ICommandService, CommandsRegistry } from '../../platform/commands/common/commands.js';
 import { IResourceEditorInput } from '../../platform/editor/common/editor.js';
 import { ipcRenderer, process } from '../../base/parts/sandbox/electron-browser/globals.js';
@@ -72,12 +72,8 @@ import { registerWindowDriver } from '../services/driver/browser/driver.js';
 import { mainWindow } from '../../base/browser/window.js';
 import { BaseWindow } from '../browser/window.js';
 import { IHostService } from '../services/host/browser/host.js';
-import { IStatusbarService, ShowTooltipCommand, StatusbarAlignment } from '../services/statusbar/browser/statusbar.js';
-import { ActionBar } from '../../base/browser/ui/actionbar/actionbar.js';
-import { ThemeIcon } from '../../base/common/themables.js';
 import { getWorkbenchContribution } from '../common/contributions.js';
 import { DynamicWorkbenchSecurityConfiguration } from '../common/configuration.js';
-import { nativeHoverDelegate } from '../../platform/hover/browser/hover.js';
 import { WINDOW_ACTIVE_BORDER, WINDOW_INACTIVE_BORDER } from '../common/theme.js';
 import { IContextMenuService } from '../../platform/contextview/browser/contextView.js';
 
@@ -1176,71 +1172,8 @@ class ZoomStatusEntry extends Disposable {
 
 	private readonly disposable = this._register(new MutableDisposable<DisposableStore>());
 
-	private zoomLevelLabel: Action | undefined = undefined;
-
-	constructor(
-		@IStatusbarService private readonly statusbarService: IStatusbarService,
-		@ICommandService private readonly commandService: ICommandService,
-		@IKeybindingService private readonly keybindingService: IKeybindingService
-	) {
-		super();
-	}
-
 	updateZoomEntry(_visibleOrText: false | string, _targetWindowId: number): void {
 		this.disposable.clear();
 	}
 
-	private createZoomEntry(visibleOrText: string): void {
-		const disposables = new DisposableStore();
-		this.disposable.value = disposables;
-
-		const container = $('.zoom-status');
-
-		const left = $('.zoom-status-left');
-		container.appendChild(left);
-
-		const zoomOutAction: Action = disposables.add(new Action('workbench.action.zoomOut', localize('zoomOut', "Zoom Out"), ThemeIcon.asClassName(Codicon.remove), true, () => this.commandService.executeCommand(zoomOutAction.id)));
-		const zoomInAction: Action = disposables.add(new Action('workbench.action.zoomIn', localize('zoomIn', "Zoom In"), ThemeIcon.asClassName(Codicon.plus), true, () => this.commandService.executeCommand(zoomInAction.id)));
-		const zoomResetAction: Action = disposables.add(new Action('workbench.action.zoomReset', localize('zoomReset', "Reset"), undefined, true, () => this.commandService.executeCommand(zoomResetAction.id)));
-		zoomResetAction.tooltip = this.keybindingService.appendKeybinding(zoomResetAction.label, zoomResetAction.id);
-		const zoomSettingsAction: Action = disposables.add(new Action('workbench.action.openSettings', localize('zoomSettings', "Settings"), ThemeIcon.asClassName(Codicon.settingsGear), true, () => this.commandService.executeCommand(zoomSettingsAction.id, 'window.zoom')));
-		const zoomLevelLabel = disposables.add(new Action('zoomLabel', undefined, undefined, false));
-
-		this.zoomLevelLabel = zoomLevelLabel;
-		disposables.add(toDisposable(() => this.zoomLevelLabel = undefined));
-
-		const actionBarLeft = disposables.add(new ActionBar(left, { hoverDelegate: nativeHoverDelegate }));
-		actionBarLeft.push(zoomOutAction, { icon: true, label: false, keybinding: this.keybindingService.lookupKeybinding(zoomOutAction.id)?.getLabel() });
-		actionBarLeft.push(this.zoomLevelLabel, { icon: false, label: true });
-		actionBarLeft.push(zoomInAction, { icon: true, label: false, keybinding: this.keybindingService.lookupKeybinding(zoomInAction.id)?.getLabel() });
-
-		const right = $('.zoom-status-right');
-		container.appendChild(right);
-
-		const actionBarRight = disposables.add(new ActionBar(right, { hoverDelegate: nativeHoverDelegate }));
-
-		actionBarRight.push(zoomResetAction, { icon: false, label: true });
-		actionBarRight.push(zoomSettingsAction, { icon: true, label: false, keybinding: this.keybindingService.lookupKeybinding(zoomSettingsAction.id)?.getLabel() });
-
-		const name = localize('status.windowZoom', "Window Zoom");
-		disposables.add(this.statusbarService.addEntry({
-			name,
-			text: visibleOrText,
-			tooltip: container,
-			ariaLabel: name,
-			command: ShowTooltipCommand,
-			kind: 'prominent'
-		}, 'status.windowZoom', StatusbarAlignment.RIGHT, 102));
-	}
-
-	private updateZoomLevelLabel(targetWindowId: number): void {
-		if (this.zoomLevelLabel) {
-			const targetWindow = getWindowById(targetWindowId, true).window;
-			const zoomFactor = Math.round(getZoomFactor(targetWindow) * 100);
-			const zoomLevel = getZoomLevel(targetWindow);
-
-			this.zoomLevelLabel.label = `${zoomLevel}`;
-			this.zoomLevelLabel.tooltip = localize('zoomNumber', "Zoom Level: {0} ({1}%)", zoomLevel, zoomFactor);
-		}
-	}
 }

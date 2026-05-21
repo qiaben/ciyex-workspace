@@ -388,22 +388,22 @@ export const STATUS_BAR_WARNING_ITEM_HOVER_BACKGROUND = registerColor('statusBar
 // < --- Activity Bar --- >
 
 export const ACTIVITY_BAR_BACKGROUND = registerColor('activityBar.background', {
-	dark: '#333333',
-	light: '#2C2C2C',
+	dark: '#252526',
+	light: '#f3f3f3',
 	hcDark: '#000000',
 	hcLight: '#FFFFFF'
 }, localize('activityBarBackground', "Activity bar background color. The activity bar is showing on the far left or right and allows to switch between views of the side bar."));
 
 export const ACTIVITY_BAR_FOREGROUND = registerColor('activityBar.foreground', {
 	dark: Color.white,
-	light: Color.white,
+	light: Color.fromHex('#333333'),
 	hcDark: Color.white,
 	hcLight: editorForeground
 }, localize('activityBarForeground', "Activity bar item foreground color when it is active. The activity bar is showing on the far left or right and allows to switch between views of the side bar."));
 
 export const ACTIVITY_BAR_INACTIVE_FOREGROUND = registerColor('activityBar.inactiveForeground', {
-	dark: transparent(ACTIVITY_BAR_FOREGROUND, 0.75),
-	light: transparent(ACTIVITY_BAR_FOREGROUND, 0.75),
+	dark: transparent(ACTIVITY_BAR_FOREGROUND, 0.6),
+	light: transparent(Color.fromHex('#333333'), 0.5),
 	hcDark: Color.white,
 	hcLight: editorForeground
 }, localize('activityBarInActiveForeground', "Activity bar item foreground color when it is inactive. The activity bar is showing on the far left or right and allows to switch between views of the side bar."));
