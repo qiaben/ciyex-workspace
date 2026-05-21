@@ -13,6 +13,9 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 // allow-any-unicode-next-line
@@ -41,13 +44,27 @@ const TIMING_OPTIONS = [
 	{ value: '1w_before', label: '1 week before' },
 ];
 
-const PROVIDER_FIELDS: Record<string, Array<{ key: string; label: string; type?: string }>> = {
-	smtp: [{ key: 'host', label: 'SMTP Host' }, { key: 'port', label: 'Port' }, { key: 'username', label: 'Username' }, { key: 'password', label: 'Password', type: 'password' }, { key: 'from_email', label: 'From Email' }, { key: 'from_name', label: 'From Name' }],
+interface ProviderField { key: string; label: string; type?: string; placeholder?: string }
+const PROVIDER_FIELDS: Record<string, ProviderField[]> = {
+	smtp: [
+		{ key: 'host', label: 'SMTP Host', placeholder: 'smtp.gmail.com' },
+		{ key: 'port', label: 'Port', type: 'number', placeholder: '587' },
+		{ key: 'username', label: 'Username', placeholder: 'user@example.com' },
+		{ key: 'password', label: 'Password', type: 'password', placeholder: 'App password' },
+		{ key: 'from_email', label: 'From Email', placeholder: 'noreply@example.com' },
+		{ key: 'from_name', label: 'From Name', placeholder: 'Practice Name' },
+	],
 	sendgrid: [{ key: 'api_key', label: 'API Key', type: 'password' }, { key: 'from_email', label: 'From Email' }, { key: 'from_name', label: 'From Name' }],
 	mailgun: [{ key: 'api_key', label: 'API Key', type: 'password' }, { key: 'domain', label: 'Domain' }, { key: 'from_email', label: 'From Email' }, { key: 'from_name', label: 'From Name' }],
 	twilio: [{ key: 'account_sid', label: 'Account SID' }, { key: 'auth_token', label: 'Auth Token', type: 'password' }, { key: 'from_number', label: 'From Number' }],
 	vonage: [{ key: 'api_key', label: 'API Key' }, { key: 'api_secret', label: 'API Secret', type: 'password' }, { key: 'from_number', label: 'From Number' }],
 };
+
+const TEMPLATE_VARIABLES = [
+	'{{patientName}}', '{{providerName}}', '{{appointmentDate}}', '{{appointmentTime}}',
+	'{{practiceName}}', '{{practicePhone}}', '{{portalLink}}', '{{labResultUrl}}',
+	'{{prescriptionName}}', '{{pickupLocation}}', '{{recallDueDate}}', '{{balanceAmount}}',
+];
 
 const inputStyle = 'width:100%;padding:7px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 const btnPrimary = 'padding:7px 16px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
@@ -73,6 +90,7 @@ export class NotificationsEditor extends EditorPane {
 	private preferences: Record<string, unknown>[] = [];
 	private emailConfig: Record<string, unknown> = {};
 	private smsConfig: Record<string, unknown> = {};
+	private editingTemplate: Record<string, unknown> | null = null;
 
 	constructor(
 		group: IEditorGroup,
@@ -80,6 +98,9 @@ export class NotificationsEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(NotificationsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -229,23 +250,101 @@ export class NotificationsEditor extends EditorPane {
 			(item) => {
 				const acts = document.createElement('div');
 				acts.style.cssText = 'display:flex;gap:4px;';
+				const view = DOM.append(acts, DOM.$('button'));
+				// allow-any-unicode-next-line
+				view.textContent = '👁';
+				view.title = 'View details';
+				view.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
+				view.addEventListener('click', e => { e.stopPropagation(); this._showLogDetail(item); });
 				if (item.status === 'failed' || item.status === 'bounced') {
 					const retry = DOM.append(acts, DOM.$('button'));
 					// allow-any-unicode-next-line
 					retry.textContent = '🔄';
 					retry.title = 'Retry';
 					retry.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
-					retry.addEventListener('click', async () => {
-						await this.apiService.fetch(`/api/notifications/${item.id}/retry`, { method: 'POST' });
+					retry.addEventListener('click', async e => {
+						e.stopPropagation();
+						const res = await this.apiService.fetch(`/api/notifications/${item.id}/retry`, { method: 'POST' });
+						const json = await res.json().catch(() => ({}));
+						if (res.ok && json?.success !== false) {
+							this.notificationService.notify({ severity: Severity.Info, message: 'Message requeued for retry.' });
+						} else {
+							this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Retry failed.' });
+						}
 						this._loadTab();
 					});
 				}
 				return acts;
 			},
+			item => this._showLogDetail(item),
 		);
 
 		// Pagination
 		this._renderPagination(this.contentEl, this.logPage, this.logs.length >= 20, () => { this.logPage--; this._loadTab(); }, () => { this.logPage++; this._loadTab(); });
+	}
+
+	private _showLogDetail(item: Record<string, unknown>): void {
+		// Modal overlay — attach to the active window so multi-window scenarios work
+		const win = DOM.getWindow(this.root) ?? DOM.getActiveWindow();
+		const overlay = DOM.append(win.document.body, DOM.$('.ciyex-log-detail-overlay'));
+		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:min(720px,90vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+
+		const hdr = DOM.append(modal, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const title = DOM.append(hdr, DOM.$('h3'));
+		title.textContent = 'Message details';
+		title.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+		const closeBtn = DOM.append(hdr, DOM.$('button'));
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.style.cssText = 'background:none;border:none;color:var(--vscode-foreground);font-size:16px;cursor:pointer;';
+		const close = () => overlay.remove();
+		closeBtn.addEventListener('click', close);
+		overlay.addEventListener('click', e => { if (e.target === overlay) { close(); } });
+
+		const content = DOM.append(modal, DOM.$('div'));
+		content.style.cssText = 'padding:16px 18px;overflow-y:auto;display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:12px;';
+
+		const status = String(item.status || '').toLowerCase();
+		const statusColor = STATUS_COLORS[status] || '#6b7280';
+
+		const addRow = (label: string, value: string, opts?: { mono?: boolean; color?: string; multiline?: boolean }) => {
+			const l = DOM.append(content, DOM.$('div'));
+			l.textContent = label;
+			l.style.cssText = 'font-weight:600;color:var(--vscode-descriptionForeground);';
+			const v = DOM.append(content, DOM.$('div'));
+			v.textContent = value || '—';
+			let css = 'word-break:break-word;';
+			if (opts?.mono) { css += 'font-family:var(--vscode-editor-font-family,monospace);'; }
+			if (opts?.color) { css += `color:${opts.color};font-weight:600;`; }
+			if (opts?.multiline) { css += 'white-space:pre-wrap;background:rgba(128,128,128,0.08);padding:8px;border-radius:4px;max-height:200px;overflow:auto;'; }
+			v.style.cssText = css;
+		};
+
+		addRow('Status', String(item.status || ''), { color: statusColor });
+		addRow('Channel', String(item.channelType || '').toUpperCase());
+		addRow('Recipient', `${item.recipientName ? String(item.recipientName) + ' · ' : ''}${String(item.recipient || '')}`);
+		if (item.subject) { addRow('Subject', String(item.subject)); }
+		if (item.patientName || item.patientId) {
+			addRow('Patient', String(item.patientName || `#${item.patientId}`));
+		}
+		if (item.triggerType) { addRow('Trigger', String(item.triggerType)); }
+		if (item.templateKey) { addRow('Template', String(item.templateKey)); }
+		if (item.sentBy) { addRow('Sent by', String(item.sentBy)); }
+		if (item.sentAt) {
+			try { addRow('Sent at', new Date(String(item.sentAt)).toLocaleString()); }
+			catch { addRow('Sent at', String(item.sentAt)); }
+		}
+		if (item.deliveredAt) {
+			try { addRow('Delivered', new Date(String(item.deliveredAt)).toLocaleString()); }
+			catch { addRow('Delivered', String(item.deliveredAt)); }
+		}
+		if (item.externalId) { addRow('External ID', String(item.externalId), { mono: true }); }
+		if (item.body) { addRow('Body', String(item.body), { multiline: true }); }
+		if (item.errorMessage) { addRow('Error', String(item.errorMessage), { multiline: true, color: '#ef4444' }); }
 	}
 
 	// allow-any-unicode-next-line
@@ -286,15 +385,32 @@ export class NotificationsEditor extends EditorPane {
 		const cancelBtn = DOM.append(formBtns, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = btnSecondary;
-		const createBtn = DOM.append(formBtns, DOM.$('button'));
+		const createBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
 		createBtn.textContent = 'Create Campaign';
 		createBtn.style.cssText = btnPrimary;
 		createBtn.addEventListener('click', async () => {
-			await this.apiService.fetch('/api/notifications/campaigns', {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: nameIn.value, channelType: channelSel.value, targetCriteria: recipientsIn.value, body: bodyIn.value }),
-			});
-			this._loadTab();
+			if (!nameIn.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Campaign name is required.' });
+				return;
+			}
+			createBtn.disabled = true;
+			try {
+				const res = await this.apiService.fetch('/api/notifications/campaigns', {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name: nameIn.value, channelType: channelSel.value, targetCriteria: recipientsIn.value, body: bodyIn.value }),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (res.ok && json?.success !== false) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Campaign created.' });
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to create campaign.' });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Failed: ${String(err)}` });
+			} finally {
+				createBtn.disabled = false;
+				this._loadTab();
+			}
 		});
 
 		// Campaign list
@@ -325,20 +441,49 @@ export class NotificationsEditor extends EditorPane {
 	// allow-any-unicode-next-line
 	// ─── Tab 2: Templates ───
 	private _renderTemplates(): void {
-		// New template form
+		const editing = this.editingTemplate;
+		const isEdit = !!editing?.id;
+
+		// Form card (handles both create and edit)
 		const formCard = DOM.append(this.contentEl, DOM.$('div'));
 		formCard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:16px;margin-bottom:16px;';
-		const fTitle = DOM.append(formCard, DOM.$('h3'));
-		fTitle.textContent = 'New Template';
-		fTitle.style.cssText = 'margin:0 0 12px;font-size:14px;font-weight:600;';
+
+		const fTitleRow = DOM.append(formCard, DOM.$('div'));
+		fTitleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		const fTitle = DOM.append(fTitleRow, DOM.$('h3'));
+		fTitle.textContent = isEdit ? `Edit Template: ${String(editing?.name || '')}` : 'New Template';
+		fTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+
+		if (isEdit) {
+			const cancelEdit = DOM.append(fTitleRow, DOM.$('button'));
+			cancelEdit.textContent = 'Cancel Edit';
+			cancelEdit.style.cssText = btnSecondary;
+			cancelEdit.addEventListener('click', () => { this.editingTemplate = null; this._render(); });
+		}
 
 		const grid = DOM.append(formCard, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;';
 
-		const nameIn = this._addInput(grid, 'Name', 'text', 'Template name');
-		const keyIn = this._addInput(grid, 'Template Key', 'text', 'e.g. appointment_reminder');
+		const nameIn = this._addInput(grid, 'Name', 'text', 'Template name', String(editing?.name || ''));
+		const keyIn = this._addInput(grid, 'Template Key', 'text', 'e.g. appointment_reminder', String(editing?.templateKey || ''));
 		const channelSel = this._addSelect(grid, 'Channel', [{ label: 'Email', value: 'email' }, { label: 'SMS', value: 'sms' }]);
+		channelSel.value = String(editing?.channelType || 'email');
 
+		// isActive toggle (visible when editing)
+		const statusRow = DOM.append(formCard, DOM.$('label'));
+		statusRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;margin-top:12px;cursor:pointer;';
+		const activeCb = DOM.append(statusRow, DOM.$('input')) as HTMLInputElement;
+		activeCb.type = 'checkbox';
+		activeCb.checked = editing?.isActive !== false;
+		const activeLbl = DOM.append(statusRow, DOM.$('span'));
+		activeLbl.textContent = 'Active';
+		if (editing?.isDefault) {
+			const defaultBadge = DOM.append(statusRow, DOM.$('span'));
+			defaultBadge.textContent = 'DEFAULT';
+			defaultBadge.style.cssText = 'margin-left:8px;padding:2px 6px;font-size:9px;font-weight:600;color:#3b82f6;background:rgba(59,130,246,0.15);border-radius:3px;';
+		}
+
+		// Subject (email only)
 		const subjectGrp = DOM.append(formCard, DOM.$('div'));
 		subjectGrp.style.cssText = 'margin-top:12px;';
 		const sLbl = DOM.append(subjectGrp, DOM.$('label'));
@@ -346,31 +491,108 @@ export class NotificationsEditor extends EditorPane {
 		sLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
 		const subjectIn = DOM.append(subjectGrp, DOM.$('input')) as HTMLInputElement;
 		subjectIn.style.cssText = inputStyle;
+		subjectIn.value = String(editing?.subject || '');
 
+		const toggleSubject = () => { subjectGrp.style.display = channelSel.value === 'sms' ? 'none' : 'block'; };
+		toggleSubject();
+		channelSel.addEventListener('change', toggleSubject);
+
+		// Variable insertion buttons
+		const varRow = DOM.append(formCard, DOM.$('div'));
+		varRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:10px;';
+		const varLbl = DOM.append(varRow, DOM.$('div'));
+		varLbl.textContent = 'Insert variable: ';
+		varLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);width:100%;margin-bottom:2px;';
+		let lastFocused: HTMLInputElement | HTMLTextAreaElement | null = null;
+
+		// Body (plain text)
 		const bodyGrp = DOM.append(formCard, DOM.$('div'));
 		bodyGrp.style.cssText = 'margin-top:12px;';
 		const bLbl = DOM.append(bodyGrp, DOM.$('label'));
-		bLbl.textContent = 'Body';
+		bLbl.textContent = 'Body (plain text)';
 		bLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
 		const bodyIn = DOM.append(bodyGrp, DOM.$('textarea')) as HTMLTextAreaElement;
-		bodyIn.style.cssText = inputStyle + 'min-height:80px;resize:vertical;font-family:inherit;';
+		bodyIn.style.cssText = inputStyle + 'min-height:100px;resize:vertical;font-family:inherit;';
+		bodyIn.value = String(editing?.body || '');
 
-		// Variables hint
-		const hint = DOM.append(formCard, DOM.$('div'));
-		hint.textContent = 'Variables: {{patientName}}, {{providerName}}, {{appointmentDate}}, {{appointmentTime}}, {{practiceName}}, {{practicePhone}}, {{portalLink}}';
-		hint.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:8px;';
+		// HTML body (email only)
+		const htmlGrp = DOM.append(formCard, DOM.$('div'));
+		htmlGrp.style.cssText = 'margin-top:12px;';
+		const hLbl = DOM.append(htmlGrp, DOM.$('label'));
+		hLbl.textContent = 'HTML Body (optional)';
+		hLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
+		const htmlIn = DOM.append(htmlGrp, DOM.$('textarea')) as HTMLTextAreaElement;
+		htmlIn.style.cssText = inputStyle + 'min-height:100px;resize:vertical;font-family:var(--vscode-editor-font-family,monospace);font-size:12px;';
+		htmlIn.value = String(editing?.htmlBody || '');
 
-		const formBtns = DOM.append(formCard, DOM.$('div'));
-		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:12px;justify-content:flex-end;';
-		const createBtn = DOM.append(formBtns, DOM.$('button'));
-		createBtn.textContent = 'Create Template';
-		createBtn.style.cssText = btnPrimary;
-		createBtn.addEventListener('click', async () => {
-			await this.apiService.fetch('/api/notifications/config/templates', {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: nameIn.value, templateKey: keyIn.value, channelType: channelSel.value, subject: subjectIn.value, body: bodyIn.value }),
+		const toggleHtml = () => { htmlGrp.style.display = channelSel.value === 'sms' ? 'none' : 'block'; };
+		toggleHtml();
+		channelSel.addEventListener('change', toggleHtml);
+
+		// Track focus across body/subject/html so variable insertion targets the right field
+		subjectIn.addEventListener('focus', () => { lastFocused = subjectIn; });
+		bodyIn.addEventListener('focus', () => { lastFocused = bodyIn; });
+		htmlIn.addEventListener('focus', () => { lastFocused = htmlIn; });
+		lastFocused = bodyIn;
+
+		for (const v of TEMPLATE_VARIABLES) {
+			const btn = DOM.append(varRow, DOM.$('button'));
+			btn.textContent = v;
+			btn.style.cssText = 'padding:3px 8px;background:rgba(0,122,204,0.1);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;cursor:pointer;font-size:10px;font-family:var(--vscode-editor-font-family,monospace);';
+			btn.addEventListener('click', e => {
+				e.preventDefault();
+				const target = lastFocused || bodyIn;
+				const start = target.selectionStart || 0;
+				const end = target.selectionEnd || 0;
+				target.value = target.value.slice(0, start) + v + target.value.slice(end);
+				const pos = start + v.length;
+				target.focus();
+				target.setSelectionRange(pos, pos);
 			});
-			this._loadTab();
+		}
+
+		// Save buttons
+		const formBtns = DOM.append(formCard, DOM.$('div'));
+		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:14px;justify-content:flex-end;';
+
+		const saveBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = isEdit ? 'Update Template' : 'Create Template';
+		saveBtn.style.cssText = btnPrimary;
+		saveBtn.addEventListener('click', async () => {
+			if (!nameIn.value.trim() || !keyIn.value.trim()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Name and Template Key are required.' });
+				return;
+			}
+			saveBtn.disabled = true;
+			const payload: Record<string, unknown> = {
+				name: nameIn.value.trim(),
+				templateKey: keyIn.value.trim(),
+				channelType: channelSel.value,
+				subject: channelSel.value === 'email' ? subjectIn.value : null,
+				body: bodyIn.value,
+				htmlBody: channelSel.value === 'email' ? htmlIn.value : null,
+				isActive: activeCb.checked,
+			};
+			try {
+				const url = isEdit ? `/api/notifications/config/templates/${editing!.id}` : '/api/notifications/config/templates';
+				const res = await this.apiService.fetch(url, {
+					method: isEdit ? 'PUT' : 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (res.ok && json?.success !== false) {
+					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Template updated.' : 'Template created.' });
+					this.editingTemplate = null;
+					this._loadTab();
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to save template.' });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${String(err)}` });
+			} finally {
+				saveBtn.disabled = false;
+			}
 		});
 
 		// Template list
@@ -380,12 +602,30 @@ export class NotificationsEditor extends EditorPane {
 				(item) => {
 					const d = document.createElement('div');
 					d.style.cssText = 'display:flex;gap:4px;';
+					const edit = DOM.append(d, DOM.$('button'));
+					// allow-any-unicode-next-line
+					edit.textContent = '✎';
+					edit.title = 'Edit';
+					edit.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;color:var(--vscode-foreground);';
+					edit.addEventListener('click', e => { e.stopPropagation(); this.editingTemplate = item; this._render(); });
 					const del = DOM.append(d, DOM.$('button'));
 					// allow-any-unicode-next-line
 					del.textContent = '🗑️';
 					del.title = 'Delete';
 					del.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
-					del.addEventListener('click', async () => { if (confirm('Delete template?')) { await this.apiService.fetch(`/api/notifications/config/templates/${item.id}`, { method: 'DELETE' }); this._loadTab(); } });
+					del.addEventListener('click', async e => {
+						e.stopPropagation();
+						const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${String(item.name)}"?` });
+						if (!confirmed) { return; }
+						const res = await this.apiService.fetch(`/api/notifications/config/templates/${item.id}`, { method: 'DELETE' });
+						const json = await res.json().catch(() => ({}));
+						if (res.ok && json?.success !== false) {
+							this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
+						} else {
+							this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Delete failed.' });
+						}
+						this._loadTab();
+					});
 					return d;
 				},
 			);
@@ -453,7 +693,7 @@ export class NotificationsEditor extends EditorPane {
 		// Save All button
 		const footer = DOM.append(this.contentEl, DOM.$('div'));
 		footer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:12px;';
-		const saveBtn = DOM.append(footer, DOM.$('button'));
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = 'Save All';
 		saveBtn.style.cssText = btnPrimary;
 		saveBtn.addEventListener('click', async () => {
@@ -464,11 +704,24 @@ export class NotificationsEditor extends EditorPane {
 				timing: i.timingSel.value,
 				templateId: i.templateSel.value || null,
 			}));
-			await this.apiService.fetch('/api/notifications/config/preferences', {
-				method: 'PUT', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(prefs),
-			});
-			this._loadTab();
+			saveBtn.disabled = true;
+			try {
+				const res = await this.apiService.fetch('/api/notifications/config/preferences', {
+					method: 'PUT', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(prefs),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (res.ok && json?.success !== false) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Event preferences saved.' });
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to save preferences.' });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${String(err)}` });
+			} finally {
+				saveBtn.disabled = false;
+				this._loadTab();
+			}
 		});
 	}
 
@@ -486,11 +739,35 @@ export class NotificationsEditor extends EditorPane {
 		const card = DOM.append(parent, DOM.$('div'));
 		card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:16px;';
 
-		const h = DOM.append(card, DOM.$('h3'));
+		// Header row with title + enabled toggle
+		const hdrRow = DOM.append(card, DOM.$('div'));
+		hdrRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		const h = DOM.append(hdrRow, DOM.$('h3'));
 		h.textContent = title;
-		h.style.cssText = 'margin:0 0 12px;font-size:14px;font-weight:600;';
+		h.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
 
-		const existingConfig = typeof config.config === 'string' ? JSON.parse(config.config || '{}') : (config.config || {});
+		const enabledWrap = DOM.append(hdrRow, DOM.$('label'));
+		enabledWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;';
+		const enabledCb = DOM.append(enabledWrap, DOM.$('input')) as HTMLInputElement;
+		enabledCb.type = 'checkbox';
+		enabledCb.checked = config.enabled !== false;
+		const enabledLbl = DOM.append(enabledWrap, DOM.$('span'));
+		enabledLbl.textContent = 'Enabled';
+
+		// Daily usage badge (read-only)
+		if (config.sentToday !== undefined || config.dailyLimit) {
+			const usage = DOM.append(card, DOM.$('div'));
+			const sentToday = Number(config.sentToday || 0);
+			const limit = Number(config.dailyLimit || 0);
+			const pct = limit > 0 ? Math.min(100, Math.round((sentToday / limit) * 100)) : 0;
+			const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+			usage.style.cssText = `font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:10px;padding:6px 10px;background:rgba(128,128,128,0.08);border-radius:4px;border-left:3px solid ${color};`;
+			usage.textContent = `Today: ${sentToday}${limit ? ` / ${limit}` : ''} sent${config.lastResetDate ? ` · last reset ${config.lastResetDate}` : ''}`;
+		}
+
+		const existingConfig: Record<string, unknown> = typeof config.config === 'string'
+			? JSON.parse((config.config as string) || '{}')
+			: ((config.config as Record<string, unknown>) || {});
 		const currentProvider = String(config.provider || providers[0].value);
 
 		const provSel = this._addSelect(card, 'Provider', providers);
@@ -500,14 +777,27 @@ export class NotificationsEditor extends EditorPane {
 		fieldsContainer.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;';
 
 		const fieldInputs = new Map<string, HTMLInputElement>();
+		let useTlsCb: HTMLInputElement | undefined;
 
 		const renderFields = () => {
 			DOM.clearNode(fieldsContainer);
 			fieldInputs.clear();
+			useTlsCb = undefined;
 			const fields = PROVIDER_FIELDS[provSel.value] || [];
 			for (const f of fields) {
-				const inp = this._addInput(fieldsContainer, f.label, f.type || 'text', '', String((existingConfig as Record<string, unknown>)[f.key] || ''));
+				const inp = this._addInput(fieldsContainer, f.label, f.type || 'text', f.placeholder || '', String(existingConfig[f.key] ?? ''));
 				fieldInputs.set(f.key, inp);
+			}
+			// SMTP gets an additional "Use TLS" checkbox stored under `use_tls`
+			if (provSel.value === 'smtp') {
+				const tlsWrap = DOM.append(fieldsContainer, DOM.$('label'));
+				tlsWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding-top:18px;';
+				useTlsCb = DOM.append(tlsWrap, DOM.$('input')) as HTMLInputElement;
+				useTlsCb.type = 'checkbox';
+				// Default to true unless explicitly false
+				useTlsCb.checked = existingConfig.use_tls !== false && existingConfig.use_tls !== 'false';
+				const tlsLbl = DOM.append(tlsWrap, DOM.$('span'));
+				tlsLbl.textContent = 'Use TLS/STARTTLS';
 			}
 		};
 		renderFields();
@@ -522,31 +812,114 @@ export class NotificationsEditor extends EditorPane {
 
 		// Buttons
 		const btns = DOM.append(card, DOM.$('div'));
-		btns.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+		btns.style.cssText = 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;';
 
-		const testBtn = DOM.append(btns, DOM.$('button'));
+		const buildConfigPayload = (): Record<string, unknown> => {
+			const cfgObj: Record<string, unknown> = {};
+			for (const [k, inp] of fieldInputs) {
+				const f = (PROVIDER_FIELDS[provSel.value] || []).find(p => p.key === k);
+				cfgObj[k] = f?.type === 'number' ? Number(inp.value) : inp.value;
+			}
+			if (provSel.value === 'smtp' && useTlsCb) {
+				cfgObj.use_tls = useTlsCb.checked;
+			}
+			return {
+				provider: provSel.value,
+				enabled: enabledCb.checked,
+				config: JSON.stringify(cfgObj),
+				senderName: senderName.value,
+				senderAddress: senderAddr.value,
+				dailyLimit: Number(dailyLimit.value),
+			};
+		};
+
+		const testBtn = DOM.append(btns, DOM.$('button')) as HTMLButtonElement;
 		testBtn.textContent = 'Test Connection';
 		testBtn.style.cssText = btnSecondary;
 		testBtn.addEventListener('click', async () => {
-			testBtn.textContent = 'Testing...';
+			testBtn.disabled = true;
+			testBtn.textContent = 'Testing…';
 			try {
-				await this.apiService.fetch(`/api/notifications/config/${channel}/test`, { method: 'POST' });
-				testBtn.textContent = 'Success!';
-			} catch { testBtn.textContent = 'Failed'; }
-			setTimeout(() => { testBtn.textContent = 'Test Connection'; }, 2000);
+				// Save first so the test uses the current form values
+				await this.apiService.fetch(`/api/notifications/config/${channel}`, {
+					method: 'PUT', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(buildConfigPayload()),
+				});
+				const res = await this.apiService.fetch(`/api/notifications/config/${channel}/test`, { method: 'POST' });
+				const json = await res.json().catch(() => ({}));
+				if (json?.success) {
+					this.notificationService.notify({ severity: Severity.Info, message: json.message || `${channel.toUpperCase()} connection test passed.` });
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || `${channel.toUpperCase()} connection test failed.` });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Test failed: ${String(err)}` });
+			} finally {
+				testBtn.disabled = false;
+				testBtn.textContent = 'Test Connection';
+			}
 		});
 
-		const saveBtn = DOM.append(btns, DOM.$('button'));
+		// Send Test Email (email channel only) - prompts for recipient & sends real test
+		if (channel === 'email') {
+			const sendTestBtn = DOM.append(btns, DOM.$('button')) as HTMLButtonElement;
+			sendTestBtn.textContent = 'Send Test Email';
+			sendTestBtn.style.cssText = btnSecondary;
+			sendTestBtn.addEventListener('click', async () => {
+				const to = await this.quickInputService.input({
+					prompt: 'Recipient email for test message',
+					value: String(existingConfig.from_email || senderAddr.value || ''),
+					placeHolder: 'you@example.com',
+				});
+				if (!to) { return; }
+				sendTestBtn.disabled = true;
+				sendTestBtn.textContent = 'Sending…';
+				try {
+					await this.apiService.fetch(`/api/notifications/config/${channel}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(buildConfigPayload()),
+					});
+					const res = await this.apiService.fetch(`/api/notifications/send-test`, {
+						method: 'POST', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ channelType: channel, recipient: to, subject: 'Ciyex SMTP test', body: 'This is a test message from the Ciyex notifications configuration.' }),
+					});
+					const json = await res.json().catch(() => ({}));
+					if (res.ok && json?.success !== false) {
+						this.notificationService.notify({ severity: Severity.Info, message: `Test email sent to ${to}.` });
+					} else {
+						this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to send test email.' });
+					}
+				} catch (err) {
+					this.notificationService.notify({ severity: Severity.Error, message: `Send failed: ${String(err)}` });
+				} finally {
+					sendTestBtn.disabled = false;
+					sendTestBtn.textContent = 'Send Test Email';
+				}
+			});
+		}
+
+		const saveBtn = DOM.append(btns, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = 'Save Configuration';
 		saveBtn.style.cssText = btnPrimary;
 		saveBtn.addEventListener('click', async () => {
-			const cfgObj: Record<string, unknown> = {};
-			for (const [k, inp] of fieldInputs) { cfgObj[k] = inp.value; }
-			await this.apiService.fetch(`/api/notifications/config/${channel}`, {
-				method: 'PUT', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ provider: provSel.value, config: JSON.stringify(cfgObj), senderName: senderName.value, senderAddress: senderAddr.value, dailyLimit: Number(dailyLimit.value) }),
-			});
-			this._loadTab();
+			saveBtn.disabled = true;
+			try {
+				const res = await this.apiService.fetch(`/api/notifications/config/${channel}`, {
+					method: 'PUT', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(buildConfigPayload()),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (res.ok && json?.success !== false) {
+					this.notificationService.notify({ severity: Severity.Info, message: `${title} saved.` });
+				} else {
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to save configuration.' });
+				}
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${String(err)}` });
+			} finally {
+				saveBtn.disabled = false;
+				this._loadTab();
+			}
 		});
 	}
 
@@ -577,7 +950,7 @@ export class NotificationsEditor extends EditorPane {
 		return sel;
 	}
 
-	private _renderTable(parent: HTMLElement, items: Record<string, unknown>[], cols: Array<{ key: string; label: string; w?: string }>, actionRenderer?: (item: Record<string, unknown>) => HTMLElement): void {
+	private _renderTable(parent: HTMLElement, items: Record<string, unknown>[], cols: Array<{ key: string; label: string; w?: string }>, actionRenderer?: (item: Record<string, unknown>) => HTMLElement, onRowClick?: (item: Record<string, unknown>) => void): void {
 		const tbl = DOM.append(parent, DOM.$('div'));
 		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 		const colWidths = cols.map(c => c.w || '1fr').join(' ') + (actionRenderer ? ' auto' : '');
@@ -596,9 +969,10 @@ export class NotificationsEditor extends EditorPane {
 
 		for (const item of items) {
 			const r = DOM.append(tbl, DOM.$('div'));
-			r.style.cssText = `display:grid;grid-template-columns:${colWidths};gap:8px;padding:6px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;transition:background 0.1s;`;
+			r.style.cssText = `display:grid;grid-template-columns:${colWidths};gap:8px;padding:6px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:12px;transition:background 0.1s;${onRowClick ? 'cursor:pointer;' : ''}`;
 			r.addEventListener('mouseenter', () => { r.style.background = 'var(--vscode-list-hoverBackground)'; });
 			r.addEventListener('mouseleave', () => { r.style.background = ''; });
+			if (onRowClick) { r.addEventListener('click', () => onRowClick(item)); }
 
 			for (const c of cols) {
 				const cell = DOM.append(r, DOM.$('span'));
