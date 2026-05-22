@@ -215,10 +215,12 @@ export class AppointmentsSidebarPane extends ViewPane {
 				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this.appointments = [];
+				this._providerOptions = [];
 				this.loaded = false;
 				this.statusOptions = [];
 				this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 				if (this.container) {
+					this._render(); // immediately wipe stale rows before async fetch
 					void this._loadAll();
 				}
 			}

@@ -123,10 +123,12 @@ export class ScheduleSidebarPane extends ViewPane {
 				this.waitlist = [];
 			} else if (state === CiyexAuthState.Authenticated) {
 				this.appointments = [];
+				this._providerOptions = [];
 				this.statusOptions = [];
 				this.roomOptions = [];
 				this.waitlist = [];
 				if (this.container) {
+					this._render(); // immediately wipe stale rows before async fetch
 					void this._loadAndRender();
 				}
 			}

@@ -72,6 +72,7 @@ export class PatientListPane extends ViewPane {
 				this._patients = [];
 				this._visibleCount = 25;
 				if (this._listEl) {
+					this._renderList(); // immediately wipe stale rows before async fetch
 					void this._loadPatients();
 				}
 			}
