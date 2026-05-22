@@ -26,8 +26,39 @@ export const SIDEBAR_INITIAL_PAGE_SIZE = 5;
 /** Batch size each subsequent "Show More" click reveals. */
 export const SIDEBAR_LOAD_MORE_BATCH = 10;
 
-/** Shared icon button style — neutral, theme-aware. */
-const ACTION_BTN_BASE = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;background:transparent;color:var(--vscode-foreground);opacity:0.75;transition:background 0.1s,opacity 0.1s;';
+/** Shared icon button style — neutral, theme-aware. Sized to match the
+ *  Microsoft Teams meeting-toolbar icon (slightly bolder than the codicon
+ *  default so single-glyph buttons hold their visual weight at small
+ *  sizes). */
+const ACTION_BTN_BASE = 'display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;border:none;border-radius:4px;cursor:pointer;font-size:16px;line-height:1;background:transparent;color:var(--vscode-foreground);opacity:0.9;transition:background 0.1s,opacity 0.1s;';
+
+/**
+ * Detect whether a string is a codicon id (lowercase kebab-case ASCII).
+ * Used so callers can pass either `'eye'` (codicon) or `'\u{1F441}'` (emoji).
+ */
+function isCodiconName(value: string): boolean {
+	if (!value) { return false; }
+	return /^[a-z][a-z0-9-]*$/.test(value);
+}
+
+/** Render a codicon class span or fall back to a monochrome text glyph. */
+function setIconContent(host: HTMLElement, symbol: string): void {
+	host.textContent = '';
+	if (isCodiconName(symbol)) {
+		const span = DOM.$('span.codicon.codicon-' + symbol);
+		// Codicons render a bit thin at 14px when sitting next to UI-font
+		// labels. Bumping to 16px and adding a half-pixel text-stroke gives
+		// them the visual weight of a UI-bold glyph without needing a heavy
+		// icon font variant.
+		(span as HTMLElement).style.cssText = 'font-size:16px;line-height:1;color:inherit;-webkit-text-stroke:0.5px currentColor;';
+		host.appendChild(span);
+	} else {
+		const span = DOM.$('span');
+		span.textContent = toMonochromeGlyph(symbol);
+		(span as HTMLElement).style.cssText = 'font-size:16px;line-height:1;color:inherit;font-variant-emoji:text;font-weight:600;';
+		host.appendChild(span);
+	}
+}
 
 /**
  * Create a Microsoft Teams-style action icon button. The button itself is
@@ -43,17 +74,17 @@ const ACTION_BTN_BASE = 'padding:2px 6px;border:none;border-radius:3px;cursor:po
 export function createActionIconButton(parent: HTMLElement, symbol: string, label: string, onClick: () => void): HTMLButtonElement {
 	const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 	btn.type = 'button';
-	btn.textContent = symbol;
 	btn.title = label;
 	btn.setAttribute('aria-label', label);
 	btn.style.cssText = ACTION_BTN_BASE;
+	setIconContent(btn, symbol);
 	btn.addEventListener('mouseenter', () => {
 		btn.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08))';
 		btn.style.opacity = '1';
 	});
 	btn.addEventListener('mouseleave', () => {
 		btn.style.background = 'transparent';
-		btn.style.opacity = '0.75';
+		btn.style.opacity = '0.85';
 	});
 	btn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
 	btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); onClick(); });
@@ -359,31 +390,34 @@ function openOverflowMenu(anchor: HTMLElement, items: IOverflowMenuItem[]): void
 		row.style.cssText = [
 			'display:flex',
 			'align-items:center',
-			'gap:10px',
+			'gap:12px',
 			'width:100%',
-			'padding:6px 12px',
+			'padding:8px 14px',
 			'border:none',
 			'background:transparent',
 			'color:inherit',
-			'font:inherit',
+			// Anchor to the workbench UI font so codicons + labels share a
+			// consistent baseline + family across every theme.
+			'font-family:var(--vscode-font-family, "Segoe UI", "Helvetica Neue", sans-serif)',
+			'font-size:13px',
+			'font-weight:500',
 			'text-align:left',
 			'cursor:' + (item.disabled ? 'default' : 'pointer'),
 			'opacity:' + (item.disabled ? '0.45' : '1'),
 		].join(';');
 
+		// Icon and label both anchor to the workbench UI font + the same
+		// weight so they read as one consistent typographic block. Icons are
+		// 16px with a half-pixel text-stroke (Teams-toolbar weight); labels
+		// are 13px medium so they don't drown out the bolder icons.
 		const iconEl = ownerDoc.createElement('span');
-		// Force monochrome text presentation so the icon picks up the menu's
-		// foreground colour (theme-aware) instead of the OS emoji palette.
-		// `font-variant-emoji: text` covers modern Chromium; the U+FE0E
-		// variation selector below covers codepoints that ignore the property
-		// (e.g. iOS / older glyph fonts).
-		iconEl.textContent = toMonochromeGlyph(item.symbol || '');
-		iconEl.style.cssText = 'flex-shrink:0;width:22px;text-align:center;font-size:16px;line-height:1;color:inherit;font-variant-emoji:text;';
+		iconEl.style.cssText = 'flex-shrink:0;width:20px;text-align:center;display:inline-flex;align-items:center;justify-content:center;color:inherit;';
+		setIconContent(iconEl, item.symbol || '');
 		row.appendChild(iconEl);
 
 		const labelEl = ownerDoc.createElement('span');
 		labelEl.textContent = item.label || '';
-		labelEl.style.cssText = 'flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+		labelEl.style.cssText = 'flex:1;font-family:var(--vscode-font-family, inherit);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;letter-spacing:0.1px;';
 		row.appendChild(labelEl);
 
 		if (!item.disabled) {
@@ -474,8 +508,10 @@ export function createOverflowMenuButton(
 	items: IOverflowMenuItem[] | (() => IOverflowMenuItem[]),
 	label = 'More actions',
 ): HTMLButtonElement {
-	// allow-any-unicode-next-line
-	const btn = createActionIconButton(parent, '⋯', label, () => {
+	// Use the workbench `ellipsis` codicon so the trigger glyph has the same
+	// thin stroke as the icons inside the popup (matches the Teams meeting
+	// toolbar "More" button).
+	const btn = createActionIconButton(parent, 'ellipsis', label, () => {
 		const resolved = typeof items === 'function' ? items() : items;
 		const usable = resolved.filter(i => i.separator || (i.label && i.onClick));
 		if (usable.length === 0) { return; }
