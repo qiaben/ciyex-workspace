@@ -16,7 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
 	id: string;
@@ -345,7 +345,7 @@ export class PatientListPane extends ViewPane {
 
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
 				{ symbol: '\u{1F5C2}', label: 'View Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName) },
-				{ symbol: '\u{1F4DD}', label: 'Edit Patient', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName, 'demographics') },
+				{ symbol: '\u{1F4DD}', label: 'Edit Patient', onClick: () => this._openEditDialog(patient) },
 				{ separator: true },
 				{
 					symbol: isActive ? '\u{1F6AB}' : '\u{2713}',
@@ -369,6 +369,40 @@ export class PatientListPane extends ViewPane {
 
 			this._listEl.appendChild(row);
 		}
+	}
+
+	private _openEditDialog(patient: IPatientRow): void {
+		openRecordEditDialog({
+			title: `Edit Patient — ${patient.firstName} ${patient.lastName}`.trim(),
+			themeAnchor: this._listEl,
+			fields: [
+				{ key: 'firstName', label: 'First Name', required: true, widthPct: 50 },
+				{ key: 'lastName', label: 'Last Name', required: true, widthPct: 50 },
+				{ key: 'dateOfBirth', label: 'Date of Birth', kind: 'date', widthPct: 50 },
+				{
+					key: 'gender', label: 'Gender', kind: 'select', widthPct: 50, options: [
+						{ value: '', label: 'Unknown' },
+						{ value: 'male', label: 'Male' },
+						{ value: 'female', label: 'Female' },
+						{ value: 'other', label: 'Other' },
+					]
+				},
+				{
+					key: 'status', label: 'Status', kind: 'select', widthPct: 100, options: [
+						{ value: 'active', label: 'Active' },
+						{ value: 'inactive', label: 'Inactive' },
+					]
+				},
+			],
+			values: patient as unknown as Record<string, unknown>,
+			onSave: async (next) => {
+				const payload = { ...patient, ...next };
+				const res = await this.apiService.fetch(`/api/patients/${patient.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				Object.assign(patient, next);
+				this._renderList();
+			},
+		});
 	}
 
 	private async _togglePatientStatus(patient: IPatientRow, isActive: boolean): Promise<void> {

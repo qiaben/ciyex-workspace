@@ -20,7 +20,7 @@ import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createOverflowMenuButton, createRowActionsContainer, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, IOverflowMenuItem } from './sidebarActions.js';
 
 // Storage key the calendar editor writes to so the sidebar can mirror its
 // view mode + selected date. Keep in sync with CalendarEditor.STORAGE_KEY.
@@ -593,6 +593,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (apt.patientId) {
 				items.push({ symbol: '\u{1F5C2}', label: 'Open Patient Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
 			}
+			items.push({ symbol: '\u{1F4DD}', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
 			if (apt.encounterId) {
 				items.push({ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId) });
 				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals') });
@@ -636,6 +637,40 @@ export class ScheduleSidebarPane extends ViewPane {
 		row.addEventListener('click', (e) => {
 			if (actionsWrap.contains(e.target as Node)) { return; }
 			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }); }
+		});
+	}
+
+	private _openEditDialog(apt: Appointment): void {
+		const startIso = (apt.start || apt.startTime || '') as string;
+		const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startIso);
+		const initialDate = m ? m[1] : '';
+		const initialTime = m ? m[2] : '';
+		openRecordEditDialog({
+			title: `Edit Appointment — ${apt.patientName || 'Appointment'}`,
+			themeAnchor: this.container,
+			fields: [
+				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
+				{ key: 'appointmentTime', label: 'Start Time', placeholder: 'HH:MM', widthPct: 50 },
+				{ key: 'appointmentType', label: 'Visit Type', widthPct: 50 },
+				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: this.statusOptions.map(s => ({ value: s, label: s })) },
+				{ key: 'room', label: 'Room', kind: 'select', widthPct: 50, options: [{ value: '', label: 'Unassigned' }, ...this.roomOptions.map(r => ({ value: r, label: r }))] },
+				{ key: 'providerName', label: 'Provider', widthPct: 50 },
+			],
+			values: {
+				appointmentDate: initialDate,
+				appointmentTime: initialTime,
+				appointmentType: getAppointmentType(apt),
+				status: apt.status || 'Scheduled',
+				room: apt.room || '',
+				providerName: apt.providerName || apt.practitionerName || '',
+			},
+			onSave: async (next) => {
+				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
+				const payload = { ...apt, startTime, status: next.status, appointmentType: next.appointmentType, room: next.room };
+				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				await this._loadAndRender();
+			},
 		});
 	}
 

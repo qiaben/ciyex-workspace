@@ -18,7 +18,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -40,6 +40,8 @@ interface SystemItem {
 	titleField: string[];
 	subtitleField?: string[];
 	actions: RowAction[];
+	/** Explicit edit-drawer schema mirroring the full editor formFields. */
+	editFields?: IEditFieldDef[];
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -58,6 +60,61 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/cds/rules?page=0&size=10',
 		titleField: ['name', 'summary'],
 		subtitleField: ['triggerType', 'severity'],
+		editFields: [
+			{ key: 'name', label: 'Rule Name', required: true, placeholder: 'e.g. Diabetes A1C Screening', widthPct: 100 },
+			{ key: 'description', label: 'Description', kind: 'textarea', placeholder: 'Brief description of this rule...', widthPct: 100 },
+			{
+				key: 'ruleType', label: 'Rule Type', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'preventive_screening', label: 'Preventive Screening' },
+					{ value: 'drug_allergy', label: 'Drug-Allergy' },
+					{ value: 'drug_drug', label: 'Drug-Drug' },
+					{ value: 'duplicate_order', label: 'Duplicate Order' },
+					{ value: 'age_based', label: 'Age-Based' },
+					{ value: 'condition_based', label: 'Condition-Based' },
+					{ value: 'lab_value', label: 'Lab Value' },
+					{ value: 'custom', label: 'Custom' },
+				]
+			},
+			{
+				key: 'category', label: 'Category', kind: 'select', widthPct: 50, options: [
+					{ value: 'preventive', label: 'Preventive' },
+					{ value: 'medication_safety', label: 'Medication Safety' },
+					{ value: 'order_entry', label: 'Order Entry' },
+					{ value: 'chronic_disease', label: 'Chronic Disease' },
+				]
+			},
+			{
+				key: 'triggerEvent', label: 'Trigger Event', kind: 'select', widthPct: 50, options: [
+					{ value: 'encounter_open', label: 'Encounter Open' },
+					{ value: 'order_entry', label: 'Order Entry' },
+					{ value: 'medication_prescribe', label: 'Medication Prescribe' },
+					{ value: 'lab_result', label: 'Lab Result' },
+					{ value: 'manual', label: 'Manual' },
+				]
+			},
+			{
+				key: 'actionType', label: 'Action Type', kind: 'select', widthPct: 50, options: [
+					{ value: 'alert', label: 'Alert' }, { value: 'reminder', label: 'Reminder' },
+					{ value: 'suggestion', label: 'Suggestion' }, { value: 'hard_stop', label: 'Hard Stop' },
+				]
+			},
+			{
+				key: 'severity', label: 'Severity', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' },
+					{ value: 'critical', label: 'Critical' },
+				]
+			},
+			{
+				key: 'appliesTo', label: 'Applies To', kind: 'select', widthPct: 50, options: [
+					{ value: 'all', label: 'All Users' }, { value: 'provider', label: 'Provider' },
+					{ value: 'nurse', label: 'Nurse' }, { value: 'ma', label: 'Medical Assistant' },
+				]
+			},
+			{ key: 'message', label: 'Alert Message', kind: 'textarea', required: true, placeholder: 'Message shown to the provider when this rule fires...', widthPct: 100 },
+			{ key: 'recommendation', label: 'Recommendation', kind: 'textarea', placeholder: 'Recommended action for the provider...', widthPct: 100 },
+			{ key: 'referenceUrl', label: 'Reference URL', placeholder: 'https://...', widthPct: 50 },
+			{ key: 'snoozeDays', label: 'Snooze (days)', kind: 'number', placeholder: 'Leave empty for no snooze', widthPct: 50 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -79,6 +136,29 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/consents?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['category', 'status'],
+		editFields: [
+			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
+			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
+			{
+				key: 'consentType', label: 'Consent Type', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'hipaa_privacy', label: 'HIPAA Privacy' },
+					{ value: 'treatment', label: 'Treatment' },
+					{ value: 'release_of_info', label: 'Release of Info' },
+					{ value: 'telehealth', label: 'Telehealth' },
+					{ value: 'research', label: 'Research' },
+					{ value: 'financial', label: 'Financial' },
+				]
+			},
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'pending', label: 'Pending' }, { value: 'signed', label: 'Signed' },
+					{ value: 'expired', label: 'Expired' }, { value: 'revoked', label: 'Revoked' },
+				]
+			},
+			{ key: 'expiryDate', label: 'Expiry Date', kind: 'date', widthPct: 50 },
+			{ key: 'version', label: 'Version', placeholder: '1.0', widthPct: 50 },
+			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -123,6 +203,22 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/fax?page=0&size=10',
 		titleField: ['to', 'from', 'subject'],
 		subtitleField: ['status', 'createdAt'],
+		editFields: [
+			{ key: 'recipientName', label: 'Recipient Name', required: true, placeholder: 'Search recipient...', widthPct: 50 },
+			{ key: 'faxNumber', label: 'Fax Number', kind: 'tel', required: true, placeholder: '+1-555-555-5555', widthPct: 50 },
+			{ key: 'subject', label: 'Subject', required: true, placeholder: 'Fax subject', widthPct: 100 },
+			{ key: 'pageCount', label: 'Page Count', kind: 'number', placeholder: '1', widthPct: 50 },
+			{ key: 'patientName', label: 'Patient Name', placeholder: 'Search patient...', widthPct: 50 },
+			{ key: 'patientId', label: 'Patient ID', placeholder: 'Auto-filled', widthPct: 50 },
+			{
+				key: 'category', label: 'Category', kind: 'select', widthPct: 50, options: [
+					{ value: 'referral', label: 'Referral' }, { value: 'lab_result', label: 'Lab Result' },
+					{ value: 'prior_auth', label: 'Prior Auth' }, { value: 'medical_records', label: 'Medical Records' },
+					{ value: 'other', label: 'Other' },
+				]
+			},
+			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -456,7 +552,7 @@ export class SystemMenuPane extends ViewPane {
 
 	private async _executeAction(item: SystemItem, row: DataRow, a: RowAction): Promise<void> {
 		const k = a.action;
-		if (k.kind === 'edit') { this.commandService.executeCommand(item.command); return; }
+		if (k.kind === 'edit') { this._openEditDialog(item, row); return; }
 		if (k.kind === 'delete') {
 			if (k.confirm) {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'warning', primaryButton: 'Delete' });
@@ -484,5 +580,47 @@ export class SystemMenuPane extends ViewPane {
 		}
 	}
 
+	private _openEditDialog(item: SystemItem, row: DataRow): void {
+		let fields: IEditFieldDef[];
+		if (item.editFields && item.editFields.length > 0) {
+			fields = item.editFields;
+		} else {
+			const fieldKeys = [...item.titleField];
+			if (item.subtitleField) {
+				for (const k of item.subtitleField) { if (!fieldKeys.includes(k)) { fieldKeys.push(k); } }
+			}
+			fields = fieldKeys
+				.filter(k => k !== 'status')
+				.map(k => ({ key: k, label: humaniseFieldKey(k), widthPct: 100 } satisfies IEditFieldDef));
+			fields.push({ key: 'status', label: 'Status', widthPct: 100 });
+		}
+
+		const initialValues: Record<string, unknown> = {};
+		for (const f of fields) { initialValues[f.key] = row[f.key] ?? ''; }
+
+		const id = row.id || row.fhirId;
+		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		openRecordEditDialog({
+			title: `Edit ${item.label}`,
+			themeAnchor: this.container,
+			fields,
+			values: initialValues,
+			onSave: async (next) => {
+				const payload = { ...row, ...next };
+				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				await this._loadItemData(item);
+			},
+		});
+	}
+
 	protected override layoutBody(h: number, w: number): void { super.layoutBody(h, w); }
+}
+
+function humaniseFieldKey(key: string): string {
+	return key
+		.replace(/([A-Z])/g, ' $1')
+		.replace(/[_-]+/g, ' ')
+		.replace(/^./, c => c.toUpperCase())
+		.trim();
 }

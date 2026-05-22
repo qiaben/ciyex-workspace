@@ -18,7 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 interface Task {
 	id: string;
@@ -355,7 +355,7 @@ export class TasksSidebarPane extends ViewPane {
 			if (task.status === 'pending') {
 				items.push({ symbol: '\u{25B6}', label: 'Start Task', onClick: () => this._updateStatus(task, 'in_progress') });
 			}
-			items.push({ symbol: '\u{1F4DD}', label: 'Edit Task', onClick: () => this.commandService.executeCommand('ciyex.openTasks') });
+			items.push({ symbol: '\u{1F4DD}', label: 'Edit Task', onClick: () => this._openEditDialog(task) });
 			if (task.status !== 'completed' && task.status !== 'cancelled') {
 				items.push({ symbol: '\u{1F6AB}', label: 'Cancel Task', onClick: () => this._updateStatus(task, 'cancelled') });
 			}
@@ -375,6 +375,67 @@ export class TasksSidebarPane extends ViewPane {
 		row.addEventListener('click', (e) => {
 			if (actions.contains(e.target as Node)) { return; }
 			this.commandService.executeCommand('ciyex.openTasks');
+		});
+	}
+
+	private _openEditDialog(task: Task): void {
+		// Mirror the full task editor form (tasksEditor.ts:541-656) so the
+		// drawer surfaces the same fields, in the same order, as the page
+		// table edit modal.
+		openRecordEditDialog({
+			title: `Edit Task — ${task.title || ''}`,
+			themeAnchor: this.container,
+			fields: [
+				{ key: 'title', label: 'Title', required: true, placeholder: 'Enter task title', widthPct: 100 },
+				{ key: 'description', label: 'Description', kind: 'textarea', placeholder: 'Task description...', widthPct: 100 },
+				{
+					key: 'taskType', label: 'Task Type', kind: 'select', widthPct: 50, options: [
+						{ value: 'general', label: 'General' },
+						{ value: 'follow_up', label: 'Follow Up' },
+						{ value: 'callback', label: 'Callback' },
+						{ value: 'refill', label: 'Refill' },
+						{ value: 'lab_review', label: 'Lab Review' },
+						{ value: 'referral', label: 'Referral' },
+						{ value: 'prior_auth', label: 'Prior Auth' },
+						{ value: 'documentation', label: 'Documentation' },
+					]
+				},
+				{
+					key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
+						{ value: 'urgent', label: 'Urgent' },
+						{ value: 'high', label: 'High' },
+						{ value: 'normal', label: 'Normal' },
+						{ value: 'low', label: 'Low' },
+					]
+				},
+				{
+					key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+						{ value: 'pending', label: 'Pending' },
+						{ value: 'in_progress', label: 'In Progress' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'cancelled', label: 'Cancelled' },
+						{ value: 'deferred', label: 'Deferred' },
+					]
+				},
+				{ key: 'dueDate', label: 'Due Date', kind: 'date', widthPct: 50 },
+				{ key: 'dueTime', label: 'Due Time', placeholder: 'HH:MM', widthPct: 50 },
+				{ key: 'assignedTo', label: 'Assigned To', required: true, placeholder: 'Search provider...', widthPct: 50 },
+				{ key: 'assignedBy', label: 'Assigned By', placeholder: 'e.g. Front Desk', widthPct: 50 },
+				{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient by name...', widthPct: 50 },
+				{ key: 'patientId', label: 'Patient ID', placeholder: 'Auto-filled from search', widthPct: 50 },
+				{ key: 'encounterId', label: 'Encounter ID', placeholder: 'Encounter ID (optional)', widthPct: 50 },
+				{ key: 'referenceType', label: 'Reference Type', placeholder: 'e.g. Order, Lab', widthPct: 50 },
+				{ key: 'referenceId', label: 'Reference ID', placeholder: 'Reference ID (numeric)', widthPct: 50 },
+				{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
+			],
+			values: task as unknown as Record<string, unknown>,
+			onSave: async (next) => {
+				const payload = { ...task, ...next };
+				const res = await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				Object.assign(task, next);
+				this._render();
+			},
 		});
 	}
 

@@ -18,7 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 interface FhirActor {
 	reference?: string;
@@ -553,9 +553,10 @@ export class AppointmentsSidebarPane extends ViewPane {
 				items.push({ symbol: '\u{1F4F9}', label: 'Join Video Visit', onClick: () => this._joinTelehealth(apt) });
 			}
 			items.push({ symbol: '\u{1F5C2}', label: 'Open Chart', onClick: () => this._openChart(apt) });
+			items.push({ symbol: '\u{1F4DD}', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
 			if (!isTele) {
 				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this._recordVitals(apt) });
-				items.push({ symbol: '\u{1F4DD}', label: 'Visit Summary', onClick: () => this._visitSummary(apt) });
+				items.push({ symbol: '\u{1F5C3}', label: 'Visit Summary', onClick: () => this._visitSummary(apt) });
 			}
 			if (!apt.encounterId) {
 				items.push({ separator: true });
@@ -604,6 +605,40 @@ export class AppointmentsSidebarPane extends ViewPane {
 		}
 		// No patient linked yet — fall back to the appointments editor.
 		this.commandService.executeCommand('ciyex.openAppointments');
+	}
+
+	private _openEditDialog(apt: Appointment): void {
+		const startIso = (apt.start || apt.startTime || '') as string;
+		const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startIso);
+		const initialDate = m ? m[1] : (apt.appointmentStartDate || '');
+		const initialTime = m ? m[2] : (apt.appointmentStartTime || '');
+		openRecordEditDialog({
+			title: `Edit Appointment — ${patientNameOf(apt)}`,
+			themeAnchor: this.container,
+			fields: [
+				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
+				{ key: 'appointmentTime', label: 'Start Time', placeholder: 'HH:MM', widthPct: 50 },
+				{ key: 'appointmentType', label: 'Visit Type', widthPct: 50 },
+				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: this.statusOptions.map(s => ({ value: s.toLowerCase().replace(/\s+/g, '-'), label: s })) },
+				{ key: 'room', label: 'Room', widthPct: 50 },
+				{ key: 'providerName', label: 'Provider', widthPct: 50 },
+			],
+			values: {
+				appointmentDate: initialDate,
+				appointmentTime: initialTime,
+				appointmentType: getAppointmentType(apt),
+				status: (apt.status || 'scheduled').toLowerCase(),
+				room: apt.room || '',
+				providerName: providerNameOf(apt),
+			},
+			onSave: async (next) => {
+				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
+				const payload = { ...apt, startTime, status: next.status, appointmentType: next.appointmentType, room: next.room };
+				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				await this._loadAll();
+			},
+		});
 	}
 
 	private _recordVitals(apt: Appointment): void {

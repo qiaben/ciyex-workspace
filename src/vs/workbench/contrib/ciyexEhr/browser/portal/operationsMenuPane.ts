@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -28,6 +28,13 @@ type RowActionKind =
 
 interface RowAction { symbol: string; label: string; color: string; action: RowActionKind }
 
+/**
+ * Per-resource edit form schema. When provided, the edit drawer renders this
+ * exact list of fields instead of deriving them from titleField/subtitleField.
+ * Use this to match the full schema the web EHR UI exposes (e.g. the Patient
+ * Recall drawer shows Patient/Phone/Email/RecallType/Provider/DueDate/
+ * Priority/Status/PreferredContact/Notes).
+ */
 interface OperationsItem {
 	id: string;
 	icon: string;
@@ -39,6 +46,8 @@ interface OperationsItem {
 	titleField: string[];
 	subtitleField?: string[];
 	actions: RowAction[];
+	/** Optional explicit field schema for the Edit drawer. */
+	editFields?: IEditFieldDef[];
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -56,6 +65,52 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/recalls?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['recallTypeName', 'status'],
+		editFields: [
+			{ key: 'patientName', label: 'Patient Name', required: true, widthPct: 50 },
+			{ key: 'phone', label: 'Phone', kind: 'tel', widthPct: 50 },
+			{ key: 'email', label: 'Email', kind: 'email', widthPct: 50 },
+			{
+				key: 'recallTypeName', label: 'Recall Type', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'Annual Physical', label: 'Annual Physical' },
+					{ value: 'Medicare Wellness', label: 'Medicare Wellness' },
+					{ value: 'Well-Child Visit', label: 'Well-Child Visit' },
+					{ value: 'Follow-up', label: 'Follow-up' },
+					{ value: 'Lab Recheck', label: 'Lab Recheck' },
+					{ value: 'Imaging', label: 'Imaging' },
+					{ value: 'Vaccination', label: 'Vaccination' },
+					{ value: 'Other', label: 'Other' },
+				]
+			},
+			{ key: 'providerName', label: 'Provider', widthPct: 50 },
+			{ key: 'dueDate', label: 'Due Date', kind: 'date', required: true, widthPct: 50 },
+			{
+				key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
+					{ value: 'Low', label: 'Low' },
+					{ value: 'Normal', label: 'Normal' },
+					{ value: 'High', label: 'High' },
+					{ value: 'Urgent', label: 'Urgent' },
+				]
+			},
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'Pending', label: 'Pending' },
+					{ value: 'Contacted', label: 'Contacted' },
+					{ value: 'Scheduled', label: 'Scheduled' },
+					{ value: 'Completed', label: 'Completed' },
+					{ value: 'Declined', label: 'Declined' },
+					{ value: 'Cancelled', label: 'Cancelled' },
+				]
+			},
+			{
+				key: 'preferredContact', label: 'Preferred Contact', kind: 'select', widthPct: 50, options: [
+					{ value: 'SMS', label: 'SMS' },
+					{ value: 'Phone', label: 'Phone' },
+					{ value: 'Email', label: 'Email' },
+					{ value: 'Mail', label: 'Mail' },
+				]
+			},
+			{ key: 'notes', label: 'Notes', kind: 'textarea', widthPct: 100 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -77,6 +132,22 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/global_codes?page=0&size=10',
 		titleField: ['code'],
 		subtitleField: ['description', 'codeType'],
+		editFields: [
+			{ key: 'code', label: 'Code', required: true, placeholder: 'e.g. 99213', widthPct: 50 },
+			{
+				key: 'codeType', label: 'Code Type', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'ICD10', label: 'ICD-10' }, { value: 'CPT4', label: 'CPT' },
+					{ value: 'HCPCS', label: 'HCPCS' }, { value: 'CDT', label: 'CDT' },
+					{ value: 'SNOMED', label: 'SNOMED' }, { value: 'LOINC', label: 'LOINC' },
+					{ value: 'NDC', label: 'NDC' }, { value: 'CVX', label: 'CVX' },
+					{ value: 'CUSTOM', label: 'Custom' },
+				]
+			},
+			{ key: 'modifier', label: 'Modifier', placeholder: 'e.g. 25, 59, GT', widthPct: 50 },
+			{ key: 'category', label: 'Category', widthPct: 50 },
+			{ key: 'shortDescription', label: 'Short Description', required: true, widthPct: 100 },
+			{ key: 'description', label: 'Full Description', kind: 'textarea', placeholder: 'Detailed description of this code...', widthPct: 100 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -96,6 +167,40 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/inventory?page=0&size=10',
 		titleField: ['name', 'item'],
 		subtitleField: ['quantity', 'status'],
+		editFields: [
+			{ key: 'name', label: 'Name', required: true, placeholder: 'e.g. Latex Gloves Medium', widthPct: 50 },
+			{ key: 'sku', label: 'SKU', required: true, placeholder: 'e.g. GLV-M-001', widthPct: 50 },
+			{ key: 'description', label: 'Description', widthPct: 100 },
+			{ key: 'unit', label: 'Unit', required: true, placeholder: 'pcs / box / vial', widthPct: 50 },
+			{ key: 'costPerUnit', label: 'Cost Per Unit ($)', kind: 'number', widthPct: 50 },
+			{ key: 'stockOnHand', label: 'Stock On Hand', kind: 'number', required: true, widthPct: 50 },
+			{ key: 'minStock', label: 'Min Stock', kind: 'number', required: true, widthPct: 50 },
+			{ key: 'maxStock', label: 'Max Stock', kind: 'number', widthPct: 50 },
+			{ key: 'reorderPoint', label: 'Reorder Point', kind: 'number', widthPct: 50 },
+			{ key: 'reorderQty', label: 'Reorder Qty', kind: 'number', widthPct: 50 },
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' },
+				]
+			},
+			{
+				key: 'itemType', label: 'Item Type', kind: 'select', widthPct: 50, options: [
+					{ value: 'consumable', label: 'Consumable' }, { value: 'durable', label: 'Durable' },
+					{ value: 'medication', label: 'Medication' }, { value: 'equipment', label: 'Equipment' },
+				]
+			},
+			{ key: 'barcode', label: 'Barcode', widthPct: 50 },
+			{ key: 'manufacturer', label: 'Manufacturer', widthPct: 50 },
+			{
+				key: 'costMethod', label: 'Cost Method', kind: 'select', widthPct: 50, options: [
+					{ value: 'fifo', label: 'FIFO' }, { value: 'lifo', label: 'LIFO' },
+					{ value: 'avg', label: 'Average' },
+				]
+			},
+			{ key: 'categoryId', label: 'Category ID', kind: 'number', widthPct: 50 },
+			{ key: 'locationId', label: 'Location ID', kind: 'number', widthPct: 50 },
+			{ key: 'supplierId', label: 'Supplier ID', kind: 'number', widthPct: 50 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -117,6 +222,34 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/payments/transactions?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['amount', 'status'],
+		editFields: [
+			{ key: 'patientName', label: 'Patient', required: true, placeholder: 'Search patient...', widthPct: 50 },
+			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
+			{ key: 'amount', label: 'Amount ($)', kind: 'number', required: true, placeholder: '0.00', widthPct: 50 },
+			{
+				key: 'transactionType', label: 'Type', kind: 'select', widthPct: 50, options: [
+					{ value: 'payment', label: 'Payment' }, { value: 'copay', label: 'Copay' },
+					{ value: 'deductible', label: 'Deductible' }, { value: 'coinsurance', label: 'Coinsurance' },
+					{ value: 'self_pay', label: 'Self-Pay' },
+				]
+			},
+			{
+				key: 'paymentMethodType', label: 'Method', kind: 'select', required: true, widthPct: 50, options: [
+					{ value: 'credit_card', label: 'Credit Card' }, { value: 'debit_card', label: 'Debit Card' },
+					{ value: 'cash', label: 'Cash' }, { value: 'check', label: 'Check' },
+					{ value: 'ach', label: 'ACH' }, { value: 'other', label: 'Other' },
+				]
+			},
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'pending', label: 'Pending' }, { value: 'processing', label: 'Processing' },
+					{ value: 'completed', label: 'Completed' },
+				]
+			},
+			{ key: 'description', label: 'Description', placeholder: 'Visit copay, lab, etc.', widthPct: 100 },
+			{ key: 'invoiceId', label: 'Invoice ID', placeholder: 'Optional - link to invoice', widthPct: 50 },
+			{ key: 'transactionId', label: 'External Transaction ID', placeholder: 'Stripe charge id, check #, ...', widthPct: 50 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -138,6 +271,34 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/all-claims?page=0&size=10',
 		titleField: ['claimNumber', 'patientName'],
 		subtitleField: ['payerName', 'status'],
+		editFields: [
+			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
+			{ key: 'patientId', label: 'Patient ID', placeholder: 'Auto-filled', widthPct: 50 },
+			{ key: 'provider', label: 'Provider', required: true, placeholder: 'Search provider...', widthPct: 50 },
+			{ key: 'providerId', label: 'Provider ID', placeholder: 'Auto-filled', widthPct: 50 },
+			{ key: 'payerName', label: 'Payer Name', placeholder: 'Insurance payer', widthPct: 50 },
+			{ key: 'diagnosisCode', label: 'Diagnosis Code', placeholder: 'e.g. Z00.00', widthPct: 50 },
+			{ key: 'diagnosisDescription', label: 'Diagnosis Description', widthPct: 100 },
+			{ key: 'policyNumber', label: 'Policy Number', placeholder: 'Policy number', widthPct: 50 },
+			{ key: 'planName', label: 'Plan Name', placeholder: 'Plan name', widthPct: 50 },
+			{
+				key: 'type', label: 'Type', kind: 'select', widthPct: 50, options: [
+					{ value: 'professional', label: 'Professional' }, { value: 'institutional', label: 'Institutional' },
+					{ value: 'dental', label: 'Dental' }, { value: 'pharmacy', label: 'Pharmacy' },
+				]
+			},
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'DRAFT', label: 'Draft' }, { value: 'IN_PROCESS', label: 'In Process' },
+					{ value: 'READY_FOR_SUBMISSION', label: 'Ready for Submission' },
+					{ value: 'SUBMITTED', label: 'Submitted' }, { value: 'CLOSED', label: 'Closed' },
+					{ value: 'VOID', label: 'Void' },
+				]
+			},
+			{ key: 'invoiceNumber', label: 'Invoice Number', placeholder: 'Linked invoice number', widthPct: 50 },
+			{ key: 'totalAmount', label: 'Total Amount ($)', kind: 'number', widthPct: 50 },
+			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
+		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -406,7 +567,7 @@ export class OperationsMenuPane extends ViewPane {
 
 	private async _executeAction(item: OperationsItem, row: DataRow, a: RowAction): Promise<void> {
 		const k = a.action;
-		if (k.kind === 'edit') { this.commandService.executeCommand(item.command); return; }
+		if (k.kind === 'edit') { this._openEditDialog(item, row); return; }
 		if (k.kind === 'delete') {
 			if (k.confirm) {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'warning', primaryButton: 'Delete' });
@@ -434,5 +595,51 @@ export class OperationsMenuPane extends ViewPane {
 		}
 	}
 
+	private _openEditDialog(item: OperationsItem, row: DataRow): void {
+		// Prefer the per-resource editFields schema when defined (e.g. Patient
+		// Recall ships the full Patient/Phone/Email/Recall Type/... grid that
+		// the web EHR drawer renders). Otherwise fall back to deriving fields
+		// from the displayed title + subtitle keys plus a Status select.
+		let fields: IEditFieldDef[];
+		if (item.editFields && item.editFields.length > 0) {
+			fields = item.editFields;
+		} else {
+			const fieldKeys = [...item.titleField];
+			if (item.subtitleField) {
+				for (const k of item.subtitleField) { if (!fieldKeys.includes(k)) { fieldKeys.push(k); } }
+			}
+			fields = fieldKeys
+				.filter(k => k !== 'status')
+				.map(k => ({ key: k, label: humaniseFieldKey(k), widthPct: 100 } satisfies IEditFieldDef));
+			fields.push({ key: 'status', label: 'Status', widthPct: 100 });
+		}
+
+		const initialValues: Record<string, unknown> = {};
+		for (const f of fields) { initialValues[f.key] = row[f.key] ?? ''; }
+
+		const id = row.id || row.fhirId;
+		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		openRecordEditDialog({
+			title: `Edit ${item.label}`,
+			themeAnchor: this.container,
+			fields,
+			values: initialValues,
+			onSave: async (next) => {
+				const payload = { ...row, ...next };
+				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				await this._loadItemData(item);
+			},
+		});
+	}
+
 	protected override layoutBody(h: number, w: number): void { super.layoutBody(h, w); }
+}
+
+function humaniseFieldKey(key: string): string {
+	return key
+		.replace(/([A-Z])/g, ' $1')
+		.replace(/[_-]+/g, ' ')
+		.replace(/^./, c => c.toUpperCase())
+		.trim();
 }

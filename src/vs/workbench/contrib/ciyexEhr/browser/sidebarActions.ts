@@ -483,3 +483,235 @@ export function createOverflowMenuButton(
 	});
 	return btn;
 }
+
+// ---------------------------------------------------------------------------
+//  Inline record-edit dialog
+// ---------------------------------------------------------------------------
+
+/**
+ * Field schema for {@link openRecordEditDialog}. Mirrors the small subset of
+ * HTML input types the panes need (text / number / email / phone / date /
+ * textarea / select). Add new kinds here as panes need them.
+ */
+export interface IEditFieldDef {
+	key: string;
+	label: string;
+	kind?: 'text' | 'number' | 'email' | 'tel' | 'date' | 'textarea' | 'select';
+	options?: Array<{ value: string; label: string }>;
+	required?: boolean;
+	placeholder?: string;
+	hint?: string;
+	/** Width hint as a percentage of the row (defaults to 100 for full row). */
+	widthPct?: number;
+}
+
+export interface IEditDialogOptions {
+	title: string;
+	fields: IEditFieldDef[];
+	values: Record<string, unknown>;
+	onSave: (next: Record<string, string>) => Promise<void> | void;
+	primaryLabel?: string;
+	themeAnchor?: HTMLElement;
+}
+
+/**
+ * Open a theme-aware modal dialog that renders the given field schema as a
+ * form. The dialog is built with raw DOM (matches the rest of the workbench
+ * sidebar code) and uses the workbench theme class for colours so it looks
+ * native on light, dark, and high-contrast themes.
+ *
+ * Used by every sidebar Edit action so users see the record's fields right
+ * away instead of being redirected to the full editor page.
+ */
+export function openRecordEditDialog(opts: IEditDialogOptions): void {
+	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
+	const theme = detectThemeKind(doc, opts.themeAnchor);
+	const palette = THEME_PALETTES[theme];
+
+	// Right-side slide-out drawer (matches the EHR-UI Patient Recall edit
+	// flow). The overlay is a thin scrim that lets the underlying page stay
+	// visible while preventing accidental clicks; the drawer itself docks
+	// flush to the right edge of the workbench.
+	const overlay = doc.createElement('div');
+	overlay.className = 'ciyex-edit-dialog-overlay';
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);';
+
+	const dialog = doc.createElement('div');
+	dialog.style.cssText = [
+		'width:520px',
+		'max-width:90vw',
+		'height:100vh',
+		'display:flex',
+		'flex-direction:column',
+		'overflow:hidden',
+		`background:${palette.background}`,
+		`color:${palette.foreground}`,
+		`border-left:1px solid ${palette.border}`,
+		`box-shadow:-12px 0 32px ${palette.shadow}`,
+		'font-size:13px',
+		// Slide-in animation - matches the React drawer in the web EHR UI.
+		'transform:translateX(100%)',
+		'transition:transform 0.2s ease-out',
+	].join(';');
+
+	const header = doc.createElement('div');
+	header.style.cssText = `padding:18px 22px;border-bottom:1px solid ${palette.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+	const titleEl = doc.createElement('span');
+	titleEl.textContent = opts.title;
+	titleEl.style.flex = '1';
+	header.appendChild(titleEl);
+	const closeBtn = doc.createElement('button');
+	closeBtn.type = 'button';
+	closeBtn.setAttribute('aria-label', 'Close');
+	closeBtn.style.cssText = `background:transparent;border:none;color:${palette.foreground};opacity:0.7;font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px;`;
+	closeBtn.textContent = '×';
+	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = palette.hoverBackground; closeBtn.style.opacity = '1'; });
+	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.opacity = '0.7'; });
+	closeBtn.addEventListener('click', () => close());
+	header.appendChild(closeBtn);
+	dialog.appendChild(header);
+
+	const form = doc.createElement('form');
+	// Two-column grid - matches the EHR-UI drawer in image 2. Cells span one
+	// column unless the field's widthPct asks for full width.
+	form.style.cssText = 'padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;column-gap:16px;row-gap:14px;overflow-y:auto;flex:1;align-content:start;';
+	form.addEventListener('submit', (e) => { e.preventDefault(); });
+
+	const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+	const inputBg = theme === 'light' || theme === 'hcLight' ? '#ffffff' : '#1e1e1e';
+	const inputBorder = palette.border;
+
+	for (const field of opts.fields) {
+		const wrap = doc.createElement('div');
+		// widthPct >= 75% spans both grid columns - mirrors the EHR-UI drawer
+		// layout where Notes / single text fields fill the whole row.
+		const widthPct = field.widthPct ?? 100;
+		const spanFull = widthPct >= 75 || field.kind === 'textarea';
+		wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:flex;flex-direction:column;gap:4px;min-width:0;`;
+
+		const lbl = doc.createElement('label');
+		lbl.textContent = field.label + (field.required ? ' *' : '');
+		lbl.style.cssText = `font-size:12px;font-weight:500;color:${palette.foreground};opacity:0.8;`;
+		wrap.appendChild(lbl);
+
+		const initial = String(opts.values[field.key] ?? '');
+		let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+		if (field.kind === 'textarea') {
+			const ta = doc.createElement('textarea');
+			ta.rows = 3;
+			ta.value = initial;
+			input = ta;
+		} else if (field.kind === 'select') {
+			const sel = doc.createElement('select');
+			for (const opt of field.options || []) {
+				const o = doc.createElement('option');
+				o.value = opt.value;
+				o.textContent = opt.label;
+				if (opt.value === initial) { o.selected = true; }
+				sel.appendChild(o);
+			}
+			input = sel;
+		} else {
+			const inp = doc.createElement('input');
+			inp.type = field.kind || 'text';
+			inp.value = initial;
+			input = inp;
+		}
+		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${palette.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
+		if (field.placeholder && (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input))) {
+			input.placeholder = field.placeholder;
+		}
+		input.addEventListener('focus', () => {
+			input.style.borderColor = 'var(--vscode-focusBorder, #007fd4)';
+		});
+		input.addEventListener('blur', () => {
+			input.style.borderColor = inputBorder;
+		});
+		wrap.appendChild(input);
+		inputs.set(field.key, input);
+
+		if (field.hint) {
+			const hint = doc.createElement('div');
+			hint.textContent = field.hint;
+			hint.style.cssText = `font-size:11px;color:${palette.foreground};opacity:0.6;`;
+			wrap.appendChild(hint);
+		}
+
+		form.appendChild(wrap);
+	}
+	dialog.appendChild(form);
+
+	const footer = doc.createElement('div');
+	footer.style.cssText = `padding:14px 22px;border-top:1px solid ${palette.separator};display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;`;
+
+	const errorMsg = doc.createElement('span');
+	errorMsg.style.cssText = `flex:1;color:#ef4444;font-size:12px;align-self:center;`;
+	footer.appendChild(errorMsg);
+
+	const cancelBtn = doc.createElement('button');
+	cancelBtn.type = 'button';
+	cancelBtn.textContent = 'Cancel';
+	cancelBtn.style.cssText = `padding:6px 14px;border:1px solid ${palette.border};border-radius:4px;background:transparent;color:${palette.foreground};font-size:13px;cursor:pointer;`;
+	cancelBtn.addEventListener('click', () => close());
+	footer.appendChild(cancelBtn);
+
+	const saveBtn = doc.createElement('button');
+	saveBtn.type = 'button';
+	saveBtn.textContent = opts.primaryLabel || 'Save Changes';
+	saveBtn.style.cssText = 'padding:6px 14px;border:none;border-radius:4px;background:var(--vscode-button-background, #0e639c);color:var(--vscode-button-foreground, #ffffff);font-size:13px;font-weight:500;cursor:pointer;';
+	saveBtn.addEventListener('mouseenter', () => { saveBtn.style.background = 'var(--vscode-button-hoverBackground, #1177bb)'; });
+	saveBtn.addEventListener('mouseleave', () => { saveBtn.style.background = 'var(--vscode-button-background, #0e639c)'; });
+	saveBtn.addEventListener('click', async () => {
+		errorMsg.textContent = '';
+		const result: Record<string, string> = {};
+		for (const f of opts.fields) {
+			const v = inputs.get(f.key)?.value ?? '';
+			if (f.required && !v.trim()) {
+				errorMsg.textContent = `${f.label} is required`;
+				return;
+			}
+			result[f.key] = v;
+		}
+		saveBtn.disabled = true;
+		const original = saveBtn.textContent;
+		saveBtn.textContent = 'Saving...';
+		try {
+			await opts.onSave(result);
+			close();
+		} catch (err) {
+			errorMsg.textContent = err instanceof Error ? err.message : String(err);
+			saveBtn.disabled = false;
+			saveBtn.textContent = original;
+		}
+	});
+	footer.appendChild(saveBtn);
+	dialog.appendChild(footer);
+	overlay.appendChild(dialog);
+
+	const onKey = (e: KeyboardEvent) => {
+		if (e.key === 'Escape') { close(); }
+	};
+	const onOverlayClick = (e: MouseEvent) => {
+		if (e.target === overlay) { close(); }
+	};
+	const close = () => {
+		if (!overlay.parentElement) { return; }
+		overlay.parentElement.removeChild(overlay);
+		doc.removeEventListener('keydown', onKey, true);
+		overlay.removeEventListener('click', onOverlayClick);
+	};
+	doc.addEventListener('keydown', onKey, true);
+	overlay.addEventListener('click', onOverlayClick);
+	(doc.body || doc.documentElement).appendChild(overlay);
+
+	// Defer the transform reset by one frame so the browser registers the
+	// initial translateX(100%) before transitioning to 0 - otherwise the
+	// drawer just snaps in.
+	const win = DOM.getWindow(opts.themeAnchor || overlay) || mainWindow;
+	win.requestAnimationFrame(() => {
+		dialog.style.transform = 'translateX(0)';
+	});
+
+	const first = opts.fields.length > 0 ? inputs.get(opts.fields[0].key) : undefined;
+	first?.focus();
+}

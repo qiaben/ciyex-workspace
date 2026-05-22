@@ -18,7 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
-import { createOverflowMenuButton, createRowActionsContainer, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 export class EncounterListPane extends ViewPane {
 	static readonly ID = 'ciyex.encounters.view';
@@ -277,6 +277,7 @@ export class EncounterListPane extends ViewPane {
 
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
 				{ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
+				{ symbol: '\u{270F}', label: 'Edit Encounter', onClick: () => this._openEditDialog(item, encId, patName) },
 				{ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
 				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan') },
 			]);
@@ -305,5 +306,47 @@ export class EncounterListPane extends ViewPane {
 			(next) => { this.visibleCount = next; this._renderList(search); },
 			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search); },
 		);
+	}
+
+	private _openEditDialog(item: Record<string, unknown>, encId: string, patName: string): void {
+		const dateRaw = String(item.encounterDate || item.startDate || item.start || '');
+		const initialDate = dateRaw ? dateRaw.slice(0, 10) : '';
+		openRecordEditDialog({
+			title: `Edit Encounter — ${patName}`,
+			themeAnchor: this.container,
+			fields: [
+				{ key: 'encounterDate', label: 'Encounter Date', kind: 'date', required: true, widthPct: 50 },
+				{
+					key: 'type', label: 'Visit Type', kind: 'select', widthPct: 50, options: [
+						{ value: 'Ambulatory', label: 'Ambulatory' },
+						{ value: 'Home Health', label: 'Home Health' },
+						{ value: 'Emergency', label: 'Emergency' },
+						{ value: 'Short Stay', label: 'Short Stay' },
+						{ value: 'Virtual', label: 'Virtual' },
+						{ value: 'Observation', label: 'Observation' },
+					]
+				},
+				{
+					key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+						{ value: 'SIGNED', label: 'Signed' },
+						{ value: 'UNSIGNED', label: 'Unsigned' },
+						{ value: 'INCOMPLETE', label: 'Incomplete' },
+					]
+				},
+				{ key: 'reason', label: 'Reason / Chief Complaint', kind: 'textarea', widthPct: 100 },
+			],
+			values: {
+				encounterDate: initialDate,
+				type: String(item.type || 'Ambulatory'),
+				status: String(item.status || 'UNSIGNED'),
+				reason: String(item.reason || item.reasonCode || ''),
+			},
+			onSave: async (next) => {
+				const payload = { ...item, ...next };
+				const res = await this.apiService.fetch(`/api/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				await this._loadData();
+			},
+		});
 	}
 }
