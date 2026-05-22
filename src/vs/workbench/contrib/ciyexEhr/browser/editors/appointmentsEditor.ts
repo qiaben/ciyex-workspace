@@ -209,14 +209,46 @@ function normalizeApptTimes(appt: AppointmentDTO): AppointmentDTO {
 function normalizeVisitType(raw: unknown): string {
 	if (!raw) { return ''; }
 	if (typeof raw === 'string') {
-		const m = raw.match(/text=([^,)]+)/);
-		return m ? m[1].trim() : raw;
+		// Strip the trailing `}` / `]` / `)` that comes from a HashMap.toString()
+		// representation, e.g. "{coding=[{...}], text=Routine}" — the test team
+		// reported this rendering as "Routine}" in the appointments table.
+		const m = raw.match(/text=([^,}\])]+)/);
+		if (m) { return m[1].trim(); }
+		const d = raw.match(/display=([^,}\])]+)/);
+		if (d) { return d[1].trim(); }
+		return raw;
 	}
 	if (typeof raw === 'object' && raw !== null) {
 		const obj = raw as Record<string, unknown>;
 		if (obj.text) { return String(obj.text); }
 		if (Array.isArray(obj.coding) && obj.coding.length > 0) {
 			return (obj.coding[0] as Record<string, string>).display || '';
+		}
+	}
+	return String(raw);
+}
+
+/** Coerce a FHIR-ish status value into a clean lowercase string. Same
+ *  defensive logic as {@link normalizeVisitType} — the upstream may send a
+ *  CodeableConcept blob ("{coding=[...], text=Checked-in}") that renders as
+ *  "[object Object]" or "Checked-in}" in the status badge. */
+function normalizeStatus(raw: unknown): string {
+	if (!raw) { return ''; }
+	if (typeof raw === 'string') {
+		const m = raw.match(/text=([^,}\])]+)/);
+		if (m) { return m[1].trim(); }
+		const d = raw.match(/display=([^,}\])]+)/);
+		if (d) { return d[1].trim(); }
+		const c = raw.match(/code=([^,}\])]+)/);
+		if (c) { return c[1].trim(); }
+		return raw;
+	}
+	if (typeof raw === 'object' && raw !== null) {
+		const obj = raw as Record<string, unknown>;
+		if (obj.text) { return String(obj.text); }
+		if (Array.isArray(obj.coding) && obj.coding.length > 0) {
+			const c0 = obj.coding[0] as Record<string, string>;
+			return c0.display || c0.code || '';
 		}
 	}
 	return String(raw);
@@ -386,8 +418,12 @@ export class AppointmentsEditor extends EditorPane {
 			let list = (data?.data?.content || data?.data || data?.content || data || []) as AppointmentDTO[];
 			list = list.map(a => normalizeApptTimes(a));
 
-			// Normalize visit types
-			for (const a of list) { a.visitType = normalizeVisitType(a.visitType); }
+			// Normalize visit types + status — FHIR CodeableConcept blobs would
+			// otherwise render as "[object Object]" / "Routine}" in the table.
+			for (const a of list) {
+				a.visitType = normalizeVisitType(a.visitType);
+				a.status = normalizeStatus(a.status);
+			}
 
 			// Collect unique visit types
 			const types = new Set<string>();

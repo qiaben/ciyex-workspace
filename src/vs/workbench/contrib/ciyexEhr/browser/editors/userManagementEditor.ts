@@ -129,15 +129,22 @@ export class UserManagementEditor extends EditorPane {
 		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;';
 		addBtn.addEventListener('click', () => this._openUserModal(null));
 
-		// Table — wrapped so horizontal overflow is scrollable
+		// Table — wrapped so horizontal overflow is scrollable. Use fixed
+		// column widths (no flex columns) so the table really does exceed the
+		// container when emails/roles get long, which is what triggers the
+		// horizontal scrollbar. Previously the columns used `1fr`, so they
+		// shrank to fit and the Actions column was hidden behind the
+		// container edge with no way to scroll.
 		const tableScroll = DOM.append(this.contentEl, DOM.$('div'));
-		tableScroll.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
+		tableScroll.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;';
 		const table = DOM.append(tableScroll, DOM.$('div'));
-		table.style.cssText = 'min-width:760px;';
+		table.style.cssText = 'min-width:1100px;';
 
-		// Header
+		// Header — fixed column widths so the table always exceeds the
+		// container width and the scrollbar appears.
+		const gridCols = 'grid-template-columns:240px 280px 220px 160px 160px;';
 		const headerRow = DOM.append(table, DOM.$('div'));
-		headerRow.style.cssText = 'display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1fr) 120px 80px 140px;gap:8px;padding:10px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);';
+		headerRow.style.cssText = `display:grid;${gridCols}gap:8px;padding:10px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);`;
 		for (const col of ['Name', 'Email', 'Role', 'Status', 'Actions']) {
 			DOM.append(headerRow, DOM.$('span')).textContent = col;
 		}
@@ -151,7 +158,7 @@ export class UserManagementEditor extends EditorPane {
 
 		for (const user of this.users) {
 			const row = DOM.append(table, DOM.$('div'));
-			row.style.cssText = 'display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1fr) 120px 80px 140px;gap:8px;padding:8px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:13px;';
+			row.style.cssText = `display:grid;${gridCols}gap:8px;padding:8px 14px;align-items:center;border-bottom:1px solid rgba(128,128,128,0.08);font-size:13px;`;
 			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
 

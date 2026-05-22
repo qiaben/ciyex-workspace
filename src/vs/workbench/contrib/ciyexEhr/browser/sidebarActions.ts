@@ -532,13 +532,21 @@ export function createOverflowMenuButton(
 export interface IEditFieldDef {
 	key: string;
 	label: string;
-	kind?: 'text' | 'number' | 'email' | 'tel' | 'date' | 'textarea' | 'select';
+	kind?: 'text' | 'number' | 'email' | 'tel' | 'date' | 'time' | 'textarea' | 'select' | 'search';
 	options?: Array<{ value: string; label: string }>;
 	required?: boolean;
 	placeholder?: string;
 	hint?: string;
 	/** Width hint as a percentage of the row (defaults to 100 for full row). */
 	widthPct?: number;
+	/** Search-typeahead callback used when {@link kind} is `'search'`. Called
+	 *  while the user types — returns a list of matches to show in a dropdown
+	 *  beneath the input. */
+	onSearch?: (query: string) => Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>>;
+	/** Optional callback fired when the user selects a search match. Lets the
+	 *  caller fill related fields (e.g. selecting a patient autofills
+	 *  patientId). */
+	onSelectSearchResult?: (item: { value: string; label: string; details?: Record<string, string> }, allInputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
 }
 
 export interface IEditDialogOptions {
@@ -632,6 +640,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 		const initial = String(opts.values[field.key] ?? '');
 		let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+		let searchPanel: HTMLDivElement | null = null;
 		if (field.kind === 'textarea') {
 			const ta = doc.createElement('textarea');
 			ta.rows = 3;
@@ -647,6 +656,20 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				sel.appendChild(o);
 			}
 			input = sel;
+		} else if (field.kind === 'search') {
+			// Typeahead — text input with a dropdown panel for matches. The
+			// caller supplies `onSearch`; we debounce + render results +
+			// fire `onSelectSearchResult` (used by clinical drawers to
+			// auto-fill the linked id field).
+			wrap.style.position = 'relative';
+			const inp = doc.createElement('input');
+			inp.type = 'text';
+			inp.value = initial;
+			inp.autocomplete = 'off';
+			input = inp;
+			searchPanel = doc.createElement('div');
+			searchPanel.style.cssText = `position:absolute;top:100%;left:0;right:0;margin-top:2px;background:${palette.background};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;box-shadow:0 4px 12px ${palette.shadow};z-index:20;max-height:200px;overflow-y:auto;display:none;`;
+			wrap.appendChild(searchPanel);
 		} else {
 			const inp = doc.createElement('input');
 			inp.type = field.kind || 'text';
@@ -665,6 +688,57 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		});
 		wrap.appendChild(input);
 		inputs.set(field.key, input);
+
+		// Wire up search-typeahead behaviour once both the input and panel exist.
+		if (field.kind === 'search' && searchPanel && field.onSearch) {
+			const panel = searchPanel;
+			const onSearch = field.onSearch;
+			const onSelect = field.onSelectSearchResult;
+			let debounceHandle: ReturnType<typeof setTimeout> | undefined;
+			const renderResults = (results: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>) => {
+				panel.innerHTML = '';
+				if (results.length === 0) { panel.style.display = 'none'; return; }
+				for (const r of results) {
+					const opt = doc.createElement('div');
+					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};`;
+					const label = doc.createElement('div');
+					label.textContent = r.label;
+					label.style.fontWeight = '500';
+					opt.appendChild(label);
+					if (r.description) {
+						const desc = doc.createElement('div');
+						desc.textContent = r.description;
+						desc.style.cssText = `font-size:11px;opacity:0.7;`;
+						opt.appendChild(desc);
+					}
+					opt.addEventListener('mouseenter', () => { opt.style.background = palette.hoverBackground; });
+					opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
+					opt.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						(input as HTMLInputElement).value = r.label;
+						if (onSelect) { onSelect(r, inputs); }
+						panel.style.display = 'none';
+					});
+					panel.appendChild(opt);
+				}
+				panel.style.display = 'block';
+			};
+			(input as HTMLInputElement).addEventListener('input', () => {
+				const q = (input as HTMLInputElement).value.trim();
+				if (debounceHandle) { clearTimeout(debounceHandle); }
+				if (q.length < 2) { panel.style.display = 'none'; return; }
+				debounceHandle = setTimeout(async () => {
+					try {
+						const results = await onSearch(q);
+						renderResults(results.slice(0, 8));
+					} catch { panel.style.display = 'none'; }
+				}, 250);
+			});
+			(input as HTMLInputElement).addEventListener('blur', () => {
+				// Hide after a tick so click on a result still fires
+				setTimeout(() => { panel.style.display = 'none'; }, 150);
+			});
+		}
 
 		if (field.hint) {
 			const hint = doc.createElement('div');

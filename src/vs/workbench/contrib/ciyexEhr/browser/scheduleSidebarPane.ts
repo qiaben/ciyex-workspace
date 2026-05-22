@@ -14,7 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
@@ -53,6 +53,22 @@ function getAppointmentType(apt: Appointment): string {
 	if (t && typeof t === 'object') { return t.text || t.coding?.[0]?.display || t.coding?.[0]?.code || ''; }
 	return apt.type || '';
 }
+
+/** Predefined visit-type catalog used by the Edit Appointment dropdown so the
+ *  field renders as a proper select even when the live appointment data has
+ *  an unparseable FHIR CodeableConcept blob in `appointmentType`. */
+const SCHEDULE_VISIT_TYPES = [
+	'Consultation', 'Follow-Up', 'New Patient', 'Urgent',
+	'Routine', 'Annual Physical', 'Telehealth', 'Lab Work',
+	'Procedure', 'Referral',
+];
+
+/** Fallback status options when /api/appointments/status-options hasn't
+ *  returned yet — keeps the Edit Appointment Status dropdown populated. */
+const DEFAULT_STATUS_OPTIONS = [
+	'Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room',
+	'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled',
+];
 
 const STATUS_COLORS: Record<string, string> = {
 	'scheduled': '#3b82f6',
@@ -143,6 +159,22 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.viewMode = 'day';
 			this.currentDate = new Date();
 		}
+	}
+
+	/** Mirror of CalendarEditor._publishCalendarState — write the new view
+	 *  mode / date so the main calendar editor's storage listener picks the
+	 *  change up. Without this, toggling Week/Month from the sidebar's
+	 *  three-dot menu would only update the sidebar.
+	 */
+	private _publishCalendarState(): void {
+		try {
+			const state: CalendarViewState = {
+				viewMode: this.viewMode,
+				currentDate: this.currentDate.toISOString(),
+				updatedAt: Date.now(),
+			};
+			this.storageService.store(CALENDAR_VIEW_STATE_KEY, JSON.stringify(state), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		} catch { /* best effort */ }
 	}
 
 	private _getRange(): { startDate: string; endDate: string; rangeLabel: string } {
@@ -305,10 +337,20 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.logService.warn('[Schedule] Load error:', err);
 		}
 
+		// Seed provider dropdown from observed appointments so the Edit dialog's
+		// Provider select has something to show even before /api/providers
+		// responds.
+		const seenProviders = new Set<string>(this._providerOptions);
+		for (const apt of this.appointments) {
+			const name = apt.providerName || apt.practitionerName;
+			if (name) { seenProviders.add(name); }
+		}
+		this._providerOptions = Array.from(seenProviders).sort();
+
 		this._render();
 
-		// Load secondary data in background (rooms, waitlist) — don't block render
-		Promise.all([loadRooms(), loadWaitlist()]).catch(() => { });
+		// Load secondary data in background (rooms, waitlist, providers) — don't block render
+		Promise.all([loadRooms(), loadWaitlist(), this._loadProviders()]).catch(() => { });
 	}
 
 	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
@@ -381,10 +423,10 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.ctxMenuService.showContextMenu({
 				getAnchor: () => moreBtn,
 				getActions: () => [
-					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._render(); } },
-					{ id: 'week', label: 'View Week', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'week'; this._render(); } },
-					{ id: 'month', label: 'View Month', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'month'; this._render(); } },
-					{ id: 'refresh', label: 'Refresh', tooltip: '', class: '', enabled: true, run: () => this._loadAndRender() },
+					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._publishCalendarState(); void this._loadAndRender(); } },
+					{ id: 'week', label: 'View Week', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'week'; this._publishCalendarState(); void this._loadAndRender(); } },
+					{ id: 'month', label: 'View Month', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'month'; this._publishCalendarState(); void this._loadAndRender(); } },
+					{ id: 'refresh', label: 'Refresh', tooltip: '', class: '', enabled: true, run: () => { void this._loadAndRender(); } },
 				],
 			});
 		});
@@ -601,8 +643,19 @@ export class ScheduleSidebarPane extends ViewPane {
 				items.push({
 					symbol: '\u{1F4C3}', label: 'Create Encounter', onClick: async () => {
 						try {
-							await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+							const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+							let newEncounterId: string | undefined;
+							if (res.ok) {
+								try {
+									const data = await res.json();
+									const payload = (data?.data ?? data) as Record<string, unknown>;
+									newEncounterId = (payload?.id || payload?.encounterId) as string | undefined;
+								} catch { /* response may be empty — fall through to reload */ }
+							}
 							await this._loadAndRender();
+							if (newEncounterId && apt.patientId) {
+								void this.commandService.executeCommand('ciyex.openEncounter', apt.patientId, String(newEncounterId), apt.patientName);
+							}
 						} catch { /* */ }
 					}
 				});
@@ -645,33 +698,95 @@ export class ScheduleSidebarPane extends ViewPane {
 		const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startIso);
 		const initialDate = m ? m[1] : '';
 		const initialTime = m ? m[2] : '';
+
+		// Build option lists once so the dropdowns render correctly even when
+		// the upstream data has FHIR CodeableConcept objects in the visit-type
+		// or status fields (which used to render as "[object Object]").
+		const visitTypeOptions = SCHEDULE_VISIT_TYPES.map(t => ({ value: t, label: t }));
+		const currentVisitType = getAppointmentType(apt);
+		if (currentVisitType && !visitTypeOptions.find(o => o.value === currentVisitType)) {
+			visitTypeOptions.unshift({ value: currentVisitType, label: currentVisitType });
+		}
+		const statusOptions = (this.statusOptions.length ? this.statusOptions : DEFAULT_STATUS_OPTIONS).map(s => ({ value: s, label: s }));
+		const initialStatus = (typeof apt.status === 'string' ? apt.status : '') || 'Scheduled';
+		if (initialStatus && !statusOptions.find(o => o.value.toLowerCase() === initialStatus.toLowerCase())) {
+			statusOptions.unshift({ value: initialStatus, label: initialStatus });
+		}
+		const providerOptions = [
+			{ value: '', label: 'Unassigned' },
+			...this._providerOptions.map(p => ({ value: p, label: p })),
+		];
+		const initialProvider = apt.providerName || apt.practitionerName || '';
+		if (initialProvider && !providerOptions.find(o => o.value === initialProvider)) {
+			providerOptions.push({ value: initialProvider, label: initialProvider });
+		}
+
 		openRecordEditDialog({
 			title: `Edit Appointment — ${apt.patientName || 'Appointment'}`,
 			themeAnchor: this.container,
 			fields: [
 				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
-				{ key: 'appointmentTime', label: 'Start Time', placeholder: 'HH:MM', widthPct: 50 },
-				{ key: 'appointmentType', label: 'Visit Type', widthPct: 50 },
-				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: this.statusOptions.map(s => ({ value: s, label: s })) },
+				{ key: 'appointmentTime', label: 'Start Time', kind: 'time', widthPct: 50 },
+				{ key: 'appointmentType', label: 'Visit Type', kind: 'select', widthPct: 50, options: visitTypeOptions },
+				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: statusOptions },
 				{ key: 'room', label: 'Room', kind: 'select', widthPct: 50, options: [{ value: '', label: 'Unassigned' }, ...this.roomOptions.map(r => ({ value: r, label: r }))] },
-				{ key: 'providerName', label: 'Provider', widthPct: 50 },
+				{ key: 'providerName', label: 'Provider', kind: 'select', widthPct: 50, options: providerOptions },
 			],
 			values: {
 				appointmentDate: initialDate,
 				appointmentTime: initialTime,
-				appointmentType: getAppointmentType(apt),
-				status: apt.status || 'Scheduled',
+				appointmentType: currentVisitType,
+				status: initialStatus,
 				room: apt.room || '',
-				providerName: apt.providerName || apt.practitionerName || '',
+				providerName: initialProvider,
 			},
 			onSave: async (next) => {
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
-				const payload = { ...apt, startTime, status: next.status, appointmentType: next.appointmentType, room: next.room };
+				// Update both `start` and `startTime`; the FHIR-normalized appointments
+				// API may read either, and leaving one stale caused the time field to
+				// "revert" on subsequent loads.
+				const payload = {
+					...apt,
+					start: startTime,
+					startTime,
+					status: next.status,
+					appointmentType: next.appointmentType,
+					visitType: next.appointmentType,
+					room: next.room,
+					providerName: next.providerName,
+				};
 				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				await this._loadAndRender();
 			},
 		});
+	}
+
+	/** Cached provider name list — populated from /api/providers and
+	 *  augmented with provider names observed on the loaded appointments. */
+	private _providerOptions: string[] = [];
+	private async _loadProviders(): Promise<void> {
+		try {
+			const urls = ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
+			for (const url of urls) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
+					const names = new Set<string>();
+					for (const p of list) {
+						const r = p as Record<string, unknown>;
+						const name = (r.name || r.fullName || r.displayName || `${r.firstName || ''} ${r.lastName || ''}`.trim() || '') as string;
+						if (name) { names.add(name); }
+					}
+					if (names.size > 0) {
+						this._providerOptions = Array.from(names).sort();
+						return;
+					}
+				} catch { /* try next */ }
+			}
+		} catch { /* best effort */ }
 	}
 
 	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {

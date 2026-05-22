@@ -96,6 +96,15 @@ function getAppointmentType(apt: Appointment): string {
 	return apt.visitType || apt.type || '';
 }
 
+/** Predefined visit-type catalog used by the Edit Appointment dropdown so the
+ *  field renders as a proper select even when the live appointment data has
+ *  an unparseable FHIR CodeableConcept blob in `appointmentType`. */
+const APPT_VISIT_TYPES = [
+	'Consultation', 'Follow-Up', 'New Patient', 'Urgent',
+	'Routine', 'Annual Physical', 'Telehealth', 'Lab Work',
+	'Procedure', 'Referral',
+];
+
 function patientNameOf(apt: Appointment): string {
 	// Flat FHIR format: patientDisplay field
 	if (apt.patientDisplay) { return apt.patientDisplay; }
@@ -238,6 +247,15 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private async _loadAll(): Promise<void> {
 		await Promise.all([this._loadAppointments(), this._loadStatusOptions()]);
+		// Seed Provider dropdown from observed appointments + kick off the
+		// provider directory load in the background.
+		const seen = new Set<string>(this._providerOptions);
+		for (const a of this.appointments) {
+			const n = providerNameOf(a);
+			if (n && n !== 'Unknown') { seen.add(n); }
+		}
+		this._providerOptions = Array.from(seen).sort();
+		void this._loadProviders();
 		this._render();
 		// Fetch names for any appointments still showing Unknown (FHIR responses
 		// sometimes omit display text — fall back to the patient demographics API)
@@ -612,33 +630,92 @@ export class AppointmentsSidebarPane extends ViewPane {
 		const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startIso);
 		const initialDate = m ? m[1] : (apt.appointmentStartDate || '');
 		const initialTime = m ? m[2] : (apt.appointmentStartTime || '');
+
+		const visitTypeOptions = APPT_VISIT_TYPES.map(t => ({ value: t, label: t }));
+		const currentVisitType = getAppointmentType(apt);
+		if (currentVisitType && !visitTypeOptions.find(o => o.value === currentVisitType)) {
+			visitTypeOptions.unshift({ value: currentVisitType, label: currentVisitType });
+		}
+		const statusOpts = this.statusOptions.length
+			? this.statusOptions
+			: ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'No Show', 'Cancelled'];
+		const statusOptions = statusOpts.map(s => ({ value: s, label: s }));
+		const initialStatus = typeof apt.status === 'string' && apt.status ? apt.status : 'Scheduled';
+		if (!statusOptions.find(o => o.value.toLowerCase() === initialStatus.toLowerCase())) {
+			statusOptions.unshift({ value: initialStatus, label: initialStatus });
+		}
+		const providerOptions = [
+			{ value: '', label: 'Unassigned' },
+			...this._providerOptions.map(p => ({ value: p, label: p })),
+		];
+		const initialProvider = providerNameOf(apt);
+		if (initialProvider && initialProvider !== 'Unknown' && !providerOptions.find(o => o.value === initialProvider)) {
+			providerOptions.push({ value: initialProvider, label: initialProvider });
+		}
+
 		openRecordEditDialog({
 			title: `Edit Appointment — ${patientNameOf(apt)}`,
 			themeAnchor: this.container,
 			fields: [
 				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
-				{ key: 'appointmentTime', label: 'Start Time', placeholder: 'HH:MM', widthPct: 50 },
-				{ key: 'appointmentType', label: 'Visit Type', widthPct: 50 },
-				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: this.statusOptions.map(s => ({ value: s.toLowerCase().replace(/\s+/g, '-'), label: s })) },
+				{ key: 'appointmentTime', label: 'Start Time', kind: 'time', widthPct: 50 },
+				{ key: 'appointmentType', label: 'Visit Type', kind: 'select', widthPct: 50, options: visitTypeOptions },
+				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: statusOptions },
 				{ key: 'room', label: 'Room', widthPct: 50 },
-				{ key: 'providerName', label: 'Provider', widthPct: 50 },
+				{ key: 'providerName', label: 'Provider', kind: 'select', widthPct: 50, options: providerOptions },
 			],
 			values: {
 				appointmentDate: initialDate,
 				appointmentTime: initialTime,
-				appointmentType: getAppointmentType(apt),
-				status: (apt.status || 'scheduled').toLowerCase(),
+				appointmentType: currentVisitType,
+				status: initialStatus,
 				room: apt.room || '',
-				providerName: providerNameOf(apt),
+				providerName: initialProvider === 'Unknown' ? '' : initialProvider,
 			},
 			onSave: async (next) => {
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
-				const payload = { ...apt, startTime, status: next.status, appointmentType: next.appointmentType, room: next.room };
+				const payload = {
+					...apt,
+					start: startTime,
+					startTime,
+					status: next.status,
+					appointmentType: next.appointmentType,
+					visitType: next.appointmentType,
+					room: next.room,
+					providerName: next.providerName,
+				};
 				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				await this._loadAll();
 			},
 		});
+	}
+
+	/** Cached provider name list — populated from /api/providers and observed
+	 *  appointment data. Drives the Provider dropdown in the Edit dialog. */
+	private _providerOptions: string[] = [];
+	private async _loadProviders(): Promise<void> {
+		try {
+			const urls = ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
+			for (const url of urls) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
+					const names = new Set<string>(this._providerOptions);
+					for (const p of list) {
+						const r = p as Record<string, unknown>;
+						const name = (r.name || r.fullName || r.displayName || `${r.firstName || ''} ${r.lastName || ''}`.trim() || '') as string;
+						if (name) { names.add(name); }
+					}
+					if (names.size > 0) {
+						this._providerOptions = Array.from(names).sort();
+						return;
+					}
+				} catch { /* try next */ }
+			}
+		} catch { /* best effort */ }
 	}
 
 	private _recordVitals(apt: Appointment): void {

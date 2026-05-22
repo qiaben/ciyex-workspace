@@ -14,6 +14,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
@@ -50,6 +51,7 @@ export class EncounterListPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
@@ -104,7 +106,12 @@ export class EncounterListPane extends ViewPane {
 		addBtn.textContent = '+';
 		addBtn.title = 'New Encounter';
 		addBtn.style.cssText = 'padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:12px;height:24px;width:24px;';
-		addBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.openEncounter'));
+		// Without a patient context, calling `ciyex.openEncounter` would fall
+		// back to "first non-errored encounter" and load some arbitrary
+		// patient's chart (the test team saw "James Lee" appear no matter who
+		// clicked +). Prompt for a patient first so the new-encounter flow
+		// always lands on the right chart.
+		addBtn.addEventListener('click', () => void this._pickPatientAndOpenEncounter());
 
 		// Toolbar row 2: date range
 		const dateRow = DOM.append(this.container, DOM.$('div'));
@@ -308,6 +315,35 @@ export class EncounterListPane extends ViewPane {
 		);
 	}
 
+	private async _pickPatientAndOpenEncounter(): Promise<void> {
+		const pick = this.quickInputService.createQuickPick<IQuickPickItem & { patientId: string }>();
+		pick.placeholder = 'Search patient to create an encounter for…';
+		pick.matchOnDescription = true;
+		pick.matchOnDetail = true;
+		pick.busy = true;
+		pick.show();
+		try {
+			const res = await this.apiService.fetch('/api/patients?page=0&size=50');
+			if (res.ok) {
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				pick.items = list.map(p => {
+					const pid = String(p.id ?? p.patientId ?? '');
+					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || pid);
+					const dob = p.dateOfBirth ? ` · DOB ${p.dateOfBirth}` : '';
+					return { label: name, description: pid ? `MRN ${pid}${dob}` : dob, patientId: pid };
+				});
+			}
+		} catch { /* */ }
+		pick.busy = false;
+		pick.onDidAccept(() => {
+			const sel = pick.selectedItems[0];
+			pick.hide();
+			if (!sel || !sel.patientId) { return; }
+			this.commandService.executeCommand('ciyex.openPatientChart', sel.patientId, sel.label, 'encounters');
+		});
+	}
+
 	private _openEditDialog(item: Record<string, unknown>, encId: string, patName: string): void {
 		const dateRaw = String(item.encounterDate || item.startDate || item.start || '');
 		const initialDate = dateRaw ? dateRaw.slice(0, 10) : '';
@@ -342,7 +378,25 @@ export class EncounterListPane extends ViewPane {
 				reason: String(item.reason || item.reasonCode || ''),
 			},
 			onSave: async (next) => {
-				const payload = { ...item, ...next };
+				// Map workspace labels back to FHIR codes so the encounter PUT
+				// doesn't reject the payload with a 500. Spreading the full
+				// `item` here would re-send display-only fields (patientDisplay,
+				// providerDisplay, etc.) that the backend rejects as unknown
+				// — only ship the user-edited fields.
+				const TYPE_CODE: Record<string, string> = {
+					'Ambulatory': 'AMB', 'Home Health': 'HH', 'Emergency': 'EMER',
+					'Short Stay': 'SS', 'Virtual': 'VR', 'Observation': 'OBSENC',
+				};
+				const STATUS_CODE: Record<string, string> = {
+					'SIGNED': 'finished', 'UNSIGNED': 'in-progress', 'INCOMPLETE': 'cancelled',
+				};
+				const payload: Record<string, unknown> = {
+					encounterDate: next.encounterDate,
+					type: TYPE_CODE[next.type] || next.type,
+					status: STATUS_CODE[next.status] || next.status,
+					reason: next.reason,
+					reasonCode: next.reason,
+				};
 				const res = await this.apiService.fetch(`/api/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				await this._loadData();

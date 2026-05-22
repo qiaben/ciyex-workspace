@@ -656,7 +656,11 @@ export class ClinicalMenuPane extends ViewPane {
 		desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 		const actionsEl = createRowActionsContainer(row);
-		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this.commandService.executeCommand(item.command));
+		// The "New X" + button used to navigate to the full editor tab, which
+		// the test team reported as "not working" — they expected an inline
+		// create form (parity with the Edit drawer). Open the same drawer in
+		// create mode so the user lands on a populated form right away.
+		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
@@ -781,6 +785,155 @@ export class ClinicalMenuPane extends ViewPane {
 		}
 	}
 
+	private _openCreateDialog(item: ClinicalItem): void {
+		if (!item.editFields || item.editFields.length === 0) {
+			// No drawer schema configured — fall back to the full editor.
+			this.commandService.executeCommand(item.command);
+			return;
+		}
+		const initialValues: Record<string, unknown> = {};
+		for (const f of item.editFields) { initialValues[f.key] = ''; }
+		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		openRecordEditDialog({
+			title: `New ${item.label.replace(/s$/, '') || item.label}`,
+			themeAnchor: this.container,
+			fields: this._withSearch(item.editFields),
+			values: initialValues,
+			primaryLabel: 'Create',
+			onSave: async (next) => {
+				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
+				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
+				await this._loadItemData(item);
+			},
+		});
+	}
+
+	/**
+	 * Walk a field schema and inject `kind: 'search'` + an `onSearch`/`onSelect`
+	 * callback for well-known typeahead fields (patient, provider, prescriber,
+	 * CVX, ICD-10, CPT, insurance). Lets every clinical sidebar drawer get
+	 * search-typeahead behaviour without each entry having to repeat the
+	 * fetch wiring.
+	 *
+	 * Called both from the New (create) and Edit drawers — the test team
+	 * specifically flagged Rx / Lab / Imm / Referral / Authorization as
+	 * "search not working" on the original plain text inputs.
+	 */
+	private _withSearch(fields: IEditFieldDef[]): IEditFieldDef[] {
+		const fetchPatients = async (q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				return list.map(p => {
+					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || p.id);
+					const pid = String(p.id ?? p.patientId ?? '');
+					return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+				});
+			} catch { return []; }
+		};
+		const fetchProviders = async (q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
+			try {
+				const urls = [`/api/providers?search=${encodeURIComponent(q)}&page=0&size=10`, `/api/fhir-resource/providers?search=${encodeURIComponent(q)}&page=0&size=10`];
+				for (const url of urls) {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+					if (list.length === 0) { continue; }
+					return list.map(p => {
+						const name = (p.name || p.fullName || `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || '') as string;
+						const npi = (p.npi as string) || '';
+						return { value: name, label: name, description: npi ? `NPI ${npi}` : undefined, details: { npi, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+					});
+				}
+				return [];
+			} catch { return []; }
+		};
+		const fetchCodes = async (path: string, q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
+			try {
+				const res = await this.apiService.fetch(`${path}?search=${encodeURIComponent(q)}&page=0&size=10`);
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				return list.map(c => {
+					const code = String(c.code || c.id || '');
+					const desc = String(c.description || c.display || c.name || '');
+					return { value: desc || code, label: desc || code, description: code, details: { code } };
+				});
+			} catch { return []; }
+		};
+
+		return fields.map(f => {
+			const k = f.key.toLowerCase();
+			// Patient-name typeahead — fills patientId on select.
+			if (k === 'patientname' || k === 'patientfirstname') {
+				return {
+					...f,
+					kind: 'search' as const,
+					onSearch: fetchPatients,
+					onSelectSearchResult: (item, all) => {
+						const set = (key: string, val: string) => { const i = all.get(key); if (i) { i.value = val; } };
+						set('patientId', item.details?.patientId || '');
+						set('patientFirstName', item.details?.firstName || '');
+						set('patientLastName', item.details?.lastName || '');
+					},
+				};
+			}
+			// Provider / prescriber typeahead — fills NPI when known.
+			if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname'].includes(k)) {
+				return {
+					...f,
+					kind: 'search' as const,
+					onSearch: fetchProviders,
+					onSelectSearchResult: (item, all) => {
+						const npi = item.details?.npi || '';
+						if (npi) {
+							for (const key of ['prescriberNpi', 'providerNpi', 'npi']) {
+								const i = all.get(key);
+								if (i && !i.value) { i.value = npi; }
+							}
+						}
+					},
+				};
+			}
+			// CVX vaccine code search.
+			if (k === 'cvxcode') {
+				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cvx', q) };
+			}
+			// CPT procedure code search.
+			if (k === 'procedurecode' || k === 'cptcode') {
+				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cpt', q) };
+			}
+			// ICD-10 diagnosis code search.
+			if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode') {
+				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/icd10', q) };
+			}
+			// LOINC lab test code search.
+			if (k === 'testcode' || k === 'loinc') {
+				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/loinc', q) };
+			}
+			// Insurance search.
+			if (k === 'insurancename') {
+				return {
+					...f,
+					kind: 'search' as const,
+					onSearch: async (q) => {
+						try {
+							const res = await this.apiService.fetch(`/api/insurances?search=${encodeURIComponent(q)}&page=0&size=10`);
+							if (!res.ok) { return []; }
+							const data = await res.json();
+							const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+							return list.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
+						} catch { return []; }
+					},
+				};
+			}
+			return f;
+		});
+	}
+
 	private _openEditDialog(item: ClinicalItem, row: DataRow): void {
 		// Prefer the explicit editFields schema (mirrors the full editor's
 		// formFields). Fall back to deriving from titleField + subtitleField +
@@ -807,7 +960,7 @@ export class ClinicalMenuPane extends ViewPane {
 		openRecordEditDialog({
 			title: `Edit ${item.label}`,
 			themeAnchor: this.container,
-			fields,
+			fields: this._withSearch(fields),
 			values: initialValues,
 			onSave: async (next) => {
 				const payload = { ...row, ...next };

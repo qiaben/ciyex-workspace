@@ -14,6 +14,7 @@ interface PatientResult {
 	id: string;
 	fhirId?: string;
 	firstName: string;
+	middleName?: string;
 	lastName: string;
 	dateOfBirth?: string;
 	gender?: string;
@@ -188,10 +189,12 @@ export class EhrTitlebarControls extends Disposable {
 	private _clientFilterProviders(rows: ProviderResult[], rawQuery: string): ProviderResult[] {
 		const q = rawQuery.toLowerCase();
 		return rows.filter(p => {
-			const first = p.firstName || p['identification.firstName'] || '';
-			const last = p.lastName || p['identification.lastName'] || '';
+			const first = (p.firstName || p['identification.firstName'] || '').toLowerCase();
+			const last = (p.lastName || p['identification.lastName'] || '').toLowerCase();
 			const name = (p.name || p.fullName || `${first} ${last}`.trim() || p.username || '').toLowerCase();
-			return name.includes(q);
+			// Anchor at the start of a name token — typing "Abi" should match
+			// "Abigail Walker" but NOT "Gabriel Cook" (test team report).
+			return first.startsWith(q) || last.startsWith(q) || name.split(/\s+/).some(part => part.startsWith(q));
 		});
 	}
 
@@ -200,9 +203,13 @@ export class EhrTitlebarControls extends Disposable {
 		const usDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawQuery);
 		const isoFromUs = usDate ? `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}` : '';
 		return rows.filter(p => {
-			const fullName = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
-			const reversed = `${p.lastName || ''} ${p.firstName || ''}`.toLowerCase();
-			if (fullName.includes(q) || reversed.includes(q)) { return true; }
+			const first = (p.firstName || '').toLowerCase();
+			const last = (p.lastName || '').toLowerCase();
+			const middle = (p.middleName || '').toLowerCase();
+			// Anchor at the start of each name token: typing "Abi" matches
+			// "Abi Test" and "Abigail Walker" but NOT "Gabriel" / "Isabella"
+			// (those used to leak in because of substring includes()).
+			if (first.startsWith(q) || last.startsWith(q) || (middle && middle.startsWith(q))) { return true; }
 			if (isoFromUs && (p.dateOfBirth || '').startsWith(isoFromUs)) { return true; }
 			if ((p.dateOfBirth || '').includes(rawQuery)) { return true; }
 			return false;

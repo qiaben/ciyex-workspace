@@ -73,7 +73,21 @@ registerAction2(class extends Action2 {
 					if (response.ok) {
 						const data = await response.json();
 						const patients = data?.data?.content || data?.content || [];
-						picker.items = patients.map((p: Record<string, string>): IPatientQuickPick => {
+						// The backend's ?search= is a substring match — typing
+						// "Abi" returns Gabriel and Isabella because both
+						// contain "abi". The test team flagged this: searches
+						// should anchor at the start of a name token. Filter
+						// client-side so only first/last names whose tokens
+						// START WITH the query survive.
+						const q = value.trim().toLowerCase();
+						const prefixMatch = (p: Record<string, string>): boolean => {
+							const first = (p.firstName || '').toLowerCase();
+							const last = (p.lastName || '').toLowerCase();
+							const middle = (p.middleName || '').toLowerCase();
+							return first.startsWith(q) || last.startsWith(q) || (middle.length > 0 && middle.startsWith(q));
+						};
+						const filteredPatients = patients.filter(prefixMatch);
+						picker.items = filteredPatients.map((p: Record<string, string>): IPatientQuickPick => {
 							const age = calcAge(p.dateOfBirth);
 							const g = p.gender === 'male' ? 'M' : p.gender === 'female' ? 'F' : '';
 							return {
