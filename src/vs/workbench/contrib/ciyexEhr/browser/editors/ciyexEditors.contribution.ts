@@ -32,6 +32,8 @@ import {
 	DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput,
 	// Telehealth
 	TelehealthEditorInput,
+	// Patient Snapshot
+	PatientSnapshotEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -69,6 +71,7 @@ import { ReportsEditor } from './reportsEditor.js';
 import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
 import { TelehealthEditor } from './telehealthEditor.js';
+import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -119,6 +122,7 @@ reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, Appointme
 
 // Telehealth
 reg.registerEditorPane(EditorPaneDescriptor.create(TelehealthEditor, TelehealthEditor.ID, localize('telehealth', "Telehealth")), [new SyncDescriptor(TelehealthEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(PatientSnapshotEditor, PatientSnapshotEditor.ID, localize('patientSnapshot', "Patient Snapshot")), [new SyncDescriptor(PatientSnapshotEditorInput)]);
 
 // System editors
 reg.registerEditorPane(EditorPaneDescriptor.create(ConsentsEditor, ConsentsEditor.ID, localize('consents', "Consents")), [new SyncDescriptor(ConsentsEditorInput)]);

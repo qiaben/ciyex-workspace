@@ -45,6 +45,7 @@ interface Appointment {
 	encounterId?: string;
 	room?: string;
 	visitType?: string;
+	locationName?: string;
 }
 
 function getAppointmentType(apt: Appointment): string {
@@ -472,9 +473,9 @@ export class ScheduleSidebarPane extends ViewPane {
 				const row = DOM.append(listEl, DOM.$('div'));
 				row.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.1));cursor:pointer;transition:background 0.1s;';
 
-				// Date + patient name + status
+				// Top row: date · patient name · status chip · room chip · 3-dot
 				const topRow = DOM.append(row, DOM.$('div'));
-				topRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
+				topRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:nowrap;min-width:0;';
 
 				const startRaw = apt.start || apt.startTime || '';
 				let dateStr = '';
@@ -486,32 +487,71 @@ export class ScheduleSidebarPane extends ViewPane {
 				}
 				const dateEl = DOM.append(topRow, DOM.$('span'));
 				dateEl.textContent = dateStr;
-				dateEl.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-editor-foreground);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+				dateEl.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);white-space:nowrap;flex-shrink:0;';
+
+				const patientEl = DOM.append(topRow, DOM.$('span'));
+				patientEl.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || '';
+				patientEl.style.cssText = 'font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
 
 				const status = apt.status || 'Scheduled';
 				const statusLower = status.toLowerCase();
 				const isTerminal = terminal.has(statusLower);
 				const statusColor = statusLower === 'cancelled' || statusLower === 'canceled' || statusLower === 'noshow' || statusLower === 'no-show' ? '#f44336'
-					: statusLower === 'completed' || statusLower === 'fulfilled' ? '#4d5' : '#3b9edd';
+					: statusLower === 'completed' || statusLower === 'fulfilled' ? '#22c55e' : '#3b9edd';
 				const badge = DOM.append(topRow, DOM.$('span'));
 				badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-				badge.style.cssText = `font-size:9px;padding:2px 6px;border-radius:10px;background:${statusColor}22;color:${statusColor};font-weight:600;white-space:nowrap;`;
+				badge.style.cssText = `font-size:9px;padding:2px 7px;border-radius:10px;background:${statusColor};color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0;`;
 
-				// More button
-				const actionsWrap = createRowActionsContainer(row);
+				if (apt.room) {
+					const roomBadge = DOM.append(topRow, DOM.$('span'));
+					roomBadge.textContent = apt.room;
+					roomBadge.style.cssText = 'font-size:9px;padding:2px 7px;border-radius:10px;background:#6366f1;color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0;';
+				}
+
+				// 3-dot overflow menu — inline, visible on row hover
+				const actionsWrap = createRowActionsContainer(topRow);
 				actionsWrap.style.cssText = 'display:flex;flex-shrink:0;align-items:center;opacity:0;transition:opacity 0.1s;';
 				createOverflowMenuButton(actionsWrap, (): IOverflowMenuItem[] => {
 					const items: IOverflowMenuItem[] = [];
 					if (apt.patientId) {
-						items.push({ symbol: '\u{1F5C2}', label: 'Open Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
+						items.push({ symbol: 'person', label: 'Open Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
 					}
-					items.push({ symbol: '\u{1F4DD}', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
-					if (apt.encounterId) {
-						items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals') });
-						items.push({ symbol: '\u{1F4C3}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName) });
-					} else if (!isTerminal) {
+					items.push({ symbol: 'edit', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
+					items.push({
+						symbol: 'pulse', label: 'Record Vitals', disabled: !apt.encounterId && isTerminal,
+						onClick: async () => {
+							if (apt.encounterId) {
+								this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals').catch(() => { });
+							} else {
+								try {
+									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+									if (res.ok) {
+										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName, 'Vitals', 'vitals'); } } catch { /* */ }
+										await this._loadAndRender();
+									}
+								} catch { /* */ }
+							}
+						}
+					});
+					items.push({
+						symbol: 'notebook', label: 'Visit Summary', disabled: !apt.encounterId && isTerminal,
+						onClick: async () => {
+							if (apt.encounterId) {
+								this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName).catch(() => { });
+							} else {
+								try {
+									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+									if (res.ok) {
+										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName); } } catch { /* */ }
+										await this._loadAndRender();
+									}
+								} catch { /* */ }
+							}
+						}
+					});
+					if (!isTerminal) {
 						items.push({
-							symbol: '\u{1F4C3}', label: 'New Encounter', onClick: async () => {
+							symbol: 'file-add', label: 'New Encounter', onClick: async () => {
 								try {
 									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
 									if (res.ok) { await this._loadAndRender(); }
@@ -522,14 +562,15 @@ export class ScheduleSidebarPane extends ViewPane {
 					return items;
 				});
 
-				// Sub-row: type / provider
+				// Sub-row: type \u00B7 provider \u00B7 location
 				const subRow = DOM.append(row, DOM.$('div'));
-				subRow.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+				subRow.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;';
 				const typeParts: string[] = [];
 				const aptType = getAppointmentType(apt);
 				if (aptType) { typeParts.push(aptType); }
 				const provName = apt.providerName || apt.practitionerName || '';
 				if (provName) { typeParts.push(provName); }
+				if (apt.locationName) { typeParts.push(apt.locationName); }
 				subRow.textContent = typeParts.join(' \u00B7 ');
 
 				row.addEventListener('mouseenter', () => {
@@ -542,7 +583,7 @@ export class ScheduleSidebarPane extends ViewPane {
 				});
 				row.addEventListener('click', (e) => {
 					if (actionsWrap.contains(e.target as Node)) { return; }
-					if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }); }
+					if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientSnapshot', apt.patientId, apt.patientName, apt.id).catch(() => { }); }
 				});
 			}
 
@@ -863,7 +904,7 @@ export class ScheduleSidebarPane extends ViewPane {
 		});
 		row.addEventListener('click', (e) => {
 			if (actionsWrap.contains(e.target as Node)) { return; }
-			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }); }
+			if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientSnapshot', apt.patientId, apt.patientName, apt.id).catch(() => { }); }
 		});
 	}
 

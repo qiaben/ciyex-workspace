@@ -121,6 +121,26 @@ export class EncounterFormEditorInput extends EditorInput {
 	}
 }
 
+export class PatientSnapshotEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexPatientSnapshot';
+	override get typeId(): string { return PatientSnapshotEditorInput.ID; }
+
+	constructor(
+		readonly patientId: string,
+		readonly patientName: string,
+		readonly appointmentId?: string,
+	) { super(); }
+
+	override getName(): string { return `${this.patientName || 'Patient'} — Snapshot`; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('graph'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-snapshot', path: `/${this.patientId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof PatientSnapshotEditorInput && this.patientId === other.patientId;
+	}
+}
+
 // allow-any-unicode-next-line
 // ─── Messaging EditorInput (channel-scoped) ───
 

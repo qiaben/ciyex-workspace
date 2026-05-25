@@ -326,6 +326,17 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				const decoded = decodeJwt(token);
 				if (decoded?.exp && decoded.exp * 1000 > Date.now()) {
 					this._userEmail = localStorage.getItem('ciyex_email') || undefined;
+					// If no tenant is set yet, extract it from the JWT so existing sessions
+					// also get the correct X-Tenant-Name header on API requests.
+					if (!localStorage.getItem('ciyex_selected_tenant')) {
+						try {
+							const org = decoded.organization;
+							const alias = Array.isArray(org) ? org[0] : (org || '');
+							if (alias) {
+								localStorage.setItem('ciyex_selected_tenant', alias);
+							}
+						} catch { /* */ }
+					}
 					this._setState(CiyexAuthState.Authenticated);
 					this._scheduleTokenRefresh();
 					this._resetIdleTimer();
@@ -688,6 +699,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		lastName: string;
 		groups: string[];
 		userId: string;
+		orgAlias?: string;
 	}): void {
 		localStorage.setItem('ciyex_token', data.token);
 		if (data.refreshToken) {
@@ -698,6 +710,19 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		localStorage.setItem('ciyex_user_name', fullName);
 		localStorage.setItem('ciyex_user_id', data.userId || '');
 		localStorage.setItem('ciyex_groups', JSON.stringify(data.groups || []));
+		// Set the tenant scope from the response orgAlias, or fall back to the
+		// organization claim embedded in the JWT. This ensures login(), changePassword(),
+		// and keycloakLogin() all scope API requests to the correct practice, not just signup().
+		try {
+			const alias = data.orgAlias || (() => {
+				const payload = decodeJwt(data.token);
+				const org = payload?.organization;
+				return Array.isArray(org) ? org[0] : (org || '');
+			})();
+			if (alias) {
+				localStorage.setItem('ciyex_selected_tenant', alias);
+			}
+		} catch { /* */ }
 	}
 
 	private _clearStoredAuth(): void {
