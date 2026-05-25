@@ -25,6 +25,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { EditorsOrder } from '../../../common/editor.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 
 /**
@@ -207,6 +208,24 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			const win = DOM.getActiveWindow();
 			win.clearInterval(this._unreadPollTimer);
 			this._unreadPollTimer = undefined;
+		}
+		this._closeCiyexEditors();
+	}
+
+	// Close every open Ciyex-typed editor (typeId prefix `workbench.input.ciyex`).
+	// Why: editor panes load tenant-scoped data on instantiation and don't
+	// re-fetch on auth state change. Without closing them, a different user
+	// logging in next sees the prior user's data in modules like Tasks,
+	// Clinical, Operations, System until they hard-refresh.
+	private _closeCiyexEditors(): void {
+		try {
+			const ciyexEditors = this.editorService.getEditors(EditorsOrder.SEQUENTIAL)
+				.filter(({ editor }) => editor.typeId.startsWith('workbench.input.ciyex'));
+			if (ciyexEditors.length > 0) {
+				this.editorService.closeEditors(ciyexEditors, { preserveFocus: true }).catch(() => { /* */ });
+			}
+		} catch (err) {
+			this.logService.warn('[CiyexEhr] Failed to close editors on sign-out:', err);
 		}
 	}
 
