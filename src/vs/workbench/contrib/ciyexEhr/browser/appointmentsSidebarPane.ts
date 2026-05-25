@@ -364,7 +364,12 @@ export class AppointmentsSidebarPane extends ViewPane {
 			);
 		}
 		if (this.statusFilter) {
-			out = out.filter(a => (a.status || '').toLowerCase() === this.statusFilter.toLowerCase());
+			if (this.statusFilter === '__in_progress__') {
+				const inProgressStatuses = new Set(['checked-in', 'in-room', 'in room', 'with-provider', 'with provider', 'arrived']);
+				out = out.filter(a => inProgressStatuses.has((a.status || '').toLowerCase()));
+			} else {
+				out = out.filter(a => (a.status || '').toLowerCase() === this.statusFilter.toLowerCase());
+			}
 		}
 		// Sort upcoming first (closest to now), then by time
 		out.sort((a, b) => {
@@ -387,11 +392,35 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private _renderHeader(): void {
 		// Title is already shown by the VS Code view container + view pane headers;
-		// here we only need the action toolbar (new + refresh) aligned to the right.
+		// here we only need quick-filter pills on the left and action toolbar on the right.
 		const header = DOM.append(this.container, DOM.$('.menu-header'));
-		header.style.cssText = 'padding:6px 10px;display:flex;align-items:center;justify-content:flex-end;gap:6px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
-		createActionIconButton(header, '+', 'New Appointment', () => this.commandService.executeCommand('ciyex.openAppointments'));
-		createActionIconButton(header, '\u{21BB}', 'Refresh', () => this._loadAll());
+		header.style.cssText = 'padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+
+		// Quick-filter pills (left)
+		const pills = DOM.append(header, DOM.$('div'));
+		pills.style.cssText = 'display:flex;align-items:center;gap:4px;';
+		this._filterPill(pills, 'In Progress', '__in_progress__', '#8b5cf6');
+		this._filterPill(pills, 'Completed', 'completed', '#6b7280');
+
+		// Action buttons (right)
+		const actions = DOM.append(header, DOM.$('div'));
+		actions.style.cssText = 'display:flex;align-items:center;gap:6px;';
+		createActionIconButton(actions, '+', 'New Appointment', () => this.commandService.executeCommand('ciyex.openAppointments'));
+		createActionIconButton(actions, '\u{21BB}', 'Refresh', () => this._loadAll());
+	}
+
+	private _filterPill(parent: HTMLElement, label: string, value: string, color: string): void {
+		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		btn.textContent = label;
+		const active = this.statusFilter === value;
+		btn.style.cssText = active
+			? `padding:2px 8px;border-radius:12px;border:none;cursor:pointer;font-size:10px;font-weight:600;background:${color};color:#fff;`
+			: `padding:2px 8px;border-radius:12px;border:1px solid var(--vscode-editorWidget-border);cursor:pointer;font-size:10px;font-weight:500;background:transparent;color:var(--vscode-foreground);opacity:0.7;`;
+		btn.addEventListener('click', () => {
+			this.statusFilter = this.statusFilter === value ? '' : value;
+			this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+			this._render();
+		});
 	}
 
 	private _renderStats(): void {

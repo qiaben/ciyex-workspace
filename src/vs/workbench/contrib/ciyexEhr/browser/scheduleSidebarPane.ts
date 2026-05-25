@@ -385,12 +385,176 @@ export class ScheduleSidebarPane extends ViewPane {
 	}
 
 	private _miniCalendarCollapsed = false;
+	private _formViewActive = false;
 
 	private _render(): void {
 		DOM.clearNode(this.container);
-		this._renderMiniCalendar();
-		this._renderTimeline();
-		this._renderWaitlist();
+		if (this._formViewActive) {
+			this._renderFormView();
+		} else {
+			this._renderMiniCalendar();
+			this._renderTimeline();
+			this._renderWaitlist();
+		}
+	}
+
+	private _renderFormView(): void {
+		const wrap = DOM.append(this.container, DOM.$('div'));
+		wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;';
+
+		// Header
+		const hdr = DOM.append(wrap, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;padding:10px 10px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);gap:6px;flex-shrink:0;';
+
+		const title = DOM.append(hdr, DOM.$('span'));
+		title.textContent = 'APPOINTMENTS';
+		title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.08em;color:var(--vscode-descriptionForeground);flex:1;text-transform:uppercase;';
+
+		const calBtn = DOM.append(hdr, DOM.$('div'));
+		calBtn.title = 'Calendar view';
+		calBtn.textContent = '\u229E';
+		calBtn.style.cssText = 'width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;color:var(--vscode-editor-foreground);transition:background 0.1s;flex-shrink:0;';
+		calBtn.addEventListener('mouseenter', () => { calBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		calBtn.addEventListener('mouseleave', () => { calBtn.style.background = ''; });
+		calBtn.addEventListener('click', () => { this._formViewActive = false; this._render(); });
+
+		// Stats row
+		const all = this.appointments;
+		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show', 'canceled']);
+		const upcoming = all.filter(a => !terminal.has((a.status || '').toLowerCase())).length;
+		const done = all.filter(a => ['completed', 'fulfilled'].includes((a.status || '').toLowerCase())).length;
+		const cancelled = all.filter(a => ['cancelled', 'canceled', 'noshow', 'no-show'].includes((a.status || '').toLowerCase())).length;
+
+		const statsRow = DOM.append(wrap, DOM.$('div'));
+		statsRow.style.cssText = 'display:flex;gap:10px;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const stat = (val: number, lbl: string, color: string) => {
+			const s = DOM.append(statsRow, DOM.$('div'));
+			s.style.cssText = 'display:flex;flex-direction:column;align-items:center;flex:1;';
+			const v = DOM.append(s, DOM.$('span'));
+			v.textContent = String(val);
+			v.style.cssText = `font-size:18px;font-weight:700;color:${color};line-height:1.2;`;
+			const l = DOM.append(s, DOM.$('span'));
+			l.textContent = lbl;
+			l.style.cssText = 'font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+		};
+		stat(all.length, 'TOTAL', 'var(--vscode-editor-foreground)');
+		stat(upcoming, 'UPCOMING', '#3b9edd');
+		stat(done, 'DONE', '#4caf50');
+		stat(cancelled, 'CANCEL', '#f44336');
+
+		// Search
+		const searchWrap = DOM.append(wrap, DOM.$('div'));
+		searchWrap.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const searchInput = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		searchInput.placeholder = 'Search patient, provider, type...';
+		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--vscode-input-border,rgba(128,128,128,0.3));border-radius:4px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font-size:11px;outline:none;';
+
+		// List
+		const listEl = DOM.append(wrap, DOM.$('div'));
+		listEl.style.cssText = 'flex:1;overflow-y:auto;padding:4px 0;';
+
+		const renderList = (filter: string) => {
+			DOM.clearNode(listEl);
+			const query = filter.toLowerCase();
+			const apts = [...this.appointments].sort((a, b) => {
+				const ta = a.start || a.startTime || '';
+				const tb = b.start || b.startTime || '';
+				return ta.localeCompare(tb);
+			}).filter(a => {
+				if (!query) { return true; }
+				const name = a.patientName || '';
+				const prov = a.providerName || a.practitionerName || '';
+				const type = getAppointmentType(a);
+				return name.toLowerCase().includes(query) || prov.toLowerCase().includes(query) || type.toLowerCase().includes(query);
+			});
+
+			for (const apt of apts) {
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.1));cursor:pointer;transition:background 0.1s;';
+
+				// Date + patient name + status
+				const topRow = DOM.append(row, DOM.$('div'));
+				topRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
+
+				const startRaw = apt.start || apt.startTime || '';
+				let dateStr = '';
+				if (startRaw) {
+					try {
+						const d = new Date(startRaw);
+						dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+					} catch { dateStr = startRaw; }
+				}
+				const dateEl = DOM.append(topRow, DOM.$('span'));
+				dateEl.textContent = dateStr;
+				dateEl.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-editor-foreground);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+				const status = apt.status || 'Scheduled';
+				const statusLower = status.toLowerCase();
+				const isTerminal = terminal.has(statusLower);
+				const statusColor = statusLower === 'cancelled' || statusLower === 'canceled' || statusLower === 'noshow' || statusLower === 'no-show' ? '#f44336'
+					: statusLower === 'completed' || statusLower === 'fulfilled' ? '#4d5' : '#3b9edd';
+				const badge = DOM.append(topRow, DOM.$('span'));
+				badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+				badge.style.cssText = `font-size:9px;padding:2px 6px;border-radius:10px;background:${statusColor}22;color:${statusColor};font-weight:600;white-space:nowrap;`;
+
+				// More button
+				const actionsWrap = createRowActionsContainer(row);
+				actionsWrap.style.cssText = 'display:flex;flex-shrink:0;align-items:center;opacity:0;transition:opacity 0.1s;';
+				createOverflowMenuButton(actionsWrap, (): IOverflowMenuItem[] => {
+					const items: IOverflowMenuItem[] = [];
+					if (apt.patientId) {
+						items.push({ symbol: '\u{1F5C2}', label: 'Open Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
+					}
+					items.push({ symbol: '\u{1F4DD}', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
+					if (apt.encounterId) {
+						items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals') });
+						items.push({ symbol: '\u{1F4C3}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName) });
+					} else if (!isTerminal) {
+						items.push({
+							symbol: '\u{1F4C3}', label: 'New Encounter', onClick: async () => {
+								try {
+									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+									if (res.ok) { await this._loadAndRender(); }
+								} catch { /* */ }
+							}
+						});
+					}
+					return items;
+				});
+
+				// Sub-row: type / provider
+				const subRow = DOM.append(row, DOM.$('div'));
+				subRow.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+				const typeParts: string[] = [];
+				const aptType = getAppointmentType(apt);
+				if (aptType) { typeParts.push(aptType); }
+				const provName = apt.providerName || apt.practitionerName || '';
+				if (provName) { typeParts.push(provName); }
+				subRow.textContent = typeParts.join(' \u00B7 ');
+
+				row.addEventListener('mouseenter', () => {
+					row.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.06))';
+					actionsWrap.style.opacity = '1';
+				});
+				row.addEventListener('mouseleave', () => {
+					row.style.background = '';
+					actionsWrap.style.opacity = '0';
+				});
+				row.addEventListener('click', (e) => {
+					if (actionsWrap.contains(e.target as Node)) { return; }
+					if (apt.patientId) { this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }); }
+				});
+			}
+
+			if (apts.length === 0) {
+				const empty = DOM.append(listEl, DOM.$('div'));
+				empty.textContent = 'No appointments found';
+				empty.style.cssText = 'padding:20px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+			}
+		};
+
+		renderList('');
+		searchInput.addEventListener('input', () => renderList(searchInput.value.trim()));
 	}
 
 	private _renderMiniCalendar(): void {
@@ -404,6 +568,14 @@ export class ScheduleSidebarPane extends ViewPane {
 		const today = this.currentDate;
 		monthName.textContent = today.toLocaleDateString('en-US', { month: 'long' });
 		monthName.style.cssText = 'font-size:14px;font-weight:600;flex:1;color:var(--vscode-editor-foreground);';
+		// form-view toggle button (list icon)
+		const listBtn = DOM.append(hdr, DOM.$('div'));
+		listBtn.title = 'Appointments list view';
+		listBtn.textContent = '\u2261';
+		listBtn.style.cssText = 'width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer;color:var(--vscode-editor-foreground);transition:background 0.1s;flex-shrink:0;margin-right:2px;';
+		listBtn.addEventListener('mouseenter', () => { listBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		listBtn.addEventListener('mouseleave', () => { listBtn.style.background = ''; });
+		listBtn.addEventListener('click', () => { this._formViewActive = true; this._render(); });
 		// + add button
 		const addBtn = DOM.append(hdr, DOM.$('div'));
 		addBtn.textContent = '+';

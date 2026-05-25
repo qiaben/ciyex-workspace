@@ -9,6 +9,8 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { URI } from '../../../../base/common/uri.js';
 
 interface PatientResult {
 	id: string;
@@ -65,6 +67,7 @@ export class EhrTitlebarControls extends Disposable {
 		private readonly apiService: ICiyexApiService,
 		private readonly commandService: ICommandService,
 		private readonly notificationService: INotificationService,
+		private readonly openerService: IOpenerService,
 	) {
 		super();
 
@@ -326,7 +329,7 @@ export class EhrTitlebarControls extends Disposable {
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
-			this.commandService.executeCommand('ciyex.openPayments').catch(() => { });
+			this.commandService.executeCommand('simpleBrowser.show', 'https://www.zeffy.com/en-US/donation-form/ciyex-ehr');
 		}));
 	}
 
