@@ -1848,6 +1848,18 @@ export class PatientChartEditor extends EditorPane {
 		this.activeTab = input.initialTab
 			|| this.storageSvc.get(LAST_TAB_KEY_PREFIX + this.patientId, StorageScope.PROFILE, 'dashboard');
 
+		// Focused mode (opened from snapshot quick-action icons): hide the
+		// patient header + chart sidebar so only the active tab content is
+		// visible. The full chart remains available via the regular flow.
+		const focused = !!input.focused;
+		this.headerBar.style.display = focused ? 'none' : '';
+		this.sidebarEl.style.display = focused ? 'none' : '';
+		if (focused) {
+			this.mainEl.style.padding = '12px 18px';
+		} else {
+			this.mainEl.style.padding = '20px 24px';
+		}
+
 		// Kick off Quick Info immediately — its 5 fetches run in parallel with
 		// the layout/patient loads below, and each row updates its DOM cell
 		// independently as soon as its own response lands.
@@ -1856,8 +1868,10 @@ export class PatientChartEditor extends EditorPane {
 		await Promise.all([this._loadLayout(), this._loadPatient(), this._loadLookups()]);
 		if (token.isCancellationRequested) { return; }
 
-		this._renderHeader();
-		this._renderSidebar();
+		if (!focused) {
+			this._renderHeader();
+			this._renderSidebar();
+		}
 		this._renderMain();
 		// Tie the quick-info promise back so a re-entrant setInput awaits it.
 		void quickInfoPromise;

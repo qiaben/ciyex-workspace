@@ -11,8 +11,15 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { PatientSnapshotEditorInput } from './ciyexEditorInput.js';
+import { PatientSnapshotEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
+
+interface QuickAction {
+	icon: string;
+	title: string;
+	onClick: () => void;
+}
 
 export class PatientSnapshotEditor extends EditorPane {
 
@@ -20,6 +27,9 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private root!: HTMLElement;
 	private _currentPatientId = '';
+	private _currentPatientName = '';
+	private readonly _pageState = new Map<string, number>();
+	private static readonly PAGE_SIZE = 5;
 
 	constructor(
 		group: import('../../../../services/editor/common/editorGroupsService.js').IEditorGroup,
@@ -27,8 +37,64 @@ export class PatientSnapshotEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
+	}
+
+	private _openChartAt(tab: string): void {
+		if (!this._currentPatientId) { return; }
+		this.editorService.openEditor(new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab, /*focused*/ true), {}, SIDE_GROUP);
+	}
+
+	private _paginate<T>(key: string, items: T[]): { page: T[]; pageIdx: number; pageCount: number; total: number } {
+		const total = items.length;
+		const pageCount = Math.max(1, Math.ceil(total / PatientSnapshotEditor.PAGE_SIZE));
+		const pageIdx = Math.min(this._pageState.get(key) ?? 0, pageCount - 1);
+		const start = pageIdx * PatientSnapshotEditor.PAGE_SIZE;
+		return { page: items.slice(start, start + PatientSnapshotEditor.PAGE_SIZE), pageIdx, pageCount, total };
+	}
+
+	private _renderPagerFooter(parent: HTMLElement, key: string, pageIdx: number, pageCount: number, total: number): void {
+		if (pageCount <= 1) { return; }
+		const bar = DOM.append(parent, DOM.$('div'));
+		bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:8px;margin-top:6px;border-top:1px solid var(--vscode-editorWidget-border);font-size:11px;color:var(--vscode-descriptionForeground);';
+
+		const info = DOM.append(bar, DOM.$('span'));
+		const from = pageIdx * PatientSnapshotEditor.PAGE_SIZE + 1;
+		const to = Math.min(from + PatientSnapshotEditor.PAGE_SIZE - 1, total);
+		// allow-any-unicode-next-line
+		info.textContent = `${from}–${to} of ${total}`;
+
+		const btns = DOM.append(bar, DOM.$('div'));
+		btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
+
+		const mkBtn = (label: string, disabled: boolean, onClick: () => void): void => {
+			const b = DOM.append(btns, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.disabled = disabled;
+			b.style.cssText = `min-width:24px;height:22px;padding:0 6px;font-size:11px;border-radius:4px;border:1px solid var(--vscode-editorWidget-border);background:${disabled ? 'transparent' : 'var(--vscode-button-secondaryBackground)'};color:var(--vscode-button-secondaryForeground,var(--vscode-foreground));cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '0.4' : '1'};`;
+			b.addEventListener('click', (e) => { e.stopPropagation(); if (!disabled) { onClick(); } });
+		};
+		// allow-any-unicode-next-line
+		mkBtn('‹', pageIdx <= 0, () => { this._pageState.set(key, pageIdx - 1); this._rerender(); });
+		const pageLbl = DOM.append(btns, DOM.$('span'));
+		pageLbl.textContent = `${pageIdx + 1} / ${pageCount}`;
+		pageLbl.style.cssText = 'padding:0 6px;font-weight:600;color:var(--vscode-foreground);';
+		// allow-any-unicode-next-line
+		mkBtn('›', pageIdx >= pageCount - 1, () => { this._pageState.set(key, pageIdx + 1); this._rerender(); });
+	}
+
+	private _lastRenderArgs: { patientId: string; patientName: string; appointmentId?: string } | null = null;
+	private _rerender(): void {
+		if (!this._lastRenderArgs) { return; }
+		const { patientId, patientName, appointmentId } = this._lastRenderArgs;
+		void this._loadAndRender(patientId, patientName, appointmentId);
+	}
+
+	private _openNewEncounter(): void {
+		if (!this._currentPatientId) { return; }
+		this.editorService.openEditor(new EncounterFormEditorInput(this._currentPatientId, 'new', this._currentPatientName, 'New Encounter'), {}, SIDE_GROUP);
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -39,7 +105,11 @@ export class PatientSnapshotEditor extends EditorPane {
 	override async setInput(input: PatientSnapshotEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		if (token.isCancellationRequested) { return; }
+		if (this._currentPatientId !== input.patientId) {
+			this._pageState.clear();
+		}
 		this._currentPatientId = input.patientId;
+		this._currentPatientName = input.patientName;
 		DOM.clearNode(this.root);
 		this._renderSkeleton(input.patientName);
 		await this._loadAndRender(input.patientId, input.patientName, input.appointmentId);
@@ -62,6 +132,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
+		this._lastRenderArgs = { patientId, patientName, appointmentId };
 		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage, appointment] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
@@ -149,6 +220,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			}
 		}
 
+		this._renderHeaderActions(hdr);
+
 		if (apt) {
 			const aptBlock = DOM.append(hdr, DOM.$('div'));
 			aptBlock.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:10px 14px;min-width:200px;font-size:12px;';
@@ -182,6 +255,92 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
+	private _renderHeaderActions(hdr: HTMLElement): void {
+		const actions = DOM.append(hdr, DOM.$('.snap-header-actions'));
+		actions.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0;';
+
+		const primary: QuickAction[] = [
+			{ icon: 'add', title: 'New Encounter', onClick: () => this._openNewEncounter() },
+			{ icon: 'person', title: 'Edit Demographics', onClick: () => this._openChartAt('demographics') },
+			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openChartAt('payment') },
+			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openChartAt('billing') },
+		];
+		for (const a of primary) {
+			this._renderIconBtn(actions, a);
+		}
+
+		const overflowItems: QuickAction[] = [
+			{ icon: 'pulse', title: 'Record Vitals', onClick: () => this._openChartAt('vitals') },
+			{ icon: 'warning', title: 'Add Problem', onClick: () => this._openChartAt('problems') },
+			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openChartAt('medications') },
+			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openChartAt('insurance') },
+			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openChartAt('labs') },
+			{ icon: 'note', title: 'Add Visit Note', onClick: () => this._openChartAt('visit-notes') },
+			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openChartAt('statements') },
+			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openChartAt('claims') },
+		];
+		this._renderOverflowBtn(actions, overflowItems);
+	}
+
+	private _renderIconBtn(parent: HTMLElement, a: QuickAction): HTMLButtonElement {
+		const b = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
+		b.title = a.title;
+		b.setAttribute('aria-label', a.title);
+		b.style.cssText = 'width:38px;height:38px;display:flex;align-items:center;justify-content:center;background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;cursor:pointer;color:var(--vscode-foreground);transition:background 0.15s;';
+		const ico = DOM.append(b, DOM.$('span.codicon.codicon-' + a.icon));
+		(ico as HTMLElement).style.cssText = 'font-size:20px;';
+		b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; });
+		b.addEventListener('mouseleave', () => { b.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; });
+		b.addEventListener('click', (e) => { e.stopPropagation(); a.onClick(); });
+		return b;
+	}
+
+	private _renderOverflowBtn(parent: HTMLElement, items: QuickAction[]): void {
+		const wrap = DOM.append(parent, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;';
+		const trigger = this._renderIconBtn(wrap, {
+			icon: 'ellipsis',
+			title: 'More actions',
+			onClick: () => { /* toggle below */ },
+		});
+
+		const menu = DOM.append(wrap, DOM.$('div'));
+		menu.style.cssText = 'position:absolute;top:44px;right:0;min-width:220px;background:var(--vscode-menu-background,var(--vscode-editor-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-menu-border,var(--vscode-editorWidget-border));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.28);padding:4px;z-index:1000;display:none;';
+
+		const closeMenu = (): void => { menu.style.display = 'none'; };
+		const docClick = (e: Event): void => {
+			if (!wrap.contains(e.target as Node)) { closeMenu(); }
+		};
+		trigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const open = menu.style.display === 'block';
+			if (open) {
+				closeMenu();
+				DOM.getActiveWindow().document.removeEventListener('click', docClick);
+			} else {
+				menu.style.display = 'block';
+				DOM.getActiveWindow().document.addEventListener('click', docClick);
+			}
+		});
+
+		for (const item of items) {
+			const row = DOM.append(menu, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:13px;color:var(--vscode-menu-foreground,var(--vscode-foreground));';
+			const ico = DOM.append(row, DOM.$('span.codicon.codicon-' + item.icon));
+			(ico as HTMLElement).style.cssText = 'font-size:14px;color:var(--vscode-descriptionForeground);';
+			const lbl = DOM.append(row, DOM.$('span'));
+			lbl.textContent = item.title;
+			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-menu-selectionBackground,var(--vscode-list-hoverBackground))'; });
+			row.addEventListener('mouseleave', () => { row.style.background = ''; });
+			row.addEventListener('click', (e) => {
+				e.stopPropagation();
+				closeMenu();
+				DOM.getActiveWindow().document.removeEventListener('click', docClick);
+				item.onClick();
+			});
+		}
+	}
+
 	private _renderGrid(
 		_p: Record<string, unknown> | null,
 		conds: Record<string, unknown>[],
@@ -199,42 +358,44 @@ export class PatientSnapshotEditor extends EditorPane {
 			const s = String(c.status || c.clinicalStatus || '').toLowerCase();
 			return !s || s === 'active';
 		});
-		this._renderCard(grid, 'stethoscope', 'Active Problems', activeProblems, (c) => {
+		this._renderCard(grid, 'problems', 'stethoscope', 'Active Problems', activeProblems, (c) => {
 			const name = c.conditionName || c.condition || c.name || c.display || (c.code as Record<string, unknown>)?.text || '—';
 			const onset = c.onsetDate || c.onsetDateTime || c.recordedDate || '';
 			const yr = onset ? new Date(String(onset)).getFullYear() : '';
 			return { primary: String(name), secondary: yr ? String(yr) : '', badge: { text: 'Active', color: '#22c55e' } };
-		});
+		}, () => this._openChartAt('problems'));
 
-		this._renderCard(grid, 'symbol-method', 'Medications', meds, (m) => {
+		this._renderCard(grid, 'medications', 'symbol-method', 'Medications', meds, (m) => {
 			const name = m.medicationName || m.name || '—';
 			const dose = m.dosage || '';
 			const freq = m.frequency || '';
 			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
-		});
+		}, () => this._openChartAt('medications'));
 
 		this._renderVitalsCard(grid, vit);
 		this._renderPaymentsCard(grid, payments, statements);
 
 		// Bottom row: All Visits (3 cols) + All Labs (1 col)
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 3, encs.length);
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 3, encs.length, () => this._openNewEncounter());
 		this._renderEncounterRows(visitCard, encs);
 
-		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 1, labs.length);
+		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 1, labs.length, () => this._openChartAt('labs'));
 		this._renderLabRows(labCard, labs);
 	}
 
 	private _renderCard(
 		parent: HTMLElement,
+		pageKey: string,
 		icon: string,
 		title: string,
 		items: Record<string, unknown>[],
 		row: (item: Record<string, unknown>) => { primary: string; secondary: string; badge?: { text: string; color: string } },
+		onAdd?: () => void,
 	): HTMLElement {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;display:flex;flex-direction:column;min-height:140px;';
 
-		this._cardHeader(card, icon, title, items.length);
+		this._cardHeader(card, icon, title, items.length, onAdd);
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
@@ -243,35 +404,38 @@ export class PatientSnapshotEditor extends EditorPane {
 			const empty = DOM.append(body, DOM.$('div'));
 			empty.textContent = 'None recorded';
 			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
-		} else {
-			for (const item of items) {
-				const r = row(item);
-				const rowEl = DOM.append(body, DOM.$('div'));
-				rowEl.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
-				const textCol = DOM.append(rowEl, DOM.$('div'));
-				textCol.style.cssText = 'flex:1;min-width:0;';
-				const pri = DOM.append(textCol, DOM.$('div'));
-				pri.textContent = r.primary;
-				pri.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-				if (r.secondary) {
-					const sec = DOM.append(textCol, DOM.$('div'));
-					sec.textContent = r.secondary;
-					sec.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
-				}
-				if (r.badge) {
-					const b = DOM.append(rowEl, DOM.$('span'));
-					b.textContent = r.badge.text;
-					b.style.cssText = `font-size:9px;padding:2px 6px;border-radius:8px;background:${r.badge.color}20;color:${r.badge.color};font-weight:700;white-space:nowrap;flex-shrink:0;`;
-				}
+			return card;
+		}
+
+		const { page, pageIdx, pageCount, total } = this._paginate(pageKey, items);
+		for (const item of page) {
+			const r = row(item);
+			const rowEl = DOM.append(body, DOM.$('div'));
+			rowEl.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			const textCol = DOM.append(rowEl, DOM.$('div'));
+			textCol.style.cssText = 'flex:1;min-width:0;';
+			const pri = DOM.append(textCol, DOM.$('div'));
+			pri.textContent = r.primary;
+			pri.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+			if (r.secondary) {
+				const sec = DOM.append(textCol, DOM.$('div'));
+				sec.textContent = r.secondary;
+				sec.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
+			}
+			if (r.badge) {
+				const b = DOM.append(rowEl, DOM.$('span'));
+				b.textContent = r.badge.text;
+				b.style.cssText = `font-size:9px;padding:2px 6px;border-radius:8px;background:${r.badge.color}20;color:${r.badge.color};font-weight:700;white-space:nowrap;flex-shrink:0;`;
 			}
 		}
+		this._renderPagerFooter(card, pageKey, pageIdx, pageCount, total);
 		return card;
 	}
 
 	private _renderVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[]): void {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
-		this._cardHeader(card, 'pulse', 'Latest Vitals', vit.length);
+		this._cardHeader(card, 'pulse', 'Latest Vitals', vit.length, () => this._openChartAt('vitals'));
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
@@ -312,12 +476,14 @@ export class PatientSnapshotEditor extends EditorPane {
 			v.style.cssText = 'font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);';
 		}
 
-		// History: remaining vitals readings
-		if (vit.length > 1) {
+		// History: remaining vitals readings (paginated)
+		const history = vit.slice(1);
+		if (history.length > 0) {
 			const histLabel = DOM.append(body, DOM.$('div'));
 			histLabel.textContent = 'VITALS HISTORY';
 			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:10px;margin-bottom:4px;';
-			for (const v of vit.slice(1)) {
+			const { page, pageIdx, pageCount, total } = this._paginate('vitals-history', history);
+			for (const v of page) {
 				const dateRaw = v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date || '';
 				const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 				const bp = (v.bpSystolic && v.bpDiastolic) ? `${v.bpSystolic}/${v.bpDiastolic}` : '';
@@ -332,13 +498,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				summaryEl.textContent = summary;
 				summaryEl.style.cssText = 'color:var(--vscode-editor-foreground);font-weight:500;';
 			}
+			this._renderPagerFooter(card, 'vitals-history', pageIdx, pageCount, total);
 		}
 	}
 
 	private _renderPaymentsCard(parent: HTMLElement, payments: Record<string, unknown>[], statements: Record<string, unknown>[]): void {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
-		this._cardHeader(card, 'credit-card', 'Financials', payments.length);
+		this._cardHeader(card, 'credit-card', 'Financials', payments.length, () => this._openChartAt('payment'));
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
@@ -361,7 +528,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			const histLabel = DOM.append(body, DOM.$('div'));
 			histLabel.textContent = 'PAYMENT HISTORY';
 			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:6px;margin-bottom:4px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
-			for (const pay of payments) {
+			const { page, pageIdx, pageCount, total } = this._paginate('payments', payments);
+			for (const pay of page) {
 				const dateRaw = (pay.paymentDate || pay.date || pay.transactionDate || pay.created || '') as string;
 				const dateStr = dateRaw ? new Date(dateRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 				const amt = pay.amount || pay.totalAmount || '';
@@ -384,6 +552,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					amtEl.style.cssText = 'font-size:13px;font-weight:700;color:#22c55e;';
 				}
 			}
+			this._renderPagerFooter(card, 'payments', pageIdx, pageCount, total);
 		} else {
 			const empty = DOM.append(body, DOM.$('div'));
 			empty.textContent = 'No payment history';
@@ -391,10 +560,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
-	private _renderWideCard(parent: HTMLElement, icon: string, title: string, cols: number, count: number): HTMLElement {
+	private _renderWideCard(parent: HTMLElement, icon: string, title: string, cols: number, count: number, onAdd?: () => void): HTMLElement {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = `background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span ${cols};`;
-		this._cardHeader(card, icon, title, count);
+		this._cardHeader(card, icon, title, count, onAdd);
 		return card;
 	}
 
@@ -414,7 +583,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
 		}
-		for (const enc of encs) {
+		const { page, pageIdx, pageCount, total } = this._paginate('encounters', encs);
+		for (const enc of page) {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 			const type = enc.visitCategory || enc.encounterType || enc.type || enc.serviceType || enc.class || '—';
@@ -444,6 +614,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 			}
 		}
+		this._renderPagerFooter(card, 'encounters', pageIdx, pageCount, total);
 	}
 
 	private _renderLabRows(card: HTMLElement, labs: Record<string, unknown>[]): void {
@@ -462,7 +633,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
 		}
-		for (const lab of labs) {
+		const { page, pageIdx, pageCount, total } = this._paginate('labs', labs);
+		for (const lab of page) {
 			const name = lab.testName || lab.display || lab.name || (lab.code as Record<string, unknown>)?.text || '—';
 			const dateRaw = lab.resultDate || lab.collectionDate || lab.date || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -489,9 +661,10 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 			}
 		}
+		this._renderPagerFooter(card, 'labs', pageIdx, pageCount, total);
 	}
 
-	private _cardHeader(card: HTMLElement, icon: string, title: string, count: number): void {
+	private _cardHeader(card: HTMLElement, icon: string, title: string, count: number, onAdd?: () => void): void {
 		const hdr = DOM.append(card, DOM.$('div'));
 		hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
 		const ico = DOM.append(hdr, DOM.$('span.codicon.codicon-' + icon));
@@ -503,6 +676,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			const badge = DOM.append(hdr, DOM.$('span'));
 			badge.textContent = String(count);
 			badge.style.cssText = 'font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;background:var(--vscode-badge-background,rgba(128,128,128,0.2));color:var(--vscode-badge-foreground,var(--vscode-editor-foreground));';
+		}
+		if (onAdd) {
+			const addBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+			addBtn.title = `Add ${title}`;
+			addBtn.setAttribute('aria-label', `Add ${title}`);
+			addBtn.style.cssText = 'width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+			const addIco = DOM.append(addBtn, DOM.$('span.codicon.codicon-add'));
+			(addIco as HTMLElement).style.cssText = 'font-size:13px;';
+			addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; addBtn.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+			addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; addBtn.style.borderColor = 'transparent'; });
+			addBtn.addEventListener('click', (e) => { e.stopPropagation(); onAdd(); });
 		}
 	}
 

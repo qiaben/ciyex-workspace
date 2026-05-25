@@ -81,21 +81,35 @@ export class PatientChartEditorInput extends EditorInput {
 		/** Optional initial tab key (e.g. 'vitals', 'encounters'). Used by
 		 *  appointment row actions to land on a specific section. */
 		readonly initialTab?: string,
+		/** When true, opens in a focused single-section view: the chart sidebar
+		 *  and patient header bar are hidden so only the active tab's form/list
+		 *  is shown. Used by the Snapshot quick-action toolbar so each icon
+		 *  opens just the relevant data, not the whole chart. */
+		readonly focused?: boolean,
 	) { super(); }
 
-	override getName(): string { return this.patientName || 'Patient Chart'; }
+	override getName(): string {
+		const base = this.patientName || 'Patient Chart';
+		if (this.focused && this.initialTab) {
+			const tabLabel = this.initialTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+			return `${base} — ${tabLabel}`;
+		}
+		return base;
+	}
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('person'); }
-	get resource(): URI { return URI.from({ scheme: 'ciyex-patient', path: `/${this.patientId}` }); }
+	get resource(): URI {
+		const suffix = this.focused ? `/focused/${this.initialTab || 'dashboard'}` : '';
+		return URI.from({ scheme: 'ciyex-patient', path: `/${this.patientId}${suffix}` });
+	}
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		if (super.matches(other)) { return true; }
-		// Include initialTab in equality so that opening the same patient with a
-		// different tab (e.g. 'vitals' vs 'encounters') triggers a fresh setInput
-		// call and lands on the correct tab, rather than reusing the open editor
-		// and silently keeping whatever tab was last active.
+		// Include initialTab + focused in equality so each focused section opens
+		// as a distinct editor tab and doesn't reuse the full-chart instance.
 		return other instanceof PatientChartEditorInput
 			&& this.patientId === other.patientId
-			&& (this.initialTab || '') === (other.initialTab || '');
+			&& (this.initialTab || '') === (other.initialTab || '')
+			&& !!this.focused === !!other.focused;
 	}
 }
 
