@@ -291,7 +291,7 @@ export class AppointmentsEditor extends EditorPane {
 	private visitTypes: string[] = [];
 
 	// Filters
-	private datePreset = 'all_time';
+	private datePreset = 'today';
 	private patientSearch = '';
 	private providerFilter = '';
 	private locationFilter = '';
@@ -1079,30 +1079,23 @@ export class AppointmentsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Table ─────────────────────────────────────────────────────────
 		const tableWrap = DOM.append(this.contentEl, DOM.$('div'));
-		tableWrap.classList.add('appt-table-wrap');
-		// `overflow-x:auto` keeps the ACTIONS column reachable on narrow viewports
-		// (it was clipped under `overflow:hidden`); `min-width` on the inner table
-		// makes the row keep its 9 columns instead of squeezing them invisibly.
-		// Explicitly opt back into a visible horizontal scrollbar — parts of the
-		// EHR shell hide scrollbars globally via `scrollbar-width:none`, and the
-		// appointment table is wide enough that the bar must stay visible.
-		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;';
-		// Force-show the horizontal scrollbar even when an ancestor sets
-		// scrollbar-width:none / ::-webkit-scrollbar{display:none}.
-		const tableWrapStyle = DOM.append(this.contentEl, DOM.$('style'));
-		tableWrapStyle.textContent = '.appt-table-wrap::-webkit-scrollbar{display:block;height:10px;}'
-			+ '.appt-table-wrap::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background,#79797966);border-radius:4px;}'
-			+ '.appt-table-wrap::-webkit-scrollbar-track{background:transparent;}';
+		// `ciyex-thin-h-scroll` opts the wrap back into a visible horizontal
+		// scrollbar — without it the global `.ciyex-editor-root` rules in
+		// ciyexCommon.css hide *every* scrollbar with `!important`, so Windows
+		// users (whose mouse wheel does not scroll horizontally by default) lose
+		// access to the ACTIONS / ROOM / WAIT columns.
+		tableWrap.classList.add('appt-table-wrap', 'ciyex-thin-h-scroll');
+		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
 
 		const table = DOM.append(tableWrap, DOM.$('table'));
 		// `table-layout:fixed` honours the column widths set via <colgroup> so all
 		// rows stay aligned even when individual cells contain multi-line content.
-		table.style.cssText = 'width:100%;min-width:1100px;border-collapse:collapse;table-layout:fixed;';
+		table.style.cssText = 'width:100%;min-width:980px;border-collapse:collapse;table-layout:fixed;';
 
 		// Column widths — matched between <colgroup> and the renderTableBody
 		// cell order (DATE, PATIENT, PROVIDER, LOCATION, TYPE, STATUS, ROOM, WAIT, ACTIONS).
+		const colWidths = ['120px', '170px', '130px', '120px', '100px', '100px', '80px', '70px', '120px'];
 		const colgroup = DOM.append(table, DOM.$('colgroup'));
-		const colWidths = ['140px', '200px', '160px', '140px', '120px', '120px', '90px', '90px', '140px'];
 		for (const w of colWidths) {
 			const col = DOM.append(colgroup, DOM.$('col')) as HTMLTableColElement;
 			col.style.width = w;

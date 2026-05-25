@@ -285,7 +285,7 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-account'));
+		DOM.append(btn, DOM.$('span.codicon.codicon-person'));
 		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
 		label.textContent = 'Patient';
 

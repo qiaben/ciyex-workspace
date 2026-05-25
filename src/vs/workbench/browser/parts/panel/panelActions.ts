@@ -9,7 +9,7 @@ import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
 import { MenuId, MenuRegistry, registerAction2, Action2, IAction2Options } from '../../../../platform/actions/common/actions.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { isHorizontal, IWorkbenchLayoutService, PanelAlignment, Parts, Position, positionToString } from '../../../services/layout/browser/layoutService.js';
-import { IsAuxiliaryWindowContext, PanelAlignmentContext, PanelMaximizedContext, PanelPositionContext, PanelVisibleContext } from '../../../common/contextkeys.js';
+import { PanelAlignmentContext, PanelMaximizedContext, PanelPositionContext, PanelVisibleContext } from '../../../common/contextkeys.js';
 import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -24,8 +24,11 @@ import { SwitchCompositeViewAction } from '../compositeBarActions.js';
 
 const maximizeIcon = registerIcon('panel-maximize', Codicon.screenFull, localize('maximizeIcon', 'Icon to maximize a panel.'));
 const closeIcon = registerIcon('panel-close', Codicon.close, localize('closeIcon', 'Icon to close a panel.'));
-const panelIcon = registerIcon('panel-layout-icon', Codicon.layoutPanel, localize('togglePanelOffIcon', 'Icon to toggle the panel off when it is on.'));
-const panelOffIcon = registerIcon('panel-layout-icon-off', Codicon.layoutPanelOff, localize('togglePanelOnIcon', 'Icon to toggle the panel on when it is off.'));
+// `panel-layout-icon` / `panel-layout-icon-off` are still registered (other
+// codepaths reference the registered icon names), but the title-bar toggle
+// that consumed them was removed for the Ciyex EHR — see below.
+registerIcon('panel-layout-icon', Codicon.layoutPanel, localize('togglePanelOffIcon', 'Icon to toggle the panel off when it is on.'));
+registerIcon('panel-layout-icon-off', Codicon.layoutPanelOff, localize('togglePanelOnIcon', 'Icon to toggle the panel on when it is off.'));
 
 export class TogglePanelAction extends Action2 {
 
@@ -317,29 +320,12 @@ registerAction2(class extends Action2 {
 	}
 });
 
-MenuRegistry.appendMenuItems([
-	{
-		id: MenuId.LayoutControlMenu,
-		item: {
-			group: '2_pane_toggles',
-			command: {
-				id: TogglePanelAction.ID,
-				title: localize('togglePanel', "Toggle Panel"),
-				icon: panelOffIcon,
-				toggled: { condition: PanelVisibleContext, icon: panelIcon }
-			},
-			when:
-				ContextKeyExpr.and(
-					IsAuxiliaryWindowContext.negate(),
-					ContextKeyExpr.or(
-						ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
-						ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both')
-					)
-				),
-			order: 1
-		}
-	}
-]);
+// Ciyex EHR: the title-bar Toggle Panel button is hidden because clicking it
+// opens the bottom panel (Problems / Output / Terminal / Ports) — features
+// that end-user clinicians never need and that surface an interactive shell
+// in a clinical app. The action itself stays registered (still reachable via
+// the command palette / View menu for developers); only the title-bar
+// LayoutControlMenu entry is suppressed.
 
 class MoveViewsBetweenPanelsAction extends Action2 {
 	constructor(private readonly source: ViewContainerLocation, private readonly destination: ViewContainerLocation, desc: Readonly<IAction2Options>) {
