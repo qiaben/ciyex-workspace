@@ -9,8 +9,6 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
-import { IOpenerService } from '../../../../platform/opener/common/opener.js';
-import { URI } from '../../../../base/common/uri.js';
 
 interface PatientResult {
 	id: string;
@@ -67,7 +65,6 @@ export class EhrTitlebarControls extends Disposable {
 		private readonly apiService: ICiyexApiService,
 		private readonly commandService: ICommandService,
 		private readonly notificationService: INotificationService,
-		private readonly openerService: IOpenerService,
 	) {
 		super();
 

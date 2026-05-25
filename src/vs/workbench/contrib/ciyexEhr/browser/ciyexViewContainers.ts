@@ -14,7 +14,6 @@ import { PatientListPane } from './patientListPane.js';
 import { GenericListPane } from './genericListPane.js';
 import { ScheduleSidebarPane } from './scheduleSidebarPane.js';
 import { TasksSidebarPane } from './tasksSidebarPane.js';
-import { AppointmentsSidebarPane } from './appointmentsSidebarPane.js';
 
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
