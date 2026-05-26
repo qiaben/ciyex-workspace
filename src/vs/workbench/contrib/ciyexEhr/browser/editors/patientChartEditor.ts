@@ -5761,3 +5761,4 @@ export class PatientChartEditor extends EditorPane {
 		this.root.style.width = `${dimension.width}px`;
 	}
 }
+
