@@ -17,7 +17,16 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { BaseCiyexInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+
+const CAL_REFRESH_OPTIONS = [
+	{ label: 'Off', value: 0 },
+	{ label: '15s', value: 15000 },
+	{ label: '30s', value: 30000 },
+	{ label: '60s', value: 60000 },
+];
 
 interface Appointment {
 	id: string;
@@ -98,6 +107,13 @@ export class CalendarEditor extends EditorPane {
 	private locations: Array<{ id: string; name: string }> = [];
 	private scheduleBlocks: Array<{ providerId?: string; status: string; startTime: string; endTime: string; recurrence?: { frequency: string; byWeekday?: string[] }; serviceType?: string }> = [];
 
+	// Auto-refresh
+	private _calRefreshInterval = 30000;
+	private _calRefreshTimer: number | null = null;
+	private _calCountdownTimer: number | null = null;
+	private _calNextRefreshAt = 0;
+	private _calCountdownEl: HTMLElement | null = null;
+
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
@@ -108,6 +124,7 @@ export class CalendarEditor extends EditorPane {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
+		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super(CalendarEditor.ID, group, telemetryService, themeService, _storageService);
 	}
@@ -179,6 +196,7 @@ export class CalendarEditor extends EditorPane {
 		this.viewMode = defaultView === 'week' ? 'week' : defaultView === 'month' ? 'month' : 'day';
 		this._publishCalendarState();
 		await this._loadAndRender();
+		this._startCalAutoRefresh();
 	}
 
 	/** True when the titlebar search bridge has been wired so we don't double-bind. */
@@ -469,6 +487,94 @@ export class CalendarEditor extends EditorPane {
 		return { startDate: localDateStr(monday), endDate: localDateStr(sunday) };
 	}
 
+	// allow-any-unicode-next-line
+	// ─── Auto-refresh / Print / Export / TV ────────────────────────────────
+
+	private _startCalAutoRefresh(): void {
+		this._stopCalAutoRefresh();
+		if (this._calRefreshInterval > 0) {
+			const win = DOM.getActiveWindow();
+			this._calNextRefreshAt = Date.now() + this._calRefreshInterval;
+			this._calRefreshTimer = win.setInterval(() => {
+				this._calNextRefreshAt = Date.now() + this._calRefreshInterval;
+				void this._loadAndRender();
+			}, this._calRefreshInterval);
+			this._calCountdownTimer = win.setInterval(() => this._updateCalCountdownLabel(), 1000);
+		}
+		this._updateCalCountdownLabel();
+	}
+
+	private _stopCalAutoRefresh(): void {
+		const win = DOM.getActiveWindow();
+		if (this._calRefreshTimer) { win.clearInterval(this._calRefreshTimer); this._calRefreshTimer = null; }
+		if (this._calCountdownTimer) { win.clearInterval(this._calCountdownTimer); this._calCountdownTimer = null; }
+		this._calNextRefreshAt = 0;
+		this._updateCalCountdownLabel();
+	}
+
+	private _updateCalCountdownLabel(): void {
+		if (!this._calCountdownEl) { return; }
+		if (this._calRefreshInterval <= 0 || this._calNextRefreshAt === 0) {
+			this._calCountdownEl.textContent = '';
+			return;
+		}
+		const seconds = Math.max(0, Math.ceil((this._calNextRefreshAt - Date.now()) / 1000));
+		this._calCountdownEl.textContent = `(${seconds}s)`;
+	}
+
+	private _exportCalendarCSV(): void {
+		const { startDate, endDate } = this._getDateRange();
+		const appts = this.appointments.filter(a => {
+			const d = this._parseAptDate(a);
+			if (!d) { return false; }
+			const ds = localDateStr(d);
+			return ds >= startDate && ds <= endDate;
+		});
+		const header = 'Date,Time,Patient,Provider,Location,Type,Status\n';
+		const rows = appts.map(a => {
+			const d = this._parseAptDate(a);
+			const dateStr = d ? localDateStr(d) : '';
+			const timeStr = d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+			const esc = (v: string) => v.includes(',') || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v;
+			return [
+				dateStr,
+				timeStr,
+				esc(a.patientName || ''),
+				esc(a.providerName || a.practitionerName || ''),
+				esc(a.locationName || ''),
+				esc(getAppointmentType(a)),
+				esc(a.status || ''),
+			].join(',');
+		}).join('\n');
+
+		const blob = new Blob([header + rows], { type: 'text/csv' });
+		const url = URL.createObjectURL(blob);
+		const win = DOM.getActiveWindow();
+		const a = win.document.createElement('a');
+		a.href = url;
+		a.download = `calendar_${localDateStr(this.currentDate)}.csv`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	private _printCalendar(): void {
+		const win = DOM.getActiveWindow();
+		win.print();
+	}
+
+	private _openTvDisplay(mode: 'staff' | 'waiting'): void {
+		try {
+			const apiUrl = this.apiService.apiUrl || '';
+			let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+			base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
+			if (!base) { base = DOM.getActiveWindow().location.origin; }
+			const url = `${base}/appointments/tv?mode=${mode}`;
+			void this.openerService.open(URI.parse(url), { openExternal: true });
+		} catch (err) {
+			this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
+		}
+	}
+
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
 		this._filterWraps = [];
@@ -495,14 +601,16 @@ export class CalendarEditor extends EditorPane {
 		}
 
 		// Provider filter — multi-select checkbox dropdown
-		this._buildCheckboxFilter(this.headerBar, 'All Providers', this.providers, this.providerFilter, () => {
+		// allow-any-unicode-next-line
+		this._buildCheckboxFilter(this.headerBar, '👤', this.providers, this.providerFilter, () => {
 			this._updateHeaderCount(); this._renderGrid();
-		});
+		}, true);
 
 		// Location filter — multi-select checkbox dropdown
-		this._buildCheckboxFilter(this.headerBar, 'All Locations', this.locations, this.locationFilter, () => {
+		// allow-any-unicode-next-line
+		this._buildCheckboxFilter(this.headerBar, '📍', this.locations, this.locationFilter, () => {
 			this._updateHeaderCount(); this._renderGrid();
-		});
+		}, true);
 
 		// Right-side action icons group
 		const actionsGroup = DOM.append(this.headerBar, DOM.$('.actions-group'));
@@ -526,8 +634,84 @@ export class CalendarEditor extends EditorPane {
 		});
 
 		// Refresh
-		iconBtn(actionsGroup, '\u21BB', 'Refresh', false, () => { this.providers = []; this.locations = []; this._headerRendered = false; this._loadAndRender(); });
-		iconBtn(actionsGroup, '\u2630', 'Appointment List', false, () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
+		const calBtnStyle = 'padding:4px 10px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		const refreshBtn = DOM.append(actionsGroup, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.style.cssText = calBtnStyle;
+		// allow-any-unicode-next-line
+		refreshBtn.textContent = '\u27F3 Refresh';
+		refreshBtn.title = 'Refresh calendar now';
+		refreshBtn.addEventListener('click', async () => {
+			refreshBtn.disabled = true;
+			const prev = refreshBtn.textContent;
+			refreshBtn.textContent = 'Refreshing\u2026';
+			try { this.providers = []; this.locations = []; this._headerRendered = false; await this._loadAndRender(); }
+			finally { refreshBtn.disabled = false; refreshBtn.textContent = prev; }
+		});
+
+		// Auto-refresh interval picker
+		const refreshWrap = DOM.append(actionsGroup, DOM.$('div'));
+		refreshWrap.style.cssText = 'display:flex;align-items:center;gap:4px;';
+		const autoLabel = DOM.append(refreshWrap, DOM.$('span'));
+		autoLabel.textContent = 'Auto:';
+		autoLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		const refreshSel = DOM.append(refreshWrap, DOM.$('select')) as HTMLSelectElement;
+		refreshSel.style.cssText = 'padding:3px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:11px;cursor:pointer;';
+		refreshSel.title = 'Auto-refresh interval';
+		for (const opt of CAL_REFRESH_OPTIONS) {
+			const o = DOM.append(refreshSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = String(opt.value); o.textContent = opt.label;
+			if (opt.value === this._calRefreshInterval) { o.selected = true; }
+		}
+		this._calCountdownEl = DOM.append(refreshWrap, DOM.$('span'));
+		this._calCountdownEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);min-width:36px;font-variant-numeric:tabular-nums;';
+		this._updateCalCountdownLabel();
+		refreshSel.addEventListener('change', () => {
+			this._calRefreshInterval = parseInt(refreshSel.value, 10);
+			this._startCalAutoRefresh();
+			if (this._calRefreshInterval > 0) { void this._loadAndRender(); }
+		});
+
+		// Print
+		const printBtn = DOM.append(actionsGroup, DOM.$('button'));
+		printBtn.style.cssText = calBtnStyle;
+		// allow-any-unicode-next-line
+		printBtn.textContent = '\uD83D\uDDA8 Print';
+		printBtn.addEventListener('click', () => this._printCalendar());
+
+		// Export
+		const exportBtn = DOM.append(actionsGroup, DOM.$('button'));
+		exportBtn.style.cssText = calBtnStyle;
+		// allow-any-unicode-next-line
+		exportBtn.textContent = '\u2B07 Export';
+		exportBtn.addEventListener('click', () => this._exportCalendarCSV());
+
+		// TV Display
+		const tvWrap = DOM.append(actionsGroup, DOM.$('div'));
+		tvWrap.style.cssText = 'position:relative;';
+		const tvBtn = DOM.append(tvWrap, DOM.$('button')) as HTMLButtonElement;
+		tvBtn.style.cssText = calBtnStyle;
+		// allow-any-unicode-next-line
+		tvBtn.textContent = '\uD83D\uDDA5 TV Display \u25BE';
+		const tvMenu = DOM.append(tvWrap, DOM.$('div'));
+		tvMenu.style.cssText = 'position:absolute;top:calc(100% + 4px);right:0;min-width:180px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:20;display:none;overflow:hidden;';
+		const mkTvItem = (icon: string, label: string, onClick: () => void) => {
+			const it = DOM.append(tvMenu, DOM.$('button')) as HTMLButtonElement;
+			it.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;background:transparent;border:none;color:var(--vscode-foreground);font-size:12px;text-align:left;cursor:pointer;';
+			it.addEventListener('mouseenter', () => { it.style.background = 'var(--vscode-list-hoverBackground)'; });
+			it.addEventListener('mouseleave', () => { it.style.background = 'transparent'; });
+			DOM.append(it, DOM.$('span')).textContent = icon;
+			DOM.append(it, DOM.$('span')).textContent = label;
+			it.addEventListener('click', onClick);
+		};
+		// allow-any-unicode-next-line
+		mkTvItem('\uD83D\uDDA5', 'Staff TV Board', () => { tvMenu.style.display = 'none'; this._openTvDisplay('staff'); });
+		// allow-any-unicode-next-line
+		mkTvItem('\uD83D\uDCFA', 'Waiting Room', () => { tvMenu.style.display = 'none'; this._openTvDisplay('waiting'); });
+		tvBtn.addEventListener('click', (e) => { e.stopPropagation(); tvMenu.style.display = tvMenu.style.display === 'none' ? 'block' : 'none'; });
+		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, 'click', () => { tvMenu.style.display = 'none'; }));
+
+		// allow-any-unicode-next-line
+		iconBtn(actionsGroup, '☰', 'Appointment List', false, () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
 
 		// Appointment count (filtered by current view date range + provider/location)
 		const { startDate, endDate } = this._getDateRange();
@@ -1704,14 +1888,20 @@ export class CalendarEditor extends EditorPane {
 		items: Array<{ id: string; name: string }>,
 		selected: Set<string>,
 		onChange: () => void,
+		symbolMode = false,
 	): void {
 		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
-		wrap.style.cssText = 'position:relative;max-width:200px;';
+		wrap.style.cssText = symbolMode ? 'position:relative;' : 'position:relative;max-width:200px;';
 		this._filterWraps.push(wrap);
 
 		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
+		const symbolStyle = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
-		trigger.style.cssText = inputStyle + 'text-align:left;';
+		trigger.style.cssText = symbolMode ? symbolStyle : inputStyle + 'text-align:left;';
+		if (symbolMode) {
+			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.color = 'var(--vscode-titleBar-activeForeground,#ccc)'; });
+			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)'; });
+		}
 		const describe = () => {
 			if (selected.size === 0) { return allLabel; }
 			if (selected.size === 1) {
@@ -1751,6 +1941,7 @@ export class CalendarEditor extends EditorPane {
 			const pickAll = () => {
 				selected.clear();
 				trigger.textContent = describe();
+				if (symbolMode) { trigger.style.color = 'var(--vscode-descriptionForeground,#888)'; }
 				onChange();
 				renderList();
 			};
@@ -1770,6 +1961,7 @@ export class CalendarEditor extends EditorPane {
 					else { selected.add(it.id); }
 					cb.checked = selected.has(it.id);
 					trigger.textContent = describe();
+					if (symbolMode) { trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)'; }
 					onChange();
 				};
 				row.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
@@ -1814,6 +2006,7 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	override dispose(): void {
+		this._stopCalAutoRefresh();
 		super.dispose();
 	}
 }

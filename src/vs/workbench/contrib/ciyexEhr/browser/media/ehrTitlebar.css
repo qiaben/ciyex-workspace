@@ -165,14 +165,14 @@
 	font-size: 12px;
 }
 
-/* --- Action Buttons — Teams-style: icon + label, transparent bg --- */
+/* --- Action Buttons — icon only, transparent bg --- */
 .ehr-action-btn {
 	display: inline-flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 3px;
-	padding: 3px 10px;
+	gap: 0;
+	padding: 3px;
 	border-radius: 6px;
 	cursor: pointer;
 	color: var(--vscode-titleBar-activeForeground, #ccc);
@@ -201,13 +201,13 @@
 
 /* Icon */
 .ehr-action-btn .codicon {
-	font-size: 22px;
+	font-size: 16px;
 	line-height: 1;
 	color: inherit;
 }
 
 .ehr-action-icon {
-	font-size: 22px;
+	font-size: 16px;
 	line-height: 1;
 	display: flex;
 	align-items: center;
@@ -227,9 +227,9 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
-	font-size: 18px;
+	width: 16px;
+	height: 16px;
+	font-size: 16px;
 	font-weight: 300;
 	line-height: 1;
 	color: inherit;
