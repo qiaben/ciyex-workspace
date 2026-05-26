@@ -717,3 +717,4 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 }
+
