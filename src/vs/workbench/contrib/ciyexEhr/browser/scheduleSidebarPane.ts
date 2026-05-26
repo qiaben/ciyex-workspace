@@ -301,7 +301,14 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (this.statusOptions.length === 0) {
 				this.statusOptions = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
 			}
-			this.statusOptions = this.statusOptions.map(s => typeof s === 'string' ? s : String(s || '')).filter(s => s.length > 0);
+			this.statusOptions = this.statusOptions.map((s: unknown): string => {
+				if (typeof s === 'string') { return s; }
+				if (s && typeof s === 'object') {
+					const r = s as Record<string, unknown>;
+					return String(r.display || r.label || r.name || r.value || r.code || r.id || '');
+				}
+				return String(s || '');
+			}).filter(s => s.length > 0);
 			this.terminalStatuses = new Set(this.statusOptions.filter(s => ['completed', 'no show', 'cancelled', 'fulfilled'].includes(s.toLowerCase())).map(s => s.toLowerCase()));
 			if (this.terminalStatuses.size === 0) {
 				this.terminalStatuses = new Set(['completed', 'fulfilled', 'cancelled', 'noshow', 'no-show']);
@@ -357,7 +364,9 @@ export class ScheduleSidebarPane extends ViewPane {
 	}
 
 	private waitlist: Array<{ id: string; patientName: string; requestedType: string; requestedDate?: string; priority?: number }> = [];
-	private showFilter: 'active' | 'completed' | 'all' = 'active';
+	private showFilter: 'active' | 'completed' | 'all' = 'all';
+	// Status filter set via the header dropdown button. Empty string means "all".
+	private statusFilter: string = '';
 
 	private statusOptions: string[] = [];
 	private roomOptions: string[] = [];
@@ -365,6 +374,12 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	private _getFilteredAppointments(): Appointment[] {
 		let filtered = [...this.appointments];
+
+		// Explicit status filter from the header dropdown
+		if (this.statusFilter) {
+			const target = this.statusFilter.toLowerCase();
+			filtered = filtered.filter(a => (a.status || '').toLowerCase() === target);
+		}
 
 		// Filter
 		if (this.showFilter === 'active') {
@@ -609,14 +624,35 @@ export class ScheduleSidebarPane extends ViewPane {
 		const today = this.currentDate;
 		monthName.textContent = today.toLocaleDateString('en-US', { month: 'long' });
 		monthName.style.cssText = 'font-size:14px;font-weight:600;flex:1;color:var(--vscode-editor-foreground);';
-		// form-view toggle button (list icon)
-		const listBtn = DOM.append(hdr, DOM.$('div'));
-		listBtn.title = 'Appointments list view';
-		listBtn.textContent = '\u2261';
-		listBtn.style.cssText = 'width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer;color:var(--vscode-editor-foreground);transition:background 0.1s;flex-shrink:0;margin-right:2px;';
-		listBtn.addEventListener('mouseenter', () => { listBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
-		listBtn.addEventListener('mouseleave', () => { listBtn.style.background = ''; });
-		listBtn.addEventListener('click', () => { this._formViewActive = true; this._render(); });
+		// Status filter button - shows a dropdown of statuses (Scheduled, Checked-in, ...)
+		// to filter the appointments list. Highlighted in blue when a filter is active.
+		const filterBtn = DOM.append(hdr, DOM.$('div'));
+		const hasActiveFilter = this.statusFilter !== '';
+		filterBtn.title = hasActiveFilter ? `Status filter: ${this.statusFilter}` : 'Filter by status';
+		filterBtn.textContent = '\u2261';
+		filterBtn.style.cssText = `width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer;color:${hasActiveFilter ? '#0078d4' : 'var(--vscode-editor-foreground)'};transition:background 0.1s;flex-shrink:0;margin-right:2px;${hasActiveFilter ? 'background:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15));' : ''}`;
+		filterBtn.addEventListener('mouseenter', () => { filterBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		filterBtn.addEventListener('mouseleave', () => { filterBtn.style.background = hasActiveFilter ? 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))' : ''; });
+		filterBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const statuses = this.statusOptions.length ? this.statusOptions : DEFAULT_STATUS_OPTIONS;
+			const checkMark = '\u2713 ';
+			const dot = '   ';
+			const isActive = (s: string) => this.statusFilter.toLowerCase() === s.toLowerCase();
+			const actions = [
+				{ id: 'all', label: `${this.statusFilter === '' ? checkMark : dot}All Statuses`, tooltip: '', class: '', enabled: true, run: () => { this.statusFilter = ''; this._render(); } },
+				...statuses.map(s => ({
+					id: s,
+					label: `${isActive(s) ? checkMark : dot}${s}`,
+					tooltip: '', class: '', enabled: true,
+					run: () => { this.statusFilter = s; this._render(); },
+				})),
+			];
+			this.ctxMenuService.showContextMenu({
+				getAnchor: () => filterBtn,
+				getActions: () => actions,
+			});
+		});
 		// + add button
 		const addBtn = DOM.append(hdr, DOM.$('div'));
 		addBtn.textContent = '+';
