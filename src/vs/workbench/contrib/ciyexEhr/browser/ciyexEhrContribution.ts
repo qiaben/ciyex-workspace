@@ -186,6 +186,32 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		};
 		this._register(this.editorService.onDidActiveEditorChange(switchSidebar));
 		this._register(this.editorService.onDidVisibleEditorsChange(switchSidebar));
+
+		// When the active editor moves to a non-patient page (e.g. Calendar),
+		// close any focused PatientChartEditor tabs that were spawned by the
+		// Snapshot quick-action toolbar — they shouldn't keep occupying the
+		// side group when the user navigates away from a patient.
+		const patientContextTypeIds = new Set<string>([
+			'workbench.input.ciyexPatientSnapshot',
+			'workbench.input.ciyexPatientChart',
+			'workbench.input.ciyexEncounterForm',
+		]);
+		const closeStrayFocusedCharts = () => {
+			const activeTypeId = this.editorService.activeEditorPane?.input?.typeId;
+			if (activeTypeId && patientContextTypeIds.has(activeTypeId)) { return; }
+			const focusedCharts = this.editorService.getEditors(EditorsOrder.SEQUENTIAL).filter(({ editor }) => {
+				// Detect focused PatientChartEditorInput without importing the
+				// concrete class (avoids a circular import chain). Resource URI
+				// for focused mode ends with `/focused` per ciyexEditorInput.ts.
+				if (editor.typeId !== 'workbench.input.ciyexPatientChart') { return false; }
+				const path = editor.resource?.path || '';
+				return path.endsWith('/focused');
+			});
+			if (focusedCharts.length > 0) {
+				this.editorService.closeEditors(focusedCharts, { preserveFocus: true }).catch(() => { /* */ });
+			}
+		};
+		this._register(this.editorService.onDidActiveEditorChange(closeStrayFocusedCharts));
 	}
 
 	private _authenticated = false;

@@ -98,18 +98,24 @@ export class PatientChartEditorInput extends EditorInput {
 	}
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('person'); }
 	get resource(): URI {
-		const suffix = this.focused ? `/focused/${this.initialTab || 'dashboard'}` : '';
+		// Focused mode uses a single per-patient resource (no tab suffix) so
+		// clicking different quick-action icons reuses the one focused tab
+		// instead of stacking up Demographics / Billing / Vitals tabs.
+		const suffix = this.focused ? '/focused' : '';
 		return URI.from({ scheme: 'ciyex-patient', path: `/${this.patientId}${suffix}` });
 	}
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		if (super.matches(other)) { return true; }
-		// Include initialTab + focused in equality so each focused section opens
-		// as a distinct editor tab and doesn't reuse the full-chart instance.
+		// Match per initialTab so VS Code treats Demographics, Vitals, etc.
+		// as distinct inputs — the snapshot's _openChartAt uses
+		// replaceEditors to swap them into the single focused side pane.
+		// If matches() returned true here, openEditor would just refocus the
+		// existing input instead of triggering setInput with the new tab.
 		return other instanceof PatientChartEditorInput
 			&& this.patientId === other.patientId
-			&& (this.initialTab || '') === (other.initialTab || '')
-			&& !!this.focused === !!other.focused;
+			&& !!this.focused === !!other.focused
+			&& (this.initialTab || '') === (other.initialTab || '');
 	}
 }
 

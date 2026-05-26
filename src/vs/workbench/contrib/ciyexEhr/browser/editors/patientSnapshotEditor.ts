@@ -44,7 +44,18 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private _openChartAt(tab: string): void {
 		if (!this._currentPatientId) { return; }
-		this.editorService.openEditor(new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab, /*focused*/ true), {}, SIDE_GROUP);
+		const input = new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab, /*focused*/ true);
+		// If a focused chart for this patient is already open in some group,
+		// swap its input in-place instead of opening another tab. The
+		// resource URI is the same across all focused tabs for a patient
+		// (`ciyex-patient/{id}/focused`), so findEditors locates it.
+		const existing = this.editorService.findEditors(input.resource);
+		if (existing.length > 0) {
+			const { editor: oldEditor, groupId } = existing[0];
+			void this.editorService.replaceEditors([{ editor: oldEditor, replacement: input }], groupId);
+			return;
+		}
+		this.editorService.openEditor(input, {}, SIDE_GROUP);
 	}
 
 	private _paginate<T>(key: string, items: T[]): { page: T[]; pageIdx: number; pageCount: number; total: number } {
@@ -375,12 +386,60 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderVitalsCard(grid, vit);
 		this._renderPaymentsCard(grid, payments, statements);
 
-		// Bottom row: All Visits (3 cols) + All Labs (1 col)
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 3, encs.length, () => this._openNewEncounter());
+		// Middle row: Visit History (2 cols) + Encounter History (2 cols)
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openNewEncounter());
 		this._renderEncounterRows(visitCard, encs);
 
-		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 1, labs.length, () => this._openChartAt('labs'));
+		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openNewEncounter());
+		this._renderEncounterClinicalRows(encCard, encs);
+
+		// Bottom row: Lab Results (full width)
+		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openChartAt('labs'));
 		this._renderLabRows(labCard, labs);
+	}
+
+	private _renderEncounterClinicalRows(card: HTMLElement, encs: Record<string, unknown>[]): void {
+		if (encs.length === 0) {
+			const empty = DOM.append(card, DOM.$('div'));
+			empty.textContent = 'No encounters found';
+			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
+			return;
+		}
+		const wrap = DOM.append(card, DOM.$('div'));
+		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
+		const table = DOM.append(wrap, DOM.$('div'));
+		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 80px;gap:0;';
+		for (const lbl of ['Date', 'Chief Complaint / Diagnosis', 'Status']) {
+			const h = DOM.append(table, DOM.$('div'));
+			h.textContent = lbl;
+			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
+		}
+		const { page, pageIdx, pageCount, total } = this._paginate('encounter-clinical', encs);
+		for (const enc of page) {
+			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
+			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+			const cc = enc.chiefComplaint || enc.reason || enc.reasonCode || '';
+			const dx = enc.diagnosis || enc.primaryDiagnosis || enc.icdCode || '';
+			const detail = [cc, dx].filter(Boolean).map(String).join(' · ') || enc.notes || '—';
+			const status = enc.status || 'Unknown';
+			const statusLower = String(status).toLowerCase();
+			const sColor = statusLower.includes('finish') || statusLower.includes('complet') ? '#22c55e' : statusLower.includes('cancel') ? '#ef4444' : '#3b9edd';
+
+			const dateCell = DOM.append(table, DOM.$('div'));
+			dateCell.textContent = dateStr;
+			dateCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);white-space:nowrap;';
+
+			const detailCell = DOM.append(table, DOM.$('div'));
+			detailCell.textContent = String(detail).slice(0, 120);
+			detailCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+			const statusCell = DOM.append(table, DOM.$('div'));
+			statusCell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			const sb = DOM.append(statusCell, DOM.$('span'));
+			sb.textContent = String(status);
+			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
+		}
+		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}
 
 	private _renderCard(
