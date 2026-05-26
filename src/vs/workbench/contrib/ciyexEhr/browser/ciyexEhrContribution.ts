@@ -173,16 +173,24 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Direction 2: Editor -> Sidebar (use both events for reliability)
 		const switchSidebar = () => {
 			if (Date.now() < _blockUntil) { return; }
-			const typeId = this.editorService.activeEditorPane?.input?.typeId;
-			if (typeId && Object.prototype.hasOwnProperty.call(editorToSidebar, typeId)) {
-				const containerId = editorToSidebar[typeId];
-				_blockUntil = Date.now() + 200;
-				this.paneCompositeService.openPaneComposite(containerId, ViewContainerLocation.Sidebar, false).then(() => {
-					// Force-open the view inside the container (fixes collapsed/hidden state)
-					const viewId = containerToView[containerId];
-					if (viewId) { this.viewsService.openView(viewId, false).catch(() => { }); }
-				}).catch(() => { });
-			}
+			const input = this.editorService.activeEditorPane?.input;
+			const typeId = input?.typeId;
+			if (!typeId || !Object.prototype.hasOwnProperty.call(editorToSidebar, typeId)) { return; }
+
+			// Snapshot-launched side panels (focused PatientChartEditorInput
+			// and any EncounterFormEditorInput) shouldn't hijack the left
+			// sidebar — the user opened them from a Schedule/Snapshot context
+			// and expects that context to remain visible while they work.
+			if (typeId === 'workbench.input.ciyexEncounterForm') { return; }
+			if (typeId === 'workbench.input.ciyexPatientChart' && (input?.resource?.path || '').endsWith('/focused')) { return; }
+
+			const containerId = editorToSidebar[typeId];
+			_blockUntil = Date.now() + 200;
+			this.paneCompositeService.openPaneComposite(containerId, ViewContainerLocation.Sidebar, false).then(() => {
+				// Force-open the view inside the container (fixes collapsed/hidden state)
+				const viewId = containerToView[containerId];
+				if (viewId) { this.viewsService.openView(viewId, false).catch(() => { }); }
+			}).catch(() => { });
 		};
 		this._register(this.editorService.onDidActiveEditorChange(switchSidebar));
 		this._register(this.editorService.onDidVisibleEditorsChange(switchSidebar));

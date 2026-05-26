@@ -8,7 +8,8 @@ import { ITelemetryService } from '../../../../../platform/telemetry/common/tele
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IEditorOpenContext } from '../../../../common/editor.js';
+import { IEditorOpenContext, EditorsOrder } from '../../../../common/editor.js';
+import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { PatientSnapshotEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
@@ -45,14 +46,27 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _openChartAt(tab: string): void {
 		if (!this._currentPatientId) { return; }
 		const input = new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab, /*focused*/ true);
-		// If a focused chart for this patient is already open in some group,
-		// swap its input in-place instead of opening another tab. The
-		// resource URI is the same across all focused tabs for a patient
-		// (`ciyex-patient/{id}/focused`), so findEditors locates it.
-		const existing = this.editorService.findEditors(input.resource);
-		if (existing.length > 0) {
-			const { editor: oldEditor, groupId } = existing[0];
-			void this.editorService.replaceEditors([{ editor: oldEditor, replacement: input }], groupId);
+		this._openInSidePanel(input);
+	}
+
+	private _findReusableSideEditor(): { editor: EditorInput; groupId: number } | undefined {
+		// Any focused PatientChartEditorInput or EncounterFormEditorInput for
+		// this patient counts as the snapshot's reusable side-panel slot.
+		for (const { editor, groupId } of this.editorService.getEditors(EditorsOrder.SEQUENTIAL)) {
+			if (editor instanceof PatientChartEditorInput && editor.focused && editor.patientId === this._currentPatientId) {
+				return { editor, groupId };
+			}
+			if (editor instanceof EncounterFormEditorInput && editor.patientId === this._currentPatientId) {
+				return { editor, groupId };
+			}
+		}
+		return undefined;
+	}
+
+	private _openInSidePanel(input: EditorInput): void {
+		const existing = this._findReusableSideEditor();
+		if (existing) {
+			void this.editorService.replaceEditors([{ editor: existing.editor, replacement: input }], existing.groupId);
 			return;
 		}
 		this.editorService.openEditor(input, {}, SIDE_GROUP);
@@ -105,7 +119,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private _openNewEncounter(): void {
 		if (!this._currentPatientId) { return; }
-		this.editorService.openEditor(new EncounterFormEditorInput(this._currentPatientId, 'new', this._currentPatientName, 'New Encounter'), {}, SIDE_GROUP);
+		this._openInSidePanel(new EncounterFormEditorInput(this._currentPatientId, 'new', this._currentPatientName, 'New Encounter'));
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -159,7 +173,11 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		if (this._currentPatientId !== patientId) { return; }
 
-		const p = patient.status === 'fulfilled' ? patient.value : null;
+		// Patient API may wrap the body in { data: {...} } depending on the
+		// backend version — unwrap here so the header can read fields like
+		// dateOfBirth / mrn directly.
+		const patientRaw = patient.status === 'fulfilled' ? patient.value : null;
+		const p = ((patientRaw?.data ?? patientRaw) as Record<string, unknown> | null);
 		const conds = this._list(conditions);
 		const meds = this._list(medications);
 		const vit = this._list(vitals);
@@ -192,33 +210,40 @@ export class PatientSnapshotEditor extends EditorPane {
 		const insName = insurance?.payorName || insurance?.name || insurance?.coverageName || '';
 
 		const hdr = DOM.append(this.root, DOM.$('.snap-header'));
-		hdr.style.cssText = 'padding:18px 24px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;background:var(--vscode-editor-background);';
+		hdr.style.cssText = 'position:relative;padding:18px 24px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);background:var(--vscode-editor-background);';
 
-		const av = DOM.append(hdr, DOM.$('div'));
-		av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;flex-shrink:0;margin-top:2px;';
+		// Left-aligned identity block: avatar on the left, name + meta row
+		// (DOB / MRN / sex / insurance) stacked to its right. Action icons
+		// are anchored top-right via absolute positioning.
+		const idRow = DOM.append(hdr, DOM.$('div'));
+		idRow.style.cssText = 'display:flex;align-items:center;gap:14px;padding-right:260px;';
+
+		const av = DOM.append(idRow, DOM.$('div'));
+		av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;flex-shrink:0;';
 		av.textContent = name.charAt(0).toUpperCase();
 
-		const info = DOM.append(hdr, DOM.$('div'));
-		info.style.cssText = 'flex:1;min-width:200px;';
+		const info = DOM.append(idRow, DOM.$('div'));
+		info.style.cssText = 'flex:1;min-width:0;';
 
-		const nameRow = DOM.append(info, DOM.$('div'));
-		nameRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
-		const nameEl = DOM.append(nameRow, DOM.$('span'));
+		const nameEl = DOM.append(info, DOM.$('div'));
 		nameEl.textContent = name;
 		nameEl.style.cssText = 'font-size:22px;font-weight:700;color:var(--vscode-editor-foreground);';
 
 		const metaRow = DOM.append(info, DOM.$('div'));
-		metaRow.style.cssText = 'display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;font-size:12px;color:var(--vscode-descriptionForeground);';
+		metaRow.style.cssText = 'display:flex;gap:14px;margin-top:4px;flex-wrap:wrap;font-size:12px;color:var(--vscode-descriptionForeground);';
 		const meta: string[] = [];
-		if (dob) { meta.push(`DOB ${new Date(String(dob)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`); }
-		if (age) { meta.push(age); }
-		if (gender) { meta.push(String(gender).charAt(0).toUpperCase() + String(gender).slice(1)); }
+		if (dob) {
+			const dobStr = new Date(String(dob)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+			meta.push(age ? `DOB ${dobStr} (${age})` : `DOB ${dobStr}`);
+		}
 		if (mrn) { meta.push(`MRN ${mrn}`); }
+		if (gender) { meta.push(String(gender).charAt(0).toUpperCase() + String(gender).slice(1)); }
 		// allow-any-unicode-next-line
 		if (insName) { meta.push(`🏥 ${insName}`); }
 		for (const m of meta) {
 			const sp = DOM.append(metaRow, DOM.$('span'));
 			sp.textContent = m;
+			sp.style.cssText = 'font-weight:500;';
 		}
 
 		if (allergies.length > 0) {
@@ -234,8 +259,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderHeaderActions(hdr);
 
 		if (apt) {
-			const aptBlock = DOM.append(hdr, DOM.$('div'));
-			aptBlock.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:10px 14px;min-width:200px;font-size:12px;';
+			const aptBlock = DOM.append(info, DOM.$('div'));
+			aptBlock.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:10px 14px;min-width:240px;font-size:12px;margin-top:8px;display:inline-block;';
 			const aptTitle = DOM.append(aptBlock, DOM.$('div'));
 			aptTitle.textContent = 'TODAY\'S APPOINTMENT';
 			aptTitle.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.08em;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
@@ -268,7 +293,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private _renderHeaderActions(hdr: HTMLElement): void {
 		const actions = DOM.append(hdr, DOM.$('.snap-header-actions'));
-		actions.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0;';
+		actions.style.cssText = 'position:absolute;top:18px;right:24px;display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
 		const primary: QuickAction[] = [
 			{ icon: 'add', title: 'New Encounter', onClick: () => this._openNewEncounter() },
