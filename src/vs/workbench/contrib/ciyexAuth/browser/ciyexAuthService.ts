@@ -73,6 +73,14 @@ export interface ICiyexAuthService {
 	changePassword(email: string, currentPassword: string, newPassword: string): Promise<CiyexLoginResult>;
 
 	/**
+	 * Trigger a password-reset email for the given account. Backend POSTs to
+	 * Keycloak's executeActionsEmail with UPDATE_PASSWORD; success is reported
+	 * uniformly regardless of whether the account exists (to prevent
+	 * account-enumeration). On any failure returns a generic error string.
+	 */
+	forgotPassword(email: string): Promise<{ success: boolean; error?: string }>;
+
+	/**
 	 * Register a new practice + admin account. On success this also completes
 	 * the login and stores the session token (mirrors the SignUpForm flow in
 	 * ciyex-ehr-ui — calls POST /api/auth/signup which creates the Keycloak
@@ -443,6 +451,35 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 				return { success: true, data: data.data };
 			}
 			return { success: false, error: data.error || `Failed to set new password (HTTP ${res.status}).` };
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return { success: false, error: `Unable to connect to server: ${msg}` };
+		}
+	}
+
+	async forgotPassword(email: string): Promise<{ success: boolean; error?: string }> {
+		const trimmedEmail = email.trim();
+		if (!trimmedEmail) {
+			return { success: false, error: 'Email is required.' };
+		}
+		try {
+			const res = await fetch(`${this.apiUrl}/api/auth/forgot-password`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email: trimmedEmail }),
+			});
+			// Treat 200/204 as success even if the body is empty — the backend
+			// intentionally returns a uniform response to avoid leaking which
+			// emails are registered.
+			if (res.ok) {
+				return { success: true };
+			}
+			let errMsg: string | undefined;
+			try {
+				const data = await res.json();
+				errMsg = data?.error || data?.message;
+			} catch { }
+			return { success: false, error: errMsg || `Unable to send reset email (HTTP ${res.status}).` };
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			return { success: false, error: `Unable to connect to server: ${msg}` };

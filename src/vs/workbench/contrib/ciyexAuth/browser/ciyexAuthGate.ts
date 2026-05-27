@@ -10,7 +10,7 @@ import { mainWindow } from '../../../../base/browser/window.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
 
-type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning' | 'signup-org' | 'signup-admin';
+type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning' | 'signup-org' | 'signup-admin' | 'forgot-password';
 
 /**
  * Helper to create a styled element via DOM APIs (no innerHTML, CSP-safe).
@@ -108,6 +108,10 @@ export class CiyexAuthGate extends Disposable {
 	private _signupConfirmPassword = '';
 	private _showSignupPassword = false;
 	private _discoverResult: { exists: boolean; authMethods: string[]; orgName: string; idps: Array<{ alias: string; displayName: string; providerId: string }> } | null = null;
+	// Forgot-password flow: email entered on the reset screen + sent-confirmation flag.
+	// Kept separate from `_email` so going Back to Welcome-back preserves the original.
+	private _forgotEmail = '';
+	private _forgotSent = false;
 	private _countdown = 120;
 	private _countdownInterval: number | null = null;
 
@@ -296,6 +300,8 @@ export class CiyexAuthGate extends Disposable {
 			content = this._buildAuthenticate(c);
 		} else if (this._step === 'change-password') {
 			content = this._buildChangePassword(c);
+		} else if (this._step === 'forgot-password') {
+			content = this._buildForgotPassword(c);
 		} else if (this._step === 'signup-org') {
 			content = this._buildSignupOrgStep(c);
 		} else if (this._step === 'signup-admin') {
@@ -799,6 +805,16 @@ export class CiyexAuthGate extends Disposable {
 		pwLabel.appendChild(pwWrap);
 		card.appendChild(pwLabel);
 
+		// Forgot password link, right-aligned under the password field.
+		const forgotRow = h('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '8px' });
+		const forgotLink = document.createElement('a');
+		forgotLink.id = 'ciyex-forgot-link';
+		forgotLink.href = '#';
+		forgotLink.textContent = 'Forgot password?';
+		Object.assign(forgotLink.style, { fontSize: '13px', color: '#4F6AF0', textDecoration: 'none', fontWeight: '500' });
+		forgotRow.appendChild(forgotLink);
+		card.appendChild(forgotRow);
+
 		const err = this._lightError();
 		if (err) { card.appendChild(err); }
 
@@ -827,6 +843,14 @@ export class CiyexAuthGate extends Disposable {
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		toggleBtn.addEventListener('click', () => { this._showPassword = !this._showPassword; this._render(); });
 		loginBtn.addEventListener('click', () => this._handleLogin());
+		forgotLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._forgotEmail = this._email;
+			this._forgotSent = false;
+			this._error = '';
+			this._step = 'forgot-password';
+			this._render();
+		});
 		if (this._discoverResult?.idps) {
 			for (let i = 0; i < idpButtons.length; i++) {
 				const alias = this._discoverResult.idps[i].alias;
@@ -892,6 +916,70 @@ export class CiyexAuthGate extends Disposable {
 		return wrapper;
 	}
 
+	private _buildForgotPassword(_c: ReturnType<typeof this._colors>): HTMLElement {
+		const dark = this._isDark();
+		const title = this._forgotSent ? 'Check your email' : 'Reset your password';
+		const subtitle = this._forgotSent
+			? `If an account exists for ${this._forgotEmail || 'that email'}, we've sent a password reset link.`
+			: 'Enter your email and we\'ll send you a link to reset your password.';
+		const { wrapper, card } = this._buildTwoPanel(title, subtitle);
+
+		// Back button → Authenticate when we came from there, otherwise email step.
+		const backBtn = document.createElement('button');
+		backBtn.id = 'ciyex-forgot-back-btn';
+		backBtn.textContent = '← Back to sign in';
+		Object.assign(backBtn.style, { background: 'none', border: 'none', color: dark ? '#858585' : '#6B7280', fontSize: '13px', padding: '0 0 16px', cursor: 'pointer', display: 'block' });
+		card.appendChild(backBtn);
+
+		if (this._forgotSent) {
+			// Success state: just show a "Return to sign in" button.
+			const doneBtn = this._lightButton('ciyex-forgot-done-btn', 'Return to sign in', true);
+			card.appendChild(doneBtn);
+			doneBtn.addEventListener('click', () => {
+				this._forgotSent = false;
+				this._forgotEmail = '';
+				this._error = '';
+				this._step = this._discoverResult ? 'authenticate' : 'email';
+				this._render();
+			});
+			backBtn.addEventListener('click', () => {
+				this._forgotSent = false;
+				this._forgotEmail = '';
+				this._error = '';
+				this._step = this._discoverResult ? 'authenticate' : 'email';
+				this._render();
+			});
+			return wrapper;
+		}
+
+		// Email field (pre-filled from current login attempt when available)
+		const emailLabel = h('div', {});
+		emailLabel.appendChild(text(h('label', { display: 'block', fontSize: '13px', fontWeight: '600', color: dark ? '#D1D5DB' : '#374151', marginBottom: '8px' }), 'Email'));
+		const emailInput = this._lightInput('ciyex-forgot-email', 'email', 'you@example.com', this._forgotEmail);
+		emailInput.autocomplete = 'email';
+		emailLabel.appendChild(emailInput);
+		card.appendChild(emailLabel);
+
+		const err = this._lightError();
+		if (err) { card.appendChild(err); }
+
+		const sendBtn = this._lightButton('ciyex-forgot-send-btn', this._loading ? 'Sending...' : 'Send reset link', true, this._loading || !this._forgotEmail.trim());
+		card.appendChild(sendBtn);
+
+		// Listeners
+		emailInput.addEventListener('input', () => { this._forgotEmail = emailInput.value; sendBtn.disabled = !this._forgotEmail.trim(); });
+		emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { void this._handleForgotPassword(); } });
+		sendBtn.addEventListener('click', () => { void this._handleForgotPassword(); });
+		backBtn.addEventListener('click', () => {
+			this._error = '';
+			this._step = this._discoverResult ? 'authenticate' : 'email';
+			this._render();
+		});
+
+		setTimeout(() => emailInput.focus(), 50);
+		return wrapper;
+	}
+
 	private _buildLocked(_c: ReturnType<typeof this._colors>): HTMLElement {
 		const subtitle = this._email
 			? `Session locked · ${this._email}`
@@ -916,11 +1004,29 @@ export class CiyexAuthGate extends Disposable {
 		switchBtn.style.marginTop = '8px';
 		card.appendChild(switchBtn);
 
+		// Forgot password link
+		const forgotRow = h('div', { display: 'flex', justifyContent: 'center', marginTop: '12px' });
+		const forgotLink = document.createElement('a');
+		forgotLink.id = 'ciyex-forgot-link-locked';
+		forgotLink.href = '#';
+		forgotLink.textContent = 'Forgot password?';
+		Object.assign(forgotLink.style, { fontSize: '13px', color: '#4F6AF0', textDecoration: 'none', fontWeight: '500' });
+		forgotRow.appendChild(forgotLink);
+		card.appendChild(forgotRow);
+
 		// Listeners
 		pwInput.addEventListener('input', () => { this._password = pwInput.value; unlockBtn.disabled = !this._password; });
 		pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { this._handleLogin(); } });
 		unlockBtn.addEventListener('click', () => this._handleLogin());
 		switchBtn.addEventListener('click', () => this._authService.signOut());
+		forgotLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._forgotEmail = this._email;
+			this._forgotSent = false;
+			this._error = '';
+			this._step = 'forgot-password';
+			this._render();
+		});
 		setTimeout(() => pwInput.focus(), 50);
 		return wrapper;
 	}
@@ -1378,6 +1484,32 @@ export class CiyexAuthGate extends Disposable {
 			return;
 		}
 		this._error = result.error || 'Signup failed';
+		this._render();
+	}
+
+	private async _handleForgotPassword(): Promise<void> {
+		if (this._loading) {
+			return;
+		}
+		const email = this._forgotEmail.trim();
+		if (!email) {
+			this._error = 'Please enter your email.';
+			this._render();
+			return;
+		}
+		this._loading = true;
+		this._error = '';
+		this._render();
+
+		const result = await this._authService.forgotPassword(email);
+		this._loading = false;
+
+		if (result.success) {
+			this._forgotSent = true;
+			this._render();
+			return;
+		}
+		this._error = result.error || 'Unable to send reset email.';
 		this._render();
 	}
 
