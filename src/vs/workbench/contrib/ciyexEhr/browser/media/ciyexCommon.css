@@ -317,6 +317,52 @@
 	border-color: var(--vscode-focusBorder);
 }
 
+/* ----------------------------------------------------------------------------
+ * Global readability fix for every native <select> that lives inside a Ciyex
+ * editor pane (toolbar filters, inline edit cells, settings dialogs, …).
+ *
+ * Native option popups are painted by the OS / browser using its own colour
+ * scheme. On dark workbench themes that produces faint grey-on-grey option
+ * text for non-highlighted entries — the unreadable "Priority / High /
+ * Urgent" dropdown the QA team reported across every create+edit drawer.
+ *
+ * Setting `color-scheme` on the host pane tells Chromium / Electron to use a
+ * matching colour scheme for the native popup, and the explicit
+ * select/option styling guarantees the inline trigger surface matches the
+ * rest of the workbench inputs.
+ *
+ * The create+edit form drawers in clinical/tasks/operations/system also
+ * substitute a fully-themed custom dropdown (see browser/customDropdown.ts);
+ * these rules cover every other native <select> elsewhere in the editors so
+ * the fix is uniform across the EHR.
+ * -------------------------------------------------------------------------- */
+.vs .ciyex-editor-root,
+.hc-light .ciyex-editor-root {
+	color-scheme: light;
+}
+.vs-dark .ciyex-editor-root,
+.hc-black .ciyex-editor-root {
+	color-scheme: dark;
+}
+
+.ciyex-editor-root select {
+	background-color: var(--vscode-dropdown-background, var(--vscode-input-background, #1e1e1e));
+	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground, #e6e6e6));
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, rgba(127, 127, 127, 0.4)));
+}
+
+.ciyex-editor-root select option {
+	background-color: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background, #1e1e1e));
+	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground, #e6e6e6));
+}
+
+.ciyex-editor-root select option:checked,
+.ciyex-editor-root select option:hover,
+.ciyex-editor-root select option:focus {
+	background-color: var(--vscode-list-hoverBackground, #37373d);
+	color: var(--vscode-list-hoverForeground, var(--vscode-foreground, #ffffff));
+}
+
 /* Checkbox / radio accents follow the focus color so they read correctly in
  * both light and dark themes. */
 .ciyex-editor-root .ciyex-dialog input[type="checkbox"],

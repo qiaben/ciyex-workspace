@@ -19,6 +19,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createCustomDropdown } from '../customDropdown.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -3719,16 +3720,18 @@ export class PatientChartEditor extends EditorPane {
 			Object.assign(el, opts);
 			return el;
 		};
-		const makeSelect = (label: string, opts: Array<{ value: string; label: string }>, span2 = false): HTMLSelectElement => {
+		const makeSelect = (label: string, opts: Array<{ value: string; label: string }>, span2 = false): HTMLInputElement => {
 			const g = DOM.append(body, DOM.$('div'));
 			if (span2) { g.style.gridColumn = 'span 2'; }
 			const lb = DOM.append(g, DOM.$('label'));
 			lb.textContent = label;
 			lb.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-			const el = DOM.append(g, DOM.$('select')) as HTMLSelectElement;
-			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;';
-			for (const o of opts) { const op = DOM.append(el, DOM.$('option')) as HTMLOptionElement; op.value = o.value; op.textContent = o.label; }
-			return el;
+			return createCustomDropdown({
+				parent: g,
+				options: opts,
+				initialValue: opts[0]?.value || '',
+				triggerStyle: 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;',
+			});
 		};
 		const makeCheckbox = (label: string, span2 = false): HTMLInputElement => {
 			const g = DOM.append(body, DOM.$('div'));
@@ -4606,8 +4609,6 @@ export class PatientChartEditor extends EditorPane {
 				const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:13px;height:32px;box-sizing:border-box;outline:none;';
 
 				if (f.type === 'select') {
-					const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
-					sel.style.cssText = inputStyle + 'cursor:pointer;';
 					// Backend tab_field_config sometimes ships option arrays as bare
 					// strings (V58 appointments: ["Consultation","Follow-up",...])
 					// instead of {label,value} objects. Normalize so the dropdown
@@ -4619,10 +4620,18 @@ export class PatientChartEditor extends EditorPane {
 						if (typeof o === 'string') { return { label: o, value: o }; }
 						return o as { label: string; value: string };
 					});
-					for (const o of [{ label: `Select ${f.label}...`, value: '' }, ...normOpts]) {
-						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
-						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
-					}
+					// Custom dropdown — native <select> popups inherit OS chrome
+					// which on dark workbench themes shows non-highlighted
+					// options as faint grey-on-grey (QA-reported unreadable
+					// dropdown). The custom widget paints with workbench theme
+					// colours and stays readable on every theme.
+					const sel = createCustomDropdown({
+						parent: cell,
+						options: normOpts,
+						initialValue: String(val),
+						placeholder: `Select ${f.label}...`,
+						triggerStyle: inputStyle + 'cursor:pointer;',
+					});
 					this._formInputs.set(f.key, sel);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const wrap = DOM.append(cell, DOM.$('div'));
