@@ -286,8 +286,6 @@ export class EhrTitlebarControls extends Disposable {
 		btn.setAttribute('aria-label', 'Add Patient');
 
 		DOM.append(btn, DOM.$('span.ehr-patient-icon'));
-		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
-		label.textContent = 'Patient';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -303,8 +301,6 @@ export class EhrTitlebarControls extends Disposable {
 		btn.setAttribute('aria-label', 'Add Appointment');
 
 		DOM.append(btn, DOM.$('span.codicon.codicon-calendar'));
-		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
-		label.textContent = 'Appointment';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -321,8 +317,6 @@ export class EhrTitlebarControls extends Disposable {
 
 		const icon = DOM.append(btn, DOM.$('span.ehr-currency-icon'));
 		icon.textContent = '$';
-		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
-		label.textContent = 'Donate';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
