@@ -711,32 +711,6 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
 	const theme = detectThemeKind(doc, opts.themeAnchor);
 	const palette = THEME_PALETTES[theme];
-	// Use workbench CSS variables for every dialog surface rather than the
-	// hardcoded {@link THEME_PALETTES} entry. The detection occasionally
-	// falls back to 'dark' when the dialog opens before the theme class
-	// lands on a reachable ancestor — which produced a dark drawer overlaid
-	// on a light workbench (QA-flagged on the clinical / operations /
-	// system menu drawers). CSS variables automatically follow whichever
-	// workbench theme is active, so the drawer matches every theme without
-	// us needing to detect it. Each token falls back to a sensible default
-	// so the dialog still renders if a custom theme leaves a variable
-	// undefined. The shadow stays palette-driven because it deepens on dark
-	// themes for legibility.
-	const colors = {
-		background: 'var(--vscode-sideBar-background, var(--vscode-editor-background, #252526))',
-		foreground: 'var(--vscode-foreground, #cccccc)',
-		border: 'var(--vscode-widget-border, var(--vscode-input-border, rgba(127,127,127,0.4)))',
-		shadow: theme === 'light' || theme === 'hcLight' ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.45)',
-		separator: 'var(--vscode-editorWidget-border, rgba(128,128,128,0.2))',
-		hoverBackground: 'var(--vscode-list-hoverBackground, rgba(128,128,128,0.16))',
-		inputBackground: 'var(--vscode-input-background, #1e1e1e)',
-		inputBorder: 'var(--vscode-input-border, rgba(127,127,127,0.4))',
-		popoverBackground: 'var(--vscode-editorWidget-background, var(--vscode-dropdown-background, var(--vscode-input-background, #1e1e1e)))',
-		popoverBorder: 'var(--vscode-widget-border, var(--vscode-editorWidget-border, var(--vscode-input-border, rgba(127,127,127,0.4))))',
-	};
-	// `palette` is read by a couple of remaining sites for hoverForeground
-	// (which has no direct workbench CSS variable equivalent).
-	void palette;
 
 	// Popover panels (typeahead matches + custom-select option lists) are
 	// mounted directly on document.body so they escape the dialog's transform
@@ -761,10 +735,10 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		'display:flex',
 		'flex-direction:column',
 		'overflow:hidden',
-		`background:${colors.background}`,
-		`color:${colors.foreground}`,
-		`border-left:1px solid ${colors.border}`,
-		`box-shadow:-12px 0 32px ${colors.shadow}`,
+		`background:${palette.background}`,
+		`color:${palette.foreground}`,
+		`border-left:1px solid ${palette.border}`,
+		`box-shadow:-12px 0 32px ${palette.shadow}`,
 		'font-size:13px',
 		// Slide-in animation - matches the React drawer in the web EHR UI.
 		'transform:translateX(100%)',
@@ -772,7 +746,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	].join(';');
 
 	const header = doc.createElement('div');
-	header.style.cssText = `padding:18px 22px;border-bottom:1px solid ${colors.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+	header.style.cssText = `padding:18px 22px;border-bottom:1px solid ${palette.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
 	const titleEl = doc.createElement('span');
 	titleEl.textContent = opts.title;
 	titleEl.style.flex = '1';
@@ -780,9 +754,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const closeBtn = doc.createElement('button');
 	closeBtn.type = 'button';
 	closeBtn.setAttribute('aria-label', 'Close');
-	closeBtn.style.cssText = `background:transparent;border:none;color:${colors.foreground};opacity:0.7;font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px;`;
+	closeBtn.style.cssText = `background:transparent;border:none;color:${palette.foreground};opacity:0.7;font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px;`;
 	closeBtn.textContent = '×';
-	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = colors.hoverBackground; closeBtn.style.opacity = '1'; });
+	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = palette.hoverBackground; closeBtn.style.opacity = '1'; });
 	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.opacity = '0.7'; });
 	closeBtn.addEventListener('click', () => close());
 	header.appendChild(closeBtn);
@@ -808,15 +782,19 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	form.setAttribute('autocomplete', 'off');
 
 	const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
-	const inputBg = colors.inputBackground;
-	const inputBorder = colors.inputBorder;
-	// Popover (typeahead / custom-select) surfaces use the editor-widget
-	// background which is visibly distinct from the drawer surface on every
-	// workbench theme, plus a solid border + drop shadow so the popup never
-	// blends into the form.
-	const popoverBg = colors.popoverBackground;
-	const popoverBorder = colors.popoverBorder;
-	const popoverShadow = colors.shadow;
+	const inputBg = theme === 'light' || theme === 'hcLight' ? '#ffffff' : '#1e1e1e';
+	const inputBorder = palette.border;
+	// Popover (typeahead / custom-select) surfaces need a background that is
+	// visibly distinct from the drawer. On dark the drawer is `#252526` and
+	// `inputBg` is `#1e1e1e` — that 7-point delta plus a solid border gives
+	// the dropdown a clear edge. On light both are `#ffffff` so we rely on a
+	// solid grey border + shadow.
+	const popoverBg = inputBg;
+	const popoverBorder = theme === 'light' ? '#c8c8c8'
+		: theme === 'hcLight' ? '#000000'
+			: theme === 'hcDark' ? '#6fc3df'
+				: 'rgba(255,255,255,0.35)';
+	const popoverShadow = theme === 'light' || theme === 'hcLight' ? 'rgba(0,0,0,0.22)' : 'rgba(0,0,0,0.55)';
 
 	for (const field of opts.fields) {
 		const wrap = doc.createElement('div');
@@ -828,7 +806,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 		const lbl = doc.createElement('label');
 		lbl.textContent = field.label + (field.required ? ' *' : '');
-		lbl.style.cssText = `font-size:12px;font-weight:500;color:${colors.foreground};opacity:0.8;`;
+		lbl.style.cssText = `font-size:12px;font-weight:500;color:${palette.foreground};opacity:0.8;`;
 		wrap.appendChild(lbl);
 
 		const initial = String(opts.values[field.key] ?? '');
@@ -857,7 +835,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			trigger.type = 'button';
 			trigger.setAttribute('aria-haspopup', 'listbox');
 			trigger.setAttribute('aria-expanded', 'false');
-			trigger.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;cursor:pointer;text-align:left;width:100%;`;
+			trigger.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:${inputBg};color:${palette.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;cursor:pointer;text-align:left;width:100%;`;
 			const triggerLabel = doc.createElement('span');
 			triggerLabel.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			const triggerCaret = doc.createElement('span');
@@ -880,7 +858,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			const panel = doc.createElement('div');
 			panel.className = 'ciyex-select-panel';
 			panel.setAttribute('role', 'listbox');
-			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
+			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${palette.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
 			doc.body.appendChild(panel);
 
 			const positionSelectPanel = () => {
@@ -895,10 +873,10 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					const row = doc.createElement('div');
 					row.setAttribute('role', 'option');
 					const isSelected = opt.value === hidden.value;
-					row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${colors.separator};background-color:${isSelected ? colors.hoverBackground : popoverBg};color:${colors.foreground};${isSelected ? 'font-weight:500;' : ''}`;
+					row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${palette.separator};background-color:${isSelected ? palette.hoverBackground : popoverBg};color:${palette.foreground};${isSelected ? 'font-weight:500;' : ''}`;
 					row.textContent = opt.label;
-					row.addEventListener('mouseenter', () => { row.style.backgroundColor = colors.hoverBackground; });
-					row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? colors.hoverBackground : popoverBg; });
+					row.addEventListener('mouseenter', () => { row.style.backgroundColor = palette.hoverBackground; });
+					row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? palette.hoverBackground : popoverBg; });
 					row.addEventListener('mousedown', (e) => {
 						e.preventDefault();
 						hidden.value = opt.value;
@@ -945,7 +923,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			if (field.hint) {
 				const hint = doc.createElement('div');
 				hint.textContent = field.hint;
-				hint.style.cssText = `font-size:11px;color:${colors.foreground};opacity:0.6;`;
+				hint.style.cssText = `font-size:11px;color:${palette.foreground};opacity:0.6;`;
 				wrap.appendChild(hint);
 			}
 			form.appendChild(wrap);
@@ -971,7 +949,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// — we set top/left explicitly from the input's getBoundingClientRect
 			// when results are shown. z-index:10000 keeps it above the dialog
 			// overlay (z-index:2000) and any subsequent floating UI.
-			searchPanel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
+			searchPanel.style.cssText = `position:fixed;background-color:${popoverBg};color:${palette.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
 			// Mount on body so the panel paints against the document root's
 			// stacking context, ignoring every transform / overflow / opacity
 			// ancestor it would otherwise inherit from.
@@ -1013,7 +991,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				input.addEventListener('pointerdown', releaseReadonly, { once: true });
 			}
 		}
-		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
+		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${palette.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
 		if (field.placeholder && (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input))) {
 			input.placeholder = field.placeholder;
 		}
@@ -1052,7 +1030,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					// dropdown reads as a solid surface — without this the
 					// rows inherited from the panel only, and any compositor
 					// quirk could let the form below show through.
-					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${colors.separator};background-color:${popoverBg};color:${colors.foreground};`;
+					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};background-color:${popoverBg};color:${palette.foreground};`;
 					const label = doc.createElement('div');
 					label.textContent = r.label;
 					label.style.fontWeight = '500';
@@ -1063,7 +1041,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 						desc.style.cssText = `font-size:11px;opacity:0.7;`;
 						opt.appendChild(desc);
 					}
-					opt.addEventListener('mouseenter', () => { opt.style.backgroundColor = colors.hoverBackground; });
+					opt.addEventListener('mouseenter', () => { opt.style.backgroundColor = palette.hoverBackground; });
 					opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = popoverBg; });
 					opt.addEventListener('mousedown', (e) => {
 						e.preventDefault();
@@ -1104,7 +1082,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		if (field.hint) {
 			const hint = doc.createElement('div');
 			hint.textContent = field.hint;
-			hint.style.cssText = `font-size:11px;color:${colors.foreground};opacity:0.6;`;
+			hint.style.cssText = `font-size:11px;color:${palette.foreground};opacity:0.6;`;
 			wrap.appendChild(hint);
 		}
 
@@ -1113,7 +1091,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	dialog.appendChild(form);
 
 	const footer = doc.createElement('div');
-	footer.style.cssText = `padding:14px 22px;border-top:1px solid ${colors.separator};display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;`;
+	footer.style.cssText = `padding:14px 22px;border-top:1px solid ${palette.separator};display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;`;
 
 	const errorMsg = doc.createElement('span');
 	errorMsg.style.cssText = `flex:1;color:#ef4444;font-size:12px;align-self:center;`;
@@ -1122,7 +1100,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const cancelBtn = doc.createElement('button');
 	cancelBtn.type = 'button';
 	cancelBtn.textContent = 'Cancel';
-	cancelBtn.style.cssText = `padding:6px 14px;border:1px solid ${colors.border};border-radius:4px;background:transparent;color:${colors.foreground};font-size:13px;cursor:pointer;`;
+	cancelBtn.style.cssText = `padding:6px 14px;border:1px solid ${palette.border};border-radius:4px;background:transparent;color:${palette.foreground};font-size:13px;cursor:pointer;`;
 	cancelBtn.addEventListener('click', () => close());
 	footer.appendChild(cancelBtn);
 
