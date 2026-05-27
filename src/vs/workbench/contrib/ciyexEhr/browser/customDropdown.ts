@@ -103,13 +103,6 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	const parent = opts.parent;
 	const doc = parent.ownerDocument || document;
 	const workbenchRoot = findWorkbenchRoot(parent, doc);
-	// Workbench theme CSS vars are scoped under the `.monaco-workbench`
-	// selector. Mirroring its class list onto our popover element ensures
-	// `var(--vscode-…)` resolves on the popover itself, even if our mount
-	// root happens to be `<body>` (the dark-fallback case).
-	const workbenchClassName = workbenchRoot.classList && workbenchRoot.classList.contains('monaco-workbench')
-		? workbenchRoot.className
-		: 'monaco-workbench';
 
 	const hidden = doc.createElement('input');
 	hidden.type = 'hidden';
@@ -149,7 +142,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// escapes any overflow:hidden / transform stacking context the host
 	// editor sets up.
 	const panel = doc.createElement('div');
-	panel.className = `ciyex-custom-dropdown-panel ${workbenchClassName}`;
+	panel.className = 'ciyex-custom-dropdown-panel';
 	panel.setAttribute('role', 'listbox');
 	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:4px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
 	// Mount inside the workbench so var(--vscode-…) resolves to the active

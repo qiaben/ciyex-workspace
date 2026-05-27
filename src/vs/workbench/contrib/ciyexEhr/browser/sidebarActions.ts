@@ -790,21 +790,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	// flush to the right edge of the workbench.
 	const overlay = doc.createElement('div');
 	overlay.className = 'ciyex-edit-dialog-overlay';
-	// Belt + suspenders: stamp the workbench class on the overlay so its
-	// children resolve `var(--vscode-…)` even when the mount point happens
-	// to fall outside `.monaco-workbench`. Workbench theme CSS rules look
-	// like `.monaco-workbench { --vscode-foreground: …; }` so any element
-	// with that class effectively re-declares every workbench variable.
-	// Copy every workbench theme class (`vs`, `vs-dark`, `hc-light`,
-	// `hc-black`) so theme-specific selectors like
-	// `.monaco-workbench.vs-dark` still match.
-	// eslint-disable-next-line no-restricted-syntax
-	const realWorkbench = (doc.body || doc.documentElement).getElementsByClassName('monaco-workbench')[0] as HTMLElement | undefined;
-	if (realWorkbench) {
-		overlay.className = `ciyex-edit-dialog-overlay ${realWorkbench.className}`;
-	} else {
-		overlay.className = 'ciyex-edit-dialog-overlay monaco-workbench';
-	}
+	// Keep the overlay transparent — only the inline rgba(0,0,0,0.25)
+	// scrim darkens the workbench underneath. Mounting inside
+	// `workbenchRoot` (below) gives the drawer its CSS variables; we do
+	// NOT also copy the workbench classList onto the overlay because that
+	// turned the entire left half into a solid black panel — the second
+	// `.monaco-workbench` element painted over the real workbench content.
 	overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);';
 
 	const dialog = doc.createElement('div');
@@ -937,7 +928,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// mount root is body. Without this the panel rendered dark on a
 			// light workbench because the CSS variables only exist under
 			// `.monaco-workbench`.
-			panel.className = `ciyex-select-panel ${realWorkbench ? realWorkbench.className : 'monaco-workbench'}`;
+			panel.className = 'ciyex-select-panel';
 			panel.setAttribute('role', 'listbox');
 			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
 			workbenchRoot.appendChild(panel);
@@ -1027,7 +1018,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			searchPanel = doc.createElement('div');
 			// Mirror workbench theme classes onto the typeahead panel so the
 			// `var(--vscode-…)` lookups resolve on the panel itself.
-			searchPanel.className = `ciyex-typeahead-panel ${realWorkbench ? realWorkbench.className : 'monaco-workbench'}`;
+			searchPanel.className = 'ciyex-typeahead-panel';
 			// `position:fixed` so the panel is positioned against the viewport
 			// — we set top/left explicitly from the input's getBoundingClientRect
 			// when results are shown. z-index:10000 keeps it above the dialog
