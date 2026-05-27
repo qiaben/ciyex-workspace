@@ -973,10 +973,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 				const ownerDoc = group.ownerDocument || document;
 				const dropdown = ownerDoc.createElement('div');
+				const searchWorkbenchRoot = findWorkbenchRoot(group, ownerDoc);
+				dropdown.className = searchWorkbenchRoot.classList && searchWorkbenchRoot.classList.contains('monaco-workbench') ? searchWorkbenchRoot.className : 'monaco-workbench';
 				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-				// Mount inside .monaco-workbench so var(--vscode-…) resolves
-				// to the active theme rather than the dark fallback hex.
-				findWorkbenchRoot(group, ownerDoc).appendChild(dropdown);
+				searchWorkbenchRoot.appendChild(dropdown);
 				const positionDropdown = () => {
 					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
 					dropdown.style.left = `${rect.left}px`;
