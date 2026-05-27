@@ -845,9 +845,25 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const isEdit = this.editingItem !== null;
 
 		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
-		// so every create/edit dialog across the EHR uses the same shape. Append
-		// to <body> so the panel sits above the entire workbench.
-		this.formOverlay = DOM.append(mainWindow.document.body, DOM.$('div'));
+		// so every create/edit dialog across the EHR uses the same shape.
+		// Mount inside `.monaco-workbench` so workbench CSS variables
+		// (--vscode-sideBar-background, --vscode-foreground, …) resolve to
+		// the active theme. Body-mount used to fall back to the dark hex
+		// defaults inline-styled below, producing a dark drawer on a light
+		// workbench (QA-flagged on clinical / operations / system create
+		// drawers).
+		const overlayDoc = mainWindow.document;
+		const overlayMount = findWorkbenchRoot(this.root, overlayDoc);
+		this.formOverlay = DOM.append(overlayMount, DOM.$('div'));
+		// Mirror the real workbench's classList onto the overlay so it
+		// re-declares every workbench CSS variable on itself — keeps the
+		// drawer's children themed even if the mount root above falls back
+		// to body.
+		if (overlayMount.classList.contains('monaco-workbench')) {
+			this.formOverlay.className = overlayMount.className;
+		} else {
+			this.formOverlay.className = 'monaco-workbench';
+		}
 		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;';
 
 		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));
