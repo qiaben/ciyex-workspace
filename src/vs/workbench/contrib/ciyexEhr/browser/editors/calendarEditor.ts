@@ -20,7 +20,6 @@ import { BaseCiyexInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
 
 const CAL_REFRESH_OPTIONS = [
 	{ label: 'Off', value: 0 },
@@ -1258,16 +1257,9 @@ export class CalendarEditor extends EditorPane {
 			const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 
 			if (options) {
-				// Custom dropdown — native <select> popups render with OS chrome
-				// (faint grey-on-grey unreadable options on dark themes).
-				const sel = createCustomDropdown({
-					parent: group,
-					options,
-					initialValue: value,
-					placeholder: `Select ${label}...`,
-					triggerStyle: inputStyle,
-				});
-				sel.id = id;
+				const sel = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
+				sel.id = id; sel.style.cssText = inputStyle;
+				for (const opt of options) { const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement; o.value = opt.value; o.textContent = opt.label; o.selected = opt.value === value; }
 				formFields.set(id, sel);
 				return sel;
 			} else if (type === 'textarea') {
@@ -1386,13 +1378,13 @@ export class CalendarEditor extends EditorPane {
 		const priorityLbl = DOM.append(priorityGroup, DOM.$('label'));
 		priorityLbl.textContent = 'Priority';
 		priorityLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;';
-		const prioritySel = createCustomDropdown({
-			parent: priorityGroup,
-			options: [{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }],
-			initialValue: 'routine',
-			triggerStyle: 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;',
-		});
+		const prioritySel = DOM.append(priorityGroup, DOM.$('select')) as HTMLSelectElement;
 		prioritySel.id = 'priority';
+		prioritySel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		for (const opt of [{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }]) {
+			const o = DOM.append(prioritySel, DOM.$('option')) as HTMLOptionElement;
+			o.value = opt.value; o.textContent = opt.label; o.selected = opt.value === 'routine';
+		}
 		formFields.set('priority', prioritySel);
 
 		// Provider — pre-select the column that was clicked (if any)

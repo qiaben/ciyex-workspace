@@ -16,7 +16,6 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createCustomDropdown } from '../customDropdown.js';
 
 interface ColumnDef { key: string; label: string; width?: string; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
@@ -936,19 +935,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			let inputEl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 			if (field.type === 'select' && field.options) {
-				// Use the shared custom dropdown instead of a native <select>.
-				// Native <option> popups are rendered by the OS using its own
-				// colour scheme — on dark workbench themes that produces faint
-				// grey-on-grey non-highlighted options, which the QA team
-				// flagged as the unreadable dropdown across every create/edit
-				// form drawer.
-				inputEl = createCustomDropdown({
-					parent: group,
-					options: field.options,
-					initialValue: '',
-					placeholder: `Select ${field.label}...`,
-					triggerStyle: inputStyle + 'min-width:200px;',
-				});
+				inputEl = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
+				inputEl.style.cssText = inputStyle + 'min-width:200px;';
+				const emptyOpt = DOM.append(inputEl, DOM.$('option')) as HTMLOptionElement;
+				emptyOpt.value = '';
+				emptyOpt.textContent = `Select ${field.label}...`;
+				for (const opt of field.options) {
+					const optEl = DOM.append(inputEl, DOM.$('option')) as HTMLOptionElement;
+					optEl.value = opt.value;
+					optEl.textContent = opt.label;
+				}
 			} else if (field.type === 'textarea') {
 				inputEl = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				// Issue #17: 60px was too tall — the prescription dialog felt
@@ -957,12 +953,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.style.cssText = inputStyle + 'min-height:40px;max-height:120px;resize:vertical;font-family:inherit;';
 				inputEl.placeholder = field.placeholder || '';
 			} else if (field.type === 'search' && (field.apiPath || field.searchApiPath)) {
-				// Search field with live autocomplete dropdown. The match
-				// dropdown is mounted on document.body with position:fixed
-				// so it escapes the form grid's overflow / transform stack
-				// and never renders behind the next row's label — the bug
-				// QA reported where "Michael John" appeared overlapping the
-				// "Priority" label below the Provider input.
+				// Search field with live autocomplete dropdown
 				const searchWrapper = DOM.append(group, DOM.$('div'));
 				searchWrapper.style.cssText = 'position:relative;';
 
@@ -971,32 +962,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
 
-				const ownerDoc = group.ownerDocument || document;
-				const dropdown = ownerDoc.createElement('div');
-				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-				ownerDoc.body.appendChild(dropdown);
-				const positionDropdown = () => {
-					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
-					dropdown.style.left = `${rect.left}px`;
-					dropdown.style.top = `${rect.bottom + 2}px`;
-					dropdown.style.width = `${rect.width}px`;
-				};
-				const repositionDropdown = () => { if (dropdown.style.display === 'block') { positionDropdown(); } };
-				const win = ownerDoc.defaultView;
-				win?.addEventListener('scroll', repositionDropdown, true);
-				win?.addEventListener('resize', repositionDropdown);
-				// Detach the body-mounted dropdown + listeners once the
-				// search input is removed from the DOM (dialog closed).
-				const dropdownObserver = new MutationObserver(() => {
-					if (!(inputEl as HTMLInputElement).isConnected) {
-						dropdownObserver.disconnect();
-						win?.removeEventListener('scroll', repositionDropdown, true);
-						win?.removeEventListener('resize', repositionDropdown);
-						if (dropdown.parentElement) { dropdown.parentElement.removeChild(dropdown); }
-					}
-				});
-				if (searchWrapper.parentNode) { dropdownObserver.observe(searchWrapper.parentNode, { childList: true, subtree: true }); }
-				const showDropdown = () => { positionDropdown(); dropdown.style.display = 'block'; };
+				const dropdown = DOM.append(searchWrapper, DOM.$('div'));
+				dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 
 				const searchEndpoint = field.apiPath || field.searchApiPath || '';
 				const displayField = field.searchDisplayField || 'name';
@@ -1039,7 +1006,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 							const noRes = DOM.append(dropdown, DOM.$('div'));
 							noRes.textContent = 'No results found';
 							noRes.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
-							showDropdown();
+							dropdown.style.display = 'block';
 							return;
 						}
 						{
@@ -1083,7 +1050,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 									}
 								});
 							}
-							showDropdown();
+							dropdown.style.display = 'block';
 						}
 					}, 300));
 				});
@@ -1093,7 +1060,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					setTimeout(() => { dropdown.style.display = 'none'; }, 200);
 				});
 				inputEl.addEventListener('focus', () => {
-					if (dropdown.childElementCount > 0) { showDropdown(); }
+					if (dropdown.childElementCount > 0) { dropdown.style.display = 'block'; }
 				});
 			} else if (field.type === 'date') {
 				// mm/dd/yyyy text + calendar icon inside the field. Native `<input type="date">`

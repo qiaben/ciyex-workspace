@@ -16,7 +16,6 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { TasksEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
 
 interface Task {
 	id: string;
@@ -496,16 +495,12 @@ export class TasksEditor extends EditorPane {
 			const val = task ? String((task as unknown as Record<string, unknown>)[key] ?? '') : '';
 
 			if (type === 'select' && opts?.options) {
-				// Custom dropdown — native <select> popups render with OS chrome
-				// that on dark themes shows non-highlighted options as faint
-				// grey-on-grey (QA-reported unreadable dropdown).
-				const sel = createCustomDropdown({
-					parent: group,
-					options: opts.options,
-					initialValue: val,
-					placeholder: opts?.placeholder || `Select ${label}...`,
-					triggerStyle: inputStyle + 'height:32px;',
-				});
+				const sel = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
+				sel.style.cssText = inputStyle + 'height:32px;cursor:pointer;appearance:auto;';
+				for (const o of opts.options) {
+					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+					opt.value = o.value; opt.textContent = o.label; opt.selected = o.value === val;
+				}
 				fields.set(key, sel);
 			} else if (type === 'textarea') {
 				const ta = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
@@ -568,37 +563,16 @@ export class TasksEditor extends EditorPane {
 			() => addField('Patient ID', 'patientId', 'text', { placeholder: 'Auto-filled from search', readonly: true }),
 		);
 
-		// Provider search autocomplete on assignedTo. Dropdown is body-mounted
-		// with position:fixed so it never overlaps the form fields below the
-		// input (QA-reported "Michael John overlapping Priority" bug).
+		// Provider search autocomplete on assignedTo
 		const assignedToInput = fields.get('assignedTo') as HTMLInputElement;
 		if (assignedToInput && assignedToInput.parentElement) {
-			const provOwnerDoc = assignedToInput.ownerDocument || document;
-			const provDropdown = provOwnerDoc.createElement('div');
-			provDropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-			provOwnerDoc.body.appendChild(provDropdown);
-			const positionProvDropdown = () => {
-				const rect = assignedToInput.getBoundingClientRect();
-				provDropdown.style.left = `${rect.left}px`;
-				provDropdown.style.top = `${rect.bottom + 2}px`;
-				provDropdown.style.width = `${rect.width}px`;
-			};
-			const repositionProv = () => { if (provDropdown.style.display === 'block') { positionProvDropdown(); } };
-			const provWin = provOwnerDoc.defaultView;
-			provWin?.addEventListener('scroll', repositionProv, true);
-			provWin?.addEventListener('resize', repositionProv);
-			// Detach the body-mounted dropdown when the input leaves the DOM
-			// (form closed) so we don't leak listeners or orphan elements.
-			const provObserver = new MutationObserver(() => {
-				if (!assignedToInput.isConnected) {
-					provObserver.disconnect();
-					provWin?.removeEventListener('scroll', repositionProv, true);
-					provWin?.removeEventListener('resize', repositionProv);
-					if (provDropdown.parentElement) { provDropdown.parentElement.removeChild(provDropdown); }
-				}
-			});
-			if (assignedToInput.parentNode?.parentNode) { provObserver.observe(assignedToInput.parentNode.parentNode, { childList: true, subtree: true }); }
-			const showProvDropdown = () => { positionProvDropdown(); provDropdown.style.display = 'block'; };
+			// Ensure parent positions the dropdown correctly. Without `position:relative`
+			// on the parent, the dropdown's `position:absolute` resolves to the nearest
+			// positioned ancestor — causing it to render above the input or outside the
+			// form, which the test team flagged as "search provider is not working".
+			assignedToInput.parentElement.style.position = 'relative';
+			const provDropdown = DOM.append(assignedToInput.parentElement, DOM.$('div'));
+			provDropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 			let provTimer: ReturnType<typeof setTimeout> | undefined;
 			assignedToInput.addEventListener('input', () => {
 				if (provTimer) { clearTimeout(provTimer); }
@@ -624,42 +598,22 @@ export class TasksEditor extends EditorPane {
 								provDropdown.style.display = 'none';
 							});
 						}
-						if (list.length > 0) { showProvDropdown(); } else { provDropdown.style.display = 'none'; }
+						provDropdown.style.display = list.length > 0 ? 'block' : 'none';
 					} catch { /* ignore */ }
 				}, 250);
 			});
 			assignedToInput.addEventListener('blur', () => { setTimeout(() => { provDropdown.style.display = 'none'; }, 150); });
 		}
 
-		// Patient search autocomplete. Body-mounted with position:fixed so
-		// the match list never collides with form fields below.
+		// Patient search autocomplete
 		const patNameInput = fields.get('patientName') as HTMLInputElement;
 		const patIdInput = fields.get('patientId') as HTMLInputElement;
 		if (patNameInput && patIdInput) {
-			const patOwnerDoc = patNameInput.ownerDocument || document;
-			const dropdown = patOwnerDoc.createElement('div');
-			dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-			patOwnerDoc.body.appendChild(dropdown);
-			const positionPatDropdown = () => {
-				const rect = patNameInput.getBoundingClientRect();
-				dropdown.style.left = `${rect.left}px`;
-				dropdown.style.top = `${rect.bottom + 2}px`;
-				dropdown.style.width = `${rect.width}px`;
-			};
-			const repositionPat = () => { if (dropdown.style.display === 'block') { positionPatDropdown(); } };
-			const patWin = patOwnerDoc.defaultView;
-			patWin?.addEventListener('scroll', repositionPat, true);
-			patWin?.addEventListener('resize', repositionPat);
-			const patObserver = new MutationObserver(() => {
-				if (!patNameInput.isConnected) {
-					patObserver.disconnect();
-					patWin?.removeEventListener('scroll', repositionPat, true);
-					patWin?.removeEventListener('resize', repositionPat);
-					if (dropdown.parentElement) { dropdown.parentElement.removeChild(dropdown); }
-				}
-			});
-			if (patNameInput.parentNode?.parentNode) { patObserver.observe(patNameInput.parentNode.parentNode, { childList: true, subtree: true }); }
-			const showPatDropdown = () => { positionPatDropdown(); dropdown.style.display = 'block'; };
+			if (patNameInput.parentElement) {
+				patNameInput.parentElement.style.position = 'relative';
+			}
+			const dropdown = DOM.append(patNameInput.parentElement!, DOM.$('div'));
+			dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:0 0 4px 4px;z-index:200;display:none;';
 
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			patNameInput.addEventListener('input', () => {
@@ -685,7 +639,7 @@ export class TasksEditor extends EditorPane {
 									dropdown.style.display = 'none';
 								});
 							}
-							if (patients.length > 0) { showPatDropdown(); } else { dropdown.style.display = 'none'; }
+							dropdown.style.display = patients.length > 0 ? 'block' : 'none';
 						}
 					} catch { /* */ }
 				}, 250);
