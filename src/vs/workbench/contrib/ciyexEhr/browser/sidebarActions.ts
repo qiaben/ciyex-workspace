@@ -785,18 +785,22 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const openPopoverPanels: Array<{ panel: HTMLElement; reposition: () => void; onDocClick?: (e: MouseEvent) => void }> = [];
 
 	// Right-side slide-out drawer (matches the EHR-UI Patient Recall edit
-	// flow). The overlay is a thin scrim that lets the underlying page stay
-	// visible while preventing accidental clicks; the drawer itself docks
-	// flush to the right edge of the workbench.
+	// flow). The overlay is a transparent click-catcher; the scrim that
+	// darkens the workbench underneath is a SEPARATE backdrop child so we
+	// keep the overlay itself fully transparent. The previous version
+	// painted `rgba(0,0,0,0.25)` directly on the overlay AND copied the
+	// workbench classList onto it — on Windows that combination collapsed
+	// the alpha and rendered a solid black panel over the entire left
+	// half of the viewport. This shape mirrors the (working) overlay in
+	// clinicalListEditor so both drawers behave identically.
 	const overlay = doc.createElement('div');
 	overlay.className = 'ciyex-edit-dialog-overlay';
-	// Keep the overlay transparent — only the inline rgba(0,0,0,0.25)
-	// scrim darkens the workbench underneath. Mounting inside
-	// `workbenchRoot` (below) gives the drawer its CSS variables; we do
-	// NOT also copy the workbench classList onto the overlay because that
-	// turned the entire left half into a solid black panel — the second
-	// `.monaco-workbench` element painted over the real workbench content.
-	overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);';
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:transparent;pointer-events:auto;';
+	const scrim = doc.createElement('div');
+	scrim.className = 'ciyex-edit-dialog-scrim';
+	scrim.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.25);z-index:0;';
+	scrim.addEventListener('click', (e) => { if (e.target === scrim) { close(); } });
+	overlay.appendChild(scrim);
 
 	const dialog = doc.createElement('div');
 	dialog.style.cssText = [
