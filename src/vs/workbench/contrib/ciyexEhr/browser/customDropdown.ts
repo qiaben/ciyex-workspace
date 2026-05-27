@@ -37,47 +37,25 @@ export interface ICreateCustomDropdownOptions {
 	onChange?: (value: string) => void;
 }
 
-interface IThemePalette {
-	background: string;
-	foreground: string;
-	border: string;
-	separator: string;
-	hoverBackground: string;
-	shadow: string;
-}
-
-type ThemeKind = 'light' | 'dark' | 'hcLight' | 'hcDark';
-
-const THEME_PALETTES: Record<ThemeKind, IThemePalette> = {
-	light: { background: '#ffffff', foreground: '#1f1f1f', border: '#c8c8c8', separator: 'rgba(0,0,0,0.10)', hoverBackground: '#e8e8e8', shadow: 'rgba(0,0,0,0.22)' },
-	dark: { background: '#1e1e1e', foreground: '#e6e6e6', border: 'rgba(255,255,255,0.35)', separator: 'rgba(255,255,255,0.12)', hoverBackground: '#37373d', shadow: 'rgba(0,0,0,0.55)' },
-	hcLight: { background: '#ffffff', foreground: '#000000', border: '#000000', separator: '#000000', hoverBackground: '#0f4a85', shadow: 'rgba(0,0,0,0.45)' },
-	hcDark: { background: '#000000', foreground: '#ffffff', border: '#6fc3df', separator: '#6fc3df', hoverBackground: '#0f4a85', shadow: 'rgba(0,0,0,0.6)' },
+// Every visible surface uses a workbench CSS variable with a sensible
+// fallback. We deliberately don't detect the theme up-front and pick from a
+// fixed palette — that approach broke on the clinical / operations / system
+// menu drawers when the workbench was light but the detection fell back to
+// 'dark', producing a dark popover on a light page. CSS variables follow
+// whichever theme is active so the popover matches the rest of the
+// workbench on every theme without us having to detect it.
+const COLORS = {
+	background: 'var(--vscode-editorWidget-background, var(--vscode-dropdown-background, var(--vscode-input-background, #1e1e1e)))',
+	foreground: 'var(--vscode-foreground, #cccccc)',
+	border: 'var(--vscode-widget-border, var(--vscode-editorWidget-border, var(--vscode-input-border, rgba(127,127,127,0.4))))',
+	separator: 'var(--vscode-editorWidget-border, rgba(128,128,128,0.2))',
+	hoverBackground: 'var(--vscode-list-hoverBackground, rgba(128,128,128,0.16))',
+	triggerBackground: 'var(--vscode-input-background, #1e1e1e)',
+	triggerBorder: 'var(--vscode-input-border, rgba(127,127,127,0.4))',
+	// The shadow stays palette-driven because it deepens on dark themes
+	// for legibility; on light themes a softer alpha looks more natural.
+	shadow: 'rgba(0,0,0,0.35)',
 };
-
-function detectThemeKind(anchor: HTMLElement | undefined): ThemeKind {
-	const classify = (cls: DOMTokenList): ThemeKind | undefined => {
-		if (cls.contains('hc-light')) { return 'hcLight'; }
-		if (cls.contains('hc-black')) { return 'hcDark'; }
-		if (cls.contains('vs-dark')) { return 'dark'; }
-		if (cls.contains('vs')) { return 'light'; }
-		return undefined;
-	};
-	let el: HTMLElement | null | undefined = anchor;
-	while (el) {
-		const kind = classify(el.classList);
-		if (kind) { return kind; }
-		el = el.parentElement;
-	}
-	const doc = (anchor && anchor.ownerDocument) || document;
-	for (const root of [doc.body, doc.documentElement]) {
-		if (root) {
-			const kind = classify(root.classList);
-			if (kind) { return kind; }
-		}
-	}
-	return 'dark';
-}
 
 /**
  * Replacement for `<select>` that returns an HTMLInputElement so existing
@@ -97,21 +75,17 @@ function detectThemeKind(anchor: HTMLElement | undefined): ThemeKind {
 export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLInputElement {
 	const parent = opts.parent;
 	const doc = parent.ownerDocument || document;
-	const theme = detectThemeKind(parent);
-	const palette = THEME_PALETTES[theme];
 
 	const hidden = doc.createElement('input');
 	hidden.type = 'hidden';
 	hidden.value = opts.initialValue ?? '';
 	parent.appendChild(hidden);
 
-	const inputBg = theme === 'light' || theme === 'hcLight' ? '#ffffff' : '#1e1e1e';
-
 	const trigger = doc.createElement('button');
 	trigger.type = 'button';
 	trigger.setAttribute('aria-haspopup', 'listbox');
 	trigger.setAttribute('aria-expanded', 'false');
-	const fallbackStyle = `width:100%;box-sizing:border-box;padding:6px 10px;background:${inputBg};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;font-size:13px;cursor:pointer;`;
+	const fallbackStyle = `width:100%;box-sizing:border-box;padding:6px 10px;background:${COLORS.triggerBackground};color:${COLORS.foreground};border:1px solid ${COLORS.triggerBorder};border-radius:4px;font-size:13px;cursor:pointer;`;
 	trigger.style.cssText = `${opts.triggerStyle || fallbackStyle};display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;font-family:inherit;`;
 
 	const triggerLabel = doc.createElement('span');
@@ -142,7 +116,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	const panel = doc.createElement('div');
 	panel.className = 'ciyex-custom-dropdown-panel';
 	panel.setAttribute('role', 'listbox');
-	panel.style.cssText = `position:fixed;background-color:${palette.background};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;box-shadow:0 6px 18px ${palette.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
+	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:4px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
 	doc.body.appendChild(panel);
 
 	const positionPanel = () => {
@@ -167,10 +141,10 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 			row.setAttribute('role', 'option');
 			const isSelected = opt.value === hidden.value;
 			const extraStyle = opt.placeholder ? 'opacity:0.7;font-style:italic;' : (isSelected ? 'font-weight:500;' : '');
-			row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${palette.separator};background-color:${isSelected ? palette.hoverBackground : palette.background};color:${palette.foreground};${extraStyle}`;
+			row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${COLORS.separator};background-color:${isSelected ? COLORS.hoverBackground : COLORS.background};color:${COLORS.foreground};${extraStyle}`;
 			row.textContent = opt.label;
-			row.addEventListener('mouseenter', () => { row.style.backgroundColor = palette.hoverBackground; });
-			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? palette.hoverBackground : palette.background; });
+			row.addEventListener('mouseenter', () => { row.style.backgroundColor = COLORS.hoverBackground; });
+			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? COLORS.hoverBackground : COLORS.background; });
 			row.addEventListener('mousedown', (e) => {
 				e.preventDefault();
 				const prev = hidden.value;
