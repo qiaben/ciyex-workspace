@@ -5,6 +5,7 @@
 
 import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createCustomDropdown } from '../customDropdown.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -148,19 +149,17 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 		const statusLabel = DOM.append(statusCell, DOM.$('label'));
 		statusLabel.textContent = 'Status';
 		statusLabel.style.cssText = labelStyle;
-		const statusInput = DOM.append(statusCell, DOM.$('select')) as HTMLSelectElement;
-		statusInput.style.cssText = inputStyle;
-		for (const opt of [
-			{ label: 'In Progress', value: 'in_progress' },
-			{ label: 'Achieved', value: 'achieved' },
-			{ label: 'Not Achieved', value: 'not_achieved' },
-			{ label: 'Cancelled', value: 'cancelled' },
-		]) {
-			const o = DOM.append(statusInput, DOM.$('option')) as HTMLOptionElement;
-			o.value = opt.value;
-			o.textContent = opt.label;
-		}
-		statusInput.value = seed?.status ?? 'in_progress';
+		const statusInput = createCustomDropdown({
+			parent: statusCell,
+			options: [
+				{ label: 'In Progress', value: 'in_progress' },
+				{ label: 'Achieved', value: 'achieved' },
+				{ label: 'Not Achieved', value: 'not_achieved' },
+				{ label: 'Cancelled', value: 'cancelled' },
+			],
+			initialValue: seed?.status ?? 'in_progress',
+			triggerStyle: inputStyle,
+		});
 
 		const ref = {
 			row,
@@ -217,20 +216,18 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 		const freqLabel = DOM.append(freqCell, DOM.$('label'));
 		freqLabel.textContent = 'Frequency';
 		freqLabel.style.cssText = labelStyle;
-		const freqInput = DOM.append(freqCell, DOM.$('select')) as HTMLSelectElement;
-		freqInput.style.cssText = inputStyle;
-		for (const opt of [
-			{ label: 'Daily', value: 'daily' },
-			{ label: 'Weekly', value: 'weekly' },
-			{ label: 'Monthly', value: 'monthly' },
-			{ label: 'As Needed', value: 'as_needed' },
-			{ label: 'Once', value: 'once' },
-		]) {
-			const o = DOM.append(freqInput, DOM.$('option')) as HTMLOptionElement;
-			o.value = opt.value;
-			o.textContent = opt.label;
-		}
-		freqInput.value = seed?.frequency ?? 'as_needed';
+		const freqInput = createCustomDropdown({
+			parent: freqCell,
+			options: [
+				{ label: 'Daily', value: 'daily' },
+				{ label: 'Weekly', value: 'weekly' },
+				{ label: 'Monthly', value: 'monthly' },
+				{ label: 'As Needed', value: 'as_needed' },
+				{ label: 'Once', value: 'once' },
+			],
+			initialValue: seed?.frequency ?? 'as_needed',
+			triggerStyle: inputStyle,
+		});
 
 		const respCell = DOM.append(sub, DOM.$('div'));
 		const respLabel = DOM.append(respCell, DOM.$('label'));
@@ -2984,19 +2981,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			return el;
 		};
 
-		const sel = (label: string, options: Array<{ value: string; label: string }>, span2 = false): HTMLSelectElement => {
+		const sel = (label: string, options: Array<{ value: string; label: string }>, span2 = false): HTMLInputElement => {
 			const grp = DOM.append(body, DOM.$('div'));
 			if (span2) { grp.style.gridColumn = 'span 2'; }
 			const lbl = DOM.append(grp, DOM.$('label'));
 			lbl.textContent = label;
 			lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
-			const el = DOM.append(grp, DOM.$('select')) as HTMLSelectElement;
-			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;';
-			for (const o of options) {
-				const opt = DOM.append(el, DOM.$('option')) as HTMLOptionElement;
-				opt.value = o.value; opt.textContent = o.label;
-			}
-			return el;
+			return createCustomDropdown({
+				parent: grp,
+				options,
+				initialValue: options[0]?.value || '',
+				triggerStyle: 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;cursor:pointer;',
+			});
 		};
 
 		const chk = (label: string, span2 = false): HTMLInputElement => {

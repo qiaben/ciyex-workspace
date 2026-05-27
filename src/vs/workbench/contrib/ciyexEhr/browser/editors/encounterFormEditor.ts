@@ -18,6 +18,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createCustomDropdown } from '../customDropdown.js';
 
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; validation?: Record<string, unknown> }
@@ -832,15 +833,19 @@ export class EncounterFormEditor extends EditorPane {
 				};
 
 				if (f.type === 'select') {
-					const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
+					// Custom dropdown — replaces native <select> so options
+					// remain readable on dark workbench themes (native option
+					// popups inherit the OS colour scheme, which produces
+					// faint grey-on-grey text the QA team flagged).
+					const sel = createCustomDropdown({
+						parent: cell,
+						options: f.options || [],
+						initialValue: String(val),
+						placeholder: `Select ${f.label}...`,
+						triggerStyle: inputStyle + 'height:32px;cursor:pointer;',
+					});
 					sel.dataset.key = f.key;
-					sel.style.cssText = inputStyle + 'height:32px;cursor:pointer;';
-					if (readOnly) { sel.disabled = true; sel.style.opacity = '0.7'; }
-					for (const o of [{ label: `Select ${f.label}...`, value: '' }, ...(f.options || [])]) {
-						const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
-						opt.value = o.value; opt.textContent = o.label; opt.selected = String(val) === o.value;
-					}
-					addFocus(sel);
+					if (readOnly) { sel.disabled = true; }
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 					ta.dataset.key = f.key;

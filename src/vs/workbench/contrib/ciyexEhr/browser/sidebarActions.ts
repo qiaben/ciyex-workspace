@@ -712,11 +712,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const theme = detectThemeKind(doc, opts.themeAnchor);
 	const palette = THEME_PALETTES[theme];
 
-	// Typeahead panels for `kind: 'search'` fields are mounted directly on
-	// document.body so they escape the dialog's transform stacking context
-	// and the form's overflow clipping. Track them here so we can detach
-	// every panel + its scroll/resize listeners when the dialog closes.
-	const openTypeaheadPanels: Array<{ panel: HTMLElement; reposition: () => void }> = [];
+	// Popover panels (typeahead matches + custom-select option lists) are
+	// mounted directly on document.body so they escape the dialog's transform
+	// stacking context and the form's overflow clipping. Track them here so
+	// we can detach every panel + its scroll/resize/document listeners when
+	// the dialog closes.
+	const openPopoverPanels: Array<{ panel: HTMLElement; reposition: () => void; onDocClick?: (e: MouseEvent) => void }> = [];
 
 	// Right-side slide-out drawer (matches the EHR-UI Patient Recall edit
 	// flow). The overlay is a thin scrim that lets the underlying page stay
@@ -783,6 +784,17 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 	const inputBg = theme === 'light' || theme === 'hcLight' ? '#ffffff' : '#1e1e1e';
 	const inputBorder = palette.border;
+	// Popover (typeahead / custom-select) surfaces need a background that is
+	// visibly distinct from the drawer. On dark the drawer is `#252526` and
+	// `inputBg` is `#1e1e1e` — that 7-point delta plus a solid border gives
+	// the dropdown a clear edge. On light both are `#ffffff` so we rely on a
+	// solid grey border + shadow.
+	const popoverBg = inputBg;
+	const popoverBorder = theme === 'light' ? '#c8c8c8'
+		: theme === 'hcLight' ? '#000000'
+			: theme === 'hcDark' ? '#6fc3df'
+				: 'rgba(255,255,255,0.35)';
+	const popoverShadow = theme === 'light' || theme === 'hcLight' ? 'rgba(0,0,0,0.22)' : 'rgba(0,0,0,0.55)';
 
 	for (const field of opts.fields) {
 		const wrap = doc.createElement('div');
@@ -806,15 +818,116 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			ta.value = initial;
 			input = ta;
 		} else if (field.kind === 'select') {
-			const sel = doc.createElement('select');
-			for (const opt of field.options || []) {
-				const o = doc.createElement('option');
-				o.value = opt.value;
-				o.textContent = opt.label;
-				if (opt.value === initial) { o.selected = true; }
-				sel.appendChild(o);
+			// Native <select> dropdowns can't be reliably styled — Chromium
+			// renders the option list using OS chrome which on dark themes
+			// produces low-contrast (faint grey) text for non-highlighted
+			// options. Build a custom dropdown instead: a hidden <input>
+			// holds the value (so the inputs Map / save flow is unchanged)
+			// while a button-styled wrapper + body-mounted popover render
+			// the option list with full theme control.
+			const hidden = doc.createElement('input');
+			hidden.type = 'hidden';
+			hidden.value = initial;
+			input = hidden;
+			wrap.appendChild(hidden);
+
+			const trigger = doc.createElement('button');
+			trigger.type = 'button';
+			trigger.setAttribute('aria-haspopup', 'listbox');
+			trigger.setAttribute('aria-expanded', 'false');
+			trigger.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:${inputBg};color:${palette.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;cursor:pointer;text-align:left;width:100%;`;
+			const triggerLabel = doc.createElement('span');
+			triggerLabel.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			const triggerCaret = doc.createElement('span');
+			// allow-any-unicode-next-line
+			triggerCaret.textContent = '▾';
+			triggerCaret.style.cssText = `opacity:0.7;font-size:10px;flex-shrink:0;`;
+			trigger.appendChild(triggerLabel);
+			trigger.appendChild(triggerCaret);
+			const findLabel = (val: string): string => {
+				const match = (field.options || []).find(o => o.value === val);
+				return match ? match.label : (val || field.placeholder || 'Select...');
+			};
+			const refreshTriggerLabel = () => {
+				const v = hidden.value;
+				triggerLabel.textContent = findLabel(v);
+				triggerLabel.style.opacity = v ? '1' : '0.6';
+			};
+			refreshTriggerLabel();
+
+			const panel = doc.createElement('div');
+			panel.className = 'ciyex-select-panel';
+			panel.setAttribute('role', 'listbox');
+			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${palette.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
+			doc.body.appendChild(panel);
+
+			const positionSelectPanel = () => {
+				const rect = trigger.getBoundingClientRect();
+				panel.style.left = `${rect.left}px`;
+				panel.style.top = `${rect.bottom + 2}px`;
+				panel.style.minWidth = `${rect.width}px`;
+			};
+			const renderSelectOptions = () => {
+				panel.innerHTML = '';
+				for (const opt of field.options || []) {
+					const row = doc.createElement('div');
+					row.setAttribute('role', 'option');
+					const isSelected = opt.value === hidden.value;
+					row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${palette.separator};background-color:${isSelected ? palette.hoverBackground : popoverBg};color:${palette.foreground};${isSelected ? 'font-weight:500;' : ''}`;
+					row.textContent = opt.label;
+					row.addEventListener('mouseenter', () => { row.style.backgroundColor = palette.hoverBackground; });
+					row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? palette.hoverBackground : popoverBg; });
+					row.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						hidden.value = opt.value;
+						refreshTriggerLabel();
+						closePanel();
+					});
+					panel.appendChild(row);
+				}
+			};
+			let panelOpen = false;
+			const openPanel = () => {
+				renderSelectOptions();
+				positionSelectPanel();
+				panel.style.display = 'block';
+				trigger.setAttribute('aria-expanded', 'true');
+				panelOpen = true;
+			};
+			const closePanel = () => {
+				panel.style.display = 'none';
+				trigger.setAttribute('aria-expanded', 'false');
+				panelOpen = false;
+			};
+			trigger.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				if (panelOpen) { closePanel(); } else { openPanel(); }
+			});
+			trigger.addEventListener('focus', () => { trigger.style.borderColor = 'var(--vscode-focusBorder, #007fd4)'; });
+			trigger.addEventListener('blur', () => { trigger.style.borderColor = inputBorder; });
+			const onDocClick = (e: MouseEvent) => {
+				if (!panelOpen) { return; }
+				const target = e.target as Node | null;
+				if (target && (panel.contains(target) || trigger.contains(target))) { return; }
+				closePanel();
+			};
+			doc.addEventListener('mousedown', onDocClick, true);
+			const reposition = () => { if (panelOpen) { positionSelectPanel(); } };
+			doc.defaultView?.addEventListener('scroll', reposition, true);
+			doc.defaultView?.addEventListener('resize', reposition);
+			openPopoverPanels.push({ panel, reposition, onDocClick });
+
+			wrap.appendChild(trigger);
+			inputs.set(field.key, hidden);
+			if (field.hint) {
+				const hint = doc.createElement('div');
+				hint.textContent = field.hint;
+				hint.style.cssText = `font-size:11px;color:${palette.foreground};opacity:0.6;`;
+				wrap.appendChild(hint);
 			}
-			input = sel;
+			form.appendChild(wrap);
+			continue;
 		} else if (field.kind === 'search') {
 			// Typeahead — text input with a dropdown panel for matches.
 			//
@@ -836,7 +949,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// — we set top/left explicitly from the input's getBoundingClientRect
 			// when results are shown. z-index:10000 keeps it above the dialog
 			// overlay (z-index:2000) and any subsequent floating UI.
-			searchPanel.style.cssText = `position:fixed;background-color:${palette.background};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;box-shadow:0 4px 12px ${palette.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
+			searchPanel.style.cssText = `position:fixed;background-color:${popoverBg};color:${palette.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
 			// Mount on body so the panel paints against the document root's
 			// stacking context, ignoring every transform / overflow / opacity
 			// ancestor it would otherwise inherit from.
@@ -871,7 +984,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// `readonly` trick — must NOT block our own search-typeahead
 			// listeners, so we attach a one-shot focus handler that drops the
 			// attribute before the user types the first character.
-			if (field.kind !== 'date' && field.kind !== 'time' && field.kind !== 'select') {
+			if (field.kind !== 'date' && field.kind !== 'time') {
 				input.setAttribute('readonly', 'readonly');
 				const releaseReadonly = () => { input.removeAttribute('readonly'); };
 				input.addEventListener('focus', releaseReadonly, { once: true });
@@ -917,7 +1030,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					// dropdown reads as a solid surface — without this the
 					// rows inherited from the panel only, and any compositor
 					// quirk could let the form below show through.
-					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};background-color:${palette.background};color:${palette.foreground};`;
+					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};background-color:${popoverBg};color:${palette.foreground};`;
 					const label = doc.createElement('div');
 					label.textContent = r.label;
 					label.style.fontWeight = '500';
@@ -929,7 +1042,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 						opt.appendChild(desc);
 					}
 					opt.addEventListener('mouseenter', () => { opt.style.backgroundColor = palette.hoverBackground; });
-					opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = palette.background; });
+					opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = popoverBg; });
 					opt.addEventListener('mousedown', (e) => {
 						e.preventDefault();
 						inputEl.value = r.label;
@@ -963,7 +1076,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			});
 			// Track the panel for cleanup when the dialog closes — see the
 			// `close()` helper below.
-			openTypeaheadPanels.push({ panel, reposition });
+			openPopoverPanels.push({ panel, reposition });
 		}
 
 		if (field.hint) {
@@ -1035,15 +1148,17 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		overlay.parentElement.removeChild(overlay);
 		doc.removeEventListener('keydown', onKey, true);
 		overlay.removeEventListener('click', onOverlayClick);
-		// Detach every body-mounted typeahead panel + its scroll/resize
-		// listeners. Leaving them attached would leak listeners on every
-		// dialog open and leave stale panels in the DOM tree.
-		for (const t of openTypeaheadPanels) {
+		// Detach every body-mounted typeahead / custom-select panel along
+		// with its scroll/resize/document listeners. Leaving them attached
+		// would leak listeners on every dialog open and leave stale panels
+		// in the DOM tree.
+		for (const t of openPopoverPanels) {
 			doc.defaultView?.removeEventListener('scroll', t.reposition, true);
 			doc.defaultView?.removeEventListener('resize', t.reposition);
+			if (t.onDocClick) { doc.removeEventListener('mousedown', t.onDocClick, true); }
 			if (t.panel.parentElement) { t.panel.parentElement.removeChild(t.panel); }
 		}
-		openTypeaheadPanels.length = 0;
+		openPopoverPanels.length = 0;
 	};
 	doc.addEventListener('keydown', onKey, true);
 	overlay.addEventListener('click', onOverlayClick);
