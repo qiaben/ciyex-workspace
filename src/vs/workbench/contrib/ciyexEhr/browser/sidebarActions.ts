@@ -707,10 +707,40 @@ export function withTypeaheadSearch(
  * Used by every sidebar Edit action so users see the record's fields right
  * away instead of being redirected to the full editor page.
  */
+/**
+ * Walk up from {@link anchor} until we find the workbench root (the
+ * element VS Code stamps with the `monaco-workbench` class). All workbench
+ * theme CSS variables — `--vscode-foreground`, `--vscode-input-background`,
+ * `--vscode-sideBar-background`, etc. — are scoped under that selector,
+ * so any overlay we want to inherit theme colours has to be mounted as
+ * one of its descendants.
+ *
+ * The previous version mounted dialog overlays on `document.body`, which
+ * sits OUTSIDE `.monaco-workbench` — so every workbench var resolved to
+ * its hardcoded fallback. On a light workbench the fallback was the dark
+ * default (`#252526` background, `#cccccc` foreground) and the drawer
+ * rendered dark over the light page (QA-flagged on the clinical /
+ * operations / system New <X> drawers).
+ */
+function findWorkbenchRoot(anchor: HTMLElement | undefined, doc: Document): HTMLElement {
+	let el: HTMLElement | null | undefined = anchor;
+	while (el) {
+		if (el.classList && el.classList.contains('monaco-workbench')) { return el; }
+		el = el.parentElement;
+	}
+	// Fall back to <body>. CSS variables may not resolve correctly here on
+	// some themes, but the dialog will still render with its inline
+	// fallback colours rather than refusing to open.
+	return doc.body || doc.documentElement;
+}
+
 export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
 	const theme = detectThemeKind(doc, opts.themeAnchor);
 	const palette = THEME_PALETTES[theme];
+	// Mount all overlays / popover panels under `.monaco-workbench` so they
+	// inherit the workbench theme CSS variables. See {@link findWorkbenchRoot}.
+	const workbenchRoot = findWorkbenchRoot(opts.themeAnchor, doc);
 	// Use workbench CSS variables for every dialog surface rather than the
 	// hardcoded {@link THEME_PALETTES} entry. The detection occasionally
 	// falls back to 'dark' when the dialog opens before the theme class
@@ -881,7 +911,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			panel.className = 'ciyex-select-panel';
 			panel.setAttribute('role', 'listbox');
 			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
-			doc.body.appendChild(panel);
+			// Mount inside the workbench so var(--vscode-…) resolves to the
+			// active theme colours rather than the dark fallbacks.
+			workbenchRoot.appendChild(panel);
 
 			const positionSelectPanel = () => {
 				const rect = trigger.getBoundingClientRect();
@@ -972,10 +1004,11 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// when results are shown. z-index:10000 keeps it above the dialog
 			// overlay (z-index:2000) and any subsequent floating UI.
 			searchPanel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
-			// Mount on body so the panel paints against the document root's
-			// stacking context, ignoring every transform / overflow / opacity
-			// ancestor it would otherwise inherit from.
-			doc.body.appendChild(searchPanel);
+			// Mount inside the workbench so the panel paints against the
+			// workbench root's stacking context (ignoring every transform /
+			// overflow / opacity ancestor it would otherwise inherit from)
+			// AND so var(--vscode-…) resolves to the active theme colours.
+			workbenchRoot.appendChild(searchPanel);
 		} else {
 			const inp = doc.createElement('input');
 			inp.type = field.kind || 'text';
@@ -1184,7 +1217,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	};
 	doc.addEventListener('keydown', onKey, true);
 	overlay.addEventListener('click', onOverlayClick);
-	(doc.body || doc.documentElement).appendChild(overlay);
+	workbenchRoot.appendChild(overlay);
 
 	// Defer the transform reset by one frame so the browser registers the
 	// initial translateX(100%) before transitioning to 0 - otherwise the
