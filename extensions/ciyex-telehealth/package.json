@@ -1,0 +1,81 @@
+{
+	"name": "ciyex-telehealth",
+	"displayName": "Ciyex Telehealth",
+	"description": "Video visits inside the Ciyex workbench. Hosts the provider-side telehealth session (mediasoup WebRTC or iframe vendor) for an appointment, with recording, chat, and mute/camera controls.",
+	"version": "0.1.0",
+	"publisher": "ciyex",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.95.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"ciyex",
+		"telehealth",
+		"video",
+		"visit",
+		"webrtc",
+		"appointment"
+	],
+	"icon": "media/icon.png",
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "ciyex-telehealth.openSession",
+				"title": "Open Video Visit",
+				"category": "Ciyex Telehealth"
+			},
+			{
+				"command": "ciyex-telehealth.configure",
+				"title": "Configure Telehealth",
+				"category": "Ciyex Telehealth"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "ciyex-telehealth.openSession",
+					"when": "false"
+				},
+				{
+					"command": "ciyex-telehealth.configure",
+					"when": "true"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Ciyex Telehealth",
+			"properties": {
+				"ciyex.telehealth.apiUrl": {
+					"type": "string",
+					"default": "",
+					"description": "Override for the Ciyex API base URL used by telehealth (e.g. https://api-dev.ciyex.org). When blank, the workbench's auth-resolved API URL is used.",
+					"scope": "application"
+				},
+				"ciyex.telehealth.recordingMode": {
+					"type": "string",
+					"enum": ["COMPOSITE", "INDIVIDUAL"],
+					"default": "COMPOSITE",
+					"description": "Recording layout requested when the provider hits the record button.",
+					"scope": "application"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:ciyex-telehealth",
+		"watch": "gulp watch-extension:ciyex-telehealth"
+	}
+}

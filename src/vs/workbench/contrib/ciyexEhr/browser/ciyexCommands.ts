@@ -11,7 +11,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICiyexPaymentService, CheckoutRequest, CheckoutResult, RegisteredGateway } from './ciyexPaymentService.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
@@ -779,6 +779,30 @@ registerAction2(class extends Action2 {
 						},
 					],
 				},
+			});
+			return;
+		}
+
+		// Prefer the ciyex-telehealth extension's command if it's installed.
+		// CommandsRegistry.getCommand returns undefined when no extension has
+		// registered the id, in which case we fall back to the workbench-baked
+		// TelehealthEditor for backwards compatibility.
+		const TELEHEALTH_EXT_COMMAND = 'ciyex-telehealth.openSession';
+		if (CommandsRegistry.getCommand(TELEHEALTH_EXT_COMMAND)) {
+			const authService = accessor.get(ICiyexAuthService);
+			const authToken = (() => {
+				try { return localStorage.getItem('ciyex_token') || ''; } catch { return ''; }
+			})();
+			const orgAlias = (() => {
+				try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
+			})();
+			await accessor.get(ICommandService).executeCommand(TELEHEALTH_EXT_COMMAND, {
+				appointmentId: String(appointmentId),
+				patientName: patientName || '',
+				providerName: providerName || '',
+				authToken,
+				orgAlias,
+				apiUrl: authService.apiUrl,
 			});
 			return;
 		}
