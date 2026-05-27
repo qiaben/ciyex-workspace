@@ -1,0 +1,86 @@
+{
+	"name": "ciyex-payment-stripe",
+	"displayName": "Ciyex Payment — Stripe",
+	"description": "Stripe payment gateway for purchasing Ciyex marketplace extensions (telehealth, eRx, RCM, payment gateway, ...). Supports card, Apple Pay, Google Pay, Link, and ACH.",
+	"version": "0.1.0",
+	"publisher": "ciyex",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.95.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"ciyex",
+		"payment",
+		"stripe",
+		"billing",
+		"marketplace"
+	],
+	"icon": "media/icon.png",
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "ciyex-payment-stripe.checkout",
+				"title": "Checkout with Stripe",
+				"category": "Ciyex Payment"
+			},
+			{
+				"command": "ciyex-payment-stripe.configure",
+				"title": "Configure Stripe Publishable Key",
+				"category": "Ciyex Payment"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "ciyex-payment-stripe.checkout",
+					"when": "false"
+				},
+				{
+					"command": "ciyex-payment-stripe.configure",
+					"when": "true"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Ciyex Payment — Stripe",
+			"properties": {
+				"ciyex.payment.stripe.publishableKey": {
+					"type": "string",
+					"default": "",
+					"description": "Stripe publishable key (pk_test_… or pk_live_…). Leave blank to fetch from the marketplace backend at /api/v1/config/payment-gateway.",
+					"scope": "application"
+				},
+				"ciyex.payment.stripe.mode": {
+					"type": "string",
+					"enum": ["TEST", "LIVE"],
+					"default": "TEST",
+					"description": "Stripe environment indicator shown in the checkout UI.",
+					"scope": "application"
+				},
+				"ciyex.payment.stripe.marketplaceApiUrl": {
+					"type": "string",
+					"default": "",
+					"description": "Override for the marketplace API base URL (e.g. https://marketplace-api.apps-dev.us-east.in.hinisoft.com/api/v1). When blank, derived from the EHR API URL.",
+					"scope": "application"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:ciyex-payment-stripe",
+		"watch": "gulp watch-extension:ciyex-payment-stripe"
+	}
+}

@@ -9,6 +9,7 @@ import { ICiyexPermissionService, CiyexPermissionService } from './ciyexPermissi
 import { ICiyexMenuService, CiyexMenuService } from './ciyexMenuService.js';
 import { ICdsHooksService, CdsHooksService } from './cdsHooksService.js';
 import { ICiyexInstallationsService, CiyexInstallationsService } from './ciyexInstallationsService.js';
+import { ICiyexPaymentService, CiyexPaymentService } from './ciyexPaymentService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } from '../../../common/contributions.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
@@ -47,6 +48,10 @@ registerSingleton(ICiyexPermissionService, CiyexPermissionService, Instantiation
 registerSingleton(ICiyexMenuService, CiyexMenuService, InstantiationType.Delayed);
 registerSingleton(ICdsHooksService, CdsHooksService, InstantiationType.Delayed);
 registerSingleton(ICiyexInstallationsService, CiyexInstallationsService, InstantiationType.Delayed);
+// Eager: payment gateway extensions activate on `onStartupFinished` and
+// call back into `ciyex.payment.registerGateway` very early. The registry
+// must be instantiated before the first such call lands.
+registerSingleton(ICiyexPaymentService, CiyexPaymentService, InstantiationType.Eager);
 
 // Register the EHR workbench contribution (loads permissions, sets up menus)
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)

@@ -10,6 +10,8 @@ import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWork
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
+import { ICiyexPaymentService, CheckoutRequest, CheckoutResult, RegisteredGateway } from './ciyexPaymentService.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
@@ -742,21 +744,40 @@ registerAction2(class extends Action2 {
 
 		if (!installations.isInstalled(TELEHEALTH_APP_SLUG)) {
 			const hubUrl = _deriveHubUrl(apiService.apiUrl, TELEHEALTH_APP_SLUG);
+			const payments = accessor.get(ICiyexPaymentService);
+			const commandService = accessor.get(ICommandService);
+			const installationsService = installations;
+			const inAppActions = payments.hasGateway() ? [{
+				id: 'ciyex.buyTelehealth',
+				label: localize2('buyAndInstall', "Buy & Install").value,
+				tooltip: 'Purchase Ciyex Telehealth without leaving the app',
+				class: undefined,
+				enabled: true,
+				run: async () => {
+					await commandService.executeCommand('ciyex.payment.checkout', TELEHEALTH_APP_SLUG);
+					await installationsService.loadInstallations();
+				},
+			}] : [];
 			notifications.notify({
 				severity: Severity.Info,
 				message: localize2(
 					'telehealthNotInstalled',
-					"Telehealth requires the Ciyex Telehealth extension. Purchase and install it from the Hub to enable video visits.",
+					"Telehealth requires the Ciyex Telehealth extension. Purchase it to enable video visits.",
 				).value,
 				actions: {
-					primary: [{
-						id: 'ciyex.openTelehealthHub',
-						label: localize2('openHub', "Open Hub").value,
-						tooltip: hubUrl,
-						class: undefined,
-						enabled: true,
-						run: async () => { await opener.open(URI.parse(hubUrl), { openExternal: true }); },
-					}],
+					primary: [
+						...inAppActions,
+						{
+							id: 'ciyex.openTelehealthHub',
+							label: payments.hasGateway()
+								? localize2('openHubInBrowser', "Open Hub in Browser").value
+								: localize2('openHub', "Open Hub").value,
+							tooltip: hubUrl,
+							class: undefined,
+							enabled: true,
+							run: async () => { await opener.open(URI.parse(hubUrl), { openExternal: true }); },
+						},
+					],
 				},
 			});
 			return;
@@ -852,3 +873,140 @@ registerAction2(class extends Action2 {
 		await accessor.get(IEditorService).openEditor(new DeveloperPortalEditorInput(section || 'overview'), { pinned: true });
 	}
 });
+
+// allow-any-unicode-next-line
+// ─── Payment Gateway Bridge Commands ─────────────────────────────────────
+//
+// These two commands are the only public surface between the workbench and
+// any payment gateway extension (ciyex-payment-stripe, ciyex-payment-gps,
+// ciyex-payment-square, ...).
+//
+//   ciyex.payment.registerGateway
+//     Called by an extension's activate() handler. The extension passes
+//     its gateway id, displayName, and the command id that will open its
+//     checkout webview. The workbench remembers the registration in
+//     CiyexPaymentService.
+//
+//   ciyex.payment.checkout
+//     Called by gated workbench features (e.g. the Telehealth notification).
+//     Builds a CheckoutRequest from marketplace data, picks the active
+//     gateway, and forwards to that gateway's checkoutCommand. After the
+//     extension resolves, refreshes installations so the gated feature
+//     unlocks.
+//
+// New gateways plug in without touching this file — they just ship as a
+// sibling extension that registers itself the same way.
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.payment.registerGateway',
+			title: localize2('registerPaymentGateway', "Register Payment Gateway"),
+			f1: false,
+		});
+	}
+	async run(accessor: ServicesAccessor, gateway?: RegisteredGateway): Promise<void> {
+		if (!gateway) { return; }
+		accessor.get(ICiyexPaymentService).registerGateway(gateway);
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.payment.checkout',
+			title: localize2('paymentCheckout', "Checkout Marketplace Extension"),
+			f1: false,
+		});
+	}
+	async run(accessor: ServicesAccessor, appSlug?: string): Promise<CheckoutResult | undefined> {
+		if (!appSlug) { return undefined; }
+
+		const payments = accessor.get(ICiyexPaymentService);
+		const notifications = accessor.get(INotificationService);
+		const commandService = accessor.get(ICommandService);
+		const apiService = accessor.get(ICiyexApiService);
+		const installations = accessor.get(ICiyexInstallationsService);
+		const opener = accessor.get(IOpenerService);
+
+		const gateway = payments.getActiveGateway();
+		if (!gateway) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize2(
+					'noPaymentGateway',
+					"No payment gateway extension is installed. Install Ciyex Payment — Stripe (or another gateway) from the Extensions view.",
+				).value,
+				actions: {
+					primary: [{
+						id: 'ciyex.payment.openExtensionsView',
+						label: localize2('openExtensions', "Open Extensions").value,
+						tooltip: 'Show payment gateway extensions',
+						class: undefined,
+						enabled: true,
+						run: async () => {
+							await commandService.executeCommand('workbench.extensions.action.showInstalledExtensions');
+						},
+					}],
+				},
+			});
+			return { status: 'error', appSlug, message: 'No payment gateway available.' };
+		}
+
+		// Resolve the app + pricing plan + clientSecret via the marketplace.
+		// We do this in-line so the workbench owns marketplace I/O and the
+		// gateway extensions don't need to know our REST shape.
+		const checkoutRequest = await _buildCheckoutRequest(apiService, opener, appSlug);
+		if (!checkoutRequest) {
+			return { status: 'error', appSlug, message: 'Failed to build checkout request.' };
+		}
+
+		const result = await commandService.executeCommand<CheckoutResult>(gateway.checkoutCommand, checkoutRequest);
+
+		if (result?.status === 'success') {
+			// Poll installations for up to 30s so the gated feature lights up
+			// the moment the marketplace webhook -> ciyex-api creates the row.
+			const deadline = Date.now() + 30_000;
+			while (Date.now() < deadline) {
+				await installations.loadInstallations();
+				if (installations.isInstalled(appSlug)) {
+					notifications.notify({
+						severity: Severity.Info,
+						message: localize2('extensionInstalled', "{0} installed and ready.", checkoutRequest.appName).value,
+					});
+					break;
+				}
+				await new Promise(r => setTimeout(r, 2000));
+			}
+		} else if (result?.status === 'error') {
+			notifications.notify({ severity: Severity.Error, message: `Payment failed: ${result.message ?? 'unknown error'}` });
+		}
+
+		return result;
+	}
+});
+
+/**
+ * Resolve the marketplace data needed for a checkout. Returns undefined if
+ * the catalog lookup fails or there are no pricing plans — the caller has
+ * already notified the user in those cases.
+ *
+ * NOTE: this is a placeholder shape. The marketplace endpoint that returns
+ * `clientSecret` alongside the new subscription is not implemented yet; for
+ * now we return the request with `clientSecret` unset so the gateway
+ * extension surfaces a clear "configure the marketplace backend" error to
+ * the user instead of silently failing. Once the backend ships, this
+ * function POSTs to /api/v1/practices/{org}/subscriptions and forwards the
+ * `clientSecret` from the response.
+ */
+async function _buildCheckoutRequest(_apiService: ICiyexApiService, _opener: IOpenerService, appSlug: string): Promise<CheckoutRequest | undefined> {
+	// TODO: wire to marketplace once /subscriptions response includes clientSecret.
+	return {
+		appSlug,
+		appName: appSlug,
+		pricingPlanId: 'default',
+		planName: 'Standard',
+		priceCents: 0,
+		currency: 'USD',
+	};
+}
