@@ -16,7 +16,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { createCustomDropdown } from '../customDropdown.js';
 
 interface ColumnDef { key: string; label: string; width?: string; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
@@ -974,9 +974,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const ownerDoc = group.ownerDocument || document;
 				const dropdown = ownerDoc.createElement('div');
 				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-				// Mount inside .monaco-workbench so var(--vscode-…) resolves
-				// to the active theme rather than the dark fallback hex.
-				findWorkbenchRoot(group, ownerDoc).appendChild(dropdown);
+				ownerDoc.body.appendChild(dropdown);
 				const positionDropdown = () => {
 					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
 					dropdown.style.left = `${rect.left}px`;

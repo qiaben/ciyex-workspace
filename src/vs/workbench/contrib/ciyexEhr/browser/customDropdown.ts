@@ -72,29 +72,9 @@ const COLORS = {
  * of the "transparent" dropdown the user reported on prescriptions, labs,
  * tasks, recall, and every other create/edit drawer.
  */
-/**
- * Walk up from `anchor` until we find the workbench root (the element
- * VS Code stamps with the `monaco-workbench` class). All workbench theme
- * CSS variables (`--vscode-foreground`, `--vscode-input-background`,
- * `--vscode-editorWidget-background`, …) are scoped under that selector,
- * so the popover has to be mounted inside it for those vars to resolve
- * to the active theme. Mounting on `document.body` instead made every
- * var fall back to the dark default, producing the dark dropdown over
- * a light workbench QA flagged.
- */
-export function findWorkbenchRoot(anchor: HTMLElement, doc: Document): HTMLElement {
-	let el: HTMLElement | null = anchor;
-	while (el) {
-		if (el.classList && el.classList.contains('monaco-workbench')) { return el; }
-		el = el.parentElement;
-	}
-	return doc.body || doc.documentElement;
-}
-
 export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLInputElement {
 	const parent = opts.parent;
 	const doc = parent.ownerDocument || document;
-	const workbenchRoot = findWorkbenchRoot(parent, doc);
 
 	const hidden = doc.createElement('input');
 	hidden.type = 'hidden';
@@ -137,9 +117,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	panel.className = 'ciyex-custom-dropdown-panel';
 	panel.setAttribute('role', 'listbox');
 	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:4px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
-	// Mount inside the workbench so var(--vscode-…) resolves to the active
-	// theme colours rather than the dark fallbacks.
-	workbenchRoot.appendChild(panel);
+	doc.body.appendChild(panel);
 
 	const positionPanel = () => {
 		const rect = trigger.getBoundingClientRect();
