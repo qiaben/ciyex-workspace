@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string; patientId?: string };
 
@@ -797,7 +797,7 @@ export class ClinicalMenuPane extends ViewPane {
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,
 			themeAnchor: this.container,
-			fields: this._withSearch(item.editFields),
+			fields: withTypeaheadSearch(item.editFields, this.apiService),
 			values: initialValues,
 			primaryLabel: 'Create',
 			onSave: async (next) => {
@@ -805,132 +805,6 @@ export class ClinicalMenuPane extends ViewPane {
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
 				await this._loadItemData(item);
 			},
-		});
-	}
-
-	/**
-	 * Walk a field schema and inject `kind: 'search'` + an `onSearch`/`onSelect`
-	 * callback for well-known typeahead fields (patient, provider, prescriber,
-	 * CVX, ICD-10, CPT, insurance). Lets every clinical sidebar drawer get
-	 * search-typeahead behaviour without each entry having to repeat the
-	 * fetch wiring.
-	 *
-	 * Called both from the New (create) and Edit drawers — the test team
-	 * specifically flagged Rx / Lab / Imm / Referral / Authorization as
-	 * "search not working" on the original plain text inputs.
-	 */
-	private _withSearch(fields: IEditFieldDef[]): IEditFieldDef[] {
-		const fetchPatients = async (q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
-			try {
-				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
-				if (!res.ok) { return []; }
-				const data = await res.json();
-				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-				return list.map(p => {
-					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || p.id);
-					const pid = String(p.id ?? p.patientId ?? '');
-					return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
-				});
-			} catch { return []; }
-		};
-		const fetchProviders = async (q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
-			try {
-				const urls = [`/api/providers?search=${encodeURIComponent(q)}&page=0&size=10`, `/api/fhir-resource/providers?search=${encodeURIComponent(q)}&page=0&size=10`];
-				for (const url of urls) {
-					const res = await this.apiService.fetch(url);
-					if (!res.ok) { continue; }
-					const data = await res.json();
-					const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-					if (list.length === 0) { continue; }
-					return list.map(p => {
-						const name = (p.name || p.fullName || `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || '') as string;
-						const npi = (p.npi as string) || '';
-						return { value: name, label: name, description: npi ? `NPI ${npi}` : undefined, details: { npi, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
-					});
-				}
-				return [];
-			} catch { return []; }
-		};
-		const fetchCodes = async (path: string, q: string): Promise<Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>> => {
-			try {
-				const res = await this.apiService.fetch(`${path}?search=${encodeURIComponent(q)}&page=0&size=10`);
-				if (!res.ok) { return []; }
-				const data = await res.json();
-				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-				return list.map(c => {
-					const code = String(c.code || c.id || '');
-					const desc = String(c.description || c.display || c.name || '');
-					return { value: desc || code, label: desc || code, description: code, details: { code } };
-				});
-			} catch { return []; }
-		};
-
-		return fields.map(f => {
-			const k = f.key.toLowerCase();
-			// Patient-name typeahead — fills patientId on select.
-			if (k === 'patientname' || k === 'patientfirstname') {
-				return {
-					...f,
-					kind: 'search' as const,
-					onSearch: fetchPatients,
-					onSelectSearchResult: (item, all) => {
-						const set = (key: string, val: string) => { const i = all.get(key); if (i) { i.value = val; } };
-						set('patientId', item.details?.patientId || '');
-						set('patientFirstName', item.details?.firstName || '');
-						set('patientLastName', item.details?.lastName || '');
-					},
-				};
-			}
-			// Provider / prescriber typeahead — fills NPI when known.
-			if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname'].includes(k)) {
-				return {
-					...f,
-					kind: 'search' as const,
-					onSearch: fetchProviders,
-					onSelectSearchResult: (item, all) => {
-						const npi = item.details?.npi || '';
-						if (npi) {
-							for (const key of ['prescriberNpi', 'providerNpi', 'npi']) {
-								const i = all.get(key);
-								if (i && !i.value) { i.value = npi; }
-							}
-						}
-					},
-				};
-			}
-			// CVX vaccine code search.
-			if (k === 'cvxcode') {
-				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cvx', q) };
-			}
-			// CPT procedure code search.
-			if (k === 'procedurecode' || k === 'cptcode') {
-				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cpt', q) };
-			}
-			// ICD-10 diagnosis code search.
-			if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode') {
-				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/icd10', q) };
-			}
-			// LOINC lab test code search.
-			if (k === 'testcode' || k === 'loinc') {
-				return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/loinc', q) };
-			}
-			// Insurance search.
-			if (k === 'insurancename') {
-				return {
-					...f,
-					kind: 'search' as const,
-					onSearch: async (q) => {
-						try {
-							const res = await this.apiService.fetch(`/api/insurances?search=${encodeURIComponent(q)}&page=0&size=10`);
-							if (!res.ok) { return []; }
-							const data = await res.json();
-							const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-							return list.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
-						} catch { return []; }
-					},
-				};
-			}
-			return f;
 		});
 	}
 
@@ -960,7 +834,7 @@ export class ClinicalMenuPane extends ViewPane {
 		openRecordEditDialog({
 			title: `Edit ${item.label}`,
 			themeAnchor: this.container,
-			fields: this._withSearch(fields),
+			fields: withTypeaheadSearch(fields, this.apiService),
 			values: initialValues,
 			onSave: async (next) => {
 				const payload = { ...row, ...next };

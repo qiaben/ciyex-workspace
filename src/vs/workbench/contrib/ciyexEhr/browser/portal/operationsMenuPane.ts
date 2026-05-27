@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -482,7 +482,12 @@ export class OperationsMenuPane extends ViewPane {
 		desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 		const actionsEl = createRowActionsContainer(row);
-		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this.commandService.executeCommand(item.command));
+		// Match the clinical pane: open the inline create drawer when an
+		// editFields schema is defined, otherwise fall back to the full editor.
+		// The previous version always called `executeCommand` which opened the
+		// editor tab but didn't trigger its New form — the test team reported
+		// these as "+ button not working".
+		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
@@ -595,6 +600,29 @@ export class OperationsMenuPane extends ViewPane {
 		}
 	}
 
+	private _openCreateDialog(item: OperationsItem): void {
+		if (!item.editFields || item.editFields.length === 0) {
+			// No drawer schema defined yet — fall back to the full editor tab.
+			this.commandService.executeCommand(item.command);
+			return;
+		}
+		const initialValues: Record<string, unknown> = {};
+		for (const f of item.editFields) { initialValues[f.key] = ''; }
+		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		openRecordEditDialog({
+			title: `New ${item.label.replace(/s$/, '') || item.label}`,
+			themeAnchor: this.container,
+			fields: withTypeaheadSearch(item.editFields, this.apiService),
+			values: initialValues,
+			primaryLabel: 'Create',
+			onSave: async (next) => {
+				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
+				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
+				await this._loadItemData(item);
+			},
+		});
+	}
+
 	private _openEditDialog(item: OperationsItem, row: DataRow): void {
 		// Prefer the per-resource editFields schema when defined (e.g. Patient
 		// Recall ships the full Patient/Phone/Email/Recall Type/... grid that
@@ -622,7 +650,7 @@ export class OperationsMenuPane extends ViewPane {
 		openRecordEditDialog({
 			title: `Edit ${item.label}`,
 			themeAnchor: this.container,
-			fields,
+			fields: withTypeaheadSearch(fields, this.apiService),
 			values: initialValues,
 			onSave: async (next) => {
 				const payload = { ...row, ...next };

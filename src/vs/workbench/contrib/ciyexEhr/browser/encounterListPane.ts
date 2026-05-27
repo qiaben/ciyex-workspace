@@ -347,6 +347,7 @@ export class EncounterListPane extends ViewPane {
 	private _openEditDialog(item: Record<string, unknown>, encId: string, patName: string): void {
 		const dateRaw = String(item.encounterDate || item.startDate || item.start || '');
 		const initialDate = dateRaw ? dateRaw.slice(0, 10) : '';
+		const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
 		openRecordEditDialog({
 			title: `Edit Encounter — ${patName}`,
 			themeAnchor: this.container,
@@ -379,10 +380,13 @@ export class EncounterListPane extends ViewPane {
 			},
 			onSave: async (next) => {
 				// Map workspace labels back to FHIR codes so the encounter PUT
-				// doesn't reject the payload with a 500. Spreading the full
-				// `item` here would re-send display-only fields (patientDisplay,
-				// providerDisplay, etc.) that the backend rejects as unknown
-				// — only ship the user-edited fields.
+				// doesn't reject the payload with a 500. The previous version
+				// posted to `/api/encounters/{id}` which is the EHR mirror
+				// endpoint and requires the patient context in the path — the
+				// new admin login hit that endpoint with no patient context
+				// and the backend 500'd. The FHIR resource endpoint accepts a
+				// flat encounter PUT and matches what `encounterFormEditor`
+				// uses for its secondary save (see editors/encounterFormEditor.ts).
 				const TYPE_CODE: Record<string, string> = {
 					'Ambulatory': 'AMB', 'Home Health': 'HH', 'Emergency': 'EMER',
 					'Short Stay': 'SS', 'Virtual': 'VR', 'Observation': 'OBSENC',
@@ -391,13 +395,15 @@ export class EncounterListPane extends ViewPane {
 					'SIGNED': 'finished', 'UNSIGNED': 'in-progress', 'INCOMPLETE': 'cancelled',
 				};
 				const payload: Record<string, unknown> = {
+					id: encId,
+					patientId,
 					encounterDate: next.encounterDate,
 					type: TYPE_CODE[next.type] || next.type,
 					status: STATUS_CODE[next.status] || next.status,
 					reason: next.reason,
 					reasonCode: next.reason,
 				};
-				const res = await this.apiService.fetch(`/api/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(payload) });
+				const res = await this.apiService.fetch(`/api/fhir-resource/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				await this._loadData();
 			},

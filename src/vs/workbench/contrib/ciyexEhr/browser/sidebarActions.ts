@@ -559,6 +559,146 @@ export interface IEditDialogOptions {
 }
 
 /**
+ * Walk a field schema and inject `kind: 'search'` + an `onSearch` /
+ * `onSelectSearchResult` callback for well-known typeahead fields (patient,
+ * provider/prescriber, common code systems). Lets every sidebar drawer get
+ * a real typeahead instead of a plain text input — which is also the only
+ * reliable way to keep Chromium's native autofill suggestion popup from
+ * showing on those fields, no matter what `autocomplete` token we set.
+ *
+ * Shared by clinical / operations / system menu panes so all three drawers
+ * get the same patient + provider lookups without duplicating the fetch
+ * wiring.
+ */
+export function withTypeaheadSearch(
+	fields: IEditFieldDef[],
+	api: { fetch(path: string, init?: RequestInit): Promise<Response> }
+): IEditFieldDef[] {
+	const fetchPatients = async (q: string) => {
+		try {
+			const res = await api.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+			if (!res.ok) { return []; }
+			const data = await res.json();
+			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+			return list.map(p => {
+				const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || p.id);
+				const pid = String(p.id ?? p.patientId ?? '');
+				return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+			});
+		} catch { return []; }
+	};
+	const fetchProviders = async (q: string) => {
+		try {
+			const urls = [`/api/providers?search=${encodeURIComponent(q)}&page=0&size=10`, `/api/fhir-resource/providers?search=${encodeURIComponent(q)}&page=0&size=10`];
+			for (const url of urls) {
+				const res = await api.fetch(url);
+				if (!res.ok) { continue; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				if (list.length === 0) { continue; }
+				return list.map(p => {
+					const name = (p.name || p.fullName || `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || '') as string;
+					const npi = (p.npi as string) || '';
+					return { value: name, label: name, description: npi ? `NPI ${npi}` : undefined, details: { npi, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+				});
+			}
+			return [];
+		} catch { return []; }
+	};
+	// Generic code search against `/api/codes/{system}` (back-end aliases the
+	// ciyex-codes service). Returns `{ value, label, description, details }`
+	// shaped the same as patient/provider so the typeahead picker works
+	// regardless of which kind of code the user is searching for.
+	const fetchCodes = async (path: string, q: string) => {
+		try {
+			const res = await api.fetch(`${path}?search=${encodeURIComponent(q)}&page=0&size=10`);
+			if (!res.ok) { return []; }
+			const data = await res.json();
+			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+			return list.map(c => {
+				const code = String(c.code || c.id || '');
+				const desc = String(c.description || c.shortDescription || c.display || c.name || '');
+				return { value: code || desc, label: desc || code, description: code, details: { code, description: desc } };
+			});
+		} catch { return []; }
+	};
+
+	return fields.map(f => {
+		const k = f.key.toLowerCase();
+		if (k === 'patientname' || k === 'patientfirstname') {
+			return {
+				...f,
+				kind: 'search' as const,
+				onSearch: fetchPatients,
+				onSelectSearchResult: (item, all) => {
+					const set = (key: string, val: string) => { const i = all.get(key); if (i) { i.value = val; } };
+					set('patientId', item.details?.patientId || '');
+					set('patientFirstName', item.details?.firstName || '');
+					set('patientLastName', item.details?.lastName || '');
+				},
+			};
+		}
+		if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname', 'provider', 'orderingprovider'].includes(k)) {
+			return {
+				...f,
+				kind: 'search' as const,
+				onSearch: fetchProviders,
+				onSelectSearchResult: (item, all) => {
+					const npi = item.details?.npi || '';
+					if (npi) {
+						for (const key of ['prescriberNpi', 'providerNpi', 'npi', 'specialistNpi']) {
+							const i = all.get(key);
+							if (i && !i.value) { i.value = npi; }
+						}
+					}
+				},
+			};
+		}
+		// CVX vaccine code search.
+		if (k === 'cvxcode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cvx', q) };
+		}
+		// CPT procedure code search.
+		if (k === 'procedurecode' || k === 'cptcode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cpt', q) };
+		}
+		// ICD-10 diagnosis code search.
+		if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/icd10', q) };
+		}
+		// LOINC lab test code search.
+		if (k === 'testcode' || k === 'loinc') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/loinc', q) };
+		}
+		// RxNorm / NDC medication code search.
+		if (k === 'medicationcode' || k === 'rxnormcode' || k === 'ndccode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/rxnorm', q) };
+		}
+		// SNOMED / HCPCS / CDT / generic global codes search.
+		if (k === 'snomedcode' || k === 'hcpcscode' || k === 'cdtcode' || k === 'code') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/global_codes', q) };
+		}
+		// Insurance search.
+		if (k === 'insurancename') {
+			return {
+				...f,
+				kind: 'search' as const,
+				onSearch: async (q) => {
+					try {
+						const res = await api.fetch(`/api/insurances?search=${encodeURIComponent(q)}&page=0&size=10`);
+						if (!res.ok) { return []; }
+						const data = await res.json();
+						const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+						return list.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
+					} catch { return []; }
+				},
+			};
+		}
+		return f;
+	});
+}
+
+/**
  * Open a theme-aware modal dialog that renders the given field schema as a
  * form. The dialog is built with raw DOM (matches the rest of the workbench
  * sidebar code) and uses the workbench theme class for colours so it looks
@@ -571,6 +711,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
 	const theme = detectThemeKind(doc, opts.themeAnchor);
 	const palette = THEME_PALETTES[theme];
+
+	// Typeahead panels for `kind: 'search'` fields are mounted directly on
+	// document.body so they escape the dialog's transform stacking context
+	// and the form's overflow clipping. Track them here so we can detach
+	// every panel + its scroll/resize listeners when the dialog closes.
+	const openTypeaheadPanels: Array<{ panel: HTMLElement; reposition: () => void }> = [];
 
 	// Right-side slide-out drawer (matches the EHR-UI Patient Recall edit
 	// flow). The overlay is a thin scrim that lets the underlying page stay
@@ -618,8 +764,21 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const form = doc.createElement('form');
 	// Two-column grid - matches the EHR-UI drawer in image 2. Cells span one
 	// column unless the field's widthPct asks for full width.
-	form.style.cssText = 'padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;column-gap:16px;row-gap:14px;overflow-y:auto;flex:1;align-content:start;';
+	// Hide the scrollbar to match the main-page (clinicalListEditor) form
+	// drawer — content still scrolls when overflowing, just without the
+	// visible scrollbar gutter the QA team flagged.
+	form.className = 'ciyex-edit-dialog-body';
+	form.style.cssText = 'padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;column-gap:16px;row-gap:14px;overflow-y:auto;flex:1;align-content:start;scrollbar-width:none;-ms-overflow-style:none;';
+	const scrollbarStyle = doc.createElement('style');
+	scrollbarStyle.textContent = 'form.ciyex-edit-dialog-body::-webkit-scrollbar{display:none;width:0;height:0;}';
+	dialog.appendChild(scrollbarStyle);
 	form.addEventListener('submit', (e) => { e.preventDefault(); });
+	// Disable the browser's native form autofill/autocomplete on the whole
+	// form. Without this, Chromium/Edge pop their own (semi-transparent,
+	// system-styled) suggestion list below text inputs — that was the
+	// "transparent dropdown" the user saw across Prescription, Lab,
+	// Tasks, Clinical and every other create/edit drawer.
+	form.setAttribute('autocomplete', 'off');
 
 	const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
 	const inputBg = theme === 'light' || theme === 'hcLight' ? '#ffffff' : '#1e1e1e';
@@ -657,24 +816,67 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			}
 			input = sel;
 		} else if (field.kind === 'search') {
-			// Typeahead — text input with a dropdown panel for matches. The
-			// caller supplies `onSearch`; we debounce + render results +
-			// fire `onSelectSearchResult` (used by clinical drawers to
-			// auto-fill the linked id field).
-			wrap.style.position = 'relative';
+			// Typeahead — text input with a dropdown panel for matches.
+			//
+			// The panel is mounted on `document.body` (not inside the wrap)
+			// with `position:fixed` so it escapes the dialog's `transform`
+			// stacking context AND the form's `overflow-y:auto` clipping.
+			// Both were causing the panel to look transparent in earlier
+			// attempts: transforms create a new stacking context (z-index
+			// can't escape it), and overflow:auto clips absolutely-positioned
+			// descendants. Mounting on body sidesteps both.
 			const inp = doc.createElement('input');
 			inp.type = 'text';
 			inp.value = initial;
 			inp.autocomplete = 'off';
 			input = inp;
 			searchPanel = doc.createElement('div');
-			searchPanel.style.cssText = `position:absolute;top:100%;left:0;right:0;margin-top:2px;background:${palette.background};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;box-shadow:0 4px 12px ${palette.shadow};z-index:20;max-height:200px;overflow-y:auto;display:none;`;
-			wrap.appendChild(searchPanel);
+			searchPanel.className = 'ciyex-typeahead-panel';
+			// `position:fixed` so the panel is positioned against the viewport
+			// — we set top/left explicitly from the input's getBoundingClientRect
+			// when results are shown. z-index:10000 keeps it above the dialog
+			// overlay (z-index:2000) and any subsequent floating UI.
+			searchPanel.style.cssText = `position:fixed;background-color:${palette.background};color:${palette.foreground};border:1px solid ${palette.border};border-radius:4px;box-shadow:0 4px 12px ${palette.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;`;
+			// Mount on body so the panel paints against the document root's
+			// stacking context, ignoring every transform / overflow / opacity
+			// ancestor it would otherwise inherit from.
+			doc.body.appendChild(searchPanel);
 		} else {
 			const inp = doc.createElement('input');
 			inp.type = field.kind || 'text';
 			inp.value = initial;
 			input = inp;
+		}
+		// Suppress the browser-native autocomplete dropdown on every text-like
+		// input. Chromium ignores plain `autocomplete="off"` when a field's
+		// name/id matches a known autofill heuristic (email, address, name,
+		// etc.), so we layer:
+		//   1. `autocomplete="new-password"` — Chrome treats this token specially
+		//      and explicitly suppresses both autofill *and* the suggestion popup.
+		//   2. A randomised `name` so Chromium's heuristic name-matcher misses.
+		//   3. `aria-autocomplete="none"` — turns off the suggestion popup at
+		//      the accessibility layer (some Chromium versions read this).
+		//   4. The `readonly` trick — start the input read-only and clear the
+		//      attribute the first time the user focuses it. Chromium decides
+		//      whether to offer autofill at *focus* time; if it sees a
+		//      readonly input it skips the field entirely, and removing the
+		//      attribute right after focus doesn't re-trigger the check.
+		if (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input)) {
+			input.setAttribute('autocomplete', 'new-password');
+			input.setAttribute('autocorrect', 'off');
+			input.setAttribute('autocapitalize', 'off');
+			input.setAttribute('spellcheck', 'false');
+			input.setAttribute('aria-autocomplete', 'none');
+			input.setAttribute('name', `ciyex-${field.key}-${Math.random().toString(36).slice(2, 8)}`);
+			// `readonly` trick — must NOT block our own search-typeahead
+			// listeners, so we attach a one-shot focus handler that drops the
+			// attribute before the user types the first character.
+			if (field.kind !== 'date' && field.kind !== 'time' && field.kind !== 'select') {
+				input.setAttribute('readonly', 'readonly');
+				const releaseReadonly = () => { input.removeAttribute('readonly'); };
+				input.addEventListener('focus', releaseReadonly, { once: true });
+				input.addEventListener('pointerdown', releaseReadonly, { once: true });
+			}
 		}
 		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${palette.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
 		if (field.placeholder && (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input))) {
@@ -694,13 +896,28 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			const panel = searchPanel;
 			const onSearch = field.onSearch;
 			const onSelect = field.onSelectSearchResult;
+			const inputEl = input as HTMLInputElement;
 			let debounceHandle: ReturnType<typeof setTimeout> | undefined;
+			// Position the panel directly under the input every time it
+			// reopens. Using `position:fixed` against viewport coordinates
+			// sidesteps the form's `overflow-y:auto` clipping and the
+			// dialog's `transform` stacking context.
+			const positionPanel = () => {
+				const rect = inputEl.getBoundingClientRect();
+				panel.style.left = `${rect.left}px`;
+				panel.style.top = `${rect.bottom + 2}px`;
+				panel.style.width = `${rect.width}px`;
+			};
 			const renderResults = (results: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>) => {
 				panel.innerHTML = '';
 				if (results.length === 0) { panel.style.display = 'none'; return; }
 				for (const r of results) {
 					const opt = doc.createElement('div');
-					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};`;
+					// Each row carries its own opaque theme background so the
+					// dropdown reads as a solid surface — without this the
+					// rows inherited from the panel only, and any compositor
+					// quirk could let the form below show through.
+					opt.style.cssText = `padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid ${palette.separator};background-color:${palette.background};color:${palette.foreground};`;
 					const label = doc.createElement('div');
 					label.textContent = r.label;
 					label.style.fontWeight = '500';
@@ -711,20 +928,26 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 						desc.style.cssText = `font-size:11px;opacity:0.7;`;
 						opt.appendChild(desc);
 					}
-					opt.addEventListener('mouseenter', () => { opt.style.background = palette.hoverBackground; });
-					opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
+					opt.addEventListener('mouseenter', () => { opt.style.backgroundColor = palette.hoverBackground; });
+					opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = palette.background; });
 					opt.addEventListener('mousedown', (e) => {
 						e.preventDefault();
-						(input as HTMLInputElement).value = r.label;
+						inputEl.value = r.label;
 						if (onSelect) { onSelect(r, inputs); }
 						panel.style.display = 'none';
 					});
 					panel.appendChild(opt);
 				}
+				positionPanel();
 				panel.style.display = 'block';
 			};
-			(input as HTMLInputElement).addEventListener('input', () => {
-				const q = (input as HTMLInputElement).value.trim();
+			// Re-position on scroll/resize so the panel tracks the input if
+			// the user scrolls the form body or resizes the window.
+			const reposition = () => { if (panel.style.display === 'block') { positionPanel(); } };
+			doc.defaultView?.addEventListener('scroll', reposition, true);
+			doc.defaultView?.addEventListener('resize', reposition);
+			inputEl.addEventListener('input', () => {
+				const q = inputEl.value.trim();
 				if (debounceHandle) { clearTimeout(debounceHandle); }
 				if (q.length < 2) { panel.style.display = 'none'; return; }
 				debounceHandle = setTimeout(async () => {
@@ -734,10 +957,13 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					} catch { panel.style.display = 'none'; }
 				}, 250);
 			});
-			(input as HTMLInputElement).addEventListener('blur', () => {
+			inputEl.addEventListener('blur', () => {
 				// Hide after a tick so click on a result still fires
 				setTimeout(() => { panel.style.display = 'none'; }, 150);
 			});
+			// Track the panel for cleanup when the dialog closes — see the
+			// `close()` helper below.
+			openTypeaheadPanels.push({ panel, reposition });
 		}
 
 		if (field.hint) {
@@ -809,6 +1035,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		overlay.parentElement.removeChild(overlay);
 		doc.removeEventListener('keydown', onKey, true);
 		overlay.removeEventListener('click', onOverlayClick);
+		// Detach every body-mounted typeahead panel + its scroll/resize
+		// listeners. Leaving them attached would leak listeners on every
+		// dialog open and leave stale panels in the DOM tree.
+		for (const t of openTypeaheadPanels) {
+			doc.defaultView?.removeEventListener('scroll', t.reposition, true);
+			doc.defaultView?.removeEventListener('resize', t.reposition);
+			if (t.panel.parentElement) { t.panel.parentElement.removeChild(t.panel); }
+		}
+		openTypeaheadPanels.length = 0;
 	};
 	doc.addEventListener('keydown', onKey, true);
 	overlay.addEventListener('click', onOverlayClick);
