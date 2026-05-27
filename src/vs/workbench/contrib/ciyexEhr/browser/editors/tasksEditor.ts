@@ -16,7 +16,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { TasksEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
+import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 
 interface Task {
 	id: string;
@@ -576,7 +576,9 @@ export class TasksEditor extends EditorPane {
 			const provOwnerDoc = assignedToInput.ownerDocument || document;
 			const provDropdown = provOwnerDoc.createElement('div');
 			provDropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-			provOwnerDoc.body.appendChild(provDropdown);
+			// Mount inside .monaco-workbench so var(--vscode-…) resolves to
+			// the active theme rather than the dark fallback hex.
+			findWorkbenchRoot(assignedToInput, provOwnerDoc).appendChild(provDropdown);
 			const positionProvDropdown = () => {
 				const rect = assignedToInput.getBoundingClientRect();
 				provDropdown.style.left = `${rect.left}px`;
@@ -639,7 +641,9 @@ export class TasksEditor extends EditorPane {
 			const patOwnerDoc = patNameInput.ownerDocument || document;
 			const dropdown = patOwnerDoc.createElement('div');
 			dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-			patOwnerDoc.body.appendChild(dropdown);
+			// Mount inside .monaco-workbench so var(--vscode-…) resolves to
+			// the active theme rather than the dark fallback hex.
+			findWorkbenchRoot(patNameInput, patOwnerDoc).appendChild(dropdown);
 			const positionPatDropdown = () => {
 				const rect = patNameInput.getBoundingClientRect();
 				dropdown.style.left = `${rect.left}px`;
