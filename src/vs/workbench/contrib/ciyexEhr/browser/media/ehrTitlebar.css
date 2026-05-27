@@ -206,6 +206,22 @@
 	color: inherit;
 }
 
+/* Patient icon: head + shoulders silhouette, no outer circle */
+.ehr-patient-icon {
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	background-color: currentColor;
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'/%3E%3C/svg%3E");
+	-webkit-mask-size: 16px 16px;
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'/%3E%3C/svg%3E");
+	mask-size: 16px 16px;
+	mask-repeat: no-repeat;
+	mask-position: center;
+}
+
 .ehr-action-icon {
 	font-size: 16px;
 	line-height: 1;
@@ -338,6 +354,20 @@
 	align-items: center;
 	padding: 16px 20px 12px;
 	border-bottom: 1px solid var(--vscode-editorWidget-border, #eee);
+}
+
+.ehr-overlay-title-group {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.ehr-overlay-title-icon {
+	width: 18px;
+	height: 18px;
+	-webkit-mask-size: 18px 18px;
+	mask-size: 18px 18px;
+	color: var(--vscode-titleBar-activeForeground, #ccc);
 }
 
 .ehr-overlay-header h3 {

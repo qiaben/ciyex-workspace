@@ -285,7 +285,7 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-person'));
+		DOM.append(btn, DOM.$('span.ehr-patient-icon'));
 		const label = DOM.append(btn, DOM.$('span.ehr-action-label'));
 		label.textContent = 'Patient';
 
@@ -347,7 +347,9 @@ export class EhrTitlebarControls extends Disposable {
 		DOM.getActiveWindow().document.body.appendChild(this.patientOverlay);
 
 		const header = DOM.append(this.patientOverlay, DOM.$('.ehr-overlay-header'));
-		const title = DOM.append(header, DOM.$('h3'));
+		const titleGroup = DOM.append(header, DOM.$('.ehr-overlay-title-group'));
+		DOM.append(titleGroup, DOM.$('span.ehr-patient-icon.ehr-overlay-title-icon'));
+		const title = DOM.append(titleGroup, DOM.$('h3'));
 		title.textContent = 'Create Patient';
 		const closeBtn = DOM.append(header, DOM.$('.ehr-overlay-close'));
 		closeBtn.textContent = '\u00D7';
