@@ -18,6 +18,7 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 
 interface QuickAction {
 	icon: string;
+	customClass?: string;
 	title: string;
 	onClick: () => void;
 }
@@ -297,7 +298,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		const primary: QuickAction[] = [
 			{ icon: 'add', title: 'New Encounter', onClick: () => this._openNewEncounter() },
-			{ icon: 'person', title: 'Edit Demographics', onClick: () => this._openChartAt('demographics') },
+			{ icon: '', customClass: 'ehr-patient-icon', title: 'Edit Demographics', onClick: () => this._openChartAt('demographics') },
 			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openChartAt('payment') },
 			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openChartAt('billing') },
 		];
@@ -323,8 +324,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		b.title = a.title;
 		b.setAttribute('aria-label', a.title);
 		b.style.cssText = 'width:38px;height:38px;display:flex;align-items:center;justify-content:center;background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;cursor:pointer;color:var(--vscode-foreground);transition:background 0.15s;';
-		const ico = DOM.append(b, DOM.$('span.codicon.codicon-' + a.icon));
-		(ico as HTMLElement).style.cssText = 'font-size:20px;';
+		let ico: HTMLElement;
+		if (a.customClass) {
+			ico = DOM.append(b, DOM.$('span.' + a.customClass)) as HTMLElement;
+			ico.style.cssText = 'width:20px;height:20px;';
+		} else {
+			ico = DOM.append(b, DOM.$('span.codicon.codicon-' + a.icon)) as HTMLElement;
+			ico.style.cssText = 'font-size:20px;';
+		}
 		b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; });
 		b.addEventListener('mouseleave', () => { b.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; });
 		b.addEventListener('click', (e) => { e.stopPropagation(); a.onClick(); });

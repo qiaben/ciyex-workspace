@@ -66,6 +66,7 @@ export class CalendarEditorInput extends BaseCiyexInput {
 	override get typeId(): string { return CalendarEditorInput.ID; }
 	// Use a virtual resource so VS Code does not show the on-disk path in breadcrumbs / title.
 	override get resource(): URI { return URI.from({ scheme: 'ciyex-calendar', path: '/calendar' }); }
+	override matches(other: EditorInput): boolean { return other instanceof CalendarEditorInput; }
 }
 
 // allow-any-unicode-next-line

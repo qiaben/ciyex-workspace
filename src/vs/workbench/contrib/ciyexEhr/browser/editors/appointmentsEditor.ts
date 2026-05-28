@@ -12,7 +12,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { AppointmentsEditorInput } from './ciyexEditorInput.js';
+import { AppointmentsEditorInput, CalendarEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
@@ -751,6 +751,14 @@ export class AppointmentsEditor extends EditorPane {
 
 		const titleGroup = DOM.append(header, DOM.$('div'));
 		titleGroup.style.cssText = 'display:flex;align-items:center;gap:12px;';
+
+		const backBtn = DOM.append(titleGroup, DOM.$('button')) as HTMLButtonElement;
+		backBtn.title = 'Back to Calendar';
+		backBtn.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 10px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		backBtn.textContent = '← Calendar';
+		backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'transparent'; });
+		backBtn.addEventListener('click', () => { this.group.openEditor(new CalendarEditorInput(), { pinned: false }); });
 
 		const title = DOM.append(titleGroup, DOM.$('h2'));
 		title.textContent = 'Appointments';

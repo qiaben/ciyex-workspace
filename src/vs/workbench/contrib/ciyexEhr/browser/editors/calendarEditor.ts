@@ -22,12 +22,6 @@ import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown } from '../customDropdown.js';
 
-const CAL_REFRESH_OPTIONS = [
-	{ label: 'Off', value: 0 },
-	{ label: '15s', value: 15000 },
-	{ label: '30s', value: 30000 },
-	{ label: '60s', value: 60000 },
-];
 
 interface Appointment {
 	id: string;
@@ -108,12 +102,6 @@ export class CalendarEditor extends EditorPane {
 	private locations: Array<{ id: string; name: string }> = [];
 	private scheduleBlocks: Array<{ providerId?: string; status: string; startTime: string; endTime: string; recurrence?: { frequency: string; byWeekday?: string[] }; serviceType?: string }> = [];
 
-	// Auto-refresh
-	private _calRefreshInterval = 30000;
-	private _calRefreshTimer: number | null = null;
-	private _calCountdownTimer: number | null = null;
-	private _calNextRefreshAt = 0;
-	private _calCountdownEl: HTMLElement | null = null;
 
 	constructor(
 		group: IEditorGroup,
@@ -197,7 +185,6 @@ export class CalendarEditor extends EditorPane {
 		this.viewMode = defaultView === 'week' ? 'week' : defaultView === 'month' ? 'month' : 'day';
 		this._publishCalendarState();
 		await this._loadAndRender();
-		this._startCalAutoRefresh();
 	}
 
 	/** True when the titlebar search bridge has been wired so we don't double-bind. */
@@ -488,80 +475,6 @@ export class CalendarEditor extends EditorPane {
 		return { startDate: localDateStr(monday), endDate: localDateStr(sunday) };
 	}
 
-	// allow-any-unicode-next-line
-	// ─── Auto-refresh / Print / Export / TV ────────────────────────────────
-
-	private _startCalAutoRefresh(): void {
-		this._stopCalAutoRefresh();
-		if (this._calRefreshInterval > 0) {
-			const win = DOM.getActiveWindow();
-			this._calNextRefreshAt = Date.now() + this._calRefreshInterval;
-			this._calRefreshTimer = win.setInterval(() => {
-				this._calNextRefreshAt = Date.now() + this._calRefreshInterval;
-				void this._loadAndRender();
-			}, this._calRefreshInterval);
-			this._calCountdownTimer = win.setInterval(() => this._updateCalCountdownLabel(), 1000);
-		}
-		this._updateCalCountdownLabel();
-	}
-
-	private _stopCalAutoRefresh(): void {
-		const win = DOM.getActiveWindow();
-		if (this._calRefreshTimer) { win.clearInterval(this._calRefreshTimer); this._calRefreshTimer = null; }
-		if (this._calCountdownTimer) { win.clearInterval(this._calCountdownTimer); this._calCountdownTimer = null; }
-		this._calNextRefreshAt = 0;
-		this._updateCalCountdownLabel();
-	}
-
-	private _updateCalCountdownLabel(): void {
-		if (!this._calCountdownEl) { return; }
-		if (this._calRefreshInterval <= 0 || this._calNextRefreshAt === 0) {
-			this._calCountdownEl.textContent = '';
-			return;
-		}
-		const seconds = Math.max(0, Math.ceil((this._calNextRefreshAt - Date.now()) / 1000));
-		this._calCountdownEl.textContent = `(${seconds}s)`;
-	}
-
-	private _exportCalendarCSV(): void {
-		const { startDate, endDate } = this._getDateRange();
-		const appts = this.appointments.filter(a => {
-			const d = this._parseAptDate(a);
-			if (!d) { return false; }
-			const ds = localDateStr(d);
-			return ds >= startDate && ds <= endDate;
-		});
-		const header = 'Date,Time,Patient,Provider,Location,Type,Status\n';
-		const rows = appts.map(a => {
-			const d = this._parseAptDate(a);
-			const dateStr = d ? localDateStr(d) : '';
-			const timeStr = d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
-			const esc = (v: string) => v.includes(',') || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v;
-			return [
-				dateStr,
-				timeStr,
-				esc(a.patientName || ''),
-				esc(a.providerName || a.practitionerName || ''),
-				esc(a.locationName || ''),
-				esc(getAppointmentType(a)),
-				esc(a.status || ''),
-			].join(',');
-		}).join('\n');
-
-		const blob = new Blob([header + rows], { type: 'text/csv' });
-		const url = URL.createObjectURL(blob);
-		const win = DOM.getActiveWindow();
-		const a = win.document.createElement('a');
-		a.href = url;
-		a.download = `calendar_${localDateStr(this.currentDate)}.csv`;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
-
-	private _printCalendar(): void {
-		const win = DOM.getActiveWindow();
-		win.print();
-	}
 
 	private _openTvDisplay(mode: 'staff' | 'waiting'): void {
 		try {
@@ -593,11 +506,11 @@ export class CalendarEditor extends EditorPane {
 
 		// View toggles
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
-		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;';
+		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;flex-shrink:0;';
 		for (const mode of ['day', 'week', 'month'] as const) {
 			const btn = DOM.append(viewGroup, DOM.$('button'));
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-			btn.style.cssText = `padding:3px 10px;border:none;cursor:pointer;font-size:11px;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			btn.style.cssText = `padding:3px 12px;border:none;cursor:pointer;font-size:11px;white-space:nowrap;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
 			btn.addEventListener('click', () => { this.viewMode = mode; this._publishCalendarState(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
@@ -649,42 +562,6 @@ export class CalendarEditor extends EditorPane {
 			finally { refreshBtn.disabled = false; refreshBtn.textContent = prev; }
 		});
 
-		// Auto-refresh interval picker
-		const refreshWrap = DOM.append(actionsGroup, DOM.$('div'));
-		refreshWrap.style.cssText = 'display:flex;align-items:center;gap:4px;';
-		const autoLabel = DOM.append(refreshWrap, DOM.$('span'));
-		autoLabel.textContent = 'Auto:';
-		autoLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		const refreshSel = DOM.append(refreshWrap, DOM.$('select')) as HTMLSelectElement;
-		refreshSel.style.cssText = 'padding:3px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:11px;cursor:pointer;';
-		refreshSel.title = 'Auto-refresh interval';
-		for (const opt of CAL_REFRESH_OPTIONS) {
-			const o = DOM.append(refreshSel, DOM.$('option')) as HTMLOptionElement;
-			o.value = String(opt.value); o.textContent = opt.label;
-			if (opt.value === this._calRefreshInterval) { o.selected = true; }
-		}
-		this._calCountdownEl = DOM.append(refreshWrap, DOM.$('span'));
-		this._calCountdownEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);min-width:36px;font-variant-numeric:tabular-nums;';
-		this._updateCalCountdownLabel();
-		refreshSel.addEventListener('change', () => {
-			this._calRefreshInterval = parseInt(refreshSel.value, 10);
-			this._startCalAutoRefresh();
-			if (this._calRefreshInterval > 0) { void this._loadAndRender(); }
-		});
-
-		// Print
-		const printBtn = DOM.append(actionsGroup, DOM.$('button'));
-		printBtn.style.cssText = calBtnStyle;
-		// allow-any-unicode-next-line
-		printBtn.textContent = '\uD83D\uDDA8 Print';
-		printBtn.addEventListener('click', () => this._printCalendar());
-
-		// Export
-		const exportBtn = DOM.append(actionsGroup, DOM.$('button'));
-		exportBtn.style.cssText = calBtnStyle;
-		// allow-any-unicode-next-line
-		exportBtn.textContent = '\u2B07 Export';
-		exportBtn.addEventListener('click', () => this._exportCalendarCSV());
 
 		// TV Display
 		const tvWrap = DOM.append(actionsGroup, DOM.$('div'));
@@ -1903,12 +1780,12 @@ export class CalendarEditor extends EditorPane {
 		this._filterWraps.push(wrap);
 
 		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
-		const symbolStyle = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;';
+		const symbolStyle = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;filter:grayscale(1) opacity(0.65);';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
 		trigger.style.cssText = symbolMode ? symbolStyle : inputStyle + 'text-align:left;';
 		if (symbolMode) {
-			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.color = 'var(--vscode-titleBar-activeForeground,#ccc)'; });
-			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)'; });
+			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.filter = 'grayscale(1) opacity(0.9)'; });
+			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.filter = selected.size > 0 ? 'grayscale(0.3) opacity(0.9)' : 'grayscale(1) opacity(0.65)'; });
 		}
 		const describe = () => {
 			if (selected.size === 0) { return allLabel; }
@@ -2014,7 +1891,6 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	override dispose(): void {
-		this._stopCalAutoRefresh();
 		super.dispose();
 	}
 }
