@@ -515,16 +515,16 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			}));
 		}
 
-		// Create Toolbar Actions
+		// EHR action buttons go before the layout/action toolbar
+		if (ehrActionElement) {
+			append(this.rightContent, ehrActionElement);
+		}
+
+		// Create Toolbar Actions (customize layout — comes after EHR buttons)
 		if (hasCustomTitlebar(this.configurationService, this.titleBarStyle)) {
 			this.actionToolBarElement = append(this.rightContent, $('div.action-toolbar-container'));
 			this.createActionToolBar();
 			this.createActionToolBarMenus();
-		}
-
-		// Append EHR action buttons last so they sit at the far right, just before window controls
-		if (ehrActionElement) {
-			append(this.rightContent, ehrActionElement);
 		}
 
 		// Window Controls Container
