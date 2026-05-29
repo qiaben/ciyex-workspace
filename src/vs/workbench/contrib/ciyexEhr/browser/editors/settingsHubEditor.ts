@@ -3858,20 +3858,23 @@ export class SettingsHubEditor extends EditorPane {
 		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:680px;max-width:92vw;max-height:88vh;overflow-y:auto;padding:20px;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		// Flex column with a sticky header / footer and only the field grid
+		// scrolling \u2014 gives the dialog a clean, structured look (QA issue 27:
+		// "add new page ui is not looking good").
+		modal.style.cssText = 'background:var(--vscode-editor-background);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;width:680px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
 
 		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
 		const ht = DOM.append(head, DOM.$('h3'));
 		ht.textContent = mode === 'create' ? 'Create Code' : mode === 'edit' ? 'Edit Code' : 'View Code';
 		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
 		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
 		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;border-radius:4px;';
 		closeBtn.addEventListener('click', () => overlay.remove());
 
 		const grid = DOM.append(modal, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;padding:20px;overflow-y:auto;flex:1;align-content:start;';
 
 		const form: Record<string, unknown> = code ? { ...code } : { active: true };
 		const isView = mode === 'view';
@@ -3949,7 +3952,7 @@ export class SettingsHubEditor extends EditorPane {
 		mkField('serviceReporting', 'Service Reporting', { type: 'checkbox' });
 
 		const actions = DOM.append(modal, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
 
 		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = isView ? 'Close' : 'Cancel';

@@ -243,13 +243,21 @@ export class EhrTitlebarControls extends Disposable {
 				dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)} · View appointments` : 'View appointments';
 
 				const patientName = `${p.firstName} ${p.lastName}`.trim();
+				const patientId = String(p.id || p.fhirId || '');
 				this._register(DOM.addDisposableListener(item, 'click', () => {
 					this.searchDropdown.style.display = 'none';
-					this.searchInput.value = patientName;
-					// Push the value into the calendar filter bridge as well so the
-					// calendar grid filters immediately.
-					this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-					this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
+					this.searchInput.value = '';
+					// Redirect to the patient's chart/snapshot (QA issue 29:
+					// "search is working but it will not redirect to the
+					// particular patient"). Fall back to the calendar only when the
+					// result has no resolvable id.
+					if (patientId) {
+						this.commandService.executeCommand('ciyex.openPatientChart', patientId, patientName).catch(() => { });
+					} else {
+						this.searchInput.value = patientName;
+						this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+						this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
+					}
 				}));
 			}
 		}

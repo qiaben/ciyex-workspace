@@ -605,20 +605,44 @@ export function withTypeaheadSearch(
 			return [];
 		} catch { return []; }
 	};
-	// Generic code search against `/api/codes/{system}` (back-end aliases the
-	// ciyex-codes service). Returns `{ value, label, description, details }`
-	// shaped the same as patient/provider so the typeahead picker works
-	// regardless of which kind of code the user is searching for.
-	const fetchCodes = async (path: string, q: string) => {
+	// Medical-code searches resolve through the ciyex-codes service via the app
+	// proxy: GET /api/app-proxy/ciyex-codes/api/codes/{SYSTEM}/search?q=… which
+	// returns a Spring Page<MedicalCode> ({ content: [...] }). `{SYSTEM}` is a
+	// CodeSystem enum value (ICD10_CM, CPT, HCPCS, CDT, NDC, LOINC, SNOMED_CT,
+	// CVX, …). The previous code endpoints (`/api/codes/cpt`, `/api/codes/rxnorm`,
+	// … with a `search=` param) collided with the patient-scoped
+	// `/api/codes/{patientId}` route on the main API — Spring tried to bind the
+	// system name as a numeric patientId and 4xx'd, so code typeahead in every
+	// sidebar drawer silently returned no results (QA: "codes search not working").
+	// The label is set to the code itself (the field stores a code) with the
+	// description surfaced as the dropdown's secondary line so codes are
+	// distinguishable while choosing.
+	const CIYEX_CODES_BASE = '/api/app-proxy/ciyex-codes/api/codes';
+	const fetchCodeSystem = async (system: string, q: string) => {
 		try {
-			const res = await api.fetch(`${path}?search=${encodeURIComponent(q)}&page=0&size=10`);
+			const res = await api.fetch(`${CIYEX_CODES_BASE}/${system}/search?q=${encodeURIComponent(q)}&page=0&size=10`);
 			if (!res.ok) { return []; }
 			const data = await res.json();
-			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+			const list = (data?.content || data?.data?.content || data?.data || (Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
 			return list.map(c => {
 				const code = String(c.code || c.id || '');
-				const desc = String(c.description || c.shortDescription || c.display || c.name || '');
-				return { value: code || desc, label: desc || code, description: code, details: { code, description: desc } };
+				const desc = String(c.shortDescription || c.description || c.longDescription || c.display || c.name || '');
+				return { value: code, label: code, description: desc, details: { code, description: desc } };
+			});
+		} catch { return []; }
+	};
+	// Custom / org-defined codes live on the main API's global_codes search
+	// route, which is ApiResponse-wrapped ({ data: [...] }) and keyed on `q`.
+	const fetchGlobalCodes = async (q: string) => {
+		try {
+			const res = await api.fetch(`/api/global_codes/search?q=${encodeURIComponent(q)}&page=0&size=10`);
+			if (!res.ok) { return []; }
+			const data = await res.json();
+			const list = (data?.data?.content || data?.content || data?.data || (Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
+			return list.map(c => {
+				const code = String(c.code || c.id || '');
+				const desc = String(c.shortDescription || c.description || c.display || c.name || '');
+				return { value: code, label: code, description: desc, details: { code, description: desc } };
 			});
 		} catch { return []; }
 	};
@@ -656,27 +680,39 @@ export function withTypeaheadSearch(
 		}
 		// CVX vaccine code search.
 		if (k === 'cvxcode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cvx', q) };
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CVX', q) };
 		}
 		// CPT procedure code search.
 		if (k === 'procedurecode' || k === 'cptcode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/cpt', q) };
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CPT', q) };
 		}
 		// ICD-10 diagnosis code search.
 		if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/icd10', q) };
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('ICD10_CM', q) };
 		}
 		// LOINC lab test code search.
 		if (k === 'testcode' || k === 'loinc') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/loinc', q) };
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q) };
 		}
-		// RxNorm / NDC medication code search.
+		// NDC medication code search (ciyex-codes has no RxNorm system; meds are NDC).
 		if (k === 'medicationcode' || k === 'rxnormcode' || k === 'ndccode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/codes/rxnorm', q) };
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('NDC', q) };
 		}
-		// SNOMED / HCPCS / CDT / generic global codes search.
-		if (k === 'snomedcode' || k === 'hcpcscode' || k === 'cdtcode' || k === 'code') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodes('/api/global_codes', q) };
+		// HCPCS code search.
+		if (k === 'hcpcscode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('HCPCS', q) };
+		}
+		// CDT (dental) code search.
+		if (k === 'cdtcode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CDT', q) };
+		}
+		// SNOMED clinical term search.
+		if (k === 'snomedcode') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('SNOMED_CT', q) };
+		}
+		// Generic / custom org-defined codes (Medical Codes module).
+		if (k === 'code') {
+			return { ...f, kind: 'search' as const, onSearch: (q) => fetchGlobalCodes(q) };
 		}
 		// Insurance search.
 		if (k === 'insurancename') {
@@ -685,11 +721,19 @@ export function withTypeaheadSearch(
 				kind: 'search' as const,
 				onSearch: async (q) => {
 					try {
-						const res = await api.fetch(`/api/insurances?search=${encodeURIComponent(q)}&page=0&size=10`);
+						// Payers live on `/api/insurance-companies` (the `/api/insurances`
+						// path the sidebar used before does not exist → 404 → no results).
+						// The route returns the full list ({ data: [...] }) with no server
+						// filter, so we match the query client-side.
+						const res = await api.fetch(`/api/insurance-companies`);
 						if (!res.ok) { return []; }
 						const data = await res.json();
 						const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-						return list.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
+						const lq = q.toLowerCase();
+						return list
+							.filter(p => !lq || String(p.name || p.label || '').toLowerCase().includes(lq))
+							.slice(0, 10)
+							.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
 					} catch { return []; }
 				},
 			};
@@ -788,6 +832,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	// flow). The overlay is a thin scrim that lets the underlying page stay
 	// visible while preventing accidental clicks; the drawer itself docks
 	// flush to the right edge of the workbench.
+	// Offset the drawer below the workbench title bar so it doesn't cover the
+	// top toolbar (the "Patient / Appointment / Donate" actions + window
+	// controls). Measuring the live titlebar keeps us correct across custom /
+	// native title-bar styles. QA report issues 30 & 31: "edit page is mis
+	// aligned with top bar like patient, appointment etc".
+	// eslint-disable-next-line no-restricted-syntax
+	const titlebarEl = doc.querySelector('.part.titlebar');
+	const titlebarHeight = titlebarEl ? Math.round((titlebarEl as HTMLElement).getBoundingClientRect().height) : 35;
+
 	const overlay = doc.createElement('div');
 	overlay.className = 'ciyex-edit-dialog-overlay';
 	// Keep the overlay transparent — only the inline rgba(0,0,0,0.25)
@@ -796,13 +849,13 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	// NOT also copy the workbench classList onto the overlay because that
 	// turned the entire left half into a solid black panel — the second
 	// `.monaco-workbench` element painted over the real workbench content.
-	overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);';
+	overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);`;
 
 	const dialog = doc.createElement('div');
 	dialog.style.cssText = [
 		'width:520px',
 		'max-width:90vw',
-		'height:100vh',
+		`height:calc(100vh - ${titlebarHeight}px)`,
 		'display:flex',
 		'flex-direction:column',
 		'overflow:hidden',

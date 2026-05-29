@@ -5,7 +5,7 @@
 
 import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
+import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -423,6 +423,11 @@ export class LabsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientFirstName', 'patientLastName', 'orderNumber', 'orderName', 'physicianName', 'status', 'priority', 'result', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// 8 data columns + Actions overflow a narrow pane and crush the headers
+		// into each other (QA issue 13: "columns missing / not aligned, action
+		// column missing"). A min-width lets the table scroll horizontally so
+		// every column — including Actions — keeps its width and stays aligned.
+		tableMinWidth: '1040px',
 		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
 		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
 		cellRenderer: (key, _value, item) => {
@@ -982,6 +987,11 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			{
+				// Only the next valid status transition is shown per row (matches
+				// ciyex-ehr-ui, which collapses the workflow into a single advance
+				// button instead of always showing Send/Ack/Schedule/Complete —
+				// QA issue 15: "some of the buttons are extra added").
+				visible: (item) => { const s = String(item.status || '').toLowerCase(); return s === '' || s === 'draft' || s === 'pending'; },
 				// allow-any-unicode-next-line
 				label: 'Send', icon: '\u{1F4E4}', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -995,6 +1005,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				}
 			},
 			{
+				visible: (item) => String(item.status || '').toLowerCase() === 'sent',
 				// allow-any-unicode-next-line
 				label: 'Acknowledge', icon: '✅', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1007,6 +1018,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				}
 			},
 			{
+				visible: (item) => String(item.status || '').toLowerCase() === 'acknowledged',
 				// allow-any-unicode-next-line
 				label: 'Schedule', icon: '\u{1F4C5}', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1019,6 +1031,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				}
 			},
 			{
+				visible: (item) => String(item.status || '').toLowerCase() === 'scheduled',
 				// allow-any-unicode-next-line
 				label: 'Complete', icon: '\u{1F3C1}', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1031,6 +1044,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				}
 			},
 			{
+				visible: (item) => { const s = String(item.status || '').toLowerCase(); return s !== 'cancelled' && s !== 'completed'; },
 				// allow-any-unicode-next-line
 				label: 'Cancel', icon: '\u{1F6AB}', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1396,6 +1410,8 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			{
+				color: '#22c55e',
+				visible: (item) => String(item.status || '').toLowerCase() !== 'approved',
 				// allow-any-unicode-next-line
 				label: 'Approve', icon: '✓', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1424,6 +1440,8 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				}
 			},
 			{
+				color: '#ef4444',
+				visible: (item) => String(item.status || '').toLowerCase() !== 'denied',
 				// allow-any-unicode-next-line
 				label: 'Deny', icon: '✗', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
@@ -1958,14 +1976,26 @@ export class RecallEditor extends ClinicalListEditorBase {
 				],
 			},
 			{
+				// Providers are loaded live from /api/providers so the filter
+				// always reflects the current practice's clinicians — the
+				// previous hardcoded list showed stale/old users (QA issue 8).
 				key: 'providerName', placeholder: 'All Providers',
-				options: [
-					{ label: 'Dr. Brian Wilson', value: 'Brian Wilson' },
-					{ label: 'Dr. Robert Kumar', value: 'Robert Kumar' },
-					{ label: 'Dr. Emily Taylor', value: 'Emily Taylor' },
-					{ label: 'Dr. Jessica Patel', value: 'Jessica Patel' },
-					{ label: 'Dr. Sarah Williams', value: 'Sarah Williams' },
-				],
+				options: [],
+				optionsLoader: async () => {
+					try {
+						const res = await this.apiService.fetch('/api/providers?page=0&size=200');
+						if (!res.ok) { return []; }
+						const data = await res.json();
+						const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+						const seen = new Set<string>();
+						const opts: Array<{ label: string; value: string }> = [];
+						for (const p of list) {
+							const name = String(p.name || p.fullName || `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim());
+							if (name && !seen.has(name)) { seen.add(name); opts.push({ label: name, value: name }); }
+						}
+						return opts.sort((a, b) => a.label.localeCompare(b.label));
+					} catch { return []; }
+				},
 			},
 			{
 				key: 'dueDateRange', placeholder: 'All Dates',
@@ -2567,6 +2597,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
 	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' = 'transactions';
+	// Plans + Ledger are patient-scoped on the backend (no global list route),
+	// so those two views require a selected patient (matches ciyex-ehr-ui).
+	private _payPatientId = '';
+	private _payPatientName = '';
+	private _payPatientBar: HTMLElement | null = null;
 	// allow-any-unicode-next-line
 	// ── Credit-card grid state ──────────────────────────────────────────────
 	private _cards: CreditCardRecord[] = [];
@@ -2940,15 +2975,25 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		this._cardFormOverlay?.remove();
 		this._cardFormBackdrop?.remove();
 
-		const doc = DOM.getActiveWindow().document;
+		const doc = (this.root && this.root.ownerDocument) || DOM.getActiveWindow().document;
+		// Mount on the workbench root (not document.body) so the workbench theme
+		// CSS variables resolve. Body-mounted overlays sit OUTSIDE .monaco-workbench
+		// where every --vscode-* var falls back to its hardcoded dark default —
+		// which is why the Add Payment Method drawer rendered dark on a light
+		// workbench (QA report issue 5).
+		const mount = findWorkbenchRoot(this.root, doc);
+		const themeType = this.themeService.getColorTheme().type;
+		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
 		const backdrop = doc.createElement('div');
+		backdrop.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
 		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
-		doc.body.appendChild(backdrop);
+		mount.appendChild(backdrop);
 		this._cardFormBackdrop = backdrop;
 
 		const overlay = doc.createElement('div');
-		overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:10000;width:560px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
-		doc.body.appendChild(overlay);
+		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+		overlay.style.cssText = `position:fixed;top:0;right:0;bottom:0;z-index:10000;width:560px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
+		mount.appendChild(overlay);
 		this._cardFormOverlay = overlay;
 
 		const close = () => { overlay.remove(); backdrop.remove(); this._cardFormOverlay = null; this._cardFormBackdrop = null; };
@@ -3125,6 +3170,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private readonly _plansConfig: ClinicalEditorConfig = {
 		title: 'Payment Plans', apiPath: '/api/payments/plans',
 		searchPlaceholder: 'Search by patient, plan...',
+		// The backend only exposes /api/payments/plans/patient/{id} for GET
+		// (a bare GET /api/payments/plans is a 405). Scope to the selected patient.
+		listUrlBuilder: () => this._payPatientId ? `/api/payments/plans/patient/${this._payPatientId}` : null,
+		emptyListMessage: 'Select a patient to view their payment plans.',
 		clientSideFilter: ['patientName', 'planName', 'status', 'id'],
 		editable: true,
 		columns: [
@@ -3173,6 +3222,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private readonly _ledgerConfig: ClinicalEditorConfig = {
 		title: 'Ledger', apiPath: '/api/payments/ledger',
 		searchPlaceholder: 'Search ledger entries...',
+		// Backend only exposes /api/payments/ledger/patient/{id} for GET
+		// (a bare GET /api/payments/ledger has no endpoint → 500). Scope by patient.
+		listUrlBuilder: () => this._payPatientId ? `/api/payments/ledger/patient/${this._payPatientId}` : null,
+		emptyListMessage: 'Select a patient to view their ledger.',
 		clientSideFilter: ['patientName', 'entryType', 'description', 'id'],
 		editable: false,
 		columns: [
@@ -3250,6 +3303,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				if (this.payView !== view) {
 					this.payView = view;
 					payTabBtns.forEach(b => { stylePayBtn(b, b === btn); });
+					this._syncPayPatientBar();
 					this._resetAndReload();
 				}
 			});
@@ -3257,7 +3311,87 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			tabRow.appendChild(btn);
 		});
 
+		this._buildPayPatientBar(parent);
 		super.createEditor(parent);
+		this._syncPayPatientBar();
+	}
+
+	/**
+	 * Patient picker shown only for the patient-scoped Plans / Ledger views.
+	 * Typing 2+ chars searches /api/patients; picking a result scopes the list
+	 * to that patient (the only way the backend serves plans/ledger data).
+	 */
+	private _buildPayPatientBar(parent: HTMLElement): void {
+		const doc = parent.ownerDocument;
+		const bar = doc.createElement('div');
+		bar.style.cssText = 'display:none;align-items:center;gap:10px;padding:10px 24px 0;position:relative;';
+		const label = doc.createElement('span');
+		label.textContent = 'Patient:';
+		label.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		bar.appendChild(label);
+
+		const wrap = doc.createElement('div');
+		wrap.style.cssText = 'position:relative;width:320px;';
+		const input = doc.createElement('input');
+		input.type = 'text';
+		input.placeholder = 'Search patient by name...';
+		input.value = this._payPatientName;
+		input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		wrap.appendChild(input);
+
+		const dropdown = doc.createElement('div');
+		dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:50;display:none;margin-top:2px;';
+		wrap.appendChild(dropdown);
+		bar.appendChild(wrap);
+
+		let debounce: ReturnType<typeof setTimeout> | undefined;
+		input.addEventListener('input', () => {
+			const q = input.value.trim();
+			if (debounce) { clearTimeout(debounce); }
+			if (q.length < 2) { dropdown.style.display = 'none'; return; }
+			debounce = setTimeout(async () => {
+				let list: Array<Record<string, unknown>> = [];
+				try {
+					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+					if (res.ok) {
+						const data = await res.json();
+						const w = data?.data ?? data;
+						list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+					}
+				} catch { /* ignore */ }
+				DOM.clearNode(dropdown);
+				if (list.length === 0) { dropdown.style.display = 'none'; return; }
+				for (const p of list.slice(0, 10)) {
+					const name = `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim() || String(p.name || p.id);
+					const pid = String(p.id ?? p.patientId ?? '');
+					const row = doc.createElement('div');
+					row.textContent = pid ? `${name} (MRN ${pid})` : name;
+					row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+					row.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						this._payPatientId = pid;
+						this._payPatientName = name;
+						input.value = name;
+						dropdown.style.display = 'none';
+						this._resetAndReload();
+					});
+					dropdown.appendChild(row);
+				}
+				dropdown.style.display = 'block';
+			}, 250);
+		});
+		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 200); });
+
+		parent.appendChild(bar);
+		this._payPatientBar = bar;
+	}
+
+	private _syncPayPatientBar(): void {
+		if (this._payPatientBar) {
+			this._payPatientBar.style.display = (this.payView === 'plans' || this.payView === 'ledger') ? 'flex' : 'none';
+		}
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }

@@ -348,6 +348,24 @@ export class EncounterListPane extends ViewPane {
 		const dateRaw = String(item.encounterDate || item.startDate || item.start || '');
 		const initialDate = dateRaw ? dateRaw.slice(0, 10) : '';
 		const patientId = String(item.patientId || item.patientRef || '').replace('Patient/', '');
+		// Live provider typeahead — encounterProvider is stored as a display name
+		// (matches ciyex-ehr-ui's encounter model), so the picker stores the name.
+		const fetchProviders = async (q: string) => {
+			try {
+				for (const url of [`/api/providers?search=${encodeURIComponent(q)}&page=0&size=10`, `/api/fhir-resource/providers?search=${encodeURIComponent(q)}&page=0&size=10`]) {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+					if (list.length === 0) { continue; }
+					return list.map(p => {
+						const name = (p.name || p.fullName || `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim() || '') as string;
+						return { value: name, label: name };
+					});
+				}
+				return [];
+			} catch { return []; }
+		};
 		openRecordEditDialog({
 			title: `Edit Encounter — ${patName}`,
 			themeAnchor: this.container,
@@ -363,6 +381,7 @@ export class EncounterListPane extends ViewPane {
 						{ value: 'Observation', label: 'Observation' },
 					]
 				},
+				{ key: 'encounterProvider', label: 'Provider', kind: 'search', placeholder: 'Search provider...', widthPct: 50, onSearch: fetchProviders },
 				{
 					key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
 						{ value: 'SIGNED', label: 'Signed' },
@@ -374,19 +393,31 @@ export class EncounterListPane extends ViewPane {
 			],
 			values: {
 				encounterDate: initialDate,
-				type: String(item.type || 'Ambulatory'),
+				type: String(item.type || item.visitCategory || 'Ambulatory'),
+				encounterProvider: String(item.encounterProvider || item.providerDisplay || item.providerName || item.provider || ''),
 				status: String(item.status || 'UNSIGNED'),
-				reason: String(item.reason || item.reasonCode || ''),
+				reason: String(item.reason || item.reasonForVisit || item.reasonCode || ''),
 			},
 			onSave: async (next) => {
-				// Map workspace labels back to FHIR codes so the encounter PUT
-				// doesn't reject the payload with a 500. The previous version
-				// posted to `/api/encounters/{id}` which is the EHR mirror
-				// endpoint and requires the patient context in the path — the
-				// new admin login hit that endpoint with no patient context
-				// and the backend 500'd. The FHIR resource endpoint accepts a
-				// flat encounter PUT and matches what `encounterFormEditor`
-				// uses for its secondary save (see editors/encounterFormEditor.ts).
+				// Prefer the patient-scoped endpoint (matches ciyex-ehr-ui) — it
+				// accepts a flat encounter with a display-name provider and the
+				// UNSIGNED/SIGNED status values directly, so we avoid the FHIR
+				// participant-reference mapping that rejects bare ids/names.
+				if (patientId) {
+					const body: Record<string, unknown> = {
+						encounterDate: next.encounterDate ? new Date(next.encounterDate).toISOString() : undefined,
+						visitCategory: next.type,
+						encounterProvider: next.encounterProvider,
+						status: next.status,
+						reasonForVisit: next.reason,
+					};
+					const res = await this.apiService.fetch(`/api/${patientId}/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(body) });
+					if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+					await this._loadData();
+					return;
+				}
+				// Fallback: no patient context — write through the generic FHIR
+				// resource endpoint with FHIR-coded type/status.
 				const TYPE_CODE: Record<string, string> = {
 					'Ambulatory': 'AMB', 'Home Health': 'HH', 'Emergency': 'EMER',
 					'Short Stay': 'SS', 'Virtual': 'VR', 'Observation': 'OBSENC',
@@ -396,7 +427,6 @@ export class EncounterListPane extends ViewPane {
 				};
 				const payload: Record<string, unknown> = {
 					id: encId,
-					patientId,
 					encounterDate: next.encounterDate,
 					type: TYPE_CODE[next.type] || next.type,
 					status: STATUS_CODE[next.status] || next.status,

@@ -24,6 +24,20 @@ interface ActionDef {
 	label: string;
 	icon: string;
 	handler: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void;
+	/**
+	 * Optional per-row predicate. When provided and it returns false, the
+	 * action button is not rendered for that row. Use to show only the
+	 * applicable status transition (e.g. Referrals only offers the next valid
+	 * step) instead of every action on every row.
+	 */
+	visible?: (item: Record<string, unknown>) => boolean;
+	/**
+	 * Optional icon colour. Monochrome glyph icons (check / cross) inherit the
+	 * foreground colour, which on some themes is too low-contrast to spot in
+	 * the actions column (QA issue 17: approve/deny "not visible" on dark).
+	 * Set an explicit colour so the action always stands out.
+	 */
+	color?: string;
 }
 
 export interface FormFieldDef {
@@ -94,6 +108,14 @@ export interface FilterDropdownDef {
 	/** Placeholder shown as the "All" option */
 	placeholder: string;
 	options: Array<{ label: string; value: string }>;
+	/**
+	 * Optional async loader for the option list. When set, options are fetched
+	 * at render time and appended after any static {@link options}. Use for
+	 * filters that must reflect live data (e.g. the Patient Recall provider
+	 * filter, which must list the current practice's providers — not a stale
+	 * hardcoded set).
+	 */
+	optionsLoader?: () => Promise<Array<{ label: string; value: string }>>;
 }
 
 
@@ -203,6 +225,16 @@ export interface ClinicalEditorConfig {
 	 * produces extra fields for the save payload.
 	 */
 	formExtras?: (container: HTMLElement, editingItem: Record<string, unknown> | null) => FormExtrasHandle;
+	/**
+	 * Optional override for the list GET URL. Use for views whose backend
+	 * endpoint is patient-scoped (e.g. /api/payments/plans/patient/{id}) and has
+	 * no global list route. Return `null` when no context is selected yet — the
+	 * editor then renders {@link emptyListMessage} instead of firing a request
+	 * that would 404/405.
+	 */
+	listUrlBuilder?: () => string | null;
+	/** Message shown when {@link listUrlBuilder} returns null (no selection yet). */
+	emptyListMessage?: string;
 }
 
 export interface FormExtrasHandle {
@@ -310,6 +342,45 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	private async _loadData(): Promise<void> {
 		try {
+			// Patient-scoped views (e.g. Payments → Plans / Ledger) supply their
+			// own URL. A null result means nothing is selected yet — render a
+			// friendly empty state instead of hitting a non-existent global route.
+			if (this.config.listUrlBuilder) {
+				const built = this.config.listUrlBuilder();
+				if (!built) {
+					this.items = [];
+					this.totalPages = 1;
+					this._render();
+					return;
+				}
+				const res = await this.apiService.fetch(built);
+				if (!res.ok) {
+					this.items = [];
+					this.totalPages = 1;
+					let detail = '';
+					try {
+						const errData = await res.json() as Record<string, unknown> | null;
+						if (errData) { detail = String(errData['message'] || errData['error'] || ''); }
+					} catch { /* non-JSON body */ }
+					const base = `Failed to load data (HTTP ${res.status}).`;
+					this._renderError(detail ? `${base} ${detail}` : `${base} The API endpoint may be unavailable.`);
+					return;
+				}
+				const data = await res.json();
+				const wrapper = data?.data ?? data;
+				if (wrapper?.content) {
+					this.items = wrapper.content as Record<string, unknown>[];
+					this.totalPages = wrapper.totalPages || 1;
+				} else if (Array.isArray(wrapper)) {
+					this.items = wrapper;
+					this.totalPages = 1;
+				} else {
+					this.items = [];
+					this.totalPages = 1;
+				}
+				this._render();
+				return;
+			}
 			const clientFilter = this.config.clientSideFilter;
 			let url: string;
 			if (clientFilter) {
@@ -570,11 +641,24 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				allOpt.value = '';
 				allOpt.textContent = fd.placeholder;
 				const current = this.additionalFilterValues.get(fd.key) || '';
-				for (const o of fd.options) {
+				const addOption = (o: { label: string; value: string }) => {
 					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 					opt.value = o.value;
 					opt.textContent = o.label;
 					if (current === o.value) { opt.selected = true; }
+				};
+				for (const o of fd.options) { addOption(o); }
+				// Live options (e.g. providers for the recall filter) are loaded
+				// async and appended once resolved, so the dropdown reflects the
+				// current practice's data instead of a stale hardcoded list.
+				if (fd.optionsLoader) {
+					fd.optionsLoader().then(loaded => {
+						const seen = new Set(fd.options.map(o => o.value));
+						for (const o of loaded) {
+							if (o.value && !seen.has(o.value)) { seen.add(o.value); addOption(o); }
+						}
+						if (current) { sel.value = current; }
+					}).catch(() => { /* leave static options */ });
 				}
 				sel.addEventListener('change', () => {
 					this.additionalFilterValues.set(fd.key, sel.value);
@@ -634,7 +718,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		if (visibleItems.length === 0) {
 			const e = DOM.append(tbl, DOM.$('div'));
 			e.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
-			e.textContent = 'No records found';
+			// When a patient-scoped view has no selection yet, guide the user
+			// instead of implying there are no records.
+			const noSelection = !!this.config.listUrlBuilder && this.config.listUrlBuilder() === null;
+			e.textContent = noSelection ? (this.config.emptyListMessage || 'Select a patient first.') : 'No records found';
 			// Pagination still shown below for empty pages so the user can navigate back.
 		}
 
@@ -700,10 +787,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 				if (cfg.actions) {
 					for (const a of cfg.actions) {
+						if (a.visible && !a.visible(item)) { continue; }
 						const btn = DOM.append(acts, DOM.$('button'));
 						btn.textContent = a.icon;
 						btn.title = a.label;
-						btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;padding:2px;';
+						btn.style.cssText = `background:none;border:none;cursor:pointer;font-size:13px;padding:2px;${a.color ? `color:${a.color};` : ''}`;
 						btn.addEventListener('click', (ev) => { ev.stopPropagation(); a.handler(item, this.apiService, () => { this._loadStats(); this._loadData(); }, this.dialogService); });
 					}
 				}

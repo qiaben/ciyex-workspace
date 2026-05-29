@@ -388,6 +388,11 @@ export class PatientListPane extends ViewPane {
 						{ value: 'other', label: 'Other' },
 					]
 				},
+				// Phone + email were missing from the drawer (QA report issue 30).
+				// Field keys match ciyex-ehr-ui's patient edit page (email / phoneNumber)
+				// so the backend PUT /api/patients/{id} accepts them unchanged.
+				{ key: 'email', label: 'Email', kind: 'email', widthPct: 50, placeholder: 'name@example.com' },
+				{ key: 'phoneNumber', label: 'Phone', kind: 'tel', widthPct: 50, placeholder: '(555) 123-4567' },
 				{
 					key: 'status', label: 'Status', kind: 'select', widthPct: 100, options: [
 						{ value: 'active', label: 'Active' },

@@ -351,6 +351,34 @@
 	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, rgba(127, 127, 127, 0.4)));
 }
 
+/* ----------------------------------------------------------------------------
+ * Native date/time picker colour scheme (issue 3).
+ *
+ * Chromium paints the <input type="date|time"> calendar/clock popup using the
+ * element's `color-scheme`. Several Ciyex date fields hard-coded
+ * `color-scheme: dark light` inline (dark preferred), so the calendar popup
+ * rendered dark even on a light workbench. These rules force the popup to
+ * follow the active workbench theme. `!important` is required to beat the
+ * inline declarations. Scoped under the workbench theme classes so they only
+ * touch Ciyex form chrome — the drawers mirror the workbench className onto
+ * themselves, so `.vs … input` matches both in-pane and body-mounted fields. */
+.vs input[type="date"],
+.vs input[type="time"],
+.vs input[type="datetime-local"],
+.hc-light input[type="date"],
+.hc-light input[type="time"],
+.hc-light input[type="datetime-local"] {
+	color-scheme: light !important;
+}
+.vs-dark input[type="date"],
+.vs-dark input[type="time"],
+.vs-dark input[type="datetime-local"],
+.hc-black input[type="date"],
+.hc-black input[type="time"],
+.hc-black input[type="datetime-local"] {
+	color-scheme: dark !important;
+}
+
 .ciyex-editor-root select option {
 	background-color: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background, #1e1e1e));
 	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground, #e6e6e6));

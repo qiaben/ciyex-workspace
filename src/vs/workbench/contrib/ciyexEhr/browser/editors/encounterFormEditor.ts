@@ -421,11 +421,41 @@ export class EncounterFormEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * The encounter-form Composition references its parent Encounter by id. When
+	 * this editor is opened for a brand-new encounter the id is the literal
+	 * "new", so the Composition would point at "Encounter/new" — which the FHIR
+	 * server rejects (HAPI-1094: "Resource Encounter/new not found"). Create a
+	 * real Encounter first (matching ciyex-ehr-ui's POST /api/{patientId}/encounters)
+	 * and adopt its id so the Composition references a resource that exists.
+	 */
+	private async _ensureRealEncounterId(formData: Record<string, unknown>): Promise<string> {
+		if (this.encounterId && this.encounterId !== 'new') { return this.encounterId; }
+		if (!this.patientId) { return this.encounterId; }
+		const reason = String(formData['chiefComplaint'] || formData['reasonForVisit'] || formData['reason'] || '').trim();
+		const res = await this.apiService.fetch(`/api/${this.patientId}/encounters`, {
+			method: 'POST',
+			body: JSON.stringify({
+				visitCategory: 'AMB',
+				encounterDate: new Date().toISOString(),
+				status: 'UNSIGNED',
+				reasonForVisit: reason,
+			}),
+		});
+		if (!res.ok) {
+			throw new Error(await res.text().catch(() => `Failed to create encounter (HTTP ${res.status})`));
+		}
+		const json = await res.json().catch(() => null);
+		const newId = String(json?.data?.id || json?.id || '');
+		if (newId) { this.encounterId = newId; }
+		return this.encounterId;
+	}
+
 	private async _saveEncounter(saveBtn: HTMLElement): Promise<boolean> {
 		if (!(this.input instanceof EncounterFormEditorInput)) { return false; }
 		if (this._isSigned) { return false; }
-		const { encounterId, patientId } = this.input;
-		if (!encounterId) { this.notificationService.warn('No encounter ID'); return false; }
+		const { patientId } = this.input;
+		if (!this.encounterId) { this.notificationService.warn('No encounter ID'); return false; }
 
 		const formData = this._collectFormData();
 
@@ -433,6 +463,8 @@ export class EncounterFormEditor extends EditorPane {
 		(saveBtn as HTMLButtonElement).disabled = true;
 
 		try {
+			// Resolve "new" to a real Encounter id before writing the Composition.
+			const encounterId = await this._ensureRealEncounterId(formData);
 			// Save to encounter-form composition (primary - matches EHR UI)
 			let compRes: Response;
 			if (this._compositionId) {
@@ -581,8 +613,11 @@ export class EncounterFormEditor extends EditorPane {
 	private async _autoSave(): Promise<void> {
 		if (!this._isDirty || this._isSigned) { return; }
 		if (!(this.input instanceof EncounterFormEditorInput)) { return; }
-		const { encounterId, patientId } = this.input;
-		if (!encounterId || !patientId) { return; }
+		const { patientId } = this.input;
+		const encounterId = this.encounterId;
+		// Don't auto-create a real encounter on a timer — that would mint a new
+		// Encounter on every keystroke pause. The explicit Save resolves "new".
+		if (!encounterId || encounterId === 'new' || !patientId) { return; }
 
 		this._updateAutoSaveIndicator('Auto-saving...');
 
