@@ -983,7 +983,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Send', icon: '\u{1F4E4}', handler: async (item, api, reload, dlg) => {
+				label: 'Send', icon: '\u{1F4E4}',
+				visible: (item) => { const s = String(item.status || '').toLowerCase(); return s === '' || s === 'draft'; },
+				handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (['sent', 'acknowledged', 'scheduled', 'completed'].includes(current)) { await dlg.info(`Referral is already ${current}.`); return; }
 					const r = await dlg.confirm({ message: 'Send this referral?', type: 'question' });
@@ -996,7 +998,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Acknowledge', icon: '✅', handler: async (item, api, reload, dlg) => {
+				label: 'Acknowledge', icon: '✅',
+				visible: (item) => String(item.status || '').toLowerCase() === 'sent',
+				handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current !== 'sent') { await dlg.info(`Can only acknowledge a Sent referral (current: ${current}).`); return; }
 					const r = await dlg.confirm({ message: 'Acknowledge this referral?', type: 'question' });
@@ -1008,7 +1012,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Schedule', icon: '\u{1F4C5}', handler: async (item, api, reload, dlg) => {
+				label: 'Schedule', icon: '\u{1F4C5}',
+				visible: (item) => String(item.status || '').toLowerCase() === 'acknowledged',
+				handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current !== 'acknowledged') { await dlg.info(`Can only schedule an Acknowledged referral (current: ${current}).`); return; }
 					const r = await dlg.confirm({ message: 'Mark this referral as scheduled?', type: 'question' });
@@ -1020,7 +1026,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Complete', icon: '\u{1F3C1}', handler: async (item, api, reload, dlg) => {
+				label: 'Complete', icon: '\u{1F3C1}',
+				visible: (item) => String(item.status || '').toLowerCase() === 'scheduled',
+				handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current === 'completed' || current === 'cancelled') { await dlg.info(`Referral is already ${current}.`); return; }
 					const r = await dlg.confirm({ message: 'Mark this referral as completed?', type: 'question' });
@@ -1032,7 +1040,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Cancel', icon: '\u{1F6AB}', handler: async (item, api, reload, dlg) => {
+				label: 'Cancel', icon: '\u{1F6AB}', color: '#ef4444',
+				visible: (item) => { const s = String(item.status || '').toLowerCase(); return !['completed', 'cancelled', 'denied', ''].includes(s); },
+				handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current === 'cancelled' || current === 'completed') { await dlg.info(`Referral is already ${current}.`); return; }
 					const r = await dlg.confirm({ message: `Cancel referral for ${item.patientName || 'patient'}?`, type: 'warning', primaryButton: 'Cancel Referral' });
@@ -1397,7 +1407,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Approve', icon: '✓', handler: async (item, api, reload, dlg) => {
+				label: 'Approve', icon: '✓', color: '#22c55e', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current === 'approved') {
 						await dlg.info('This authorization is already approved.');
@@ -1425,7 +1435,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Deny', icon: '✗', handler: async (item, api, reload, dlg) => {
+				label: 'Deny', icon: '✗', color: '#ef4444', handler: async (item, api, reload, dlg) => {
 					const current = String(item.status || '').toLowerCase();
 					if (current === 'denied') {
 						await dlg.info('This authorization is already denied.');
@@ -1958,14 +1968,12 @@ export class RecallEditor extends ClinicalListEditorBase {
 				],
 			},
 			{
+				// Provider options are derived from the loaded recall records for the
+				// current org rather than a hardcoded seed list (which showed stale
+				// providers from a different practice — workspace test report issue 8).
 				key: 'providerName', placeholder: 'All Providers',
-				options: [
-					{ label: 'Dr. Brian Wilson', value: 'Brian Wilson' },
-					{ label: 'Dr. Robert Kumar', value: 'Robert Kumar' },
-					{ label: 'Dr. Emily Taylor', value: 'Emily Taylor' },
-					{ label: 'Dr. Jessica Patel', value: 'Jessica Patel' },
-					{ label: 'Dr. Sarah Williams', value: 'Sarah Williams' },
-				],
+				optionsFromData: 'providerName',
+				options: [],
 			},
 			{
 				key: 'dueDateRange', placeholder: 'All Dates',
