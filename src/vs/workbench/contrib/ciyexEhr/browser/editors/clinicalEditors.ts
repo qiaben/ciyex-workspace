@@ -2941,14 +2941,21 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		this._cardFormBackdrop?.remove();
 
 		const doc = DOM.getActiveWindow().document;
+		// Mount under `.monaco-workbench` so the workbench theme CSS variables
+		// (`--vscode-editorWidget-background`, `--vscode-input-*`, …) resolve.
+		// Appending to `doc.body` left the form outside that selector, so every
+		// variable fell back to its dark default and the Add Payment Method
+		// drawer rendered dark over a light workbench (test report issue 5).
+		// eslint-disable-next-line no-restricted-syntax
+		const mountRoot = (doc.getElementsByClassName('monaco-workbench')[0] as HTMLElement | undefined) || doc.body;
 		const backdrop = doc.createElement('div');
 		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
-		doc.body.appendChild(backdrop);
+		mountRoot.appendChild(backdrop);
 		this._cardFormBackdrop = backdrop;
 
 		const overlay = doc.createElement('div');
 		overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:10000;width:560px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
-		doc.body.appendChild(overlay);
+		mountRoot.appendChild(overlay);
 		this._cardFormOverlay = overlay;
 
 		const close = () => { overlay.remove(); backdrop.remove(); this._cardFormOverlay = null; this._cardFormBackdrop = null; };

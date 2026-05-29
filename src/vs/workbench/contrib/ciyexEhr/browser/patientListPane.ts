@@ -25,6 +25,8 @@ interface IPatientRow {
 	dateOfBirth: string;
 	gender: string;
 	status: string;
+	phoneNumber?: string;
+	email?: string;
 }
 
 export class PatientListPane extends ViewPane {
@@ -379,6 +381,8 @@ export class PatientListPane extends ViewPane {
 			fields: [
 				{ key: 'firstName', label: 'First Name', required: true, widthPct: 50 },
 				{ key: 'lastName', label: 'Last Name', required: true, widthPct: 50 },
+				{ key: 'phoneNumber', label: 'Phone Number', kind: 'tel', widthPct: 50, placeholder: '(555) 555-5555' },
+				{ key: 'email', label: 'Email', kind: 'email', widthPct: 50, placeholder: 'name@example.com' },
 				{ key: 'dateOfBirth', label: 'Date of Birth', kind: 'date', widthPct: 50 },
 				{
 					key: 'gender', label: 'Gender', kind: 'select', widthPct: 50, options: [

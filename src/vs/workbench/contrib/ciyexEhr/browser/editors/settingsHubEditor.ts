@@ -1972,16 +1972,44 @@ export class SettingsHubEditor extends EditorPane {
 	}
 
 	private async _saveRecord(): Promise<void> {
-		// Required validation
+		// Required + format validation. The settings forms (Facilities, Providers,
+		// Insurance, Referral Practices) previously only checked required fields,
+		// so negative test cases — letters in a phone, a malformed email, a
+		// non-numeric NPI, a purely numeric name — saved successfully (workspace
+		// test report issues 21-25). Validate the well-known field shapes here.
 		const errors: Record<string, string> = {};
 		const fc = this.currentFieldConfig;
 		if (fc?.sections) {
 			for (const s of fc.sections) {
 				for (const f of s.fields) {
-					if (f.required) {
-						const v = this.formData[f.key];
-						if ((v === null || v === undefined || (typeof v === 'string' && v.trim() === ''))) {
-							errors[f.key] = `${f.label} is required`;
+					const raw = this.formData[f.key];
+					const val = typeof raw === 'string' ? raw.trim() : (raw === null || raw === undefined ? '' : String(raw).trim());
+					if (f.required && val === '') {
+						errors[f.key] = `${f.label} is required`;
+						continue;
+					}
+					if (val === '') { continue; }
+					const key = f.key.toLowerCase();
+					const type = (f.type || '').toLowerCase();
+					if (type === 'email' || key.includes('email')) {
+						if (!/^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/.test(val)) {
+							errors[f.key] = `${f.label} must be a valid email (e.g. name@example.com)`;
+						}
+					} else if (type === 'phone' || type === 'tel' || key.includes('phone') || key.includes('fax')) {
+						if (val.replace(/\D/g, '').length !== 10) {
+							errors[f.key] = `${f.label} must be 10 digits`;
+						}
+					} else if (key === 'npi' || key.endsWith('npi')) {
+						if (!/^\d{10}$/.test(val)) {
+							errors[f.key] = `${f.label} must be a 10-digit number`;
+						}
+					} else if (key.includes('license')) {
+						if (!/^[A-Za-z0-9][A-Za-z0-9\- ]{1,}$/.test(val)) {
+							errors[f.key] = `${f.label} must be alphanumeric`;
+						}
+					} else if (key.endsWith('name') || key === 'name') {
+						if (!/[A-Za-z]/.test(val)) {
+							errors[f.key] = `${f.label} must contain letters`;
 						}
 					}
 				}
@@ -1989,7 +2017,7 @@ export class SettingsHubEditor extends EditorPane {
 		}
 		this.validationErrors = errors;
 		if (Object.keys(errors).length > 0) {
-			this.notificationService.notify({ severity: Severity.Warning, message: 'Please fill in required fields.' });
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Please correct the highlighted fields.' });
 			this._renderContent();
 			return;
 		}
