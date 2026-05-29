@@ -515,16 +515,14 @@ export class CalendarEditor extends EditorPane {
 		}
 
 		// Provider filter — multi-select checkbox dropdown
-		// allow-any-unicode-next-line
-		this._buildCheckboxFilter(this.headerBar, '👤', this.providers, this.providerFilter, () => {
+		this._buildCheckboxFilter(this.headerBar, 'All Providers', this.providers, this.providerFilter, () => {
 			this._updateHeaderCount(); this._renderGrid();
-		}, true);
+		}, true, 'ehr-doctor-icon');
 
 		// Location filter — multi-select checkbox dropdown
-		// allow-any-unicode-next-line
-		this._buildCheckboxFilter(this.headerBar, '📍', this.locations, this.locationFilter, () => {
+		this._buildCheckboxFilter(this.headerBar, 'All Locations', this.locations, this.locationFilter, () => {
 			this._updateHeaderCount(); this._renderGrid();
-		}, true);
+		}, true, 'ehr-location-icon');
 
 		// Right-side action icons group
 		const actionsGroup = DOM.append(this.headerBar, DOM.$('.actions-group'));
@@ -1774,19 +1772,37 @@ export class CalendarEditor extends EditorPane {
 		selected: Set<string>,
 		onChange: () => void,
 		symbolMode = false,
+		iconClass?: string,
 	): void {
 		const wrap = DOM.append(parent, DOM.$('.cal-filter'));
 		wrap.style.cssText = symbolMode ? 'position:relative;' : 'position:relative;max-width:200px;';
 		this._filterWraps.push(wrap);
 
 		const inputStyle = 'padding:2px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;width:100%;cursor:pointer;';
-		const symbolStyle = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;filter:grayscale(1) opacity(0.65);';
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
-		trigger.style.cssText = symbolMode ? symbolStyle : inputStyle + 'text-align:left;';
-		if (symbolMode) {
+
+		let iconSpanEl: HTMLElement | null = null;
+		let labelEl: HTMLElement | null = null;
+
+		if (symbolMode && iconClass) {
+			// Icon mode: persistent SVG icon + dynamic text label side by side
+			trigger.style.cssText = 'padding:4px 6px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);cursor:pointer;display:flex;align-items:center;gap:4px;';
+			iconSpanEl = DOM.append(trigger, DOM.$('span')) as HTMLElement;
+			iconSpanEl.classList.add(iconClass);
+			iconSpanEl.style.cssText = 'width:16px;height:16px;flex-shrink:0;';
+			labelEl = DOM.append(trigger, DOM.$('span')) as HTMLElement;
+			labelEl.style.cssText = 'font-size:11px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.opacity = '1'; });
+			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.opacity = selected.size > 0 ? '1' : '0.65'; });
+			trigger.style.opacity = '0.65';
+		} else if (symbolMode) {
+			trigger.style.cssText = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;filter:grayscale(1) opacity(0.65);';
 			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.filter = 'grayscale(1) opacity(0.9)'; });
 			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.filter = selected.size > 0 ? 'grayscale(0.3) opacity(0.9)' : 'grayscale(1) opacity(0.65)'; });
+		} else {
+			trigger.style.cssText = inputStyle + 'text-align:left;';
 		}
+
 		const describe = () => {
 			if (selected.size === 0) { return allLabel; }
 			if (selected.size === 1) {
@@ -1796,7 +1812,18 @@ export class CalendarEditor extends EditorPane {
 			}
 			return `${selected.size} selected`;
 		};
-		trigger.textContent = describe();
+
+		const updateTrigger = () => {
+			if (labelEl) {
+				labelEl.textContent = selected.size === 0 ? '' : describe();
+				trigger.style.opacity = selected.size > 0 ? '1' : '0.65';
+				trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)';
+				if (iconSpanEl) { iconSpanEl.style.color = trigger.style.color; }
+			} else {
+				trigger.textContent = describe();
+			}
+		};
+		updateTrigger();
 
 		const panel = DOM.append(wrap, DOM.$('.cal-filter-panel'));
 		panel.style.cssText = 'position:absolute;top:100%;left:0;right:0;margin-top:2px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:30;display:none;min-width:240px;';
@@ -1825,8 +1852,8 @@ export class CalendarEditor extends EditorPane {
 			allLbl.style.fontWeight = '600';
 			const pickAll = () => {
 				selected.clear();
-				trigger.textContent = describe();
-				if (symbolMode) { trigger.style.color = 'var(--vscode-descriptionForeground,#888)'; }
+				updateTrigger();
+				if (symbolMode && !iconClass) { trigger.style.color = 'var(--vscode-descriptionForeground,#888)'; }
 				onChange();
 				renderList();
 			};
@@ -1845,8 +1872,8 @@ export class CalendarEditor extends EditorPane {
 					if (selected.has(it.id)) { selected.delete(it.id); }
 					else { selected.add(it.id); }
 					cb.checked = selected.has(it.id);
-					trigger.textContent = describe();
-					if (symbolMode) { trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)'; }
+					updateTrigger();
+					if (symbolMode && !iconClass) { trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)'; }
 					onChange();
 				};
 				row.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
