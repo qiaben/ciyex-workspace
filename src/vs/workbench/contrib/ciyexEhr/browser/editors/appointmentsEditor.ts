@@ -744,6 +744,19 @@ export class AppointmentsEditor extends EditorPane {
 		const selectStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;cursor:pointer;outline:none;';
 		const inputStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;outline:none;min-width:150px;';
 		const btnStyle = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+
+		// SVG helpers — avoid innerHTML to comply with VS Code Trusted Types policy
+		const SVG_NS = 'http://www.w3.org/2000/svg';
+		const mkSvg = (): SVGSVGElement => {
+			const svg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
+			svg.setAttribute('width', '15'); svg.setAttribute('height', '15');
+			svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+			svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+			svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+			return svg;
+		};
+		const svgPath = (svg: SVGSVGElement, d: string) => { const p = document.createElementNS(SVG_NS, 'path'); p.setAttribute('d', d); svg.appendChild(p); };
+		const svgRect = (svg: SVGSVGElement, x: string, y: string, w: string, h: string, rx: string) => { const r = document.createElementNS(SVG_NS, 'rect'); r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', w); r.setAttribute('height', h); r.setAttribute('rx', rx); svg.appendChild(r); };
 		// allow-any-unicode-next-line
 		// ─── Header ────────────────────────────────────────────────────────
 		const header = DOM.append(this.contentEl, DOM.$('div'));
@@ -775,17 +788,20 @@ export class AppointmentsEditor extends EditorPane {
 		// visible "spinning" feedback so the user can tell the click landed.
 		const refreshBtn = DOM.append(actionGroup, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.style.cssText = btnStyle;
-		// allow-any-unicode-next-line
-		refreshBtn.textContent = '⟳ Refresh';
+		const refreshSvg = mkSvg();
+		svgPath(refreshSvg, 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8');
+		svgPath(refreshSvg, 'M21 3v5h-5');
+		svgPath(refreshSvg, 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16');
+		svgPath(refreshSvg, 'M8 16H3v5');
+		refreshBtn.appendChild(refreshSvg);
 		refreshBtn.title = 'Refresh appointments now';
 		refreshBtn.addEventListener('click', async () => {
 			refreshBtn.disabled = true;
-			const prev = refreshBtn.textContent;
-			refreshBtn.textContent = 'Refreshing…';
+			refreshBtn.style.opacity = '0.5';
 			try { await this._loadAppointments(); }
 			finally {
 				refreshBtn.disabled = false;
-				refreshBtn.textContent = prev;
+				refreshBtn.style.opacity = '1';
 			}
 		});
 
@@ -837,8 +853,14 @@ export class AppointmentsEditor extends EditorPane {
 		tvWrap.style.cssText = 'position:relative;';
 		const tvBtn = DOM.append(tvWrap, DOM.$('button')) as HTMLButtonElement;
 		tvBtn.style.cssText = btnStyle;
+		const tvSvg = mkSvg();
+		svgRect(tvSvg, '2', '3', '20', '14', '2');
+		svgPath(tvSvg, 'M8 21h8m-4-4v4');
+		tvBtn.appendChild(tvSvg);
+		const tvChevron = DOM.append(tvBtn, DOM.$('span'));
 		// allow-any-unicode-next-line
-		tvBtn.textContent = '🖥 TV Display ▾';
+		tvChevron.textContent = '▾';
+		tvChevron.style.cssText = 'font-size:9px;margin-left:1px;';
 		const tvMenu = DOM.append(tvWrap, DOM.$('div'));
 		tvMenu.style.cssText = 'position:absolute;top:calc(100% + 4px);right:0;min-width:180px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:20;display:none;overflow:hidden;';
 

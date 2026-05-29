@@ -15,6 +15,9 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { ReportsEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createTrustedTypesPolicy } from '../../../../../base/browser/trustedTypes.js';
+
+const _printTtPolicy = createTrustedTypesPolicy('ciyexEhrPrint', { createHTML: (html: string) => html });
 
 const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#14b8a6'];
 const INPUT_STYLE = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
@@ -2220,27 +2223,98 @@ export class ReportsEditor extends EditorPane {
 		for (const item of items) {
 			rows += '<tr>' + cols.map(c => `<td>${esc(String(item[c.key] || ''))}</td>`).join('') + '</tr>';
 		}
-		const html = `<!DOCTYPE html><html><head><title>${esc(reportName)}</title><style>
-			body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;margin:20px;color:#000;}
+
+		// Resolve theme colours from live CSS variables so the preview matches the active theme.
+		const activeWindow = DOM.getActiveWindow();
+		const activeDoc = activeWindow.document;
+		const cs = activeWindow.getComputedStyle(activeDoc.documentElement);
+		const get = (v: string, fallback: string) => cs.getPropertyValue(v).trim() || fallback;
+		const themeBg = get('--vscode-editor-background', '#1e1e1e');
+		const themeFg = get('--vscode-editor-foreground', '#cccccc');
+		const themeBorder = get('--vscode-editorWidget-border', '#454545');
+		const themeSubtle = get('--vscode-descriptionForeground', '#999');
+		const themeThBg = get('--vscode-editorGroupHeader-tabsBackground', themeBg);
+
+		// Preview HTML uses theme colours; @media print overrides to black-on-white for paper.
+		const previewHtml = `<!DOCTYPE html><html><head><title>${esc(reportName)}</title><style>
+			body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;margin:20px;background:${themeBg};color:${themeFg};}
 			h1{font-size:18px;margin:0 0 4px;}
-			.meta{color:#666;font-size:11px;margin-bottom:14px;}
+			.meta{color:${themeSubtle};font-size:11px;margin-bottom:14px;}
 			table{width:100%;border-collapse:collapse;}
-			th,td{padding:6px 8px;text-align:left;border:1px solid #ddd;}
-			th{background:#f5f5f5;font-weight:600;text-transform:uppercase;font-size:10px;}
-			@media print{@page{size:landscape;margin:12mm;}}
+			th,td{padding:6px 8px;text-align:left;border:1px solid ${themeBorder};}
+			th{background:${themeThBg};font-weight:600;text-transform:uppercase;font-size:10px;}
+			@media print{
+				@page{size:landscape;margin:12mm;}
+				body{background:#fff!important;color:#000!important;}
+				th,td{border-color:#ddd!important;}
+				th{background:#f5f5f5!important;}
+				.meta{color:#666!important;}
+			}
 		</style></head><body>
 			<h1>${esc(reportName)}</h1>
 			<div class="meta">Generated ${new Date().toLocaleString()} • ${items.length} records</div>
 			<table><thead><tr>${cols.map(c => `<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
 		</body></html>`;
 
-		const w = DOM.getActiveWindow().open('', '_blank');
-		if (!w) { return; }
-		w.document.open();
-		w.document.write(html);
-		w.document.close();
-		w.onload = () => { try { w.focus(); w.print(); } catch { /* ignore */ } };
-		w.setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
+		// Show a print preview modal that follows the active theme.
+		const overlay = activeDoc.createElement('div');
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+
+		const modal = activeDoc.createElement('div');
+		modal.style.cssText = `background:${themeBg};color:${themeFg};border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);width:90vw;max-width:960px;height:85vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid ${themeBorder};`;
+
+		// Modal header
+		const mHeader = activeDoc.createElement('div');
+		mHeader.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid ${themeBorder};flex-shrink:0;`;
+		const mTitle = activeDoc.createElement('span');
+		mTitle.textContent = `Print Preview — ${reportName}`;
+		mTitle.style.cssText = 'font-weight:600;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
+		const mMeta = activeDoc.createElement('span');
+		mMeta.textContent = `${items.length} record${items.length !== 1 ? 's' : ''}`;
+		mMeta.style.cssText = `font-size:12px;color:${themeSubtle};font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;`;
+
+		const btnGroup = activeDoc.createElement('div');
+		btnGroup.style.cssText = 'display:flex;gap:8px;';
+
+		const closeBtn = activeDoc.createElement('button');
+		closeBtn.textContent = 'Close';
+		closeBtn.style.cssText = `padding:6px 16px;border:1px solid ${themeBorder};border-radius:4px;background:${themeBg};color:${themeFg};cursor:pointer;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;`;
+
+		const doPrintBtn = activeDoc.createElement('button');
+		// allow-any-unicode-next-line
+		doPrintBtn.textContent = '🖨 Print';
+		doPrintBtn.style.cssText = `padding:6px 16px;border:none;border-radius:4px;background:${get('--vscode-button-background', '#0078d4')};color:${get('--vscode-button-foreground', '#fff')};cursor:pointer;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;`;
+
+		const close = () => overlay.remove();
+		closeBtn.addEventListener('click', close);
+		overlay.addEventListener('click', (e) => { if (e.target === overlay) { close(); } });
+
+		const trustedHtml = _printTtPolicy?.createHTML(previewHtml) ?? previewHtml;
+
+		doPrintBtn.addEventListener('click', () => {
+			const iframe = activeDoc.createElement('iframe');
+			iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;border:none;';
+			activeDoc.body.appendChild(iframe);
+			const doc = iframe.contentDocument;
+			if (!doc) { iframe.remove(); return; }
+			doc.open(); doc.write(trustedHtml as string); doc.close();
+			const iw = iframe.contentWindow;
+			if (!iw) { iframe.remove(); return; }
+			iw.focus();
+			iw.print();
+			setTimeout(() => iframe.remove(), 2000);
+		});
+
+		// Preview iframe — srcdoc requires TrustedHTML; blob:/data: src blocked by CSP frame-src.
+		const preview = activeDoc.createElement('iframe');
+		preview.style.cssText = `flex:1;border:none;background:${themeBg};`;
+		preview.srcdoc = trustedHtml as unknown as string;
+
+		btnGroup.append(closeBtn, doPrintBtn);
+		mHeader.append(mTitle, mMeta, btnGroup);
+		modal.append(mHeader, preview);
+		overlay.appendChild(modal);
+		activeDoc.body.appendChild(overlay);
 	}
 
 	private _exportCsv(reportName: string): void {

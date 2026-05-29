@@ -864,7 +864,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		} else {
 			this.formOverlay.className = 'monaco-workbench';
 		}
-		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;';
+		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;background:transparent;';
 
 		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));
 		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
@@ -879,9 +879,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// user was on a light theme (issue #18).
 		const themeType = this.themeService.getColorTheme().type;
 		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
+		// eslint-disable-next-line no-restricted-syntax
+		const titlebarEl = overlayDoc.querySelector('.part.titlebar');
+		const titlebarHeight = titlebarEl ? (titlebarEl as HTMLElement).getBoundingClientRect().height : 35;
+
+		const GAP = 12;
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
 		dialog.className = 'cle-form-dialog';
-		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:100%;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
+		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:calc(100% - ${titlebarHeight + GAP * 2}px);margin-top:${titlebarHeight + GAP}px;margin-bottom:${GAP}px;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);border-radius:8px 0 0 8px;display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
 		// Force native <option> backgrounds to use the VS Code dropdown vars so
 		// the dropdown popup matches the rest of the dialog rather than rendering
 		// white on dark themes.
@@ -900,7 +905,6 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			'}',
 		].join('\n');
 
-		// Header
 		const header = DOM.append(dialog, DOM.$('div'));
 		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));z-index:2;';
 
@@ -912,11 +916,6 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		}
 		title.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
 
-		const closeBtn = DOM.append(header, DOM.$('button'));
-		// allow-any-unicode-next-line
-		closeBtn.textContent = '✕';
-		closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;color:var(--vscode-foreground);padding:2px 6px;';
-		closeBtn.addEventListener('click', () => this._closeForm());
 
 		// Form body — flex:1 fills the space between header and footer.
 		// Two-column grid lets form fields sit side-by-side (use width:'span 2'

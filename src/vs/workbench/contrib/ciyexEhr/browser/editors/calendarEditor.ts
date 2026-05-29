@@ -546,18 +546,35 @@ export class CalendarEditor extends EditorPane {
 		});
 
 		// Refresh
-		const calBtnStyle = 'padding:4px 10px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+
+		// SVG helpers — avoid innerHTML to comply with VS Code Trusted Types policy
+		const SVG_NS = 'http://www.w3.org/2000/svg';
+		const mkSvg = (): SVGSVGElement => {
+			const svg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
+			svg.setAttribute('width', '15'); svg.setAttribute('height', '15');
+			svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+			svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+			svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+			return svg;
+		};
+		const svgPath = (svg: SVGSVGElement, d: string) => { const p = document.createElementNS(SVG_NS, 'path'); p.setAttribute('d', d); svg.appendChild(p); };
+		const svgRect = (svg: SVGSVGElement, x: string, y: string, w: string, h: string, rx: string) => { const r = document.createElementNS(SVG_NS, 'rect'); r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', w); r.setAttribute('height', h); r.setAttribute('rx', rx); svg.appendChild(r); };
+
 		const refreshBtn = DOM.append(actionsGroup, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.style.cssText = calBtnStyle;
-		// allow-any-unicode-next-line
-		refreshBtn.textContent = '\u27F3 Refresh';
+		const refreshSvg = mkSvg();
+		svgPath(refreshSvg, 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8');
+		svgPath(refreshSvg, 'M21 3v5h-5');
+		svgPath(refreshSvg, 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16');
+		svgPath(refreshSvg, 'M8 16H3v5');
+		refreshBtn.appendChild(refreshSvg);
 		refreshBtn.title = 'Refresh calendar now';
 		refreshBtn.addEventListener('click', async () => {
 			refreshBtn.disabled = true;
-			const prev = refreshBtn.textContent;
-			refreshBtn.textContent = 'Refreshing\u2026';
+			refreshBtn.style.opacity = '0.5';
 			try { this.providers = []; this.locations = []; this._headerRendered = false; await this._loadAndRender(); }
-			finally { refreshBtn.disabled = false; refreshBtn.textContent = prev; }
+			finally { refreshBtn.disabled = false; refreshBtn.style.opacity = '1'; }
 		});
 
 
@@ -566,8 +583,14 @@ export class CalendarEditor extends EditorPane {
 		tvWrap.style.cssText = 'position:relative;';
 		const tvBtn = DOM.append(tvWrap, DOM.$('button')) as HTMLButtonElement;
 		tvBtn.style.cssText = calBtnStyle;
+		const tvSvg = mkSvg();
+		svgRect(tvSvg, '2', '3', '20', '14', '2');
+		svgPath(tvSvg, 'M8 21h8m-4-4v4');
+		tvBtn.appendChild(tvSvg);
+		const tvChevron = DOM.append(tvBtn, DOM.$('span'));
 		// allow-any-unicode-next-line
-		tvBtn.textContent = '\uD83D\uDDA5 TV Display \u25BE';
+		tvChevron.textContent = '▾';
+		tvChevron.style.cssText = 'font-size:9px;margin-left:1px;';
 		const tvMenu = DOM.append(tvWrap, DOM.$('div'));
 		tvMenu.style.cssText = 'position:absolute;top:calc(100% + 4px);right:0;min-width:180px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:20;display:none;overflow:hidden;';
 		const mkTvItem = (icon: string, label: string, onClick: () => void) => {
@@ -1786,15 +1809,50 @@ export class CalendarEditor extends EditorPane {
 
 		if (symbolMode && iconClass) {
 			// Icon mode: persistent SVG icon + dynamic text label side by side
-			trigger.style.cssText = 'padding:4px 6px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);cursor:pointer;display:flex;align-items:center;gap:4px;';
+			trigger.style.cssText = 'padding:4px 6px;background:transparent;border:none;border-radius:4px;color:var(--vscode-foreground);cursor:pointer;display:flex;align-items:center;gap:4px;';
+			// Render inline SVG icons (avoids CSS mask opacity/color issues)
 			iconSpanEl = DOM.append(trigger, DOM.$('span')) as HTMLElement;
-			iconSpanEl.classList.add(iconClass);
-			iconSpanEl.style.cssText = 'width:16px;height:16px;flex-shrink:0;';
+			iconSpanEl.style.cssText = 'width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+			const _svgNs = 'http://www.w3.org/2000/svg';
+			const _mkIconSvg = (): SVGSVGElement => {
+				const s = document.createElementNS(_svgNs, 'svg') as SVGSVGElement;
+				s.setAttribute('width', '16'); s.setAttribute('height', '16');
+				s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none');
+				s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '1.8');
+				s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round');
+				return s;
+			};
+			const _ic = (svg: SVGSVGElement, tag: string, attrs: Record<string, string>) => {
+				const el = document.createElementNS(_svgNs, tag);
+				for (const [k, v] of Object.entries(attrs)) { el.setAttribute(k, v); }
+				svg.appendChild(el);
+			};
+			if (iconClass === 'ehr-doctor-icon') {
+				const s = _mkIconSvg();
+				s.setAttribute('stroke-width', '2');
+				// Head
+				_ic(s, 'circle', { cx: '12', cy: '4', r: '3' });
+				// Half body / shoulder arc
+				_ic(s, 'path', { d: 'M5 22 C 5 16 8 13 12 13 C 16 13 19 16 19 22' });
+				// Stethoscope: U-shaped earpiece connector just below chin
+				_ic(s, 'path', { d: 'M9 9.5 C 9 8 10 7.5 11 7.5 L 13 7.5 C 14 7.5 15 8 15 9.5' });
+				// Stethoscope tube going down from center
+				_ic(s, 'line', { x1: '12', y1: '9.5', x2: '12', y2: '16' });
+				// Chest piece (diaphragm)
+				_ic(s, 'circle', { cx: '12', cy: '18', r: '2' });
+				iconSpanEl.appendChild(s);
+			} else if (iconClass === 'ehr-location-icon') {
+				const s = _mkIconSvg();
+				_ic(s, 'path', { d: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z' });
+				_ic(s, 'circle', { cx: '12', cy: '9', r: '2.5' });
+				iconSpanEl.appendChild(s);
+			} else {
+				iconSpanEl.classList.add(iconClass);
+			}
 			labelEl = DOM.append(trigger, DOM.$('span')) as HTMLElement;
 			labelEl.style.cssText = 'font-size:11px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.opacity = '1'; });
-			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; trigger.style.opacity = selected.size > 0 ? '1' : '0.65'; });
-			trigger.style.opacity = '0.65';
+			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+			trigger.addEventListener('mouseleave', () => { trigger.style.background = 'transparent'; });
 		} else if (symbolMode) {
 			trigger.style.cssText = 'padding:4px 8px;background:transparent;border:none;border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:15px;cursor:pointer;line-height:1;filter:grayscale(1) opacity(0.65);';
 			trigger.addEventListener('mouseenter', () => { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; trigger.style.filter = 'grayscale(1) opacity(0.9)'; });
@@ -1816,8 +1874,8 @@ export class CalendarEditor extends EditorPane {
 		const updateTrigger = () => {
 			if (labelEl) {
 				labelEl.textContent = selected.size === 0 ? '' : describe();
-				trigger.style.opacity = selected.size > 0 ? '1' : '0.65';
-				trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-descriptionForeground,#888)';
+				trigger.style.opacity = '1';
+				trigger.style.color = selected.size > 0 ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-foreground)';
 				if (iconSpanEl) { iconSpanEl.style.color = trigger.style.color; }
 			} else {
 				trigger.textContent = describe();
