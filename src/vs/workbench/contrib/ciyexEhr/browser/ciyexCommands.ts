@@ -951,7 +951,6 @@ registerAction2(class extends Action2 {
 		const commandService = accessor.get(ICommandService);
 		const apiService = accessor.get(ICiyexApiService);
 		const installations = accessor.get(ICiyexInstallationsService);
-		const opener = accessor.get(IOpenerService);
 
 		const gateway = payments.getActiveGateway();
 		if (!gateway) {
@@ -980,9 +979,13 @@ registerAction2(class extends Action2 {
 		// Resolve the app + pricing plan + clientSecret via the marketplace.
 		// We do this in-line so the workbench owns marketplace I/O and the
 		// gateway extensions don't need to know our REST shape.
-		const checkoutRequest = await _buildCheckoutRequest(apiService, opener, appSlug);
-		if (!checkoutRequest) {
-			return { status: 'error', appSlug, message: 'Failed to build checkout request.' };
+		let checkoutRequest: CheckoutRequest;
+		try {
+			checkoutRequest = await _buildCheckoutRequest(apiService, appSlug);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			notifications.notify({ severity: Severity.Error, message: `Couldn't start checkout: ${message}` });
+			return { status: 'error', appSlug, message };
 		}
 
 		const result = await commandService.executeCommand<CheckoutResult>(gateway.checkoutCommand, checkoutRequest);
@@ -1010,27 +1013,111 @@ registerAction2(class extends Action2 {
 	}
 });
 
+interface MarketplacePricingPlan {
+	id: string;
+	name: string;
+	amount?: number;
+	currency?: string;
+	interval?: string;
+	isDefault?: boolean;
+}
+
+interface MarketplaceApp {
+	slug: string;
+	name: string;
+	pricingPlans?: MarketplacePricingPlan[];
+}
+
+interface MarketplaceSubscription {
+	id?: string;
+	status?: string;
+	clientSecret?: string;
+}
+
 /**
- * Resolve the marketplace data needed for a checkout. Returns undefined if
- * the catalog lookup fails or there are no pricing plans — the caller has
- * already notified the user in those cases.
+ * Resolve everything a gateway extension needs to render checkout for an app:
+ *   1. GET  /api/v1/apps/{slug}                       → name + pricing plans
+ *   2. POST /api/v1/practices/{org}/subscriptions     → Stripe clientSecret
  *
- * NOTE: this is a placeholder shape. The marketplace endpoint that returns
- * `clientSecret` alongside the new subscription is not implemented yet; for
- * now we return the request with `clientSecret` unset so the gateway
- * extension surfaces a clear "configure the marketplace backend" error to
- * the user instead of silently failing. Once the backend ships, this
- * function POSTs to /api/v1/practices/{org}/subscriptions and forwards the
- * `clientSecret` from the response.
+ * Throws (with a user-presentable message) on any failure so the caller can
+ * surface it — e.g. no plans, marketplace unreachable, already subscribed.
+ *
+ * The marketplace base URL is derived from the EHR API URL by swapping the
+ * `api` host segment for `marketplace-api`, overridable via the
+ * `ciyex_marketplace_api_url` localStorage key.
  */
-async function _buildCheckoutRequest(_apiService: ICiyexApiService, _opener: IOpenerService, appSlug: string): Promise<CheckoutRequest | undefined> {
-	// TODO: wire to marketplace once /subscriptions response includes clientSecret.
+async function _buildCheckoutRequest(apiService: ICiyexApiService, appSlug: string): Promise<CheckoutRequest> {
+	const base = _marketplaceBaseUrl(apiService.apiUrl);
+	const orgAlias = _readLocal('ciyex_selected_tenant') || _readLocal('ciyex_tenant');
+	const authToken = _readLocal('ciyex_token');
+	if (!orgAlias) { throw new Error('No active practice selected.'); }
+
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (authToken) { headers['Authorization'] = `Bearer ${authToken}`; }
+
+	// 1. Catalog lookup for display + plan selection.
+	const appRes = await globalThis.fetch(`${base}/apps/${encodeURIComponent(appSlug)}`, { headers });
+	if (!appRes.ok) {
+		throw new Error(`Marketplace returned ${appRes.status} for app "${appSlug}".`);
+	}
+	const appRaw = await appRes.json() as MarketplaceApp | { data?: MarketplaceApp };
+	const app = (appRaw as { data?: MarketplaceApp }).data ?? (appRaw as MarketplaceApp);
+	const plans = app.pricingPlans ?? [];
+	if (!plans.length) {
+		throw new Error(`"${app.name || appSlug}" has no pricing plans.`);
+	}
+	const plan = plans.find(p => p.isDefault) ?? plans[0];
+
+	// 2. Start the subscription — this creates the Stripe PaymentIntent and
+	// returns its client_secret for the gateway extension to confirm.
+	const subRes = await globalThis.fetch(`${base}/practices/${encodeURIComponent(orgAlias)}/subscriptions`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ appSlug, pricingPlanId: plan.id }),
+	});
+	if (!subRes.ok) {
+		const body = await subRes.text().catch(() => '');
+		throw new Error(`Subscription failed (${subRes.status})${body ? `: ${body}` : ''}.`);
+	}
+	const subRaw = await subRes.json() as MarketplaceSubscription | { data?: MarketplaceSubscription };
+	const sub = (subRaw as { data?: MarketplaceSubscription }).data ?? (subRaw as MarketplaceSubscription);
+
 	return {
 		appSlug,
-		appName: appSlug,
-		pricingPlanId: 'default',
-		planName: 'Standard',
-		priceCents: 0,
-		currency: 'USD',
+		appName: app.name || appSlug,
+		pricingPlanId: plan.id,
+		planName: plan.name || 'Standard',
+		priceCents: Math.round((plan.amount ?? 0) * 100),
+		currency: (plan.currency || 'USD').toUpperCase(),
+		interval: _mapInterval(plan.interval),
+		clientSecret: sub.clientSecret,
+		authToken: authToken || undefined,
+		orgAlias,
 	};
+}
+
+function _marketplaceBaseUrl(apiUrl: string): string {
+	const override = _readLocal('ciyex_marketplace_api_url');
+	if (override) { return override.replace(/\/$/, ''); }
+	try {
+		const u = new URL(apiUrl);
+		u.hostname = u.hostname.replace(/(^|\.)api(-|\.)/, '$1marketplace-api$2');
+		u.pathname = '/api/v1';
+		u.search = '';
+		u.hash = '';
+		return u.toString().replace(/\/$/, '');
+	} catch {
+		return 'https://marketplace-api.apps-dev.us-east.in.hinisoft.com/api/v1';
+	}
+}
+
+function _mapInterval(interval?: string): 'month' | 'year' | 'one_time' {
+	const i = (interval || '').toUpperCase();
+	if (i === 'MONTHLY' || i === 'MONTH') { return 'month'; }
+	if (i === 'YEARLY' || i === 'YEAR' || i === 'ANNUAL') { return 'year'; }
+	return 'one_time';
+}
+
+function _readLocal(key: string): string {
+	try { return localStorage.getItem(key) || ''; } catch { return ''; }
 }
