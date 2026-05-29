@@ -309,6 +309,17 @@
 .vs-dark .ehr-form-input::placeholder {
 	color: var(--vscode-input-placeholderForeground, #777);
 }
+/* Native time-picker clock icon is near-black and invisible on the dark overlay - invert it so it reads as a light, clearly visible icon. */
+.vs-dark .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
+.vs-dark .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator {
+	filter: invert(1) brightness(1.8);
+	opacity: 0.85;
+	cursor: pointer;
+}
+.vs-dark .ehr-form-input[type="time"]:hover::-webkit-calendar-picker-indicator,
+.vs-dark .ehr-overlay input[type="time"]:hover::-webkit-calendar-picker-indicator {
+	opacity: 1;
+}
 .vs-dark .ehr-form-label {
 	color: var(--vscode-descriptionForeground, #999);
 }

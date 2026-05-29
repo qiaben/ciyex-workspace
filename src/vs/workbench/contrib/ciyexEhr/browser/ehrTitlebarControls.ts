@@ -459,7 +459,10 @@ export class EhrTitlebarControls extends Disposable {
 		const smsConsent = this._createCheckbox(consentRow, 'SMS/Text', true) as HTMLInputElement;
 		const voicemailConsent = this._createCheckbox(consentRow, 'Voicemail', true) as HTMLInputElement;
 
-		this._patientFormElements.inputs.push(firstName, middleName, lastName, phone, dob, email, emailConsent, smsConsent, voicemailConsent);
+		// Track the visible text field and the native date picker too so _resetForm
+		// clears them. Only the hidden ISO `dob` was tracked before, leaving the
+		// previously entered date displayed when re-opening the form for a new patient.
+		this._patientFormElements.inputs.push(firstName, middleName, lastName, phone, dob, dobVisible, dobPicker, email, emailConsent, smsConsent, voicemailConsent);
 		this._patientFormElements.selects.push(gender);
 
 		// Buttons
@@ -655,8 +658,23 @@ export class EhrTitlebarControls extends Disposable {
 		const startDate = this._createField(row2, 'Start Date', 'date', false, 'startDate') as HTMLInputElement;
 		const endDate = this._createField(row2, 'End Date', 'date', false, 'endDate') as HTMLInputElement;
 
+		// Block past dates at the calendar level (mirrors ciyex-ehr-ui AppointmentModal).
+		// `min` is (re)applied on overlay open via _refreshAppointmentDateMin so it stays
+		// correct across a day boundary while the workbench stays running. In _createField's
+		// date wrap the children are [visible-text, hidden, picker, icon], so the native date
+		// picker is the hidden input's next sibling.
+		const startPickerSib = startDate.nextElementSibling;
+		const endPickerSib = endDate.nextElementSibling;
+		this._appointmentStartDatePicker = DOM.isHTMLInputElement(startPickerSib) && startPickerSib.type === 'date' ? startPickerSib : null;
+		this._appointmentEndDatePicker = DOM.isHTMLInputElement(endPickerSib) && endPickerSib.type === 'date' ? endPickerSib : null;
+		this._refreshAppointmentDateMin();
+
 		// When start date is picked, default end date to the same day
 		this._register(DOM.addDisposableListener(startDate, 'change', () => {
+			// End date can never precede the chosen start date.
+			if (this._appointmentEndDatePicker && startDate.value) {
+				this._appointmentEndDatePicker.min = startDate.value;
+			}
 			if (startDate.value && !endDate.value) {
 				endDate.value = startDate.value;
 				const endWrap = endDate.parentElement;
@@ -791,6 +809,22 @@ export class EhrTitlebarControls extends Disposable {
 			const ed = endDate.value || sd;
 			const et = endTime.value || st;
 
+			// Past date/time guard — cannot schedule in the past; if today is chosen
+			// the start time must not be earlier than now.
+			if (sd) {
+				const apptStart = new Date(`${sd}T${st}:00`);
+				if (!isNaN(apptStart.getTime()) && apptStart.getTime() < Date.now()) {
+					errorEl.textContent = 'Cannot create appointments in the past. Please select a future date and time.';
+					errorEl.style.display = '';
+					return;
+				}
+			}
+			if (sd && ed && ed < sd) {
+				errorEl.textContent = 'End date cannot be before start date.';
+				errorEl.style.display = '';
+				return;
+			}
+
 			const startISO = sd ? `${sd}T${st}:00` : '';
 			const endISO = ed ? `${ed}T${et}:00` : '';
 
@@ -856,6 +890,16 @@ export class EhrTitlebarControls extends Disposable {
 
 	private _appointmentProviderSelect!: HTMLSelectElement;
 	private _appointmentLocationSelect!: HTMLSelectElement;
+	private _appointmentStartDatePicker: HTMLInputElement | null = null;
+	private _appointmentEndDatePicker: HTMLInputElement | null = null;
+
+	/** Set the calendar `min` on the appointment date pickers to today (local). */
+	private _refreshAppointmentDateMin(): void {
+		const now = new Date();
+		const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		if (this._appointmentStartDatePicker) { this._appointmentStartDatePicker.min = todayIso; }
+		if (this._appointmentEndDatePicker) { this._appointmentEndDatePicker.min = todayIso; }
+	}
 
 	private async _loadProvidersAndLocations(): Promise<void> {
 		// Providers
@@ -944,6 +988,7 @@ export class EhrTitlebarControls extends Disposable {
 		const isOpen = this.patientOverlay.style.display !== 'none';
 		this._closeAllOverlays();
 		if (!isOpen) {
+			this._resetForm(this.patientOverlay);
 			this._ensureInWorkbench(this.overlayBackdrop);
 			this._ensureInWorkbench(this.patientOverlay);
 			this._resetOverlayPosition(this.patientOverlay);
@@ -961,6 +1006,7 @@ export class EhrTitlebarControls extends Disposable {
 			this._resetOverlayPosition(this.appointmentOverlay);
 			this.appointmentOverlay.style.display = '';
 			this._showBackdrop();
+			this._refreshAppointmentDateMin();
 			this._loadProvidersAndLocations();
 		}
 	}

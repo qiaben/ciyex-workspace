@@ -176,7 +176,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'dosage', label: 'Dosage' },
 					{ key: 'frequency', label: 'Frequency' },
 					{ key: 'startDate', label: 'Start Date' },
-					{ key: 'prescriberName', label: 'Prescriber' },
+					{ key: 'prescriberName', label: 'Prescriber', aliases: ['prescriberDisplay', 'prescribingDoctorDisplay', 'prescriberName', 'prescriber', 'prescribingDoctor', 'requester', 'orderedBy', 'prescriberId'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -1064,6 +1064,10 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'educator', label: 'Educator', type: 'search', placeholder: 'Search educator…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 					{ key: 'content', label: 'Content / Summary', type: 'textarea', placeholder: 'Enter content / summary…', colSpan: 2 },
+					// URL link to the education material (matches the reference EHR UI).
+					// localOnly so it's appended even when the backend tab_field_config
+					// drives the form and omits this field.
+					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://… (link to material)', colSpan: 2, localOnly: true },
 					{ key: 'reasonCondition', label: 'Reason / Condition', type: 'text', placeholder: 'Enter reason / condition…' },
 					{
 						key: 'language', label: 'Language', type: 'select', options: [
@@ -2134,6 +2138,14 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	// Some endpoints aren't patient-scoped (e.g. /api/locations) — don't append /patient/{id}.
+	private _isFhirResourceTab(tab: ChartTab): boolean {
+		// FHIR-backed when the tab lists fhirResources OR its apiPath targets the
+		// generic FHIR controller (e.g. vitals -> /api/fhir-resource/vitals).
+		// Such resources are patient-scoped on create/update/delete, unlike plain
+		// apiPath endpoints (/api/cds/alerts, /api/education/assignments).
+		return (!tab.apiPath && tab.fhirResources.length > 0) || !!tab.apiPath?.startsWith('/api/fhir-resource/');
+	}
+
 	private _isPatientScoped(tab: ChartTab): boolean {
 		// Tabs that pull from org-level collections
 		const orgLevelTabs = new Set(['facility']);
@@ -2336,7 +2348,7 @@ export class PatientChartEditor extends EditorPane {
 									// if the local fallback says so. Backend label wins (it's a content
 									// choice); local provides UX hints (placeholder, validation, options)
 									// and `required` when backend left the flag unset.
-									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup';
+									const isSearchType = ov.type === 'code-search' || ov.type === 'practitioner-search' || ov.type === 'patient-search' || ov.type === 'lookup' || ov.type === 'search';
 									const backendOpts = f.options;
 									const hasBackendOptions = Array.isArray(backendOpts) && backendOpts.length > 0;
 									// Promote backend `text` fields to `select`/`date`/`datetime`/etc.
@@ -2363,6 +2375,13 @@ export class PatientChartEditor extends EditorPane {
 										type: isSearchType ? ov.type : (promoteRicher ? ov.type : f.type),
 										placeholder: f.placeholder || ov.placeholder,
 										lookupConfig: f.lookupConfig || ov.lookupConfig,
+										// Search-type fields need their endpoint + display mapping to render
+										// as a working typeahead. The backend tab_field_config ships these
+										// as plain text (no apiPath), which left Education Topic/Title +
+										// Educator pickers non-searchable.
+										apiPath: f.apiPath || ov.apiPath,
+										relatedDisplayFields: f.relatedDisplayFields || ov.relatedDisplayFields,
+										relatedField: f.relatedField || ov.relatedField,
 										validationPattern: f.validationPattern || ov.validationPattern,
 										validationMessage: f.validationMessage || ov.validationMessage,
 										defaultValue: f.defaultValue ?? ov.defaultValue,
@@ -2552,7 +2571,7 @@ export class PatientChartEditor extends EditorPane {
 		}
 		if (phone) {
 			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = phone;
+			el.textContent = `Phone: ${this._formatPhoneDisplay(phone)}`;
 			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		}
 
@@ -4123,7 +4142,7 @@ export class PatientChartEditor extends EditorPane {
 					// for patient-scoped resources, /api/fhir-resource/{tabKey}/{recordId}
 					// for org-level (Facility / Location).
 					// apiPath endpoints (non-FHIR): /{ep}/{recordId}
-					const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
+					const isFhir = this._isFhirResourceTab(tab);
 					const fhirPatient = isFhir && this._isPatientScoped(tab);
 					const delUrl = isFhir
 						? (fhirPatient ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/${recordId}`)
@@ -4337,7 +4356,7 @@ export class PatientChartEditor extends EditorPane {
 				return;
 			}
 
-			const isFhir = !tab.apiPath && tab.fhirResources.length > 0;
+			const isFhir = this._isFhirResourceTab(tab);
 			// FHIR endpoints take patientId from the URL path, not the body.
 			// apiPath endpoints (e.g. /api/cds/alerts) still need patientId in the body.
 			const payload: Record<string, unknown> = isFhir || isEdit ? {} : { patientId: this.patientId };
@@ -4373,6 +4392,20 @@ export class PatientChartEditor extends EditorPane {
 			try {
 				const ep = (this._tabEndpoint(tab) || '').split('?')[0];
 				if (!ep) { throw new Error('No endpoint for this tab'); }
+				// Encounter provider maps to FHIR Encounter.participant[0].individual.reference.
+				// The backend's reference-type inference can't resolve the resource type for
+				// an *indexed* path (participant[0].individual), so a bare practitioner id
+				// reaches HAPI as "13643" and is rejected (HAPI-0505: "Does not contain
+				// resource type"). Prefix it with "Practitioner/" here so the saved reference
+				// is well-formed. Patient comes from the URL path, not the body.
+				if (tab.key === 'encounters') {
+					for (const provKey of ['provider', 'providerId']) {
+						const v = payload[provKey];
+						if (typeof v === 'string' && v.trim() && !v.includes('/')) {
+							payload[provKey] = `Practitioner/${v.trim()}`;
+						}
+					}
+				}
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
@@ -4633,7 +4666,10 @@ export class PatientChartEditor extends EditorPane {
 						triggerStyle: inputStyle + 'cursor:pointer;',
 					});
 					this._formInputs.set(f.key, sel);
-				} else if (f.type === 'boolean' || f.type === 'toggle') {
+				} else if (f.type === 'boolean' || f.type === 'toggle' || f.type === 'checkbox') {
+					// Backend tab_field_config ships the Emergency Contact toggle as type
+					// "checkbox" (V139); treat it the same as boolean so it renders a
+					// checkbox instead of falling through to a plain text input.
 					const wrap = DOM.append(cell, DOM.$('div'));
 					wrap.style.cssText = 'display:flex;align-items:center;gap:8px;height:32px;';
 					const cb = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
@@ -4990,12 +5026,11 @@ export class PatientChartEditor extends EditorPane {
 			const rect = input.getBoundingClientRect();
 			const viewportWidth = DOM.getActiveWindow().innerWidth;
 			const viewportHeight = DOM.getActiveWindow().innerHeight;
-			// Desired width — at least the input width, capped at 380px, and
-			// never wider than the viewport (minus a small margin). The test
-			// team flagged the ICD-10 dropdown as "overlapping with the page"
-			// because the previous logic could push the dropdown's right edge
-			// past the page chrome on narrow form cells.
-			const desiredWidth = Math.min(Math.max(rect.width, 380), viewportWidth - 16);
+			// Width matches the search input so the dropdown aligns with its field
+			// (and every other form input) instead of jutting past it into the
+			// neighbouring column. A 220px floor keeps result rows readable in very
+			// narrow cells; never exceed the input width by much, nor the viewport.
+			const desiredWidth = Math.min(Math.max(rect.width, 220), viewportWidth - 16);
 			// Anchor to the input's left edge but clamp so the dropdown stays
 			// inside the viewport. If the right edge would overflow, slide it
 			// left so it ends 8px before the viewport edge.
@@ -5483,11 +5518,12 @@ export class PatientChartEditor extends EditorPane {
 			// the calendar; if a row has no linked encounter we fall back to
 			// the chart's encounters tab.
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
-			// Issue #13: Open Chart / Record Vitals / Visit Summary shortcuts —
-			// available on every encounter-linked tab (Billing, Encounters,
-			// Appointments, Visit Notes). Each opens the encounter editor
-			// scrolled to the appropriate section.
-			const encounterLinkedTabs = new Set(['billing', 'encounters', 'appointments', 'visit-notes', 'claims', 'submissions']);
+			// Open Chart / Record Vitals / Visit Summary shortcuts. The QA team
+			// asked that the Encounters, Appointments, and Visit Notes tabs show
+			// ONLY the edit + delete pair (workspace test report issues 16-18),
+			// so those tabs are intentionally excluded here. The billing/claims
+			// tabs still surface the encounter shortcuts.
+			const encounterLinkedTabs = new Set(['billing', 'claims', 'submissions']);
 			if (encounterLinkedTabs.has(tab.key)) {
 				// Row may surface the encounter via different keys: `encounterId`,
 				// `encounter`, `encounterRef`, `encounter.reference`, or — for the
@@ -5757,6 +5793,15 @@ export class PatientChartEditor extends EditorPane {
 		if (years > 0) { return `${years} yr${years !== 1 ? 's' : ''}${months > 0 ? ` ${months} mo` : ''}`; }
 		if (months > 0) { return `${months} mo${days > 0 ? ` ${days} d` : ''}`; }
 		return `${days} d`;
+	}
+
+	private _formatPhoneDisplay(raw: string): string {
+		// Standardize US phone display as XXX-XXX-XXXX (e.g. 555-678-9876).
+		// Returns the original string unchanged when it isn't a 10-digit number.
+		const digits = (raw || '').replace(/\D/g, '');
+		const ten = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+		if (ten.length !== 10) { return raw; }
+		return `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`;
 	}
 
 	private _genderLabel(g: string): string {
