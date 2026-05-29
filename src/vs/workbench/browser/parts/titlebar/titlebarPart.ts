@@ -487,11 +487,13 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		this.title = append(this.centerContent, $('div.window-title'));
 		this.createTitle();
 
-		// EHR Titlebar Controls — search bar goes to centre, action buttons go to right
+		// EHR Titlebar Controls — search bar goes to centre, action buttons go to far right
+		// (appended after both toolbars below so they sit closest to the window controls)
+		let ehrActionElement: HTMLElement | undefined;
 		try {
 			const apiService = this.instantiationService.invokeFunction(accessor => accessor.get(ICiyexApiService));
 			const ehrControls = this._register(new EhrTitlebarControls(apiService, this.commandService, this.notificationService));
-			append(this.rightContent, ehrControls.element);
+			ehrActionElement = ehrControls.element;
 			// Place the EHR search bar in the title centre, replacing the command centre
 			this._ehrSearchElement = ehrControls.searchElement;
 			reset(this.title, this._ehrSearchElement);
@@ -518,6 +520,11 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			this.actionToolBarElement = append(this.rightContent, $('div.action-toolbar-container'));
 			this.createActionToolBar();
 			this.createActionToolBarMenus();
+		}
+
+		// Append EHR action buttons last so they sit at the far right, just before window controls
+		if (ehrActionElement) {
+			append(this.rightContent, ehrActionElement);
 		}
 
 		// Window Controls Container
