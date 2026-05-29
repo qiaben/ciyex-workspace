@@ -1789,6 +1789,14 @@ export class PatientChartEditor extends EditorPane {
 	private quickInfo: QuickInfo = { allergies: '…', problems: '…', history: '…', vitals: '…' };
 	private readonly _configHome: URI;
 	private readonly _tabDataCache = new Map<string, { config: FieldConfig | null; data: Record<string, unknown>[] }>();
+	// Records created during this session, keyed by tab.key. HAPI FHIR search
+	// indexing is eventually consistent — a resource created seconds ago is
+	// often missing from the next /patient/{id} search response (and some
+	// resource types report a non-zero total while returning empty content).
+	// We keep created records here and merge them into every list fetch until
+	// the server's own search surfaces them, so a freshly-created allergy /
+	// vital / problem / insurance / relationship never disappears from the list.
+	private readonly _pendingCreates = new Map<string, Array<Record<string, unknown>>>();
 	private readonly _tabNavMap = new Map<string, HTMLElement>();
 	private readonly _tabCountEls = new Map<string, HTMLElement>();
 	private readonly _tabCounts = new Map<string, number>();
@@ -1846,6 +1854,7 @@ export class PatientChartEditor extends EditorPane {
 		this.patientId = input.patientId;
 		this.patientName = input.patientName;
 		this._tabDataCache.clear();
+		this._pendingCreates.clear();
 		this._tabNavMap.clear();
 		this._quickInfoValEls.clear();
 		// Initial-tab override (e.g. appointment row "Record Vitals" lands on the
@@ -1884,6 +1893,7 @@ export class PatientChartEditor extends EditorPane {
 
 	override clearInput(): void {
 		this._tabDataCache.clear();
+		this._pendingCreates.clear();
 		this._tabNavMap.clear();
 		this._quickInfoValEls.clear();
 		super.clearInput();
@@ -2135,6 +2145,35 @@ export class PatientChartEditor extends EditorPane {
 			return `/api/fhir-resource/${slug}`;
 		}
 		return null;
+	}
+
+	/** Stable record identity, tolerant of `ResourceType/123` vs bare `123`. */
+	private _recordId(r: Record<string, unknown>): string {
+		const raw = String((r.id ?? r.fhirId ?? r.uuid ?? r._id ?? '') as unknown);
+		return raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw;
+	}
+
+	/**
+	 * Prepend any session-created records the server hasn't surfaced yet so a
+	 * just-created row keeps showing despite FHIR search-index lag. Once the
+	 * server returns a record (matched by id), it's dropped from the pending
+	 * set so we never render it twice.
+	 */
+	private _mergePendingCreates(tabKey: string, data: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+		const pending = this._pendingCreates.get(tabKey);
+		if (!pending || pending.length === 0) { return data; }
+		const haveIds = new Set(data.map(r => this._recordId(r)).filter(Boolean));
+		const stillPending: Array<Record<string, unknown>> = [];
+		let merged = data;
+		for (const p of pending) {
+			const pid = this._recordId(p);
+			if (pid && haveIds.has(pid)) { continue; } // server returned it → reconciled
+			stillPending.push(p);
+			merged = [p, ...merged];
+		}
+		if (stillPending.length) { this._pendingCreates.set(tabKey, stillPending); }
+		else { this._pendingCreates.delete(tabKey); }
+		return merged;
 	}
 
 	// Some endpoints aren't patient-scoped (e.g. /api/locations) — don't append /patient/{id}.
@@ -2478,6 +2517,7 @@ export class PatientChartEditor extends EditorPane {
 				console.error(`[patientChart] ${tab.key} GET ${url} threw:`, e);
 			}
 		}
+		data = this._mergePendingCreates(tab.key, data);
 		const result = { config, data };
 		this._tabDataCache.set(tab.key, result);
 		return result;
@@ -2766,7 +2806,12 @@ export class PatientChartEditor extends EditorPane {
 						const json = await res.json();
 						const total = json?.data?.totalElements ?? json?.totalElements
 							?? (Array.isArray(json?.data?.content) ? json.data.content.length : (Array.isArray(json?.data) ? json.data.length : 0));
-						const count = typeof total === 'number' ? total : 0;
+						let count = typeof total === 'number' ? total : 0;
+						// Don't undercount records we're optimistically showing while
+						// the server's FHIR search index catches up — keep the badge in
+						// step with the list (which includes pending creates).
+						const cachedLen = this._tabDataCache.get(tab.key)?.data.length;
+						if (typeof cachedLen === 'number' && cachedLen > count) { count = cachedLen; }
 						this._tabCounts.set(tab.key, count);
 						const el = this._tabCountEls.get(tab.key);
 						if (el) {
@@ -2941,7 +2986,7 @@ export class PatientChartEditor extends EditorPane {
 				ep: `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=5`,
 				emoji: '\u{1F4C5}',
 				build: (a) => ({
-					title: `Appointment: ${String(a.visitType || a.appointmentType || 'Visit')}`,
+					title: `Appointment: ${this._displayText(a.appointmentType) || this._displayText(a.visitType) || 'Visit'}`,
 					description: String(a.appointmentStartTime || this._formatDate(a.appointmentStartDate) || ''),
 					timestamp: this._formatDate(a.appointmentStartDate) || '',
 					sortKey: this._toEpoch(a.appointmentStartDate),
@@ -2953,8 +2998,8 @@ export class PatientChartEditor extends EditorPane {
 				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=5`,
 				emoji: '\u{1F4CB}',
 				build: (e) => ({
-					title: `Encounter: ${String(e.visitType || e.type || 'Visit')}`,
-					description: String(e.providerName || e.practitionerName || ''),
+					title: `Encounter: ${this._displayText(e.visitType) || this._displayText(e.type) || 'Visit'}`,
+					description: this._displayText(e.providerName) || this._displayText(e.practitionerName) || '',
 					timestamp: this._formatDate(e.startDate || e.start) || '',
 					sortKey: this._toEpoch(e.startDate || e.start),
 					status: String(e.status || ''),
@@ -3002,8 +3047,8 @@ export class PatientChartEditor extends EditorPane {
 				ep: `${FHIR_MAP['MedicationRequest']}/patient/${this.patientId}?page=0&size=5`,
 				emoji: '\u{1F48A}',
 				build: (m) => ({
-					title: `Medication: ${String(m.medicationName || '')}`,
-					description: String(m.dosage || ''),
+					title: `Medication: ${this._displayText(m.medicationName) || this._displayText(m.medication) || ''}`,
+					description: this._displayText(m.dosage) || '',
 					timestamp: this._formatDate(m.startDate || m.authoredOn) || '',
 					sortKey: this._toEpoch(m.startDate || m.authoredOn),
 					status: String(m.status || ''),
@@ -4477,21 +4522,37 @@ export class PatientChartEditor extends EditorPane {
 						}
 					} catch { /* response not JSON — skip optimistic merge */ }
 
-					const cached = this._tabDataCache.get(tab.key);
-					if (cached) {
-						const merged: Record<string, unknown> = { ...payload, ...(savedRecord || {}) };
-						if (isEdit && recordId) {
+					const merged: Record<string, unknown> = { ...payload, ...(savedRecord || {}) };
+					if (isEdit && recordId) {
+						const cached = this._tabDataCache.get(tab.key);
+						if (cached) {
 							cached.data = cached.data.map(r => {
 								const id = String(r.id ?? r.fhirId ?? '');
 								return id === String(recordId) ? { ...r, ...merged } : r;
 							});
-						} else {
-							// Ensure the optimistic row has *some* id so row-action handlers
-							// don't break before the silent refresh lands.
-							if (!merged.id && !merged.fhirId) { merged.id = `tmp-${Date.now()}`; }
-							cached.data = [merged, ...cached.data];
+							this._tabDataCache.set(tab.key, cached);
 						}
-						this._tabDataCache.set(tab.key, cached);
+					} else {
+						// Track this create so the list keeps showing it past the 1.5s
+						// reconciliation refetch — the server's FHIR search index may
+						// not have surfaced it yet. _mergePendingCreates drops it once
+						// the server returns it. Only track records with a real server
+						// id so reconciliation can dedupe; a tmp id would never match a
+						// server record and could render a duplicate row.
+						if (this._recordId(merged)) {
+							const pend = this._pendingCreates.get(tab.key) || [];
+							pend.unshift(merged);
+							this._pendingCreates.set(tab.key, pend);
+						} else {
+							// No id came back — fall back to a tmp id for the optimistic
+							// row so row-action handlers don't break before refresh.
+							merged.id = `tmp-${Date.now()}`;
+						}
+						const cached = this._tabDataCache.get(tab.key);
+						if (cached) {
+							cached.data = [merged, ...cached.data];
+							this._tabDataCache.set(tab.key, cached);
+						}
 					}
 					if (this.activeTab === tab.key) { this._renderMain(); }
 

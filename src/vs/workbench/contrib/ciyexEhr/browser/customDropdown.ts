@@ -177,10 +177,29 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? COLORS.hoverBackground : COLORS.background; });
 			row.addEventListener('mousedown', (e) => {
 				e.preventDefault();
+				// Keep the selection contained to this control. Without this the
+				// mousedown also reaches the host form's outside-click / backdrop
+				// handlers.
+				e.stopPropagation();
 				const prev = hidden.value;
 				hidden.value = opt.value;
 				refreshTriggerLabel();
 				closePanel();
+				// closePanel() hides this body-mounted panel during the mousedown,
+				// so the browser then dispatches a synthetic `click` whose target —
+				// the panel now being display:none — resolves to whatever sits
+				// underneath (the host form's overlay scrim / backdrop). That stray
+				// click was tearing the create/edit drawer down before the user
+				// could save. Swallow exactly that one trailing click.
+				const swallowNextClick = (ev: Event) => {
+					ev.stopPropagation();
+					ev.preventDefault();
+					doc.removeEventListener('click', swallowNextClick, true);
+				};
+				doc.addEventListener('click', swallowNextClick, true);
+				// Fallback: if no click is generated (e.g. the pointer was dragged
+				// off the row) drop the listener so it can't swallow a later click.
+				doc.defaultView?.setTimeout(() => doc.removeEventListener('click', swallowNextClick, true), 100);
 				if (prev !== opt.value) {
 					// Fire 'change' so existing listeners on the (formerly select)
 					// element pick up the new value.

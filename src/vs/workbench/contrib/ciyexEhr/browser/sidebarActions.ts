@@ -1004,9 +1004,23 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? colors.hoverBackground : popoverBg; });
 					row.addEventListener('mousedown', (e) => {
 						e.preventDefault();
+						// Contain the selection to this control so the host drawer's
+						// outside-click handler doesn't see it.
+						e.stopPropagation();
 						hidden.value = opt.value;
 						refreshTriggerLabel();
 						closePanel();
+						// closePanel() hides this body-mounted panel during mousedown,
+						// so the trailing synthetic `click` resolves to the drawer's
+						// overlay scrim (onOverlayClick → close()), tearing the drawer
+						// down before save. Swallow exactly that one click.
+						const swallowNextClick = (ev: Event) => {
+							ev.stopPropagation();
+							ev.preventDefault();
+							doc.removeEventListener('click', swallowNextClick, true);
+						};
+						doc.addEventListener('click', swallowNextClick, true);
+						doc.defaultView?.setTimeout(() => doc.removeEventListener('click', swallowNextClick, true), 100);
 					});
 					panel.appendChild(row);
 				}
@@ -1172,9 +1186,21 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = popoverBg; });
 					opt.addEventListener('mousedown', (e) => {
 						e.preventDefault();
+						e.stopPropagation();
 						inputEl.value = r.label;
 						if (onSelect) { onSelect(r, inputs); }
 						panel.style.display = 'none';
+						// Hiding this body-mounted panel during mousedown makes the
+						// trailing synthetic click resolve to the drawer's overlay
+						// scrim (onOverlayClick → close()), closing the form before
+						// save. Swallow that one click.
+						const swallowNextClick = (ev: Event) => {
+							ev.stopPropagation();
+							ev.preventDefault();
+							doc.removeEventListener('click', swallowNextClick, true);
+						};
+						doc.addEventListener('click', swallowNextClick, true);
+						doc.defaultView?.setTimeout(() => doc.removeEventListener('click', swallowNextClick, true), 100);
 					});
 					panel.appendChild(opt);
 				}
