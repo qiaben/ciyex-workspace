@@ -16,8 +16,9 @@
 .ehr-titlebar-controls {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	margin-right: 4px;
+	gap: 8px;
+	margin-right: 2px;
+	padding-left: 8px;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
 	flex-shrink: 0;
@@ -173,6 +174,8 @@
 	justify-content: center;
 	gap: 0;
 	padding: 3px;
+	box-sizing: border-box;
+	width: 28px;
 	border-radius: 6px;
 	cursor: pointer;
 	color: var(--vscode-titleBar-activeForeground, #ccc);
@@ -182,7 +185,6 @@
 	font-family: inherit;
 	transition: background 0.12s;
 	-webkit-app-region: no-drag;
-	margin-left: 1px;
 	white-space: nowrap;
 }
 
