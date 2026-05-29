@@ -682,7 +682,24 @@ export class ScheduleSidebarPane extends ViewPane {
 			});
 		});
 
-		if (this._miniCalendarCollapsed) { return; }
+		// Chevron toggle — collapses/expands the date grid. Rendered in BOTH states
+		// (a down caret to reveal when collapsed, an up caret to hide when expanded)
+		// so a collapsed calendar can always be brought back. Previously the chevron
+		// lived below the grid, so collapsing removed it and left no way to reopen.
+		const renderToggleChevron = () => {
+			const chevWrap = DOM.append(wrap, DOM.$('div'));
+			chevWrap.style.cssText = 'text-align:center;margin-top:6px;cursor:pointer;';
+			const chev = DOM.append(chevWrap, DOM.$('span'));
+			// allow-any-unicode-next-line
+			chev.textContent = this._miniCalendarCollapsed ? '⌄' : '⌃';
+			chev.title = this._miniCalendarCollapsed ? 'Show calendar' : 'Hide calendar';
+			chev.style.cssText = 'font-size:13px;line-height:1;color:var(--vscode-descriptionForeground);';
+			chevWrap.addEventListener('mouseenter', () => { chev.style.color = 'var(--vscode-editor-foreground)'; });
+			chevWrap.addEventListener('mouseleave', () => { chev.style.color = 'var(--vscode-descriptionForeground)'; });
+			chevWrap.addEventListener('click', () => { this._miniCalendarCollapsed = !this._miniCalendarCollapsed; this._render(); });
+		};
+
+		if (this._miniCalendarCollapsed) { renderToggleChevron(); return; }
 
 		// Day-of-week headers
 		const dayHdr = DOM.append(wrap, DOM.$('div'));
@@ -719,14 +736,8 @@ export class ScheduleSidebarPane extends ViewPane {
 			cell.addEventListener('mouseleave', () => { if (!isToday) { cell.style.background = isSelected && !isToday ? 'var(--vscode-toolbar-hoverBackground)' : ''; } });
 		}
 
-		// Chevron at bottom to collapse
-		const chevWrap = DOM.append(wrap, DOM.$('div'));
-		chevWrap.style.cssText = 'text-align:center;margin-top:6px;cursor:pointer;';
-		const chev = DOM.append(chevWrap, DOM.$('span'));
-		// allow-any-unicode-next-line
-		chev.textContent = '∨';
-		chev.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		chevWrap.addEventListener('click', () => { this._miniCalendarCollapsed = true; this._render(); });
+		// Chevron at bottom toggles the calendar closed (and back open).
+		renderToggleChevron();
 	}
 
 	private _renderTimeline(): void {
