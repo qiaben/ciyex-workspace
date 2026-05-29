@@ -285,7 +285,7 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Add Patient';
 		btn.setAttribute('aria-label', 'Add Patient');
 
-		DOM.append(btn, DOM.$('span.ehr-patient-icon'));
+		DOM.append(btn, DOM.$('span.codicon.codicon-person'));
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -315,8 +315,7 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Donate';
 		btn.setAttribute('aria-label', 'Donate');
 
-		const icon = DOM.append(btn, DOM.$('span.ehr-currency-icon'));
-		icon.textContent = '$';
+		DOM.append(btn, DOM.$('span.ehr-currency-icon'));
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
