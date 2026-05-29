@@ -23,13 +23,6 @@ interface StatusTab { label: string; value: string }
 interface ActionDef {
 	label: string;
 	icon: string;
-	/** Optional icon color (CSS). Defaults to the theme foreground. Used to give
-	 *  Approve/Deny-style actions visible, intent-coded glyphs on dark themes. */
-	color?: string;
-	/** Optional per-row visibility predicate. When set and it returns false the
-	 *  action button is hidden for that row — lets workflow actions show only the
-	 *  contextually-relevant next step (matches the reference EHR UI). */
-	visible?: (item: Record<string, unknown>) => boolean;
 	handler: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void;
 }
 
@@ -101,11 +94,6 @@ export interface FilterDropdownDef {
 	/** Placeholder shown as the "All" option */
 	placeholder: string;
 	options: Array<{ label: string; value: string }>;
-	/** When set, the option list is derived from the distinct values of this
-	 *  field across the loaded records instead of the static {@link options}.
-	 *  Keeps data-driven filters (e.g. provider) in sync with the current org
-	 *  rather than a hardcoded seed list. */
-	optionsFromData?: string;
 }
 
 
@@ -582,16 +570,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				allOpt.value = '';
 				allOpt.textContent = fd.placeholder;
 				const current = this.additionalFilterValues.get(fd.key) || '';
-				let opts = fd.options;
-				if (fd.optionsFromData) {
-					const seen = new Set<string>();
-					for (const it of this.items) {
-						const v = String(it[fd.optionsFromData] ?? '').trim();
-						if (v) { seen.add(v); }
-					}
-					opts = Array.from(seen).sort((a, b) => a.localeCompare(b)).map(v => ({ label: v, value: v }));
-				}
-				for (const o of opts) {
+				for (const o of fd.options) {
 					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 					opt.value = o.value;
 					opt.textContent = o.label;
@@ -721,11 +700,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 				if (cfg.actions) {
 					for (const a of cfg.actions) {
-						if (a.visible && !a.visible(item)) { continue; }
 						const btn = DOM.append(acts, DOM.$('button'));
 						btn.textContent = a.icon;
 						btn.title = a.label;
-						btn.style.cssText = `background:none;border:none;cursor:pointer;font-size:13px;padding:2px;color:${a.color || 'var(--vscode-foreground)'};`;
+						btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;padding:2px;';
 						btn.addEventListener('click', (ev) => { ev.stopPropagation(); a.handler(item, this.apiService, () => { this._loadStats(); this._loadData(); }, this.dialogService); });
 					}
 				}

@@ -41,8 +41,6 @@ export class EncounterFormEditor extends EditorPane {
 	private _autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	private _isDirty = false;
 	private _compositionId = '';
-	// In-flight encounter creation for the "new" case (see _ensureRealEncounterId).
-	private _creatingEncounter: Promise<string> | null = null;
 	private _encounterStatus = '';
 	private _statusBadge: HTMLElement | undefined;
 	private _autoSaveIndicator: HTMLElement | undefined;
@@ -426,8 +424,8 @@ export class EncounterFormEditor extends EditorPane {
 	private async _saveEncounter(saveBtn: HTMLElement): Promise<boolean> {
 		if (!(this.input instanceof EncounterFormEditorInput)) { return false; }
 		if (this._isSigned) { return false; }
-		const { patientId } = this.input;
-		if (!patientId) { this.notificationService.warn('No patient'); return false; }
+		const { encounterId, patientId } = this.input;
+		if (!encounterId) { this.notificationService.warn('No encounter ID'); return false; }
 
 		const formData = this._collectFormData();
 
@@ -435,9 +433,6 @@ export class EncounterFormEditor extends EditorPane {
 		(saveBtn as HTMLButtonElement).disabled = true;
 
 		try {
-			// Ensure a persisted encounter exists before writing the composition
-			// (a "new" encounter must be created first — see _ensureRealEncounterId).
-			const encounterId = await this._ensureRealEncounterId(patientId);
 			// Save to encounter-form composition (primary - matches EHR UI)
 			let compRes: Response;
 			if (this._compositionId) {
@@ -540,43 +535,6 @@ export class EncounterFormEditor extends EditorPane {
 		}
 	}
 
-	/**
-	 * Resolve a real, persisted encounter id. When the form is opened for a
-	 * brand-new encounter the id is the literal "new", which the backend then
-	 * stamped into `Composition.encounter` as `Encounter/new` — a reference to
-	 * a resource that doesn't exist, producing HTTP 400 HAPI-1094 on save
-	 * (workspace test report issue 1). Create the Encounter first so the
-	 * composition can point at a valid id. The promise is cached so a save and
-	 * a concurrent auto-save don't create two encounters.
-	 */
-	private async _ensureRealEncounterId(patientId: string): Promise<string> {
-		const current = this.encounterId;
-		if (current && current !== 'new') { return current; }
-		if (this._creatingEncounter) { return this._creatingEncounter; }
-		this._creatingEncounter = (async () => {
-			const today = new Date().toISOString().slice(0, 10);
-			const body = { status: 'in-progress', encounterDate: today, startDate: today, type: 'AMB', patientId };
-			const res = await this.apiService.fetch(`/api/fhir-resource/encounters/patient/${patientId}`, {
-				method: 'POST',
-				body: JSON.stringify(body),
-			});
-			if (!res.ok) {
-				const err = await res.text().catch(() => 'Unknown error');
-				throw new Error(`Could not create encounter: ${err.substring(0, 200)}`);
-			}
-			const data = await res.json();
-			const newId = String(data?.data?.id || data?.data?.fhirId || data?.id || data?.fhirId || '');
-			if (!newId) { throw new Error('Encounter created but no id was returned'); }
-			this.encounterId = newId;
-			return newId;
-		})();
-		try {
-			return await this._creatingEncounter;
-		} finally {
-			this._creatingEncounter = null;
-		}
-	}
-
 	private _collectFormData(): Record<string, unknown> {
 		const formData: Record<string, unknown> = {};
 		for (const [, card] of this.sectionCards) {
@@ -623,14 +581,13 @@ export class EncounterFormEditor extends EditorPane {
 	private async _autoSave(): Promise<void> {
 		if (!this._isDirty || this._isSigned) { return; }
 		if (!(this.input instanceof EncounterFormEditorInput)) { return; }
-		const { patientId } = this.input;
-		if (!patientId) { return; }
+		const { encounterId, patientId } = this.input;
+		if (!encounterId || !patientId) { return; }
 
 		this._updateAutoSaveIndicator('Auto-saving...');
 
 		const formData = this._collectFormData();
 		try {
-			const encounterId = await this._ensureRealEncounterId(patientId);
 			let res: Response;
 			if (this._compositionId) {
 				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}/${this._compositionId}`, {

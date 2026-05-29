@@ -4431,19 +4431,6 @@ export class PatientChartEditor extends EditorPane {
 						payload.url = uniq;
 					}
 				}
-				// Encounters: participant.individual must be a typed FHIR reference
-				// (e.g. "Practitioner/13643"). The provider picker stores a bare id
-				// that the backend mapper wrote verbatim, so HAPI rejected the save
-				// with HTTP 400 HAPI-0505 "Does not contain resource type"
-				// (workspace test report issue 26). Prefix the provider reference.
-				if (tab.key === 'encounters') {
-					for (const provKey of ['provider', 'providerId']) {
-						const pv = payload[provKey];
-						if (typeof pv === 'string' && pv && !pv.includes('/')) {
-							payload[provKey] = `Practitioner/${pv}`;
-						}
-					}
-				}
 				// Org-level FHIR resources (Facility / Location) skip the
 				// /patient/{id} prefix — they are not patient-scoped.
 				const fhirPatient = isFhir && this._isPatientScoped(tab);
