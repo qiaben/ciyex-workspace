@@ -30,8 +30,6 @@ import {
 	SettingsHubEditorInput, LayoutHubEditorInput,
 	// Portal Management full-page editors
 	DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput,
-	// Telehealth
-	TelehealthEditorInput,
 	// Patient Snapshot
 	PatientSnapshotEditorInput,
 } from './ciyexEditorInput.js';
@@ -70,7 +68,6 @@ import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
-import { TelehealthEditor } from './telehealthEditor.js';
 import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
@@ -120,8 +117,8 @@ reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.
 // Appointments
 reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, AppointmentsEditor.ID, localize('appointments', "Appointments")), [new SyncDescriptor(AppointmentsEditorInput)]);
 
-// Telehealth
-reg.registerEditorPane(EditorPaneDescriptor.create(TelehealthEditor, TelehealthEditor.ID, localize('telehealth', "Telehealth")), [new SyncDescriptor(TelehealthEditorInput)]);
+// Telehealth video UI is provided by the ciyex-telehealth extension — no
+// workbench-baked editor pane.
 reg.registerEditorPane(EditorPaneDescriptor.create(PatientSnapshotEditor, PatientSnapshotEditor.ID, localize('patientSnapshot', "Patient Snapshot")), [new SyncDescriptor(PatientSnapshotEditorInput)]);
 
 // System editors

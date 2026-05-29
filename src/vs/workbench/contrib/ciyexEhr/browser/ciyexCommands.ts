@@ -16,7 +16,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, TelehealthEditorInput, PatientSnapshotEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -692,19 +692,18 @@ registerAction2(class extends Action2 {
 /**
  * Command: Open Telehealth Video Session for an appointment.
  *
- * Telehealth is a paid marketplace extension (`ciyex-telehealth`). This command
- * is gated on the org having purchased + installed that extension from the Hub.
- * If not installed, the user gets a notification with an action to open the
- * Hub product page so they can complete the purchase. After install, the
- * marketplace webhook → ciyex-api creates an active app_installation row;
- * CiyexInstallationsService picks it up on next load (or via runtime refresh)
- * and the Video Call action lights up.
- *
- * Once installed, mirrors the ciyex-ehr-ui flow at /telehealth/{appointmentId}:
- * creates or retrieves a session via the SDK-routed backend, then opens it in
- * the TelehealthEditor pane.
+ * Telehealth has two independent gates:
+ *   1. Entitlement — the org must have purchased the `ciyex-telehealth`
+ *      marketplace app (CiyexInstallationsService.isInstalled). If not, the
+ *      user gets a "Buy & Install" notification.
+ *   2. Provider — the video UI is owned EXCLUSIVELY by the ciyex-telehealth
+ *      VS Code extension, which contributes `ciyex-telehealth.openSession`.
+ *      The workbench no longer ships a baked-in telehealth editor; if the
+ *      extension is disabled the user is told to enable it. This command's
+ *      only job is to dispatch to the extension with the session context.
  */
 const TELEHEALTH_APP_SLUG = 'ciyex-telehealth';
+const TELEHEALTH_EXT_COMMAND = 'ciyex-telehealth.openSession';
 
 /** Derive the Hub URL from the API URL by swapping `api` → `app`. */
 function _deriveHubUrl(apiUrl: string, slug: string): string {
@@ -783,32 +782,48 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		// Prefer the ciyex-telehealth extension's command if it's installed.
-		// CommandsRegistry.getCommand returns undefined when no extension has
-		// registered the id, in which case we fall back to the workbench-baked
-		// TelehealthEditor for backwards compatibility.
-		const TELEHEALTH_EXT_COMMAND = 'ciyex-telehealth.openSession';
-		if (CommandsRegistry.getCommand(TELEHEALTH_EXT_COMMAND)) {
-			const authService = accessor.get(ICiyexAuthService);
-			const authToken = (() => {
-				try { return localStorage.getItem('ciyex_token') || ''; } catch { return ''; }
-			})();
-			const orgAlias = (() => {
-				try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
-			})();
-			await accessor.get(ICommandService).executeCommand(TELEHEALTH_EXT_COMMAND, {
-				appointmentId: String(appointmentId),
-				patientName: patientName || '',
-				providerName: providerName || '',
-				authToken,
-				orgAlias,
-				apiUrl: authService.apiUrl,
+		// Telehealth UI is provided exclusively by the ciyex-telehealth
+		// extension. If its command isn't registered the extension is
+		// installed-but-disabled (or not built) — there is no workbench
+		// fallback, so guide the user to enable it rather than silently
+		// doing nothing.
+		if (!CommandsRegistry.getCommand(TELEHEALTH_EXT_COMMAND)) {
+			const commandService = accessor.get(ICommandService);
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize2(
+					'telehealthExtDisabled',
+					"The Ciyex Telehealth extension is required for video visits. Enable it from the Extensions view.",
+				).value,
+				actions: {
+					primary: [{
+						id: 'ciyex.telehealth.openExtensionsView',
+						label: localize2('openExtensions', "Open Extensions").value,
+						tooltip: 'Show the Ciyex Telehealth extension',
+						class: undefined,
+						enabled: true,
+						run: async () => { await commandService.executeCommand('workbench.extensions.action.showInstalledExtensions'); },
+					}],
+				},
 			});
 			return;
 		}
 
-		const input = new TelehealthEditorInput(String(appointmentId), patientName || '', providerName || '');
-		await accessor.get(IEditorService).openEditor(input, { pinned: true });
+		const authService = accessor.get(ICiyexAuthService);
+		const authToken = (() => {
+			try { return localStorage.getItem('ciyex_token') || ''; } catch { return ''; }
+		})();
+		const orgAlias = (() => {
+			try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
+		})();
+		await accessor.get(ICommandService).executeCommand(TELEHEALTH_EXT_COMMAND, {
+			appointmentId: String(appointmentId),
+			patientName: patientName || '',
+			providerName: providerName || '',
+			authToken,
+			orgAlias,
+			apiUrl: authService.apiUrl,
+		});
 	}
 });
 
