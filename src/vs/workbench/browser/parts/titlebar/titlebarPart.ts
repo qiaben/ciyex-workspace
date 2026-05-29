@@ -501,7 +501,12 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			// CiyexApiService not available (e.g., not in EHR context) — skip
 		}
 
-		// Center-Adjacent Toolbar (e.g., update indicator)
+		// EHR action buttons come first so they stay in a fixed position regardless of Update indicator
+		if (ehrActionElement) {
+			append(this.rightContent, ehrActionElement);
+		}
+
+		// Center-Adjacent Toolbar (e.g., update indicator) — sits between EHR buttons and layout toolbar
 		if (hasCustomTitlebar(this.configurationService, this.titleBarStyle)) {
 			const centerAdjacentToolBarElement = append(this.rightContent, $('div.center-adjacent-toolbar-container'));
 			this.centerAdjacentToolBarDisposable.add(this.instantiationService.createInstance(MenuWorkbenchToolBar, centerAdjacentToolBarElement, MenuId.TitleBarAdjacentCenter, {
@@ -513,11 +518,6 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 				actionViewItemProvider: (action, options) => createActionViewItem(this.instantiationService, action, options),
 				hoverDelegate: this.hoverDelegate
 			}));
-		}
-
-		// EHR action buttons go before the layout/action toolbar
-		if (ehrActionElement) {
-			append(this.rightContent, ehrActionElement);
 		}
 
 		// Create Toolbar Actions (customize layout — comes after EHR buttons)
