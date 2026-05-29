@@ -745,28 +745,9 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?(?:\\s*(mL|mg|mcg|units|IU|cc|g|%))?$',
 						validationMessage: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)',
 					},
-					{
-						key: 'route', label: 'Route', type: 'select', options: [
-							{ label: 'Intramuscular (IM)', value: 'intramuscular' },
-							{ label: 'Subcutaneous (SC)', value: 'subcutaneous' },
-							{ label: 'Oral', value: 'oral' },
-							{ label: 'Intranasal', value: 'intranasal' },
-							{ label: 'Intradermal', value: 'intradermal' },
-						]
-					},
-					{
-						key: 'site', label: 'Site', type: 'select', options: [
-							{ label: 'Left Arm', value: 'left arm' },
-							{ label: 'Right Arm', value: 'right arm' },
-							{ label: 'Left Thigh', value: 'left thigh' },
-							{ label: 'Right Thigh', value: 'right thigh' },
-							{ label: 'Left Deltoid', value: 'left deltoid' },
-							{ label: 'Right Deltoid', value: 'right deltoid' },
-							{ label: 'Left Gluteal', value: 'left gluteal' },
-							{ label: 'Right Gluteal', value: 'right gluteal' },
-						]
-					},
-					{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'e.g., Pfizer' },
+					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
+					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
+					{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Completed', value: 'completed' },
@@ -1083,7 +1064,6 @@ const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'educator', label: 'Educator', type: 'search', placeholder: 'Search educator…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 					{ key: 'content', label: 'Content / Summary', type: 'textarea', placeholder: 'Enter content / summary…', colSpan: 2 },
-					{ key: 'url', label: 'URL Link', type: 'text', placeholder: 'https://… (link to material)', colSpan: 2 },
 					{ key: 'reasonCondition', label: 'Reason / Condition', type: 'text', placeholder: 'Enter reason / condition…' },
 					{
 						key: 'language', label: 'Language', type: 'select', options: [
@@ -2572,7 +2552,7 @@ export class PatientChartEditor extends EditorPane {
 		}
 		if (phone) {
 			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = `Phone: ${phone}`;
+			el.textContent = phone;
 			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		}
 
@@ -5503,12 +5483,11 @@ export class PatientChartEditor extends EditorPane {
 			// the calendar; if a row has no linked encounter we fall back to
 			// the chart's encounters tab.
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
-			// Open Chart / Record Vitals / Visit Summary shortcuts. The QA team
-			// asked that the Encounters, Appointments, and Visit Notes tabs show
-			// ONLY the edit + delete pair (workspace test report issues 16-18),
-			// so those tabs are intentionally excluded here. The billing/claims
-			// tabs still surface the encounter shortcuts.
-			const encounterLinkedTabs = new Set(['billing', 'claims', 'submissions']);
+			// Issue #13: Open Chart / Record Vitals / Visit Summary shortcuts —
+			// available on every encounter-linked tab (Billing, Encounters,
+			// Appointments, Visit Notes). Each opens the encounter editor
+			// scrolled to the appropriate section.
+			const encounterLinkedTabs = new Set(['billing', 'encounters', 'appointments', 'visit-notes', 'claims', 'submissions']);
 			if (encounterLinkedTabs.has(tab.key)) {
 				// Row may surface the encounter via different keys: `encounterId`,
 				// `encounter`, `encounterRef`, `encounter.reference`, or — for the

@@ -243,21 +243,13 @@ export class EhrTitlebarControls extends Disposable {
 				dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)} · View appointments` : 'View appointments';
 
 				const patientName = `${p.firstName} ${p.lastName}`.trim();
-				const patientId = p.fhirId || p.id;
 				this._register(DOM.addDisposableListener(item, 'click', () => {
 					this.searchDropdown.style.display = 'none';
-					this.searchInput.value = '';
-					// Selecting a patient from the global search opens that patient's
-					// chart directly (workspace test report issue 29) instead of just
-					// filtering the calendar. Fall back to the calendar filter when the
-					// result carries no id.
-					if (patientId) {
-						this.commandService.executeCommand('ciyex.openPatientChart', String(patientId), patientName).catch(() => { });
-					} else {
-						this.searchInput.value = patientName;
-						this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-						this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
-					}
+					this.searchInput.value = patientName;
+					// Push the value into the calendar filter bridge as well so the
+					// calendar grid filters immediately.
+					this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+					this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
 				}));
 			}
 		}
@@ -467,11 +459,7 @@ export class EhrTitlebarControls extends Disposable {
 		const smsConsent = this._createCheckbox(consentRow, 'SMS/Text', true) as HTMLInputElement;
 		const voicemailConsent = this._createCheckbox(consentRow, 'Voicemail', true) as HTMLInputElement;
 
-		// `dobVisible` is the user-facing MM/DD/YYYY text field; `dob` is the
-		// hidden ISO value sent on save. Both must be tracked so _resetForm()
-		// clears the visible field too — otherwise the previous patient's DOB
-		// lingers on the next Create Patient (workspace test report issue 1).
-		this._patientFormElements.inputs.push(firstName, middleName, lastName, phone, dobVisible, dob, email, emailConsent, smsConsent, voicemailConsent);
+		this._patientFormElements.inputs.push(firstName, middleName, lastName, phone, dob, email, emailConsent, smsConsent, voicemailConsent);
 		this._patientFormElements.selects.push(gender);
 
 		// Buttons
@@ -803,37 +791,8 @@ export class EhrTitlebarControls extends Disposable {
 			const ed = endDate.value || sd;
 			const et = endTime.value || st;
 
-			if (!sd) {
-				errorEl.textContent = 'Please select a start date.';
-				errorEl.style.display = '';
-				return;
-			}
-
 			const startISO = sd ? `${sd}T${st}:00` : '';
 			const endISO = ed ? `${ed}T${et}:00` : '';
-
-			// Appointments cannot be scheduled in the past (workspace test report
-			// issue 6). Reject a start instant that's already elapsed; when no
-			// start time was given we compare against the start of today so a
-			// same-day appointment without a time is still allowed.
-			const startInstant = new Date(startISO);
-			const nowInstant = new Date();
-			const pastCutoff = startTime.value ? nowInstant : new Date(nowInstant.getFullYear(), nowInstant.getMonth(), nowInstant.getDate());
-			if (!isNaN(startInstant.getTime()) && startInstant.getTime() < pastCutoff.getTime()) {
-				errorEl.textContent = startTime.value
-					? 'Appointment start cannot be in the past.'
-					: 'Appointment date cannot be in the past.';
-				errorEl.style.display = '';
-				return;
-			}
-			if (endISO) {
-				const endInstant = new Date(endISO);
-				if (!isNaN(endInstant.getTime()) && endInstant.getTime() < startInstant.getTime()) {
-					errorEl.textContent = 'Appointment end must be after the start.';
-					errorEl.style.display = '';
-					return;
-				}
-			}
 
 			const vtVal = (visitType as HTMLSelectElement).value;
 			const body = {
@@ -1070,12 +1029,6 @@ export class EhrTitlebarControls extends Disposable {
 			// calendar without needing showPicker() (which is unreliable in Electron).
 			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			picker.type = 'date';
-			// Appointment dates can't be in the past — the only date fields built
-			// through _createField are the appointment start/end dates, so cap the
-			// calendar at today (workspace test report issue 6). Save-time
-			// validation below catches typed (non-picker) past dates too.
-			const _now = new Date();
-			picker.min = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			visible.addEventListener('input', () => {
 				const iso = usToIso(visible.value);
@@ -1101,11 +1054,6 @@ export class EhrTitlebarControls extends Disposable {
 		input.name = name;
 		if (type === 'tel') { input.placeholder = '(555) 123-4567'; }
 		if (type === 'email') { input.placeholder = 'name@example.com'; }
-		// Native <input type="time"> renders its clock picker indicator using the
-		// element's color-scheme. On the dark overlay the default light scheme drew
-		// a near-invisible dark glyph (workspace test report issue 3); declaring
-		// `dark light` makes Chromium paint a contrasting indicator.
-		if (type === 'time') { input.style.colorScheme = 'dark light'; }
 		return input;
 	}
 
