@@ -141,12 +141,20 @@ export class PatientSnapshotEditor extends EditorPane {
 		await this._loadAndRender(input.patientId, input.patientName, input.appointmentId);
 	}
 
+	private _getInitials(name: string): string {
+		const parts = (name || '?').trim().split(/\s+/);
+		if (parts.length >= 2) {
+			return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+		}
+		return parts[0].charAt(0).toUpperCase();
+	}
+
 	private _renderSkeleton(name: string): void {
 		const hdr = DOM.append(this.root, DOM.$('.snap-header'));
 		hdr.style.cssText = 'padding:18px 24px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:14px;';
 		const av = DOM.append(hdr, DOM.$('div'));
-		av.style.cssText = 'width:48px;height:48px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#fff;flex-shrink:0;';
-		av.textContent = (name || '?').charAt(0).toUpperCase();
+		av.style.cssText = 'width:48px;height:48px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;flex-shrink:0;';
+		av.textContent = this._getInitials(name);
 		const info = DOM.append(hdr, DOM.$('div'));
 		info.style.cssText = 'flex:1;min-width:0;';
 		const nameEl = DOM.append(info, DOM.$('div'));
@@ -157,9 +165,40 @@ export class PatientSnapshotEditor extends EditorPane {
 		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-top:3px;';
 	}
 
+	private async _fetchTodayAppointment(patientId: string, appointmentId?: string): Promise<Record<string, unknown> | null> {
+		// If a specific appointment ID is provided, fetch it directly.
+		if (appointmentId) {
+			const raw = await this._fetch(`/api/appointments/${appointmentId}`);
+			if (raw) {
+				// Unwrap { data: {...} } if needed
+				return ((raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data))
+					? raw.data as Record<string, unknown>
+					: raw);
+			}
+		}
+		// Fallback: fetch today's appointments for this patient.
+		const today = new Date().toISOString().split('T')[0];
+		const urls = [
+			`/api/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
+			`/api/appointments?patientId=${patientId}&date=${today}&page=0&size=5`,
+			`/api/fhir-resource/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
+		];
+		for (const url of urls) {
+			try {
+				const raw = await this._fetch(url);
+				if (!raw) { continue; }
+				const inner = (raw.data ?? raw) as Record<string, unknown>;
+				const arr: Record<string, unknown>[] = (inner.content || inner.list || inner.items || inner.records ||
+					(Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Record<string, unknown>[];
+				if (arr.length > 0) { return arr[0]; }
+			} catch { /* try next */ }
+		}
+		return null;
+	}
+
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
 		this._lastRenderArgs = { patientId, patientName, appointmentId };
-		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage, appointment] = await Promise.allSettled([
+		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
 			this._fetch(`/api/fhir-resource/medications/patient/${patientId}?page=0&size=50`),
@@ -169,8 +208,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			this._fetch(`/api/fhir-resource/payments/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
 			this._fetch(`/api/fhir-resource/insurance-coverage/patient/${patientId}?page=0&size=1`),
-			appointmentId ? this._fetch(`/api/appointments/${appointmentId}`) : Promise.resolve(null),
 		]);
+
+		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
 
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -187,11 +227,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const payList = this._list(payments);
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
-		const apt = appointment.status === 'fulfilled' ? appointment.value : null;
 
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList);
+		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt);
 	}
 
 	private _renderHeader(p: Record<string, unknown> | null, fallbackName: string, apt: Record<string, unknown> | null, cov: Record<string, unknown>[]): void {
@@ -220,8 +259,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		idRow.style.cssText = 'display:flex;align-items:center;gap:14px;padding-right:260px;';
 
 		const av = DOM.append(idRow, DOM.$('div'));
-		av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;flex-shrink:0;';
-		av.textContent = name.charAt(0).toUpperCase();
+		av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--vscode-button-background,#0e639c);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0;';
+		av.textContent = this._getInitials(name);
 
 		const info = DOM.append(idRow, DOM.$('div'));
 		info.style.cssText = 'flex:1;min-width:0;';
@@ -258,38 +297,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 
 		this._renderHeaderActions(hdr);
-
-		if (apt) {
-			const aptBlock = DOM.append(info, DOM.$('div'));
-			aptBlock.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:10px 14px;min-width:240px;font-size:12px;margin-top:8px;display:inline-block;';
-			const aptTitle = DOM.append(aptBlock, DOM.$('div'));
-			aptTitle.textContent = 'TODAY\'S APPOINTMENT';
-			aptTitle.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.08em;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
-			const rows: Array<[string, string]> = [];
-			const startRaw = (apt.start || apt.startTime || '') as string;
-			if (startRaw) {
-				try {
-					const d = new Date(startRaw);
-					rows.push(['Time', d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })]);
-				} catch { /* */ }
-			}
-			const type = apt.visitType || apt.appointmentType || apt.type || '';
-			if (type && typeof type === 'string') { rows.push(['Type', type]); }
-			const prov = apt.providerName || apt.practitionerName || '';
-			if (prov) { rows.push(['Provider', String(prov)]); }
-			const room = apt.room || '';
-			if (room) { rows.push(['Room', String(room)]); }
-			for (const [lbl, val] of rows) {
-				const r = DOM.append(aptBlock, DOM.$('div'));
-				r.style.cssText = 'display:flex;gap:6px;margin-top:3px;';
-				const l = DOM.append(r, DOM.$('span'));
-				l.textContent = lbl;
-				l.style.cssText = 'color:var(--vscode-descriptionForeground);flex-shrink:0;width:54px;';
-				const v = DOM.append(r, DOM.$('span'));
-				v.textContent = val;
-				v.style.cssText = 'font-weight:500;color:var(--vscode-editor-foreground);';
-			}
-		}
 	}
 
 	private _renderHeaderActions(hdr: HTMLElement): void {
@@ -384,6 +391,160 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
+	private async _updateAppointmentStatus(id: string, status: string): Promise<void> {
+		try {
+			await this.apiService.fetch(`/api/appointments/${id}/status`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status }),
+			});
+		} catch { /* */ }
+	}
+
+	private async _updateAppointmentRoom(id: string, room: string): Promise<void> {
+		try {
+			await this.apiService.fetch(`/api/appointments/${id}/room`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ room }),
+			});
+		} catch { /* */ }
+	}
+
+	private async _fetchRoomOptions(): Promise<string[]> {
+		const fallback = ['Exam 1', 'Exam 2', 'Exam 3', 'Exam 4', 'Lab', 'Procedure Room', 'Triage'];
+		for (const url of ['/api/rooms', '/api/appointments/room-options']) {
+			try {
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) { continue; }
+				const data = await res.json();
+				const arr = (data?.data || data || []) as Record<string, string>[];
+				const rooms = arr.map((r: Record<string, string>) => r.name || r.roomName || r.id || String(r)).filter(Boolean);
+				if (rooms.length > 0) { return rooms; }
+			} catch { /* try next */ }
+		}
+		return fallback;
+	}
+
+	private _renderAppointmentCard(parent: HTMLElement, apt: Record<string, unknown>): void {
+		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
+
+		const card = DOM.append(parent, DOM.$('.snap-card'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
+		this._cardHeader(card, 'calendar', 'Today\'s Appointment', 1, undefined);
+
+		const table = DOM.append(card, DOM.$('div'));
+		table.style.cssText = 'display:grid;grid-template-columns:160px 1fr 1fr 190px 220px;gap:0;margin-top:4px;';
+
+		for (const lbl of ['Date / Time', 'Visit Type', 'Provider', 'Status', 'Room']) {
+			const h = DOM.append(table, DOM.$('div'));
+			h.textContent = lbl;
+			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);padding-right:12px;';
+		}
+
+		const startRaw = String(apt.start || apt.startTime || '');
+		let timeStr = '—';
+		if (startRaw) {
+			try {
+				const d = new Date(startRaw);
+				// allow-any-unicode-next-line
+				timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+			} catch { /* */ }
+		}
+
+		const cellCss = 'padding:10px 12px 10px 0;font-size:12px;color:var(--vscode-editor-foreground);border-bottom:1px solid var(--vscode-editorWidget-border);';
+
+		const timeCell = DOM.append(table, DOM.$('div'));
+		timeCell.textContent = timeStr;
+		timeCell.style.cssText = cellCss + 'font-weight:500;';
+
+		const typeCell = DOM.append(table, DOM.$('div'));
+		typeCell.textContent = String(apt.visitType || apt.appointmentType || apt.type || '—');
+		typeCell.style.cssText = cellCss;
+
+		const provCell = DOM.append(table, DOM.$('div'));
+		provCell.textContent = String(apt.providerName || apt.practitionerName || '—');
+		provCell.style.cssText = cellCss;
+
+		// Status dropdown — seeded immediately with defaults, then overwritten by live API options
+		const statusCell = DOM.append(table, DOM.$('div'));
+		statusCell.style.cssText = 'padding:6px 12px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;';
+		const currentStatus = String(apt.status || apt.appointmentStatus || 'Scheduled');
+		const statusSelect = DOM.append(statusCell, DOM.$('select')) as HTMLSelectElement;
+		statusSelect.style.cssText = 'background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;outline:none;width:100%;';
+
+		const populateStatuses = (opts: string[]) => {
+			DOM.clearNode(statusSelect);
+			for (const s of opts) {
+				const opt = DOM.append(statusSelect, DOM.$('option')) as HTMLOptionElement;
+				opt.value = s;
+				opt.textContent = s;
+				if (s.toLowerCase() === currentStatus.toLowerCase()) { opt.selected = true; }
+			}
+		};
+		populateStatuses(['Scheduled', 'Checked In', 'In Progress', 'Completed', 'Cancelled', 'No Show']);
+
+		void (async () => {
+			try {
+				const res = await this.apiService.fetch('/api/appointments/status-options');
+				if (res.ok) {
+					const data = await res.json();
+					const opts = ((data?.data || data || []) as Array<{ label?: string; value?: string } | string>)
+						.map(o => (typeof o === 'string' ? o : o.label || o.value || ''))
+						.filter(Boolean);
+					if (opts.length > 0) { populateStatuses(opts); }
+				}
+			} catch { /* keep defaults */ }
+		})();
+
+		statusSelect.addEventListener('change', () => {
+			if (!appointmentId) { return; }
+			void this._updateAppointmentStatus(appointmentId, statusSelect.value);
+		});
+
+		// Room dropdown — populated from /api/rooms with hardcoded fallback
+		const roomCell = DOM.append(table, DOM.$('div'));
+		roomCell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:6px;';
+		const currentRoom = String(apt.room || apt.roomName || '');
+		const roomSelect = DOM.append(roomCell, DOM.$('select')) as HTMLSelectElement;
+		roomSelect.style.cssText = 'flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;outline:none;min-width:0;';
+
+		const loadingOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
+		loadingOpt.value = '';
+		loadingOpt.textContent = 'Loading rooms…';
+		loadingOpt.disabled = true;
+		loadingOpt.selected = true;
+
+		void this._fetchRoomOptions().then(rooms => {
+			DOM.clearNode(roomSelect);
+			const blankOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
+			blankOpt.value = '';
+			blankOpt.textContent = '— Select room —';
+			for (const r of rooms) {
+				const opt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
+				opt.value = r;
+				opt.textContent = r;
+				if (r === currentRoom) { opt.selected = true; }
+			}
+			if (!currentRoom) { blankOpt.selected = true; }
+		});
+
+		const assignBtn = DOM.append(roomCell, DOM.$('button')) as HTMLButtonElement;
+		assignBtn.textContent = 'Assign';
+		assignBtn.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;';
+		assignBtn.addEventListener('mouseenter', () => { assignBtn.style.opacity = '0.85'; });
+		assignBtn.addEventListener('mouseleave', () => { assignBtn.style.opacity = '1'; });
+		assignBtn.addEventListener('click', async e => {
+			e.stopPropagation();
+			if (!appointmentId || !roomSelect.value) { return; }
+			assignBtn.disabled = true;
+			assignBtn.textContent = 'Saving…';
+			await this._updateAppointmentRoom(appointmentId, roomSelect.value);
+			assignBtn.disabled = false;
+			assignBtn.textContent = 'Assign';
+		});
+	}
+
 	private _renderGrid(
 		_p: Record<string, unknown> | null,
 		conds: Record<string, unknown>[],
@@ -393,9 +554,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		labs: Record<string, unknown>[],
 		payments: Record<string, unknown>[],
 		statements: Record<string, unknown>[],
+		apt?: Record<string, unknown> | null,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
+
+		if (apt) {
+			this._renderAppointmentCard(grid, apt);
+		}
 
 		const activeProblems = conds.filter(c => {
 			const s = String(c.status || c.clinicalStatus || '').toLowerCase();

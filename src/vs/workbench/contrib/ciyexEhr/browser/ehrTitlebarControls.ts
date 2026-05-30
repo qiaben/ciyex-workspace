@@ -100,7 +100,6 @@ export class EhrTitlebarControls extends Disposable {
 		const searchContainer = DOM.append(this.searchElement, DOM.$('.ehr-search-container'));
 
 		const searchIcon = DOM.append(searchContainer, DOM.$('span.ehr-search-icon'));
-		searchIcon.textContent = '\uEB51'; // codicon search
 		searchIcon.classList.add('codicon');
 		searchIcon.classList.add('codicon-search');
 

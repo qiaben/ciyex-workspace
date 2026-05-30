@@ -867,6 +867,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient, specialist, reason...',
 		clientSideFilter: ['patientName', 'specialistName', 'specialty', 'facilityName', 'reason', 'urgency', 'referringProvider', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		// Issue #22: Referrals shows 7 KPI cards (Draft / Sent / Acknowledged /
 		// Scheduled / Completed / Cancelled / Denied). compactStats keeps the
 		// strip from dominating the viewport above the table.
@@ -932,6 +933,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true,
 				placeholder: 'Search provider (must be selected from results)...',
 				apiPath: '/api/providers',
+				relatedField: 'referringProviderId',
 				relatedDisplayFields: ['firstName', 'lastName'],
 				aliases: ['referringPrescriber', 'referringProviderName'],
 				validationMessage: 'Please select a referring provider from the search results',
@@ -1071,6 +1073,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by title, patient, author...',
 		clientSideFilter: ['title', 'patientName', 'authorName', 'category', 'description', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'title', label: 'Title', width: '1.5fr' }, { key: 'patientName', label: 'Patient' },
 			{ key: 'authorName', label: 'Author' }, { key: 'category', label: 'Category', width: '120px' },
@@ -1096,7 +1099,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'other' },
 				]
 			},
-			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'authorId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'startDate', label: 'Start Date', type: 'date' },
 			{ key: 'endDate', label: 'End Date', type: 'date' },
 			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...', width: 'span 2' },
@@ -1364,7 +1367,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		formFields: [
 			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
 			{ key: 'memberId', label: 'Member ID', type: 'text' },
 			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
@@ -1942,6 +1945,7 @@ export class RecallEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by patient name...',
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		// Columns ordered to match the web app's RecallBoard:
 		// Patient | Type | Provider | Due Date | Status | Priority | Attempts | Contact
 		columns: [
@@ -2309,6 +2313,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by PO #, supplier...',
 		clientSideFilter: ['orderNumber', 'poNumber', 'supplierName', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'orderNumber', label: 'PO #', width: '130px' },
 			{ key: 'supplierName', label: 'Supplier', width: '1.5fr' },
@@ -2359,6 +2364,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		searchPlaceholder: 'Search by name, contact, email, phone...',
 		clientSideFilter: ['name', 'contactName', 'email', 'phone', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		filterKey: 'isActive',
 		columns: [
 			{ key: 'name', label: 'Name', width: '1.5fr' },
@@ -3176,6 +3182,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		emptyListMessage: 'Select a patient to view their payment plans.',
 		clientSideFilter: ['patientName', 'planName', 'status', 'id'],
 		editable: true,
+		refetchOnEdit: true,
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'planName', label: 'Plan Name' },
@@ -3403,6 +3410,7 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 		title: 'Claims Management', apiPath: '/api/all-claims', statsPath: '/api/all-claims/stats',
 		searchPlaceholder: 'Search by patient, diagnosis, claim ID...',
 		editable: true,
+		refetchOnEdit: true,
 		// Claims are derived from invoices created via the patient flow — the Claims
 		// list only fetches/displays them. QA report 2026-05-08 #20: hide "+ New Claim".
 		creatable: false,

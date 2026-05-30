@@ -532,7 +532,7 @@ export class CalendarEditor extends EditorPane {
 			const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 			btn.textContent = symbol;
 			btn.title = title;
-			btn.style.cssText = `padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:14px;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:600;' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			btn.style.cssText = `padding:4px 10px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:15px;display:inline-flex;align-items:center;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:700;' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
 			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
 			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
 			btn.addEventListener('click', onClick);
@@ -546,7 +546,7 @@ export class CalendarEditor extends EditorPane {
 		});
 
 		// Refresh
-		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:#fff;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
 
 		// SVG helpers — avoid innerHTML to comply with VS Code Trusted Types policy
 		const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -609,8 +609,14 @@ export class CalendarEditor extends EditorPane {
 		tvBtn.addEventListener('click', (e) => { e.stopPropagation(); tvMenu.style.display = tvMenu.style.display === 'none' ? 'block' : 'none'; });
 		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, 'click', () => { tvMenu.style.display = 'none'; }));
 
-		// allow-any-unicode-next-line
-		iconBtn(actionsGroup, '☰', 'Appointment List', false, () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
+		const listBtn = DOM.append(actionsGroup, DOM.$('button')) as HTMLButtonElement;
+		listBtn.style.cssText = calBtnStyle;
+		listBtn.title = 'Appointment List';
+		const listIco = DOM.append(listBtn, DOM.$('span.codicon.codicon-list-unordered')) as HTMLElement;
+		listIco.style.cssText = 'font-size:15px;color:#fff;';
+		listBtn.addEventListener('mouseenter', () => { listBtn.style.opacity = '0.85'; });
+		listBtn.addEventListener('mouseleave', () => { listBtn.style.opacity = '1'; });
+		listBtn.addEventListener('click', () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
 
 		// Appointment count (filtered by current view date range + provider/location)
 		const { startDate, endDate } = this._getDateRange();
@@ -1810,23 +1816,23 @@ export class CalendarEditor extends EditorPane {
 		// and meaning varied across themes and operating systems.
 		let labelEl: HTMLElement;
 		let iconEl: HTMLElement | undefined;
+		const baseStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:#fff;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
 		const setPillState = () => {
 			if (!symbolMode) { return; }
 			const active = selected.size > 0;
-			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'transparent';
-			trigger.style.borderColor = active ? 'var(--vscode-inputOption-activeBorder,#007acc)' : 'transparent';
-			trigger.style.color = active ? 'var(--vscode-inputOption-activeForeground,var(--vscode-foreground))' : 'var(--vscode-foreground)';
-			if (iconEl) { iconEl.style.color = active ? 'var(--vscode-inputOption-activeForeground,var(--vscode-focusBorder,#007acc))' : 'var(--vscode-descriptionForeground,#888)'; }
+			trigger.style.borderColor = active ? 'var(--vscode-inputOption-activeBorder,#007acc)' : 'var(--vscode-input-border,#3c3c3c)';
+			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'var(--vscode-button-secondaryBackground)';
 		};
 		if (symbolMode) {
-			trigger.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:3px 8px;background:transparent;border:1px solid transparent;border-radius:5px;color:var(--vscode-foreground);font-size:11px;line-height:1;cursor:pointer;white-space:nowrap;';
+			trigger.style.cssText = baseStyle;
 			iconEl = DOM.append(trigger, DOM.$('span.codicon.codicon-' + (iconId || 'filter'))) as HTMLElement;
-			iconEl.style.cssText = 'font-size:14px;color:var(--vscode-descriptionForeground,#888);';
+			iconEl.style.cssText = 'font-size:15px;color:#fff;';
 			labelEl = DOM.append(trigger, DOM.$('span'));
+			labelEl.style.display = 'none';
 			const chevron = DOM.append(trigger, DOM.$('span.codicon.codicon-chevron-down')) as HTMLElement;
-			chevron.style.cssText = 'font-size:11px;opacity:0.55;';
-			trigger.addEventListener('mouseenter', () => { if (selected.size === 0) { trigger.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; } });
-			trigger.addEventListener('mouseleave', () => { setPillState(); });
+			chevron.style.cssText = 'font-size:11px;color:#fff;opacity:0.55;';
+			trigger.addEventListener('mouseenter', () => { trigger.style.opacity = '0.85'; });
+			trigger.addEventListener('mouseleave', () => { trigger.style.opacity = '1'; setPillState(); });
 		} else {
 			trigger.style.cssText = inputStyle + 'text-align:left;';
 			labelEl = trigger;

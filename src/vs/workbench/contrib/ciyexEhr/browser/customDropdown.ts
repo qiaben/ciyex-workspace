@@ -84,9 +84,14 @@ const COLORS = {
  */
 export function findWorkbenchRoot(anchor: HTMLElement, doc: Document): HTMLElement {
 	// First: walk up from the anchor.
+	// Skip position:fixed overlays (e.g. the EHR form drawer that copies the
+	// monaco-workbench class for CSS-var inheritance). The real workbench root
+	// has position:relative from its class styles, never position:fixed as an
+	// inline override — mounting panels inside a fixed overlay puts them in a
+	// stacking context where VS Code's own class rules may hide them.
 	let el: HTMLElement | null = anchor;
 	while (el) {
-		if (el.classList && el.classList.contains('monaco-workbench')) { return el; }
+		if (el.classList && el.classList.contains('monaco-workbench') && el.style.position !== 'fixed') { return el; }
 		el = el.parentElement;
 	}
 	// Fallback: query for the workbench root by class — VS Code itself
@@ -142,12 +147,15 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// escapes any overflow:hidden / transform stacking context the host
 	// editor sets up.
 	const panel = doc.createElement('div');
-	panel.className = 'ciyex-custom-dropdown-panel';
+	// Add monaco-workbench class so --vscode-* CSS variables resolve to the
+	// active theme even though the panel is mounted on document.body (outside
+	// the real workbench root). Mounting on body is required because VS Code
+	// applies transform + overflow:hidden to .monaco-workbench, which makes
+	// position:fixed children use it as their containing block and clips them.
+	panel.className = 'ciyex-custom-dropdown-panel monaco-workbench';
 	panel.setAttribute('role', 'listbox');
 	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:4px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
-	// Mount inside the workbench so var(--vscode-…) resolves to the active
-	// theme colours rather than the dark fallbacks.
-	workbenchRoot.appendChild(panel);
+	(doc.body || doc.documentElement).appendChild(panel);
 
 	const positionPanel = () => {
 		const rect = trigger.getBoundingClientRect();
@@ -212,6 +220,9 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	};
 	let panelOpen = false;
 	const openPanel = () => {
+		if (!panel.isConnected) {
+			(doc.body || doc.documentElement).appendChild(panel);
+		}
 		renderOptions();
 		positionPanel();
 		panel.style.display = 'block';

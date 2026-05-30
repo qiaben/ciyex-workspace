@@ -956,7 +956,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));
 		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
-		backdrop.addEventListener('click', () => this._closeForm());
+		backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) { this._closeForm(); } });
 
 		// Dialog (right-side panel) — flex column so header+footer are sticky and
 		// only the body scrolls. overflow:hidden on the dialog itself removes the
@@ -1076,10 +1076,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 				const ownerDoc = group.ownerDocument || document;
 				const dropdown = ownerDoc.createElement('div');
-				const searchWorkbenchRoot = findWorkbenchRoot(group, ownerDoc);
-				dropdown.className = searchWorkbenchRoot.classList && searchWorkbenchRoot.classList.contains('monaco-workbench') ? searchWorkbenchRoot.className : 'monaco-workbench';
+				// monaco-workbench class makes --vscode-* vars resolve on a body-mounted element.
+				// Must mount on body to escape workbench transform + overflow:hidden clipping.
+				dropdown.className = 'monaco-workbench';
 				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-				searchWorkbenchRoot.appendChild(dropdown);
+				(ownerDoc.body || ownerDoc.documentElement).appendChild(dropdown);
 				const positionDropdown = () => {
 					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
 					dropdown.style.left = `${rect.left}px`;
@@ -1514,8 +1515,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			}
 		});
 
-		// Close on overlay click
-		this.formOverlay.addEventListener('click', (ev) => {
+		// Close on overlay mousedown (not click — click fires after panel hides on dropdown
+		// selection, causing a stray event to land on this overlay and tear the drawer down).
+		this.formOverlay.addEventListener('mousedown', (ev) => {
 			if (ev.target === this.formOverlay) { this._closeForm(); }
 		});
 	}
