@@ -13,7 +13,6 @@ import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICiyexPaymentService, CheckoutRequest, CheckoutResult, RegisteredGateway } from './ciyexPaymentService.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput } from './editors/ciyexEditorInput.js';
@@ -692,32 +691,14 @@ registerAction2(class extends Action2 {
 /**
  * Command: Open Telehealth Video Session for an appointment.
  *
- * Telehealth has two independent gates:
- *   1. Entitlement — the org must have purchased the `ciyex-telehealth`
- *      marketplace app (CiyexInstallationsService.isInstalled). If not, the
- *      user gets a "Buy & Install" notification.
- *   2. Provider — the video UI is owned EXCLUSIVELY by the ciyex-telehealth
- *      VS Code extension, which contributes `ciyex-telehealth.openSession`.
- *      The workbench no longer ships a baked-in telehealth editor; if the
- *      extension is disabled the user is told to enable it. This command's
- *      only job is to dispatch to the extension with the session context.
+ * Telehealth UI is provided exclusively by the ciyex-telehealth extension.
+ * Access is gated on a single thing: whether that extension is enabled
+ * (i.e. its `ciyex-telehealth.openSession` command is registered). No
+ * marketplace entitlement check — installing/enabling the extension IS
+ * the entitlement. Disabling the extension blocks the feature; enabling
+ * it grants access. Same model as ciyex-payment-stripe.
  */
-const TELEHEALTH_APP_SLUG = 'ciyex-telehealth';
 const TELEHEALTH_EXT_COMMAND = 'ciyex-telehealth.openSession';
-
-/** Derive the Hub URL from the API URL by swapping `api` → `app`. */
-function _deriveHubUrl(apiUrl: string, slug: string): string {
-	try {
-		const u = new URL(apiUrl);
-		u.hostname = u.hostname.replace(/(^|\.)api(-|\.)/, '$1app$2');
-		u.pathname = `/hub/${slug}`;
-		u.search = '';
-		u.hash = '';
-		return u.toString();
-	} catch {
-		return `https://app.ciyex.org/hub/${slug}`;
-	}
-}
 
 registerAction2(class extends Action2 {
 	constructor() {
@@ -730,65 +711,13 @@ registerAction2(class extends Action2 {
 	async run(accessor: ServicesAccessor, appointmentId?: string | number, patientName?: string, providerName?: string): Promise<void> {
 		if (!appointmentId) { return; }
 
-		const installations = accessor.get(ICiyexInstallationsService);
 		const notifications = accessor.get(INotificationService);
-		const opener = accessor.get(IOpenerService);
-		const apiService = accessor.get(ICiyexApiService);
+		const commandService = accessor.get(ICommandService);
 
-		// If installations haven't loaded yet (e.g. command fired immediately
-		// after login), pull them now so first-click after install also works.
-		if (!installations.loaded) {
-			await installations.loadInstallations();
-		}
-
-		if (!installations.isInstalled(TELEHEALTH_APP_SLUG)) {
-			const hubUrl = _deriveHubUrl(apiService.apiUrl, TELEHEALTH_APP_SLUG);
-			const payments = accessor.get(ICiyexPaymentService);
-			const commandService = accessor.get(ICommandService);
-			const installationsService = installations;
-			const inAppActions = payments.hasGateway() ? [{
-				id: 'ciyex.buyTelehealth',
-				label: localize2('buyAndInstall', "Buy & Install").value,
-				tooltip: 'Purchase Ciyex Telehealth without leaving the app',
-				class: undefined,
-				enabled: true,
-				run: async () => {
-					await commandService.executeCommand('ciyex.payment.checkout', TELEHEALTH_APP_SLUG);
-					await installationsService.loadInstallations();
-				},
-			}] : [];
-			notifications.notify({
-				severity: Severity.Info,
-				message: localize2(
-					'telehealthNotInstalled',
-					"Telehealth requires the Ciyex Telehealth extension. Purchase it to enable video visits.",
-				).value,
-				actions: {
-					primary: [
-						...inAppActions,
-						{
-							id: 'ciyex.openTelehealthHub',
-							label: payments.hasGateway()
-								? localize2('openHubInBrowser', "Open Hub in Browser").value
-								: localize2('openHub', "Open Hub").value,
-							tooltip: hubUrl,
-							class: undefined,
-							enabled: true,
-							run: async () => { await opener.open(URI.parse(hubUrl), { openExternal: true }); },
-						},
-					],
-				},
-			});
-			return;
-		}
-
-		// Telehealth UI is provided exclusively by the ciyex-telehealth
-		// extension. If its command isn't registered the extension is
-		// installed-but-disabled (or not built) — there is no workbench
-		// fallback, so guide the user to enable it rather than silently
-		// doing nothing.
+		// Single gate: extension must be enabled. CommandsRegistry.getCommand
+		// returns undefined when the extension is missing OR disabled — same
+		// remediation either way: send the user to the Extensions view.
 		if (!CommandsRegistry.getCommand(TELEHEALTH_EXT_COMMAND)) {
-			const commandService = accessor.get(ICommandService);
 			notifications.notify({
 				severity: Severity.Warning,
 				message: localize2(
@@ -816,7 +745,7 @@ registerAction2(class extends Action2 {
 		const orgAlias = (() => {
 			try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
 		})();
-		await accessor.get(ICommandService).executeCommand(TELEHEALTH_EXT_COMMAND, {
+		await commandService.executeCommand(TELEHEALTH_EXT_COMMAND, {
 			appointmentId: String(appointmentId),
 			patientName: patientName || '',
 			providerName: providerName || '',
