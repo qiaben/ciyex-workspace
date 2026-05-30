@@ -11,7 +11,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICiyexPaymentService, CheckoutRequest, CheckoutResult, RegisteredGateway } from './ciyexPaymentService.js';
-import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -713,46 +713,56 @@ registerAction2(class extends Action2 {
 
 		const notifications = accessor.get(INotificationService);
 		const commandService = accessor.get(ICommandService);
-
-		// Single gate: extension must be enabled. CommandsRegistry.getCommand
-		// returns undefined when the extension is missing OR disabled — same
-		// remediation either way: send the user to the Extensions view.
-		if (!CommandsRegistry.getCommand(TELEHEALTH_EXT_COMMAND)) {
-			notifications.notify({
-				severity: Severity.Warning,
-				message: localize2(
-					'telehealthExtDisabled',
-					"The Ciyex Telehealth extension is required for video visits. Enable it from the Extensions view.",
-				).value,
-				actions: {
-					primary: [{
-						id: 'ciyex.telehealth.openExtensionsView',
-						label: localize2('openExtensions', "Open Extensions").value,
-						tooltip: 'Show the Ciyex Telehealth extension',
-						class: undefined,
-						enabled: true,
-						run: async () => { await commandService.executeCommand('workbench.extensions.action.showInstalledExtensions'); },
-					}],
-				},
-			});
-			return;
-		}
-
 		const authService = accessor.get(ICiyexAuthService);
+
+		// Single gate: invoke the extension command directly. executeCommand
+		// triggers `onCommand:` activation (VS Code auto-generates this from
+		// contributes.commands), so a registry pre-check would race the
+		// activation and incorrectly report the extension as missing. If the
+		// extension is disabled or absent, executeCommand throws — we catch
+		// that and surface the "enable extension" notification.
 		const authToken = (() => {
 			try { return localStorage.getItem('ciyex_token') || ''; } catch { return ''; }
 		})();
 		const orgAlias = (() => {
 			try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
 		})();
-		await commandService.executeCommand(TELEHEALTH_EXT_COMMAND, {
-			appointmentId: String(appointmentId),
-			patientName: patientName || '',
-			providerName: providerName || '',
-			authToken,
-			orgAlias,
-			apiUrl: authService.apiUrl,
-		});
+
+		try {
+			await commandService.executeCommand(TELEHEALTH_EXT_COMMAND, {
+				appointmentId: String(appointmentId),
+				patientName: patientName || '',
+				providerName: providerName || '',
+				authToken,
+				orgAlias,
+				apiUrl: authService.apiUrl,
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			// Distinguish "command not found" (extension disabled / missing)
+			// from extension-internal errors so users get the right guidance.
+			if (/command\s+'?ciyex-telehealth/i.test(message) || /not\s+found/i.test(message)) {
+				notifications.notify({
+					severity: Severity.Warning,
+					message: localize2(
+						'telehealthExtDisabled',
+						"The Ciyex Telehealth extension is required for video visits. Enable it from the Extensions view.",
+					).value,
+					actions: {
+						primary: [{
+							id: 'ciyex.telehealth.openExtensionsView',
+							label: localize2('openExtensions', "Open Extensions").value,
+							tooltip: 'Show the Ciyex Telehealth extension',
+							class: undefined,
+							enabled: true,
+							run: async () => { await commandService.executeCommand('workbench.view.extensions'); },
+						}],
+					},
+				});
+			} else {
+				notifications.notify({ severity: Severity.Error, message: `Telehealth: ${message}` });
+			}
+		}
 	}
 });
 
@@ -912,7 +922,7 @@ registerAction2(class extends Action2 {
 						class: undefined,
 						enabled: true,
 						run: async () => {
-							await commandService.executeCommand('workbench.extensions.action.showInstalledExtensions');
+							await commandService.executeCommand('workbench.view.extensions');
 						},
 					}],
 				},
