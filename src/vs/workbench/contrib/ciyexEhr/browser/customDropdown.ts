@@ -107,7 +107,6 @@ export function findWorkbenchRoot(anchor: HTMLElement, doc: Document): HTMLEleme
 export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLInputElement {
 	const parent = opts.parent;
 	const doc = parent.ownerDocument || document;
-	const workbenchRoot = findWorkbenchRoot(parent, doc);
 
 	const hidden = doc.createElement('input');
 	hidden.type = 'hidden';
