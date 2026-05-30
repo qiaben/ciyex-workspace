@@ -1123,7 +1123,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						try {
 							const param = field.searchParam || 'search';
 							const sep = searchEndpoint.includes('?') ? '&' : '?';
-							const res = await this.apiService.fetch(`${searchEndpoint}${sep}${param}=${encodeURIComponent(query)}`);
+							const res = await this.apiService.fetch(`${searchEndpoint}${sep}${param}=${encodeURIComponent(query)}&page=0&size=15`);
 							if (res.ok) {
 								const data = await res.json();
 								const wrapper = data?.data || data;
@@ -1151,17 +1151,21 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						{
 							for (const result of results.slice(0, 15)) {
 								const item = DOM.append(dropdown, DOM.$('div'));
+								// Supports dot-path notation (e.g. 'identification.firstName') for nested DTO fields.
+								const getPath = (obj: Record<string, unknown>, path: string): unknown =>
+									path.split('.').reduce<unknown>((acc, k) => (acc !== null && acc !== undefined ? (acc as Record<string, unknown>)[k] : undefined), obj);
+
 								// Build display text
-								let displayText = String(result[displayField] ?? '');
+								let displayText = String(getPath(result, displayField) ?? '');
 								if (field.relatedDisplayFields) {
-									const parts = field.relatedDisplayFields.map(f => String(result[f] ?? '')).filter(Boolean);
+									const parts = field.relatedDisplayFields.map(f => String(getPath(result, f) ?? '')).filter(Boolean);
 									if (parts.length > 0) { displayText = parts.join(' '); }
 								}
 								if (!displayText) {
-									// Fallback: try firstName + lastName
-									const fn = String(result['firstName'] ?? '');
-									const ln = String(result['lastName'] ?? '');
-									displayText = [fn, ln].filter(Boolean).join(' ') || String(result[valueField] ?? '');
+									// Fallback: try firstName + lastName (also via dot-path for nested DTOs)
+									const fn = String(getPath(result, 'firstName') ?? '');
+									const ln = String(getPath(result, 'lastName') ?? '');
+									displayText = [fn, ln].filter(Boolean).join(' ') || String(getPath(result, valueField) ?? '');
 								}
 								item.textContent = displayText;
 								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
@@ -1182,7 +1186,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 										for (const [formKey, resultKey] of Object.entries(field.relatedFieldsMap)) {
 											const relatedInput = inputs.get(formKey);
 											if (relatedInput) {
-												const v = (result as Record<string, unknown>)[resultKey];
+												const v = getPath(result, resultKey);
 												relatedInput.value = String(v ?? '');
 											}
 										}

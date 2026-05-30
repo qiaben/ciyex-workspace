@@ -597,9 +597,12 @@ export function withTypeaheadSearch(
 				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
 				if (list.length === 0) { continue; }
 				return list.map(p => {
-					const name = (p.name || p.fullName || `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || '') as string;
+					const id = p.identification as Record<string, unknown> | undefined;
+					const firstName = ((id?.firstName ?? p.firstName ?? '') as string);
+					const lastName = ((id?.lastName ?? p.lastName ?? '') as string);
+					const name = (p.name || p.fullName || `${firstName} ${lastName}`.trim() || '') as string;
 					const npi = (p.npi as string) || '';
-					return { value: name, label: name, description: npi ? `NPI ${npi}` : undefined, details: { npi, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+					return { value: name, label: name, description: npi ? `NPI ${npi}` : undefined, details: { npi, firstName, lastName } };
 				});
 			}
 			return [];
@@ -993,7 +996,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				panel.style.minWidth = `${rect.width}px`;
 			};
 			const renderSelectOptions = () => {
-				panel.innerHTML = '';
+				DOM.clearNode(panel);
 				for (const opt of field.options || []) {
 					const row = doc.createElement('div');
 					row.setAttribute('role', 'option');
@@ -1163,7 +1166,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				panel.style.width = `${rect.width}px`;
 			};
 			const renderResults = (results: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>) => {
-				panel.innerHTML = '';
+				DOM.clearNode(panel);
 				if (results.length === 0) { panel.style.display = 'none'; return; }
 				for (const r of results) {
 					const opt = doc.createElement('div');

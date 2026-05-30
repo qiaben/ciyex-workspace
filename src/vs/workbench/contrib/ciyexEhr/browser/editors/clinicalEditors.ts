@@ -328,7 +328,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{
 				key: 'prescriberName', label: 'Prescriber', type: 'search', placeholder: 'Search prescriber...',
-				apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'],
+				apiPath: '/api/providers', relatedDisplayFields: ['identification.firstName', 'identification.lastName'],
 				relatedFieldsMap: { prescriberNpi: 'npi' },
 				aliases: ['providerName', 'prescribingDoctor', 'prescriber', 'renderingProvider'],
 			},
