@@ -487,8 +487,8 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		this.title = append(this.centerContent, $('div.window-title'));
 		this.createTitle();
 
-		// EHR Titlebar Controls — search bar goes to centre, action buttons go to far right
-		// (appended after both toolbars below so they sit closest to the window controls)
+		// EHR Titlebar Controls — search bar goes to centre, action buttons appended first
+		// in the right section so they hold a fixed position regardless of Update button state.
 		let ehrActionElement: HTMLElement | undefined;
 		try {
 			const apiService = this.instantiationService.invokeFunction(accessor => accessor.get(ICiyexApiService));
@@ -501,7 +501,8 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			// CiyexApiService not available (e.g., not in EHR context) — skip
 		}
 
-		// Center-Adjacent Toolbar (e.g., update indicator) — appears before EHR buttons
+		// Center-Adjacent Toolbar (e.g., update indicator) — fixed-width slot: always
+		// occupies the same space so nothing shifts when the Update button appears/disappears.
 		if (hasCustomTitlebar(this.configurationService, this.titleBarStyle)) {
 			const centerAdjacentToolBarElement = append(this.rightContent, $('div.center-adjacent-toolbar-container'));
 			this.centerAdjacentToolBarDisposable.add(this.instantiationService.createInstance(MenuWorkbenchToolBar, centerAdjacentToolBarElement, MenuId.TitleBarAdjacentCenter, {
@@ -515,7 +516,7 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			}));
 		}
 
-		// EHR action buttons go before the layout/action toolbar
+		// EHR action buttons — appended after the Update slot so they sit to its right.
 		if (ehrActionElement) {
 			append(this.rightContent, ehrActionElement);
 		}

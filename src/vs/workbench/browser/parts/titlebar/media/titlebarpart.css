@@ -397,15 +397,23 @@
 	color: white;
 }
 
-/* Center-Adjacent Toolbar (e.g., update indicator) */
+/* Center-Adjacent Toolbar (e.g., update indicator)
+ * Fixed-width slot: always occupies the same space so the EHR icons and layout
+ * toolbar never shift when the Update button appears or disappears.
+ * visibility:hidden (not display:none) keeps the slot in the flow when empty. */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .center-adjacent-toolbar-container {
 	z-index: 2500;
 	-webkit-app-region: no-drag;
-	margin-right: auto;
+	flex-shrink: 0;
+	flex-grow: 0;
+	width: 80px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .center-adjacent-toolbar-container.has-no-actions {
-	display: none;
+	visibility: hidden;
 }
 
 /* Action Tool Bar Controls */
