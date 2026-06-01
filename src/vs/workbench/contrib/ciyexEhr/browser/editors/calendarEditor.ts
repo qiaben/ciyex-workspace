@@ -542,7 +542,7 @@ export class CalendarEditor extends EditorPane {
 		});
 
 		// Refresh
-		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:#fff;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-titleBar-activeBackground);color:var(--vscode-titleBar-activeForeground);border:1px solid var(--vscode-titleBar-border,var(--vscode-editorWidget-border));border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
 
 		// SVG helpers — avoid innerHTML to comply with VS Code Trusted Types policy
 		const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -609,7 +609,7 @@ export class CalendarEditor extends EditorPane {
 		listBtn.style.cssText = calBtnStyle;
 		listBtn.title = 'Appointment List';
 		const listIco = DOM.append(listBtn, DOM.$('span.codicon.codicon-list-unordered')) as HTMLElement;
-		listIco.style.cssText = 'font-size:15px;color:#fff;';
+		listIco.style.cssText = 'font-size:15px;color:inherit;';
 		listBtn.addEventListener('mouseenter', () => { listBtn.style.opacity = '0.85'; });
 		listBtn.addEventListener('mouseleave', () => { listBtn.style.opacity = '1'; });
 		listBtn.addEventListener('click', () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
@@ -843,7 +843,7 @@ export class CalendarEditor extends EditorPane {
 			const prov = activeProviders[pi];
 			const provColor = PROVIDER_COLORS[pi % PROVIDER_COLORS.length];
 			const hdr = DOM.append(table, DOM.$('.cal-prov-header'));
-			hdr.style.cssText = `border-bottom:2px solid ${provColor};border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;text-align:center;position:sticky;top:0;background:var(--vscode-editor-background);z-index:2;`;
+			hdr.style.cssText = `border-bottom:2px solid ${provColor};border-right:1px solid var(--vscode-editorWidget-border);padding:6px 4px;text-align:center;position:sticky;top:0;background:var(--vscode-editorGroupHeader-tabsBackground,var(--vscode-editor-background));z-index:2;`;
 			const nameEl = DOM.append(hdr, DOM.$('div'));
 			nameEl.textContent = prov.name;
 			nameEl.style.cssText = 'font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
@@ -1812,21 +1812,21 @@ export class CalendarEditor extends EditorPane {
 		// and meaning varied across themes and operating systems.
 		let labelEl: HTMLElement;
 		let iconEl: HTMLElement | undefined;
-		const baseStyle = 'padding:4px 8px;background:var(--vscode-button-secondaryBackground);color:#fff;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
+		const baseStyle = 'padding:4px 8px;background:var(--vscode-titleBar-activeBackground);color:var(--vscode-titleBar-activeForeground);border:1px solid var(--vscode-titleBar-border,var(--vscode-editorWidget-border));border-radius:4px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
 		const setPillState = () => {
 			if (!symbolMode) { return; }
 			const active = selected.size > 0;
 			trigger.style.borderColor = active ? 'var(--vscode-inputOption-activeBorder,#007acc)' : 'var(--vscode-input-border,#3c3c3c)';
-			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'var(--vscode-button-secondaryBackground)';
+			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'var(--vscode-titleBar-activeBackground)';
 		};
 		if (symbolMode) {
 			trigger.style.cssText = baseStyle;
 			iconEl = DOM.append(trigger, DOM.$('span.codicon.codicon-' + (iconId || 'filter'))) as HTMLElement;
-			iconEl.style.cssText = 'font-size:15px;color:#fff;';
+			iconEl.style.cssText = 'font-size:15px;color:inherit;';
 			labelEl = DOM.append(trigger, DOM.$('span'));
 			labelEl.style.display = 'none';
 			const chevron = DOM.append(trigger, DOM.$('span.codicon.codicon-chevron-down')) as HTMLElement;
-			chevron.style.cssText = 'font-size:11px;color:#fff;opacity:0.55;';
+			chevron.style.cssText = 'font-size:11px;color:inherit;opacity:0.7;';
 			trigger.addEventListener('mouseenter', () => { trigger.style.opacity = '0.85'; });
 			trigger.addEventListener('mouseleave', () => { trigger.style.opacity = '1'; setPillState(); });
 		} else {
