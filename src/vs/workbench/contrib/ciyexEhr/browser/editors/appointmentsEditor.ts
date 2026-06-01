@@ -16,8 +16,6 @@ import { AppointmentsEditorInput, CalendarEditorInput } from './ciyexEditorInput
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 // allow-any-unicode-next-line
@@ -325,7 +323,6 @@ export class AppointmentsEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super(AppointmentsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -831,21 +828,31 @@ export class AppointmentsEditor extends EditorPane {
 			if (this.refreshInterval > 0) { void this._loadAppointments(); }
 		});
 
-		// Print
-		const printBtn = DOM.append(actionGroup, DOM.$('button'));
+		// Print — icon-only button (tooltip provides the label).
+		const printBtn = DOM.append(actionGroup, DOM.$('button')) as HTMLButtonElement;
 		printBtn.style.cssText = btnStyle;
-		// allow-any-unicode-next-line
-		printBtn.textContent = '🖨 Print';
+		printBtn.title = 'Print';
+		printBtn.setAttribute('aria-label', 'Print');
+		const printSvg = mkSvg();
+		svgPath(printSvg, 'M6 9V2h12v7');
+		svgPath(printSvg, 'M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2');
+		svgRect(printSvg, '6', '14', '12', '8', '0');
+		printBtn.appendChild(printSvg);
 		printBtn.addEventListener('click', () => {
 			try { this._printTable(); }
 			catch (err) { this.notificationService.notify({ severity: Severity.Error, message: `Print failed: ${String(err)}` }); }
 		});
 
-		// Export
-		const exportBtn = DOM.append(actionGroup, DOM.$('button'));
+		// Export — icon-only button (tooltip provides the label).
+		const exportBtn = DOM.append(actionGroup, DOM.$('button')) as HTMLButtonElement;
 		exportBtn.style.cssText = btnStyle;
-		// allow-any-unicode-next-line
-		exportBtn.textContent = '⬇ Export';
+		exportBtn.title = 'Export to CSV';
+		exportBtn.setAttribute('aria-label', 'Export');
+		const exportSvg = mkSvg();
+		svgPath(exportSvg, 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4');
+		svgPath(exportSvg, 'M7 10l5 5 5-5');
+		svgPath(exportSvg, 'M12 15V3');
+		exportBtn.appendChild(exportSvg);
 		exportBtn.addEventListener('click', () => this._exportToCSV());
 
 		// TV Display — dropdown with Staff TV Board / Waiting Room
@@ -872,11 +879,12 @@ export class AppointmentsEditor extends EditorPane {
 				let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 				base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
 				if (!base) { base = DOM.getActiveWindow().location.origin; }
-				const url = `${base}/appointments/tv?mode=${mode}`;
-				// Use openerService so the URL opens in the system browser —
-				// window.open() is denied by Electron's window-open handler and
-				// silently fails.
-				void this.openerService.open(URI.parse(url), { openExternal: true });
+				const tvMode = mode === 'waiting' ? 'waiting-room' : 'staff';
+				const url = `${base}/appointments/tv?mode=${tvMode}`;
+				// Open in an internal Simple Browser editor tab so the TV view
+				// renders inside the workspace instead of launching the system
+				// browser via the "open external website" prompt.
+				void this.commandService.executeCommand('simpleBrowser.show', url);
 			} catch (err) {
 				this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
 			}
@@ -922,6 +930,18 @@ export class AppointmentsEditor extends EditorPane {
 			this.patientSearch = patientInput.value;
 			this._renderTableBody(this._getFilteredRows());
 		});
+
+		// Date preset filter — placed before the Provider filter so the date
+		// selector lives inline with the other filters rather than on a
+		// separate row above the table.
+		const dateSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
+		dateSel.style.cssText = selectStyle;
+		dateSel.title = 'Date range';
+		for (const p of DATE_PRESETS) {
+			const o = DOM.append(dateSel, DOM.$('option')) as HTMLOptionElement;
+			o.value = p.value; o.textContent = p.label;
+			if (p.value === this.datePreset) { o.selected = true; }
+		}
 
 		// Provider filter
 		const provSel = DOM.append(filters, DOM.$('select')) as HTMLSelectElement;
@@ -1005,25 +1025,12 @@ export class AppointmentsEditor extends EditorPane {
 		});
 
 		// allow-any-unicode-next-line
-		// ─── Date Filter Row ──────────────────────────────────────────────
-		// Per the EHR-UI parity spec: the date preset selector sits above the
-		// DATE column on the left, and the date-range pickers (visible when the
-		// preset is "All Time") sit above the ACTIONS column on the right.
+		// ─── Date Range Row ───────────────────────────────────────────────
+		// Custom from/to date pickers, only visible when the preset is
+		// "All Time". The date preset selector itself now lives in the
+		// filters row above, immediately before the Provider filter.
 		const dateRow = DOM.append(this.contentEl, DOM.$('div'));
-		dateRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding:8px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
-
-		const dateLeft = DOM.append(dateRow, DOM.$('div'));
-		dateLeft.style.cssText = 'display:flex;align-items:center;gap:6px;';
-		const dateLeftLabel = DOM.append(dateLeft, DOM.$('span'));
-		dateLeftLabel.textContent = 'Date:';
-		dateLeftLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;';
-		const dateSel = DOM.append(dateLeft, DOM.$('select')) as HTMLSelectElement;
-		dateSel.style.cssText = selectStyle;
-		for (const p of DATE_PRESETS) {
-			const o = DOM.append(dateSel, DOM.$('option')) as HTMLOptionElement;
-			o.value = p.value; o.textContent = p.label;
-			if (p.value === this.datePreset) { o.selected = true; }
-		}
+		dateRow.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:8px;padding:8px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
 
 		const dateRight = DOM.append(dateRow, DOM.$('div'));
 		dateRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
@@ -1084,8 +1091,10 @@ export class AppointmentsEditor extends EditorPane {
 
 		// Range row visible only when "All Time" is the active preset; other
 		// presets define their own implicit range so the inputs would be ignored.
+		// Hide the entire row (not just the pickers) so the otherwise-empty
+		// bordered band doesn't sit between the filters and the table.
 		const updateRangeVisibility = () => {
-			dateRight.style.visibility = this.datePreset === 'all_time' ? 'visible' : 'hidden';
+			dateRow.style.display = this.datePreset === 'all_time' ? 'flex' : 'none';
 		};
 		updateRangeVisibility();
 

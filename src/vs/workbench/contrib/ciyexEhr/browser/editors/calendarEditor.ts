@@ -17,8 +17,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { BaseCiyexInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
-import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { URI } from '../../../../../base/common/uri.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown } from '../customDropdown.js';
 
@@ -113,7 +112,7 @@ export class CalendarEditor extends EditorPane {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
-		@IOpenerService private readonly openerService: IOpenerService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(CalendarEditor.ID, group, telemetryService, themeService, _storageService);
 	}
@@ -482,8 +481,12 @@ export class CalendarEditor extends EditorPane {
 			let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 			base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
 			if (!base) { base = DOM.getActiveWindow().location.origin; }
-			const url = `${base}/appointments/tv?mode=${mode}`;
-			void this.openerService.open(URI.parse(url), { openExternal: true });
+			const tvMode = mode === 'waiting' ? 'waiting-room' : 'staff';
+			const url = `${base}/appointments/tv?mode=${tvMode}`;
+			// Open in an internal Simple Browser editor tab so the TV view
+			// renders inside the workspace instead of launching the system
+			// browser via the "open external website" prompt.
+			void this.commandService.executeCommand('simpleBrowser.show', url);
 		} catch (err) {
 			this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
 		}
