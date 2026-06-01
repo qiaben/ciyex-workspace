@@ -16,6 +16,7 @@ import {
 	PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput,
 	CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput,
 	ReportsEditorInput, AppointmentsEditorInput,
+	StaffTvBoardEditorInput, WaitingRoomEditorInput,
 	// New clinical
 	LabsEditorInput, EducationEditorInput,
 	// Operations
@@ -68,6 +69,7 @@ import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
+import { StaffTvBoardEditor, WaitingRoomEditor } from './tvDisplayEditor.js';
 import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
@@ -116,6 +118,12 @@ reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.
 
 // Appointments
 reg.registerEditorPane(EditorPaneDescriptor.create(AppointmentsEditor, AppointmentsEditor.ID, localize('appointments', "Appointments")), [new SyncDescriptor(AppointmentsEditorInput)]);
+
+// TV Display editors — native Staff Board + Waiting Room (replace the
+// previous "open in external browser" handoff so the TV view runs inside
+// the workspace).
+reg.registerEditorPane(EditorPaneDescriptor.create(StaffTvBoardEditor, StaffTvBoardEditor.ID, localize('staffTvBoard', "Staff TV Board")), [new SyncDescriptor(StaffTvBoardEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(WaitingRoomEditor, WaitingRoomEditor.ID, localize('waitingRoom', "Waiting Room")), [new SyncDescriptor(WaitingRoomEditorInput)]);
 
 // Telehealth video UI is provided by the ciyex-telehealth extension — no
 // workbench-baked editor pane.

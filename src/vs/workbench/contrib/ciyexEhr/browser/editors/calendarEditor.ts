@@ -16,8 +16,7 @@ import { ICiyexAuthService, CiyexAuthState } from '../../../ciyexAuth/browser/ci
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { BaseCiyexInput, AppointmentsEditorInput } from './ciyexEditorInput.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown } from '../customDropdown.js';
 
@@ -112,7 +111,6 @@ export class CalendarEditor extends EditorPane {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
-		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(CalendarEditor.ID, group, telemetryService, themeService, _storageService);
 	}
@@ -477,16 +475,11 @@ export class CalendarEditor extends EditorPane {
 
 	private _openTvDisplay(mode: 'staff' | 'waiting'): void {
 		try {
-			const apiUrl = this.apiService.apiUrl || '';
-			let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
-			base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
-			if (!base) { base = DOM.getActiveWindow().location.origin; }
-			const tvMode = mode === 'waiting' ? 'waiting-room' : 'staff';
-			const url = `${base}/appointments/tv?mode=${tvMode}`;
-			// Open in an internal Simple Browser editor tab so the TV view
-			// renders inside the workspace instead of launching the system
-			// browser via the "open external website" prompt.
-			void this.commandService.executeCommand('simpleBrowser.show', url);
+			// Open the native TV editor (Staff Board / Waiting Room) directly
+			// inside the workspace. The editor pulls live data from the same
+			// backend the calendar uses — no web embedding, no external redirect.
+			const input = mode === 'staff' ? new StaffTvBoardEditorInput() : new WaitingRoomEditorInput();
+			void this.group.openEditor(input, { pinned: true });
 		} catch (err) {
 			this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
 		}

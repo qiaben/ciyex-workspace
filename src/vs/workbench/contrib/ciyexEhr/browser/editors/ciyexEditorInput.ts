@@ -433,6 +433,30 @@ export class AppointmentsEditorInput extends EditorInput {
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof AppointmentsEditorInput; }
 }
 
+// Native TV display editors — Staff Board (full schedule + status) and
+// Waiting Room (HIPAA-safe initials grid). Replaces the previous "open in
+// external browser" handoff so the TV view runs entirely inside the workspace.
+
+export class StaffTvBoardEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexStaffTvBoard';
+	override get typeId(): string { return StaffTvBoardEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Staff TV Board'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('device-desktop'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-tv-staff', path: '/staff' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof StaffTvBoardEditorInput; }
+}
+
+export class WaitingRoomEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexWaitingRoom';
+	override get typeId(): string { return WaitingRoomEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Waiting Room'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('device-tv'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-tv-waiting', path: '/waiting' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof WaitingRoomEditorInput; }
+}
+
 // allow-any-unicode-next-line
 // ─── Additional Clinical EditorInputs ───
 

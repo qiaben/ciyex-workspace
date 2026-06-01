@@ -12,7 +12,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { AppointmentsEditorInput, CalendarEditorInput } from './ciyexEditorInput.js';
+import { AppointmentsEditorInput, CalendarEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
@@ -874,17 +874,11 @@ export class AppointmentsEditor extends EditorPane {
 		const openTv = (mode: 'staff' | 'waiting') => {
 			tvMenu.style.display = 'none';
 			try {
-				const apiUrl = this.apiService.apiUrl || '';
-				// Strip trailing /api and convert *api-dev* host to *app-dev* if present
-				let base = apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
-				base = base.replace(/(^https?:\/\/)api(-[^.]+)?\./, '$1app$2.');
-				if (!base) { base = DOM.getActiveWindow().location.origin; }
-				const tvMode = mode === 'waiting' ? 'waiting-room' : 'staff';
-				const url = `${base}/appointments/tv?mode=${tvMode}`;
-				// Open in an internal Simple Browser editor tab so the TV view
-				// renders inside the workspace instead of launching the system
-				// browser via the "open external website" prompt.
-				void this.commandService.executeCommand('simpleBrowser.show', url);
+				// Open the native TV editor (Staff Board / Waiting Room) directly
+				// inside the workspace. No web load, no Simple Browser, no external
+				// redirect — the editor talks to the same backend API this view does.
+				const input = mode === 'staff' ? new StaffTvBoardEditorInput() : new WaitingRoomEditorInput();
+				void this.group.openEditor(input, { pinned: true });
 			} catch (err) {
 				this.notificationService.notify({ severity: Severity.Error, message: `TV Display failed: ${String(err)}` });
 			}
