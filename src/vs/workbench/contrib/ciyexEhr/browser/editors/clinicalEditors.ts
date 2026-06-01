@@ -2704,6 +2704,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
 			{ key: 'invoiceId', label: 'Invoice ID', type: 'text', placeholder: 'Optional — link to invoice' },
 			{ key: 'notes', label: 'Notes / Stripe Charge ID', type: 'text', placeholder: 'Stripe charge id (ch_...), check #, ...' },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Processing', value: 'processing' },
+					{ label: 'Completed', value: 'completed' },
+				], defaultValue: 'completed'
+			},
 		],
 		cellRenderer: (key: string, value: unknown, item: Record<string, unknown>): string => {
 			if (key === 'amount' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
