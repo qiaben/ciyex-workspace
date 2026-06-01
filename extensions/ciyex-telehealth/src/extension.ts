@@ -375,9 +375,15 @@ window.__CTX = {
 // --- Telehealth webview: port of ciyex-ehr-ui MediasoupStompProvider ---
 //
 // Dependencies loaded from esm.sh (CDN). Keep these pinned to avoid drift.
+//
+// Raw WebSocket (no SockJS): SockJS opens a cross-origin XHR /info request
+// without credentials, which Cloudflare blocks with a challenge page from
+// the vscode-webview origin. Native WebSocket always carries cookies for
+// the destination host, so cf_clearance passes through. The backend exposes
+// both endpoints (.withSockJS() + raw) at the same /ws/telehealth path; we
+// pick the raw one here.
 import { Device } from 'https://esm.sh/mediasoup-client@3.7.18';
 import { Client } from 'https://esm.sh/@stomp/stompjs@7.0.0';
-import SockJS from 'https://esm.sh/sockjs-client@1.6.1';
 
 const vscode = acquireVsCodeApi();
 const ctx = window.__CTX;
@@ -510,46 +516,48 @@ class MediasoupStompProvider {
 		//   1. session.joinInfo.wsUrl (returned by backend SDK)
 		//   2. derive /ws/telehealth on the API host
 		const wsHint = this.session.joinInfo && this.session.joinInfo.wsUrl;
-		const sockUrl = this._toSockJsUrl(wsHint) || this._deriveFromApi();
-		if (!sockUrl) {
+		const wssUrl = this._toWssUrl(wsHint) || this._deriveFromApi();
+		if (!wssUrl) {
 			throw new Error('Session missing signaling URL - check telehealth vendor config');
 		}
-		state.signalingHint = sockUrl;
+		state.signalingHint = wssUrl;
 		render();
 
-		await this._connectSignaling(sockUrl);
+		await this._connectSignaling(wssUrl);
 	}
 
-	_toSockJsUrl(wsUrl) {
+	_toWssUrl(wsUrl) {
 		if (!wsUrl) { return null; }
-		// SockJS expects HTTP(S), not WS(S). Convert wss:// → https://, ws:// → http://.
-		const http = wsUrl.replace(/^ws:\\/\\//i, 'http://').replace(/^wss:\\/\\//i, 'https://');
-		return this._rewriteSignalingHost(http);
+		// Normalize to wss:// (downgrade only if explicitly ws://). Backend
+		// returns either ws:// or wss:// depending on telehealthPublicUrl.
+		const wss = wsUrl.replace(/^http:\\/\\//i, 'ws://').replace(/^https:\\/\\//i, 'wss://');
+		return this._rewriteSignalingHost(wss);
 	}
 
 	_deriveFromApi() {
 		try {
 			const u = new URL(ctx.apiUrl);
-			return this._rewriteSignalingHost(u.protocol + '//' + u.host + '/ws/telehealth');
+			const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+			return this._rewriteSignalingHost(wsProto + '//' + u.host + '/ws/telehealth');
 		} catch (_) { return null; }
 	}
 
 	// Backend builds joinInfo.wsUrl using telehealthPublicUrl (= the EHR API
-	// host, e.g. https://api-dev.ciyex.org). Cloudflare Tunnel does NOT serve
-	// /ws/telehealth on that host — only on the EHR-UI host
-	// (api-dev → app-dev, api-stage → app-stage, …). The browser EHR UI
-	// sidesteps this by building the SockJS URL from window.location.host;
-	// the desktop webview has no such origin so we rewrite "api-" → "app-"
-	// on the first hostname label to land where /ws/telehealth is routed.
-	_rewriteSignalingHost(httpUrl) {
+	// host, e.g. wss://api-dev.ciyex.org). Cloudflare Tunnel does NOT serve
+	// /ws/telehealth on api-* hosts — only on the EHR-UI host (api-dev →
+	// app-dev, api-stage → app-stage, …). The browser EHR UI sidesteps this
+	// by building the URL from window.location.host; the desktop webview has
+	// no such origin so we rewrite "api-" → "app-" on the first hostname
+	// label to land where /ws/telehealth is actually routed.
+	_rewriteSignalingHost(wsUrl) {
 		try {
-			const u = new URL(httpUrl);
+			const u = new URL(wsUrl);
 			u.hostname = u.hostname.replace(/^api-/, 'app-');
 			return u.toString();
-		} catch (_) { return httpUrl; }
+		} catch (_) { return wsUrl; }
 	}
 
-	_connectSignaling(sockjsUrl) {
+	_connectSignaling(wssUrl) {
 		return new Promise((resolve) => {
 			// 20s deadline waiting for "joined" message from server
 			this.joinTimeout = setTimeout(() => {
@@ -561,7 +569,7 @@ class MediasoupStompProvider {
 			}, 20000);
 
 			const client = new Client({
-				webSocketFactory: () => new SockJS(sockjsUrl, null, { transports: ['websocket', 'xhr-polling'] }),
+				brokerURL: wssUrl,
 				connectHeaders: { Authorization: 'Bearer ' + ctx.authToken },
 				reconnectDelay: 5000,
 				heartbeatIncoming: 10000,

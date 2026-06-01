@@ -785,7 +785,10 @@ registerAction2(class extends Action2 {
 			const message = err instanceof Error ? err.message : String(err);
 			// Distinguish "command not found" (extension disabled / missing)
 			// from extension-internal errors so users get the right guidance.
-			if (/command\s+'?ciyex-telehealth/i.test(message) || /not\s+found/i.test(message)) {
+			// VS Code raises exactly: command '<id>' not found — match that
+			// precise shape only. A broader /not found/ test would mis-attribute
+			// API 404s and other internal errors to a disabled extension.
+			if (/command\s+'?ciyex-telehealth[\w.-]*'?\s+not\s+found/i.test(message)) {
 				notifications.notify({
 					severity: Severity.Warning,
 					message: localize2(
