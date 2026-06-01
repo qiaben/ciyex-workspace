@@ -732,6 +732,7 @@ registerAction2(class extends Action2 {
 	}
 });
 
+
 /**
  * Command: Open Telehealth Video Session for an appointment.
  *

@@ -21,8 +21,67 @@ interface OpenSessionRequest {
 	role?: 'provider' | 'patient';
 }
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const WS = require('ws') as typeof import('ws');
+
 const OPEN_COMMAND = 'ciyex-telehealth.openSession';
 const CONFIGURE_COMMAND = 'ciyex-telehealth.configure';
+
+// Active session panels keyed by sessionId — used to route signaling
+// WebSocket events back to the right webview. One open telehealth session
+// per appointment.
+const activePanels = new Map<string, vscode.WebviewPanel>();
+
+// Open signaling sockets, keyed by the same sessionId. The Node-side ws
+// is the only path that works: the workbench renderer's WebSocket is
+// blocked by Electron, the webview iframe is blocked by CORS, and only
+// Node with a browser User-Agent slips past Cloudflare's bot challenge.
+const signalingSockets = new Map<string, import('ws').WebSocket>();
+
+// UA Cloudflare lets through. The full real-Chrome UA actually gets
+// challenged here because the JA3/TLS fingerprint doesn't match (Node tls
+// vs real Chrome) and CF flags the mismatch as a bot. A plain product
+// name is treated as a legitimate non-browser client and waved through.
+const SIGNALING_UA = 'ciyex-workspace-telehealth/1.0';
+
+function openSignalingSocket(panel: vscode.WebviewPanel, sessionId: string, url: string): void {
+	closeSignalingSocket(sessionId);
+	let socket: import('ws').WebSocket;
+	try {
+		socket = new WS.WebSocket(url, { headers: { 'User-Agent': SIGNALING_UA } });
+	} catch (err) {
+		panel.webview.postMessage({ type: 'signalingEvent', event: 'close', code: 1006, reason: err instanceof Error ? err.message : String(err), wasClean: false });
+		return;
+	}
+	signalingSockets.set(sessionId, socket);
+	socket.on('open', () => {
+		panel.webview.postMessage({ type: 'signalingEvent', event: 'open' });
+	});
+	socket.on('message', (data: import('ws').RawData) => {
+		const text = typeof data === 'string' ? data : data.toString('utf8');
+		panel.webview.postMessage({ type: 'signalingEvent', event: 'message', data: text });
+	});
+	socket.on('error', () => {
+		panel.webview.postMessage({ type: 'signalingEvent', event: 'error' });
+	});
+	socket.on('close', (code: number, reason: Buffer) => {
+		signalingSockets.delete(sessionId);
+		panel.webview.postMessage({ type: 'signalingEvent', event: 'close', code, reason: reason.toString('utf8'), wasClean: code === 1000 });
+	});
+}
+
+function sendSignalingMessage(sessionId: string, data: string): void {
+	const socket = signalingSockets.get(sessionId);
+	if (!socket || socket.readyState !== WS.WebSocket.OPEN) { return; }
+	try { socket.send(data); } catch { /* swallowed — channel will close */ }
+}
+
+function closeSignalingSocket(sessionId: string): void {
+	const socket = signalingSockets.get(sessionId);
+	if (!socket) { return; }
+	signalingSockets.delete(sessionId);
+	try { socket.close(); } catch { /* ignore */ }
+}
 
 export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
@@ -74,6 +133,11 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 		},
 	);
 
+	// Unique per-panel signaling channel ID, used by the workbench-side bridge
+	// to route WebSocket events back here.
+	const signalingId = `tele-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+	activePanels.set(signalingId, panel);
+
 	panel.webview.html = renderSessionHtml({
 		appointmentId: request.appointmentId,
 		patientName: request.patientName || 'Patient',
@@ -84,6 +148,7 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 		authToken: request.authToken,
 		orgAlias: request.orgAlias || '',
 		recordingMode,
+		signalingId,
 	});
 
 	const sub = panel.webview.onDidReceiveMessage(async (msg: {
@@ -94,6 +159,8 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 		method?: string;
 		path?: string;
 		body?: string;
+		url?: string;
+		data?: string;
 	}) => {
 		if (msg.type === 'notify' && msg.message) {
 			const sev = msg.severity ?? 'info';
@@ -106,6 +173,12 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 			}
 		} else if (msg.type === 'endCall') {
 			panel.dispose();
+		} else if (msg.type === 'signalingOpen' && msg.url) {
+			openSignalingSocket(panel, signalingId, msg.url);
+		} else if (msg.type === 'signalingSend' && typeof msg.data === 'string') {
+			sendSignalingMessage(signalingId, msg.data);
+		} else if (msg.type === 'signalingClose') {
+			closeSignalingSocket(signalingId);
 		} else if (msg.type === 'http' && msg.requestId && msg.path) {
 			// Bridge HTTPS calls to the EHR API via a workbench-side proxy
 			// command. The webview's `vscode-webview://` origin gets CORS-
@@ -141,7 +214,11 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 			}
 		}
 	});
-	panel.onDidDispose(() => sub.dispose());
+	panel.onDidDispose(() => {
+		sub.dispose();
+		activePanels.delete(signalingId);
+		closeSignalingSocket(signalingId);
+	});
 }
 
 interface RenderOptions {
@@ -154,6 +231,7 @@ interface RenderOptions {
 	authToken: string;
 	orgAlias: string;
 	recordingMode: 'COMPOSITE' | 'INDIVIDUAL';
+	signalingId: string;
 }
 
 /**
@@ -368,6 +446,7 @@ window.__CTX = {
 	authToken: ${JSON.stringify(opts.authToken)},
 	orgAlias: ${JSON.stringify(opts.orgAlias)},
 	recordingMode: ${JSON.stringify(opts.recordingMode)},
+	signalingId: ${JSON.stringify(opts.signalingId)},
 };
 </script>
 
@@ -376,12 +455,14 @@ window.__CTX = {
 //
 // Dependencies loaded from esm.sh (CDN). Keep these pinned to avoid drift.
 //
-// Raw WebSocket (no SockJS): SockJS opens a cross-origin XHR /info request
-// without credentials, which Cloudflare blocks with a challenge page from
-// the vscode-webview origin. Native WebSocket always carries cookies for
-// the destination host, so cf_clearance passes through. The backend exposes
-// both endpoints (.withSockJS() + raw) at the same /ws/telehealth path; we
-// pick the raw one here.
+// Signaling goes through a workbench-side WebSocket bridge: the webview's
+// vscode-webview:// origin can't fetch app-dev.ciyex.org (CORS preflight
+// 403 from Spring before it reaches SockJS) and can't open a raw WebSocket
+// either (close code 1006 — Cloudflare terminates the upgrade despite the
+// path being routed). The workbench renderer is vscode-file:// which
+// Electron treats as a privileged main page (no CORS gate, no CF challenge
+// since user sign-in already cleared it), so we open the real WebSocket
+// there and shuttle frames in via postMessage to the panel.
 import { Device } from 'https://esm.sh/mediasoup-client@3.7.18';
 import { Client } from 'https://esm.sh/@stomp/stompjs@7.0.0';
 
@@ -492,6 +573,47 @@ async function initSession() {
 	}
 }
 
+// WebSocket-shaped object backed by the workbench-side signaling bridge.
+// STOMP only needs send/close/onopen/onmessage/onclose/onerror/readyState
+// + the binaryType getter (we leave it at the default string mode).
+class BridgeWebSocket {
+	constructor(url) {
+		this.url = url;
+		this.readyState = 0; // CONNECTING
+		this.onopen = null;
+		this.onmessage = null;
+		this.onclose = null;
+		this.onerror = null;
+		this._sigHandler = (ev) => {
+			const m = ev.data;
+			if (!m || m.type !== 'signalingEvent') { return; }
+			if (m.event === 'open') {
+				this.readyState = 1;
+				this.onopen && this.onopen({});
+			} else if (m.event === 'message') {
+				this.onmessage && this.onmessage({ data: m.data || '' });
+			} else if (m.event === 'error') {
+				this.onerror && this.onerror({});
+			} else if (m.event === 'close') {
+				this.readyState = 3;
+				this.onclose && this.onclose({ code: m.code || 1006, reason: m.reason || '', wasClean: !!m.wasClean });
+				window.removeEventListener('message', this._sigHandler);
+			}
+		};
+		window.addEventListener('message', this._sigHandler);
+		vscode.postMessage({ type: 'signalingOpen', url });
+	}
+	send(data) {
+		// STOMP frames are strings. Bridge only forwards strings; binary is not used here.
+		vscode.postMessage({ type: 'signalingSend', data: typeof data === 'string' ? data : String(data) });
+	}
+	close() {
+		if (this.readyState === 3) { return; }
+		this.readyState = 2; // CLOSING
+		vscode.postMessage({ type: 'signalingClose' });
+	}
+}
+
 // === MediasoupStompProvider (port) ===
 class MediasoupStompProvider {
 	constructor(session, displayName, remoteVideoEl) {
@@ -516,20 +638,19 @@ class MediasoupStompProvider {
 		//   1. session.joinInfo.wsUrl (returned by backend SDK)
 		//   2. derive /ws/telehealth on the API host
 		const wsHint = this.session.joinInfo && this.session.joinInfo.wsUrl;
-		const wssUrl = this._toWssUrl(wsHint) || this._deriveFromApi();
-		if (!wssUrl) {
+		const wsUrl = this._toWssUrl(wsHint) || this._deriveFromApi();
+		if (!wsUrl) {
 			throw new Error('Session missing signaling URL - check telehealth vendor config');
 		}
-		state.signalingHint = wssUrl;
+		state.signalingHint = wsUrl;
 		render();
 
-		await this._connectSignaling(wssUrl);
+		await this._connectSignaling(wsUrl);
 	}
 
 	_toWssUrl(wsUrl) {
 		if (!wsUrl) { return null; }
-		// Normalize to wss:// (downgrade only if explicitly ws://). Backend
-		// returns either ws:// or wss:// depending on telehealthPublicUrl.
+		// Normalize to wss:// (downgrade only if explicitly ws://).
 		const wss = wsUrl.replace(/^http:\\/\\//i, 'ws://').replace(/^https:\\/\\//i, 'wss://');
 		return this._rewriteSignalingHost(wss);
 	}
@@ -569,7 +690,11 @@ class MediasoupStompProvider {
 			}, 20000);
 
 			const client = new Client({
-				brokerURL: wssUrl,
+				// Bridge WebSocket through the workbench. The webview can't open
+				// the WS directly (CORS preflight 403 + Cloudflare WS termination
+				// from vscode-webview://). Workbench's vscode-file:// origin is
+				// privileged and the user's sign-in already cleared CF challenge.
+				webSocketFactory: () => new BridgeWebSocket(wssUrl),
 				connectHeaders: { Authorization: 'Bearer ' + ctx.authToken },
 				reconnectDelay: 5000,
 				heartbeatIncoming: 10000,
