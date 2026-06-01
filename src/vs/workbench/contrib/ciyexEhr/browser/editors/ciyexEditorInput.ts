@@ -133,6 +133,11 @@ export class EncounterFormEditorInput extends EditorInput {
 		readonly patientName: string,
 		readonly encounterLabel: string,
 		readonly initialSectionKey?: string,
+		/** Appointment this encounter is being created for. Used by the
+		 *  snapshot's "+ New Encounter" action to enforce one encounter per
+		 *  appointment — if the appointment already has an encounter the
+		 *  caller short-circuits and opens the existing one. */
+		readonly appointmentId?: string,
 	) { super(); }
 
 	override getName(): string { return this.encounterLabel || 'Encounter'; }

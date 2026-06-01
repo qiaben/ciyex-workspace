@@ -15,6 +15,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { PatientSnapshotEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 
 interface QuickAction {
 	icon: string;
@@ -30,6 +31,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	private root!: HTMLElement;
 	private _currentPatientId = '';
 	private _currentPatientName = '';
+	/** Most recent appointment loaded for the patient — used to enforce one
+	 *  encounter per appointment in `_openNewEncounter`. Reset on every
+	 *  `_loadAndRender`. */
+	private _currentAppointment: Record<string, unknown> | null = null;
 	private readonly _pageState = new Map<string, number>();
 	private static readonly PAGE_SIZE = 5;
 
@@ -40,6 +45,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@IEditorService private readonly editorService: IEditorService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -120,7 +126,43 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private _openNewEncounter(): void {
 		if (!this._currentPatientId) { return; }
-		this._openInSidePanel(new EncounterFormEditorInput(this._currentPatientId, 'new', this._currentPatientName, 'New Encounter'));
+
+		// Enforce one encounter per appointment: if today's appointment
+		// already has an encounter linked, surface a notification and open
+		// the existing encounter in the side panel instead of starting a
+		// new draft.
+		const apt = this._currentAppointment;
+		const appointmentId = apt
+			? String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '')
+			: String(this._lastRenderArgs?.appointmentId || '');
+		const existingEncounterId = apt
+			? String(apt.encounterId || (apt.encounter as Record<string, unknown> | undefined)?.id || '')
+			: '';
+
+		if (existingEncounterId) {
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: 'An encounter has already been created for this appointment. Opening the existing encounter.',
+			});
+			this._openInSidePanel(new EncounterFormEditorInput(
+				this._currentPatientId,
+				existingEncounterId,
+				this._currentPatientName,
+				'Encounter',
+				undefined,
+				appointmentId || undefined,
+			));
+			return;
+		}
+
+		this._openInSidePanel(new EncounterFormEditorInput(
+			this._currentPatientId,
+			'new',
+			this._currentPatientName,
+			'New Encounter',
+			undefined,
+			appointmentId || undefined,
+		));
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -211,6 +253,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		]);
 
 		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
+		this._currentAppointment = apt;
 
 		if (this._currentPatientId !== patientId) { return; }
 

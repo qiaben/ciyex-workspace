@@ -67,12 +67,15 @@ export class EncounterFormEditor extends EditorPane {
 		this.headerBar = DOM.append(this.root, DOM.$('div'));
 		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;align-items:center;gap:10px;';
 
-		// Body: TOC + scroll
+		// Body: content-only (SECTIONS sidebar intentionally hidden — the
+		// New Encounter / Edit Encounter side panel shows the form content
+		// directly. The TOC element still exists off-screen so the existing
+		// scroll-sync / TOC-click logic can operate without null checks.)
 		const body = DOM.append(this.root, DOM.$('div'));
 		body.style.cssText = 'flex:1;display:flex;overflow:hidden;';
 
 		this.tocNav = DOM.append(body, DOM.$('div'));
-		this.tocNav.style.cssText = 'width:200px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--vscode-editorWidget-border);padding:8px 0;';
+		this.tocNav.style.cssText = 'display:none;';
 
 		this.scrollArea = DOM.append(body, DOM.$('div'));
 		this.scrollArea.style.cssText = 'flex:1;overflow-y:auto;';
