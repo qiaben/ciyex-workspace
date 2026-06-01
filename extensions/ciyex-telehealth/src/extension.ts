@@ -86,7 +86,15 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 		recordingMode,
 	});
 
-	const sub = panel.webview.onDidReceiveMessage((msg: { type: string; message?: string; severity?: 'info' | 'warning' | 'error' }) => {
+	const sub = panel.webview.onDidReceiveMessage(async (msg: {
+		type: string;
+		message?: string;
+		severity?: 'info' | 'warning' | 'error';
+		requestId?: string;
+		method?: string;
+		path?: string;
+		body?: string;
+	}) => {
 		if (msg.type === 'notify' && msg.message) {
 			const sev = msg.severity ?? 'info';
 			if (sev === 'error') {
@@ -98,6 +106,39 @@ function openSessionPanel(context: vscode.ExtensionContext, request: OpenSession
 			}
 		} else if (msg.type === 'endCall') {
 			panel.dispose();
+		} else if (msg.type === 'http' && msg.requestId && msg.path) {
+			// Bridge HTTPS calls to the EHR API via a workbench-side proxy
+			// command. The webview's `vscode-webview://` origin gets CORS-
+			// blocked, and a Node fetch from this extension host hits
+			// Cloudflare's "Just a moment..." managed challenge. The workbench
+			// renderer already cleared that challenge during sign-in, so its
+			// fetch (and ours via the proxy) sails through.
+			const reqId = msg.requestId;
+			try {
+				const result = await vscode.commands.executeCommand<{ ok: boolean; status: number; statusText: string; body: string; error?: string } | undefined>(
+					'ciyex.telehealth.proxyFetch',
+					{ method: msg.method || 'GET', path: msg.path, body: msg.body, orgAlias: request.orgAlias || '' },
+				);
+				panel.webview.postMessage({
+					type: 'httpResponse',
+					requestId: reqId,
+					ok: !!(result && result.ok),
+					status: (result && result.status) || 0,
+					statusText: (result && result.statusText) || '',
+					body: (result && result.body) || '',
+					error: result && result.error,
+				});
+			} catch (err) {
+				panel.webview.postMessage({
+					type: 'httpResponse',
+					requestId: reqId,
+					ok: false,
+					status: 0,
+					statusText: 'ProxyError',
+					body: '',
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
 	});
 	panel.onDidDispose(() => sub.dispose());
@@ -366,14 +407,39 @@ function notify(message, severity) {
 	vscode.postMessage({ type: 'notify', message, severity: severity || 'info' });
 }
 
-async function api(path, init) {
-	const url = ctx.apiUrl + path;
-	const headers = Object.assign({
-		'Content-Type': 'application/json',
-		'Authorization': 'Bearer ' + ctx.authToken,
-	}, (init && init.headers) || {});
-	if (ctx.orgAlias) { headers['X-Org-Alias'] = ctx.orgAlias; }
-	return fetch(url, Object.assign({}, init, { headers }));
+// Bridge HTTP through the extension host so we sidestep the webview's
+// vscode-webview origin CORS rejection. Returns a Response-like object so
+// the callers keep their fetch-style code.
+const httpPending = new Map();
+window.addEventListener('message', (ev) => {
+	const m = ev.data;
+	if (!m || m.type !== 'httpResponse' || !m.requestId) { return; }
+	const cb = httpPending.get(m.requestId);
+	if (!cb) { return; }
+	httpPending.delete(m.requestId);
+	cb(m);
+});
+function api(path, init) {
+	const requestId = 'r' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+	return new Promise((resolve) => {
+		httpPending.set(requestId, (m) => {
+			const body = m.body || '';
+			resolve({
+				ok: !!m.ok,
+				status: m.status || 0,
+				statusText: m.statusText || '',
+				text: () => Promise.resolve(m.error ? (m.error + (body ? ': ' + body : '')) : body),
+				json: () => Promise.resolve(body ? JSON.parse(body) : null),
+			});
+		});
+		vscode.postMessage({
+			type: 'http',
+			requestId,
+			method: (init && init.method) || 'GET',
+			path,
+			body: init && init.body,
+		});
+	});
 }
 
 // === Session bootstrap ===
@@ -457,14 +523,30 @@ class MediasoupStompProvider {
 	_toSockJsUrl(wsUrl) {
 		if (!wsUrl) { return null; }
 		// SockJS expects HTTP(S), not WS(S). Convert wss:// → https://, ws:// → http://.
-		return wsUrl.replace(/^ws:\\/\\//i, 'http://').replace(/^wss:\\/\\//i, 'https://');
+		const http = wsUrl.replace(/^ws:\\/\\//i, 'http://').replace(/^wss:\\/\\//i, 'https://');
+		return this._rewriteSignalingHost(http);
 	}
 
 	_deriveFromApi() {
 		try {
 			const u = new URL(ctx.apiUrl);
-			return u.protocol + '//' + u.host + '/ws/telehealth';
+			return this._rewriteSignalingHost(u.protocol + '//' + u.host + '/ws/telehealth');
 		} catch (_) { return null; }
+	}
+
+	// Backend builds joinInfo.wsUrl using telehealthPublicUrl (= the EHR API
+	// host, e.g. https://api-dev.ciyex.org). Cloudflare Tunnel does NOT serve
+	// /ws/telehealth on that host — only on the EHR-UI host
+	// (api-dev → app-dev, api-stage → app-stage, …). The browser EHR UI
+	// sidesteps this by building the SockJS URL from window.location.host;
+	// the desktop webview has no such origin so we rewrite "api-" → "app-"
+	// on the first hostname label to land where /ws/telehealth is routed.
+	_rewriteSignalingHost(httpUrl) {
+		try {
+			const u = new URL(httpUrl);
+			u.hostname = u.hostname.replace(/^api-/, 'app-');
+			return u.toString();
+		} catch (_) { return httpUrl; }
 	}
 
 	_connectSignaling(sockjsUrl) {

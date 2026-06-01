@@ -689,6 +689,50 @@ registerAction2(class extends Action2 {
 });
 
 /**
+ * Workbench-side fetch proxy for the ciyex-telehealth extension.
+ *
+ * The extension lives in a vscode-webview origin which Cloudflare-protected
+ * API hosts reject with a "Just a moment..." managed challenge, and the
+ * extension-host's Node fetch has no cf_clearance cookie either. The
+ * workbench renderer (Electron Chromium) already cleared the challenge as
+ * part of normal sign-in, so its fetch sails through. We expose that here
+ * so the extension can route every API call back through the renderer
+ * without re-implementing auth/tenant headers.
+ */
+interface TelehealthProxyRequest { method?: string; path: string; body?: string; orgAlias?: string }
+interface TelehealthProxyResult { ok: boolean; status: number; statusText: string; body: string; error?: string }
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: 'ciyex.telehealth.proxyFetch', title: localize2('telehealthProxy', "Telehealth API Proxy"), f1: false });
+	}
+	async run(accessor: ServicesAccessor, request: TelehealthProxyRequest): Promise<TelehealthProxyResult> {
+		if (!request || !request.path || !request.path.startsWith('/')) {
+			return { ok: false, status: 0, statusText: 'BadRequest', body: '', error: 'invalid path' };
+		}
+		const apiService = accessor.get(ICiyexApiService);
+		// The telehealth backend (org.ciyex.telehealth.SessionController) reads
+		// X-Org-Alias rather than X-Tenant-Name, so add it explicitly. The base
+		// apiService.fetch will still add bearer + tenant.
+		const headers: Record<string, string> = {};
+		const orgAlias = request.orgAlias || (() => {
+			try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
+		})();
+		if (orgAlias) { headers['X-Org-Alias'] = orgAlias; }
+		try {
+			const res = await apiService.fetch(request.path, {
+				method: request.method || 'GET',
+				headers,
+				body: request.body,
+			});
+			const body = await res.text();
+			return { ok: res.ok, status: res.status, statusText: res.statusText, body };
+		} catch (err) {
+			return { ok: false, status: 0, statusText: 'NetworkError', body: '', error: err instanceof Error ? err.message : String(err) };
+		}
+	}
+});
+
+/**
  * Command: Open Telehealth Video Session for an appointment.
  *
  * Telehealth UI is provided exclusively by the ciyex-telehealth extension.
