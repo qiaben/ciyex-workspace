@@ -112,9 +112,20 @@ export default {
 	},
 };
 
-/** Map a platform string like "linux-x64-archive" → "linux-x64" for pointer release tags. */
-function platformToTagSuffix(platform: string): string {
-	return platform.replace(/-archive$/, '').replace(/-zip$/, '');
+/**
+ * Map a platform + quality to the correct GitHub pointer release tag.
+ *
+ * Each build workflow publishes a metadata.json to a "latest pointer" release:
+ *   Windows:  stage-latest                   (single tag, all win32 variants)
+ *   Linux:    stage-latest-linux-x64
+ *   macOS:    stage-latest-darwin-universal
+ */
+function platformToPointerTag(quality: string, platform: string): string {
+	if (platform.startsWith('win32')) {
+		return `${quality}-latest`;
+	}
+	const suffix = platform.replace(/-archive$/, '').replace(/-zip$/, '');
+	return `${quality}-latest-${suffix}`;
 }
 
 async function getLatestManifest(env: Env, ctx: ExecutionContext, quality: string, platform: string): Promise<UpdateManifest | undefined> {
@@ -122,7 +133,7 @@ async function getLatestManifest(env: Env, ctx: ExecutionContext, quality: strin
 	// (e.g. "stage-latest-linux-x64") which is always updated by CI on every build.
 	// Prod/stable use the standard non-prerelease release mechanism.
 	const isChannelBuild = quality === 'dev' || quality === 'stage';
-	const cacheKey = new Request(`https://updates.internal/manifest/${env.GITHUB_REPO}/${isChannelBuild ? `${quality}-${platformToTagSuffix(platform)}` : 'stable'}`);
+	const cacheKey = new Request(`https://updates.internal/manifest/${env.GITHUB_REPO}/${isChannelBuild ? platformToPointerTag(quality, platform) : 'stable'}`);
 	const cache = caches.default;
 
 	const cached = await cache.match(cacheKey);
@@ -186,7 +197,7 @@ async function fetchLatestRelease(env: Env, quality: string, platform: string): 
 	// The CI always uploads a fresh metadata.json to e.g. "stage-latest-linux-x64"
 	// on every successful build, so this is always up to date.
 	if (quality === 'dev' || quality === 'stage') {
-		const tag = `${quality}-latest-${platformToTagSuffix(platform)}`;
+		const tag = `${quality}-latest-${platformToPointerTag(quality, platform)}`;
 		const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/releases/tags/${tag}`, { headers });
 		if (!res.ok) {
 			console.error(`GitHub API error fetching tag ${tag}: ${res.status}`);
