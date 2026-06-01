@@ -258,6 +258,13 @@ export class ScheduleSidebarPane extends ViewPane {
 					const page = raw.map((a: Record<string, unknown>) => ({
 						...a,
 						patientName: a.patientName || a.patientDisplay || '',
+						// FHIR returns `patient` / `subject` as `"Patient/{uuid}"` reference strings.
+						// Without this fallback `patientId` is undefined and the row click handler
+						// (which gates on `if (apt.patientId)`) silently no-ops, so clicking an
+						// appointment never opens the patient snapshot.
+						patientId: a.patientId
+							|| (typeof a.patient === 'string' ? (a.patient as string).replace('Patient/', '') : '')
+							|| (typeof a.subject === 'string' ? (a.subject as string).replace('Patient/', '') : ''),
 						providerName: a.providerName || a.providerDisplay || '',
 						practitionerName: a.practitionerName || a.providerDisplay || '',
 						providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),

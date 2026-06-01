@@ -14,6 +14,7 @@ import { PatientListPane } from './patientListPane.js';
 import { GenericListPane } from './genericListPane.js';
 import { ScheduleSidebarPane } from './scheduleSidebarPane.js';
 import { TasksSidebarPane } from './tasksSidebarPane.js';
+import { AppointmentsSidebarPane } from './appointmentsSidebarPane.js';
 
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry);
@@ -62,7 +63,7 @@ function reg(id: string, title: ReturnType<typeof localize2>, icon: ReturnType<t
 // of "Calendar / Schedule" stacked together. The id stays `ciyex.calendar` to
 // preserve user state (pinned position, visibility prefs, etc.).
 export const CALENDAR_CONTAINER = reg('ciyex.calendar', localize2('ciyex.schedule', "Schedule"), icons.calendar, 1);
-// export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', localize2('ciyex.appointments', "Appointments"), icons.appointments, 2);
+export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', localize2('ciyex.appointments', "Appointments"), icons.appointments, 2);
 export const PATIENTS_CONTAINER = reg('ciyex.patients', localize2('ciyex.patients', "Patients"), icons.patients, 3);
 export const ENCOUNTERS_CONTAINER = reg('ciyex.encounters', localize2('ciyex.encounters', "Encounters"), icons.encounters, 4);
 export const TASKS_CONTAINER = reg('ciyex.tasks', localize2('ciyex.tasks', "Tasks"), icons.tasks, 5);
@@ -222,7 +223,7 @@ viewsRegistry.registerViews([{ id: ScheduleSidebarPane.ID, name: localize2('sche
 // Appointments — rich sidebar with date filters, status filter, per-row actions, pagination
 // View names match their container titles so the sidebar shows a single
 // merged title (e.g. "Appointments") instead of "Appointments: All Appointments".
-// viewsRegistry.registerViews([{ id: AppointmentsSidebarPane.ID, name: localize2('ciyex.appointments.view', "Appointments"), ctorDescriptor: new SyncDescriptor(AppointmentsSidebarPane) }], APPOINTMENTS_CONTAINER);
+viewsRegistry.registerViews([{ id: AppointmentsSidebarPane.ID, name: localize2('ciyex.appointments.view', "Appointments"), ctorDescriptor: new SyncDescriptor(AppointmentsSidebarPane) }], APPOINTMENTS_CONTAINER);
 viewsRegistry.registerViews([{ id: PatientListPane.ID, name: localize2('ciyex.patients.view', "Patients"), ctorDescriptor: new SyncDescriptor(PatientListPane) }], PATIENTS_CONTAINER);
 import { EncounterListPane } from './encounterListPane.js';
 viewsRegistry.registerViews([{ id: EncounterListPane.ID, name: localize2('encounters', "Encounters"), ctorDescriptor: new SyncDescriptor(EncounterListPane) }], ENCOUNTERS_CONTAINER);
