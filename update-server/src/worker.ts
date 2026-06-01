@@ -74,7 +74,7 @@ export default {
 
 		let manifest: UpdateManifest | undefined;
 		try {
-			manifest = await getLatestManifest(env, ctx);
+			manifest = await getLatestManifest(env, ctx, quality, platform);
 		} catch (err) {
 			console.error('Failed to load manifest:', err);
 			return NO_CONTENT;
@@ -112,8 +112,17 @@ export default {
 	},
 };
 
-async function getLatestManifest(env: Env, ctx: ExecutionContext): Promise<UpdateManifest | undefined> {
-	const cacheKey = new Request(`https://updates.internal/manifest/${env.GITHUB_REPO}`);
+/** Map a platform string like "linux-x64-archive" → "linux-x64" for pointer release tags. */
+function platformToTagSuffix(platform: string): string {
+	return platform.replace(/-archive$/, '').replace(/-zip$/, '');
+}
+
+async function getLatestManifest(env: Env, ctx: ExecutionContext, quality: string, platform: string): Promise<UpdateManifest | undefined> {
+	// For dev/stage channels, fetch the per-channel pointer release metadata
+	// (e.g. "stage-latest-linux-x64") which is always updated by CI on every build.
+	// Prod/stable use the standard non-prerelease release mechanism.
+	const isChannelBuild = quality === 'dev' || quality === 'stage';
+	const cacheKey = new Request(`https://updates.internal/manifest/${env.GITHUB_REPO}/${isChannelBuild ? `${quality}-${platformToTagSuffix(platform)}` : 'stable'}`);
 	const cache = caches.default;
 
 	const cached = await cache.match(cacheKey);
@@ -121,7 +130,7 @@ async function getLatestManifest(env: Env, ctx: ExecutionContext): Promise<Updat
 		return await cached.json<UpdateManifest>();
 	}
 
-	const release = await fetchLatestRelease(env);
+	const release = await fetchLatestRelease(env, quality, platform);
 	if (!release) {
 		return undefined;
 	}
@@ -163,7 +172,7 @@ interface GitHubRelease {
 	assets: GitHubAsset[];
 }
 
-async function fetchLatestRelease(env: Env): Promise<GitHubRelease | undefined> {
+async function fetchLatestRelease(env: Env, quality: string, platform: string): Promise<GitHubRelease | undefined> {
 	const headers: Record<string, string> = {
 		'Accept': 'application/vnd.github+json',
 		'User-Agent': 'ciyex-workspace-update-server',
@@ -173,13 +182,25 @@ async function fetchLatestRelease(env: Env): Promise<GitHubRelease | undefined> 
 		headers['Authorization'] = `Bearer ${env.GITHUB_TOKEN}`;
 	}
 
-	// Use /releases (not /releases/latest) so we can skip drafts/prereleases ourselves.
+	// Dev/stage: fetch the channel pointer release directly by tag name.
+	// The CI always uploads a fresh metadata.json to e.g. "stage-latest-linux-x64"
+	// on every successful build, so this is always up to date.
+	if (quality === 'dev' || quality === 'stage') {
+		const tag = `${quality}-latest-${platformToTagSuffix(platform)}`;
+		const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/releases/tags/${tag}`, { headers });
+		if (!res.ok) {
+			console.error(`GitHub API error fetching tag ${tag}: ${res.status}`);
+			return undefined;
+		}
+		return await res.json<GitHubRelease>();
+	}
+
+	// Prod/stable: use the latest non-prerelease, non-draft release.
 	const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/releases?per_page=10`, { headers });
 	if (!res.ok) {
 		console.error(`GitHub API error: ${res.status}`);
 		return undefined;
 	}
-
 	const releases = await res.json<GitHubRelease[]>();
 	return releases.find(r => !r.draft && !r.prerelease);
 }
