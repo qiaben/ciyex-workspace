@@ -516,7 +516,10 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			}));
 		}
 
-		// EHR action buttons — appended after the Update slot so they sit to its right.
+		// EHR action buttons — appended after the Update slot. The EHR controls carry
+		// margin-left:auto (in CSS) which pushes this entire right-hand group
+		// (EHR + layout controls + window controls) flush against the right edge so all
+		// six icons sit adjacent: person → calendar → donate → configure-layout → window.
 		if (ehrActionElement) {
 			append(this.rightContent, ehrActionElement);
 		}

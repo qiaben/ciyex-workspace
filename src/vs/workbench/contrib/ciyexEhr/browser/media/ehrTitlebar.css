@@ -16,17 +16,18 @@
 .ehr-titlebar-controls {
 	display: flex;
 	align-items: center;
-	/* Match the adjacent VS Code layout-control toolbar so all titlebar icons
-	share one rhythm: those items are 22px wide (16px icon + 3px padding each
-	side) at a 26px pitch (4px between items). We mirror that here: 4px gap
-	+ .ehr-action-btn sized to 22px below, so the 3 EHR icons line up at the
-	same pitch as the 3 layout icons. */
-	gap: 4px;
-	margin-right: 4px;
-	padding-left: 8px;
+	gap: 8px;
+	padding: 0 8px;
+	/* margin-left:auto pushes this group flush to the right, keeping all six icons adjacent. */
+	margin-left: auto;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
 	flex-shrink: 0;
+}
+
+/* Cancel the margin-left:auto VS Code sets on the action toolbar so it sits immediately after EHR icons. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
+	margin-left: 0 !important;
 }
 
 /* --- Search Bar --- */
@@ -186,9 +187,7 @@
 	gap: 0;
 	padding: 3px;
 	box-sizing: border-box;
-	/* 16px icon + 3px padding each side = 22px, matching the VS Code layout
-	controls so the 6 titlebar icons line up at an equal pitch. */
-	width: 22px;
+	width: 28px;
 	border-radius: 6px;
 	cursor: pointer;
 	color: var(--vscode-titleBar-activeForeground, #ccc);
@@ -283,6 +282,11 @@
 	line-height: 1;
 	color: inherit;
 	font-weight: 400;
+}
+
+/* Donate button — wider than the other action buttons for visual prominence */
+.ehr-action-btn-currency {
+	width: 36px;
 }
 
 /* Currency $ icon — match codicon visual size */
