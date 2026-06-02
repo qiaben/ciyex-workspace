@@ -298,9 +298,9 @@
 	font-weight: 400;
 }
 
-/* Donate button — same width as other action buttons for visual consistency */
+/* Donate button — slightly wider for visual prominence */
 .ehr-action-btn-currency {
-	width: 28px;
+	width: 36px;
 }
 
 /* Currency $ icon — match codicon visual size */
