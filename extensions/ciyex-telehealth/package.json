@@ -77,5 +77,8 @@
 	"scripts": {
 		"compile": "gulp compile-extension:ciyex-telehealth",
 		"watch": "gulp watch-extension:ciyex-telehealth"
+	},
+	"dependencies": {
+		"ws": "^8.19.0"
 	}
 }
