@@ -1057,6 +1057,12 @@
 				if (!isFirefox && options.allowScripts) {
 					allowRules.push('clipboard-read;', 'clipboard-write;');
 				}
+				// ciyex-telehealth's inner iframe calls getUserMedia for the
+				// provider-side camera/mic. The outer webview iframe already
+				// allows them (see webviewElement.ts) but Feature Policy is
+				// hierarchical so this inner one needs the matching entries
+				// or Chromium reports "Permission denied".
+				allowRules.push('camera;', 'microphone;');
 				newFrame.setAttribute('allow', allowRules.join(' '));
 				// We should just be able to use srcdoc, but I wasn't
 				// seeing the service worker applying properly.
