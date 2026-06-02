@@ -32,9 +32,16 @@
 	padding-right: 16px !important;
 }
 
-/* Match the 8px gap used between EHR icons so all 6 titlebar icons are equally spaced. */
+/* Match the 8px gap used between EHR icons so all titlebar icons are equally spaced. */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .actions-container {
 	gap: 8px !important;
+}
+
+/* Match the 28px width of EHR action buttons so layout icons are visually the same size. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .monaco-action-bar .action-item {
+	width: 28px !important;
+	min-width: 28px !important;
+	justify-content: center !important;
 }
 
 /* --- Search Bar --- */
@@ -291,9 +298,9 @@
 	font-weight: 400;
 }
 
-/* Donate button — wider than the other action buttons for visual prominence */
+/* Donate button — same width as other action buttons for visual consistency */
 .ehr-action-btn-currency {
-	width: 36px;
+	width: 28px;
 }
 
 /* Currency $ icon — match codicon visual size */
