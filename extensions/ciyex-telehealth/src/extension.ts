@@ -631,10 +631,6 @@ class MediasoupStompProvider {
 		this.consumers = new Map();
 		this.pendingProduceCallbacks = new Map();
 		this.joinTimeout = null;
-		// Active STOMP subscriptions, torn down before each re-subscribe so
-		// a transient reconnect doesn't double-fire chat / join / leave
-		// callbacks on a fresh broker session.
-		this.subscriptions = [];
 	}
 
 	async connect() {
@@ -710,41 +706,34 @@ class MediasoupStompProvider {
 				const sid = this.sessionId;
 				const uid = this.userId;
 
-				// Drop any subscriptions left over from a previous STOMP
-				// connection. Without this, a reconnect (heartbeat timeout,
-				// transient WS drop) stacks a second callback for every topic
-				// and the chat panel ends up showing each incoming "hi" twice.
-				this.subscriptions.forEach(s => { try { s.unsubscribe(); } catch (_) { /* ignore */ } });
-				this.subscriptions = [];
-
-				this.subscriptions.push(client.subscribe('/topic/signal/' + uid, (msg) => {
+				client.subscribe('/topic/signal/' + uid, (msg) => {
 					this._onSignal(JSON.parse(msg.body));
-				}));
-				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/join', (msg) => {
+				});
+				client.subscribe('/topic/session/' + sid + '/join', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'peer-joined' && p.peerId !== uid) {
 						state.remotePeers.set(p.peerId, { displayName: p.displayName || '' });
 						render();
 					}
-				}));
-				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/producer', (msg) => {
+				});
+				client.subscribe('/topic/session/' + sid + '/producer', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'new-producer' && p.peerId !== uid) {
 						this._consume(p.producerId, p.kind);
 					}
-				}));
-				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/leave', (msg) => {
+				});
+				client.subscribe('/topic/session/' + sid + '/leave', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'peer-left') {
 						state.remotePeers.delete(p.peerId);
 						render();
 					}
-				}));
-				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/chat', (msg) => {
+				});
+				client.subscribe('/topic/session/' + sid + '/chat', (msg) => {
 					const p = JSON.parse(msg.body);
 					state.chatMessages.push({ senderId: p.senderId, senderName: p.senderName, content: p.content, sentAt: p.sentAt || new Date().toISOString() });
 					render();
-				}));
+				});
 
 				client.publish({ destination: '/app/session/' + sid + '/join', body: JSON.stringify({ userId: uid, displayName: this.displayName }) });
 				resolve();
@@ -1001,10 +990,9 @@ function toggleChatPanel() { state.chatOpen = !state.chatOpen; render(); }
 function sendChat() {
 	const text = (state.chatInput || '').trim();
 	if (!text) { return; }
-	// No local echo: the backend broadcasts /topic/session/<id>/chat to every
-	// subscriber including the sender, so an optimistic push here makes the
-	// sender's own message show up twice. Letting the STOMP round-trip own
-	// the render keeps both sides consistent.
+	// Echo locally so the sender sees the bubble immediately even if the
+	// server doesn't broadcast back to the sender.
+	state.chatMessages.push({ senderId: provider ? provider.userId : 'self', senderName: ctx.displayName, content: text, sentAt: new Date().toISOString() });
 	if (provider) { provider.sendChat(text); }
 	state.chatInput = '';
 	render();

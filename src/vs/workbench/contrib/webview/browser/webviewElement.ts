@@ -408,12 +408,6 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 		if (!isFirefox) {
 			allowRules.push('clipboard-read', 'clipboard-write');
 		}
-		// ciyex-telehealth's webview calls navigator.mediaDevices.getUserMedia
-		// for the provider-side video. Without these Feature Policy entries the
-		// inner iframe surfaces NotAllowedError ("Permission denied") on
-		// Windows/macOS, even though Electron has already granted 'media' at
-		// the session level (see app.ts allowedPermissionsInWebview).
-		allowRules.push('camera', 'microphone');
 		element.setAttribute('allow', allowRules.join('; '));
 
 		element.style.border = 'none';
