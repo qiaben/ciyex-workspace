@@ -29,7 +29,7 @@
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
 	margin-left: 0 !important;
 	justify-content: flex-start !important;
-	padding-right: 0 !important;
+	padding-right: 16px !important;
 }
 
 /* Match the 8px gap used between EHR icons so all 6 titlebar icons are equally spaced. */
