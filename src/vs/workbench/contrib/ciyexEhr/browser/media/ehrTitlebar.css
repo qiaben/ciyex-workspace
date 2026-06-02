@@ -32,6 +32,11 @@
 	padding-right: 0 !important;
 }
 
+/* Match the 8px gap used between EHR icons so all 6 titlebar icons are equally spaced. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .actions-container {
+	gap: 8px !important;
+}
+
 /* --- Search Bar --- */
 .ehr-search-container {
 	position: relative;
