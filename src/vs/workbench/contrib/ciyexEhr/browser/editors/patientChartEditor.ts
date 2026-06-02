@@ -176,7 +176,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'dosage', label: 'Dosage' },
 					{ key: 'frequency', label: 'Frequency' },
 					{ key: 'startDate', label: 'Start Date' },
-					{ key: 'prescriberName', label: 'Prescriber', aliases: ['prescriberDisplay', 'prescribingDoctorDisplay', 'prescriberName', 'prescriber', 'prescribingDoctor', 'requester', 'orderedBy', 'prescriberId'] },
+					{ key: 'prescriberName', label: 'Prescriber', aliases: ['prescriberDisplay', 'prescribingDoctorDisplay', 'prescriberName', 'prescriber', 'prescribingDoctor', 'requester', 'orderedBy'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
