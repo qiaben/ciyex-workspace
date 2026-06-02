@@ -25,9 +25,11 @@
 	flex-shrink: 0;
 }
 
-/* Cancel the margin-left:auto VS Code sets on the action toolbar so it sits immediately after EHR icons. */
+/* Cancel margin-left:auto and center-justify so layout icons start flush after EHR icons. */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
 	margin-left: 0 !important;
+	justify-content: flex-start !important;
+	padding-right: 0 !important;
 }
 
 /* --- Search Bar --- */
