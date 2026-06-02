@@ -7,6 +7,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+import { IWorkbenchThemeService } from '../../../services/themes/common/workbenchThemeService.js';
 import { ICiyexAuthService } from './ciyexAuthService.js';
 import { CiyexAuthGate } from './ciyexAuthGate.js';
 import { mainWindow } from '../../../../base/browser/window.js';
@@ -23,10 +24,11 @@ export class CiyexAuthGateContribution extends Disposable implements IWorkbenchC
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@ICiyexAuthService authService: ICiyexAuthService,
 		@IOpenerService openerService: IOpenerService,
+		@IWorkbenchThemeService themeService: IWorkbenchThemeService,
 	) {
 		super();
 
 		// Attach the auth gate to the document body so it overlays everything
-		this._register(new CiyexAuthGate(mainWindow.document.body, authService, openerService));
+		this._register(new CiyexAuthGate(mainWindow.document.body, authService, openerService, themeService));
 	}
 }

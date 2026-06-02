@@ -8,7 +8,16 @@ import { FileAccess } from '../../../../base/common/network.js';
 import { URI } from '../../../../base/common/uri.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { ConfigurationTarget } from '../../../../platform/configuration/common/configuration.js';
+import { ColorScheme } from '../../../../platform/theme/common/theme.js';
+import { IWorkbenchThemeService, ThemeSettingDefaults } from '../../../services/themes/common/workbenchThemeService.js';
 import { ICiyexAuthService, CiyexAuthState } from './ciyexAuthService.js';
+
+/**
+ * Calendly link rendered on the email step when a visitor has no Ciyex account
+ * yet. Sales/onboarding owns this URL — update here if it changes.
+ */
+const CIYEX_SCHEDULE_MEETING_URL = 'https://calendly.com/qiaben/ciyex';
 
 type AuthStep = 'email' | 'authenticate' | 'change-password' | 'locked' | 'warning' | 'signup-org' | 'signup-admin' | 'forgot-password';
 
@@ -119,11 +128,20 @@ export class CiyexAuthGate extends Disposable {
 		private readonly _parent: HTMLElement,
 		private readonly _authService: ICiyexAuthService,
 		private readonly _openerService: IOpenerService,
+		private readonly _themeService: IWorkbenchThemeService,
 	) {
 		super();
 
 		this._register(this._authService.onDidChangeAuthState(state => this._onAuthStateChanged(state)));
 		this._register(this._authService.onSessionWarning(countdown => this._onSessionWarning(countdown)));
+		// Re-render whenever the workbench theme changes so the gate (and its
+		// theme toggle icon) stays in sync — e.g. the user flipping the toggle
+		// or an external theme change.
+		this._register(this._themeService.onDidColorThemeChange(() => {
+			if (this._overlay && this._overlay.style.display !== 'none') {
+				this._render();
+			}
+		}));
 
 		// Show overlay based on initial auth state
 		if (this._authService.state === CiyexAuthState.Locked) {
@@ -221,20 +239,33 @@ export class CiyexAuthGate extends Disposable {
 
 	// --- theme helpers ---
 	private _isDark(): boolean {
-		// Read the VS Code theme from the body background colour that the
-		// workbench injects via the ThemeService (e.g. background-color:#1e1e1e).
+		// Source of truth is the workbench theme service — toggling it from the
+		// login page propagates to the entire app after sign-in.
+		const type = this._themeService.getColorTheme().type;
+		return type === ColorScheme.DARK || type === ColorScheme.HIGH_CONTRAST_DARK;
+	}
+
+	/**
+	 * Flip the workbench colour theme between the default light and dark
+	 * variants. Writing to ConfigurationTarget.USER persists the choice so it
+	 * survives sign-out and is shared across all workbench windows for the
+	 * signed-in user.
+	 */
+	private async _toggleTheme(): Promise<void> {
+		const targetSettingsId = this._isDark()
+			? ThemeSettingDefaults.COLOR_THEME_LIGHT
+			: ThemeSettingDefaults.COLOR_THEME_DARK;
 		try {
-			const bg = mainWindow.document.body.style.backgroundColor;
-			if (bg) {
-				// Parse rgb/rgba or hex and check luminance
-				const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
-				if (m) {
-					const lum = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3]);
-					return lum < 128;
-				}
+			const themes = await this._themeService.getColorThemes();
+			const next = themes.find(t => t.settingsId === targetSettingsId);
+			if (next) {
+				await this._themeService.setColorTheme(next.id, ConfigurationTarget.USER);
 			}
-		} catch { }
-		return mainWindow.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+		} catch {
+			// Theme registry not ready or write failed — leave UI as-is; the
+			// onDidColorThemeChange subscription will still pick up any change
+			// that does land.
+		}
 	}
 
 	private _colors() {
@@ -355,6 +386,52 @@ export class CiyexAuthGate extends Disposable {
 	// --- Build helpers ---
 	private _buildCard(c: ReturnType<typeof this._colors>): HTMLElement {
 		return h('div', { background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' });
+	}
+
+	/**
+	 * Top-right pill button that flips between light and dark workbench themes.
+	 * Sun icon = currently dark (click → light); moon icon = currently light.
+	 */
+	private _buildThemeToggle(): HTMLElement {
+		const dark = this._isDark();
+		const btn = document.createElement('button');
+		btn.id = 'ciyex-theme-toggle';
+		btn.type = 'button';
+		btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+		btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+		Object.assign(btn.style, {
+			position: 'absolute', top: '16px', right: '20px',
+			width: '36px', height: '36px',
+			display: 'flex', alignItems: 'center', justifyContent: 'center',
+			background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+			border: dark ? '1px solid rgba(255,255,255,0.14)' : '1px solid rgba(0,0,0,0.08)',
+			borderRadius: '50%',
+			color: dark ? '#F9FAFB' : '#374151',
+			cursor: 'pointer', padding: '0',
+		});
+		btn.appendChild(this._themeIcon(dark));
+		btn.addEventListener('click', () => { void this._toggleTheme(); });
+		return btn;
+	}
+
+	private _themeIcon(dark: boolean): HTMLElement {
+		// Sun while in dark mode (so the icon previews "what clicking will give you")
+		// is a common pattern, but more recognisable here to show the *current*
+		// state: sun = light, moon = dark.
+		return createSvg(18, '0 0 24 24', (svg) => {
+			svg.setAttribute('stroke', 'currentColor');
+			svg.setAttribute('stroke-width', '2');
+			svg.setAttribute('stroke-linecap', 'round');
+			svg.setAttribute('stroke-linejoin', 'round');
+			if (dark) {
+				// Moon
+				svgPath(svg, 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z');
+			} else {
+				// Sun
+				svgCircle(svg, { cx: '12', cy: '12', r: '4' });
+				svgPath(svg, 'M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M4.93 19.07l1.41-1.41 M17.66 6.34l1.41-1.41');
+			}
+		});
 	}
 
 
@@ -545,12 +622,29 @@ export class CiyexAuthGate extends Disposable {
 		});
 		card.appendChild(btn);
 
+		// "Don't have an account? Click here" — routes prospects to the
+		// Calendly link so the Ciyex team can book a demo before self-signup.
+		const scheduleRow = h('p', {
+			marginTop: '22px', marginBottom: '0', textAlign: 'center',
+			fontSize: '14px', color: subColor, fontWeight: '400',
+		});
+		scheduleRow.appendChild(document.createTextNode(`Don't have an account? `));
+		const scheduleLink = document.createElement('a');
+		scheduleLink.id = 'ciyex-schedule-link';
+		scheduleLink.href = '#';
+		scheduleLink.textContent = 'Click here';
+		Object.assign(scheduleLink.style, {
+			color: '#4F6AF0', fontWeight: '500', textDecoration: 'none',
+		});
+		scheduleRow.appendChild(scheduleLink);
+		card.appendChild(scheduleRow);
+
 		// Register link
 		const registerLink = document.createElement('a');
 		registerLink.href = '#';
 		registerLink.textContent = 'Register a new practice';
 		Object.assign(registerLink.style, {
-			display: 'block', textAlign: 'center', marginTop: '22px',
+			display: 'block', textAlign: 'center', marginTop: '10px',
 			fontSize: '14px', color: '#4F6AF0', fontWeight: '500', textDecoration: 'none',
 		});
 		card.appendChild(registerLink);
@@ -569,6 +663,11 @@ export class CiyexAuthGate extends Disposable {
 		card.appendChild(legal);
 
 		right.appendChild(card);
+
+		// Theme toggle (top-right corner) — flips the workbench colour theme
+		// so the choice persists through sign-in and into the rest of the app.
+		const themeToggle = this._buildThemeToggle();
+		right.appendChild(themeToggle);
 
 		// Server Settings link (bottom-right corner)
 		const settingsLink = document.createElement('button');
@@ -658,6 +757,10 @@ export class CiyexAuthGate extends Disposable {
 			this._error = '';
 			this._render();
 		});
+		scheduleLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			this._openExternal(CIYEX_SCHEDULE_MEETING_URL);
+		});
 		termsA.addEventListener('click', (e) => {
 			e.preventDefault();
 			this._openExternal('https://ciyex.org/terms');
@@ -727,6 +830,9 @@ export class CiyexAuthGate extends Disposable {
 		card.appendChild(text(h('h1', { fontSize: '24px', fontWeight: '700', color: titleColor, textAlign: 'center', marginBottom: '6px' }), title));
 		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '28px' }), subtitle));
 		right.appendChild(card);
+		// Keep the theme toggle reachable from every auth step (welcome back,
+		// signup, forgot password, …), not just the email entry screen.
+		right.appendChild(this._buildThemeToggle());
 		wrapper.appendChild(right);
 		return { wrapper, card };
 	}
