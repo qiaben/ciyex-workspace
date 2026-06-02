@@ -13,6 +13,7 @@ export const dirs = [
 	'build',
 	'build/vite',
 	'extensions',
+	'extensions/ciyex-telehealth',
 	'extensions/configuration-editing',
 	'extensions/css-language-features',
 	'extensions/css-language-features/server',
