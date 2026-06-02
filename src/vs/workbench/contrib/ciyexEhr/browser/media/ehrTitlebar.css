@@ -298,20 +298,20 @@
 	font-weight: 400;
 }
 
-/* Donate button — slightly wider for visual prominence */
+/* Donate button — same width as other action buttons for consistent spacing */
 .ehr-action-btn-currency {
-	width: 44px;
+	width: 28px;
 }
 
-/* Currency $ icon — match codicon visual size */
+/* Currency $ icon — larger than codicons so the donate button stands out */
 .ehr-currency-icon {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 16px;
-	height: 16px;
-	font-size: 16px;
-	font-weight: 300;
+	width: 20px;
+	height: 20px;
+	font-size: 20px;
+	font-weight: 400;
 	line-height: 1;
 	color: inherit;
 	font-family: 'Segoe UI', system-ui, sans-serif;
