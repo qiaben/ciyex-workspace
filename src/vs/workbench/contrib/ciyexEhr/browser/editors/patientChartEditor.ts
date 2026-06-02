@@ -730,8 +730,37 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
+					// Vaccine Name / Manufacturer / Site / Route are dropdowns to match
+					// the reference EHR-UI immunizations form (QA issue 10). Site + Route
+					// use the reference's exact SITE_OPTIONS / ROUTE_OPTIONS
+					// (ciyex-ehr-ui src/app/immunizations/page.tsx). Vaccine Name uses the
+					// reference CVX display list; Manufacturer uses the common vaccine
+					// manufacturer set (reference free-texts it with a "Pfizer, Moderna…"
+					// hint, so the option list mirrors that hint's intent).
 					{
-						key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Vaccine name'
+						key: 'vaccineName', label: 'Vaccine Name', type: 'select', placeholder: 'Select vaccine…', options: [
+							{ label: 'COVID-19 Pfizer-BioNTech', value: 'COVID-19 Pfizer-BioNTech' },
+							{ label: 'COVID-19 Moderna', value: 'COVID-19 Moderna' },
+							{ label: 'COVID-19 Novavax', value: 'COVID-19 Novavax' },
+							{ label: 'Influenza (Flu)', value: 'Influenza' },
+							{ label: 'Influenza, high dose', value: 'Influenza, high dose' },
+							{ label: 'Tdap (Tetanus, Diphtheria, Pertussis)', value: 'Tdap' },
+							{ label: 'Td (Tetanus, Diphtheria)', value: 'Td' },
+							{ label: 'MMR (Measles, Mumps, Rubella)', value: 'MMR' },
+							{ label: 'Varicella (Chickenpox)', value: 'Varicella' },
+							{ label: 'Hepatitis A', value: 'Hepatitis A' },
+							{ label: 'Hepatitis B', value: 'Hepatitis B' },
+							{ label: 'HPV (Human Papillomavirus)', value: 'HPV' },
+							{ label: 'Pneumococcal (PCV13)', value: 'PCV13' },
+							{ label: 'Pneumococcal (PPSV23)', value: 'PPSV23' },
+							{ label: 'Meningococcal', value: 'Meningococcal' },
+							{ label: 'Zoster (Shingles)', value: 'Zoster' },
+							{ label: 'Rotavirus', value: 'Rotavirus' },
+							{ label: 'Polio (IPV)', value: 'IPV' },
+							{ label: 'Hib (Haemophilus influenzae type b)', value: 'Hib' },
+							{ label: 'RSV', value: 'RSV' },
+							{ label: 'Other', value: 'Other' },
+						]
 					},
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
@@ -745,9 +774,41 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?(?:\\s*(mL|mg|mcg|units|IU|cc|g|%))?$',
 						validationMessage: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)',
 					},
-					{ key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., IM' },
-					{ key: 'site', label: 'Site', type: 'text', placeholder: 'e.g., Left deltoid' },
-					{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
+					{
+						key: 'route', label: 'Route', type: 'select', placeholder: 'Select route…', options: [
+							{ label: 'Intramuscular (IM)', value: 'intramuscular' },
+							{ label: 'Subcutaneous (SC)', value: 'subcutaneous' },
+							{ label: 'Oral', value: 'oral' },
+							{ label: 'Intranasal', value: 'intranasal' },
+							{ label: 'Intradermal', value: 'intradermal' },
+						]
+					},
+					{
+						key: 'site', label: 'Site', type: 'select', placeholder: 'Select site…', options: [
+							{ label: 'Left Arm', value: 'left arm' },
+							{ label: 'Right Arm', value: 'right arm' },
+							{ label: 'Left Thigh', value: 'left thigh' },
+							{ label: 'Right Thigh', value: 'right thigh' },
+							{ label: 'Left Deltoid', value: 'left deltoid' },
+							{ label: 'Right Deltoid', value: 'right deltoid' },
+							{ label: 'Left Gluteal', value: 'left gluteal' },
+							{ label: 'Right Gluteal', value: 'right gluteal' },
+						]
+					},
+					{
+						key: 'manufacturer', label: 'Manufacturer', type: 'select', placeholder: 'Select manufacturer…', options: [
+							{ label: 'Pfizer', value: 'Pfizer' },
+							{ label: 'Moderna', value: 'Moderna' },
+							{ label: 'Novavax', value: 'Novavax' },
+							{ label: 'Sanofi', value: 'Sanofi' },
+							{ label: 'GlaxoSmithKline (GSK)', value: 'GlaxoSmithKline' },
+							{ label: 'Merck', value: 'Merck' },
+							{ label: 'Seqirus', value: 'Seqirus' },
+							{ label: 'Janssen (Johnson & Johnson)', value: 'Janssen' },
+							{ label: 'AstraZeneca', value: 'AstraZeneca' },
+							{ label: 'Other', value: 'Other' },
+						]
+					},
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Completed', value: 'completed' },
@@ -783,34 +844,17 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	},
 	insurance: {
 		tabKey: 'insurance',
+		// Field set mirrors the reference EHR-UI insurance-coverage tab_field_config
+		// (ciyex V44__insurance_coverage_enhanced.sql): exactly two sections —
+		// Policy Information + Subscriber Information. The earlier desktop form had
+		// 5 extra sections (Insurance Company, Claims Address, Financial
+		// Responsibility, Payer Contact & Claims, Insurance Card Images) that the
+		// web app never shows; QA issue 11 asked for the form to match the
+		// reference, so those extra sections were removed and copayAmount folded
+		// back into Policy Information where the reference keeps it.
 		sections: [
 			{
-				key: 'insurance-company', title: 'Insurance Company', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'companyName', label: 'Company Name', type: 'text', required: true, placeholder: 'Insurance company name' },
-					{
-						key: 'active', label: 'Active', type: 'select', options: [
-							{ label: 'Yes', value: 'true' },
-							{ label: 'No', value: 'false' },
-						], defaultValue: 'true'
-					},
-					{ key: 'payerId', label: 'Payer ID', type: 'text', placeholder: 'EDI Payer ID' },
-					{ key: 'phone', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567' },
-					{ key: 'fax', label: 'Fax', type: 'phone', placeholder: '(555) 123-4568' },
-					{ key: 'email', label: 'Email', type: 'email', placeholder: 'claims@insurance.com' },
-					{ key: 'website', label: 'Website', type: 'text', placeholder: 'https://provider.insur...', colSpan: 2 },
-				],
-			},
-			{
-				key: 'claims-address', title: 'Claims Address', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'addressLine1', label: 'Address Line 1', type: 'text', placeholder: 'Street address' },
-					{ key: 'addressLine2', label: 'Address Line 2', type: 'text', placeholder: 'Suite, PO Box' },
-					{ key: 'city', label: 'City', type: 'text', placeholder: 'Enter city' },
-					{ key: 'state', label: 'State', type: 'text', placeholder: 'Enter state...' },
-					{ key: 'zipCode', label: 'Zip Code', type: 'text', placeholder: 'Enter zip code...' },
-				],
-			},
-			{
-				key: 'policy-info', title: 'Policy Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+				key: 'policy-info', title: 'Policy Information', columns: 3, visible: true, collapsible: false, fields: [
 					{
 						key: 'insuranceType', label: 'Insurance Tier', type: 'select', required: true, options: [
 							{ label: 'Primary', value: 'primary' },
@@ -826,29 +870,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
-					{
-						key: 'payerName', label: 'Insurance Company / Payer', type: 'select', required: true, options: [
-							{ label: 'Aetna', value: 'Aetna' },
-							{ label: 'Anthem Blue Cross', value: 'Anthem Blue Cross' },
-							{ label: 'Blue Cross Blue Shield', value: 'Blue Cross Blue Shield' },
-							{ label: 'Cigna', value: 'Cigna' },
-							{ label: 'Humana', value: 'Humana' },
-							{ label: 'Kaiser Permanente', value: 'Kaiser Permanente' },
-							{ label: 'Medicaid', value: 'Medicaid' },
-							{ label: 'Medicare', value: 'Medicare' },
-							{ label: 'Molina Healthcare', value: 'Molina Healthcare' },
-							{ label: 'Oscar Health', value: 'Oscar Health' },
-							{ label: 'UnitedHealthcare', value: 'UnitedHealthcare' },
-							{ label: 'Tricare', value: 'Tricare' },
-							{ label: 'Centene', value: 'Centene' },
-							{ label: 'Wellcare', value: 'Wellcare' },
-							{ label: 'Ambetter', value: 'Ambetter' },
-							{ label: 'Bright Health', value: 'Bright Health' },
-							{ label: 'Clover Health', value: 'Clover Health' },
-							{ label: 'Friday Health Plans', value: 'Friday Health Plans' },
-							{ label: 'WellPoint', value: 'WellPoint' },
-						]
-					},
+					{ key: 'payerName', label: 'Insurance Company / Payer', type: 'text', required: true, placeholder: 'Insurance company name' },
 					{ key: 'planName', label: 'Plan Name', type: 'text', placeholder: 'e.g. Blue Cross PPO Gold' },
 					{
 						key: 'policyType', label: 'Plan Type', type: 'select', options: [
@@ -867,69 +889,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'policyNumber', label: 'Policy / Member ID', type: 'text', required: true, placeholder: 'Member ID' },
 					{ key: 'groupNumber', label: 'Group Number', type: 'text', placeholder: 'Group #' },
+					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
 					{ key: 'policyEffectiveDate', label: 'Effective Date', type: 'date' },
 					{ key: 'policyEndDate', label: 'End Date', type: 'date' },
-				],
-			},
-			{
-				key: 'financial-responsibility', title: 'Financial Responsibility', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
-					{ key: 'specialistCopay', label: 'Specialist Copay', type: 'text', placeholder: '$0.00' },
-					{ key: 'erCopay', label: 'ER Copay', type: 'text', placeholder: '$0.00' },
-					{ key: 'deductibleIndividual', label: 'Deductible (Individual)', type: 'text', placeholder: '$0.00' },
-					{ key: 'deductibleFamily', label: 'Deductible (Family)', type: 'text', placeholder: '$0.00' },
-					{ key: 'deductibleMet', label: 'Deductible Met', type: 'text', placeholder: '$0.00' },
-					{ key: 'coinsurancePct', label: 'Coinsurance %', type: 'number', placeholder: '20' },
-					{ key: 'outOfPocketMax', label: 'Out-of-Pocket Max', type: 'text', placeholder: '$0.00' },
-					{ key: 'outOfPocketMet', label: 'Out-of-Pocket Met', type: 'text', placeholder: '$0.00' },
-				],
-			},
-			{
-				key: 'payer-contact', title: 'Payer Contact & Claims', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'payerPhone', label: 'Payer Phone', type: 'phone' },
-					{ key: 'claimsPhone', label: 'Claims Phone', type: 'phone' },
-					{ key: 'priorAuthPhone', label: 'Prior Auth Phone', type: 'phone' },
-					{ key: 'claimsAddress', label: 'Claims Mailing Address', type: 'text', colSpan: 3, placeholder: 'Full claims address' },
-					{ key: 'payerId', label: 'Payer ID (EDI)', type: 'text', placeholder: 'EDI payer ID' },
-					{ key: 'electronicPayerId', label: 'Electronic Payer ID', type: 'text', placeholder: 'For 837 / EDI submission' },
-					{
-						key: 'priorAuthRequired', label: 'Prior Authorization Required', type: 'select', options: [
-							{ label: 'No', value: 'no' },
-							{ label: 'Yes', value: 'yes' },
-							{ label: 'Some Services', value: 'some' },
-						]
-					},
-					{
-						key: 'referralRequired', label: 'Referral Required', type: 'select', options: [
-							{ label: 'No', value: 'no' },
-							{ label: 'Yes', value: 'yes' },
-						]
-					},
-					{ key: 'verifiedDate', label: 'Last Verified', type: 'date' },
-				],
-			},
-			{
-				key: 'card-images', title: 'Insurance Card Images', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'cardFrontUrl', label: 'Card Front (URL)', type: 'text', placeholder: 'https://...' },
-					{ key: 'cardBackUrl', label: 'Card Back (URL)', type: 'text', placeholder: 'https://...' },
-					{ key: 'cardFront', label: 'Card Front Upload', type: 'file' },
-					{ key: 'cardBack', label: 'Card Back Upload', type: 'file' },
-					{
-						key: 'networkStatus', label: 'Network Status', type: 'select', options: [
-							{ label: 'In-Network', value: 'in_network' },
-							{ label: 'Out-of-Network', value: 'out_of_network' },
-							{ label: 'Unknown', value: 'unknown' },
-						], defaultValue: 'in_network'
-					},
-					{ key: 'planYear', label: 'Plan Year', type: 'text', placeholder: '2026' },
-					{
-						key: 'eligibilityVerified', label: 'Eligibility Verified', type: 'select', options: [
-							{ label: 'No', value: 'no' },
-							{ label: 'Yes', value: 'yes' },
-						], defaultValue: 'no'
-					},
-					{ key: 'eligibilityVerifiedDate', label: 'Verification Date', type: 'date' },
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 			{
@@ -1812,6 +1774,13 @@ export class PatientChartEditor extends EditorPane {
 	private readonly _orgNameById = new Map<string, string>();
 	private readonly _locationNameById = new Map<string, string>();
 	private _lookupsLoaded = false;
+	// Provider ids that `_resolveIdToName` saw but couldn't resolve from the
+	// bulk caches (e.g. a prescriber Practitioner whose row fell outside the
+	// first 500 of /api/providers). Collected during a render pass, then
+	// fetched one-by-one and the list re-rendered so the table shows the
+	// prescriber NAME instead of a bare id like "13656" (QA issue 9).
+	private readonly _unresolvedProviderIds = new Set<string>();
+	private readonly _attemptedProviderIds = new Set<string>();
 
 	constructor(
 		group: IEditorGroup,
@@ -2085,6 +2054,12 @@ export class PatientChartEditor extends EditorPane {
 		if (isProviderCol) {
 			const name = this._providerNameById.get(idOnly);
 			if (name) { return name; }
+			// Not in the bulk cache — queue a targeted fetch so the table can
+			// resolve it to a name on the next render pass (QA issue 9). Only
+			// queue plausible provider ids (numeric / uuid), never already-tried.
+			if (idOnly && !this._attemptedProviderIds.has(idOnly)) {
+				this._unresolvedProviderIds.add(idOnly);
+			}
 		}
 		if (isOrgCol) {
 			const name = this._orgNameById.get(idOnly);
@@ -3744,22 +3719,28 @@ export class PatientChartEditor extends EditorPane {
 		this._chartCardFormOverlay?.remove();
 		this._chartCardFormBackdrop?.remove();
 
-		const doc = DOM.getActiveWindow().document;
-		const backdrop = doc.createElement('div');
-		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
-		doc.body.appendChild(backdrop);
-		this._chartCardFormBackdrop = backdrop;
-
-		const overlay = doc.createElement('div');
-		overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:10000;width:540px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
-		doc.body.appendChild(overlay);
+		// Mount inside the editor root (NOT document.body) and anchor the panel
+		// to the right with the same flex layout `_openRecordDialog` uses for
+		// every other create/edit drawer (New Education, New Immunizations, …).
+		// The previous body-mounted `position:fixed;right:0` overlay anchored to
+		// the WINDOW edge instead of the editor pane, so when the chart wasn't
+		// full-width the drawer slid in from the wrong side (QA issue 14).
+		const overlay = DOM.append(this.root, DOM.$('div'));
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:200;display:flex;justify-content:flex-end;';
 		this._chartCardFormOverlay = overlay;
 
-		const close = () => { overlay.remove(); backdrop.remove(); this._chartCardFormOverlay = null; this._chartCardFormBackdrop = null; };
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		this._chartCardFormBackdrop = backdrop;
+
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'position:relative;width:540px;max-width:95vw;height:100%;z-index:1;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;';
+
+		const close = () => { overlay.remove(); this._chartCardFormOverlay = null; this._chartCardFormBackdrop = null; };
 		backdrop.addEventListener('click', close);
 
 		// Header
-		const hdr = DOM.append(overlay, DOM.$('div'));
+		const hdr = DOM.append(panel, DOM.$('div'));
 		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
 		const titleEl = DOM.append(hdr, DOM.$('h3'));
 		titleEl.textContent = card ? 'Edit Card' : 'Add Payment Method';
@@ -3770,7 +3751,7 @@ export class PatientChartEditor extends EditorPane {
 		xBtn.addEventListener('click', close);
 
 		// Body
-		const body = DOM.append(overlay, DOM.$('div'));
+		const body = DOM.append(panel, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;scrollbar-width:none;';
 
 		const makeInput = (label: string, span2 = false, opts: Partial<HTMLInputElement> = {}): HTMLInputElement => {
@@ -3857,7 +3838,7 @@ export class PatientChartEditor extends EditorPane {
 		errEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;padding:6px 10px;background:rgba(244,135,113,0.1);border:1px solid rgba(244,135,113,0.3);border-radius:4px;display:none;';
 
 		// Footer
-		const footer = DOM.append(overlay, DOM.$('div'));
+		const footer = DOM.append(panel, DOM.$('div'));
 		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
 		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';
@@ -5082,6 +5063,15 @@ export class PatientChartEditor extends EditorPane {
 		// test team was reporting overlap because the previous translucent
 		// look made it hard to tell where the dropdown ended.
 		const dropdown = DOM.append(DOM.getActiveWindow().document.body, DOM.$('div'));
+		// Add the `monaco-workbench` class so the --vscode-* CSS variables below
+		// resolve against the ACTIVE theme. This dropdown is mounted on
+		// document.body (to escape the form's overflow/transform clipping), which
+		// puts it OUTSIDE the real `.monaco-workbench` root where those vars are
+		// scoped — so without the class every var fell back to its hardcoded dark
+		// default (#252526) and the author/provider typeahead rendered dark even
+		// on a light workbench (QA issue 6). Same fix the shared
+		// createCustomDropdown helper uses for its body-mounted panel.
+		dropdown.classList.add('monaco-workbench');
 		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:280px;overflow-y:auto;display:none;padding:4px 0;';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
@@ -5604,11 +5594,17 @@ export class PatientChartEditor extends EditorPane {
 				};
 				extraActions = [
 					// allow-any-unicode-next-line
-					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: () => openSection('summary') },
+					// 'Open Chart' jumps to the Chief Complaint (top) section; 'Visit
+					// Summary' jumps to the Assessment & Plan section — the encounter
+					// form has no 'summary' section key, so the previous 'summary'
+					// target matched nothing and the encounter opened blank/at-top
+					// (QA issue 15). These keys mirror the appointmentsEditor flow.
+					// allow-any-unicode-next-line
+					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: () => openSection('cc') },
 					// allow-any-unicode-next-line
 					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openSection('vitals') },
 					// allow-any-unicode-next-line
-					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: () => openSection('summary') },
+					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: () => openSection('plan') },
 				];
 			}
 
@@ -5647,6 +5643,54 @@ export class PatientChartEditor extends EditorPane {
 				this._renderMain();
 			});
 		}
+
+		// Any provider ids this render couldn't resolve (e.g. a prescriber whose
+		// Practitioner row fell outside the bulk /api/providers page) — fetch them
+		// individually, then re-render so the table shows the name (QA issue 9).
+		void this._resolvePendingProviderIds(tab);
+	}
+
+	/**
+	 * Fetch the names for any provider ids `_resolveIdToName` flagged as
+	 * unresolved during the last render, cache them, and re-render the chart
+	 * once so prescriber / provider / author columns show a name instead of a
+	 * bare id. Guarded by `_attemptedProviderIds` so a genuinely-missing id is
+	 * only fetched once (no render loop).
+	 */
+	private async _resolvePendingProviderIds(tab: ChartTab): Promise<void> {
+		if (this._unresolvedProviderIds.size === 0) { return; }
+		const ids = Array.from(this._unresolvedProviderIds);
+		this._unresolvedProviderIds.clear();
+		let resolvedAny = false;
+		await Promise.all(ids.map(async id => {
+			this._attemptedProviderIds.add(id);
+			// Try the plain provider endpoint first, then the FHIR practitioner
+			// view — each indexes ids the other can miss.
+			for (const url of [`/api/providers/${id}`, `/api/fhir-resource/practitioners/${id}`]) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const d = await res.json();
+					const p = (d?.data ?? d) as Record<string, unknown>;
+					if (!p || typeof p !== 'object') { continue; }
+					const prefix = (p as Record<string, Record<string, unknown>>).identification;
+					const first = String(prefix?.firstName ?? p.firstName ?? '').trim();
+					const last = String(prefix?.lastName ?? p.lastName ?? '').trim();
+					const name = (`${first} ${last}`.trim())
+						|| String(p.displayName ?? p.name ?? p.fullName ?? p.username ?? '').trim();
+					if (name) {
+						this._providerNameById.set(id, name);
+						this._providerNameById.set(`Practitioner/${id}`, name);
+						this._providerNameById.set(`PractitionerRole/${id}`, name);
+						resolvedAny = true;
+						break;
+					}
+				} catch { /* try next url */ }
+			}
+		}));
+		// Only re-render if we actually learned a new name AND this tab is still
+		// the one on screen, so the freshly-fetched names paint into the table.
+		if (resolvedAny && this.activeTab === tab.key) { this._renderMain(); }
 	}
 
 	/** Delete a record from a list tab, then refresh the view + counts + Quick Info. */

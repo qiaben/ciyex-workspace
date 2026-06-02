@@ -9,6 +9,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { createCustomDropdown, IDropdownOption } from './customDropdown.js';
 
 interface PatientResult {
 	id: string;
@@ -398,7 +399,7 @@ export class EhrTitlebarControls extends Disposable {
 			{ value: 'male', label: 'Male' },
 			{ value: 'female', label: 'Female' },
 			{ value: 'unknown', label: 'Unknown' },
-		]) as HTMLSelectElement;
+		]);
 
 		// Row 3: DOB, Email
 		const row3 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
@@ -746,10 +747,14 @@ export class EhrTitlebarControls extends Disposable {
 		providerLabelEl.textContent = 'Provider';
 		const provReqBadge = DOM.append(providerLabelEl, DOM.$('span.ehr-required-badge'));
 		provReqBadge.textContent = 'required';
-		const providerSelect = DOM.append(providerGroup, DOM.$('select.ehr-form-select')) as HTMLSelectElement;
-		const provDefaultOpt = DOM.append(providerSelect, DOM.$('option')) as HTMLOptionElement;
-		provDefaultOpt.value = '';
-		provDefaultOpt.textContent = 'Select a provider...';
+		// Options are populated later by _loadProvidersAndLocations, which mutates
+		// this array in place; the custom dropdown re-reads it each time it opens.
+		const providerSelect = createCustomDropdown({
+			parent: providerGroup,
+			options: this._providerOptions,
+			placeholder: 'Select a provider...',
+			triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
+		});
 
 		// Row 5: Location, Status
 		const row5 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
@@ -758,10 +763,12 @@ export class EhrTitlebarControls extends Disposable {
 		locationLabelEl.textContent = 'Location';
 		const locReqBadge = DOM.append(locationLabelEl, DOM.$('span.ehr-required-badge'));
 		locReqBadge.textContent = 'required';
-		const locationSelect = DOM.append(locationGroup, DOM.$('select.ehr-form-select')) as HTMLSelectElement;
-		const locDefaultOpt = DOM.append(locationSelect, DOM.$('option')) as HTMLOptionElement;
-		locDefaultOpt.value = '';
-		locDefaultOpt.textContent = 'Select a location...';
+		const locationSelect = createCustomDropdown({
+			parent: locationGroup,
+			options: this._locationOptions,
+			placeholder: 'Select a location...',
+			triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
+		});
 
 		const status = this._createSelectField(row5, 'Status', false, 'status', [
 			{ value: 'Scheduled', label: 'Scheduled' },
@@ -835,14 +842,14 @@ export class EhrTitlebarControls extends Disposable {
 			const startISO = sd ? `${sd}T${st}:00` : '';
 			const endISO = ed ? `${ed}T${et}:00` : '';
 
-			const vtVal = (visitType as HTMLSelectElement).value;
+			const vtVal = visitType.value;
 			const body = {
 				appointmentType: {
 					coding: [{ system: 'http://ciyex.org/appointment-type', code: vtVal.toLowerCase().replace(/\s+/g, '-'), display: vtVal }],
 					text: vtVal,
 				},
-				status: (status as HTMLSelectElement).value.toLowerCase(),
-				priority: (priority as HTMLSelectElement).value.toLowerCase(),
+				status: status.value.toLowerCase(),
+				priority: priority.value.toLowerCase(),
 				start: startISO,
 				end: endISO,
 				reason: reasonInput.value.trim(),
@@ -887,16 +894,16 @@ export class EhrTitlebarControls extends Disposable {
 			saveBtn.textContent = 'Save Appointment';
 		}));
 
-		// Store references for populating and resetting later
-		this._appointmentProviderSelect = providerSelect;
-		this._appointmentLocationSelect = locationSelect;
+		// Store references for resetting later (provider/location options are
+		// populated via _loadProvidersAndLocations into _providerOptions/_locationOptions).
 		this._appointmentFormElements.inputs.push(patientSearchInput, startDate, endDate, startTime, endTime);
-		this._appointmentFormElements.selects.push(visitType as HTMLSelectElement, priority as HTMLSelectElement, providerSelect, locationSelect, status as HTMLSelectElement);
+		this._appointmentFormElements.selects.push(visitType, priority, providerSelect, locationSelect, status);
 		this._appointmentFormElements.textareas.push(reasonInput);
 	}
 
-	private _appointmentProviderSelect!: HTMLSelectElement;
-	private _appointmentLocationSelect!: HTMLSelectElement;
+	/** Live option arrays for the provider/location custom dropdowns — mutated in place by _loadProvidersAndLocations. */
+	private readonly _providerOptions: IDropdownOption[] = [];
+	private readonly _locationOptions: IDropdownOption[] = [];
 	private _appointmentStartDatePicker: HTMLInputElement | null = null;
 	private _appointmentEndDatePicker: HTMLInputElement | null = null;
 
@@ -945,27 +952,21 @@ export class EhrTitlebarControls extends Disposable {
 			}
 		}
 
-		// Populate provider select
-		const pSelect = this._appointmentProviderSelect;
-		while (pSelect.options.length > 1) { pSelect.remove(1); }
+		// Populate provider options (mutate the array the custom dropdown reads).
+		this._providerOptions.length = 0;
 		for (const p of this.providers) {
-			const opt = DOM.$('option') as HTMLOptionElement;
-			opt.value = (p as ProviderResult).id || (p as ProviderResult).fhirId || '';
+			const value = (p as ProviderResult).id || (p as ProviderResult).fhirId || '';
 			const prefix = (p as ProviderResult)['identification.prefix'] || '';
 			const fn = (p as ProviderResult)['identification.firstName'] || (p as ProviderResult).firstName || '';
 			const ln = (p as ProviderResult)['identification.lastName'] || (p as ProviderResult).lastName || '';
-			opt.textContent = `${prefix} ${fn} ${ln}`.trim() || (p as ProviderResult).name || (p as ProviderResult).fullName || (p as ProviderResult).username || '';
-			pSelect.appendChild(opt);
+			const label = `${prefix} ${fn} ${ln}`.trim() || (p as ProviderResult).name || (p as ProviderResult).fullName || (p as ProviderResult).username || '';
+			this._providerOptions.push({ value, label });
 		}
 
-		// Populate location select
-		const lSelect = this._appointmentLocationSelect;
-		while (lSelect.options.length > 1) { lSelect.remove(1); }
+		// Populate location options.
+		this._locationOptions.length = 0;
 		for (const l of this.locations) {
-			const opt = DOM.$('option') as HTMLOptionElement;
-			opt.value = l.id;
-			opt.textContent = l.name;
-			lSelect.appendChild(opt);
+			this._locationOptions.push({ value: l.id, label: l.name });
 		}
 	}
 
@@ -1110,7 +1111,10 @@ export class EhrTitlebarControls extends Disposable {
 		return input;
 	}
 
-	private _createSelectField(parent: HTMLElement, label: string, required: boolean, name: string, options: Array<{ value: string; label: string }>): HTMLElement {
+	/** Shared trigger style so the custom dropdown matches `.ehr-form-input` exactly across themes. */
+	private static readonly _dropdownTriggerStyle = 'width:100%;box-sizing:border-box;min-width:0;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;padding:7px 10px;font-family:inherit;cursor:pointer;';
+
+	private _createSelectField(parent: HTMLElement, label: string, required: boolean, name: string, options: IDropdownOption[]): HTMLInputElement {
 		const group = DOM.append(parent, DOM.$('.ehr-form-group'));
 		const labelEl = DOM.append(group, DOM.$('label.ehr-form-label'));
 		if (required) {
@@ -1119,13 +1123,22 @@ export class EhrTitlebarControls extends Disposable {
 		}
 		labelEl.append(` ${label}`);
 
-		const select = DOM.append(group, DOM.$('select.ehr-form-select')) as HTMLSelectElement;
+		// Native <select> renders with OS chrome (an opaque box / accent border
+		// that ignores the workbench theme), which in the light theme makes these
+		// fields look "highlighted" compared to the text inputs. The shared themed
+		// dropdown paints with `--vscode-*` variables so it matches the other
+		// inputs on every theme.
+		const defaultValue = options.length > 0 ? options[0].value : '';
+		const select = createCustomDropdown({
+			parent: group,
+			options,
+			initialValue: defaultValue,
+			triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
+		});
 		select.name = name;
-		for (const opt of options) {
-			const optEl = DOM.append(select, DOM.$('option')) as HTMLOptionElement;
-			optEl.value = opt.value;
-			optEl.textContent = opt.label;
-		}
+		// Remember the default so _resetForm can restore it (these fields have no
+		// placeholder, so resetting to '' would blank a normally-preselected value).
+		select.dataset.ehrDefault = defaultValue;
 		return select;
 	}
 
@@ -1139,8 +1152,8 @@ export class EhrTitlebarControls extends Disposable {
 		return input;
 	}
 
-	private readonly _patientFormElements: { inputs: HTMLInputElement[]; selects: HTMLSelectElement[]; textareas: HTMLTextAreaElement[]; errorEl: HTMLElement | null } = { inputs: [], selects: [], textareas: [], errorEl: null };
-	private readonly _appointmentFormElements: { inputs: HTMLInputElement[]; selects: HTMLSelectElement[]; textareas: HTMLTextAreaElement[]; errorEl: HTMLElement | null } = { inputs: [], selects: [], textareas: [], errorEl: null };
+	private readonly _patientFormElements: { inputs: HTMLInputElement[]; selects: HTMLInputElement[]; textareas: HTMLTextAreaElement[]; errorEl: HTMLElement | null } = { inputs: [], selects: [], textareas: [], errorEl: null };
+	private readonly _appointmentFormElements: { inputs: HTMLInputElement[]; selects: HTMLInputElement[]; textareas: HTMLTextAreaElement[]; errorEl: HTMLElement | null } = { inputs: [], selects: [], textareas: [], errorEl: null };
 
 	private _resetForm(form: HTMLElement): void {
 		const elements = form === this.patientOverlay ? this._patientFormElements : this._appointmentFormElements;
@@ -1149,7 +1162,11 @@ export class EhrTitlebarControls extends Disposable {
 			else { el.value = ''; }
 		}
 		for (const el of elements.selects) {
-			el.selectedIndex = 0;
+			// Custom-dropdown inputs reset by writing their value (the overridden
+			// value setter refreshes the visible trigger label). Restore the field's
+			// recorded default option; dropdowns without one (provider/location)
+			// fall back to '' which shows their placeholder.
+			el.value = el.dataset.ehrDefault ?? '';
 		}
 		for (const el of elements.textareas) {
 			el.value = '';

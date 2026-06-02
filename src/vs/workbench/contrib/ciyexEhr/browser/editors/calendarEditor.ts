@@ -500,13 +500,22 @@ export class CalendarEditor extends EditorPane {
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
 		spacer.style.cssText = 'flex:1;';
 
-		// View toggles
+		// View toggles — selected segment uses the primary button color; the
+		// unselected segments are transparent with foreground text so they read
+		// correctly in both light and dark themes (the old secondary-button fill
+		// looked washed-out / dark in light mode). Hover uses the toolbar hover
+		// background on unselected segments only.
 		const viewGroup = DOM.append(this.headerBar, DOM.$('.view-group'));
-		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow:hidden;flex-shrink:0;';
+		viewGroup.style.cssText = 'display:flex;border:1px solid var(--vscode-input-border);border-radius:4px;overflow:hidden;flex-shrink:0;';
 		for (const mode of ['day', 'week', 'month'] as const) {
-			const btn = DOM.append(viewGroup, DOM.$('button'));
+			const btn = DOM.append(viewGroup, DOM.$('button')) as HTMLButtonElement;
 			btn.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-			btn.style.cssText = `padding:3px 12px;border:none;cursor:pointer;font-size:11px;white-space:nowrap;${this.viewMode === mode ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			const isSelected = this.viewMode === mode;
+			btn.style.cssText = `padding:3px 12px;border:none;cursor:pointer;font-size:11px;white-space:nowrap;${isSelected ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-foreground);'}`;
+			if (!isSelected) {
+				btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+				btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+			}
 			btn.addEventListener('click', () => { this.viewMode = mode; this._publishCalendarState(); this._headerRendered = false; this._renderHeader(); this._renderGrid(); });
 		}
 
@@ -528,7 +537,7 @@ export class CalendarEditor extends EditorPane {
 			const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 			btn.textContent = symbol;
 			btn.title = title;
-			btn.style.cssText = `padding:4px 10px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:15px;display:inline-flex;align-items:center;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:700;' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);'}`;
+			btn.style.cssText = `padding:4px 10px;border:1px solid var(--vscode-input-border);border-radius:4px;cursor:pointer;font-size:15px;display:inline-flex;align-items:center;${primary ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:700;' : 'background:transparent;color:var(--vscode-foreground);'}`;
 			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
 			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
 			btn.addEventListener('click', onClick);
@@ -541,8 +550,17 @@ export class CalendarEditor extends EditorPane {
 			await this._createAppointment(today, '09:00');
 		});
 
-		// Refresh
-		const calBtnStyle = 'padding:4px 8px;background:var(--vscode-titleBar-activeBackground);color:var(--vscode-titleBar-activeForeground);border:1px solid var(--vscode-titleBar-border,var(--vscode-editorWidget-border));border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		// Refresh / TV / List icon buttons — subtle, theme-driven styling. The old
+		// `titleBar-activeBackground/Foreground` pair renders as a dark fill in many
+		// light themes (the title bar is often dark regardless of theme), so the
+		// buttons looked wrong in light mode. A transparent background with
+		// foreground-colored glyphs and an input border follows the active theme,
+		// and the hover uses the standard toolbar hover background.
+		const calBtnStyle = 'padding:4px 8px;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-input-border);border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;';
+		const wireIconBtnHover = (btn: HTMLButtonElement) => {
+			btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+		};
 
 		// SVG helpers — avoid innerHTML to comply with VS Code Trusted Types policy
 		const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -559,6 +577,7 @@ export class CalendarEditor extends EditorPane {
 
 		const refreshBtn = DOM.append(actionsGroup, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.style.cssText = calBtnStyle;
+		wireIconBtnHover(refreshBtn);
 		const refreshSvg = mkSvg();
 		svgPath(refreshSvg, 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8');
 		svgPath(refreshSvg, 'M21 3v5h-5');
@@ -579,6 +598,7 @@ export class CalendarEditor extends EditorPane {
 		tvWrap.style.cssText = 'position:relative;';
 		const tvBtn = DOM.append(tvWrap, DOM.$('button')) as HTMLButtonElement;
 		tvBtn.style.cssText = calBtnStyle;
+		wireIconBtnHover(tvBtn);
 		const tvSvg = mkSvg();
 		svgRect(tvSvg, '2', '3', '20', '14', '2');
 		svgPath(tvSvg, 'M8 21h8m-4-4v4');
@@ -610,8 +630,7 @@ export class CalendarEditor extends EditorPane {
 		listBtn.title = 'Appointment List';
 		const listIco = DOM.append(listBtn, DOM.$('span.codicon.codicon-list-unordered')) as HTMLElement;
 		listIco.style.cssText = 'font-size:15px;color:inherit;';
-		listBtn.addEventListener('mouseenter', () => { listBtn.style.opacity = '0.85'; });
-		listBtn.addEventListener('mouseleave', () => { listBtn.style.opacity = '1'; });
+		wireIconBtnHover(listBtn);
 		listBtn.addEventListener('click', () => this.group.openEditor(new AppointmentsEditorInput(), { pinned: true }));
 
 		// Appointment count (filtered by current view date range + provider/location)
@@ -1812,12 +1831,16 @@ export class CalendarEditor extends EditorPane {
 		// and meaning varied across themes and operating systems.
 		let labelEl: HTMLElement;
 		let iconEl: HTMLElement | undefined;
-		const baseStyle = 'padding:4px 8px;background:var(--vscode-titleBar-activeBackground);color:var(--vscode-titleBar-activeForeground);border:1px solid var(--vscode-titleBar-border,var(--vscode-editorWidget-border));border-radius:4px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
+		// Subtle, theme-driven pill (transparent + foreground text). The old
+		// title-bar colors rendered as a dark fill in light themes; transparent
+		// with an input border follows the active theme. When a selection is
+		// active the pill switches to the input-option active highlight.
+		const baseStyle = 'padding:4px 8px;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-input-border);border-radius:4px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
 		const setPillState = () => {
 			if (!symbolMode) { return; }
 			const active = selected.size > 0;
-			trigger.style.borderColor = active ? 'var(--vscode-inputOption-activeBorder,#007acc)' : 'var(--vscode-input-border,#3c3c3c)';
-			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'var(--vscode-titleBar-activeBackground)';
+			trigger.style.borderColor = active ? 'var(--vscode-inputOption-activeBorder,#007acc)' : 'var(--vscode-input-border)';
+			trigger.style.background = active ? 'var(--vscode-inputOption-activeBackground,rgba(0,122,204,0.18))' : 'transparent';
 		};
 		if (symbolMode) {
 			trigger.style.cssText = baseStyle;
@@ -1827,8 +1850,10 @@ export class CalendarEditor extends EditorPane {
 			labelEl.style.display = 'none';
 			const chevron = DOM.append(trigger, DOM.$('span.codicon.codicon-chevron-down')) as HTMLElement;
 			chevron.style.cssText = 'font-size:11px;color:inherit;opacity:0.7;';
-			trigger.addEventListener('mouseenter', () => { trigger.style.opacity = '0.85'; });
-			trigger.addEventListener('mouseleave', () => { trigger.style.opacity = '1'; setPillState(); });
+			// Hover with the toolbar hover background only when there's no active
+			// selection (the active-selection highlight should stay visible).
+			trigger.addEventListener('mouseenter', () => { if (selected.size === 0) { trigger.style.background = 'var(--vscode-toolbar-hoverBackground)'; } });
+			trigger.addEventListener('mouseleave', () => { setPillState(); });
 		} else {
 			trigger.style.cssText = inputStyle + 'text-align:left;';
 			labelEl = trigger;

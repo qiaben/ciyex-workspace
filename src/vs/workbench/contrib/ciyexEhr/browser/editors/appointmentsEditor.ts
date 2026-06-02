@@ -330,11 +330,14 @@ export class AppointmentsEditor extends EditorPane {
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.appointments-editor.ciyex-editor-root'));
 		this.root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);';
-		// Scrollable content area — pagination is rendered as a sibling and pinned
-		// to the bottom (see _render). Keeps the toolbar/table scrollable while the
-		// pagination bar stays visible per the EHR-UI parity requirement.
+		// Flex column so the toolbar/filters keep their natural height and the
+		// table wrapper flex-fills the remaining space and owns the vertical
+		// scroll. Scrolling the table inside its own wrapper (rather than the
+		// whole content area) is what lets the table header stay sticky — a
+		// sticky <thead> only pins relative to its nearest scroll container.
+		// Pagination is rendered as a pinned sibling of contentEl (see _render).
 		this.contentEl = DOM.append(this.root, DOM.$('div'));
-		this.contentEl.style.cssText = 'flex:1;overflow-y:auto;padding:20px 24px;';
+		this.contentEl.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;padding:20px 24px;min-height:0;';
 	}
 
 	private _pagBarEl: HTMLElement | null = null;
@@ -588,8 +591,14 @@ export class AppointmentsEditor extends EditorPane {
 		} catch { /* */ }
 	}
 
-	private _openPatientChart(patientId: number, patientName: string): void {
-		this.commandService.executeCommand('ciyex.openPatientChart', String(patientId), patientName);
+	private _openPatientChart(row: AppointmentDTO): void {
+		const patientId = this._resolveActionPatientId(row);
+		if (!patientId) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'No patient is linked to this appointment yet.' });
+			return;
+		}
+		this.commandService.executeCommand('ciyex.openPatientChart', patientId, row.patientName || '')
+			.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Open Patient Chart failed: ${String(err)}` }));
 	}
 
 	private _printTable(): void {
@@ -757,7 +766,7 @@ export class AppointmentsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Header ────────────────────────────────────────────────────────
 		const header = DOM.append(this.contentEl, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;';
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;flex-shrink:0;';
 
 		const titleGroup = DOM.append(header, DOM.$('div'));
 		titleGroup.style.cssText = 'display:flex;align-items:center;gap:12px;';
@@ -913,7 +922,7 @@ export class AppointmentsEditor extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Filters ───────────────────────────────────────────────────────
 		const filters = DOM.append(this.contentEl, DOM.$('div'));
-		filters.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;padding:12px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
+		filters.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;padding:12px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;flex-shrink:0;';
 
 		// Patient search
 		const patientInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
@@ -1024,7 +1033,7 @@ export class AppointmentsEditor extends EditorPane {
 		// "All Time". The date preset selector itself now lives in the
 		// filters row above, immediately before the Provider filter.
 		const dateRow = DOM.append(this.contentEl, DOM.$('div'));
-		dateRow.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:8px;padding:8px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;';
+		dateRow.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:8px;padding:8px 16px;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;flex-shrink:0;';
 
 		const dateRight = DOM.append(dateRow, DOM.$('div'));
 		dateRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
@@ -1118,7 +1127,12 @@ export class AppointmentsEditor extends EditorPane {
 		// users (whose mouse wheel does not scroll horizontally by default) lose
 		// access to the ACTIONS / ROOM / WAIT columns.
 		tableWrap.classList.add('appt-table-wrap', 'ciyex-thin-h-scroll');
-		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow-x:auto;overflow-y:hidden;';
+		// This wrapper is the scroll container for BOTH axes: horizontal so the
+		// ACTIONS/ROOM/WAIT columns stay reachable, vertical so the sticky <thead>
+		// (below) pins to the top of the wrapper while the rows scroll under it.
+		// `flex:1;min-height:0` lets it fill the remaining height inside the flex
+		// column so the body scrolls instead of the whole page.
+		tableWrap.style.cssText = 'flex:1;min-height:0;border:1px solid var(--vscode-editorWidget-border,#3c3c3c);border-radius:8px;overflow:auto;';
 
 		const table = DOM.append(tableWrap, DOM.$('table'));
 		// `table-layout:fixed` honours the column widths set via <colgroup> so all
@@ -1265,7 +1279,7 @@ export class AppointmentsEditor extends EditorPane {
 			const patientLink = DOM.append(tdPatient, DOM.$('div'));
 			patientLink.textContent = row.patientName || `Patient #${row.patientId}`;
 			patientLink.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground,#3794ff);font-weight:500;';
-			patientLink.addEventListener('click', () => this._openPatientChart(row.patientId, row.patientName || ''));
+			patientLink.addEventListener('click', () => this._openPatientChart(row));
 			const mrnLine = DOM.append(tdPatient, DOM.$('div'));
 			mrnLine.textContent = `MRN: ${row.patientId}`;
 			mrnLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
@@ -1428,47 +1442,69 @@ export class AppointmentsEditor extends EditorPane {
 		);
 	}
 
+	/** Resolve the patient id for a row's actions. When an appointment has a
+	 *  linked encounter the encounter's own patient (`encounterPatientId`) is the
+	 *  authoritative id — the appointment-level `patientId` can be 0/undefined for
+	 *  FHIR-sourced rows, which previously made the action buttons open with a
+	 *  `"undefined"` id (the row actions appeared to do nothing). Mirrors the
+	 *  EHR-UI `r.encounterPatientId || r.patientId` resolution. */
+	private _resolveActionPatientId(row: AppointmentDTO): string {
+		const id = row.encounterPatientId ?? row.patientId;
+		return (id !== undefined && id !== null) ? String(id) : '';
+	}
+
 	/** "Open Chart" — for an appointment row, opens the encounter form (parity
 	 *  with EHR-UI). Falls back to the patient chart when no encounter is linked
 	 *  yet (e.g. status is still Scheduled and an encounter hasn't been created). */
 	private _openVisitChart(row: AppointmentDTO): void {
+		const patientId = this._resolveActionPatientId(row);
 		const label = row.patientName ? `Visit — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label);
+			this.commandService.executeCommand('ciyex.openEncounter', patientId, String(row.encounterId), row.patientName || '', label)
+				.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Open Chart failed: ${String(err)}` }));
 			return;
 		}
 		// Always open on encounters tab so payment/billing tab is never shown unexpectedly.
-		this._openPatientChartTab(row.patientId, row.patientName || '', 'encounters');
+		this._openPatientChartTab(patientId, row.patientName || '', 'encounters');
 	}
 
 	/** "Record Vitals" — opens the encounter form (which has a Vitals
 	 *  section). Without an encounter, opens the patient chart on the Vitals
 	 *  tab so the user lands somewhere they can record values. */
 	private _openVitalsForRow(row: AppointmentDTO): void {
+		const patientId = this._resolveActionPatientId(row);
 		const label = row.patientName ? `Vitals — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label, 'vitals');
+			this.commandService.executeCommand('ciyex.openEncounter', patientId, String(row.encounterId), row.patientName || '', label, 'vitals')
+				.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Record Vitals failed: ${String(err)}` }));
 			return;
 		}
-		this._openPatientChartTab(row.patientId, row.patientName || '', 'vitals');
+		this._openPatientChartTab(patientId, row.patientName || '', 'vitals');
 	}
 
 	/** Opens the patient chart with a specific initial tab pre-selected
 	 *  (used by "Record Vitals" → vitals tab, etc.). */
-	private _openPatientChartTab(patientId: number, patientName: string, tabKey: string): void {
-		this.commandService.executeCommand('ciyex.openPatientChart', String(patientId), patientName, tabKey);
+	private _openPatientChartTab(patientId: string, patientName: string, tabKey: string): void {
+		if (!patientId) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'No patient is linked to this appointment yet.' });
+			return;
+		}
+		this.commandService.executeCommand('ciyex.openPatientChart', patientId, patientName, tabKey)
+			.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Open Patient Chart failed: ${String(err)}` }));
 	}
 
 	/** "Visit Summary": if the appointment has a linked encounterId, open the
 	 *  encounter form on the Assessment & Plan section; otherwise fall back to
 	 *  opening the chart on Encounters. */
 	private _openVisitSummary(row: AppointmentDTO): void {
+		const patientId = this._resolveActionPatientId(row);
 		const label = row.patientName ? `Summary — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', String(row.patientId), String(row.encounterId), row.patientName || '', label, 'plan');
+			this.commandService.executeCommand('ciyex.openEncounter', patientId, String(row.encounterId), row.patientName || '', label, 'plan')
+				.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Visit Summary failed: ${String(err)}` }));
 			return;
 		}
-		this._openPatientChartTab(row.patientId, row.patientName || '', 'encounters');
+		this._openPatientChartTab(patientId, row.patientName || '', 'encounters');
 	}
 
 	override layout(dimension: DOM.Dimension): void {

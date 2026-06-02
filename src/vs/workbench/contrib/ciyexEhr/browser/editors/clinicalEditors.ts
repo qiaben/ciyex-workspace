@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -883,7 +883,6 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'specialistName', label: 'Specialist / Specialty' },
 			{ key: 'facilityName', label: 'Facility' },
-			{ key: 'facilityPhone', label: 'Contact', width: '110px' },
 			{ key: 'reason', label: 'Reason' },
 			{ key: 'referralDate', label: 'Referral Date', width: '100px' },
 			{ key: 'status', label: 'Status', width: '110px' },
@@ -900,9 +899,6 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 			}
 			if (key === 'referralDate' && typeof value === 'string') {
 				try { return new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { return String(value); }
-			}
-			if (key === 'facilityPhone' && value) {
-				return String(value);
 			}
 			if (key === 'reason') {
 				const r = String(value || '--');
@@ -1380,6 +1376,10 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				searchValueField: 'code',
 				relatedField: 'procedureCode',
 				relatedDisplayFields: ['code', 'shortDescription'],
+				// Issue #7: dropdown shows "code description", but only the
+				// description lands in the Procedure box while the code fills the
+				// separate "CPT Code" box (relatedField above).
+				selectDisplayField: 'shortDescription',
 				validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
 				validationMessage: 'Procedure must be at least 2 characters and contain only letters/numbers/punctuation',
 			},
@@ -1393,6 +1393,9 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				searchValueField: 'code',
 				relatedField: 'diagnosisCode',
 				relatedDisplayFields: ['code', 'shortDescription'],
+				// Issue #7: ICD-10 code fills the "Diagnosis Code (ICD-10)" box;
+				// only the description lands in this "Diagnosis" box.
+				selectDisplayField: 'shortDescription',
 			},
 			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'Auto-filled', validationPattern: '^[A-Z][0-9][0-9A-Z](\\.[0-9A-Z]{1,4})?$', validationMessage: 'ICD-10 format: e.g. E11.9, J18.9' },
 			{ key: 'reviewDate', label: 'Review Date', type: 'date' },
@@ -1422,17 +1425,34 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 						await dlg.info('This authorization is already approved.');
 						return;
 					}
-					const res = await dlg.input({ type: 'question', message: 'Approve authorization', detail: `Patient: ${item.patientName || '—'}`, inputs: [{ placeholder: 'Approved units (number)', value: '1' }] });
-					if (!res.confirmed) { return; }
-					const u = res.values?.[0]?.trim() || '';
-					const n = Number(u);
-					if (!u || !isFinite(n) || n <= 0) {
+					// Issue #17a: themed "Approve Authorization" popup with the same
+					// three fields as the web app (Authorization Number / Approved
+					// Units / Expiry Date) instead of the bare single-input prompt.
+					const proc = [item.procedureCode, item.procedureDescription].filter(Boolean).join(' ');
+					const result = await showThemedModal({
+						title: 'Approve Authorization',
+						// allow-any-unicode-next-line
+						subtitle: `Patient: ${item.patientName || '—'}${proc ? ` — ${proc}` : ''}`,
+						confirmLabel: 'Approve',
+						confirmColor: '#16a34a',
+						fields: [
+							{ key: 'authNumber', label: 'Authorization Number', type: 'text', value: String(item.authorizationNumber || ''), placeholder: 'Auth reference number' },
+							{ key: 'approvedUnits', label: 'Approved Units', type: 'number', value: String(item.approvedUnits || 1) },
+							{ key: 'expiryDate', label: 'Expiry Date', type: 'date', value: String(item.expiryDate || '') },
+						],
+					});
+					if (!result) { return; }
+					const n = Number(result.approvedUnits);
+					if (!result.approvedUnits || !isFinite(n) || n <= 0) {
 						await dlg.error('Please enter a valid number of approved units (greater than zero).');
 						return;
 					}
+					const body: Record<string, unknown> = { approvedUnits: n };
+					if (result.authNumber) { body.authNumber = result.authNumber; body.authorizationNumber = result.authNumber; }
+					if (result.expiryDate) { body.expiryDate = result.expiryDate; }
 					const r = await api.fetch(`/api/prior-auth/${item.id}/approve`, {
 						method: 'POST', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ approvedUnits: n }),
+						body: JSON.stringify(body),
 					});
 					if (!r.ok) {
 						const err = await r.json().catch(() => null) as Record<string, unknown> | null;

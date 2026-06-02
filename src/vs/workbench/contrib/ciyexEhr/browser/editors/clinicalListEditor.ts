@@ -59,6 +59,14 @@ export interface FormFieldDef {
 	relatedField?: string;
 	/** For 'search' type: fields from API response to display in dropdown */
 	relatedDisplayFields?: string[];
+	/**
+	 * For 'search' type: result field whose value is placed into THIS search input
+	 * on selection (e.g. only the description), independent of the dropdown text
+	 * built from {@link relatedDisplayFields}. Used so a code search can show
+	 * "code description" in the dropdown but put only the description in the
+	 * Procedure/Diagnosis text box while the code goes into {@link relatedField}.
+	 */
+	selectDisplayField?: string;
 	/** For 'search' type: query parameter name for live search. Defaults to 'search'.
 	 * ciyex-codes uses 'q', most other backends use 'search'. */
 	searchParam?: string;
@@ -261,6 +269,109 @@ const STATUS_COLORS: Record<string, string> = {
 	// Education
 	'in-progress': '#3b82f6', preparation: '#f59e0b', 'not-done': '#6b7280',
 };
+
+/** A labelled field rendered inside {@link showThemedModal}. */
+interface IThemedModalField {
+	key: string;
+	label: string;
+	type?: 'text' | 'number' | 'date';
+	value?: string;
+	placeholder?: string;
+}
+
+interface IThemedModalOptions {
+	title: string;
+	/** Optional sub-heading line rendered under the title (e.g. patient + procedure). */
+	subtitle?: string;
+	fields: IThemedModalField[];
+	confirmLabel: string;
+	/** Accent colour for the confirm button (e.g. green for Approve). */
+	confirmColor?: string;
+	/** Optional DOM anchor used to locate the workbench root for theming.
+	 * Defaults to the document body (findWorkbenchRoot then queries by class). */
+	anchor?: HTMLElement;
+}
+
+/**
+ * Render a small themed centre-screen modal with labelled fields and a
+ * Cancel/confirm button pair, mounted inside `.monaco-workbench` so the VS
+ * Code CSS variables resolve to the active light/dark theme. Resolves to a map
+ * of field key -> entered value, or `null` when cancelled. Used for the
+ * Authorization "Approve Authorization" popup (issue #17a) so it matches the
+ * multi-field web-app modal instead of the bare single-input dialog prompt.
+ */
+export function showThemedModal(opts: IThemedModalOptions): Promise<Record<string, string> | null> {
+	return new Promise<Record<string, string> | null>(resolve => {
+		const doc = mainWindow.document;
+		const mount = findWorkbenchRoot(opts.anchor || doc.body || doc.documentElement, doc);
+		const overlay = DOM.append(mount, DOM.$('div'));
+		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);';
+
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'position:relative;width:420px;max-width:92vw;max-height:90vh;overflow-y:auto;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);padding:20px;box-sizing:border-box;';
+
+		const titleEl = DOM.append(modal, DOM.$('h3'));
+		titleEl.textContent = opts.title;
+		titleEl.style.cssText = 'margin:0 0 8px;font-size:16px;font-weight:600;';
+
+		if (opts.subtitle) {
+			const sub = DOM.append(modal, DOM.$('p'));
+			sub.textContent = opts.subtitle;
+			sub.style.cssText = 'margin:0 0 16px;font-size:12px;color:var(--vscode-descriptionForeground);';
+		}
+
+		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		const inputs = new Map<string, HTMLInputElement>();
+		for (const f of opts.fields) {
+			const grp = DOM.append(modal, DOM.$('div'));
+			grp.style.cssText = 'margin-bottom:12px;';
+			const lbl = DOM.append(grp, DOM.$('label'));
+			lbl.textContent = f.label;
+			lbl.style.cssText = 'display:block;font-size:11px;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
+			const input = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
+			input.type = f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
+			input.value = f.value ?? '';
+			input.placeholder = f.placeholder ?? '';
+			input.style.cssText = inputStyle + (f.type === 'date' ? 'color-scheme:dark light;' : '');
+			inputs.set(f.key, input);
+		}
+
+		const footer = DOM.append(modal, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px;';
+
+		let settled = false;
+		const close = (result: Record<string, string> | null) => {
+			if (settled) { return; }
+			settled = true;
+			overlay.remove();
+			resolve(result);
+		};
+
+		const cancelBtn = DOM.append(footer, DOM.$('button'));
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,transparent);color:var(--vscode-button-secondaryForeground,var(--vscode-foreground));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;';
+		cancelBtn.addEventListener('click', () => close(null));
+
+		const confirmBtn = DOM.append(footer, DOM.$('button'));
+		confirmBtn.textContent = opts.confirmLabel;
+		confirmBtn.style.cssText = `padding:6px 14px;background:${opts.confirmColor || 'var(--vscode-button-background)'};color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;`;
+		confirmBtn.addEventListener('click', () => {
+			const out: Record<string, string> = {};
+			for (const [k, el] of inputs.entries()) { out[k] = el.value.trim(); }
+			close(out);
+		});
+
+		backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) { close(null); } });
+		overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { close(null); } });
+
+		const first = opts.fields.length > 0 ? inputs.get(opts.fields[0].key) : undefined;
+		(first || confirmBtn).focus();
+	});
+}
 
 /**
  * Base class for all clinical list editors.
@@ -696,8 +807,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Header
 		const hr = DOM.append(tbl, DOM.$('div'));
 		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:8px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,var(--vscode-editor-background));text-transform:uppercase;letter-spacing:0.3px;position:sticky;top:0;z-index:2;${tableMinW}`;
-		for (const c of cfg.columns) { DOM.append(hr, DOM.$('span')).textContent = c.label; }
-		if (cfg.actions || cfg.editable) { DOM.append(hr, DOM.$('span')).textContent = 'Actions'; }
+		// Header cells must shrink exactly like the body cells. Body cells set
+		// `overflow:hidden` which gives them an automatic min-size of 0 so the
+		// `minmax(0,1fr)` tracks collapse evenly. Header spans without it keep
+		// `min-width:auto` (= min-content), so a long label like "Specialist /
+		// Specialty" widens its header track past the matching body track and the
+		// columns no longer line up (issue #16). Apply the same overflow style.
+		const headerCellStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;';
+		for (const c of cfg.columns) { const hc = DOM.append(hr, DOM.$('span')); hc.textContent = c.label; hc.style.cssText = headerCellStyle; }
+		if (cfg.actions || cfg.editable) { const ac = DOM.append(hr, DOM.$('span')); ac.textContent = 'Actions'; ac.style.cssText = headerCellStyle; }
 
 		const filteredItems = this._visibleItems();
 		// Client-side pagination: slice the filtered set into pages so every editor
@@ -1172,7 +1290,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 								item.addEventListener('mouseleave', () => { item.style.background = ''; });
 								item.addEventListener('click', () => {
-									(inputEl as HTMLInputElement).value = displayText;
+									// When `selectDisplayField` is set, the input shows only that
+									// field (e.g. the description) while the dropdown still shows the
+									// fuller `displayText` (code + description). Otherwise fall back to
+									// the dropdown text so existing search fields are unchanged.
+									(inputEl as HTMLInputElement).value = field.selectDisplayField
+										? String(getPath(result, field.selectDisplayField) ?? displayText)
+										: displayText;
 									dropdown.style.display = 'none';
 									// Auto-fill related field (e.g. patientId)
 									if (field.relatedField) {

@@ -20,6 +20,51 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 
+// ------------------------- Field-format validators -------------------------
+// Reusable client-side validators for the Settings > General add/edit forms.
+// Kept module-local (not exported) so they stay private to this editor.
+
+/** True when `value` is a syntactically valid email address. */
+function isValidEmail(value: string): boolean {
+	const v = value.trim();
+	// Standard single-address shape: local@domain.tld (no spaces, one @).
+	return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);
+}
+
+/** True when `value` is a plausible phone/fax number (10-15 digits). */
+function isValidPhone(value: string): boolean {
+	const digits = value.replace(/[^\d]/g, '');
+	// Reject anything with stray letters and require a sane digit count.
+	if (/[a-zA-Z]/.test(value)) { return false; }
+	return digits.length >= 10 && digits.length <= 15;
+}
+
+/** True when `value` is a valid NPI: exactly 10 digits, numeric only. */
+function isValidNpi(value: string): boolean {
+	return /^\d{10}$/.test(value.trim());
+}
+
+/**
+ * True when `value` is a real-looking name: non-empty, contains at least one
+ * letter and is not purely numeric/punctuation garbage (e.g. "12345432").
+ */
+function isNonEmptyName(value: string): boolean {
+	const v = value.trim();
+	if (v.length < 2) { return false; }
+	if (/^[\d\s\W]+$/.test(v)) { return false; }
+	return /[a-zA-Z]/.test(v);
+}
+
+/**
+ * True when `value` is a reasonable identifier (license number, etc.):
+ * non-empty, alphanumeric (dashes/spaces allowed), 2-32 chars.
+ */
+function isReasonableId(value: string): boolean {
+	const v = value.trim();
+	if (v.length < 2 || v.length > 32) { return false; }
+	return /^[A-Za-z0-9][A-Za-z0-9\- ]*$/.test(v);
+}
+
 interface FieldDef {
 	key: string;
 	label: string;
@@ -747,8 +792,8 @@ export class SettingsHubEditor extends EditorPane {
 			th.style.cssText = 'padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
 		}
 		const thActions = DOM.append(tr, DOM.$('th'));
-		thActions.textContent = '';
-		thActions.style.cssText = 'padding:10px 12px;width:160px;';
+		thActions.textContent = 'Actions';
+		thActions.style.cssText = 'padding:10px 12px;width:160px;text-align:right;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);';
 
 		// Body rows
 		const tbody = DOM.append(table, DOM.$('tbody'));
@@ -1971,6 +2016,44 @@ export class SettingsHubEditor extends EditorPane {
 		input.addEventListener('blur', () => setTimeout(close, 200));
 	}
 
+	/**
+	 * Format validation for a single settings field. Returns an error string
+	 * when the value is invalid, or `undefined` when it passes. Driven off the
+	 * field's `key`/`label`/`type` so it works across the dynamic FHIR tabs
+	 * (Facilities, Providers, Insurance, Referral Practices/Providers) without
+	 * hardcoding per-tab field lists. Empty values are NOT checked here — the
+	 * caller only invokes this for non-empty values.
+	 */
+	private _validateFieldFormat(field: FieldDef, value: string): string | undefined {
+		const key = (field.key || '').toLowerCase();
+		const label = (field.label || '').toLowerCase();
+		const type = (field.type || '').toLowerCase();
+		const looks = (re: RegExp): boolean => re.test(key) || re.test(label);
+
+		// Email — by key, label or input type.
+		if (type === 'email' || looks(/e-?mail/)) {
+			return isValidEmail(value) ? undefined : `${field.label} must be a valid email address`;
+		}
+		// Phone / Fax — both validated as phone numbers.
+		if (type === 'tel' || looks(/phone|fax|mobile|cell/)) {
+			return isValidPhone(value) ? undefined : `${field.label} must be a valid phone number`;
+		}
+		// NPI — numeric, 10 digits.
+		if (looks(/\bnpi\b/)) {
+			return isValidNpi(value) ? undefined : `${field.label} must be a 10-digit NPI number`;
+		}
+		// Names — first/last/company/payer/practice/organization names must be
+		// real names, not blank or purely numeric garbage (QA issues 19/20/22).
+		if (looks(/first ?name|last ?name|company ?name|payer ?name|practice ?name|provider ?name|\bname\b/)) {
+			return isNonEmptyName(value) ? undefined : `${field.label} must be a valid name`;
+		}
+		// License number — non-empty, reasonable length, alphanumeric.
+		if (looks(/licen[cs]e/)) {
+			return isReasonableId(value) ? undefined : `${field.label} is not valid`;
+		}
+		return undefined;
+	}
+
 	private async _saveRecord(): Promise<void> {
 		// Required validation
 		const errors: Record<string, string> = {};
@@ -1978,10 +2061,21 @@ export class SettingsHubEditor extends EditorPane {
 		if (fc?.sections) {
 			for (const s of fc.sections) {
 				for (const f of s.fields) {
-					if (f.required) {
-						const v = this.formData[f.key];
-						if ((v === null || v === undefined || (typeof v === 'string' && v.trim() === ''))) {
-							errors[f.key] = `${f.label} is required`;
+					const v = this.formData[f.key];
+					const isEmpty = v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
+					if (f.required && isEmpty) {
+						errors[f.key] = `${f.label} is required`;
+						continue;
+					}
+					// Format validation — only when a value is present (empty
+					// optional fields are allowed; emptiness is handled above
+					// for required fields). Guards the negative test cases from
+					// QA issues 18/19/20/21/22: invalid phone/fax/email, garbage
+					// names, non-numeric NPI etc. must be rejected on save.
+					if (!isEmpty) {
+						const fmtErr = this._validateFieldFormat(f, String(v).trim());
+						if (fmtErr) {
+							errors[f.key] = fmtErr;
 						}
 					}
 				}
@@ -1989,7 +2083,7 @@ export class SettingsHubEditor extends EditorPane {
 		}
 		this.validationErrors = errors;
 		if (Object.keys(errors).length > 0) {
-			this.notificationService.notify({ severity: Severity.Warning, message: 'Please fill in required fields.' });
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Please correct the highlighted fields.' });
 			this._renderContent();
 			return;
 		}
@@ -3889,7 +3983,7 @@ export class SettingsHubEditor extends EditorPane {
 			if (opts.type === 'select') {
 				const sel = DOM.append(cell, DOM.$('select')) as HTMLSelectElement;
 				sel.disabled = isView;
-				sel.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;';
+				sel.style.cssText = 'width:100%;height:34px;padding:6px 10px;box-sizing:border-box;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:12px;outline:none;';
 				for (const [v, l] of (opts.options || [])) {
 					const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 					o.value = v;
@@ -3898,22 +3992,27 @@ export class SettingsHubEditor extends EditorPane {
 				}
 				sel.addEventListener('change', () => { form[key] = sel.value; });
 			} else if (opts.type === 'checkbox') {
+				// Render the checkbox as a self-contained bordered row (no
+				// separate field label above) so the three boolean flags line
+				// up cleanly in the two-column grid instead of looking cramped.
+				lbl.remove();
 				const wrap = DOM.append(cell, DOM.$('label'));
-				wrap.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;';
+				wrap.style.cssText = 'display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;box-sizing:border-box;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);font-size:12px;cursor:pointer;';
 				const cb = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				cb.type = 'checkbox';
 				cb.disabled = isView;
 				cb.checked = !!form[key];
+				cb.style.cssText = 'margin:0;cursor:pointer;';
 				cb.addEventListener('change', () => { form[key] = cb.checked; });
 				const t = DOM.append(wrap, DOM.$('span'));
-				t.textContent = opts.placeholder || label;
+				t.textContent = label;
 			} else {
 				const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 				inp.type = opts.type === 'number' ? 'number' : 'text';
 				inp.placeholder = opts.placeholder || '';
 				inp.value = form[key] === undefined || form[key] === null ? '' : String(form[key]);
 				inp.disabled = isView;
-				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
+				inp.style.cssText = 'width:100%;height:34px;padding:6px 10px;box-sizing:border-box;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
 				inp.addEventListener('input', () => {
 					if (opts.type === 'number') {
 						const n = inp.value === '' ? undefined : Number(inp.value);

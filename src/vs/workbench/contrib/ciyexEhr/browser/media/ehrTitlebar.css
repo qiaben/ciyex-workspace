@@ -16,8 +16,13 @@
 .ehr-titlebar-controls {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	margin-right: 2px;
+	/* Match the adjacent VS Code layout-control toolbar so all titlebar icons
+	share one rhythm: those items are 22px wide (16px icon + 3px padding each
+	side) at a 26px pitch (4px between items). We mirror that here: 4px gap
+	+ .ehr-action-btn sized to 22px below, so the 3 EHR icons line up at the
+	same pitch as the 3 layout icons. */
+	gap: 4px;
+	margin-right: 4px;
 	padding-left: 8px;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
@@ -80,26 +85,32 @@
  * top/left/width are set dynamically via JS. */
 .ehr-search-dropdown {
 	position: fixed;
-	background: var(--vscode-editorWidget-background, #fff);
-	border: 1px solid var(--vscode-editorWidget-border, #ddd);
+	/* Match the form input fields (input-background/border) so the search
+	 * options surface is visually consistent with the rest of the inputs in
+	 * the current theme, instead of using the editor-widget palette which
+	 * read as a mismatched panel. */
+	background: var(--vscode-input-background, var(--vscode-editorWidget-background, #fff));
+	border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, #ddd));
 	border-radius: 6px;
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 	z-index: 10000;
 	max-height: 300px;
 	overflow-y: auto;
 	min-width: 300px;
+	color: var(--vscode-input-foreground, var(--vscode-foreground, #ccc));
+	font-family: inherit;
 }
 
 /* Light theme */
 .vs .ehr-search-dropdown {
-	background: var(--vscode-editorWidget-background, #fff);
-	border-color: var(--vscode-editorWidget-border, #ddd);
+	background: var(--vscode-input-background, var(--vscode-editorWidget-background, #fff));
+	border-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #ddd));
 }
 .vs .ehr-search-item:hover {
 	background: var(--vscode-list-hoverBackground, #f0f0f0);
 }
 .vs .ehr-search-name {
-	color: var(--vscode-editor-foreground, #111);
+	color: var(--vscode-input-foreground, var(--vscode-editor-foreground, #111));
 }
 .vs .ehr-search-dob {
 	color: var(--vscode-descriptionForeground, #666);
@@ -108,20 +119,20 @@
 	color: var(--vscode-descriptionForeground, #888);
 }
 .vs .ehr-search-item {
-	border-bottom-color: var(--vscode-editorWidget-border, #eee);
+	border-bottom-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #eee));
 }
 
 /* Dark theme */
 .vs-dark .ehr-search-dropdown {
-	background: var(--vscode-editorWidget-background, #252526);
-	border-color: var(--vscode-editorWidget-border, #454545);
+	background: var(--vscode-input-background, var(--vscode-editorWidget-background, #252526));
+	border-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #454545));
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 .vs-dark .ehr-search-item:hover {
 	background: var(--vscode-list-hoverBackground, #2a2d2e);
 }
 .vs-dark .ehr-search-name {
-	color: var(--vscode-editor-foreground, #d4d4d4);
+	color: var(--vscode-input-foreground, var(--vscode-editor-foreground, #d4d4d4));
 }
 .vs-dark .ehr-search-dob {
 	color: var(--vscode-descriptionForeground, #888);
@@ -130,13 +141,13 @@
 	color: var(--vscode-descriptionForeground, #888);
 }
 .vs-dark .ehr-search-item {
-	border-bottom-color: var(--vscode-editorWidget-border, #3c3c3c);
+	border-bottom-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #3c3c3c));
 }
 
 .ehr-search-item {
 	padding: 8px 12px;
 	cursor: pointer;
-	border-bottom: 1px solid var(--vscode-editorWidget-border, #eee);
+	border-bottom: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, #eee));
 }
 
 .ehr-search-item:last-child {
@@ -150,7 +161,7 @@
 .ehr-search-name {
 	font-weight: 600;
 	font-size: 13px;
-	color: var(--vscode-editor-foreground, #111);
+	color: var(--vscode-input-foreground, var(--vscode-editor-foreground, #111));
 }
 
 .ehr-search-dob {
@@ -175,7 +186,9 @@
 	gap: 0;
 	padding: 3px;
 	box-sizing: border-box;
-	width: 28px;
+	/* 16px icon + 3px padding each side = 22px, matching the VS Code layout
+	controls so the 6 titlebar icons line up at an equal pitch. */
+	width: 22px;
 	border-radius: 6px;
 	cursor: pointer;
 	color: var(--vscode-titleBar-activeForeground, #ccc);
@@ -309,16 +322,25 @@
 .vs-dark .ehr-form-input::placeholder {
 	color: var(--vscode-input-placeholderForeground, #777);
 }
-/* Native time-picker clock icon is near-black and invisible on the dark overlay - invert it so it reads as a light, clearly visible icon. */
-.vs-dark .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
-.vs-dark .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator {
-	filter: invert(1) brightness(1.8);
+/* Native time-picker clock icon. By default Chromium paints it near-black,
+ * which is fine on the light theme's pale input but invisible on the dark
+ * overlay. Make it clearly visible in every theme: full opacity + pointer
+ * cursor for all themes, and invert it to a light glyph on the dark / high
+ * contrast dark themes so it reads against the dark input. */
+.ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
+.ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator {
 	opacity: 0.85;
 	cursor: pointer;
 }
-.vs-dark .ehr-form-input[type="time"]:hover::-webkit-calendar-picker-indicator,
-.vs-dark .ehr-overlay input[type="time"]:hover::-webkit-calendar-picker-indicator {
+.ehr-form-input[type="time"]:hover::-webkit-calendar-picker-indicator,
+.ehr-overlay input[type="time"]:hover::-webkit-calendar-picker-indicator {
 	opacity: 1;
+}
+.vs-dark .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
+.vs-dark .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator,
+.hc-black .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
+.hc-black .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator {
+	filter: invert(1) brightness(1.8);
 }
 .vs-dark .ehr-form-label {
 	color: var(--vscode-descriptionForeground, #999);
@@ -492,14 +514,19 @@
 	margin-right: 2px;
 }
 
+/* "required" marker — rendered as a plain themed word (no filled accent box).
+ * The previous translucent-red filled badge made the Provider/Location/Patient
+ * labels look "highlighted/boxed" in the light theme compared to the other
+ * fields. Keep it subtle and theme-driven so every label reads the same. */
 .ehr-required-badge {
-	display: inline-block;
+	display: inline;
 	font-size: 10px;
-	font-weight: 500;
-	color: #e53e3e;
-	background: rgba(229, 62, 62, 0.12);
-	padding: 1px 6px;
-	border-radius: 4px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--vscode-errorForeground, var(--vscode-descriptionForeground));
+	background: transparent;
+	padding: 0;
 	margin-left: 6px;
 }
 
