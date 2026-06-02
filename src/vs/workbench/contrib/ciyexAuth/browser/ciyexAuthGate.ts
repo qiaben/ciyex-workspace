@@ -608,6 +608,20 @@ export class CiyexAuthGate extends Disposable {
 			});
 			err.textContent = this._error;
 			card.appendChild(err);
+			// When server is down, add a clickable hint pointing to the Environment selector
+			if (this._error.includes('temporarily unavailable')) {
+				const hint = h('div', {
+					marginTop: '8px', fontSize: '12px', color: '#4F6AF0',
+					cursor: 'pointer', textDecoration: 'underline',
+				});
+				hint.textContent = '→ Try switching to "Staging" in the Environment dropdown above';
+				hint.addEventListener('click', () => {
+					// The channel select was created above and appended to channelWrap inside card's parent.
+					// Scroll the overlay into view so the user sees the Environment dropdown.
+					this._overlay?.scrollTo({ top: 0, behavior: 'smooth' });
+				});
+				card.appendChild(hint);
+			}
 		}
 
 		// Continue button
