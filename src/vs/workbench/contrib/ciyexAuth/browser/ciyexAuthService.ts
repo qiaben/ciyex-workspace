@@ -375,7 +375,10 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			});
 
 			if (!res.ok) {
-				return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: `Unable to verify your account (HTTP ${res.status}).` };
+				const msg = (res.status === 502 || res.status === 503 || res.status === 504)
+					? 'Server is temporarily unavailable. Please try again in a moment.'
+					: `Unable to verify your account (HTTP ${res.status}).`;
+				return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: msg };
 			}
 
 			return await res.json();

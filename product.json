@@ -52,7 +52,7 @@
 			"apiUrl": "https://api-stage.ciyex.org",
 			"keycloakUrl": "https://stage.aran.me",
 			"keycloakRealm": "ciyex",
-			"keycloakClientId": "ciyex-workspace-desktop",
+			"keycloakClientId": "ciyex-app",
 			"registerUrl": "https://app-stage.ciyex.org/register",
 			"updateUrl": "https://github.com/qiaben/ciyex-workspace/releases/download/stage-latest{platformSuffix}/metadata.json"
 		},
