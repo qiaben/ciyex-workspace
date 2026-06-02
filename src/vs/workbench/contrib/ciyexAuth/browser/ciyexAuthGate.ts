@@ -414,11 +414,11 @@ export class CiyexAuthGate extends Disposable {
 		return btn;
 	}
 
-	private _themeIcon(dark: boolean): HTMLElement {
+	private _themeIcon(dark: boolean, size = 18): HTMLElement {
 		// Sun while in dark mode (so the icon previews "what clicking will give you")
 		// is a common pattern, but more recognisable here to show the *current*
 		// state: sun = light, moon = dark.
-		return createSvg(18, '0 0 24 24', (svg) => {
+		return createSvg(size, '0 0 24 24', (svg) => {
 			svg.setAttribute('stroke', 'currentColor');
 			svg.setAttribute('stroke-width', '2');
 			svg.setAttribute('stroke-linecap', 'round');
@@ -664,21 +664,38 @@ export class CiyexAuthGate extends Disposable {
 
 		right.appendChild(card);
 
-		// Theme toggle (top-right corner) — flips the workbench colour theme
-		// so the choice persists through sign-in and into the rest of the app.
-		const themeToggle = this._buildThemeToggle();
-		right.appendChild(themeToggle);
+		// Bottom-right row: small theme toggle icon + Server Settings link
+		const bottomRow = document.createElement('div');
+		Object.assign(bottomRow.style, {
+			position: 'absolute', bottom: '16px', right: '20px',
+			display: 'flex', alignItems: 'center', gap: '6px',
+		});
 
-		// Server Settings link (bottom-right corner)
+		// Small theme icon button — flips the workbench colour theme
+		const themeBtn = document.createElement('button');
+		themeBtn.id = 'ciyex-theme-toggle';
+		themeBtn.type = 'button';
+		themeBtn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+		themeBtn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+		Object.assign(themeBtn.style, {
+			display: 'flex', alignItems: 'center', justifyContent: 'center',
+			background: 'none', border: 'none', color: '#9CA3AF',
+			cursor: 'pointer', padding: '2px', flexShrink: '0', borderRadius: '4px',
+		});
+		themeBtn.appendChild(this._themeIcon(dark, 14));
+		themeBtn.addEventListener('click', () => { void this._toggleTheme(); });
+		bottomRow.appendChild(themeBtn);
+
+		// Server Settings link
 		const settingsLink = document.createElement('button');
 		settingsLink.id = 'ciyex-settings-toggle';
 		settingsLink.textContent = 'Server Settings';
 		Object.assign(settingsLink.style, {
-			position: 'absolute', bottom: '16px', right: '20px',
 			background: 'none', border: 'none', color: '#9CA3AF',
-			fontSize: '11px', padding: '4px 8px', cursor: 'pointer', textDecoration: 'underline',
+			fontSize: '11px', padding: '2px 0', cursor: 'pointer', textDecoration: 'underline',
 		});
-		right.appendChild(settingsLink);
+		bottomRow.appendChild(settingsLink);
+		right.appendChild(bottomRow);
 
 		wrapper.appendChild(right);
 
