@@ -24,13 +24,13 @@ import { createCustomDropdown } from '../customDropdown.js';
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
 interface ChartTab { key: string; label: string; icon: string; emoji?: string; color?: string; position: number; visible: boolean; display?: 'form' | 'list' | 'custom'; panel?: 'main' | 'bottom' | 'right'; fhirResources: string[]; apiPath?: string; columns?: Array<{ key: string; label: string; aliases?: string[] }>; readOnly?: boolean }
-interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
+export interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 // `localOnly: true` means the field is appended even when the backend
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[] }
-interface FieldConfig { tabKey: string; sections: FieldSection[] }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[] }
+export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
 const FHIR_MAP: Record<string, string> = {
@@ -419,7 +419,7 @@ const CATEGORY_COLLAPSED_KEY_PREFIX = 'ciyex.patientChart.catCollapsed.';
 
 // Built-in field configs for tabs with a standard structure. Users can still override by dropping
 // a file at ~/.ciyex/fields/{tabKey}.json — that takes precedence.
-const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
+export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	demographics: {
 		tabKey: 'demographics',
 		sections: [

@@ -16,12 +16,32 @@ import { PatientSnapshotEditorInput, PatientChartEditorInput, EncounterFormEdito
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IEditFieldDef, IListColumn, openListAndFormDialog, withTypeaheadSearch } from '../sidebarActions.js';
+import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 
 interface QuickAction {
 	icon: string;
 	customClass?: string;
 	title: string;
 	onClick: () => void;
+}
+
+interface EntitySpec {
+	title: string;
+	/** Key into `DEFAULT_FIELD_CONFIGS` (chart editor schemas). */
+	configKey: string;
+	/** Base FHIR / API path used by the chart editor's `apiPath`. */
+	basePath: string;
+	/** True for FHIR resources scoped per-patient ({base}/patient/{id}). */
+	fhirPatientScoped: boolean;
+	/** True when the resource is *not* served by the generic FHIR controller
+	 *  (e.g. medical-problems lives at /api/medical-problems/{patientId}). */
+	nonFhir?: boolean;
+	/** List columns shown in the popup's list view. */
+	columns: IListColumn[];
+	/** Endpoint that returns the existing rows for the patient. */
+	listPath: (patientId: string) => string;
 }
 
 export class PatientSnapshotEditor extends EditorPane {
@@ -31,11 +51,15 @@ export class PatientSnapshotEditor extends EditorPane {
 	private root!: HTMLElement;
 	private _currentPatientId = '';
 	private _currentPatientName = '';
-	/** Most recent appointment loaded for the patient — used to enforce one
-	 *  encounter per appointment in `_openNewEncounter`. Reset on every
-	 *  `_loadAndRender`. */
-	private _currentAppointment: Record<string, unknown> | null = null;
 	private readonly _pageState = new Map<string, number>();
+	/** IDs of records the user just deleted on this patient. Filtered out of
+	 *  every list render until a fresh fetch confirms the server has removed
+	 *  them — covers HAPI's eventual-consistency search index lag. */
+	private readonly _deletedIds = new Map<string, Set<string>>();
+	/** Records created in this session that the server's search index may not
+	 *  have surfaced yet. Merged into every list render until a subsequent
+	 *  fetch returns the same id, mirroring the chart editor's _pendingCreates. */
+	private readonly _pendingCreates = new Map<string, Array<Record<string, unknown>>>();
 	private static readonly PAGE_SIZE = 5;
 
 	constructor(
@@ -46,6 +70,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IDialogService private readonly dialogService: IDialogService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -55,6 +80,707 @@ export class PatientSnapshotEditor extends EditorPane {
 		const input = new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab, /*focused*/ true);
 		this._openInSidePanel(input);
 	}
+
+	// --- Popup CRUD --------------------------------------------------------
+	//
+	// Every entity surfaced on the snapshot dashboard routes through one
+	// shared popup (`openListAndFormDialog`) that toggles between a list of
+	// existing records and a create / edit form — the user sees a single
+	// popup, never a side tab. Field schemas come from the chart editor's
+	// `DEFAULT_FIELD_CONFIGS` so the popup form is exactly the same shape as
+	// the full chart editor (no missing fields).
+
+	private static readonly _ENTITY_REGISTRY: Record<string, EntitySpec> = {
+		vitals: {
+			title: 'Vitals', configKey: 'vitals', basePath: '/api/fhir-resource/vitals', fhirPatientScoped: true,
+			columns: [
+				{ key: 'recordedAt', label: 'Recorded', width: '140px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'bpSystolic', label: 'BP', width: '90px', format: (_v, r) => (r.bpSystolic && r.bpDiastolic) ? `${r.bpSystolic}/${r.bpDiastolic}` : '—' },
+				{ key: 'pulse', label: 'Pulse', width: '60px' },
+				{ key: 'temperatureC', label: 'Temp', width: '60px' },
+				{ key: 'oxygenSaturation', label: 'O2 %', width: '60px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/vitals/patient/${pid}?page=0&size=50`,
+		},
+		problems: {
+			// V20: tab_field_config slug is 'medicalproblems', so writes go to
+			// /api/fhir-resource/medicalproblems. Reads use the legacy
+			// /api/medical-problems endpoint (returns { problemsList: [...] }).
+			title: 'Problems', configKey: 'problems', basePath: '/api/fhir-resource/medicalproblems', fhirPatientScoped: true,
+			columns: [
+				{ key: 'conditionName', label: 'Condition', width: '2fr' },
+				{ key: 'icdCode', label: 'ICD-10', width: '100px' },
+				{ key: 'clinicalStatus', label: 'Status', width: '90px' },
+				{ key: 'onsetDate', label: 'Onset', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+			],
+			listPath: (pid) => `/api/medical-problems/${pid}`,
+		},
+		medications: {
+			title: 'Medications', configKey: 'medications', basePath: '/api/fhir-resource/medications', fhirPatientScoped: true,
+			columns: [
+				{ key: 'medicationName', label: 'Medication', width: '2fr' },
+				{ key: 'dosage', label: 'Dosage', width: '100px' },
+				{ key: 'frequency', label: 'Frequency', width: '120px' },
+				{ key: 'status', label: 'Status', width: '90px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/medications/patient/${pid}?page=0&size=50`,
+		},
+		insurance: {
+			// Chart editor: tab.key 'insurance' → /api/fhir-resource/insurance
+			// (no TAB_API_SLUG remap). The 'insurance-coverage' read path is a
+			// legacy alias the snapshot uses for fetching; writes must go to
+			// /api/fhir-resource/insurance to match backend tab_field_config.
+			title: 'Insurance Coverage', configKey: 'insurance', basePath: '/api/fhir-resource/insurance', fhirPatientScoped: true,
+			columns: [
+				{ key: 'payerName', label: 'Payor', width: '2fr' },
+				{ key: 'policyNumber', label: 'Member ID', width: '140px' },
+				{ key: 'groupNumber', label: 'Group #', width: '120px' },
+				{ key: 'insuranceType', label: 'Priority', width: '100px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/insurance/patient/${pid}?page=0&size=20`,
+		},
+		labs: {
+			title: 'Lab Orders', configKey: 'labs', basePath: '/api/fhir-resource/labs', fhirPatientScoped: true,
+			columns: [
+				{ key: 'testName', label: 'Test', width: '2fr' },
+				{ key: 'testCode', label: 'LOINC', width: '110px' },
+				{ key: 'collectionDate', label: 'Collected', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'status', label: 'Status', width: '100px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/labs/patient/${pid}?page=0&size=50`,
+		},
+		'visit-notes': {
+			title: 'Visit Notes', configKey: 'visit-notes', basePath: '/api/fhir-resource/visit-notes', fhirPatientScoped: true,
+			columns: [
+				{ key: 'date', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'type', label: 'Type', width: '160px' },
+				{ key: 'subject', label: 'Subject', width: '2fr' },
+				{ key: 'status', label: 'Status', width: '110px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/visit-notes/patient/${pid}?page=0&size=50`,
+		},
+		statements: {
+			title: 'Statements', configKey: 'statements', basePath: '/api/fhir-resource/statements', fhirPatientScoped: true,
+			columns: [
+				{ key: 'statementNumber', label: 'Statement #', width: '160px' },
+				{ key: 'statementDate', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'balance', label: 'Balance', width: '110px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
+				{ key: 'status', label: 'Status', width: '110px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/statements/patient/${pid}?page=0&size=20`,
+		},
+		claims: {
+			title: 'Claims', configKey: 'claims', basePath: '/api/fhir-resource/claims', fhirPatientScoped: true,
+			columns: [
+				{ key: 'identifier', label: 'Claim #', width: '140px' },
+				{ key: 'type', label: 'Type', width: '120px' },
+				{ key: 'serviceDate', label: 'Service Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'totalAmount', label: 'Total', width: '100px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
+				{ key: 'status', label: 'Status', width: '110px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/claims/patient/${pid}?page=0&size=50`,
+		},
+		payment: {
+			title: 'Payments', configKey: 'payment', basePath: '/api/fhir-resource/payments', fhirPatientScoped: true,
+			columns: [
+				{ key: 'paymentDate', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'amount', label: 'Amount', width: '100px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
+				{ key: 'paymentMethod', label: 'Method', width: '140px' },
+				{ key: 'reference', label: 'Reference', width: '160px' },
+				{ key: 'status', label: 'Status', width: '110px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/payments/patient/${pid}?page=0&size=50`,
+		},
+		demographics: {
+			title: 'Demographics', configKey: 'demographics', basePath: '/api/patients', fhirPatientScoped: false, nonFhir: true,
+			columns: [
+				{ key: 'firstName', label: 'First Name', width: '1fr' },
+				{ key: 'lastName', label: 'Last Name', width: '1fr' },
+				{ key: 'dateOfBirth', label: 'DOB', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'gender', label: 'Sex', width: '80px' },
+			],
+			// Demographics is a single record (the patient), not a list — we
+			// still surface it through the same popup so users get the full
+			// field set, but the list view shows just that one record.
+			listPath: (pid) => `/api/patients/${pid}`,
+		},
+		encounters: {
+			title: 'Encounters', configKey: 'encounters', basePath: '/api/fhir-resource/encounters', fhirPatientScoped: true,
+			columns: [
+				{ key: 'startDate', label: 'Date', width: '120px', format: (v, r) => { const raw = v || r.start || r.periodStart || r.encounterDate; return raw ? new Date(String(raw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; } },
+				{ key: 'type', label: 'Type', width: '120px' },
+				{ key: 'reason', label: 'Reason', width: '2fr' },
+				{ key: 'status', label: 'Status', width: '110px' },
+			],
+			listPath: (pid) => `/api/fhir-resource/encounters/patient/${pid}?page=0&size=50`,
+		},
+	};
+
+	/**
+	 * Flatten a chart-editor `FieldConfig` (sections + fields) into the
+	 * flat `IEditFieldDef[]` shape the popup form understands. The chart
+	 * editor uses richer types (`practitioner-search`, `code-search`,
+	 * `boolean`, `phone`, `lookup`, …) — map them to the closest popup
+	 * equivalent so the popup form still feels native.
+	 */
+	private _flattenChartConfig(cfg: FieldConfig): IEditFieldDef[] {
+		const out: IEditFieldDef[] = [];
+		for (const section of cfg.sections) {
+			for (const f of section.fields) {
+				if (f.localOnly) { continue; }
+				out.push(this._toPopupField(f, section.columns));
+			}
+		}
+		return out;
+	}
+
+	private _toPopupField(f: FieldDef, sectionCols: number): IEditFieldDef {
+		// Width: chart uses colSpan / sectionCols; popup uses widthPct. A
+		// half-row field (one column in a two-column section) is widthPct=50.
+		const span = f.colSpan ?? 1;
+		const widthPct = Math.min(100, Math.round((span / Math.max(1, sectionCols)) * 100));
+
+		let kind: IEditFieldDef['kind'];
+		let options: IEditFieldDef['options'];
+		switch (f.type) {
+			case 'textarea': kind = 'textarea'; break;
+			case 'number': kind = 'number'; break;
+			case 'email': kind = 'email'; break;
+			case 'phone': kind = 'tel'; break;
+			case 'date': kind = 'date'; break;
+			case 'datetime': kind = 'date'; break; // popup has no datetime — fall back to date
+			case 'select':
+				kind = 'select';
+				options = (f.options || []).map(o => typeof o === 'string' ? { value: o, label: o } : { value: o.value, label: o.label });
+				break;
+			case 'boolean':
+				kind = 'select';
+				options = [
+					{ value: '', label: '—' },
+					{ value: 'true', label: 'Yes' },
+					{ value: 'false', label: 'No' },
+				];
+				break;
+			case 'practitioner-search':
+			case 'patient-search':
+			case 'code-search':
+			case 'lookup':
+				kind = 'search';
+				break;
+			default:
+				kind = 'text';
+		}
+
+		return {
+			key: f.key,
+			label: f.label,
+			kind,
+			options,
+			required: f.required,
+			placeholder: f.placeholder,
+			widthPct,
+		};
+	}
+
+	private _entityFields(entity: string): IEditFieldDef[] {
+		// Encounters have a much richer clinical form than the 7-field chart
+		// editor default — we surface the full EncounterFormEditor schema
+		// (CC, HPI, Vitals, PMH, FH, SH, Assessment, Plan, Provider Notes,
+		// Procedures) so the popup matches the dedicated encounter editor.
+		if (entity === 'encounters') {
+			return withTypeaheadSearch(PatientSnapshotEditor._encounterFormFields(), this.apiService);
+		}
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		if (!reg) { return []; }
+		const cfg = DEFAULT_FIELD_CONFIGS[reg.configKey];
+		if (!cfg) { return []; }
+		const fields = this._flattenChartConfig(cfg);
+		return withTypeaheadSearch(fields, this.apiService);
+	}
+
+	/**
+	 * Full encounter-form schema mirrored from {@link encounterFormEditor.ts}
+	 * `_defaultSections`. Composite types (ros-grid, exam-grid, diagnosis-list,
+	 * plan-items, procedure-list) collapse to textareas so the popup stays
+	 * usable — users get a free-text capture that downstream encounter editing
+	 * can promote into the structured grid components.
+	 */
+	private static _encounterFormFields(): IEditFieldDef[] {
+		return [
+			// --- Encounter meta ---
+			{
+				key: 'type', label: 'Encounter Type', kind: 'select', widthPct: 50, options: [
+					{ value: 'AMB', label: 'Ambulatory' },
+					{ value: 'EMER', label: 'Emergency' },
+					{ value: 'HH', label: 'Home Health' },
+					{ value: 'IMP', label: 'Inpatient' },
+					{ value: 'OBSENC', label: 'Observation' },
+					{ value: 'SS', label: 'Short Stay' },
+					{ value: 'VR', label: 'Virtual' },
+				]
+			},
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'planned', label: 'Planned' },
+					{ value: 'arrived', label: 'Arrived' },
+					{ value: 'in-progress', label: 'In Progress' },
+					{ value: 'finished', label: 'Finished' },
+					{ value: 'cancelled', label: 'Cancelled' },
+				]
+			},
+			{ key: 'startDate', label: 'Start Date', kind: 'date', required: true, widthPct: 50 },
+			{ key: 'endDate', label: 'End Date', kind: 'date', widthPct: 50 },
+			{ key: 'provider', label: 'Provider', kind: 'search', placeholder: 'Search Provider', widthPct: 100 },
+
+			// --- Chief Complaint ---
+			{ key: 'chiefComplaint', label: 'Chief Complaint', kind: 'textarea', required: true, placeholder: 'Why is the patient being seen today?', widthPct: 100 },
+
+			// --- History of Present Illness ---
+			{ key: 'hpi_onset', label: 'HPI: Onset', placeholder: 'When did it start?', widthPct: 50 },
+			{ key: 'hpi_location', label: 'HPI: Location', placeholder: 'Where is it?', widthPct: 50 },
+			{ key: 'hpi_duration', label: 'HPI: Duration', placeholder: 'How long?', widthPct: 50 },
+			{ key: 'hpi_character', label: 'HPI: Character', placeholder: 'What does it feel like?', widthPct: 50 },
+			{
+				key: 'hpi_severity', label: 'HPI: Severity', kind: 'select', widthPct: 50, options: [
+					{ value: '', label: '-' },
+					{ value: 'mild', label: 'Mild' },
+					{ value: 'moderate', label: 'Moderate' },
+					{ value: 'severe', label: 'Severe' },
+				]
+			},
+			{ key: 'hpi_timing', label: 'HPI: Timing', placeholder: 'Constant, intermittent?', widthPct: 50 },
+			{ key: 'hpi_context', label: 'HPI: Context', placeholder: 'What were you doing?', widthPct: 50 },
+			{ key: 'hpi_modifying', label: 'HPI: Modifying Factors', placeholder: 'What makes it better/worse?', widthPct: 50 },
+			{ key: 'hpi_associated', label: 'HPI: Associated Signs/Symptoms', placeholder: 'Any other symptoms?', widthPct: 100 },
+			{ key: 'hpi_narrative', label: 'HPI: Narrative', kind: 'textarea', placeholder: 'Free-text narrative...', widthPct: 100 },
+
+			// --- Review of Systems (grid collapsed to textarea) ---
+			{ key: 'ros_data', label: 'Review of Systems', kind: 'textarea', placeholder: 'Constitutional, HEENT, cardiovascular, respiratory, GI, GU, musculoskeletal, skin, neurological, psychiatric, endocrine, hematologic/lymphatic, allergic/immunologic...', widthPct: 100 },
+
+			// --- Vitals ---
+			{ key: 'vitals_bp_systolic', label: 'BP Systolic (mmHg)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_bp_diastolic', label: 'BP Diastolic (mmHg)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_heart_rate', label: 'Heart Rate (bpm)', kind: 'number', widthPct: 25 },
+			// allow-any-unicode-next-line
+			{ key: 'vitals_temperature', label: 'Temperature (°F)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_spo2', label: 'SpO2 (%)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_respiratory_rate', label: 'Respiratory Rate (/min)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_weight', label: 'Weight (kg)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_height', label: 'Height (cm)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_bmi', label: 'BMI', kind: 'number', placeholder: 'Auto-calculated', widthPct: 25 },
+			{ key: 'vitals_pain_level', label: 'Pain Level (0-10)', kind: 'number', widthPct: 25 },
+			{ key: 'vitals_notes', label: 'Vitals Notes', placeholder: 'Additional notes...', widthPct: 50 },
+
+			// --- Physical Exam (grid collapsed to textarea) ---
+			{ key: 'pe_data', label: 'Physical Exam', kind: 'textarea', placeholder: 'General, head/eyes/ears/nose/throat, neck, chest, cardiovascular, abdomen, extremities, neurological, skin, psychiatric...', widthPct: 100 },
+
+			// --- Past Medical / Surgical History ---
+			{ key: 'pmh_conditions', label: 'PMH: Medical Conditions', kind: 'textarea', placeholder: 'List past medical conditions...', widthPct: 50 },
+			{ key: 'pmh_surgeries', label: 'PMH: Surgical History', kind: 'textarea', placeholder: 'List past surgeries...', widthPct: 50 },
+			{ key: 'pmh_allergies', label: 'PMH: Allergies', kind: 'textarea', placeholder: 'List known allergies...', widthPct: 50 },
+			{ key: 'pmh_medications', label: 'PMH: Current Medications', kind: 'textarea', placeholder: 'List current medications...', widthPct: 50 },
+
+			// --- Family History ---
+			{ key: 'fh_father', label: 'FH: Father', placeholder: 'Health conditions...', widthPct: 50 },
+			{ key: 'fh_mother', label: 'FH: Mother', placeholder: 'Health conditions...', widthPct: 50 },
+			{ key: 'fh_siblings', label: 'FH: Siblings', placeholder: 'Health conditions...', widthPct: 50 },
+			{ key: 'fh_notes', label: 'FH: Additional Notes', kind: 'textarea', widthPct: 100 },
+
+			// --- Social History ---
+			{
+				key: 'sh_smoking', label: 'SH: Smoking', kind: 'select', widthPct: 33, options: [
+					{ value: '', label: '-' },
+					{ value: 'never', label: 'Never' },
+					{ value: 'former', label: 'Former' },
+					{ value: 'current', label: 'Current' },
+				]
+			},
+			{
+				key: 'sh_alcohol', label: 'SH: Alcohol', kind: 'select', widthPct: 33, options: [
+					{ value: '', label: '-' },
+					{ value: 'none', label: 'None' },
+					{ value: 'social', label: 'Social' },
+					{ value: 'daily', label: 'Daily' },
+				]
+			},
+			{
+				key: 'sh_exercise', label: 'SH: Exercise', kind: 'select', widthPct: 33, options: [
+					{ value: '', label: '-' },
+					{ value: 'none', label: 'None' },
+					{ value: '1-2', label: '1-2x/week' },
+					{ value: '3-5', label: '3-5x/week' },
+					{ value: 'daily', label: 'Daily' },
+				]
+			},
+			{ key: 'sh_occupation', label: 'SH: Occupation', widthPct: 50 },
+			{
+				key: 'sh_drugs', label: 'SH: Recreational Drugs', kind: 'select', widthPct: 50, options: [
+					{ value: '', label: '-' },
+					{ value: 'none', label: 'None' },
+					{ value: 'past', label: 'Past' },
+					{ value: 'current', label: 'Current' },
+				]
+			},
+			{ key: 'sh_notes', label: 'SH: Additional Notes', kind: 'textarea', widthPct: 100 },
+
+			// --- Assessment & Diagnosis ---
+			{ key: 'assessment_diagnoses', label: 'Diagnoses (ICD-10)', kind: 'textarea', placeholder: 'One diagnosis per line: e.g. E11.9 — Type 2 Diabetes', widthPct: 100 },
+			{ key: 'assessment_notes', label: 'Assessment Notes', kind: 'textarea', placeholder: 'Clinical assessment narrative...', widthPct: 100 },
+
+			// --- Plan ---
+			{ key: 'plan_items', label: 'Plan Items', kind: 'textarea', placeholder: 'One action item per line...', widthPct: 100 },
+			{ key: 'plan_medications', label: 'Plan: Medications Prescribed', kind: 'textarea', placeholder: 'Medications prescribed or changed...', widthPct: 50 },
+			{ key: 'plan_labs', label: 'Plan: Labs / Imaging Ordered', kind: 'textarea', placeholder: 'Lab tests, imaging, or diagnostics ordered...', widthPct: 50 },
+			{ key: 'plan_referrals', label: 'Plan: Referrals', kind: 'textarea', placeholder: 'Specialist referrals...', widthPct: 50 },
+			{ key: 'plan_followup', label: 'Plan: Follow-up', placeholder: 'Return in 2 weeks, PRN, etc.', widthPct: 50 },
+			{ key: 'plan_patient_education', label: 'Plan: Patient Education', kind: 'textarea', placeholder: 'Education and instructions provided...', widthPct: 100 },
+			{ key: 'plan_notes', label: 'Plan Notes', kind: 'textarea', placeholder: 'Additional plan details...', widthPct: 100 },
+
+			// --- Provider Notes ---
+			{ key: 'provider_narrative', label: 'Provider Narrative', kind: 'textarea', placeholder: 'Free-text provider notes...', widthPct: 100 },
+
+			// --- Procedures ---
+			{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', kind: 'textarea', placeholder: 'One procedure per line: e.g. 99213 — Office visit, established patient', widthPct: 100 },
+			{ key: 'procedures_notes', label: 'Procedure Notes', kind: 'textarea', placeholder: 'Procedure details and notes...', widthPct: 100 },
+
+			// --- Reason (kept for parity with the simple FHIR Encounter resource) ---
+			{ key: 'reason', label: 'Reason for Visit', placeholder: 'Reason summary', widthPct: 100 },
+		];
+	}
+
+	/**
+	 * Pull the existing records for an entity. Demographics returns a
+	 * single-element array so the list view still shows something.
+	 * Filters out IDs we've just deleted so HAPI's eventual-consistency
+	 * search index lag doesn't show records that were already removed.
+	 */
+	private async _loadEntityList(entity: string): Promise<Array<Record<string, unknown>>> {
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		if (!reg || !this._currentPatientId) { return []; }
+		const raw = await this._fetch(reg.listPath(this._currentPatientId));
+		if (!raw) { return []; }
+		// Demographics returns the patient object directly.
+		if (entity === 'demographics') {
+			const p = (raw.data ?? raw) as Record<string, unknown>;
+			return p ? [p] : [];
+		}
+		const inner = (raw.data ?? raw) as Record<string, unknown>;
+		const arr = (inner.problemsList || inner.allergiesList || inner.content || inner.list || inner.items || inner.records || (Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as unknown;
+		const items = Array.isArray(arr) ? arr as Array<Record<string, unknown>> : [];
+		return this._mergePending(entity, this._filterDeleted(entity, items));
+	}
+
+	private _filterDeleted(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+		const set = this._deletedIds.get(entity);
+		if (!set || set.size === 0) { return items; }
+		const remaining: typeof items = [];
+		const stillPresent = new Set<string>();
+		for (const r of items) {
+			const id = String(r.id ?? r.fhirId ?? '');
+			if (id && set.has(id)) {
+				stillPresent.add(id);
+				continue;
+			}
+			remaining.push(r);
+		}
+		// Drop tracked IDs the server no longer returns — the index caught up,
+		// so we no longer need to filter them locally.
+		for (const id of Array.from(set)) {
+			if (!stillPresent.has(id)) { set.delete(id); }
+		}
+		return remaining;
+	}
+
+	private _trackDeleted(entity: string, id: string): void {
+		let set = this._deletedIds.get(entity);
+		if (!set) { set = new Set<string>(); this._deletedIds.set(entity, set); }
+		set.add(id);
+	}
+
+	private _trackCreated(entity: string, record: Record<string, unknown>): void {
+		const id = String(record.id ?? record.fhirId ?? '');
+		if (!id) { return; }
+		const arr = this._pendingCreates.get(entity) || [];
+		// Replace any prior entry with the same id (covers create-then-edit).
+		const filtered = arr.filter(r => String(r.id ?? r.fhirId ?? '') !== id);
+		filtered.unshift(record);
+		this._pendingCreates.set(entity, filtered);
+	}
+
+	private _mergePending(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+		const pending = this._pendingCreates.get(entity);
+		if (!pending || pending.length === 0) { return items; }
+		const seen = new Set(items.map(r => String(r.id ?? r.fhirId ?? '')).filter(Boolean));
+		const stillPending: typeof items = [];
+		const out = [...items];
+		for (const p of pending) {
+			const pid = String(p.id ?? p.fhirId ?? '');
+			if (pid && seen.has(pid)) { continue; } // server caught up
+			stillPending.push(p);
+			out.unshift(p);
+		}
+		if (stillPending.length) { this._pendingCreates.set(entity, stillPending); }
+		else { this._pendingCreates.delete(entity); }
+		return out;
+	}
+
+	/**
+	 * Two-step encounter save (matches EncounterFormEditor):
+	 *
+	 *  1. If no existing id, POST `/api/{patientId}/encounters` to mint a real
+	 *     FHIR Encounter resource. HAPI rejects compositions that reference
+	 *     `Encounter/new`, so we must create the encounter first.
+	 *  2. POST or PUT `/api/fhir-resource/encounter-form/patient/{pid}` (with
+	 *     `?encounterRef={encounterId}` on create) to persist the rich
+	 *     clinical fields (CC, HPI, ROS, vitals, PE, PMH, FH, SH, assessment,
+	 *     plan, provider narrative, procedures).
+	 */
+	private async _saveEncounterComposition(values: Record<string, string>, existingId: string | undefined): Promise<Response> {
+		const pid = this._currentPatientId;
+		let encounterId = existingId || '';
+		if (!encounterId) {
+			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
+			const startDate = values['startDate'] || new Date().toISOString();
+			const createRes = await this.apiService.fetch(`/api/${pid}/encounters`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					visitCategory: values['type'] || 'AMB',
+					encounterDate: startDate,
+					status: 'UNSIGNED',
+					reasonForVisit: reason,
+				}),
+			});
+			if (!createRes.ok) { return createRes; }
+			const created = await createRes.json().catch(() => null);
+			encounterId = String(created?.data?.id || created?.id || '');
+			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
+		}
+		const url = existingId
+			? `/api/fhir-resource/encounter-form/patient/${pid}/${encounterId}`
+			: `/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`;
+		return this.apiService.fetch(url, {
+			method: existingId ? 'PUT' : 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ...values, patientId: pid, id: encounterId }),
+		});
+	}
+
+	/** Build the create / update URL the same way the full chart editor does. */
+	private _saveUrl(entity: string, existingId: string | undefined): { url: string; method: 'POST' | 'PUT' } {
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		const isEdit = !!existingId;
+		const ep = reg.basePath;
+		if (reg.nonFhir) {
+			// Non-FHIR: medical-problems / patients use plain {base} or {base}/{id}.
+			if (entity === 'demographics') {
+				return { url: `${ep}/${this._currentPatientId}`, method: 'PUT' };
+			}
+			return { url: isEdit ? `${ep}/${existingId}` : ep, method: isEdit ? 'PUT' : 'POST' };
+		}
+		if (reg.fhirPatientScoped) {
+			return {
+				url: isEdit ? `${ep}/patient/${this._currentPatientId}/${existingId}` : `${ep}/patient/${this._currentPatientId}`,
+				method: isEdit ? 'PUT' : 'POST',
+			};
+		}
+		return { url: isEdit ? `${ep}/${existingId}` : ep, method: isEdit ? 'PUT' : 'POST' };
+	}
+
+	/** Open the unified list+form popup for an entity. */
+	private _openManager(entity: string, initialMode: 'list' | 'create' = 'list'): void {
+		if (!this._currentPatientId) { return; }
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		if (!reg) { this._openChartAt(entity); return; }
+		const fields = this._entityFields(entity);
+		if (fields.length === 0) { this._openChartAt(entity); return; }
+
+		openListAndFormDialog({
+			title: reg.title,
+			themeAnchor: this.root,
+			fields,
+			listColumns: reg.columns,
+			initialMode: entity === 'demographics' ? 'create' : initialMode,
+			loadList: () => this._loadEntityList(entity),
+			saveRecord: async (next, existingId) => {
+				// Encounters need a two-step save (mirrors EncounterFormEditor):
+				//   1. POST /api/{patientId}/encounters to mint a real Encounter id
+				//   2. POST /api/fhir-resource/encounter-form/patient/{pid}?encounterRef={id}
+				//      to persist the clinical composition (CC, HPI, ROS, …).
+				// Without step 1, the composition references "Encounter/new" and
+				// HAPI rejects with HAPI-1094 "Resource Encounter/new not found".
+				if (entity === 'encounters') {
+					const res = await this._saveEncounterComposition(next, existingId);
+					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+					let saved: Record<string, unknown> | null = null;
+					try {
+						const j = await res.json();
+						const cand = (j?.data ?? j) as Record<string, unknown> | null;
+						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+					} catch { /* */ }
+					if (!existingId && saved) { this._trackCreated(entity, { ...next, ...saved }); }
+					this.notificationService.notify({ severity: Severity.Info, message: `Encounter ${existingId ? 'updated' : 'created'}.` });
+					this._rerender();
+					return;
+				}
+				const { url, method } = this._saveUrl(entity, existingId);
+				const payload: Record<string, unknown> = { ...next };
+				// Backend `vitals` POST without recordedAt is rejected by the
+				// FhirPathMapper validation — chart editor injects this exact
+				// fallback, so mirror it here.
+				if (entity === 'vitals' && method === 'POST' && !payload.recordedAt) {
+					payload.recordedAt = new Date().toISOString();
+				}
+				if (!reg.nonFhir && entity !== 'demographics') {
+					payload.patientId = this._currentPatientId;
+				}
+				const res = await this.apiService.fetch(url, {
+					method,
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+				// Read the saved record off the response so we can show it on
+				// the dashboard immediately, mirroring the chart editor's
+				// optimistic-merge pattern. FHIR search indexing is eventually
+				// consistent — without this, the just-created row would not
+				// appear until HAPI caught up.
+				let saved: Record<string, unknown> | null = null;
+				try {
+					const j = await res.json();
+					const cand = (j?.data ?? j) as Record<string, unknown> | null;
+					if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+				} catch { /* response body wasn't JSON */ }
+				if (method === 'POST' && saved) {
+					this._trackCreated(entity, { ...payload, ...saved });
+				}
+				this.notificationService.notify({ severity: Severity.Info, message: `${reg.title.replace(/s$/, '')} ${method === 'POST' ? 'created' : 'updated'}.` });
+				this._rerender();
+			},
+			deleteRecord: entity === 'demographics' ? undefined : async (id) => {
+				const confirm = await this.dialogService.confirm({
+					message: `Delete this ${reg.title.replace(/s$/, '').toLowerCase()}?`,
+					type: 'warning',
+					primaryButton: 'Delete',
+				});
+				if (!confirm.confirmed) { return; }
+				const delUrl = reg.fhirPatientScoped
+					? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+					: `${reg.basePath}/${id}`;
+				const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
+				if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
+				this._trackDeleted(entity, id);
+				this.notificationService.notify({ severity: Severity.Info, message: `${reg.title.replace(/s$/, '')} deleted.` });
+				this._rerender();
+			},
+			onChanged: () => this._rerender(),
+		});
+	}
+
+	private _openCreateModal(entity: string): void {
+		this._openManager(entity, 'create');
+	}
+
+	private _openEditModal(entity: string, item: Record<string, unknown>): void {
+		if (!this._currentPatientId) { return; }
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		if (!reg) { return; }
+		const fields = this._entityFields(entity);
+		if (fields.length === 0) { return; }
+		openListAndFormDialog({
+			title: reg.title,
+			themeAnchor: this.root,
+			fields,
+			listColumns: reg.columns,
+			initialMode: 'edit',
+			initialItem: item,
+			loadList: () => this._loadEntityList(entity),
+			saveRecord: async (next, existingId) => {
+				if (entity === 'encounters') {
+					const res = await this._saveEncounterComposition(next, existingId);
+					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+					let saved: Record<string, unknown> | null = null;
+					try {
+						const j = await res.json();
+						const cand = (j?.data ?? j) as Record<string, unknown> | null;
+						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+					} catch { /* */ }
+					this._trackCreated(entity, { ...item, ...next, ...(saved || {}) });
+					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter updated.' });
+					this._rerender();
+					return;
+				}
+				const { url, method } = this._saveUrl(entity, existingId);
+				const payload: Record<string, unknown> = { ...item, ...next };
+				if (!reg.nonFhir && entity !== 'demographics') {
+					payload.patientId = this._currentPatientId;
+				}
+				const res = await this.apiService.fetch(url, {
+					method,
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+				// Track the updated record so the dashboard reflects the edit
+				// immediately, before the FHIR search index catches up.
+				let saved: Record<string, unknown> | null = null;
+				try {
+					const j = await res.json();
+					const cand = (j?.data ?? j) as Record<string, unknown> | null;
+					if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+				} catch { /* */ }
+				this._trackCreated(entity, { ...payload, ...(saved || {}) });
+				this.notificationService.notify({ severity: Severity.Info, message: `${reg.title.replace(/s$/, '')} updated.` });
+				this._rerender();
+			},
+			deleteRecord: entity === 'demographics' ? undefined : async (id) => {
+				const confirm = await this.dialogService.confirm({
+					message: `Delete this ${reg.title.replace(/s$/, '').toLowerCase()}?`,
+					type: 'warning',
+					primaryButton: 'Delete',
+				});
+				if (!confirm.confirmed) { return; }
+				const delUrl = reg.fhirPatientScoped
+					? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+					: `${reg.basePath}/${id}`;
+				const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
+				if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
+				this._trackDeleted(entity, id);
+				this.notificationService.notify({ severity: Severity.Info, message: `${reg.title.replace(/s$/, '')} deleted.` });
+				this._rerender();
+			},
+			onChanged: () => this._rerender(),
+		});
+	}
+
+	private async _deleteItem(entity: string, item: Record<string, unknown>): Promise<void> {
+		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
+		if (!reg) { return; }
+		const id = String(item.id || item.fhirId || '');
+		if (!id) { return; }
+		const r = await this.dialogService.confirm({
+			message: `Delete this ${reg.title.replace(/s$/, '').toLowerCase()}?`,
+			type: 'warning',
+			primaryButton: 'Delete',
+		});
+		if (!r.confirmed) { return; }
+		try {
+			const delUrl = reg.fhirPatientScoped
+				? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+				: `${reg.basePath}/${id}`;
+			const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
+			if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
+			this._trackDeleted(entity, id);
+			this.notificationService.notify({ severity: Severity.Info, message: `${reg.title.replace(/s$/, '')} deleted.` });
+			this._rerender();
+		} catch (err) {
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
 
 	private _findReusableSideEditor(): { editor: EditorInput; groupId: number } | undefined {
 		// Any focused PatientChartEditorInput or EncounterFormEditorInput for
@@ -124,46 +850,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		void this._loadAndRender(patientId, patientName, appointmentId);
 	}
 
-	private _openNewEncounter(): void {
-		if (!this._currentPatientId) { return; }
-
-		// Enforce one encounter per appointment: if today's appointment
-		// already has an encounter linked, surface a notification and open
-		// the existing encounter in the side panel instead of starting a
-		// new draft.
-		const apt = this._currentAppointment;
-		const appointmentId = apt
-			? String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '')
-			: String(this._lastRenderArgs?.appointmentId || '');
-		const existingEncounterId = apt
-			? String(apt.encounterId || (apt.encounter as Record<string, unknown> | undefined)?.id || '')
-			: '';
-
-		if (existingEncounterId) {
-			this.notificationService.notify({
-				severity: Severity.Info,
-				message: 'An encounter has already been created for this appointment. Opening the existing encounter.',
-			});
-			this._openInSidePanel(new EncounterFormEditorInput(
-				this._currentPatientId,
-				existingEncounterId,
-				this._currentPatientName,
-				'Encounter',
-				undefined,
-				appointmentId || undefined,
-			));
-			return;
-		}
-
-		this._openInSidePanel(new EncounterFormEditorInput(
-			this._currentPatientId,
-			'new',
-			this._currentPatientName,
-			'New Encounter',
-			undefined,
-			appointmentId || undefined,
-		));
-	}
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.ciyex-snapshot.ciyex-editor-root'));
@@ -253,7 +939,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		]);
 
 		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
-		this._currentAppointment = apt;
 
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -262,12 +947,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		// dateOfBirth / mrn directly.
 		const patientRaw = patient.status === 'fulfilled' ? patient.value : null;
 		const p = ((patientRaw?.data ?? patientRaw) as Record<string, unknown> | null);
-		const conds = this._list(conditions);
-		const meds = this._list(medications);
-		const vit = this._list(vitals);
-		const encs = this._list(encounters);
-		const labList = this._list(labs);
-		const payList = this._list(payments);
+		const conds = this._mergePending('problems', this._filterDeleted('problems', this._list(conditions)));
+		const meds = this._mergePending('medications', this._filterDeleted('medications', this._list(medications)));
+		const vit = this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals)));
+		const encs = this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters)));
+		const labList = this._mergePending('labs', this._filterDeleted('labs', this._list(labs)));
+		const payList = this._mergePending('payment', this._filterDeleted('payment', this._list(payments)));
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
 
@@ -347,24 +1032,24 @@ export class PatientSnapshotEditor extends EditorPane {
 		actions.style.cssText = 'position:absolute;top:18px;right:24px;display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
 		const primary: QuickAction[] = [
-			{ icon: 'add', title: 'New Encounter', onClick: () => this._openNewEncounter() },
-			{ icon: '', customClass: 'ehr-patient-icon', title: 'Edit Demographics', onClick: () => this._openChartAt('demographics') },
-			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openChartAt('payment') },
-			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openChartAt('billing') },
+			{ icon: 'add', title: 'New Encounter', onClick: () => this._openCreateModal('encounters') },
+			{ icon: '', customClass: 'ehr-patient-icon', title: 'Edit Demographics', onClick: () => this._openCreateModal('demographics') },
+			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openCreateModal('payment') },
+			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openCreateModal('claims') },
 		];
 		for (const a of primary) {
 			this._renderIconBtn(actions, a);
 		}
 
 		const overflowItems: QuickAction[] = [
-			{ icon: 'pulse', title: 'Record Vitals', onClick: () => this._openChartAt('vitals') },
-			{ icon: 'warning', title: 'Add Problem', onClick: () => this._openChartAt('problems') },
-			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openChartAt('medications') },
-			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openChartAt('insurance') },
-			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openChartAt('labs') },
-			{ icon: 'note', title: 'Add Visit Note', onClick: () => this._openChartAt('visit-notes') },
-			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openChartAt('statements') },
-			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openChartAt('claims') },
+			{ icon: 'pulse', title: 'Record Vitals', onClick: () => this._openCreateModal('vitals') },
+			{ icon: 'warning', title: 'Add Problem', onClick: () => this._openCreateModal('problems') },
+			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openCreateModal('medications') },
+			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openCreateModal('insurance') },
+			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openCreateModal('labs') },
+			{ icon: 'note', title: 'Add Visit Note', onClick: () => this._openCreateModal('visit-notes') },
+			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openCreateModal('statements') },
+			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openCreateModal('claims') },
 		];
 		this._renderOverflowBtn(actions, overflowItems);
 	}
@@ -615,27 +1300,27 @@ export class PatientSnapshotEditor extends EditorPane {
 			const onset = c.onsetDate || c.onsetDateTime || c.recordedDate || '';
 			const yr = onset ? new Date(String(onset)).getFullYear() : '';
 			return { primary: String(name), secondary: yr ? String(yr) : '', badge: { text: 'Active', color: '#22c55e' } };
-		}, () => this._openChartAt('problems'));
+		}, () => this._openCreateModal('problems'), 'problems');
 
 		this._renderCard(grid, 'medications', 'symbol-method', 'Medications', meds, (m) => {
 			const name = m.medicationName || m.name || '—';
 			const dose = m.dosage || '';
 			const freq = m.frequency || '';
 			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
-		}, () => this._openChartAt('medications'));
+		}, () => this._openCreateModal('medications'), 'medications');
 
 		this._renderVitalsCard(grid, vit);
 		this._renderPaymentsCard(grid, payments, statements);
 
 		// Middle row: Visit History (2 cols) + Encounter History (2 cols)
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openNewEncounter());
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('encounters'));
 		this._renderEncounterRows(visitCard, encs);
 
-		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openNewEncounter());
+		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openCreateModal('encounters'));
 		this._renderEncounterClinicalRows(encCard, encs);
 
 		// Bottom row: Lab Results (full width)
-		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openChartAt('labs'));
+		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openCreateModal('labs'));
 		this._renderLabRows(labCard, labs);
 	}
 
@@ -649,8 +1334,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 80px;gap:0;';
-		for (const lbl of ['Date', 'Chief Complaint / Diagnosis', 'Status']) {
+		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 80px 56px;gap:0;';
+		for (const lbl of ['Date', 'Chief Complaint / Diagnosis', 'Status', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
@@ -679,6 +1364,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			const sb = DOM.append(statusCell, DOM.$('span'));
 			sb.textContent = String(status);
 			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
+
+			this._renderGridRowActions(table, 'visit-notes', enc);
 		}
 		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}
@@ -691,6 +1378,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		items: Record<string, unknown>[],
 		row: (item: Record<string, unknown>) => { primary: string; secondary: string; badge?: { text: string; color: string } },
 		onAdd?: () => void,
+		entity?: string,
 	): HTMLElement {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;display:flex;flex-direction:column;min-height:140px;';
@@ -727,15 +1415,56 @@ export class PatientSnapshotEditor extends EditorPane {
 				b.textContent = r.badge.text;
 				b.style.cssText = `font-size:9px;padding:2px 6px;border-radius:8px;background:${r.badge.color}20;color:${r.badge.color};font-weight:700;white-space:nowrap;flex-shrink:0;`;
 			}
+			if (entity) { this._attachRowActions(rowEl, entity, item); }
 		}
 		this._renderPagerFooter(card, pageKey, pageIdx, pageCount, total);
 		return card;
 	}
 
+	/**
+	 * Append hover-reveal Edit + Delete icons to a dashboard card row, and
+	 * wire row-click to the edit modal. Keeps the row compact in its idle
+	 * state and only surfaces actions when the user hovers/focuses.
+	 */
+	private _attachRowActions(rowEl: HTMLElement, entity: string, item: Record<string, unknown>): void {
+		const actions = DOM.append(rowEl, DOM.$('div'));
+		actions.style.cssText = 'display:flex;align-items:center;gap:2px;flex-shrink:0;opacity:0;transition:opacity 0.12s ease-out;';
+
+		const mkBtn = (codicon: string, title: string, onClick: (e: Event) => void): HTMLButtonElement => {
+			const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			b.title = title;
+			b.setAttribute('aria-label', title);
+			b.style.cssText = 'width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+			const ico = DOM.append(b, DOM.$('span.codicon.codicon-' + codicon));
+			(ico as HTMLElement).style.cssText = 'font-size:13px;';
+			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; b.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; b.style.borderColor = 'transparent'; });
+			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(e); });
+			return b;
+		};
+
+		mkBtn('edit', 'Edit', () => this._openEditModal(entity, item));
+		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
+
+		rowEl.style.cursor = 'pointer';
+		rowEl.addEventListener('mouseenter', () => {
+			actions.style.opacity = '1';
+			rowEl.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.08))';
+		});
+		rowEl.addEventListener('mouseleave', () => {
+			actions.style.opacity = '0';
+			rowEl.style.background = '';
+		});
+		rowEl.addEventListener('click', (e) => {
+			if ((e.target as HTMLElement).closest('button')) { return; }
+			this._openEditModal(entity, item);
+		});
+	}
+
 	private _renderVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[]): void {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
-		this._cardHeader(card, 'pulse', 'Latest Vitals', vit.length, () => this._openChartAt('vitals'));
+		this._cardHeader(card, 'pulse', 'Latest Vitals', vit.length, () => this._openCreateModal('vitals'));
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
@@ -790,13 +1519,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				const wt = v.weightKg || '';
 				const summary = [bp ? `BP ${bp}` : '', wt ? `Wt ${wt} kg` : ''].filter(Boolean).join(' · ') || '—';
 				const row = DOM.append(body, DOM.$('div'));
-				row.style.cssText = 'display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:11px;';
+				row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:11px;';
 				const dateEl = DOM.append(row, DOM.$('span'));
 				dateEl.textContent = dateStr;
 				dateEl.style.cssText = 'color:var(--vscode-descriptionForeground);';
 				const summaryEl = DOM.append(row, DOM.$('span'));
 				summaryEl.textContent = summary;
-				summaryEl.style.cssText = 'color:var(--vscode-editor-foreground);font-weight:500;';
+				summaryEl.style.cssText = 'color:var(--vscode-editor-foreground);font-weight:500;flex:1;text-align:right;';
+				this._attachRowActions(row, 'vitals', v);
 			}
 			this._renderPagerFooter(card, 'vitals-history', pageIdx, pageCount, total);
 		}
@@ -805,7 +1535,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _renderPaymentsCard(parent: HTMLElement, payments: Record<string, unknown>[], statements: Record<string, unknown>[]): void {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
-		this._cardHeader(card, 'credit-card', 'Financials', payments.length, () => this._openChartAt('payment'));
+		this._cardHeader(card, 'credit-card', 'Financials', payments.length, () => this._openCreateModal('payment'));
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
@@ -851,6 +1581,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					amtEl.textContent = isNaN(amtNum) ? String(amt) : `$${amtNum.toFixed(2)}`;
 					amtEl.style.cssText = 'font-size:13px;font-weight:700;color:#22c55e;';
 				}
+				this._attachRowActions(r, 'payment', pay);
 			}
 			this._renderPagerFooter(card, 'payments', pageIdx, pageCount, total);
 		} else {
@@ -877,8 +1608,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 140px 80px 80px;gap:0;';
-		for (const lbl of ['Date', 'Type / Provider', 'Location', 'Status', 'Notes']) {
+		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 140px 80px 80px 56px;gap:0;';
+		for (const lbl of ['Date', 'Type / Provider', 'Location', 'Status', 'Notes', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
@@ -913,8 +1644,35 @@ export class PatientSnapshotEditor extends EditorPane {
 					if (isNotes) { cell.style.color = 'var(--vscode-descriptionForeground)'; cell.style.fontSize = '11px'; }
 				}
 			}
+			this._renderGridRowActions(table, 'visit-notes', enc);
 		}
 		this._renderPagerFooter(card, 'encounters', pageIdx, pageCount, total);
+	}
+
+	/**
+	 * Append a trailing actions cell to a grid-layout row. Used by the
+	 * encounter / lab tables on the snapshot dashboard so users can edit or
+	 * delete records inline without leaving the page.
+	 */
+	private _renderGridRowActions(table: HTMLElement, entity: string, item: Record<string, unknown>): void {
+		const cell = DOM.append(table, DOM.$('div'));
+		cell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:2px;';
+
+		const mkBtn = (codicon: string, title: string, onClick: () => void): HTMLButtonElement => {
+			const b = DOM.append(cell, DOM.$('button')) as HTMLButtonElement;
+			b.title = title;
+			b.setAttribute('aria-label', title);
+			b.style.cssText = 'width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+			const ico = DOM.append(b, DOM.$('span.codicon.codicon-' + codicon));
+			(ico as HTMLElement).style.cssText = 'font-size:12px;';
+			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; b.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; b.style.borderColor = 'transparent'; });
+			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+			return b;
+		};
+
+		mkBtn('edit', 'Edit', () => this._openEditModal(entity, item));
+		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 	}
 
 	private _renderLabRows(card: HTMLElement, labs: Record<string, unknown>[]): void {
@@ -927,8 +1685,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:1fr 100px 80px 50px;gap:0;';
-		for (const lbl of ['Test', 'Date', 'Value', 'Flag']) {
+		table.style.cssText = 'display:grid;grid-template-columns:1fr 100px 80px 50px 56px;gap:0;';
+		for (const lbl of ['Test', 'Date', 'Value', 'Flag', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
@@ -960,6 +1718,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					cell.textContent = txt;
 				}
 			}
+			this._renderGridRowActions(table, 'labs', lab);
 		}
 		this._renderPagerFooter(card, 'labs', pageIdx, pageCount, total);
 	}

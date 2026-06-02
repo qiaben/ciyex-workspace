@@ -556,6 +556,13 @@ export interface IEditDialogOptions {
 	onSave: (next: Record<string, string>) => Promise<void> | void;
 	primaryLabel?: string;
 	themeAnchor?: HTMLElement;
+	/** Surface style:
+	 *  - `'drawer'` (default): right-side slide-out, full viewport height.
+	 *    Matches the EHR-UI Patient Recall edit flow.
+	 *  - `'modal'`: centred popup overlay (matches the snapshot page's
+	 *    `+` menu and dashboard card CRUD).
+	 */
+	variant?: 'drawer' | 'modal';
 }
 
 /**
@@ -844,6 +851,8 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	const titlebarEl = doc.querySelector('.part.titlebar');
 	const titlebarHeight = titlebarEl ? Math.round((titlebarEl as HTMLElement).getBoundingClientRect().height) : 35;
 
+	const isModal = opts.variant === 'modal';
+
 	const overlay = doc.createElement('div');
 	overlay.className = 'ciyex-edit-dialog-overlay';
 	// Keep the overlay transparent — only the inline rgba(0,0,0,0.25)
@@ -852,10 +861,31 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	// NOT also copy the workbench classList onto the overlay because that
 	// turned the entire left half into a solid black panel — the second
 	// `.monaco-workbench` element painted over the real workbench content.
-	overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);`;
+	// Modal variant centres the dialog over the workbench instead of
+	// docking it to the right edge.
+	overlay.style.cssText = isModal
+		? `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;`
+		: `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:stretch;justify-content:flex-end;background:rgba(0,0,0,0.25);`;
 
 	const dialog = doc.createElement('div');
-	dialog.style.cssText = [
+	dialog.style.cssText = (isModal ? [
+		'width:640px',
+		'max-width:min(92vw,640px)',
+		`max-height:calc(100vh - ${titlebarHeight}px - 48px)`,
+		'display:flex',
+		'flex-direction:column',
+		'overflow:hidden',
+		`background:${colors.background}`,
+		`color:${colors.foreground}`,
+		`border:1px solid ${colors.border}`,
+		'border-radius:12px',
+		`box-shadow:0 24px 64px ${colors.shadow}`,
+		'font-size:13px',
+		// Subtle fade + scale matches typical modal entrance.
+		'transform:scale(0.96)',
+		'opacity:0',
+		'transition:transform 0.18s ease-out, opacity 0.18s ease-out',
+	] : [
 		'width:520px',
 		'max-width:90vw',
 		`height:calc(100vh - ${titlebarHeight}px)`,
@@ -870,7 +900,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		// Slide-in animation - matches the React drawer in the web EHR UI.
 		'transform:translateX(100%)',
 		'transition:transform 0.2s ease-out',
-	].join(';');
+	]).join(';');
 
 	const header = doc.createElement('div');
 	header.style.cssText = `padding:18px 22px;border-bottom:1px solid ${colors.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
@@ -1322,12 +1352,406 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 	// Defer the transform reset by one frame so the browser registers the
 	// initial translateX(100%) before transitioning to 0 - otherwise the
-	// drawer just snaps in.
+	// drawer just snaps in. Modal variant fades + scales instead.
 	const win = DOM.getWindow(opts.themeAnchor || overlay) || mainWindow;
 	win.requestAnimationFrame(() => {
-		dialog.style.transform = 'translateX(0)';
+		if (isModal) {
+			dialog.style.transform = 'scale(1)';
+			dialog.style.opacity = '1';
+		} else {
+			dialog.style.transform = 'translateX(0)';
+		}
 	});
 
 	const first = opts.fields.length > 0 ? inputs.get(opts.fields[0].key) : undefined;
 	first?.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Unified list + create/edit popup
+// ---------------------------------------------------------------------------
+
+export interface IListColumn {
+	key: string;
+	label: string;
+	width?: string;
+	format?: (val: unknown, row: Record<string, unknown>) => string;
+}
+
+export interface IListAndFormDialogOptions {
+	title: string;
+	themeAnchor?: HTMLElement;
+	fields: IEditFieldDef[];
+	listColumns: IListColumn[];
+	loadList: () => Promise<Array<Record<string, unknown>>>;
+	saveRecord: (values: Record<string, string>, existingId?: string) => Promise<void>;
+	deleteRecord?: (id: string) => Promise<void>;
+	/** Resolve the id off a row. Defaults to row.id ?? row.fhirId. */
+	getRowId?: (row: Record<string, unknown>) => string;
+	initialMode?: 'list' | 'create' | 'edit';
+	/** Required when initialMode is 'edit' — opens the form pre-populated with this row. */
+	initialItem?: Record<string, unknown>;
+	primaryLabel?: string;
+	onChanged?: () => void;
+}
+
+/**
+ * Open a single centred popup that toggles between a list view (existing
+ * records with edit + delete actions and a `+ Add` button) and a form view
+ * (create / edit). Switching modes never closes the popup — the same overlay
+ * is reused, so users perceive one unified surface for managing the resource.
+ */
+export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
+	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
+	const workbenchRoot = findWorkbenchRoot(opts.themeAnchor, doc);
+
+	const getRowId = opts.getRowId || ((r: Record<string, unknown>) => String(r.id ?? r.fhirId ?? ''));
+
+	// eslint-disable-next-line no-restricted-syntax
+	const titlebarEl = doc.querySelector('.part.titlebar');
+	const titlebarHeight = titlebarEl ? Math.round((titlebarEl as HTMLElement).getBoundingClientRect().height) : 35;
+
+	const overlay = doc.createElement('div');
+	overlay.className = 'ciyex-edit-dialog-overlay';
+	overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;`;
+
+	const dialog = doc.createElement('div');
+	dialog.className = 'monaco-workbench';
+	dialog.style.cssText = [
+		'width:760px',
+		'max-width:min(95vw,760px)',
+		`max-height:calc(100vh - ${titlebarHeight}px - 48px)`,
+		'display:flex',
+		'flex-direction:column',
+		'overflow:hidden',
+		'background:var(--vscode-editor-background)',
+		'color:var(--vscode-editor-foreground)',
+		'border:1px solid var(--vscode-editorWidget-border)',
+		'border-radius:12px',
+		'box-shadow:0 24px 64px rgba(0,0,0,0.45)',
+		'font-size:13px',
+		'transform:scale(0.96)',
+		'opacity:0',
+		'transition:transform 0.18s ease-out, opacity 0.18s ease-out',
+	].join(';');
+	// Strip the className — we only used it briefly so the workbench theme
+	// vars resolve inside an inner container. The actual class is set below.
+	dialog.className = '';
+
+	const header = doc.createElement('div');
+	header.style.cssText = 'padding:14px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
+	const titleEl = doc.createElement('span');
+	titleEl.style.cssText = 'flex:1;font-size:15px;font-weight:600;';
+	header.appendChild(titleEl);
+
+	const addBtn = doc.createElement('button');
+	addBtn.type = 'button';
+	addBtn.style.cssText = 'padding:6px 12px;border:none;border-radius:6px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;';
+	const addBtnIco = doc.createElement('span');
+	addBtnIco.className = 'codicon codicon-add';
+	addBtnIco.style.fontSize = '14px';
+	addBtn.appendChild(addBtnIco);
+	const addBtnLbl = doc.createElement('span');
+	addBtnLbl.textContent = 'Add';
+	addBtn.appendChild(addBtnLbl);
+	header.appendChild(addBtn);
+
+	const closeBtn = doc.createElement('button');
+	closeBtn.type = 'button';
+	closeBtn.setAttribute('aria-label', 'Close');
+	closeBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.7;font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px;margin-left:4px;';
+	closeBtn.textContent = '×';
+	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
+	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.7'; });
+	header.appendChild(closeBtn);
+	dialog.appendChild(header);
+
+	// Body holds the list / form views. Only one is visible at a time.
+	const body = doc.createElement('div');
+	body.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:300px;';
+	dialog.appendChild(body);
+
+	overlay.appendChild(dialog);
+
+	let currentMode: 'list' | 'form' = 'list';
+	let editingItem: Record<string, unknown> | null = null;
+	let listRows: Array<Record<string, unknown>> = [];
+	let listLoaded = false;
+
+	const close = (): void => {
+		if (!overlay.parentElement) { return; }
+		overlay.parentElement.removeChild(overlay);
+		doc.removeEventListener('keydown', onKey, true);
+		overlay.removeEventListener('click', onOverlayClick);
+	};
+	const onKey = (e: KeyboardEvent): void => {
+		if (e.key === 'Escape') { close(); }
+	};
+	const onOverlayClick = (e: MouseEvent): void => {
+		if (e.target === overlay) { close(); }
+	};
+
+	const renderList = async (): Promise<void> => {
+		currentMode = 'list';
+		editingItem = null;
+		titleEl.textContent = opts.title;
+		addBtn.style.display = '';
+		body.replaceChildren();
+
+		const toolbar = doc.createElement('div');
+		toolbar.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;';
+		const search = doc.createElement('input') as HTMLInputElement;
+		search.type = 'search';
+		search.placeholder = 'Filter...';
+		search.style.cssText = 'flex:1;padding:6px 10px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
+		toolbar.appendChild(search);
+		body.appendChild(toolbar);
+
+		const scroll = doc.createElement('div');
+		scroll.style.cssText = 'flex:1;overflow-y:auto;padding:0 20px 16px;';
+		body.appendChild(scroll);
+
+		if (!listLoaded) {
+			const loading = doc.createElement('div');
+			loading.textContent = 'Loading...';
+			loading.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+			scroll.appendChild(loading);
+			try {
+				listRows = await opts.loadList();
+				listLoaded = true;
+			} catch {
+				listRows = [];
+				listLoaded = true;
+			}
+			scroll.replaceChildren();
+		}
+
+		const renderRows = (filter: string): void => {
+			scroll.replaceChildren();
+			const lq = filter.trim().toLowerCase();
+			const filtered = lq
+				? listRows.filter(r => opts.listColumns.some(c => {
+					const raw = (r[c.key] ?? '') as unknown;
+					const txt = c.format ? c.format(raw, r) : String(raw);
+					return txt.toLowerCase().includes(lq);
+				}))
+				: listRows;
+
+			if (filtered.length === 0) {
+				const empty = doc.createElement('div');
+				empty.textContent = lq ? 'No matches.' : 'No records yet. Click + Add to create the first one.';
+				empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+				scroll.appendChild(empty);
+				return;
+			}
+
+			const table = doc.createElement('div');
+			const cols = opts.listColumns.map(c => c.width || '1fr').join(' ') + ' 72px';
+			table.style.cssText = `display:grid;grid-template-columns:${cols};gap:0;margin-top:10px;`;
+
+			for (const c of opts.listColumns) {
+				const h = doc.createElement('div');
+				h.textContent = c.label;
+				h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:6px 8px 6px 0;border-bottom:2px solid var(--vscode-editorWidget-border);';
+				table.appendChild(h);
+			}
+			const hAct = doc.createElement('div');
+			hAct.style.cssText = 'border-bottom:2px solid var(--vscode-editorWidget-border);';
+			table.appendChild(hAct);
+
+			for (const row of filtered) {
+				for (const c of opts.listColumns) {
+					const cell = doc.createElement('div');
+					const raw = (row[c.key] ?? '') as unknown;
+					cell.textContent = c.format ? c.format(raw, row) : String(raw || '—');
+					cell.style.cssText = 'padding:8px 8px 8px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
+					cell.addEventListener('click', () => { renderForm(row); });
+					table.appendChild(cell);
+				}
+				const actCell = doc.createElement('div');
+				actCell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:2px;';
+				const mkAct = (codicon: string, title: string, onClick: () => void): HTMLButtonElement => {
+					const b = doc.createElement('button') as HTMLButtonElement;
+					b.title = title;
+					b.style.cssText = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+					const ico = doc.createElement('span');
+					ico.className = `codicon codicon-${codicon}`;
+					ico.style.fontSize = '13px';
+					b.appendChild(ico);
+					b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; b.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+					b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; b.style.borderColor = 'transparent'; });
+					b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+					actCell.appendChild(b);
+					return b;
+				};
+				mkAct('edit', 'Edit', () => renderForm(row));
+				if (opts.deleteRecord) {
+					mkAct('trash', 'Delete', () => { void handleDelete(row); });
+				}
+				table.appendChild(actCell);
+			}
+			scroll.appendChild(table);
+		};
+		renderRows('');
+		search.addEventListener('input', () => renderRows(search.value));
+	};
+
+	const handleDelete = async (row: Record<string, unknown>): Promise<void> => {
+		if (!opts.deleteRecord) { return; }
+		const id = getRowId(row);
+		if (!id) { return; }
+		try {
+			await opts.deleteRecord(id);
+			listLoaded = false;
+			opts.onChanged?.();
+			await renderList();
+		} catch (err) {
+			const win2 = doc.defaultView;
+			win2?.alert?.(err instanceof Error ? err.message : String(err));
+		}
+	};
+
+	const renderForm = (existing: Record<string, unknown> | null): void => {
+		currentMode = 'form';
+		editingItem = existing;
+		const isEdit = !!existing;
+		titleEl.textContent = `${isEdit ? 'Edit' : 'Add'} ${opts.title.replace(/s$/, '') || opts.title}`;
+		addBtn.style.display = 'none';
+		body.replaceChildren();
+
+		const formScroll = doc.createElement('div');
+		formScroll.style.cssText = 'flex:1;overflow-y:auto;padding:16px 20px;';
+		body.appendChild(formScroll);
+
+		const form = doc.createElement('form');
+		form.setAttribute('autocomplete', 'off');
+		form.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;column-gap:14px;row-gap:12px;';
+		form.addEventListener('submit', (e) => { e.preventDefault(); });
+		formScroll.appendChild(form);
+
+		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+		for (const field of opts.fields) {
+			const widthPct = field.widthPct ?? 100;
+			const spanFull = widthPct >= 75 || field.kind === 'textarea';
+			const wrap = doc.createElement('div');
+			wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:flex;flex-direction:column;gap:4px;min-width:0;`;
+			const lbl = doc.createElement('label');
+			lbl.textContent = field.label + (field.required ? ' *' : '');
+			lbl.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-foreground);opacity:0.85;';
+			wrap.appendChild(lbl);
+
+			const initial = String((existing?.[field.key] ?? '') as string | number);
+			let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+			if (field.kind === 'textarea') {
+				const ta = doc.createElement('textarea');
+				ta.rows = 3;
+				ta.value = initial;
+				ta.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;resize:vertical;min-height:60px;';
+				input = ta;
+			} else if (field.kind === 'select') {
+				const sel = doc.createElement('select');
+				sel.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
+				for (const o of field.options || []) {
+					const opt = doc.createElement('option');
+					opt.value = o.value;
+					opt.textContent = o.label;
+					if (o.value === initial) { opt.selected = true; }
+					sel.appendChild(opt);
+				}
+				input = sel;
+			} else {
+				const inp = doc.createElement('input') as HTMLInputElement;
+				inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date', 'time'].includes(field.kind) ? field.kind : 'text';
+				inp.value = initial;
+				inp.placeholder = field.placeholder || '';
+				inp.autocomplete = 'off';
+				inp.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
+				input = inp;
+			}
+			(input as HTMLElement).id = `lf-${field.key}`;
+			wrap.appendChild(input);
+			inputs.set(field.key, input);
+
+			if (field.hint) {
+				const hint = doc.createElement('div');
+				hint.textContent = field.hint;
+				hint.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+				wrap.appendChild(hint);
+			}
+			form.appendChild(wrap);
+		}
+
+		const footer = doc.createElement('div');
+		footer.style.cssText = 'padding:12px 20px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
+		const errorMsg = doc.createElement('span');
+		errorMsg.style.cssText = 'flex:1;color:#ef4444;font-size:12px;';
+		footer.appendChild(errorMsg);
+
+		const backBtn = doc.createElement('button');
+		backBtn.type = 'button';
+		backBtn.textContent = isEdit ? 'Cancel' : 'Back to list';
+		backBtn.style.cssText = 'padding:6px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:transparent;color:var(--vscode-foreground);font-size:12px;cursor:pointer;';
+		backBtn.addEventListener('click', () => { void renderList(); });
+		footer.appendChild(backBtn);
+
+		const saveBtn = doc.createElement('button');
+		saveBtn.type = 'button';
+		saveBtn.textContent = opts.primaryLabel || (isEdit ? 'Save Changes' : 'Save');
+		saveBtn.style.cssText = 'padding:6px 14px;border:none;border-radius:6px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:500;cursor:pointer;';
+		saveBtn.addEventListener('click', async () => {
+			errorMsg.textContent = '';
+			const result: Record<string, string> = {};
+			for (const f of opts.fields) {
+				const v = inputs.get(f.key)?.value ?? '';
+				if (f.required && !v.trim()) {
+					errorMsg.textContent = `${f.label} is required`;
+					return;
+				}
+				result[f.key] = v;
+			}
+			saveBtn.disabled = true;
+			const original = saveBtn.textContent;
+			saveBtn.textContent = 'Saving...';
+			try {
+				const existingId = isEdit && editingItem ? getRowId(editingItem) : undefined;
+				await opts.saveRecord(result, existingId);
+				listLoaded = false;
+				opts.onChanged?.();
+				await renderList();
+			} catch (err) {
+				errorMsg.textContent = err instanceof Error ? err.message : String(err);
+				saveBtn.disabled = false;
+				saveBtn.textContent = original;
+			}
+		});
+		footer.appendChild(saveBtn);
+		body.appendChild(footer);
+
+		const firstField = opts.fields[0];
+		if (firstField) { inputs.get(firstField.key)?.focus(); }
+	};
+
+	addBtn.addEventListener('click', () => renderForm(null));
+	closeBtn.addEventListener('click', () => close());
+
+	doc.addEventListener('keydown', onKey, true);
+	overlay.addEventListener('click', onOverlayClick);
+	workbenchRoot.appendChild(overlay);
+
+	// initial mode
+	if (opts.initialMode === 'create') {
+		renderForm(null);
+	} else if (opts.initialMode === 'edit' && opts.initialItem) {
+		renderForm(opts.initialItem);
+	} else {
+		void renderList();
+	}
+
+	const win = DOM.getWindow(opts.themeAnchor || overlay) || mainWindow;
+	win.requestAnimationFrame(() => {
+		dialog.style.transform = 'scale(1)';
+		dialog.style.opacity = '1';
+	});
+
+	void currentMode; // referenced via state captured in closures
 }
