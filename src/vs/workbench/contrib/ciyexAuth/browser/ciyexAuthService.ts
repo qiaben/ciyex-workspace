@@ -376,7 +376,7 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 
 			if (!res.ok) {
 				const msg = (res.status === 502 || res.status === 503 || res.status === 504)
-					? 'Server is temporarily unavailable. Please try again in a moment.'
+					? 'Server is temporarily unavailable. Please try again or use Server Settings to switch environment.'
 					: `Unable to verify your account (HTTP ${res.status}).`;
 				return { exists: false, authMethods: [], idps: [], orgAlias: '', orgName: '', error: msg };
 			}
