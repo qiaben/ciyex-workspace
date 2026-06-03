@@ -1805,7 +1805,13 @@ export class PatientChartEditor extends EditorPane {
 
 		// Header bar
 		this.headerBar = DOM.append(this.root, DOM.$('.chart-header'));
-		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;align-items:center;gap:10px;background:var(--vscode-editor-background);';
+		// Single-line header: nowrap + overflow hidden. Every item below is
+		// white-space:nowrap and flex-shrink:0 except the demographics cluster,
+		// which is the one flexible part that ellipsis-truncates when the pane is
+		// narrow (e.g. the create/edit form panel open). This keeps the name,
+		// pills and action buttons on ONE line and always visible — previously the
+		// items shrank and their text re-wrapped, pushing the header to 3 lines.
+		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;flex-wrap:nowrap;align-items:center;gap:10px;background:var(--vscode-editor-background);overflow:hidden;white-space:nowrap;';
 
 		// Body: sidebar + main
 		const body = DOM.append(this.root, DOM.$('.chart-body'));
@@ -1835,7 +1841,11 @@ export class PatientChartEditor extends EditorPane {
 		// patient header + chart sidebar so only the active tab content is
 		// visible. The full chart remains available via the regular flow.
 		const focused = !!input.focused;
-		this.headerBar.style.display = focused ? 'none' : '';
+		// Restore 'flex' (not '') when un-hiding: the header's cssText declares
+		// display:flex, but setting it to '' removes the property and the <div>
+		// falls back to display:block, which stacked the demographics/buttons onto
+		// separate lines (the 3-line header QA flagged). Keep it a flex row.
+		this.headerBar.style.display = focused ? 'none' : 'flex';
 		this.sidebarEl.style.display = focused ? 'none' : '';
 		if (focused) {
 			this.mainEl.style.padding = '12px 18px';
@@ -2554,7 +2564,7 @@ export class PatientChartEditor extends EditorPane {
 		const back = DOM.append(this.headerBar, DOM.$('button'));
 		back.textContent = '←';
 		back.title = 'Back';
-		back.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px;';
+		back.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px;flex-shrink:0;';
 		back.addEventListener('mouseenter', () => { back.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
 		back.addEventListener('mouseleave', () => { back.style.background = 'transparent'; });
 		back.addEventListener('click', () => { this.group.closeEditor(this.input!); });
@@ -2562,13 +2572,13 @@ export class PatientChartEditor extends EditorPane {
 		// Name
 		const nameEl = DOM.append(this.headerBar, DOM.$('span'));
 		nameEl.textContent = name;
-		nameEl.style.cssText = 'font-size:14px;font-weight:700;color:var(--vscode-foreground);';
+		nameEl.style.cssText = 'font-size:14px;font-weight:700;color:var(--vscode-foreground);white-space:nowrap;flex-shrink:0;';
 
 		// MRN pill
 		if (mrn) {
 			const pill = DOM.append(this.headerBar, DOM.$('span'));
 			pill.textContent = `MRN: ${mrn}`;
-			pill.style.cssText = 'font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#3b82f6;';
+			pill.style.cssText = 'font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#3b82f6;white-space:nowrap;flex-shrink:0;';
 		}
 
 		// Demographics cluster (DOB · Sex · Phone). Grouped in one flex row with
@@ -2576,16 +2586,19 @@ export class PatientChartEditor extends EditorPane {
 		// distinct, evenly-spaced items — relying on the header's flex gap alone
 		// previously left "…11 mo)Sex: female" running together (QA spacing flag).
 		const demo = DOM.append(this.headerBar, DOM.$('div'));
-		demo.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:11px;color:var(--vscode-descriptionForeground);';
+		// The one shrinkable item: when the pane gets narrow it clips with an
+		// ellipsis instead of wrapping, so the rest of the header stays one line.
+		demo.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:11px;color:var(--vscode-descriptionForeground);min-width:0;flex-shrink:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;';
 		const addDemo = (text: string): void => {
 			if (demo.childElementCount > 0) {
 				const sep = DOM.append(demo, DOM.$('span'));
 				// allow-any-unicode-next-line
 				sep.textContent = '·';
-				sep.style.cssText = 'opacity:0.5;';
+				sep.style.cssText = 'opacity:0.5;flex-shrink:0;';
 			}
 			const el = DOM.append(demo, DOM.$('span'));
 			el.textContent = text;
+			el.style.cssText = 'white-space:nowrap;flex-shrink:0;';
 		};
 		if (dobRaw) {
 			const dobStr = this._formatDate(dobRaw);
@@ -2599,7 +2612,7 @@ export class PatientChartEditor extends EditorPane {
 		const statusPill = DOM.append(this.headerBar, DOM.$('span'));
 		statusPill.textContent = status;
 		const statusColor = status === 'Active' ? '#22c55e' : status === 'Inactive' ? '#ef4444' : '#f59e0b';
-		statusPill.style.cssText = `font-size:11px;font-weight:600;padding:2px 10px;border-radius:10px;background:${statusColor}20;color:${statusColor};`;
+		statusPill.style.cssText = `font-size:11px;font-weight:600;padding:2px 10px;border-radius:10px;background:${statusColor}20;color:${statusColor};white-space:nowrap;flex-shrink:0;`;
 
 		// Spacer
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
@@ -2607,12 +2620,12 @@ export class PatientChartEditor extends EditorPane {
 		// Action buttons
 		const newEnc = DOM.append(this.headerBar, DOM.$('button'));
 		newEnc.textContent = '+ New Encounter';
-		newEnc.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+		newEnc.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);white-space:nowrap;flex-shrink:0;';
 		newEnc.addEventListener('click', () => this._openNewEncounter());
 
 		const schedBtn = DOM.append(this.headerBar, DOM.$('button'));
 		schedBtn.textContent = '\u{1F4C5} Schedule Appointment';
-		schedBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
+		schedBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);white-space:nowrap;flex-shrink:0;';
 		schedBtn.addEventListener('click', () => this._navigate('appointments'));
 	}
 
@@ -2851,8 +2864,13 @@ export class PatientChartEditor extends EditorPane {
 	private _highlightActiveTab(): void {
 		this._tabNavMap.forEach((el, key) => {
 			const isActive = key === this.activeTab;
+			// Active item: a MUTED, theme-following selection tint (light grey on
+			// light themes, dark grey on dark) rather than `list-activeSelectionBackground`,
+			// which is a saturated blue on light themes and looked out of place on
+			// the white workbench (QA flag). The accent left-border + bold label
+			// carry the "selected" affordance, so the background can stay subtle.
 			el.style.borderLeftColor = isActive ? 'var(--vscode-focusBorder, #007acc)' : 'transparent';
-			el.style.background = isActive ? 'var(--vscode-list-activeSelectionBackground, rgba(0,120,212,0.15))' : '';
+			el.style.background = isActive ? 'var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground, rgba(127,127,127,0.12)))' : '';
 			el.style.fontWeight = isActive ? '600' : '';
 		});
 	}
@@ -5144,7 +5162,10 @@ export class PatientChartEditor extends EditorPane {
 			for (let i = 0; i < rows.length; i++) {
 				const row = rows[i];
 				if (i === idx) {
-					row.style.background = 'var(--vscode-list-activeSelectionBackground,rgba(0,120,212,0.18))';
+					// Muted, theme-following highlight (matches the sidebar active
+					// item) instead of the saturated `list-activeSelectionBackground`
+					// blue, which read as out of place on the light workbench.
+					row.style.background = 'var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground, rgba(127,127,127,0.14)))';
 					row.style.borderLeftColor = 'var(--vscode-focusBorder,#007acc)';
 					row.scrollIntoView({ block: 'nearest' });
 				} else {
