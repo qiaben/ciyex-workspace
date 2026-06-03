@@ -16,25 +16,16 @@
 .ehr-titlebar-controls {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 0 8px;
-	/* margin-left:auto pushes this group flush to the right, keeping all six icons adjacent. */
-	margin-left: auto;
+	gap: 4px;
+	margin-right: 4px;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
 	flex-shrink: 0;
 }
 
-/* Cancel margin-left:auto and center-justify so layout icons start flush after EHR icons. */
-.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
-	margin-left: 0 !important;
-	justify-content: flex-start !important;
-	padding-right: 16px !important;
-}
-
-/* Match the 8px gap used between EHR icons so all titlebar icons are equally spaced. */
+/* 4px gap between layout icons to match EHR icon spacing. */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .actions-container {
-	gap: 8px !important;
+	gap: 4px !important;
 }
 
 /* Match the 28px width of EHR action buttons so layout icons are visually the same size. */
