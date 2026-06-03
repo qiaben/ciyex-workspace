@@ -83,24 +83,37 @@ const COLORS = {
  * a light workbench QA flagged.
  */
 export function findWorkbenchRoot(anchor: HTMLElement, doc: Document): HTMLElement {
-	// First: walk up from the anchor.
-	// Skip position:fixed overlays (e.g. the EHR form drawer that copies the
-	// monaco-workbench class for CSS-var inheritance). The real workbench root
-	// has position:relative from its class styles, never position:fixed as an
-	// inline override — mounting panels inside a fixed overlay puts them in a
-	// stacking context where VS Code's own class rules may hide them.
+	// A genuine workbench root has the `monaco-workbench` class but is NOT one of
+	// the body-mounted popovers we inject (custom dropdown / search panels), which
+	// also copy that class for CSS-var inheritance and are rendered `position:fixed`.
+	// Two reasons to skip them:
+	//  1. The EHR form drawer / dropdown overlays are `position:fixed`; mounting
+	//     panels inside such a fixed overlay puts them in a stacking context where
+	//     VS Code's own class rules may hide them.
+	//  2. Those injected panels accumulate in the DOM, so a naive
+	//     `getElementsByClassName('monaco-workbench')[0]` lookup can return a
+	//     stale, zero-size panel that sits before the real workbench in document
+	//     order — anything mounted inside it is then invisible (the "Approve
+	//     Authorization" modal never appeared because showThemedModal appended it
+	//     into a leftover dropdown panel).
+	const isInjectedPanel = (e: Element): boolean =>
+		e.classList.contains('ciyex-custom-dropdown-panel') || e.classList.contains('ciyex-search-dropdown');
 	let el: HTMLElement | null = anchor;
 	while (el) {
-		if (el.classList && el.classList.contains('monaco-workbench') && el.style.position !== 'fixed') { return el; }
+		if (el.classList && el.classList.contains('monaco-workbench') && el.style.position !== 'fixed' && !isInjectedPanel(el)) { return el; }
 		el = el.parentElement;
 	}
 	// Fallback: query for the workbench root by class — VS Code itself
 	// uses this exact lookup in layout.ts. The alternative (body mount)
 	// leaves the popover outside `.monaco-workbench` where the workbench
 	// CSS variables aren't defined, so light themes render dark popovers.
+	// Skip our own injected panels so we return the actual workbench shell.
 	// eslint-disable-next-line no-restricted-syntax
-	const wb = (doc.body || doc.documentElement).getElementsByClassName('monaco-workbench')[0] as HTMLElement | undefined;
-	if (wb) { return wb; }
+	const candidates = (doc.body || doc.documentElement).getElementsByClassName('monaco-workbench');
+	for (let i = 0; i < candidates.length; i++) {
+		const cand = candidates[i] as HTMLElement;
+		if (!isInjectedPanel(cand) && cand.style.position !== 'fixed') { return cand; }
+	}
 	return doc.body || doc.documentElement;
 }
 

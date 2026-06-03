@@ -1420,6 +1420,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				visible: (item) => String(item.status || '').toLowerCase() !== 'approved',
 				// allow-any-unicode-next-line
 				label: 'Approve', icon: '✓', handler: async (item, api, reload, dlg) => {
+					console.log('[PriorAuth] Approve clicked for', item.id, item.status);
 					const current = String(item.status || '').toLowerCase();
 					if (current === 'approved') {
 						await dlg.info('This authorization is already approved.');
@@ -1436,7 +1437,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 						confirmLabel: 'Approve',
 						confirmColor: '#16a34a',
 						fields: [
-							{ key: 'authNumber', label: 'Authorization Number', type: 'text', value: String(item.authorizationNumber || ''), placeholder: 'Auth reference number' },
+							{ key: 'authNumber', label: 'Authorization Number', type: 'text', value: String(item.authNumber || item.authorizationNumber || ''), placeholder: 'Auth reference number' },
 							{ key: 'approvedUnits', label: 'Approved Units', type: 'number', value: String(item.approvedUnits || 1) },
 							{ key: 'expiryDate', label: 'Expiry Date', type: 'date', value: String(item.expiryDate || '') },
 						],

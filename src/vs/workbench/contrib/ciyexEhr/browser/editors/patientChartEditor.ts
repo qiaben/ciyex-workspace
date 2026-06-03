@@ -686,7 +686,16 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'startDate', label: 'Start Date', type: 'date' },
 					{ key: 'endDate', label: 'End Date', type: 'date' },
-					{ key: 'prescriberId', label: 'Prescriber', type: 'practitioner-search', placeholder: 'Search Prescriber' },
+					// Prescriber: store the practitioner id under `prescribingDoctor`
+					// (the key the backend medications tab_field_config maps to the
+					// FHIR MedicationRequest.requester reference) so the prescriber is
+					// actually persisted — the old `prescriberId` key matched no
+					// backend mapping and was silently dropped, leaving the table to
+					// fall back to a bare id. `relatedField` also captures the chosen
+					// NAME into the `prescriberName` companion field so the table shows
+					// the name immediately (optimistic merge) and after the backend
+					// re-fetch returns `prescribingDoctorDisplay` (QA: name not id).
+					{ key: 'prescribingDoctor', label: 'Prescriber', type: 'practitioner-search', placeholder: 'Search Prescriber', relatedField: 'prescriberName' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Active', value: 'active' },
@@ -730,38 +739,6 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
-					// Vaccine Name / Manufacturer / Site / Route are dropdowns to match
-					// the reference EHR-UI immunizations form (QA issue 10). Site + Route
-					// use the reference's exact SITE_OPTIONS / ROUTE_OPTIONS
-					// (ciyex-ehr-ui src/app/immunizations/page.tsx). Vaccine Name uses the
-					// reference CVX display list; Manufacturer uses the common vaccine
-					// manufacturer set (reference free-texts it with a "Pfizer, Moderna…"
-					// hint, so the option list mirrors that hint's intent).
-					{
-						key: 'vaccineName', label: 'Vaccine Name', type: 'select', placeholder: 'Select vaccine…', options: [
-							{ label: 'COVID-19 Pfizer-BioNTech', value: 'COVID-19 Pfizer-BioNTech' },
-							{ label: 'COVID-19 Moderna', value: 'COVID-19 Moderna' },
-							{ label: 'COVID-19 Novavax', value: 'COVID-19 Novavax' },
-							{ label: 'Influenza (Flu)', value: 'Influenza' },
-							{ label: 'Influenza, high dose', value: 'Influenza, high dose' },
-							{ label: 'Tdap (Tetanus, Diphtheria, Pertussis)', value: 'Tdap' },
-							{ label: 'Td (Tetanus, Diphtheria)', value: 'Td' },
-							{ label: 'MMR (Measles, Mumps, Rubella)', value: 'MMR' },
-							{ label: 'Varicella (Chickenpox)', value: 'Varicella' },
-							{ label: 'Hepatitis A', value: 'Hepatitis A' },
-							{ label: 'Hepatitis B', value: 'Hepatitis B' },
-							{ label: 'HPV (Human Papillomavirus)', value: 'HPV' },
-							{ label: 'Pneumococcal (PCV13)', value: 'PCV13' },
-							{ label: 'Pneumococcal (PPSV23)', value: 'PPSV23' },
-							{ label: 'Meningococcal', value: 'Meningococcal' },
-							{ label: 'Zoster (Shingles)', value: 'Zoster' },
-							{ label: 'Rotavirus', value: 'Rotavirus' },
-							{ label: 'Polio (IPV)', value: 'IPV' },
-							{ label: 'Hib (Haemophilus influenzae type b)', value: 'Hib' },
-							{ label: 'RSV', value: 'RSV' },
-							{ label: 'Other', value: 'Other' },
-						]
-					},
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
 					{
@@ -796,26 +773,15 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'manufacturer', label: 'Manufacturer', type: 'select', placeholder: 'Select manufacturer…', options: [
-							{ label: 'Pfizer', value: 'Pfizer' },
-							{ label: 'Moderna', value: 'Moderna' },
-							{ label: 'Novavax', value: 'Novavax' },
-							{ label: 'Sanofi', value: 'Sanofi' },
-							{ label: 'GlaxoSmithKline (GSK)', value: 'GlaxoSmithKline' },
-							{ label: 'Merck', value: 'Merck' },
-							{ label: 'Seqirus', value: 'Seqirus' },
-							{ label: 'Janssen (Johnson & Johnson)', value: 'Janssen' },
-							{ label: 'AstraZeneca', value: 'AstraZeneca' },
-							{ label: 'Other', value: 'Other' },
-						]
-					},
-					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Completed', value: 'completed' },
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 							{ label: 'Not Done', value: 'not-done' },
 						]
 					},
+					// Free-text Notes — maps to FHIR Immunization.note[0].text via the
+					// backend immunizations tab_field_config `notes` field.
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, placeholder: 'Notes' },
 				],
 			},
 		],
@@ -865,9 +831,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
-							{ label: 'Cancelled', value: 'cancelled' },
-							{ label: 'Draft', value: 'draft' },
-							{ label: 'Entered in Error', value: 'entered-in-error' },
+							{ label: 'Inactive', value: 'inactive' },
 						]
 					},
 					{ key: 'payerName', label: 'Insurance Company / Payer', type: 'text', required: true, placeholder: 'Insurance company name' },
@@ -988,10 +952,13 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Patient Education', columns: 2, visible: true, collapsible: false, fields: [
-					// materialId: 'search' type lets the user pick an existing education material.
-					// The save handler posts to /api/patient-education-assignments/{materialId}
-					// so this value becomes the path variable — required by the backend.
-					{ key: 'materialId', label: 'Topic / Title', type: 'search', required: true, placeholder: 'Search topic / title…', apiPath: '/api/education/materials', relatedDisplayFields: ['title'], relatedField: 'materialTitle' },
+					// Topic / Title is a free-text input — the user types the topic
+					// directly instead of picking from an existing-material dropdown.
+					// The save handler (tab.key === 'education') turns the typed title
+					// into an EducationMaterial (POST /api/education/materials) and
+					// assigns the resulting id, since /api/education/assignments
+					// requires a real materialId FK.
+					{ key: 'materialTitle', label: 'Topic / Title', type: 'text', required: true, placeholder: 'Enter topic / title…' },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Select Status…', value: '' },
@@ -2055,8 +2022,12 @@ export class PatientChartEditor extends EditorPane {
 		const prefixMatch = /^([A-Z][A-Za-z]+)\//.exec(value);
 		const prefix = prefixMatch ? prefixMatch[1] : '';
 		const key = columnKey.toLowerCase();
+		// `prescrib` (not `prescriber`) so the backend's medication field key
+		// `prescribingDoctor` ALSO matches — it carries the raw Practitioner id
+		// (e.g. "13643") and must resolve to the prescriber name. `doctor` /
+		// `physician` likewise cover *Doctor / *Physician practitioner columns.
 		const isProviderCol = prefix === 'Practitioner' || prefix === 'PractitionerRole'
-			|| /(provider|practitioner|performer|author|prescriber|administeredby|orderedby|ordering|referrer|referredby|signedby|attendingphysician|encounterprovider|recorder|reporter|enterer|orderer|requester)/.test(key);
+			|| /(provider|practitioner|performer|author|prescrib|administeredby|orderedby|ordering|referrer|referredby|signedby|physician|doctor|encounterprovider|recorder|reporter|enterer|orderer|requester)/.test(key);
 		const isOrgCol = prefix === 'Organization'
 			|| /(insur|payer|payor|organization|company)/.test(key);
 		const isLocationCol = prefix === 'Location'
@@ -2101,6 +2072,12 @@ export class PatientChartEditor extends EditorPane {
 		'problems': 'medicalproblems',
 		'submissions': 'claim-submissions',
 		'denials': 'claim-denials',
+		// The Coverage tab_field_config (FHIR paths for save/read) is seeded under
+		// 'insurance-coverage' (ciyex V41/V44); the chart layout uses tab key
+		// 'insurance'. Route saves/reads through the real backend key so the
+		// Coverage create/update resolves its field config — without this the
+		// POST to /api/fhir-resource/insurance fails getConfig("insurance").
+		'insurance': 'insurance-coverage',
 		// V19 only label-touched the 'report' tab_field_config row — it has no
 		// FHIR mapping for DiagnosticReport. The 'labs' row is the only seeded
 		// tab key with a complete DiagnosticReport mapping, so route Report
@@ -4291,6 +4268,9 @@ export class PatientChartEditor extends EditorPane {
 			// proper name (allergen, medication, vaccine, procedure, condition, alert,
 			// test, document title).
 			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
+			// Free-text titles (e.g. Education Topic "Type 2 Diabetes",
+			// "COVID-19 Vaccine FAQ") — letters, numbers and common punctuation.
+			const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
 			// Lot numbers: alphanumeric plus hyphens, 3-30 chars (pure numbers allowed).
 			const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
 			// Dose: positive number, unit suffix is optional (e.g., "1.5" or "0.5 mL").
@@ -4308,7 +4288,7 @@ export class PatientChartEditor extends EditorPane {
 				alertName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 				description: { rx: namePattern, msg: 'No special characters allowed' },
-				materialTitle: { rx: namePattern, msg: 'No special characters allowed' },
+				materialTitle: { rx: titlePattern, msg: 'Title may contain letters, numbers and basic punctuation' },
 				subject: { rx: namePattern, msg: 'No special characters allowed' },
 				lotNumber: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
 				lot_number: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
@@ -4455,24 +4435,56 @@ export class PatientChartEditor extends EditorPane {
 						}
 					}
 				}
+				// Medications prescriber maps to MedicationRequest.requester.reference
+				// (ciyex V140 tab_field_config). The field holds a bare Practitioner
+				// id (e.g. "13643") which round-trips back into the table as-is, so
+				// the Prescriber column showed the raw id instead of the name. Prefix
+				// it with "Practitioner/" so the stored reference is well-formed FHIR
+				// and read-back yields "Practitioner/13643" — the table's id→name
+				// resolver then renders the prescriber name. (Same fix shape as the
+				// encounter provider above.)
+				if (tab.key === 'medications') {
+					const v = payload.prescribingDoctor;
+					if (typeof v === 'string' && v.trim() && !v.includes('/')) {
+						payload.prescribingDoctor = `Practitioner/${v.trim()}`;
+					}
+				}
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
 				// Education assignments — the backend's PatientEducationService
-				// expects flat numeric materialId + patientId in the body. The
-				// route is POST /api/education/assignments (handled below); the
-				// `material: { id }` / `patient: { id }` nested shape we used
-				// previously was rejected with "The given id must not be null".
+				// requires a real numeric materialId FK (it rejects free text with
+				// "Education material is required"). The Topic / Title field is now
+				// free text (`materialTitle`), so create an EducationMaterial from the
+				// typed title first, then assign its returned id. flat materialId +
+				// patientId then go in the body of POST /api/education/assignments.
 				if (tab.key === 'education' && !isEdit) {
-					const matId = payload.materialId;
-					if (!matId || matId === '' || matId === null || matId === undefined) {
+					const title = String(payload.materialTitle ?? '').trim();
+					if (!title) {
 						saveBtn.disabled = false;
 						saveBtn.textContent = 'Save';
-						this.notificationService.error('Please select a Topic / Title from the search dropdown before saving.');
+						this.notificationService.error('Please enter a Topic / Title before saving.');
 						return;
 					}
-					const numId = typeof matId === 'number' ? matId : (parseInt(String(matId), 10) || matId);
-					payload.materialId = numId;
+					// Create the education material so the assignment has a valid FK.
+					try {
+						const matBody: Record<string, unknown> = { title };
+						if (payload.category) { matBody.category = payload.category; }
+						if (payload.content) { matBody.content = payload.content; }
+						if (payload.url) { matBody.externalUrl = payload.url; }
+						const matRes = await this.apiService.fetch('/api/education/materials', { method: 'POST', body: JSON.stringify(matBody) });
+						if (!matRes.ok) { throw new Error(`material create failed: ${matRes.status}`); }
+						const matJson = await matRes.json();
+						const matObj = (matJson?.data ?? matJson) as Record<string, unknown>;
+						const newId = matObj?.id;
+						if (newId === null || newId === undefined || newId === '') { throw new Error('material create returned no id'); }
+						payload.materialId = typeof newId === 'number' ? newId : (parseInt(String(newId), 10) || newId);
+					} catch {
+						saveBtn.disabled = false;
+						saveBtn.textContent = 'Save';
+						this.notificationService.error('Could not save the education topic. Please try again.');
+						return;
+					}
 					if (this.patientId && !payload.patientId) {
 						const numPid = parseInt(this.patientId, 10) || this.patientId;
 						payload.patientId = numPid;
@@ -5054,6 +5066,16 @@ export class PatientChartEditor extends EditorPane {
 		hidden.type = 'hidden';
 		hidden.value = currentValue;
 		this._formInputs.set(f.key, hidden);
+		// Companion hidden input for `relatedField` (e.g. a prescriber-search's
+		// `prescriberName`). The dropdown selection handler writes the chosen
+		// display NAME here so the save payload carries a human-readable name
+		// alongside the id — the table then shows the name immediately instead
+		// of a bare id, even before the backend re-fetch supplies *Display.
+		if (f.relatedField && !this._formInputs.has(f.relatedField)) {
+			const relHidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			relHidden.type = 'hidden';
+			this._formInputs.set(f.relatedField, relHidden);
+		}
 		// Foreign-key references — patient / practitioner pickers and
 		// `lookup` fields whose key is an id (numeric / UUID) — MUST come
 		// from a dropdown selection. Free text deserialises to null on

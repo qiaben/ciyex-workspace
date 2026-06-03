@@ -20,7 +20,7 @@ import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, IOverflowMenuItem } from './sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, IOverflowMenuItem } from './sidebarActions.js';
 
 // Storage key the calendar editor writes to so the sidebar can mirror its
 // view mode + selected date. Keep in sync with CalendarEditor.STORAGE_KEY.
@@ -46,6 +46,26 @@ interface Appointment {
 	room?: string;
 	visitType?: string;
 	locationName?: string;
+	/** Normalized headshot URLs (resolved from the raw payload during load).
+	 *  When present the row avatar shows the photo; otherwise it falls back to
+	 *  the first/last-name initials. */
+	patientPhotoUrl?: string;
+	providerPhotoUrl?: string;
+}
+
+/** Resolve a patient/provider headshot URL from the raw appointment record,
+ *  checking the same key variants the rest of the platform uses (see
+ *  PatientChartPanel). Returns undefined when no usable URL is present, so the
+ *  avatar falls back to initials. */
+function resolvePhotoUrl(raw: Record<string, unknown>, who: 'patient' | 'provider'): string | undefined {
+	const candidates = who === 'patient'
+		? ['patientPhotoUrl', 'patientPhoto', 'patientProfilePhoto', 'patientImageUrl', 'patientAvatarUrl', 'patientPhoto_url', 'patient_photo_url']
+		: ['providerPhotoUrl', 'providerPhoto', 'practitionerPhotoUrl', 'practitionerPhoto', 'providerProfilePhoto', 'providerImageUrl', 'providerAvatarUrl'];
+	for (const key of candidates) {
+		const value = raw[key];
+		if (typeof value === 'string' && value.trim()) { return value.trim(); }
+	}
+	return undefined;
 }
 
 function getAppointmentType(apt: Appointment): string {
@@ -70,6 +90,40 @@ const DEFAULT_STATUS_OPTIONS = [
 	'Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room',
 	'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled',
 ];
+
+/** Build the 1-2 letter initials shown inside a circular avatar (e.g.
+ *  "Lauren Bell" -> "LB", "steve mendosa" -> "SM"). */
+function initialsOf(name: string): string {
+	return name.split(' ').map(p => p[0] || '').filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
+
+/** Append a circular avatar (the small "logo" shown next to a person's name in
+ *  a schedule row). Shows the headshot photo when `photoUrl` is provided, and
+ *  otherwise — or if the image fails to load — falls back to the first/last
+ *  name initials. Shared by the patient and provider rows so both render
+ *  identically. */
+function appendInitialsAvatar(parent: HTMLElement, name: string, bgColor: string, photoUrl?: string): HTMLElement {
+	const av = DOM.append(parent, DOM.$('div'));
+	av.style.cssText = `width:18px;height:18px;border-radius:50%;background:${bgColor};color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;`;
+	av.title = name;
+	const showInitials = () => { av.textContent = initialsOf(name); };
+	if (photoUrl) {
+		const img = DOM.append(av, DOM.$('img')) as HTMLImageElement;
+		img.src = photoUrl;
+		img.alt = name;
+		img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+		// Photo unreachable / broken -> drop it and show initials instead.
+		img.addEventListener('error', () => { img.remove(); showInitials(); });
+	} else {
+		showInitials();
+	}
+	return av;
+}
+
+/** Brand accent used for the patient avatar so it reads as the row's primary
+ *  identity (distinct from the status-coloured provider avatar). Matches the
+ *  mini-calendar "today" highlight. */
+const PATIENT_AVATAR_COLOR = '#0078d4';
 
 const STATUS_COLORS: Record<string, string> = {
 	'scheduled': '#3b82f6',
@@ -271,6 +325,8 @@ export class ScheduleSidebarPane extends ViewPane {
 						locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
 						locationName: a.locationName || a.locationDisplay || '',
 						status: a.status || 'Scheduled',
+						patientPhotoUrl: resolvePhotoUrl(a, 'patient'),
+						providerPhotoUrl: resolvePhotoUrl(a, 'provider'),
 					}));
 					// Client-side filter: keep appointments whose start date
 					// falls inside [startDate, endDate]. Use local-date strings
@@ -846,13 +902,32 @@ export class ScheduleSidebarPane extends ViewPane {
 		const content = DOM.append(row, DOM.$('div'));
 		content.style.cssText = 'flex:1;min-width:0;';
 
-		const title = DOM.append(content, DOM.$('div'));
-		title.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown Patient';
+		// Patient title row: initials "logo" avatar + first/last name
+		const patientName = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim() || 'Unknown Patient';
+		const titleRow = DOM.append(content, DOM.$('div'));
+		titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
+		appendInitialsAvatar(titleRow, patientName, PATIENT_AVATAR_COLOR, apt.patientPhotoUrl);
+		const title = DOM.append(titleRow, DOM.$('div'));
+		title.textContent = patientName;
 		title.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-editor-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
 		const sub = DOM.append(content, DOM.$('div'));
-		sub.textContent = getAppointmentType(apt) || (apt.providerName || apt.practitionerName || '');
-		sub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+		sub.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:1px;min-width:0;';
+		const subLabel = DOM.append(sub, DOM.$('span'));
+		subLabel.textContent = getAppointmentType(apt) || (apt.providerName || apt.practitionerName || '');
+		subLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+		// Telehealth: always-visible Video Call shortcut so the visit can be
+		// joined directly from the schedule row (also in the overflow menu).
+		const visitTypeStr = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
+		const isTelehealth = visitTypeStr.includes('telehealth') || visitTypeStr.includes('virtual') || visitTypeStr.includes('video');
+		if (isTelehealth && this.installationsService.isInstalled('ciyex-telehealth')) {
+			const videoBtn = createActionIconButton(sub, 'device-camera-video', 'Video Call', () => {
+				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
+			});
+			videoBtn.style.opacity = '1';
+			videoBtn.style.color = 'var(--vscode-charts-green, #22c55e)';
+		}
 
 		// Status badge
 		const statusBadge = DOM.append(content, DOM.$('span'));
@@ -863,11 +938,8 @@ export class ScheduleSidebarPane extends ViewPane {
 		if (apt.providerName || apt.practitionerName) {
 			const avatarRow = DOM.append(content, DOM.$('div'));
 			avatarRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
-			const av = DOM.append(avatarRow, DOM.$('div'));
 			const provName = apt.providerName || apt.practitionerName || '';
-			av.textContent = provName.split(' ').map((p: string) => p[0] || '').slice(0, 2).join('').toUpperCase();
-			av.style.cssText = `width:18px;height:18px;border-radius:50%;background:${statusColor};color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;`;
-			av.title = provName;
+			appendInitialsAvatar(avatarRow, provName, statusColor, apt.providerPhotoUrl);
 			const provLabel = DOM.append(avatarRow, DOM.$('span'));
 			provLabel.textContent = provName;
 			provLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';

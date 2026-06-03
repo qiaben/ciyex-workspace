@@ -31,12 +31,14 @@ function isValidEmail(value: string): boolean {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);
 }
 
-/** True when `value` is a plausible phone/fax number (10-15 digits). */
+/** True when `value` is a valid US phone/fax number: exactly 10 digits. */
 function isValidPhone(value: string): boolean {
-	const digits = value.replace(/[^\d]/g, '');
-	// Reject anything with stray letters and require a sane digit count.
+	// Reject any letters outright (e.g. "555-CALL-NOW").
 	if (/[a-zA-Z]/.test(value)) { return false; }
-	return digits.length >= 10 && digits.length <= 15;
+	const digits = value.replace(/[^\d]/g, '');
+	// US standard: exactly 10 digits once formatting is stripped. This also
+	// rejects overlong inputs (>10 digits) per the QA negative test cases.
+	return digits.length === 10;
 }
 
 /** True when `value` is a valid NPI: exactly 10 digits, numeric only. */
@@ -53,6 +55,15 @@ function isNonEmptyName(value: string): boolean {
 	if (v.length < 2) { return false; }
 	if (/^[\d\s\W]+$/.test(v)) { return false; }
 	return /[a-zA-Z]/.test(v);
+}
+
+/**
+ * True when `value` is a valid person name (first / last / middle name):
+ * only letters, spaces, hyphens, apostrophes or periods — no digits at all.
+ * Mirrors the reference web renderer's strict firstName/lastName rule.
+ */
+function isPersonName(value: string): boolean {
+	return /^[A-Za-z\s\-'.]+$/.test(value.trim());
 }
 
 /**
@@ -2028,28 +2039,75 @@ export class SettingsHubEditor extends EditorPane {
 		const key = (field.key || '').toLowerCase();
 		const label = (field.label || '').toLowerCase();
 		const type = (field.type || '').toLowerCase();
-		const looks = (re: RegExp): boolean => re.test(key) || re.test(label);
+		// Take the LAST dot-segment of the key and normalize it down to bare
+		// alphanumerics, e.g. `identification.firstName` → `firstname`,
+		// `contact.faxNumber` → `faxnumber`, `professionalDetails.license_number`
+		// → `licensenumber`, `contact.phone-number` → `phonenumber`. The provider
+		// form uses dot-notation keys (identification.* / contact.* /
+		// professionalDetails.*) while the Facilities/Insurance/Referral forms use
+		// flat keys (`phone`, `email`, `name`). Stripping the separator/punctuation
+		// AND collapsing to alphanumerics is what makes the SAME validator match
+		// both shapes — without it the anchored name/identifier checks below only
+		// ever matched the flat `npi` key, which is exactly why only NPI validated
+		// on the Providers tab. The reference web renderer (GenericSettingsPage.tsx)
+		// keys its validation off the last segment for the same reason.
+		const lastSeg = key.split('.').pop() || key;
+		const seg = lastSeg.replace(/[^a-z0-9]/g, '');
+		// Normalized label too (e.g. "Work Phone" → "workphone", "First Name" →
+		// "firstname") so the label-based fallback covers the provider labels.
+		const labelNorm = label.replace(/[^a-z0-9]/g, '');
+		const looks = (re: RegExp): boolean => re.test(key) || re.test(seg) || re.test(label) || re.test(labelNorm);
 
-		// Email — by key, label or input type.
-		if (type === 'email' || looks(/e-?mail/)) {
+		// Provider identifier fields (UPIN, taxonomy, tax id, DEA, medicare /
+		// medicaid, billing NPI etc.) are intentionally alphanumeric and must
+		// NOT be force-validated as a strict NPI/phone/name. Match the
+		// reference renderer's `isProviderIdentifier` allow-list and only
+		// require a sane alphanumeric shape.
+		if (/^(upin|taxonomy|taxonomycode|taxid|medicareid|medicaidid|medicarebeneficiaryid|deanumber|billingnpi)$/.test(seg)) {
+			return /^[A-Za-z0-9\s\-./]+$/.test(value.trim())
+				? undefined
+				: `${field.label} must contain only letters, numbers, hyphens, or periods`;
+		}
+
+		// Email — by key, label, input type or normalized segment
+		// (e.g. `contact.email` → seg `email`). Covers labels like "Email".
+		if (type === 'email' || seg === 'email' || seg.includes('email') || labelNorm.includes('email')) {
 			return isValidEmail(value) ? undefined : `${field.label} must be a valid email address`;
 		}
-		// Phone / Fax — both validated as phone numbers.
-		if (type === 'tel' || looks(/phone|fax|mobile|cell/)) {
-			return isValidPhone(value) ? undefined : `${field.label} must be a valid phone number`;
+		// Phone / Fax / Mobile — all validated as 10-digit US numbers. Matches
+		// flat keys (`phone`, `fax`) AND provider dot-keys via the normalized
+		// segment (`contact.phoneNumber` → `phonenumber`, `contact.faxNumber` →
+		// `faxnumber`, `contact.mobileNumber` → `mobilenumber`). Labels like
+		// "Work Phone", "Fax Number", "Mobile Phone" are also covered.
+		const phoneSegs = new Set(['phone', 'phonenumber', 'workphone', 'homephone', 'cellphone', 'contactphone', 'fax', 'faxnumber', 'mobile', 'mobilenumber', 'mobilephone', 'cell', 'cellnumber']);
+		if (type === 'tel' || phoneSegs.has(seg) || looks(/phone|fax|mobile|cell/)) {
+			return isValidPhone(value) ? undefined : `${field.label} must be a valid 10-digit phone number`;
 		}
-		// NPI — numeric, 10 digits.
-		if (looks(/\bnpi\b/)) {
+		// NPI — numeric, exactly 10 digits.
+		if (seg === 'npi' || looks(/\bnpi\b/)) {
 			return isValidNpi(value) ? undefined : `${field.label} must be a 10-digit NPI number`;
 		}
-		// Names — first/last/company/payer/practice/organization names must be
-		// real names, not blank or purely numeric garbage (QA issues 19/20/22).
-		if (looks(/first ?name|last ?name|company ?name|payer ?name|practice ?name|provider ?name|\bname\b/)) {
-			return isNonEmptyName(value) ? undefined : `${field.label} must be a valid name`;
+		// First / Last / Middle name — must contain only letters, spaces,
+		// hyphens, apostrophes or periods (no digits at all), matching the
+		// reference web renderer's strict firstName/lastName rule. Matched off
+		// the normalized segment so `identification.firstName` (→ `firstname`)
+		// validates, plus the "First Name"/"Last Name" labels.
+		const nameSegs = new Set(['firstname', 'lastname', 'middlename', 'givenname', 'familyname', 'surname']);
+		if (nameSegs.has(seg) || /^(first|last|middle) ?name$/.test(label)) {
+			return isPersonName(value) ? undefined : `${field.label} must contain only letters, spaces, hyphens, or apostrophes`;
 		}
-		// License number — non-empty, reasonable length, alphanumeric.
-		if (looks(/licen[cs]e/)) {
+		// License number — non-empty, reasonable length, alphanumeric. Matched
+		// off the normalized segment (`professionalDetails.licenseNumber` →
+		// `licensenumber`) and the "License Number" label. Checked before the
+		// generic name rule so a license value isn't mis-validated as a name.
+		if (seg === 'licensenumber' || seg.includes('license') || seg.includes('licence') || looks(/licen[cs]e/)) {
 			return isReasonableId(value) ? undefined : `${field.label} is not valid`;
+		}
+		// Other names — company / payer / practice / provider / organization
+		// names must be real names, not blank or purely numeric garbage
+		// (QA issues 9/22): allow digits inside but require at least one letter.
+		if (looks(/company ?name|payer ?name|practice ?name|provider ?name|organi[sz]ation|\bname\b/)) {
+			return isNonEmptyName(value) ? undefined : `${field.label} must be a valid name`;
 		}
 		return undefined;
 	}
