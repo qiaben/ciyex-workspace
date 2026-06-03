@@ -498,3 +498,36 @@
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 }
+
+/* ============================================================================
+ * Patient chart tab icon (filled person silhouette)
+ * Overrides the `ciyex-patient-avatar` codicon (PatientChartEditorInput.getIcon)
+ * so the editor tab shows a solid head + half-dome shoulders silhouette instead
+ * of the built-in codicon font glyph. The editor-tab icon element is rendered
+ * as `monaco-icon-label codicon-ciyex-patient-avatar` (NO base `codicon` class),
+ * so we target the single `codicon-ciyex-patient-avatar` class and use
+ * `!important` to beat the runtime icon-font rule regardless of selector
+ * specificity or stylesheet order. `currentColor` keeps it tinted to the
+ * active/inactive tab foreground.
+ * ============================================================================ */
+.codicon-ciyex-patient-avatar::before {
+	content: '' !important;
+	display: inline-block !important;
+	width: 16px !important;
+	height: 16px !important;
+	vertical-align: middle;
+	/* The 16px mask box lays out ~7px above the tab's vertical center (the block
+	 * ::before sits high in the 35px tab row), so nudge it down to put the
+	 * silhouette's optical center on the label-text center. Measured by pixel
+	 * centroid: icon vs text aligned to within 0.1px at this offset. */
+	transform: translateY(9px) !important;
+	background-color: currentColor !important;
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%275%27 r=%273%27 fill=%27black%27/%3E%3Cpath d=%27M2 14 a6 4.5 0 0 1 12 0 z%27 fill=%27black%27/%3E%3C/svg%3E") !important;
+	-webkit-mask-size: 16px 16px !important;
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%275%27 r=%273%27 fill=%27black%27/%3E%3Cpath d=%27M2 14 a6 4.5 0 0 1 12 0 z%27 fill=%27black%27/%3E%3C/svg%3E") !important;
+	mask-size: 16px 16px !important;
+	mask-repeat: no-repeat;
+	mask-position: center;
+}

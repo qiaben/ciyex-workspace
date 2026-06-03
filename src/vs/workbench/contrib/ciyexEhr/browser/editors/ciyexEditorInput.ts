@@ -7,6 +7,17 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IUntypedEditorInput } from '../../../../common/editor.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
+import { codiconsLibrary as Codicon } from '../../../../../base/common/codiconsLibrary.js';
+import { localize } from '../../../../../nls.js';
+
+/**
+ * Patient chart tab icon: a filled person silhouette (round head + half-dome
+ * shoulders), painted from a local SVG via CSS mask in ciyexCommon.css
+ * (`.codicon-ciyex-patient-avatar`). The `Codicon.account` default is only a
+ * fallback if that CSS fails to load.
+ */
+const patientAvatarIcon = registerIcon('ciyex-patient-avatar', Codicon.account, localize('ciyexPatientAvatar', 'Patient profile icon'));
 
 export abstract class BaseCiyexInput extends EditorInput {
 	constructor(
@@ -100,7 +111,7 @@ export class PatientChartEditorInput extends EditorInput {
 		}
 		return base;
 	}
-	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('person'); }
+	override getIcon(): ThemeIcon | undefined { return patientAvatarIcon; }
 	get resource(): URI {
 		// Focused mode uses a single per-patient resource (no tab suffix) so
 		// clicking different quick-action icons reuses the one focused tab
