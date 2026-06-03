@@ -2571,24 +2571,29 @@ export class PatientChartEditor extends EditorPane {
 			pill.style.cssText = 'font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#3b82f6;';
 		}
 
-		// DOB + age
+		// Demographics cluster (DOB · Sex · Phone). Grouped in one flex row with
+		// its own gap + thin bullet separators so the fields always read as
+		// distinct, evenly-spaced items — relying on the header's flex gap alone
+		// previously left "…11 mo)Sex: female" running together (QA spacing flag).
+		const demo = DOM.append(this.headerBar, DOM.$('div'));
+		demo.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:11px;color:var(--vscode-descriptionForeground);';
+		const addDemo = (text: string): void => {
+			if (demo.childElementCount > 0) {
+				const sep = DOM.append(demo, DOM.$('span'));
+				// allow-any-unicode-next-line
+				sep.textContent = '·';
+				sep.style.cssText = 'opacity:0.5;';
+			}
+			const el = DOM.append(demo, DOM.$('span'));
+			el.textContent = text;
+		};
 		if (dobRaw) {
 			const dobStr = this._formatDate(dobRaw);
 			const age = this._calculateAge(dobRaw);
-			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = `DOB: ${dobStr}${age ? ` (${age})` : ''}`;
-			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+			addDemo(`DOB: ${dobStr}${age ? ` (${age})` : ''}`);
 		}
-		if (gender) {
-			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = `Sex: ${gender}`;
-			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		}
-		if (phone) {
-			const el = DOM.append(this.headerBar, DOM.$('span'));
-			el.textContent = `Phone: ${this._formatPhoneDisplay(phone)}`;
-			el.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		}
+		if (gender) { addDemo(`Sex: ${gender}`); }
+		if (phone) { addDemo(`Phone: ${this._formatPhoneDisplay(phone)}`); }
 
 		// Status pill
 		const statusPill = DOM.append(this.headerBar, DOM.$('span'));
@@ -5072,7 +5077,14 @@ export class PatientChartEditor extends EditorPane {
 		// on a light workbench (QA issue 6). Same fix the shared
 		// createCustomDropdown helper uses for its body-mounted panel.
 		dropdown.classList.add('monaco-workbench');
-		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:280px;overflow-y:auto;display:none;padding:4px 0;';
+		// Marker class so the shared friendly-scroll CSS (ciyexCommon.css) hides
+		// this body-mounted popover's vertical scrollbar when results overflow.
+		dropdown.classList.add('ciyex-search-dropdown');
+		// font-family is pinned because the dropdown is mounted on document.body
+		// (outside the editor font scope); without it the result rows fell back to
+		// the browser default serif at an inconsistent size vs the input — the
+		// "big & uneven" typeahead the QA team flagged.
+		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
 			const viewportWidth = DOM.getActiveWindow().innerWidth;
@@ -5091,10 +5103,14 @@ export class PatientChartEditor extends EditorPane {
 			}
 			// Vertical: prefer below the input. Flip above if there's not
 			// enough room below, so the dropdown never falls off-screen.
+			// Use the panel's ACTUAL rendered height (it's display:block by the
+			// time we position it) rather than a fixed 280px estimate — the old
+			// estimate left a large empty gap between a short result list and the
+			// input when flipped above (QA "big/uneven" typeahead).
+			const panelHeight = dropdown.offsetHeight || Math.min(dropdown.scrollHeight || 240, 240);
 			let top = rect.bottom + 4;
-			const estimatedHeight = 280;
-			if (top + estimatedHeight > viewportHeight - 8 && rect.top > estimatedHeight + 8) {
-				top = rect.top - estimatedHeight - 4;
+			if (top + panelHeight > viewportHeight - 8 && rect.top > panelHeight + 8) {
+				top = rect.top - panelHeight - 4;
 			}
 			dropdown.style.top = `${top}px`;
 			dropdown.style.left = `${left}px`;
@@ -5166,7 +5182,7 @@ export class PatientChartEditor extends EditorPane {
 					if (items.length === 0) {
 						const empty = DOM.append(dropdown, DOM.$('div'));
 						empty.textContent = 'No matches';
-						empty.style.cssText = 'padding:10px 14px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+						empty.style.cssText = 'padding:6px 10px;color:var(--vscode-descriptionForeground);font-size:13px;line-height:18px;font-style:italic;';
 					} else {
 						for (const it of items) {
 							const row = DOM.append(dropdown, DOM.$('div'));
@@ -5174,7 +5190,7 @@ export class PatientChartEditor extends EditorPane {
 							// alone — code rows are tighter and show the
 							// code in monospace alongside the description.
 							if (isCodeSearch) {
-								row.style.cssText = 'padding:8px 14px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:10px;border-left:3px solid transparent;';
+								row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:13px;line-height:18px;display:flex;align-items:center;gap:10px;border-left:3px solid transparent;border-radius:4px;';
 								const codeEl = DOM.append(row, DOM.$('span'));
 								codeEl.textContent = it.code;
 								codeEl.style.cssText = 'font-weight:600;color:var(--vscode-textLink-foreground);min-width:64px;font-family:var(--vscode-editor-font-family,monospace);flex-shrink:0;';
@@ -5182,7 +5198,11 @@ export class PatientChartEditor extends EditorPane {
 								labelEl.textContent = it.label;
 								labelEl.style.cssText = 'color:var(--vscode-foreground);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 							} else {
-								row.style.cssText = 'padding:10px 16px;cursor:pointer;font-size:14px;color:var(--vscode-foreground);border-left:3px solid transparent;';
+								// Match the code-row metrics (padding/font/line-height)
+								// so name and code result lists are the same height —
+								// they used to differ (10px/14px vs 8px/13px), reading
+								// as an uneven list.
+								row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:13px;line-height:18px;color:var(--vscode-foreground);border-left:3px solid transparent;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 								row.textContent = it.label || it.code;
 							}
 							rows.push(row);
@@ -5212,8 +5232,11 @@ export class PatientChartEditor extends EditorPane {
 						}
 						setHighlight(0);
 					}
-					positionDropdown();
+					// Show first, then position: positionDropdown() reads the
+					// panel's real height (offsetHeight) to decide flip-above
+					// placement, which is only measurable once it's display:block.
 					dropdown.style.display = 'block';
+					positionDropdown();
 				} catch { /* ignore */ }
 			}, 300);
 		};

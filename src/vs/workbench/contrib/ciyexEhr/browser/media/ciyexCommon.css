@@ -63,6 +63,34 @@
 	background: rgba(127, 127, 127, 0.55) !important;
 }
 
+/* Body-mounted dropdown / typeahead popovers (custom <select> replacements and
+ * the form search/lookup fields). These are appended to document.body — not to
+ * the editor pane — so they escape the editor's overflow/transform clipping.
+ * That also puts them OUTSIDE `.ciyex-editor-root`, so the friendly-scroll rule
+ * above never reaches them and their option lists showed a native vertical
+ * scrollbar once the choices overflowed `max-height`. Hide that scrollbar here
+ * too; wheel / touch / keyboard scrolling still works. Applies to every
+ * category's create+edit form (OVERVIEW, CLINICAL, …) since all of them share
+ * these two widgets (customDropdown.ts + patientChartEditor _buildSearchInput). */
+.ciyex-custom-dropdown-panel,
+.ciyex-search-dropdown {
+	scrollbar-width: none !important;
+	-ms-overflow-style: none !important;
+}
+
+.ciyex-custom-dropdown-panel::-webkit-scrollbar,
+.ciyex-custom-dropdown-panel::-webkit-scrollbar-thumb,
+.ciyex-custom-dropdown-panel::-webkit-scrollbar-track,
+.ciyex-search-dropdown::-webkit-scrollbar,
+.ciyex-search-dropdown::-webkit-scrollbar-thumb,
+.ciyex-search-dropdown::-webkit-scrollbar-track {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
+	background: transparent !important;
+	-webkit-appearance: none !important;
+}
+
 /* ============================================================================
  * Pagination control
  * ============================================================================ */

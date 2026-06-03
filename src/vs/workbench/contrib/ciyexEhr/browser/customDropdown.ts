@@ -153,7 +153,12 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// position:fixed children use it as their containing block and clips them.
 	panel.className = 'ciyex-custom-dropdown-panel monaco-workbench';
 	panel.setAttribute('role', 'listbox');
-	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:4px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
+	// font-family is set explicitly: the panel is mounted on document.body
+	// (outside the editor's font scope) so without it the option rows fall back
+	// to the browser default serif at an inconsistent size — that was the
+	// "big & uneven" dropdown the QA team flagged. Pin it to the workbench font
+	// so options match the trigger (which inherits it) exactly.
+	panel.style.cssText = `position:fixed;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
 	(doc.body || doc.documentElement).appendChild(panel);
 
 	const positionPanel = () => {
@@ -177,11 +182,16 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 			const row = doc.createElement('div');
 			row.setAttribute('role', 'option');
 			const isSelected = opt.value === hidden.value;
-			const extraStyle = opt.placeholder ? 'opacity:0.7;font-style:italic;' : (isSelected ? 'font-weight:500;' : '');
-			row.style.cssText = `padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid ${COLORS.separator};background-color:${isSelected ? COLORS.hoverBackground : COLORS.background};color:${COLORS.foreground};${extraStyle}`;
+			const extraStyle = opt.placeholder ? 'opacity:0.7;font-style:italic;' : (isSelected ? 'font-weight:600;' : '');
+			// Even, compact rows: a fixed line-height keeps every row the same
+			// height regardless of glyph ascenders/descenders, a single border
+			// radius matches the panel, and hover/selection share one rounded
+			// highlight. No per-row border — the previous border-bottom on every
+			// row made the list read like a heavy table (QA "uneven look").
+			row.style.cssText = `padding:6px 10px;cursor:pointer;font-size:13px;line-height:18px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background-color:${isSelected ? COLORS.hoverBackground : 'transparent'};color:${COLORS.foreground};${extraStyle}`;
 			row.textContent = opt.label;
 			row.addEventListener('mouseenter', () => { row.style.backgroundColor = COLORS.hoverBackground; });
-			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? COLORS.hoverBackground : COLORS.background; });
+			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? COLORS.hoverBackground : 'transparent'; });
 			row.addEventListener('mousedown', (e) => {
 				e.preventDefault();
 				// Keep the selection contained to this control. Without this the
