@@ -1395,17 +1395,90 @@ export interface IListAndFormDialogOptions {
 	onChanged?: () => void;
 }
 
+/** Field-group sections for the unified list/form popup. Clinical forms (the
+ *  encounter composition especially) carry dozens of fields whose keys share a
+ *  domain prefix — grouping them under labelled sections turns an overwhelming
+ *  flat wall of inputs into a scannable, sectioned chart note. Simple resources
+ *  (payment, vitals, problem) have no matching prefixes, so they collapse into
+ *  a single headerless block and render exactly as a clean two-column form. */
+const LIST_FORM_SECTIONS: ReadonlyArray<{ readonly test: RegExp; readonly title: string; readonly icon: string }> = [
+	{ test: /^hpi_/, title: 'History of Present Illness', icon: 'history' },
+	{ test: /^ros_/, title: 'Review of Systems', icon: 'checklist' },
+	{ test: /^vitals_/, title: 'Vitals', icon: 'pulse' },
+	{ test: /^pe_/, title: 'Physical Exam', icon: 'person' },
+	{ test: /^pmh_/, title: 'Past Medical & Surgical History', icon: 'archive' },
+	{ test: /^fh_/, title: 'Family History', icon: 'organization' },
+	{ test: /^sh_/, title: 'Social History', icon: 'globe' },
+	{ test: /^assessment_/, title: 'Assessment & Diagnosis', icon: 'lightbulb' },
+	{ test: /^plan_/, title: 'Plan', icon: 'list-ordered' },
+	{ test: /^provider_/, title: 'Provider Notes', icon: 'edit' },
+	{ test: /^procedures_/, title: 'Procedures', icon: 'tools' },
+];
+
+function sectionForField(key: string): { title: string; icon: string } | null {
+	for (const s of LIST_FORM_SECTIONS) {
+		if (s.test.test(key)) { return { title: s.title, icon: s.icon }; }
+	}
+	return null;
+}
+
+/** Pick a header glyph for the popup based on the resource title. Falls back to
+ *  a neutral list icon so an unmapped entity still gets a tidy badge. */
+function listFormHeaderIcon(title: string): string {
+	const t = title.toLowerCase();
+	if (t.includes('vital')) { return 'pulse'; }
+	if (t.includes('problem')) { return 'stethoscope'; }
+	if (t.includes('medication')) { return 'symbol-method'; }
+	if (t.includes('insurance')) { return 'shield'; }
+	if (t.includes('lab')) { return 'beaker'; }
+	if (t.includes('payment') || t.includes('financ')) { return 'credit-card'; }
+	if (t.includes('statement')) { return 'file-symlink-file'; }
+	if (t.includes('claim')) { return 'file-binary'; }
+	if (t.includes('encounter')) { return 'note'; }
+	if (t.includes('visit')) { return 'calendar'; }
+	if (t.includes('demographic')) { return 'account'; }
+	return 'list-flat';
+}
+
 /**
  * Open a single centred popup that toggles between a list view (existing
  * records with edit + delete actions and a `+ Add` button) and a form view
  * (create / edit). Switching modes never closes the popup — the same overlay
  * is reused, so users perceive one unified surface for managing the resource.
+ *
+ * The surface is a refined, theme-aware clinical sheet: an accent rail, an
+ * icon-badged header with a contextual subtitle, sectioned form fields, custom
+ * theme-styled selects + typeahead, focus rings, and a sticky action bar.
  */
 export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 	const doc = (opts.themeAnchor && opts.themeAnchor.ownerDocument) || document;
+	const theme = detectThemeKind(doc, opts.themeAnchor);
 	const workbenchRoot = findWorkbenchRoot(opts.themeAnchor, doc);
 
 	const getRowId = opts.getRowId || ((r: Record<string, unknown>) => String(r.id ?? r.fhirId ?? ''));
+	const headerIcon = listFormHeaderIcon(opts.title);
+	const singular = opts.title.replace(/s$/, '') || opts.title;
+
+	// Theme-driven surface tokens — every colour resolves from workbench CSS
+	// variables so the sheet matches light, dark and high-contrast themes
+	// automatically (see openRecordEditDialog for the rationale).
+	const c = {
+		surface: 'var(--vscode-editor-background)',
+		raised: 'var(--vscode-editorWidget-background, rgba(127,127,127,0.045))',
+		fg: 'var(--vscode-editor-foreground, #ccc)',
+		muted: 'var(--vscode-descriptionForeground, rgba(160,160,160,0.9))',
+		border: 'var(--vscode-editorWidget-border, rgba(127,127,127,0.28))',
+		inputBg: 'var(--vscode-input-background, #1e1e1e)',
+		inputBorder: 'var(--vscode-input-border, rgba(127,127,127,0.4))',
+		hover: 'var(--vscode-list-hoverBackground, rgba(127,127,127,0.12))',
+		accent: 'var(--vscode-focusBorder, var(--vscode-button-background, #0e639c))',
+		popoverBg: 'var(--vscode-editorWidget-background, var(--vscode-dropdown-background, #1e1e1e))',
+		shadow: theme === 'light' || theme === 'hcLight' ? 'rgba(0,0,0,0.22)' : 'rgba(0,0,0,0.5)',
+	};
+
+	// Body-mounted popover panels (custom selects + typeahead) — tracked so we
+	// detach them and their listeners when the sheet closes.
+	const popovers: Array<{ panel: HTMLElement; reposition: () => void; onDocMouseDown?: (e: MouseEvent) => void }> = [];
 
 	// eslint-disable-next-line no-restricted-syntax
 	const titlebarEl = doc.querySelector('.part.titlebar');
@@ -1413,62 +1486,83 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 	const overlay = doc.createElement('div');
 	overlay.className = 'ciyex-edit-dialog-overlay';
-	overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;`;
+	overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(1.5px);padding:24px;`;
 
 	const dialog = doc.createElement('div');
-	dialog.className = 'monaco-workbench';
 	dialog.style.cssText = [
-		'width:760px',
-		'max-width:min(95vw,760px)',
-		`max-height:calc(100vh - ${titlebarHeight}px - 48px)`,
+		'width:820px',
+		'max-width:min(96vw,820px)',
+		`max-height:calc(100vh - ${titlebarHeight}px - 40px)`,
 		'display:flex',
 		'flex-direction:column',
 		'overflow:hidden',
-		'background:var(--vscode-editor-background)',
-		'color:var(--vscode-editor-foreground)',
-		'border:1px solid var(--vscode-editorWidget-border)',
-		'border-radius:12px',
-		'box-shadow:0 24px 64px rgba(0,0,0,0.45)',
+		`background:${c.surface}`,
+		`color:${c.fg}`,
+		`border:1px solid ${c.border}`,
+		'border-radius:14px',
+		`box-shadow:0 32px 80px ${c.shadow}, 0 2px 8px ${c.shadow}`,
 		'font-size:13px',
-		'transform:scale(0.96)',
+		'transform:scale(0.97) translateY(6px)',
 		'opacity:0',
-		'transition:transform 0.18s ease-out, opacity 0.18s ease-out',
+		'transition:transform 0.2s cubic-bezier(0.16,1,0.3,1), opacity 0.2s ease-out',
 	].join(';');
-	// Strip the className — we only used it briefly so the workbench theme
-	// vars resolve inside an inner container. The actual class is set below.
-	dialog.className = '';
+
+	// Accent rail across the very top of the sheet.
+	const rail = doc.createElement('div');
+	rail.style.cssText = `height:3px;flex-shrink:0;background:linear-gradient(90deg,${c.accent},transparent 92%);`;
+	dialog.appendChild(rail);
 
 	const header = doc.createElement('div');
-	header.style.cssText = 'padding:14px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
+	header.style.cssText = `padding:16px 22px;border-bottom:1px solid ${c.border};display:flex;align-items:center;gap:13px;flex-shrink:0;`;
+
+	const badge = doc.createElement('div');
+	badge.style.cssText = `width:38px;height:38px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, ${c.accent} 16%, transparent);border:1px solid color-mix(in srgb, ${c.accent} 32%, transparent);`;
+	const badgeIco = doc.createElement('span');
+	badgeIco.className = `codicon codicon-${headerIcon}`;
+	badgeIco.style.cssText = `font-size:18px;color:${c.accent};`;
+	badge.appendChild(badgeIco);
+	header.appendChild(badge);
+
+	const headText = doc.createElement('div');
+	headText.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;';
 	const titleEl = doc.createElement('span');
-	titleEl.style.cssText = 'flex:1;font-size:15px;font-weight:600;';
-	header.appendChild(titleEl);
+	titleEl.style.cssText = `font-size:16px;font-weight:650;letter-spacing:-0.01em;color:${c.fg};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+	const subtitleEl = doc.createElement('span');
+	subtitleEl.style.cssText = `font-size:11.5px;color:${c.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+	headText.appendChild(titleEl);
+	headText.appendChild(subtitleEl);
+	header.appendChild(headText);
 
 	const addBtn = doc.createElement('button');
 	addBtn.type = 'button';
-	addBtn.style.cssText = 'padding:6px 12px;border:none;border-radius:6px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;';
+	addBtn.style.cssText = `padding:7px 14px;border:none;border-radius:8px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background 0.12s;`;
+	addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
+	addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'var(--vscode-button-background,#0e639c)'; });
 	const addBtnIco = doc.createElement('span');
 	addBtnIco.className = 'codicon codicon-add';
 	addBtnIco.style.fontSize = '14px';
 	addBtn.appendChild(addBtnIco);
 	const addBtnLbl = doc.createElement('span');
-	addBtnLbl.textContent = 'Add';
+	addBtnLbl.textContent = 'New';
 	addBtn.appendChild(addBtnLbl);
 	header.appendChild(addBtn);
 
 	const closeBtn = doc.createElement('button');
 	closeBtn.type = 'button';
 	closeBtn.setAttribute('aria-label', 'Close');
-	closeBtn.style.cssText = 'background:transparent;border:none;color:var(--vscode-foreground);opacity:0.7;font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px;margin-left:4px;';
-	closeBtn.textContent = '×';
-	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
-	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.7'; });
+	closeBtn.style.cssText = `width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:8px;color:${c.fg};opacity:0.65;cursor:pointer;`;
+	const closeIco = doc.createElement('span');
+	closeIco.className = 'codicon codicon-close';
+	closeIco.style.fontSize = '15px';
+	closeBtn.appendChild(closeIco);
+	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; closeBtn.style.background = c.hover; closeBtn.style.borderColor = c.border; });
+	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.65'; closeBtn.style.background = 'transparent'; closeBtn.style.borderColor = 'transparent'; });
 	header.appendChild(closeBtn);
 	dialog.appendChild(header);
 
 	// Body holds the list / form views. Only one is visible at a time.
 	const body = doc.createElement('div');
-	body.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:300px;';
+	body.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:320px;';
 	dialog.appendChild(body);
 
 	overlay.appendChild(dialog);
@@ -1478,11 +1572,22 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 	let listRows: Array<Record<string, unknown>> = [];
 	let listLoaded = false;
 
+	const teardownPopovers = (): void => {
+		for (const p of popovers) {
+			doc.defaultView?.removeEventListener('scroll', p.reposition, true);
+			doc.defaultView?.removeEventListener('resize', p.reposition);
+			if (p.onDocMouseDown) { doc.removeEventListener('mousedown', p.onDocMouseDown, true); }
+			p.panel.remove();
+		}
+		popovers.length = 0;
+	};
+
 	const close = (): void => {
 		if (!overlay.parentElement) { return; }
 		overlay.parentElement.removeChild(overlay);
 		doc.removeEventListener('keydown', onKey, true);
 		overlay.removeEventListener('click', onOverlayClick);
+		teardownPopovers();
 	};
 	const onKey = (e: KeyboardEvent): void => {
 		if (e.key === 'Escape') { close(); }
@@ -1492,6 +1597,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 	};
 
 	const renderList = async (): Promise<void> => {
+		teardownPopovers();
 		currentMode = 'list';
 		editingItem = null;
 		titleEl.textContent = opts.title;
@@ -1499,22 +1605,38 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		body.replaceChildren();
 
 		const toolbar = doc.createElement('div');
-		toolbar.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;';
+		toolbar.style.cssText = `padding:12px 22px;border-bottom:1px solid ${c.border};display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+		const searchWrap = doc.createElement('div');
+		searchWrap.style.cssText = `flex:1;display:flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid ${c.inputBorder};border-radius:9px;background:${c.inputBg};transition:border-color 0.12s,box-shadow 0.12s;`;
+		const searchIco = doc.createElement('span');
+		searchIco.className = 'codicon codicon-search';
+		searchIco.style.cssText = `font-size:13px;color:${c.muted};flex-shrink:0;`;
+		searchWrap.appendChild(searchIco);
 		const search = doc.createElement('input') as HTMLInputElement;
-		search.type = 'search';
-		search.placeholder = 'Filter...';
-		search.style.cssText = 'flex:1;padding:6px 10px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
-		toolbar.appendChild(search);
+		search.type = 'text';
+		search.placeholder = `Filter ${opts.title.toLowerCase()}…`;
+		search.autocomplete = 'off';
+		search.style.cssText = `flex:1;border:none;background:transparent;color:var(--vscode-input-foreground);outline:none;font-size:12.5px;min-width:0;`;
+		searchWrap.appendChild(search);
+		search.addEventListener('focus', () => { searchWrap.style.borderColor = c.accent; searchWrap.style.boxShadow = `0 0 0 1px ${c.accent}`; });
+		search.addEventListener('blur', () => { searchWrap.style.borderColor = c.inputBorder; searchWrap.style.boxShadow = 'none'; });
+		toolbar.appendChild(searchWrap);
 		body.appendChild(toolbar);
 
 		const scroll = doc.createElement('div');
-		scroll.style.cssText = 'flex:1;overflow-y:auto;padding:0 20px 16px;';
+		scroll.style.cssText = 'flex:1;overflow-y:auto;padding:6px 22px 18px;';
 		body.appendChild(scroll);
 
 		if (!listLoaded) {
 			const loading = doc.createElement('div');
-			loading.textContent = 'Loading...';
-			loading.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+			loading.style.cssText = `padding:36px;text-align:center;color:${c.muted};font-size:12px;display:flex;flex-direction:column;align-items:center;gap:10px;`;
+			const spin = doc.createElement('span');
+			spin.className = 'codicon codicon-loading codicon-modifier-spin';
+			spin.style.fontSize = '20px';
+			loading.appendChild(spin);
+			const lt = doc.createElement('span');
+			lt.textContent = 'Loading records…';
+			loading.appendChild(lt);
 			scroll.appendChild(loading);
 			try {
 				listRows = await opts.loadList();
@@ -1526,67 +1648,94 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 			scroll.replaceChildren();
 		}
 
+		subtitleEl.textContent = `${listRows.length} ${listRows.length === 1 ? 'record' : 'records'}`;
+
 		const renderRows = (filter: string): void => {
 			scroll.replaceChildren();
 			const lq = filter.trim().toLowerCase();
 			const filtered = lq
-				? listRows.filter(r => opts.listColumns.some(c => {
-					const raw = (r[c.key] ?? '') as unknown;
-					const txt = c.format ? c.format(raw, r) : String(raw);
+				? listRows.filter(r => opts.listColumns.some(col => {
+					const raw = (r[col.key] ?? '') as unknown;
+					const txt = col.format ? col.format(raw, r) : String(raw);
 					return txt.toLowerCase().includes(lq);
 				}))
 				: listRows;
 
 			if (filtered.length === 0) {
 				const empty = doc.createElement('div');
-				empty.textContent = lq ? 'No matches.' : 'No records yet. Click + Add to create the first one.';
-				empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
+				empty.style.cssText = `padding:44px 24px;text-align:center;color:${c.muted};display:flex;flex-direction:column;align-items:center;gap:12px;`;
+				const eIco = doc.createElement('span');
+				eIco.className = `codicon codicon-${lq ? 'search-stop' : 'inbox'}`;
+				eIco.style.cssText = `font-size:26px;opacity:0.5;`;
+				empty.appendChild(eIco);
+				const eTxt = doc.createElement('div');
+				eTxt.textContent = lq ? 'No records match your filter.' : `No ${opts.title.toLowerCase()} yet.`;
+				eTxt.style.cssText = 'font-size:12.5px;';
+				empty.appendChild(eTxt);
+				if (!lq) {
+					const eBtn = doc.createElement('button');
+					eBtn.type = 'button';
+					eBtn.textContent = `Create the first ${singular.toLowerCase()}`;
+					eBtn.style.cssText = `margin-top:2px;padding:7px 14px;border:1px solid ${c.border};border-radius:8px;background:transparent;color:${c.fg};font-size:12px;font-weight:600;cursor:pointer;`;
+					eBtn.addEventListener('mouseenter', () => { eBtn.style.background = c.hover; });
+					eBtn.addEventListener('mouseleave', () => { eBtn.style.background = 'transparent'; });
+					eBtn.addEventListener('click', () => renderForm(null));
+					empty.appendChild(eBtn);
+				}
 				scroll.appendChild(empty);
 				return;
 			}
 
 			const table = doc.createElement('div');
-			const cols = opts.listColumns.map(c => c.width || '1fr').join(' ') + ' 72px';
-			table.style.cssText = `display:grid;grid-template-columns:${cols};gap:0;margin-top:10px;`;
+			const cols = opts.listColumns.map(col => col.width || '1fr').join(' ') + ' 76px';
+			table.style.cssText = `display:grid;grid-template-columns:${cols};gap:0;margin-top:8px;`;
 
-			for (const c of opts.listColumns) {
+			for (const col of opts.listColumns) {
 				const h = doc.createElement('div');
-				h.textContent = c.label;
-				h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:6px 8px 6px 0;border-bottom:2px solid var(--vscode-editorWidget-border);';
+				h.textContent = col.label;
+				h.style.cssText = `font-size:9.5px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${c.muted};padding:6px 10px 8px 0;border-bottom:1px solid ${c.border};`;
 				table.appendChild(h);
 			}
 			const hAct = doc.createElement('div');
-			hAct.style.cssText = 'border-bottom:2px solid var(--vscode-editorWidget-border);';
+			hAct.style.cssText = `border-bottom:1px solid ${c.border};`;
 			table.appendChild(hAct);
 
 			for (const row of filtered) {
-				for (const c of opts.listColumns) {
+				const cells: HTMLElement[] = [];
+				const setRowBg = (bg: string): void => { for (const el of cells) { el.style.background = bg; } };
+				for (const col of opts.listColumns) {
 					const cell = doc.createElement('div');
-					const raw = (row[c.key] ?? '') as unknown;
-					cell.textContent = c.format ? c.format(raw, row) : String(raw || '—');
-					cell.style.cssText = 'padding:8px 8px 8px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
+					const raw = (row[col.key] ?? '') as unknown;
+					cell.textContent = col.format ? col.format(raw, row) : String(raw || '—');
+					cell.style.cssText = `padding:9px 10px 9px 0;border-bottom:1px solid ${c.border};font-size:12.5px;color:${c.fg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background 0.1s;`;
 					cell.addEventListener('click', () => { renderForm(row); });
 					table.appendChild(cell);
+					cells.push(cell);
 				}
 				const actCell = doc.createElement('div');
-				actCell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:2px;';
-				const mkAct = (codicon: string, title: string, onClick: () => void): HTMLButtonElement => {
+				actCell.style.cssText = `padding:5px 0;border-bottom:1px solid ${c.border};display:flex;align-items:center;justify-content:flex-end;gap:2px;transition:background 0.1s;`;
+				cells.push(actCell);
+				const mkAct = (codicon: string, title: string, onClick: () => void): void => {
 					const b = doc.createElement('button') as HTMLButtonElement;
 					b.title = title;
-					b.style.cssText = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+					b.setAttribute('aria-label', title);
+					b.style.cssText = `width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:${c.fg};padding:0;`;
 					const ico = doc.createElement('span');
 					ico.className = `codicon codicon-${codicon}`;
 					ico.style.fontSize = '13px';
 					b.appendChild(ico);
-					b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; b.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+					b.addEventListener('mouseenter', () => { b.style.background = c.hover; b.style.borderColor = c.border; });
 					b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; b.style.borderColor = 'transparent'; });
 					b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 					actCell.appendChild(b);
-					return b;
 				};
 				mkAct('edit', 'Edit', () => renderForm(row));
 				if (opts.deleteRecord) {
 					mkAct('trash', 'Delete', () => { void handleDelete(row); });
+				}
+				for (const el of cells) {
+					el.addEventListener('mouseenter', () => setRowBg(c.hover));
+					el.addEventListener('mouseleave', () => setRowBg('transparent'));
 				}
 				table.appendChild(actCell);
 			}
@@ -1611,107 +1760,314 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		}
 	};
 
+	/** Render one field control (input / textarea / themed select / typeahead)
+	 *  into `host`, registering it in `inputs` and wiring focus rings. */
+	const renderFieldControl = (
+		field: IEditFieldDef,
+		initial: string,
+		inputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+		host: HTMLElement,
+	): void => {
+		const focusRing = (el: HTMLElement, on: boolean): void => {
+			el.style.borderColor = on ? c.accent : c.inputBorder;
+			el.style.boxShadow = on ? `0 0 0 1px ${c.accent}` : 'none';
+		};
+		const baseInput = `width:100%;box-sizing:border-box;padding:8px 10px;font-size:12.5px;font-family:inherit;border:1px solid ${c.inputBorder};border-radius:8px;background:${c.inputBg};color:var(--vscode-input-foreground,${c.fg});outline:none;transition:border-color 0.12s,box-shadow 0.12s;`;
+
+		if (field.kind === 'textarea') {
+			const ta = doc.createElement('textarea');
+			ta.rows = 3;
+			ta.value = initial;
+			ta.placeholder = field.placeholder || '';
+			ta.setAttribute('autocomplete', 'off');
+			ta.style.cssText = baseInput + 'resize:vertical;min-height:64px;line-height:1.45;';
+			ta.addEventListener('focus', () => focusRing(ta, true));
+			ta.addEventListener('blur', () => focusRing(ta, false));
+			host.appendChild(ta);
+			inputs.set(field.key, ta);
+			return;
+		}
+
+		if (field.kind === 'select') {
+			// Custom theme-styled dropdown (native <select> option lists render
+			// with low-contrast OS chrome on dark themes). A hidden input holds
+			// the value so the save flow is unchanged.
+			const hidden = doc.createElement('input');
+			hidden.type = 'hidden';
+			hidden.value = initial;
+			host.appendChild(hidden);
+			inputs.set(field.key, hidden);
+
+			const trigger = doc.createElement('button');
+			trigger.type = 'button';
+			trigger.setAttribute('aria-haspopup', 'listbox');
+			trigger.style.cssText = baseInput + 'display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;text-align:left;';
+			const tLabel = doc.createElement('span');
+			tLabel.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			const tCaret = doc.createElement('span');
+			tCaret.className = 'codicon codicon-chevron-down';
+			tCaret.style.cssText = `font-size:13px;opacity:0.6;flex-shrink:0;`;
+			trigger.appendChild(tLabel);
+			trigger.appendChild(tCaret);
+			const labelFor = (val: string): string => {
+				const m = (field.options || []).find(o => o.value === val);
+				return m ? m.label : (val || field.placeholder || 'Select…');
+			};
+			const refresh = (): void => { tLabel.textContent = labelFor(hidden.value); tLabel.style.opacity = hidden.value ? '1' : '0.55'; };
+			refresh();
+
+			const panel = doc.createElement('div');
+			panel.setAttribute('role', 'listbox');
+			panel.style.cssText = `position:fixed;background:${c.popoverBg};color:${c.fg};border:1px solid ${c.border};border-radius:9px;box-shadow:0 10px 28px ${c.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;padding:4px;`;
+			workbenchRoot.appendChild(panel);
+
+			const position = (): void => {
+				const r = trigger.getBoundingClientRect();
+				panel.style.left = `${r.left}px`;
+				panel.style.top = `${r.bottom + 4}px`;
+				panel.style.minWidth = `${r.width}px`;
+			};
+			const renderOpts = (): void => {
+				DOM.clearNode(panel);
+				for (const opt of field.options || []) {
+					const r = doc.createElement('div');
+					r.setAttribute('role', 'option');
+					const sel = opt.value === hidden.value;
+					r.textContent = opt.label;
+					r.style.cssText = `padding:7px 10px;cursor:pointer;font-size:12.5px;border-radius:6px;background:${sel ? c.hover : 'transparent'};color:${c.fg};${sel ? 'font-weight:600;' : ''}`;
+					r.addEventListener('mouseenter', () => { r.style.background = c.hover; });
+					r.addEventListener('mouseleave', () => { r.style.background = opt.value === hidden.value ? c.hover : 'transparent'; });
+					r.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						hidden.value = opt.value;
+						refresh();
+						closePanel();
+					});
+					panel.appendChild(r);
+				}
+			};
+			let open = false;
+			const openPanel = (): void => { renderOpts(); position(); panel.style.display = 'block'; trigger.setAttribute('aria-expanded', 'true'); focusRing(trigger, true); open = true; };
+			const closePanel = (): void => { panel.style.display = 'none'; trigger.setAttribute('aria-expanded', 'false'); focusRing(trigger, false); open = false; };
+			trigger.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (open) { closePanel(); } else { openPanel(); } });
+			const onDocMouseDown = (e: MouseEvent): void => {
+				if (!open) { return; }
+				const t = e.target as Node | null;
+				if (t && (panel.contains(t) || trigger.contains(t))) { return; }
+				closePanel();
+			};
+			doc.addEventListener('mousedown', onDocMouseDown, true);
+			const reposition = (): void => { if (open) { position(); } };
+			doc.defaultView?.addEventListener('scroll', reposition, true);
+			doc.defaultView?.addEventListener('resize', reposition);
+			popovers.push({ panel, reposition, onDocMouseDown });
+			host.appendChild(trigger);
+			return;
+		}
+
+		// text / number / email / tel / date / time / search
+		const inp = doc.createElement('input') as HTMLInputElement;
+		inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date', 'time'].includes(field.kind) ? field.kind : 'text';
+		inp.value = initial;
+		inp.placeholder = field.placeholder || '';
+		inp.setAttribute('autocomplete', 'off');
+		inp.style.cssText = baseInput;
+		inp.addEventListener('focus', () => focusRing(inp, true));
+		inp.addEventListener('blur', () => focusRing(inp, false));
+		host.appendChild(inp);
+		inputs.set(field.key, inp);
+
+		// Typeahead dropdown for search fields wired with onSearch.
+		if (field.kind === 'search' && field.onSearch) {
+			const onSearch = field.onSearch;
+			const onSelect = field.onSelectSearchResult;
+			const panel = doc.createElement('div');
+			panel.style.cssText = `position:fixed;background:${c.popoverBg};color:${c.fg};border:1px solid ${c.border};border-radius:9px;box-shadow:0 10px 28px ${c.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;`;
+			workbenchRoot.appendChild(panel);
+			const position = (): void => {
+				const r = inp.getBoundingClientRect();
+				panel.style.left = `${r.left}px`;
+				panel.style.top = `${r.bottom + 4}px`;
+				panel.style.width = `${r.width}px`;
+			};
+			const reposition = (): void => { if (panel.style.display === 'block') { position(); } };
+			doc.defaultView?.addEventListener('scroll', reposition, true);
+			doc.defaultView?.addEventListener('resize', reposition);
+			popovers.push({ panel, reposition });
+			let handle: ReturnType<typeof setTimeout> | undefined;
+			const render = (results: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>): void => {
+				DOM.clearNode(panel);
+				if (results.length === 0) { panel.style.display = 'none'; return; }
+				for (const res of results) {
+					const o = doc.createElement('div');
+					o.style.cssText = `padding:7px 10px;cursor:pointer;font-size:12px;border-radius:6px;color:${c.fg};`;
+					const l = doc.createElement('div'); l.textContent = res.label; l.style.fontWeight = '600'; o.appendChild(l);
+					if (res.description) { const d = doc.createElement('div'); d.textContent = res.description; d.style.cssText = `font-size:11px;color:${c.muted};margin-top:1px;`; o.appendChild(d); }
+					o.addEventListener('mouseenter', () => { o.style.background = c.hover; });
+					o.addEventListener('mouseleave', () => { o.style.background = 'transparent'; });
+					o.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						inp.value = res.label;
+						if (onSelect) { onSelect(res, inputs); }
+						panel.style.display = 'none';
+					});
+					panel.appendChild(o);
+				}
+				position();
+				panel.style.display = 'block';
+			};
+			inp.addEventListener('input', () => {
+				const q = inp.value.trim();
+				if (handle) { clearTimeout(handle); }
+				if (q.length < 2) { panel.style.display = 'none'; return; }
+				handle = setTimeout(async () => {
+					try { render((await onSearch(q)).slice(0, 8)); } catch { panel.style.display = 'none'; }
+				}, 250);
+			});
+			inp.addEventListener('blur', () => { setTimeout(() => { panel.style.display = 'none'; }, 150); });
+		}
+	};
+
 	const renderForm = (existing: Record<string, unknown> | null): void => {
+		teardownPopovers();
 		currentMode = 'form';
 		editingItem = existing;
 		const isEdit = !!existing;
-		titleEl.textContent = `${isEdit ? 'Edit' : 'Add'} ${opts.title.replace(/s$/, '') || opts.title}`;
+		titleEl.textContent = `${isEdit ? 'Edit' : 'New'} ${singular}`;
+		subtitleEl.textContent = isEdit ? 'Update the details below' : `Add a new ${singular.toLowerCase()} record`;
 		addBtn.style.display = 'none';
 		body.replaceChildren();
 
 		const formScroll = doc.createElement('div');
-		formScroll.style.cssText = 'flex:1;overflow-y:auto;padding:16px 20px;';
+		formScroll.style.cssText = 'flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:18px;';
 		body.appendChild(formScroll);
 
-		const form = doc.createElement('form');
-		form.setAttribute('autocomplete', 'off');
-		form.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;column-gap:14px;row-gap:12px;';
-		form.addEventListener('submit', (e) => { e.preventDefault(); });
-		formScroll.appendChild(form);
-
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+
+		// Partition fields into contiguous sections by key-prefix so clinical
+		// forms read as a chart note. Fields with no matching section collapse
+		// into a single headerless block.
+		const groups: Array<{ title: string; icon: string; fields: IEditFieldDef[] }> = [];
 		for (const field of opts.fields) {
-			const widthPct = field.widthPct ?? 100;
-			const spanFull = widthPct >= 75 || field.kind === 'textarea';
-			const wrap = doc.createElement('div');
-			wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:flex;flex-direction:column;gap:4px;min-width:0;`;
-			const lbl = doc.createElement('label');
-			lbl.textContent = field.label + (field.required ? ' *' : '');
-			lbl.style.cssText = 'font-size:12px;font-weight:500;color:var(--vscode-foreground);opacity:0.85;';
-			wrap.appendChild(lbl);
+			const sec = sectionForField(field.key);
+			const title = sec?.title ?? '';
+			const last = groups[groups.length - 1];
+			if (last && last.title === title) { last.fields.push(field); }
+			else { groups.push({ title, icon: sec?.icon ?? '', fields: [field] }); }
+		}
+		const showHeaders = groups.filter(g => g.title).length > 0 && groups.length > 1;
 
-			const initial = String((existing?.[field.key] ?? '') as string | number);
-			let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-			if (field.kind === 'textarea') {
-				const ta = doc.createElement('textarea');
-				ta.rows = 3;
-				ta.value = initial;
-				ta.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;resize:vertical;min-height:60px;';
-				input = ta;
-			} else if (field.kind === 'select') {
-				const sel = doc.createElement('select');
-				sel.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
-				for (const o of field.options || []) {
-					const opt = doc.createElement('option');
-					opt.value = o.value;
-					opt.textContent = o.label;
-					if (o.value === initial) { opt.selected = true; }
-					sel.appendChild(opt);
+		for (const group of groups) {
+			const section = doc.createElement('div');
+			section.style.cssText = 'display:flex;flex-direction:column;gap:10px;';
+
+			if (showHeaders && group.title) {
+				const sHead = doc.createElement('div');
+				sHead.style.cssText = `display:flex;align-items:center;gap:7px;padding-bottom:7px;border-bottom:1px solid ${c.border};`;
+				const sIco = doc.createElement('span');
+				sIco.className = `codicon codicon-${group.icon || 'circle-small'}`;
+				sIco.style.cssText = `font-size:13px;color:${c.accent};`;
+				sHead.appendChild(sIco);
+				const sLbl = doc.createElement('span');
+				sLbl.textContent = group.title;
+				sLbl.style.cssText = `font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${c.muted};`;
+				sHead.appendChild(sLbl);
+				section.appendChild(sHead);
+			}
+
+			const grid = doc.createElement('div');
+			grid.style.cssText = 'display:grid;grid-template-columns:repeat(12,1fr);column-gap:14px;row-gap:13px;';
+			section.appendChild(grid);
+
+			for (const field of group.fields) {
+				const widthPct = field.widthPct ?? 100;
+				const span = field.kind === 'textarea' ? 12 : Math.max(2, Math.min(12, Math.round((widthPct / 100) * 12)));
+				const wrap = doc.createElement('div');
+				wrap.style.cssText = `grid-column:span ${span};display:flex;flex-direction:column;gap:5px;min-width:0;`;
+				const lbl = doc.createElement('label');
+				lbl.style.cssText = `font-size:10.5px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:${c.muted};display:flex;align-items:center;gap:4px;`;
+				const lblText = doc.createElement('span');
+				// Strip the section prefix from the label (e.g. "HPI: Onset" → "Onset")
+				// when it is shown under that section header, to avoid redundancy.
+				let labelText = field.label;
+				if (showHeaders && group.title) {
+					const m = /^[A-Za-z][A-Za-z /&]*?:\s*(.+)$/.exec(field.label);
+					if (m) { labelText = m[1]; }
 				}
-				input = sel;
-			} else {
-				const inp = doc.createElement('input') as HTMLInputElement;
-				inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date', 'time'].includes(field.kind) ? field.kind : 'text';
-				inp.value = initial;
-				inp.placeholder = field.placeholder || '';
-				inp.autocomplete = 'off';
-				inp.style.cssText = 'padding:6px 8px;font-size:12px;border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
-				input = inp;
-			}
-			(input as HTMLElement).id = `lf-${field.key}`;
-			wrap.appendChild(input);
-			inputs.set(field.key, input);
+				lblText.textContent = labelText;
+				lbl.appendChild(lblText);
+				if (field.required) {
+					const star = doc.createElement('span');
+					star.textContent = '*';
+					star.style.cssText = `color:${c.accent};font-weight:800;`;
+					lbl.appendChild(star);
+				}
+				wrap.appendChild(lbl);
 
-			if (field.hint) {
-				const hint = doc.createElement('div');
-				hint.textContent = field.hint;
-				hint.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-				wrap.appendChild(hint);
+				const initial = String((existing?.[field.key] ?? '') as string | number);
+				renderFieldControl(field, initial, inputs, wrap);
+
+				if (field.hint) {
+					const hint = doc.createElement('div');
+					hint.textContent = field.hint;
+					hint.style.cssText = `font-size:11px;color:${c.muted};`;
+					wrap.appendChild(hint);
+				}
+				grid.appendChild(wrap);
 			}
-			form.appendChild(wrap);
+			formScroll.appendChild(section);
 		}
 
 		const footer = doc.createElement('div');
-		footer.style.cssText = 'padding:12px 20px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
+		footer.style.cssText = `padding:13px 22px;border-top:1px solid ${c.border};display:flex;align-items:center;gap:8px;flex-shrink:0;background:${c.raised};`;
 		const errorMsg = doc.createElement('span');
-		errorMsg.style.cssText = 'flex:1;color:#ef4444;font-size:12px;';
+		errorMsg.style.cssText = 'flex:1;color:#ef4444;font-size:12px;display:flex;align-items:center;gap:5px;';
 		footer.appendChild(errorMsg);
+		const setError = (msg: string): void => {
+			DOM.clearNode(errorMsg);
+			if (!msg) { return; }
+			const ico = doc.createElement('span');
+			ico.className = 'codicon codicon-warning';
+			ico.style.fontSize = '13px';
+			errorMsg.appendChild(ico);
+			const t = doc.createElement('span');
+			t.textContent = msg;
+			errorMsg.appendChild(t);
+		};
 
 		const backBtn = doc.createElement('button');
 		backBtn.type = 'button';
 		backBtn.textContent = isEdit ? 'Cancel' : 'Back to list';
-		backBtn.style.cssText = 'padding:6px 14px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:transparent;color:var(--vscode-foreground);font-size:12px;cursor:pointer;';
+		backBtn.style.cssText = `padding:8px 16px;border:1px solid ${c.border};border-radius:8px;background:transparent;color:${c.fg};font-size:12px;font-weight:600;cursor:pointer;transition:background 0.12s;`;
+		backBtn.addEventListener('mouseenter', () => { backBtn.style.background = c.hover; });
+		backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'transparent'; });
 		backBtn.addEventListener('click', () => { void renderList(); });
 		footer.appendChild(backBtn);
 
 		const saveBtn = doc.createElement('button');
 		saveBtn.type = 'button';
 		saveBtn.textContent = opts.primaryLabel || (isEdit ? 'Save Changes' : 'Save');
-		saveBtn.style.cssText = 'padding:6px 14px;border:none;border-radius:6px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:500;cursor:pointer;';
+		saveBtn.style.cssText = `padding:8px 18px;border:none;border-radius:8px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:700;cursor:pointer;transition:background 0.12s;`;
+		saveBtn.addEventListener('mouseenter', () => { if (!saveBtn.disabled) { saveBtn.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; } });
+		saveBtn.addEventListener('mouseleave', () => { saveBtn.style.background = 'var(--vscode-button-background,#0e639c)'; });
 		saveBtn.addEventListener('click', async () => {
-			errorMsg.textContent = '';
+			setError('');
 			const result: Record<string, string> = {};
 			for (const f of opts.fields) {
 				const v = inputs.get(f.key)?.value ?? '';
 				if (f.required && !v.trim()) {
-					errorMsg.textContent = `${f.label} is required`;
+					setError(`${f.label} is required`);
 					return;
 				}
 				result[f.key] = v;
 			}
 			saveBtn.disabled = true;
+			saveBtn.style.opacity = '0.65';
+			saveBtn.style.cursor = 'default';
 			const original = saveBtn.textContent;
-			saveBtn.textContent = 'Saving...';
+			saveBtn.textContent = 'Saving…';
 			try {
 				const existingId = isEdit && editingItem ? getRowId(editingItem) : undefined;
 				await opts.saveRecord(result, existingId);
@@ -1719,8 +2075,10 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				opts.onChanged?.();
 				await renderList();
 			} catch (err) {
-				errorMsg.textContent = err instanceof Error ? err.message : String(err);
+				setError(err instanceof Error ? err.message : String(err));
 				saveBtn.disabled = false;
+				saveBtn.style.opacity = '1';
+				saveBtn.style.cursor = 'pointer';
 				saveBtn.textContent = original;
 			}
 		});
@@ -1749,7 +2107,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 	const win = DOM.getWindow(opts.themeAnchor || overlay) || mainWindow;
 	win.requestAnimationFrame(() => {
-		dialog.style.transform = 'scale(1)';
+		dialog.style.transform = 'scale(1) translateY(0)';
 		dialog.style.opacity = '1';
 	});
 

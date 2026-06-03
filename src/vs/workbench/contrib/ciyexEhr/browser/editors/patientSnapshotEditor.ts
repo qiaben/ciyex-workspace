@@ -17,7 +17,8 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IEditFieldDef, IListColumn, openListAndFormDialog, withTypeaheadSearch } from '../sidebarActions.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 
 interface QuickAction {
@@ -71,6 +72,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -590,6 +592,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Open the unified list+form popup for an entity. */
 	private _openManager(entity: string, initialMode: 'list' | 'create' = 'list'): void {
 		if (!this._currentPatientId) { return; }
+		// Demographics is the patient record itself — there is no list to manage,
+		// so clicking it should jump straight to the patient's Demographics tab
+		// in the chart editor rather than surfacing a single-record popup.
+		if (entity === 'demographics') { this._openChartAt('demographics'); return; }
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
 		if (!reg) { this._openChartAt(entity); return; }
 		const fields = this._entityFields(entity);
@@ -1033,7 +1039,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		const primary: QuickAction[] = [
 			{ icon: 'add', title: 'New Encounter', onClick: () => this._openCreateModal('encounters') },
-			{ icon: '', customClass: 'ehr-patient-icon', title: 'Edit Demographics', onClick: () => this._openCreateModal('demographics') },
+			{ icon: '', customClass: 'ehr-patient-icon', title: 'Open Demographics', onClick: () => this._openChartAt('demographics') },
 			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openCreateModal('payment') },
 			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openCreateModal('claims') },
 		];
@@ -1154,6 +1160,150 @@ export class PatientSnapshotEditor extends EditorPane {
 		return fallback;
 	}
 
+	/** Resolve a human visit-type label from the raw appointment, tolerating the
+	 *  FHIR CodeableConcept blob the appointments API sometimes returns. */
+	private _apptTypeStr(apt: Record<string, unknown>): string {
+		const t = apt.visitType || apt.appointmentType || apt.type;
+		if (typeof t === 'string' && t.trim()) { return t; }
+		if (t && typeof t === 'object') {
+			const cc = t as { text?: string; coding?: Array<{ display?: string; code?: string }> };
+			return cc.text || cc.coding?.[0]?.display || cc.coding?.[0]?.code || '—';
+		}
+		return '—';
+	}
+
+	/** PUT a new appointment status, then refresh the dashboard so the card,
+	 *  status pill and available actions all reflect the new state. */
+	private async _changeApptStatus(id: string, status: string): Promise<void> {
+		if (!id) { return; }
+		await this._updateAppointmentStatus(id, status);
+		this._rerender();
+	}
+
+	/** Create a FHIR encounter from the appointment, open it, then refresh. */
+	private async _createEncounterFromAppointment(apt: Record<string, unknown>): Promise<void> {
+		const id = String(apt.id || apt.appointmentId || '');
+		if (!id) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
+			let encounterId: string | undefined;
+			if (res.ok) {
+				try {
+					const data = await res.json();
+					const payload = (data?.data ?? data) as Record<string, unknown>;
+					encounterId = (payload?.id || payload?.encounterId) as string | undefined;
+				} catch { /* empty body — fall through to refresh */ }
+			}
+			if (encounterId) {
+				void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, String(encounterId), this._currentPatientName);
+			}
+			this._rerender();
+		} catch {
+			this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create encounter from appointment.' });
+		}
+	}
+
+	/** Fetch provider display names for the edit dialog dropdown. */
+	private async _fetchProviderOptions(): Promise<string[]> {
+		const names = new Set<string>();
+		for (const url of ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100']) {
+			try {
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) { continue; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
+				for (const p of list) {
+					const nm = (p.name || p.providerName || p.fullName || `${p.firstName || ''} ${p.lastName || ''}`).toString().trim();
+					if (nm) { names.add(nm); }
+				}
+				if (names.size > 0) { break; }
+			} catch { /* try next */ }
+		}
+		return Array.from(names);
+	}
+
+	/** Open the appointment edit popup (date / time / type / status / room /
+	 *  provider) — mirrors the schedule pane's edit dialog. */
+	private async _openApptEdit(apt: Record<string, unknown>): Promise<void> {
+		const id = String(apt.id || apt.appointmentId || '');
+		if (!id) { return; }
+		const startIso = String(apt.start || apt.startTime || '');
+		const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startIso);
+		const initialDate = m ? m[1] : '';
+		const initialTime = m ? m[2] : '';
+
+		const [rooms, providers] = await Promise.all([this._fetchRoomOptions(), this._fetchProviderOptions()]);
+		let statusOpts = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
+		try {
+			const res = await this.apiService.fetch('/api/appointments/status-options');
+			if (res.ok) {
+				const data = await res.json();
+				const opts = ((data?.data || data || []) as Array<{ label?: string; value?: string } | string>)
+					.map(o => (typeof o === 'string' ? o : o.label || o.value || '')).filter(Boolean);
+				if (opts.length > 0) { statusOpts = opts; }
+			}
+		} catch { /* keep defaults */ }
+
+		const visitTypes = ['Consultation', 'Follow-Up', 'New Patient', 'Urgent', 'Routine', 'Annual Physical', 'Telehealth', 'Lab Work', 'Procedure', 'Referral'];
+		const currentType = this._apptTypeStr(apt);
+		const typeOptions = visitTypes.map(t => ({ value: t, label: t }));
+		if (currentType && currentType !== '—' && !typeOptions.find(o => o.value === currentType)) { typeOptions.unshift({ value: currentType, label: currentType }); }
+		const currentStatus = String(apt.status || apt.appointmentStatus || 'Scheduled');
+		const statusOptions = statusOpts.map(s => ({ value: s, label: s }));
+		if (currentStatus && !statusOptions.find(o => o.value.toLowerCase() === currentStatus.toLowerCase())) { statusOptions.unshift({ value: currentStatus, label: currentStatus }); }
+		const currentProvider = String(apt.providerName || apt.practitionerName || '');
+		const providerOptions = [{ value: '', label: 'Unassigned' }, ...providers.map(p => ({ value: p, label: p }))];
+		if (currentProvider && !providerOptions.find(o => o.value === currentProvider)) { providerOptions.push({ value: currentProvider, label: currentProvider }); }
+		const currentRoom = String(apt.room || apt.roomName || '');
+
+		openRecordEditDialog({
+			title: `Edit Appointment — ${this._currentPatientName || 'Appointment'}`,
+			themeAnchor: this.root,
+			variant: 'modal',
+			fields: [
+				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
+				{ key: 'appointmentTime', label: 'Start Time', kind: 'time', widthPct: 50 },
+				{ key: 'duration', label: 'Duration (min)', kind: 'number', widthPct: 50 },
+				{ key: 'appointmentType', label: 'Visit Type', kind: 'select', widthPct: 50, options: typeOptions },
+				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: statusOptions },
+				{ key: 'providerName', label: 'Provider', kind: 'select', widthPct: 50, options: providerOptions },
+				{ key: 'room', label: 'Room', kind: 'select', widthPct: 50, options: [{ value: '', label: 'Unassigned' }, ...rooms.map(r => ({ value: r, label: r }))] },
+				{ key: 'reason', label: 'Reason / Chief Complaint', kind: 'textarea', widthPct: 100 },
+				{ key: 'notes', label: 'Notes', kind: 'textarea', widthPct: 100 },
+			],
+			values: {
+				appointmentDate: initialDate,
+				appointmentTime: initialTime,
+				duration: String(apt.duration || ''),
+				appointmentType: currentType === '—' ? '' : currentType,
+				status: currentStatus,
+				providerName: currentProvider,
+				room: currentRoom,
+				reason: String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || ''),
+				notes: String(apt.notes || apt.note || apt.comment || ''),
+			},
+			onSave: async (next) => {
+				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
+				const payload = {
+					...apt,
+					start: startTime,
+					startTime,
+					duration: next.duration ? Number(next.duration) : apt.duration,
+					status: next.status,
+					appointmentType: next.appointmentType,
+					visitType: next.appointmentType,
+					providerName: next.providerName,
+					room: next.room,
+					reason: next.reason,
+					notes: next.notes,
+				};
+				const res = await this.apiService.fetch(`/api/appointments/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				this._rerender();
+			},
+		});
+	}
+
 	private _renderAppointmentCard(parent: HTMLElement, apt: Record<string, unknown>): void {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 
@@ -1161,46 +1311,72 @@ export class PatientSnapshotEditor extends EditorPane {
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
 		this._cardHeader(card, 'calendar', 'Today\'s Appointment', 1, undefined);
 
-		const table = DOM.append(card, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:160px 1fr 1fr 190px 220px;gap:0;margin-top:4px;';
-
-		for (const lbl of ['Date / Time', 'Visit Type', 'Provider', 'Status', 'Room']) {
-			const h = DOM.append(table, DOM.$('div'));
-			h.textContent = lbl;
-			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);padding-right:12px;';
-		}
-
+		// --- All appointment fields, shown as label / value pairs --------------
 		const startRaw = String(apt.start || apt.startTime || '');
+		let dateStr = '—';
 		let timeStr = '—';
+		let endStr = '';
 		if (startRaw) {
 			try {
 				const d = new Date(startRaw);
-				// allow-any-unicode-next-line
-				timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+				dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+				timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+				const dur = Number(apt.duration || 0);
+				if (dur > 0) {
+					const end = new Date(d.getTime() + dur * 60000);
+					endStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+				}
 			} catch { /* */ }
 		}
+		const durVal = Number(apt.duration || 0);
+		const reason = String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || '').trim();
+		const notes = String(apt.notes || apt.note || apt.comment || '').trim();
+		const location = String(apt.locationName || apt.location || apt.facility || '').trim();
+		const room = String(apt.room || apt.roomName || '').trim();
+		const provider = String(apt.providerName || apt.practitionerName || '').trim();
+		const hasEncounter = !!(apt.encounterId);
 
-		const cellCss = 'padding:10px 12px 10px 0;font-size:12px;color:var(--vscode-editor-foreground);border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const fields: Array<[string, string]> = [
+			['Date', dateStr],
+			// allow-any-unicode-next-line
+			['Time', endStr ? `${timeStr} – ${endStr}` : timeStr],
+			['Visit Type', this._apptTypeStr(apt)],
+			['Provider', provider || '—'],
+			['Duration', durVal > 0 ? `${durVal} min` : '—'],
+			['Location', location || '—'],
+			['Room', room || '— Unassigned —'],
+			['Encounter', hasEncounter ? 'Linked' : 'Not started'],
+		];
+		if (reason) { fields.push(['Reason', reason]); }
+		if (notes) { fields.push(['Notes', notes]); }
 
-		const timeCell = DOM.append(table, DOM.$('div'));
-		timeCell.textContent = timeStr;
-		timeCell.style.cssText = cellCss + 'font-weight:500;';
+		const detailGrid = DOM.append(card, DOM.$('div'));
+		detailGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin:6px 0 12px;';
+		for (const [label, value] of fields) {
+			const isWide = label === 'Reason' || label === 'Notes';
+			const cell = DOM.append(detailGrid, DOM.$('div'));
+			cell.style.cssText = isWide ? 'grid-column:1 / -1;min-width:0;' : 'min-width:0;';
+			const l = DOM.append(cell, DOM.$('div'));
+			l.textContent = label;
+			l.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+			const v = DOM.append(cell, DOM.$('div'));
+			v.textContent = value;
+			v.style.cssText = `font-size:12.5px;font-weight:600;color:var(--vscode-editor-foreground);${isWide ? '' : 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'}`;
+			if (label === 'Encounter') { v.style.color = hasEncounter ? '#22c55e' : 'var(--vscode-descriptionForeground)'; }
+		}
 
-		const typeCell = DOM.append(table, DOM.$('div'));
-		typeCell.textContent = String(apt.visitType || apt.appointmentType || apt.type || '—');
-		typeCell.style.cssText = cellCss;
+		// --- Inline status + room controls -------------------------------------
+		const controls = DOM.append(card, DOM.$('div'));
+		controls.style.cssText = 'display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;padding-top:10px;border-top:1px solid var(--vscode-editorWidget-border);';
 
-		const provCell = DOM.append(table, DOM.$('div'));
-		provCell.textContent = String(apt.providerName || apt.practitionerName || '—');
-		provCell.style.cssText = cellCss;
-
-		// Status dropdown — seeded immediately with defaults, then overwritten by live API options
-		const statusCell = DOM.append(table, DOM.$('div'));
-		statusCell.style.cssText = 'padding:6px 12px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;';
+		const statusGroup = DOM.append(controls, DOM.$('div'));
+		statusGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:170px;';
+		const statusLbl = DOM.append(statusGroup, DOM.$('div'));
+		statusLbl.textContent = 'STATUS';
+		statusLbl.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);';
 		const currentStatus = String(apt.status || apt.appointmentStatus || 'Scheduled');
-		const statusSelect = DOM.append(statusCell, DOM.$('select')) as HTMLSelectElement;
-		statusSelect.style.cssText = 'background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;outline:none;width:100%;';
-
+		const statusSelect = DOM.append(statusGroup, DOM.$('select')) as HTMLSelectElement;
+		statusSelect.style.cssText = 'background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:7px;padding:6px 9px;font-size:12px;cursor:pointer;outline:none;';
 		const populateStatuses = (opts: string[]) => {
 			DOM.clearNode(statusSelect);
 			for (const s of opts) {
@@ -1210,8 +1386,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				if (s.toLowerCase() === currentStatus.toLowerCase()) { opt.selected = true; }
 			}
 		};
-		populateStatuses(['Scheduled', 'Checked In', 'In Progress', 'Completed', 'Cancelled', 'No Show']);
-
+		populateStatuses(['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'No Show', 'Cancelled']);
 		void (async () => {
 			try {
 				const res = await this.apiService.fetch('/api/appointments/status-options');
@@ -1224,25 +1399,26 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 			} catch { /* keep defaults */ }
 		})();
-
 		statusSelect.addEventListener('change', () => {
 			if (!appointmentId) { return; }
-			void this._updateAppointmentStatus(appointmentId, statusSelect.value);
+			void this._changeApptStatus(appointmentId, statusSelect.value);
 		});
 
-		// Room dropdown — populated from /api/rooms with hardcoded fallback
-		const roomCell = DOM.append(table, DOM.$('div'));
-		roomCell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:6px;';
+		const roomGroup = DOM.append(controls, DOM.$('div'));
+		roomGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1;';
+		const roomLbl = DOM.append(roomGroup, DOM.$('div'));
+		roomLbl.textContent = 'ROOM';
+		roomLbl.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);';
+		const roomRow = DOM.append(roomGroup, DOM.$('div'));
+		roomRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
 		const currentRoom = String(apt.room || apt.roomName || '');
-		const roomSelect = DOM.append(roomCell, DOM.$('select')) as HTMLSelectElement;
-		roomSelect.style.cssText = 'flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;outline:none;min-width:0;';
-
+		const roomSelect = DOM.append(roomRow, DOM.$('select')) as HTMLSelectElement;
+		roomSelect.style.cssText = 'flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:7px;padding:6px 9px;font-size:12px;cursor:pointer;outline:none;min-width:0;';
 		const loadingOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
 		loadingOpt.value = '';
 		loadingOpt.textContent = 'Loading rooms…';
 		loadingOpt.disabled = true;
 		loadingOpt.selected = true;
-
 		void this._fetchRoomOptions().then(rooms => {
 			DOM.clearNode(roomSelect);
 			const blankOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
@@ -1256,10 +1432,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			}
 			if (!currentRoom) { blankOpt.selected = true; }
 		});
-
-		const assignBtn = DOM.append(roomCell, DOM.$('button')) as HTMLButtonElement;
+		const assignBtn = DOM.append(roomRow, DOM.$('button')) as HTMLButtonElement;
 		assignBtn.textContent = 'Assign';
-		assignBtn.style.cssText = 'padding:4px 10px;font-size:11px;font-weight:600;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;';
+		assignBtn.style.cssText = 'padding:6px 12px;font-size:11px;font-weight:700;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:7px;cursor:pointer;white-space:nowrap;flex-shrink:0;';
 		assignBtn.addEventListener('mouseenter', () => { assignBtn.style.opacity = '0.85'; });
 		assignBtn.addEventListener('mouseleave', () => { assignBtn.style.opacity = '1'; });
 		assignBtn.addEventListener('click', async e => {
@@ -1270,7 +1445,90 @@ export class PatientSnapshotEditor extends EditorPane {
 			await this._updateAppointmentRoom(appointmentId, roomSelect.value);
 			assignBtn.disabled = false;
 			assignBtn.textContent = 'Assign';
+			this._rerender();
 		});
+
+		// --- Full appointment action toolbar -----------------------------------
+		this._renderAppointmentActions(card, apt, appointmentId);
+	}
+
+	/** Render the complete appointment workflow action bar — status
+	 *  progression, encounter, chart, telehealth and destructive actions —
+	 *  mirroring the schedule pane's per-appointment menu. */
+	private _renderAppointmentActions(card: HTMLElement, apt: Record<string, unknown>, appointmentId: string): void {
+		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'canceled', 'noshow', 'no-show', 'no show']);
+		const isTerminal = terminal.has(status);
+		const hasEncounter = !!(apt.encounterId);
+		const encounterId = String(apt.encounterId || '');
+		const vt = this._apptTypeStr(apt).toLowerCase();
+		const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+
+		const bar = DOM.append(card, DOM.$('div'));
+		bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
+
+		const mkBtn = (icon: string, label: string, onClick: () => void, tone: 'default' | 'primary' | 'danger' = 'default'): void => {
+			const b = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+			b.style.cssText = [
+				'display:flex;align-items:center;gap:5px;padding:6px 11px;font-size:11.5px;font-weight:600;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background 0.12s,border-color 0.12s;',
+				tone === 'primary'
+					? 'background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:1px solid transparent;'
+					: tone === 'danger'
+						? 'background:transparent;color:#ef4444;border:1px solid rgba(239,68,68,0.4);'
+						: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);',
+			].join('');
+			const ico = DOM.append(b, DOM.$('span.codicon.codicon-' + icon));
+			(ico as HTMLElement).style.cssText = 'font-size:13px;';
+			const lbl = DOM.append(b, DOM.$('span'));
+			lbl.textContent = label;
+			b.addEventListener('mouseenter', () => {
+				if (tone === 'primary') { b.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; }
+				else if (tone === 'danger') { b.style.background = 'rgba(239,68,68,0.12)'; }
+				else { b.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; }
+			});
+			b.addEventListener('mouseleave', () => {
+				if (tone === 'primary') { b.style.background = 'var(--vscode-button-background,#0e639c)'; }
+				else if (tone === 'danger') { b.style.background = 'transparent'; }
+				else { b.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; }
+			});
+			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+		};
+
+		// Status progression — only meaningful while the visit is live.
+		if (!isTerminal) {
+			if (status !== 'arrived' && status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
+				mkBtn('person', 'Mark Arrived', () => void this._changeApptStatus(appointmentId, 'Arrived'));
+			}
+			if (status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
+				mkBtn('check', 'Check In', () => void this._changeApptStatus(appointmentId, 'Checked-in'), 'primary');
+			}
+			if (status === 'checked-in' || status === 'arrived') {
+				mkBtn('home', 'Move to Room', () => void this._changeApptStatus(appointmentId, 'In Room'));
+			}
+			if (status !== 'with-provider') {
+				mkBtn('account', 'With Provider', () => void this._changeApptStatus(appointmentId, 'With Provider'));
+			}
+			mkBtn('pass', 'Mark Completed', () => void this._changeApptStatus(appointmentId, 'Completed'));
+		}
+
+		// Encounter + navigation
+		if (hasEncounter) {
+			mkBtn('note', 'Open Encounter', () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName));
+			mkBtn('pulse', 'Record Vitals', () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName, 'Vitals', 'vitals'));
+		} else if (!isTerminal) {
+			mkBtn('add', 'Create Encounter', () => void this._createEncounterFromAppointment(apt), 'primary');
+		}
+		mkBtn('edit', 'Edit', () => void this._openApptEdit(apt));
+		mkBtn('book', 'Open Chart', () => this._openChartAt('demographics'));
+		if (isTele) {
+			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
+		}
+
+		// Destructive actions
+		if (!isTerminal) {
+			mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show'), 'danger');
+			mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled'), 'danger');
+		}
 	}
 
 	private _renderGrid(
