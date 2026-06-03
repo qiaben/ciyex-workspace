@@ -631,6 +631,10 @@ class MediasoupStompProvider {
 		this.consumers = new Map();
 		this.pendingProduceCallbacks = new Map();
 		this.joinTimeout = null;
+		// Active STOMP subscriptions, torn down before each re-subscribe so a
+		// transient reconnect (heartbeat timeout, brief WS drop) doesn't stack a
+		// second callback per topic and double-render every incoming chat line.
+		this.subscriptions = [];
 	}
 
 	async connect() {
@@ -706,34 +710,40 @@ class MediasoupStompProvider {
 				const sid = this.sessionId;
 				const uid = this.userId;
 
-				client.subscribe('/topic/signal/' + uid, (msg) => {
+				// Drop subscriptions left over from a previous STOMP connection.
+				// Without this, a reconnect stacks a second callback per topic and
+				// the next incoming chat line renders twice.
+				this.subscriptions.forEach(s => { try { s.unsubscribe(); } catch (_) { /* ignore */ } });
+				this.subscriptions = [];
+
+				this.subscriptions.push(client.subscribe('/topic/signal/' + uid, (msg) => {
 					this._onSignal(JSON.parse(msg.body));
-				});
-				client.subscribe('/topic/session/' + sid + '/join', (msg) => {
+				}));
+				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/join', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'peer-joined' && p.peerId !== uid) {
 						state.remotePeers.set(p.peerId, { displayName: p.displayName || '' });
 						render();
 					}
-				});
-				client.subscribe('/topic/session/' + sid + '/producer', (msg) => {
+				}));
+				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/producer', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'new-producer' && p.peerId !== uid) {
 						this._consume(p.producerId, p.kind);
 					}
-				});
-				client.subscribe('/topic/session/' + sid + '/leave', (msg) => {
+				}));
+				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/leave', (msg) => {
 					const p = JSON.parse(msg.body);
 					if (p.type === 'peer-left') {
 						state.remotePeers.delete(p.peerId);
 						render();
 					}
-				});
-				client.subscribe('/topic/session/' + sid + '/chat', (msg) => {
+				}));
+				this.subscriptions.push(client.subscribe('/topic/session/' + sid + '/chat', (msg) => {
 					const p = JSON.parse(msg.body);
 					state.chatMessages.push({ senderId: p.senderId, senderName: p.senderName, content: p.content, sentAt: p.sentAt || new Date().toISOString() });
 					render();
-				});
+				}));
 
 				client.publish({ destination: '/app/session/' + sid + '/join', body: JSON.stringify({ userId: uid, displayName: this.displayName }) });
 				resolve();
@@ -962,15 +972,63 @@ class MediasoupStompProvider {
 	}
 }
 
+// Cross-platform (Linux / Windows / macOS) camera+mic permission popup.
+// A browser shows its own prompt; an Electron webview auto-grants Chromium's
+// 'media' permission silently, so the user never sees one. We surface our own
+// in-app modal so there is an explicit "Allow" step on every OS. It is plain
+// webview DOM, so it looks and behaves identically everywhere. On macOS the
+// getUserMedia call that follows "Allow" triggers the native TCC prompt (the
+// electron-main permission handler calls systemPreferences.askForMediaAccess).
+function requestMediaAccess() {
+	return new Promise((resolve) => {
+		const overlay = document.createElement('div');
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(8,10,14,0.72);backdrop-filter:blur(2px);';
+		const card = document.createElement('div');
+		card.style.cssText = 'width:380px;max-width:90vw;background:#1f2937;border:1px solid #374151;border-radius:10px;padding:22px 22px 18px;box-shadow:0 12px 40px rgba(0,0,0,0.5);text-align:center;';
+		card.innerHTML =
+			'<div style="font-size:34px;line-height:1;margin-bottom:10px;">\u{1F3A5}</div>'
+			+ '<div style="font-size:15px;font-weight:600;color:#fff;margin-bottom:6px;">Allow camera & microphone?</div>'
+			+ '<div style="font-size:12px;color:#9ca3af;line-height:1.5;margin-bottom:18px;">Ciyex Telehealth needs your camera and microphone for this video visit. You can mute or turn off video anytime during the call.</div>'
+			+ '<div style="display:flex;gap:8px;">'
+			+ '<button id="perm-skip" style="flex:1;padding:9px 0;border-radius:6px;border:1px solid #374151;background:transparent;color:#d1d5db;font-size:12px;cursor:pointer;">Join without camera</button>'
+			+ '<button id="perm-allow" style="flex:1;padding:9px 0;border-radius:6px;border:none;background:#22c55e;color:#06240f;font-weight:600;font-size:12px;cursor:pointer;">Allow</button>'
+			+ '</div>';
+		overlay.appendChild(card);
+		document.body.appendChild(overlay);
+		const done = (val) => { try { overlay.remove(); } catch (_) {} resolve(val); };
+		card.querySelector('#perm-allow').addEventListener('click', () => done(true));
+		card.querySelector('#perm-skip').addEventListener('click', () => done(false));
+	});
+}
+
 async function connectMediasoup(session) {
-	// Acquire local media first so the user sees themselves immediately.
-	try {
-		localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-		const localEl = document.getElementById('local-video');
-		if (localEl) { localEl.srcObject = localStream; }
-	} catch (err) {
-		notify('Could not access camera/microphone: ' + (err && err.message ? err.message : 'unknown'), 'warning');
+	// Ask the user first (explicit, cross-OS popup), then acquire local media
+	// so they see themselves immediately.
+	const wantsMedia = await requestMediaAccess();
+	if (wantsMedia) {
+		try {
+			localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+			const localEl = document.getElementById('local-video');
+			if (localEl) { localEl.srcObject = localStream; }
+		} catch (err) {
+			const name = err && err.name ? err.name : '';
+			// Distinguish the failure modes so the message is actionable:
+			// NotAllowedError = OS/Chromium blocked it; NotFoundError = no device.
+			let msg;
+			if (name === 'NotAllowedError' || name === 'SecurityError') {
+				msg = 'Camera/microphone access was blocked. On macOS, enable it in System Settings → Privacy & Security → Camera and Microphone, then rejoin. Joining without video for now.';
+			} else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+				msg = 'No camera or microphone found on this device. Joining without video.';
+			} else {
+				msg = 'Could not access camera/microphone: ' + (err && err.message ? err.message : 'unknown') + '. Joining without video.';
+			}
+			notify(msg, 'warning');
+			state.videoEnabled = false; state.audioEnabled = false;
+		}
+	} else {
+		// User opted out — join as a viewer (mirrors the ciyex-ehr-ui flow).
 		state.videoEnabled = false; state.audioEnabled = false;
+		notify('Joined without camera/microphone. Use the controls to enable them anytime.', 'info');
 	}
 
 	const remoteEl = document.getElementById('remote-video');
@@ -990,9 +1048,11 @@ function toggleChatPanel() { state.chatOpen = !state.chatOpen; render(); }
 function sendChat() {
 	const text = (state.chatInput || '').trim();
 	if (!text) { return; }
-	// Echo locally so the sender sees the bubble immediately even if the
-	// server doesn't broadcast back to the sender.
-	state.chatMessages.push({ senderId: provider ? provider.userId : 'self', senderName: ctx.displayName, content: text, sentAt: new Date().toISOString() });
+	// No optimistic echo: the backend broadcasts /topic/session/<id>/chat to
+	// every subscriber INCLUDING the sender, so pushing a local copy here made
+	// the sender's own message appear twice (once with the local clock, once
+	// with the server's sentAt). Let the STOMP round-trip own the render so the
+	// bubble shows exactly once and both peers stay consistent.
 	if (provider) { provider.sendChat(text); }
 	state.chatInput = '';
 	render();

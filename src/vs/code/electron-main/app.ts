@@ -192,6 +192,14 @@ export class CodeApplication extends Disposable {
 			...alwaysAllowedPermissions,
 			'clipboard-read',
 			'clipboard-sanitized-write',
+			// ciyex-telehealth runs inside a vscode-webview:// panel and calls
+			// navigator.mediaDevices.getUserMedia for the provider-side
+			// camera/mic. Without 'media' here the session permission handler
+			// returns callback(false) for the webview origin and Chromium
+			// surfaces NotAllowedError ("Permission denied") on Win/Mac. The
+			// matching per-iframe Feature Policy ('allow' attribute) is added in
+			// webviewElement.ts and webview/browser/pre/index.html.
+			'media',
 			// TODO(deepak1556): Should be removed once migration is complete
 			// https://github.com/microsoft/vscode/issues/239228
 			'deprecated-sync-clipboard-read',
@@ -206,9 +214,24 @@ export class CodeApplication extends Disposable {
 			'deprecated-sync-clipboard-read',
 		]);
 
-		session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+		session.defaultSession.setPermissionRequestHandler(async (_webContents, permission, callback, details) => {
 			if (isUrlFromWebview(details.requestingUrl)) {
-				return callback(allowedPermissionsInWebview.has(permission));
+				const allowed = allowedPermissionsInWebview.has(permission);
+				// Granting Chromium's 'media' permission is necessary but not
+				// sufficient on macOS: getUserMedia still rejects with
+				// NotAllowedError ("Permission denied") unless the app also holds
+				// the OS-level (TCC) camera/microphone grant. Proactively ask for
+				// it so the first ciyex-telehealth visit triggers the macOS
+				// prompt instead of silently failing. No-op on Win/Linux.
+				if (allowed && permission === 'media' && isMacintosh) {
+					try {
+						await Promise.all([
+							systemPreferences.askForMediaAccess('camera'),
+							systemPreferences.askForMediaAccess('microphone'),
+						]);
+					} catch (_) { /* OS prompt failed; Chromium grant still applies */ }
+				}
+				return callback(allowed);
 			}
 			if (isUrlFromWindow(details.requestingUrl)) {
 				return callback(allowedPermissionsInCore.has(permission));

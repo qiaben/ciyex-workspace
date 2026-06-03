@@ -408,6 +408,12 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 		if (!isFirefox) {
 			allowRules.push('clipboard-read', 'clipboard-write');
 		}
+		// ciyex-telehealth's webview calls navigator.mediaDevices.getUserMedia
+		// for the provider-side video. Feature Policy is enforced per-iframe and
+		// is hierarchical, so this outer webview iframe must delegate camera +
+		// microphone (the inner fake.html iframe in pre/index.html does too).
+		// Electron grants 'media' for webview origins in electron-main/app.ts.
+		allowRules.push('camera', 'microphone');
 		element.setAttribute('allow', allowRules.join('; '));
 
 		element.style.border = 'none';
