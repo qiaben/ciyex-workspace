@@ -17,23 +17,19 @@
 	display: flex;
 	align-items: center;
 	gap: 4px;
+	margin-left: auto;
 	margin-right: 4px;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
 	flex-shrink: 0;
 }
 
-/* 4px gap between layout icons to match EHR icon spacing. */
-.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .actions-container {
-	gap: 4px !important;
+/* Cancel the default auto left-margin on the action toolbar so it sits
+ * flush after the EHR buttons with no gap. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
+	margin-left: 0 !important;
 }
 
-/* Match the 28px width of EHR action buttons so layout icons are visually the same size. */
-.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container .monaco-action-bar .action-item {
-	width: 28px !important;
-	min-width: 28px !important;
-	justify-content: center !important;
-}
 
 /* --- Search Bar --- */
 .ehr-search-container {
@@ -186,23 +182,18 @@
 /* --- Action Buttons — icon only, transparent bg --- */
 .ehr-action-btn {
 	display: inline-flex;
-	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 0;
-	padding: 3px;
-	box-sizing: border-box;
-	width: 28px;
-	border-radius: 6px;
+	width: 22px;
+	height: 22px;
+	border-radius: 5px;
 	cursor: pointer;
 	color: var(--vscode-titleBar-activeForeground, #ccc);
 	background: transparent;
 	border: none;
-	height: 100%;
 	font-family: inherit;
 	transition: background 0.12s;
 	-webkit-app-region: no-drag;
-	white-space: nowrap;
 }
 
 .ehr-action-btn:hover {
@@ -289,10 +280,6 @@
 	font-weight: 400;
 }
 
-/* Donate button — same width as other action buttons for consistent spacing */
-.ehr-action-btn-currency {
-	width: 28px;
-}
 
 /* Currency $ icon — larger than codicons so the donate button stands out */
 .ehr-currency-icon {
