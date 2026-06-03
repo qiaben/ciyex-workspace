@@ -83,6 +83,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._openInSidePanel(input);
 	}
 
+	/** Open the full patient chart *page* (left-rail navigation + patient
+	 *  header) in the main editor area, landing on a specific section. Unlike
+	 *  {@link _openChartAt} this is NOT the narrow focused side-panel — it's
+	 *  the full dashboard page, matching `ciyex.openPatientChart`. */
+	private _openPatientChartPage(tab: string): void {
+		if (!this._currentPatientId) { return; }
+		const input = new PatientChartEditorInput(this._currentPatientId, this._currentPatientName, tab);
+		void this.editorService.openEditor(input, { pinned: true });
+	}
+
 	// --- Popup CRUD --------------------------------------------------------
 	//
 	// Every entity surfaced on the snapshot dashboard routes through one
@@ -593,9 +603,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _openManager(entity: string, initialMode: 'list' | 'create' = 'list'): void {
 		if (!this._currentPatientId) { return; }
 		// Demographics is the patient record itself — there is no list to manage,
-		// so clicking it should jump straight to the patient's Demographics tab
-		// in the chart editor rather than surfacing a single-record popup.
-		if (entity === 'demographics') { this._openChartAt('demographics'); return; }
+		// so clicking it should jump straight to the patient's full chart page
+		// (Demographics section) rather than surfacing a single-record popup or
+		// the narrow side-panel view.
+		if (entity === 'demographics') { this._openPatientChartPage('demographics'); return; }
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
 		if (!reg) { this._openChartAt(entity); return; }
 		const fields = this._entityFields(entity);
@@ -1038,8 +1049,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		actions.style.cssText = 'position:absolute;top:18px;right:24px;display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
 		const primary: QuickAction[] = [
-			{ icon: 'add', title: 'New Encounter', onClick: () => this._openCreateModal('encounters') },
-			{ icon: '', customClass: 'ehr-patient-icon', title: 'Open Demographics', onClick: () => this._openChartAt('demographics') },
+			{ icon: '', customClass: 'ehr-patient-icon', title: 'Open Demographics', onClick: () => this._openPatientChartPage('demographics') },
 			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openCreateModal('payment') },
 			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openCreateModal('claims') },
 		];
@@ -1519,7 +1529,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('add', 'Create Encounter', () => void this._createEncounterFromAppointment(apt), 'primary');
 		}
 		mkBtn('edit', 'Edit', () => void this._openApptEdit(apt));
-		mkBtn('book', 'Open Chart', () => this._openChartAt('demographics'));
+		mkBtn('book', 'Open Chart', () => this._openPatientChartPage('demographics'));
 		if (isTele) {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
