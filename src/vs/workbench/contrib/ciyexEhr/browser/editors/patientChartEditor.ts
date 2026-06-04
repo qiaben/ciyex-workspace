@@ -4449,6 +4449,22 @@ export class PatientChartEditor extends EditorPane {
 						payload.prescribingDoctor = `Practitioner/${v.trim()}`;
 					}
 				}
+				// Claim facility maps to FHIR Claim.facility.reference (ciyex
+				// tab_field_config key `facilityReference`, backed by /api/locations).
+				// The backend's reference-type inference has no rule for the
+				// "facility" path, so a bare Location id reaches HAPI as "13642"
+				// and is rejected (HAPI-0505: "Does not contain resource type").
+				// Prefix it with "Location/" so the saved reference is well-formed.
+				// (Same fix shape as the encounter provider and medication
+				// prescriber above.)
+				if (tab.key === 'claims') {
+					for (const facKey of ['facilityReference', 'facilityId', 'facility']) {
+						const v = payload[facKey];
+						if (typeof v === 'string' && v.trim() && !v.includes('/')) {
+							payload[facKey] = `Location/${v.trim()}`;
+						}
+					}
+				}
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
