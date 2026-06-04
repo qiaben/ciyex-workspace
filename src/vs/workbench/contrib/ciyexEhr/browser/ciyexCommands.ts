@@ -5,13 +5,15 @@
 
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { localize2 } from '../../../../nls.js';
+import { localize, localize2 } from '../../../../nls.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICiyexPaymentService, CheckoutRequest, CheckoutResult, RegisteredGateway } from './ciyexPaymentService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -1123,3 +1125,199 @@ function _mapInterval(interval?: string): 'month' | 'year' | 'one_time' {
 function _readLocal(key: string): string {
 	try { return localStorage.getItem(key) || ''; } catch { return ''; }
 }
+
+// allow-any-unicode-next-line
+// ─── Patient Pay (ciyex-patient-pay) Bridge Commands ─────────────────────
+//
+// Phase 1 (create + send invoice), Phase 2b (staff-collected payment) and the
+// hand-off into a gateway extension all live here. Crucially, NO gateway SDK is
+// touched in the workbench — staff payments are routed through the SAME
+// `ICiyexPaymentService` registry + `gateway.checkoutCommand` handshake the
+// marketplace checkout uses, so "Stripe & other gateways, extension-way only"
+// holds for patient bills too. ciyex-patient-pay mints the clientSecret; the
+// active gateway extension confirms the card in its own CSP-locked webview.
+
+interface PatientPayInvoice {
+	id: string;
+	invoiceNumber?: string;
+	patientId?: string;
+	patientName?: string;
+	balanceDue?: number;
+	totalAmount?: number;
+	status?: string;
+}
+
+/**
+ * Resolve the ciyex-patient-pay base URL. Order: explicit setting →
+ * `ciyex_patient_pay_api_url` localStorage override → derived from the EHR API
+ * URL by swapping the `api` host segment for `patient-pay-api`.
+ */
+function _patientPayBaseUrl(apiUrl: string, configured: string): string {
+	const explicit = (configured || '').trim() || _readLocal('ciyex_patient_pay_api_url');
+	if (explicit) { return explicit.replace(/\/$/, ''); }
+	try {
+		const u = new URL(apiUrl);
+		u.hostname = u.hostname.replace(/(^|\.)api(-|\.)/, '$1patient-pay-api$2');
+		u.pathname = '';
+		u.search = '';
+		u.hash = '';
+		return u.toString().replace(/\/$/, '');
+	} catch {
+		return 'https://patient-pay-api.apps-dev.us-east.in.hinisoft.com';
+	}
+}
+
+function _patientPayHeaders(): Record<string, string> {
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	const token = _readLocal('ciyex_token');
+	const orgAlias = _readLocal('ciyex_selected_tenant') || _readLocal('ciyex_tenant');
+	if (token) { headers['Authorization'] = `Bearer ${token}`; }
+	if (orgAlias) { headers['X-Org-Alias'] = orgAlias; }
+	return headers;
+}
+
+function _unwrap<T>(raw: unknown): T {
+	const r = raw as { data?: T };
+	return (r && r.data !== undefined ? r.data : raw) as T;
+}
+
+// Phase 2b — collect a patient payment through the active gateway extension.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.patientPay.collectPayment',
+			title: localize2('patientPayCollect', "Patient Pay: Collect Payment"),
+			category: localize2('patientPayCategory', "Ciyex Patient Pay"),
+			f1: true,
+		});
+	}
+	async run(accessor: ServicesAccessor, arg?: { invoiceId?: string } | string): Promise<CheckoutResult | undefined> {
+		const payments = accessor.get(ICiyexPaymentService);
+		const notifications = accessor.get(INotificationService);
+		const commandService = accessor.get(ICommandService);
+		const apiService = accessor.get(ICiyexApiService);
+		const quickInput = accessor.get(IQuickInputService);
+		const configurationService = accessor.get(IConfigurationService);
+
+		let invoiceId = typeof arg === 'string' ? arg : arg?.invoiceId;
+		if (!invoiceId) {
+			invoiceId = await quickInput.input({
+				prompt: localize('patientPayInvoicePrompt', "Invoice id to collect payment for"),
+				placeHolder: 'invoice UUID',
+			});
+		}
+		if (!invoiceId) { return undefined; }
+
+		// Pick the gateway the same way the marketplace flow does — extension only.
+		const preferred = configurationService.getValue<string>('ciyex.patientPay.defaultGateway') || '';
+		const gateway = (preferred && payments.gateways.find(g => g.id === preferred)) || payments.getActiveGateway();
+		if (!gateway) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('patientPayNoGateway', "No payment gateway extension is installed. Install Ciyex Payment — Stripe (or another gateway) from the Extensions view."),
+				actions: {
+					primary: [{
+						id: 'ciyex.patientPay.openExtensionsView',
+						label: localize('openExtensions', "Open Extensions"),
+						tooltip: '', class: undefined, enabled: true,
+						run: async () => { await commandService.executeCommand('workbench.view.extensions'); },
+					}],
+				},
+			});
+			return { status: 'error', appSlug: invoiceId, message: 'No payment gateway available.' };
+		}
+
+		const base = _patientPayBaseUrl(apiService.apiUrl, configurationService.getValue<string>('ciyex.patientPay.apiUrl'));
+		const headers = _patientPayHeaders();
+		if (!headers['X-Org-Alias']) {
+			notifications.notify({ severity: Severity.Error, message: localize('patientPayNoOrg', "No active practice selected.") });
+			return { status: 'error', appSlug: invoiceId, message: 'No active practice.' };
+		}
+
+		try {
+			// Invoice detail for display (amount + patient name) in the webview.
+			const invRes = await globalThis.fetch(`${base}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}`, { headers });
+			if (!invRes.ok) { throw new Error(`Invoice lookup failed (${invRes.status}).`); }
+			const invoice = _unwrap<PatientPayInvoice>(await invRes.json());
+			const amount = invoice.balanceDue ?? invoice.totalAmount ?? 0;
+
+			// Mint the gateway payment intent via ciyex-patient-pay (Phase 2 backend).
+			const intentRes = await globalThis.fetch(
+				`${base}/api/patient-pay/payments/intent/${encodeURIComponent(invoiceId)}?gateway=${encodeURIComponent(gateway.id)}`,
+				{ method: 'POST', headers });
+			if (!intentRes.ok) {
+				const body = await intentRes.text().catch(() => '');
+				throw new Error(`Payment intent failed (${intentRes.status})${body ? `: ${body}` : ''}.`);
+			}
+			const intent = _unwrap<{ clientSecret?: string; gatewayTransactionId?: string; gateway?: string }>(await intentRes.json());
+
+			const checkoutRequest: CheckoutRequest = {
+				appSlug: `invoice:${invoiceId}`,
+				appName: invoice.invoiceNumber ? `Invoice ${invoice.invoiceNumber}` : `Invoice ${invoiceId}`,
+				pricingPlanId: invoiceId,
+				planName: invoice.patientName ? `Balance for ${invoice.patientName}` : 'Patient balance',
+				priceCents: Math.round(amount * 100),
+				currency: 'USD',
+				interval: 'one_time',
+				clientSecret: intent.clientSecret,
+				authToken: _readLocal('ciyex_token') || undefined,
+				orgAlias: headers['X-Org-Alias'],
+			};
+
+			const result = await commandService.executeCommand<CheckoutResult>(gateway.checkoutCommand, checkoutRequest);
+			if (result?.status === 'success') {
+				notifications.notify({
+					severity: Severity.Info,
+					message: localize('patientPayPaid', "Payment submitted via {0}. The gateway webhook will confirm and mark the invoice paid.", gateway.displayName),
+				});
+			} else if (result?.status === 'error') {
+				notifications.notify({ severity: Severity.Error, message: `Payment failed: ${result.message ?? 'unknown error'}` });
+			}
+			return result;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			notifications.notify({ severity: Severity.Error, message: `Couldn't collect payment: ${message}` });
+			return { status: 'error', appSlug: invoiceId, message };
+		}
+	}
+});
+
+// Phase 1 — send an existing invoice (token + ciyex-comm email/SMS).
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.patientPay.sendInvoice',
+			title: localize2('patientPaySend', "Patient Pay: Send Invoice to Patient"),
+			category: localize2('patientPayCategory', "Ciyex Patient Pay"),
+			f1: true,
+		});
+	}
+	async run(accessor: ServicesAccessor, arg?: { invoiceId?: string } | string): Promise<void> {
+		const notifications = accessor.get(INotificationService);
+		const apiService = accessor.get(ICiyexApiService);
+		const quickInput = accessor.get(IQuickInputService);
+		const configurationService = accessor.get(IConfigurationService);
+
+		let invoiceId = typeof arg === 'string' ? arg : arg?.invoiceId;
+		if (!invoiceId) {
+			invoiceId = await quickInput.input({
+				prompt: localize('patientPaySendPrompt', "Invoice id to send to the patient"),
+				placeHolder: 'invoice UUID',
+			});
+		}
+		if (!invoiceId) { return; }
+
+		const base = _patientPayBaseUrl(apiService.apiUrl, configurationService.getValue<string>('ciyex.patientPay.apiUrl'));
+		const headers = _patientPayHeaders();
+		try {
+			const res = await globalThis.fetch(`${base}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}/send`, { method: 'POST', headers });
+			if (!res.ok) {
+				const body = await res.text().catch(() => '');
+				throw new Error(`Send failed (${res.status})${body ? `: ${body}` : ''}.`);
+			}
+			notifications.notify({ severity: Severity.Info, message: localize('patientPaySent', "Invoice sent — the patient will receive an email/SMS with a secure pay link.") });
+		} catch (err) {
+			notifications.notify({ severity: Severity.Error, message: `Couldn't send invoice: ${err instanceof Error ? err.message : String(err)}` });
+		}
+	}
+});

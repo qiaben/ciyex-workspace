@@ -1,0 +1,79 @@
+{
+	"name": "ciyex-payment-paypal",
+	"displayName": "Ciyex Payment — PayPal",
+	"description": "PayPal payment gateway for Ciyex. Registers as a sibling of the Stripe gateway via the same ciyex.payment.registerGateway handshake — no workbench code change.",
+	"version": "0.1.0",
+	"publisher": "ciyex",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.95.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"ciyex",
+		"payment",
+		"paypal",
+		"billing"
+	],
+	"icon": "media/icon.png",
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "ciyex-payment-paypal.checkout",
+				"title": "Checkout with PayPal",
+				"category": "Ciyex Payment"
+			},
+			{
+				"command": "ciyex-payment-paypal.configure",
+				"title": "Configure PayPal Client ID",
+				"category": "Ciyex Payment"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "ciyex-payment-paypal.checkout",
+					"when": "false"
+				},
+				{
+					"command": "ciyex-payment-paypal.configure",
+					"when": "true"
+				}
+			]
+		},
+		"configuration": {
+			"title": "Ciyex Payment — PayPal",
+			"properties": {
+				"ciyex.payment.paypal.clientId": {
+					"type": "string",
+					"default": "",
+					"description": "PayPal client id (public). Required to render the PayPal buttons.",
+					"scope": "application"
+				},
+				"ciyex.payment.paypal.mode": {
+					"type": "string",
+					"enum": ["SANDBOX", "LIVE"],
+					"default": "SANDBOX",
+					"description": "PayPal environment indicator shown in the checkout UI.",
+					"scope": "application"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "gulp compile-extension:ciyex-payment-paypal",
+		"watch": "gulp watch-extension:ciyex-payment-paypal"
+	}
+}

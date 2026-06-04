@@ -55,6 +55,30 @@ configRegistry.registerConfiguration({
 	},
 });
 
+// --- Patient Pay -----------------------------------------------------
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.patientPay',
+	order: 1,
+	title: localize('ciyexPatientPay', "Ciyex: Patient Pay"),
+	properties: {
+		'ciyex.patientPay.apiUrl': {
+			type: 'string',
+			default: '',
+			description: localize('ciyexPatientPayUrl', "ciyex-patient-pay service base URL. Leave blank to derive it from the EHR API URL by swapping the host segment to 'patient-pay-api'."),
+			scope: ConfigurationScope.APPLICATION,
+			order: 1,
+		},
+		'ciyex.patientPay.defaultGateway': {
+			type: 'string',
+			default: '',
+			description: localize('ciyexPatientPayGateway', "Preferred payment gateway id ('stripe', 'paypal', ...) for staff-collected patient payments. Leave blank to use the first registered gateway extension."),
+			scope: ConfigurationScope.APPLICATION,
+			order: 2,
+		},
+	},
+});
+
 // --- Display Settings ------------------------------------------------
 
 configRegistry.registerConfiguration({
