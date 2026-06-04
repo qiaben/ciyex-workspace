@@ -133,18 +133,42 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
-			{ key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments' },
+			{
+				key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments',
+				// Match the reference EHR UI: only Status / Topic / Category / Date
+				// Provided columns (plus the auto-appended Actions column).
+				columns: [
+					{ key: 'status', label: 'Status' },
+					{ key: 'materialTitle', label: 'Topic / Title', aliases: ['materialTitle', 'topic', 'title', 'materialName'] },
+					{ key: 'category', label: 'Category', aliases: ['category', 'materialCategory'] },
+					{ key: 'dateProvided', label: 'Date Provided', aliases: ['dateProvided', 'assignedDate', 'dateAssigned', 'createdAt'] },
+				],
+			},
 			// Messaging uses the FHIR Communication resource via the generic FHIR controller
 			// — same backend `tab_field_config` + scope enforcement as the rest of the chart,
 			// and no separate patient-messages controller required.
-			{ key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Communication'] },
+			{
+				key: 'messaging', label: 'Messaging', icon: 'MessageSquare', emoji: '\u{1F4AC}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Communication'],
+				// Explicit columns so both sent AND received messages render the
+				// same way. Aliases cover the FHIR field keys (sender/recipient/
+				// sent) and any display-name variants the backend resolves.
+				columns: [
+					{ key: 'sender', label: 'From (Provider)', aliases: ['senderName', 'sender', 'from', 'fromName', 'providerName'] },
+					{ key: 'recipient', label: 'To (Patient)', aliases: ['recipientName', 'recipient', 'to', 'toName', 'patientName'] },
+					{ key: 'subject', label: 'Subject', aliases: ['subject', 'topic', 'title'] },
+					{ key: 'sent', label: 'Sent Date', aliases: ['sent', 'sentDate', 'sentAt', 'date', 'createdAt'] },
+					{ key: 'status', label: 'Status' },
+				],
+			},
 			{ key: 'relationships', label: 'Relationships', icon: 'Users', emoji: '\u{1F46A}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['RelatedPerson'] },
 			// Facility now routes through the FHIR Location resource so CRUD
 			// (PUT / DELETE) works. The legacy /api/locations endpoint is
 			// read-only — that's why the test team's "delete, update option is
 			// not working" was 405-ing every time. Backend tab_field_config
 			// `facility` (V107) drives the form and column shape.
-			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Location'] },
+			// Facility is hidden from the patient chart — it is an org-level
+			// resource, not patient-scoped, so it doesn't belong in the chart nav.
+			{ key: 'facility', label: 'Facility', icon: 'Building', emoji: '\u{1F3E2}', position: 5, visible: false, display: 'list', panel: 'main', fhirResources: ['Location'] },
 		],
 	},
 	{
@@ -1012,11 +1036,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{
 						key: 'readingLevel', label: 'Reading Level', type: 'select', options: [
 							{ label: 'Select Reading Level…', value: '' },
-							{ label: '3rd Grade', value: '3rd' },
-							{ label: '5th Grade', value: '5th' },
-							{ label: '8th Grade', value: '8th' },
-							{ label: 'High School', value: 'high_school' },
-							{ label: 'College', value: 'college' },
+							{ label: 'Easy Read', value: 'easy_read' },
+							{ label: 'Standard', value: 'standard' },
+							{ label: 'Advanced', value: 'advanced' },
 						]
 					},
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes…', colSpan: 2 },
@@ -5656,7 +5678,8 @@ export class PatientChartEditor extends EditorPane {
 			// ONLY the edit + delete pair (workspace test report issues 16-18),
 			// so those tabs are intentionally excluded here. The billing/claims
 			// tabs still surface the encounter shortcuts.
-			const encounterLinkedTabs = new Set(['billing', 'claims', 'submissions']);
+			// Billing excluded — QA wants only the edit + delete pair there.
+			const encounterLinkedTabs = new Set(['claims', 'submissions']);
 			if (encounterLinkedTabs.has(tab.key)) {
 				// Row may surface the encounter via different keys: `encounterId`,
 				// `encounter`, `encounterRef`, `encounter.reference`, or — for the

@@ -67,15 +67,14 @@ export class EncounterFormEditor extends EditorPane {
 		this.headerBar = DOM.append(this.root, DOM.$('div'));
 		this.headerBar.style.cssText = 'padding:8px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;display:flex;align-items:center;gap:10px;';
 
-		// Body: content-only (SECTIONS sidebar intentionally hidden — the
-		// New Encounter / Edit Encounter side panel shows the form content
-		// directly. The TOC element still exists off-screen so the existing
-		// scroll-sync / TOC-click logic can operate without null checks.)
+		// Body: SECTIONS sidebar (TOC) + scrollable form content. The TOC gives
+		// quick navigation between Chief Complaint / HPI / Vitals / Assessment /
+		// etc. when the encounter chart is opened as a full editor.
 		const body = DOM.append(this.root, DOM.$('div'));
 		body.style.cssText = 'flex:1;display:flex;overflow:hidden;';
 
 		this.tocNav = DOM.append(body, DOM.$('div'));
-		this.tocNav.style.cssText = 'display:none;';
+		this.tocNav.style.cssText = 'width:200px;flex-shrink:0;overflow-y:auto;padding:8px 0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background,var(--vscode-editor-background));';
 
 		this.scrollArea = DOM.append(body, DOM.$('div'));
 		this.scrollArea.style.cssText = 'flex:1;overflow-y:auto;';

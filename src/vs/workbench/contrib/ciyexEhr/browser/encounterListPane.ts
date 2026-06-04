@@ -29,8 +29,18 @@ export class EncounterListPane extends ViewPane {
 	private allItems: Record<string, unknown>[] = [];
 	private loaded = false;
 	private filterValue = '';
-	private dateFrom = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-	private dateTo = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+	private dateFrom = EncounterListPane._defaultFrom();
+	private dateTo = EncounterListPane._defaultTo();
+
+	/** Range start: one year before today's system date (recomputed per render). */
+	private static _defaultFrom(): string {
+		return new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+	}
+
+	/** Range end: 30 days after today's system date (recomputed per render). */
+	private static _defaultTo(): string {
+		return new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+	}
 	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	// FHIR type code → readable label
@@ -77,6 +87,10 @@ export class EncounterListPane extends ViewPane {
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
+		// Recompute the default range against the current system date so the
+		// inputs are never anchored to a stale construction-time "today".
+		this.dateFrom = EncounterListPane._defaultFrom();
+		this.dateTo = EncounterListPane._defaultTo();
 		this.container = DOM.append(parent, DOM.$('.encounter-list-pane.ciyex-editor-root'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
 

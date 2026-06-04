@@ -28,16 +28,19 @@ interface CarePlanGoal {
 	description: string;
 	targetDate: string;
 	status: string;
+	measure: string;
+	targetValue: string;
+	priority: string;
 }
 
 interface CarePlanIntervention {
 	title: string;
 	description: string;
 	frequency: string;
-	responsibleParty: string;
+	assignedTo: string;
 }
 
-function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown> | null): FormExtrasHandle {
+function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown> | null, api: ICiyexApiService): FormExtrasHandle {
 	const sectionStyle = 'grid-column:span 2;display:flex;flex-direction:column;gap:8px;margin-top:12px;';
 	const headerRowStyle = 'display:flex;align-items:center;justify-content:space-between;';
 	const titleStyle = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);margin:0;';
@@ -161,6 +164,44 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 			triggerStyle: inputStyle,
 		});
 
+		// Measure / Target Value / Priority — matching ciyex-ehr-ui goal fields.
+		const sub2 = DOM.append(row, DOM.$('div'));
+		sub2.style.cssText = fieldRowStyle;
+		const measureCell = DOM.append(sub2, DOM.$('div'));
+		const measureLabel = DOM.append(measureCell, DOM.$('label'));
+		measureLabel.textContent = 'Measure';
+		measureLabel.style.cssText = labelStyle;
+		const measureInput = DOM.append(measureCell, DOM.$('input')) as HTMLInputElement;
+		measureInput.type = 'text';
+		measureInput.placeholder = 'e.g. HbA1c';
+		measureInput.style.cssText = inputStyle;
+		measureInput.value = seed?.measure ?? '';
+
+		const targetValCell = DOM.append(sub2, DOM.$('div'));
+		const targetValLabel = DOM.append(targetValCell, DOM.$('label'));
+		targetValLabel.textContent = 'Target Value';
+		targetValLabel.style.cssText = labelStyle;
+		const targetValInput = DOM.append(targetValCell, DOM.$('input')) as HTMLInputElement;
+		targetValInput.type = 'text';
+		targetValInput.placeholder = 'e.g. 7.0';
+		targetValInput.style.cssText = inputStyle;
+		targetValInput.value = seed?.targetValue ?? '';
+
+		const priorityCell = DOM.append(row, DOM.$('div'));
+		const priorityLabel = DOM.append(priorityCell, DOM.$('label'));
+		priorityLabel.textContent = 'Priority';
+		priorityLabel.style.cssText = labelStyle;
+		const priorityInput = createCustomDropdown({
+			parent: priorityCell,
+			options: [
+				{ label: 'Low', value: 'low' },
+				{ label: 'Medium', value: 'medium' },
+				{ label: 'High', value: 'high' },
+			],
+			initialValue: seed?.priority ?? 'medium',
+			triggerStyle: inputStyle,
+		});
+
 		const ref = {
 			row,
 			getters: (): CarePlanGoal => ({
@@ -168,6 +209,9 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 				description: descInput.value.trim(),
 				targetDate: dateInput.value,
 				status: statusInput.value,
+				measure: measureInput.value.trim(),
+				targetValue: targetValInput.value.trim(),
+				priority: priorityInput.value,
 			}),
 		};
 		goalRefs.push(ref);
@@ -229,15 +273,33 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 			triggerStyle: inputStyle,
 		});
 
-		const respCell = DOM.append(sub, DOM.$('div'));
-		const respLabel = DOM.append(respCell, DOM.$('label'));
-		respLabel.textContent = 'Responsible Party';
-		respLabel.style.cssText = labelStyle;
-		const respInput = DOM.append(respCell, DOM.$('input')) as HTMLInputElement;
-		respInput.type = 'text';
-		respInput.placeholder = 'e.g. Dr. Smith';
-		respInput.style.cssText = inputStyle;
-		respInput.value = seed?.responsibleParty ?? '';
+		// Assign Provider — a searchable select populated from /api/providers,
+		// replacing the old free-text "Responsible Party" box (matches the
+		// reference EHR UI's "Assign to provider..." field).
+		const provCell = DOM.append(sub, DOM.$('div'));
+		const provLabel = DOM.append(provCell, DOM.$('label'));
+		provLabel.textContent = 'Assign Provider';
+		provLabel.style.cssText = labelStyle;
+		const provOptions: Array<{ label: string; value: string }> = [];
+		const seededProvider = seed?.assignedTo ?? '';
+		if (seededProvider) { provOptions.push({ label: seededProvider, value: seededProvider }); }
+		const provInput = createCustomDropdown({
+			parent: provCell,
+			options: provOptions,
+			placeholder: 'Assign to provider...',
+			initialValue: seededProvider,
+			triggerStyle: inputStyle,
+		});
+		void api.fetch('/api/providers').then(async r => {
+			if (!r.ok) { return; }
+			const json = await r.json().catch(() => null) as Record<string, unknown> | null;
+			const list = (Array.isArray(json?.data) ? json!.data : Array.isArray(json) ? json : Array.isArray(json?.content) ? json!.content : []) as Array<Record<string, unknown>>;
+			const seen = new Set(provOptions.map(o => o.value));
+			for (const p of list) {
+				const name = `${String(p.firstName ?? '')} ${String(p.lastName ?? '')}`.trim() || String(p.name ?? p.fullName ?? p.displayName ?? '');
+				if (name && !seen.has(name)) { seen.add(name); provOptions.push({ label: name, value: name }); }
+			}
+		}).catch(() => { /* providers are optional */ });
 
 		const ref = {
 			row,
@@ -245,7 +307,7 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 				title: titleInput.value.trim(),
 				description: descInput.value.trim(),
 				frequency: freqInput.value,
-				responsibleParty: respInput.value.trim(),
+				assignedTo: provInput.value.trim(),
 			}),
 		};
 		intRefs.push(ref);
@@ -269,6 +331,9 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 				description: String(g.description ?? ''),
 				targetDate: String(g.targetDate ?? ''),
 				status: String(g.status ?? 'in_progress'),
+				measure: String(g.measure ?? ''),
+				targetValue: String(g.targetValue ?? ''),
+				priority: String(g.priority ?? 'medium'),
 			});
 		}
 		const existingInts = Array.isArray(editing.interventions) ? editing.interventions as Array<Record<string, unknown>> : [];
@@ -277,7 +342,7 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 				title: String(it.title ?? it.description ?? ''),
 				description: String(it.description ?? ''),
 				frequency: String(it.frequency ?? 'as_needed'),
-				responsibleParty: String(it.responsibleParty ?? it.assignedTo ?? ''),
+				assignedTo: String(it.assignedTo ?? it.responsibleParty ?? ''),
 			});
 		}
 	}
@@ -286,7 +351,10 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 		collect: () => ({
 			// Drop completely empty entries so the backend doesn't receive blanks.
 			goals: goalRefs.map(g => g.getters()).filter(g => g.title || g.description),
-			interventions: intRefs.map(i => i.getters()).filter(i => i.title || i.description),
+			// Emit both `assignedTo` (reference EHR UI key) and `responsibleParty`
+			// (legacy key) so whichever the backend reads is populated.
+			interventions: intRefs.map(i => i.getters()).filter(i => i.title || i.description)
+				.map(i => ({ ...i, responsibleParty: i.assignedTo })),
 		}),
 	};
 }
@@ -535,8 +603,8 @@ export class LabsEditor extends ClinicalListEditorBase {
 					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
 				], defaultValue: 'Pending'
 			},
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
-			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 		],
 		actions: [
 			{
@@ -625,6 +693,19 @@ export class LabsEditor extends ClinicalListEditorBase {
 			return String(value ?? '');
 		},
 		formFields: [
+			// Patient is required — the lab_result row has a NOT NULL patient_id FK.
+			// Without these fields the create POSTed a null patientId and the DB
+			// rejected it ("null value in column patient_id ... violates not-null").
+			{
+				key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient by name, MRN or ID...',
+				apiPath: '/api/patients', relatedField: 'patientId',
+				relatedDisplayFields: ['firstName', 'lastName'],
+				relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
+				aliases: ['firstName', 'patientFirst', 'patient.firstName'],
+			},
+			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
+			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
 			{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
 			{ key: 'procedureName', label: 'Procedure Name', type: 'text', placeholder: 'Procedure name' },
 			{ key: 'loincCode', label: 'LOINC Code', type: 'text', placeholder: 'e.g. 2345-7' },
@@ -1110,7 +1191,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 			// so the user can add an arbitrary number of items instead of the old
 			// hardcoded Goal 1 / Goal 2 / Intervention 1-3 rows.
 		],
-		formExtras: (host, editing) => renderCarePlanExtras(host, editing),
+		formExtras: (host, editing) => renderCarePlanExtras(host, editing, this.apiService),
 		additionalFilters: [
 			{
 				key: 'category', placeholder: 'All Categories',
@@ -1336,12 +1417,44 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Prior Authorizations', apiPath: '/api/prior-auth', statsPath: '/api/prior-auth/stats',
 		searchPlaceholder: 'Search by auth#, patient, procedure, insurance...',
-		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authorizationNumber', 'priority', 'status', 'id'],
+		clientSideFilter: ['patientName', 'insuranceName', 'procedureCode', 'procedureDescription', 'authNumber', 'authorizationNumber', 'priority', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		// Issue #22: 7+ KPI cards (Pending / Submitted / Approved / Denied /
 		// Appeal / Expired / Cancelled). compactStats halves the strip height.
 		compactStats: true,
+		// Issue #10: the typed authorization number wasn't saving/showing because
+		// the form + column used the key `authorizationNumber`, but the backend
+		// PriorAuth DTO/entity use `authNumber`. The form field + column are now
+		// keyed `authNumber`; this beforeSave keeps `authorizationNumber` in sync
+		// as a defensive alias in case any path still reads the long key.
+		beforeSave: (payload) => {
+			const auth = payload.authNumber ?? payload.authorizationNumber;
+			if (auth !== undefined && auth !== null && String(auth).trim() !== '') {
+				payload.authNumber = auth;
+				payload.authorizationNumber = auth;
+			}
+			return payload;
+		},
+		// Procedure + Diagnosis columns show BOTH the code and its description
+		// (matching ciyex-ehr-ui). Auth # reads `authNumber` (backend key) with a
+		// fallback to the legacy `authorizationNumber`.
+		cellRenderer: (key, value, item) => {
+			if (key === 'procedureDescription') {
+				const code = String(item.procedureCode || '').trim();
+				const desc = String(item.procedureDescription || '').trim();
+				return [code, desc].filter(Boolean).join(' — ') || String(value ?? '');
+			}
+			if (key === 'diagnosisCode') {
+				const code = String(item.diagnosisCode || '').trim();
+				const desc = String(item.diagnosisDescription || '').trim();
+				return [code, desc].filter(Boolean).join(' — ') || String(value ?? '');
+			}
+			if (key === 'authNumber') {
+				return String(item.authNumber || item.authorizationNumber || value || '');
+			}
+			return String(value ?? '');
+		},
 		// Columns matching ciyex-ehr-ui: Patient, Insurance, Procedure, Diagnosis, Auth#, Units, Expiry, Status
 		// Priority filter removed per QA request (issue #13).
 		columns: [
@@ -1349,7 +1462,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ key: 'insuranceName', label: 'Insurance' },
 			{ key: 'procedureDescription', label: 'Procedure' },
 			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
-			{ key: 'authorizationNumber', label: 'Auth #', width: '120px' },
+			{ key: 'authNumber', label: 'Auth #', width: '120px' },
 			{ key: 'approvedUnits', label: 'Units', width: '70px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
 			{ key: 'status', label: 'Status', width: '90px' },
@@ -1366,7 +1479,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'] },
 			{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
 			{ key: 'memberId', label: 'Member ID', type: 'text' },
-			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
+			{ key: 'authNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
 			{
 				key: 'procedureDescription', label: 'Procedure', type: 'search', required: true,
 				placeholder: 'Search CPT procedure (e.g. office visit)...',
@@ -1580,8 +1693,25 @@ export class EducationEditor extends ClinicalListEditorBase {
 					{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
 				], defaultValue: 'article'
 			},
+			{ key: 'content', label: 'Content', type: 'textarea', placeholder: 'Education material content...', width: 'span 2' },
 			{ key: 'source', label: 'Source', type: 'text', placeholder: 'Source / author' },
 			{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
+			{
+				key: 'language', label: 'Language', type: 'select', options: [
+					{ label: 'English', value: 'english' }, { label: 'Spanish', value: 'spanish' },
+					{ label: 'French', value: 'french' }, { label: 'German', value: 'german' },
+					{ label: 'Portuguese', value: 'portuguese' }, { label: 'Chinese', value: 'chinese' },
+					{ label: 'Arabic', value: 'arabic' }, { label: 'Hindi', value: 'hindi' },
+					{ label: 'Vietnamese', value: 'vietnamese' }, { label: 'Other', value: 'other' },
+				], defaultValue: 'english'
+			},
+			{
+				key: 'audience', label: 'Audience', type: 'select', options: [
+					{ label: 'Patient', value: 'patient' }, { label: 'Caregiver', value: 'caregiver' },
+					{ label: 'Both', value: 'both' },
+				], defaultValue: 'patient'
+			},
+			{ key: 'author', label: 'Author', type: 'search', placeholder: 'Search provider or type name...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
 			{
 				key: 'isActive', label: 'Active', type: 'select', options: [
 					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
