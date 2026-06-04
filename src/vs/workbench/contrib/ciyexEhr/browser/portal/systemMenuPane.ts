@@ -239,16 +239,16 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		description: 'OCR upload and processing',
 		command: 'ciyex.openDocScanning',
 		color: '#06b6d4',
-		apiPath: '/api/doc-scanning?page=0&size=10',
+		apiPath: '/api/document-scanning?page=0&size=10',
 		titleField: ['patientName', 'description'],
 		subtitleField: ['category', 'status'],
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
 			// allow-any-unicode-next-line
-			{ symbol: '\u{1F504}', label: 'Re-OCR', color: '#3b82f6', action: { kind: 'method', method: 'POST', path: r => `/api/doc-scanning/${r.id}/ocr` } },
+			{ symbol: '\u{1F504}', label: 'Re-OCR', color: '#3b82f6', action: { kind: 'method', method: 'POST', path: r => `/api/document-scanning/${r.id}/ocr` } },
 			// allow-any-unicode-next-line
-			{ symbol: '\u{1F5D1}', label: 'Delete', color: '#ef4444', action: { kind: 'delete', path: r => `/api/doc-scanning/${r.id}`, confirm: 'Delete this document?' } },
+			{ symbol: '\u{1F5D1}', label: 'Delete', color: '#ef4444', action: { kind: 'delete', path: r => `/api/document-scanning/${r.id}`, confirm: 'Delete this document?' } },
 		],
 	},
 	{
