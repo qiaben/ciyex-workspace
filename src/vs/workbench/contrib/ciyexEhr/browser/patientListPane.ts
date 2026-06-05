@@ -333,7 +333,7 @@ export class PatientListPane extends ViewPane {
 			detailEl.style.whiteSpace = 'nowrap';
 			const age = this._calcAge(patient.dateOfBirth);
 			const g = patient.gender === 'male' ? 'M' : patient.gender === 'female' ? 'F' : '';
-			const dob = patient.dateOfBirth || '';
+			const dob = this._formatDob(patient.dateOfBirth || '');
 			detailEl.textContent = `${dob} ${g} ${age}y`;
 			row.appendChild(detailEl);
 
@@ -436,6 +436,18 @@ export class PatientListPane extends ViewPane {
 		el.style.fontSize = '12px';
 		el.textContent = msg;
 		this._listEl.appendChild(el);
+	}
+
+	/** Display an ISO date-only DOB (YYYY-MM-DD) as MM/DD/YYYY to match the rest of the EHR. */
+	private _formatDob(dob: string): string {
+		if (!dob) {
+			return '';
+		}
+		const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob);
+		if (iso) {
+			return `${iso[2]}/${iso[3]}/${iso[1]}`;
+		}
+		return dob;
 	}
 
 	private _calcAge(dob: string): number {

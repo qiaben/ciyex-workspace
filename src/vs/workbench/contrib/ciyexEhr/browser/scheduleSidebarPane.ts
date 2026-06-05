@@ -205,6 +205,9 @@ export class ScheduleSidebarPane extends ViewPane {
 	private currentDate: Date = new Date();
 
 	private _readCalendarState(): void {
+		// The reference date changed elsewhere (calendar editor) — re-seed the
+		// mini-calendar month so the grid follows the newly selected date.
+		this._miniCalAnchor = null;
 		const raw = this.storageService.get(CALENDAR_VIEW_STATE_KEY, StorageScope.WORKSPACE);
 		if (!raw) { this.viewMode = 'day'; this.currentDate = new Date(); return; }
 		try {
@@ -465,6 +468,10 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	private _miniCalendarCollapsed = false;
 	private _formViewActive = false;
+	/** Month currently shown in the mini calendar grid. Defaults to the selected
+	 *  date's month; the prev / next header buttons move it without changing the
+	 *  selected day. Null until first render, where it seeds from currentDate. */
+	private _miniCalAnchor: Date | null = null;
 
 	private _render(): void {
 		DOM.clearNode(this.container);
@@ -680,13 +687,45 @@ export class ScheduleSidebarPane extends ViewPane {
 		const wrap = DOM.append(this.container, DOM.$('.mini-cal'));
 		wrap.style.cssText = 'padding:10px 8px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
-		// Header row: month name + +/... buttons
+		// Seed the displayed month from the selected date on first render.
+		if (!this._miniCalAnchor) {
+			this._miniCalAnchor = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
+		}
+		const anchor = this._miniCalAnchor;
+
+		// Header row: prev | month year | next + filter / + / ... buttons
 		const hdr = DOM.append(wrap, DOM.$('div'));
-		hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:8px;';
-		const monthName = DOM.append(hdr, DOM.$('span'));
+		hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:8px;gap:1px;';
 		const today = this.currentDate;
-		monthName.textContent = today.toLocaleDateString('en-US', { month: 'long' });
-		monthName.style.cssText = 'font-size:14px;font-weight:600;flex:1;color:var(--vscode-editor-foreground);';
+
+		const navBtnStyle = 'width:20px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer;color:var(--vscode-editor-foreground);transition:background 0.1s;flex-shrink:0;';
+		const shiftMonth = (delta: number) => {
+			this._miniCalAnchor = new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+			this._render();
+		};
+		// previous month
+		const prevBtn = DOM.append(hdr, DOM.$('div'));
+		// allow-any-unicode-next-line
+		prevBtn.textContent = '‹';
+		prevBtn.title = 'Previous month';
+		prevBtn.style.cssText = navBtnStyle;
+		prevBtn.addEventListener('mouseenter', () => { prevBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		prevBtn.addEventListener('mouseleave', () => { prevBtn.style.background = ''; });
+		prevBtn.addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(-1); });
+
+		const monthName = DOM.append(hdr, DOM.$('span'));
+		monthName.textContent = anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+		monthName.style.cssText = 'font-size:13px;font-weight:600;flex:1;text-align:center;color:var(--vscode-editor-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+		// next month
+		const nextBtn = DOM.append(hdr, DOM.$('div'));
+		// allow-any-unicode-next-line
+		nextBtn.textContent = '›';
+		nextBtn.title = 'Next month';
+		nextBtn.style.cssText = navBtnStyle;
+		nextBtn.addEventListener('mouseenter', () => { nextBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
+		nextBtn.addEventListener('mouseleave', () => { nextBtn.style.background = ''; });
+		nextBtn.addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(1); });
 		// Status filter button - shows a dropdown of statuses (Scheduled, Checked-in, ...)
 		// to filter the appointments list. Highlighted in blue when a filter is active.
 		const filterBtn = DOM.append(hdr, DOM.$('div'));
@@ -737,7 +776,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.ctxMenuService.showContextMenu({
 				getAnchor: () => moreBtn,
 				getActions: () => [
-					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._publishCalendarState(); void this._loadAndRender(); } },
+					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._miniCalAnchor = null; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'week', label: 'View Week', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'week'; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'month', label: 'View Month', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'month'; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'refresh', label: 'Refresh', tooltip: '', class: '', enabled: true, run: () => { void this._loadAndRender(); } },
@@ -773,27 +812,42 @@ export class ScheduleSidebarPane extends ViewPane {
 			cell.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:2px 0;';
 		}
 
-		// Build 2-week grid: week containing today + next week
+		// Build a full month grid for the anchored month. Leading days from the
+		// previous month and trailing days from the next month fill the first and
+		// last rows so the grid is always whole weeks (Sun-Sat).
 		const now = new Date();
 		const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-		const startSunday = new Date(now);
-		startSunday.setDate(now.getDate() - now.getDay()); // this Sunday
+		const selIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+		const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+		const gridStart = new Date(firstOfMonth);
+		gridStart.setDate(firstOfMonth.getDate() - firstOfMonth.getDay()); // back to Sunday
+		const lastOfMonth = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+		// Total cells = whole weeks (multiple of 7) covering the leading blanks
+		// plus every day of the month.
+		const totalDays = Math.ceil((firstOfMonth.getDay() + lastOfMonth.getDate()) / 7) * 7;
 		const grid = DOM.append(wrap, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;';
 
-		for (let i = 0; i < 14; i++) {
-			const d = new Date(startSunday);
-			d.setDate(startSunday.getDate() + i);
+		for (let i = 0; i < totalDays; i++) {
+			const d = new Date(gridStart);
+			d.setDate(gridStart.getDate() + i);
 			const dIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 			const isToday = dIso === todayIso;
-			const isSelected = dIso === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+			const isSelected = dIso === selIso;
+			const inMonth = d.getMonth() === anchor.getMonth();
 			const cell = DOM.append(grid, DOM.$('span'));
 			cell.textContent = String(d.getDate());
-			cell.style.cssText = `text-align:center;font-size:12px;padding:3px 0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:1px auto;${isToday ? 'background:#0078d4;color:#fff;font-weight:700;' : isSelected && !isToday ? 'background:var(--vscode-toolbar-hoverBackground);color:var(--vscode-editor-foreground);' : 'color:var(--vscode-editor-foreground);'}`;
+			const baseColor = inMonth ? 'var(--vscode-editor-foreground)' : 'var(--vscode-disabledForeground,var(--vscode-descriptionForeground))';
+			cell.style.cssText = `text-align:center;font-size:12px;padding:3px 0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:1px auto;${isToday ? 'background:#0078d4;color:#fff;font-weight:700;' : isSelected && !isToday ? `background:var(--vscode-toolbar-hoverBackground);color:${baseColor};` : `color:${baseColor};`}${inMonth ? '' : 'opacity:0.55;'}`;
 			cell.addEventListener('click', () => {
+				// Select the clicked day, switch the timeline to that day, keep the
+				// grid anchored on the day's month, and reload appointments for the
+				// new range (a plain _render would filter the stale set → empty).
 				this.currentDate = new Date(d);
 				this.viewMode = 'day';
-				this._render();
+				this._miniCalAnchor = new Date(d.getFullYear(), d.getMonth(), 1);
+				this._publishCalendarState();
+				void this._loadAndRender();
 			});
 			cell.addEventListener('mouseenter', () => { if (!isToday) { cell.style.background = 'var(--vscode-toolbar-hoverBackground)'; } });
 			cell.addEventListener('mouseleave', () => { if (!isToday) { cell.style.background = isSelected && !isToday ? 'var(--vscode-toolbar-hoverBackground)' : ''; } });

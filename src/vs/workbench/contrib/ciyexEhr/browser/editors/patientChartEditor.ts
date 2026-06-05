@@ -5674,12 +5674,11 @@ export class PatientChartEditor extends EditorPane {
 			// the chart's encounters tab.
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
 			// Open Chart / Record Vitals / Visit Summary shortcuts. The QA team
-			// asked that the Encounters, Appointments, and Visit Notes tabs show
-			// ONLY the edit + delete pair (workspace test report issues 16-18),
-			// so those tabs are intentionally excluded here. The billing/claims
-			// tabs still surface the encounter shortcuts.
-			// Billing excluded — QA wants only the edit + delete pair there.
-			const encounterLinkedTabs = new Set(['claims', 'submissions']);
+			// asked that the Encounters, Appointments, Visit Notes, Claims, and
+			// Submissions tabs show ONLY the edit + delete pair, so every tab is
+			// excluded here (the set is empty). Re-add a tab key to surface the
+			// encounter shortcuts on that tab again.
+			const encounterLinkedTabs = new Set<string>();
 			if (encounterLinkedTabs.has(tab.key)) {
 				// Row may surface the encounter via different keys: `encounterId`,
 				// `encounter`, `encounterRef`, `encounter.reference`, or — for the
