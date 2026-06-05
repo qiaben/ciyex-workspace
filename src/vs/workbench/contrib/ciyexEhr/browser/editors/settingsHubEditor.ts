@@ -387,14 +387,15 @@ export class SettingsHubEditor extends EditorPane {
 	private _renderTreeGroup(parent: HTMLElement, groupKey: SidebarGroup, label: string, items: SidebarItem[]): void {
 		const collapsed = this.collapsedGroups.has(groupKey);
 
+		// Native settings-TOC look: 22px row, normal weight, subtle 0.9 opacity.
 		const row = DOM.append(parent, DOM.$('.sh-tree-group'));
-		row.style.cssText = 'display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px 3px 3px;cursor:pointer;border-radius:4px;user-select:none;';
+		row.style.cssText = 'display:flex;align-items:center;gap:2px;width:100%;height:22px;padding:0 8px 0 2px;cursor:pointer;user-select:none;opacity:0.9;';
 		const twistie = DOM.append(row, DOM.$('span.codicon'));
 		twistie.classList.add(collapsed ? 'codicon-chevron-right' : 'codicon-chevron-down');
-		twistie.style.cssText = 'flex-shrink:0;font-size:16px;opacity:0.85;';
+		twistie.style.cssText = 'flex-shrink:0;width:16px;font-size:16px;text-align:center;opacity:0.8;';
 		const lbl = DOM.append(row, DOM.$('span'));
 		lbl.textContent = label;
-		lbl.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		lbl.style.cssText = 'flex:1;font-size:13px;line-height:22px;font-weight:400;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
 		row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
 		row.addEventListener('click', () => {
@@ -413,12 +414,13 @@ export class SettingsHubEditor extends EditorPane {
 		const btn = DOM.append(parent, DOM.$('button'));
 		btn.dataset.key = item.key;
 		const isActive = this.activeKey === item.key;
-		// Native list look: active = list selection bg + bold; inactive = subtle
-		// hover. Left padding (22px) indents the label past the parent twistie.
-		btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px 3px 22px;background:${isActive ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent'};color:${isActive ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)'};border:none;border-radius:4px;cursor:pointer;text-align:left;font-size:13px;font-weight:${isActive ? '600' : '400'};`;
+		// Native settings-TOC look: 22px row; selected = selection bg + bold text;
+		// inactive = 0.9 opacity + subtle hover. Left padding (24px) indents the
+		// label past the parent twistie.
+		btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;height:22px;padding:0 8px 0 24px;background:${isActive ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent'};color:${isActive ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)'};opacity:${isActive ? '1' : '0.9'};border:none;cursor:pointer;text-align:left;font-size:13px;line-height:22px;font-weight:${isActive ? 'bold' : '400'};`;
 		const label = DOM.append(btn, DOM.$('span'));
 		label.textContent = item.label;
-		label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		label.style.cssText = 'flex:1;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		// Command-kind items get a subtle "\u2197" suffix to show they open a new editor.
 		if (item.kind === 'command') {
 			const ext = DOM.append(btn, DOM.$('span'));

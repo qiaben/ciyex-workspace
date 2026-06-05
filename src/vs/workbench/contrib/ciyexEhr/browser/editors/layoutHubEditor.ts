@@ -124,16 +124,16 @@ export class LayoutHubEditor extends EditorPane {
 		const nav = DOM.append(this.sidebarEl, DOM.$('nav'));
 		nav.style.cssText = 'padding:4px;display:flex;flex-direction:column;gap:0;';
 
-		// Collapsible "Layout" parent row (twistie) — matches the native
-		// settings tree look: chevron + indented child rows.
+		// Collapsible "Layout" parent row (twistie) — native settings-TOC look:
+		// 22px row, normal weight, subtle 0.9 opacity, indented child rows.
 		const group = DOM.append(nav, DOM.$('.lh-tree-group'));
-		group.style.cssText = 'display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px 3px 3px;cursor:pointer;border-radius:4px;user-select:none;';
+		group.style.cssText = 'display:flex;align-items:center;gap:2px;width:100%;height:22px;padding:0 8px 0 2px;cursor:pointer;user-select:none;opacity:0.9;';
 		const twistie = DOM.append(group, DOM.$('span.codicon'));
 		twistie.classList.add(this.sidebarCollapsed ? 'codicon-chevron-right' : 'codicon-chevron-down');
-		twistie.style.cssText = 'flex-shrink:0;font-size:16px;opacity:0.85;';
+		twistie.style.cssText = 'flex-shrink:0;width:16px;font-size:16px;text-align:center;opacity:0.8;';
 		const groupLabel = DOM.append(group, DOM.$('span'));
 		groupLabel.textContent = 'Layout';
-		groupLabel.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		groupLabel.style.cssText = 'flex:1;font-size:13px;line-height:22px;font-weight:400;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		group.addEventListener('mouseenter', () => { group.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
 		group.addEventListener('mouseleave', () => { group.style.background = 'transparent'; });
 		group.addEventListener('click', () => { this.sidebarCollapsed = !this.sidebarCollapsed; this._renderSidebar(); });
@@ -145,11 +145,12 @@ export class LayoutHubEditor extends EditorPane {
 			const isActive = this.nestedKey === item.key;
 			const baseBg = isActive ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent';
 			const baseFg = isActive ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)';
-			// Left padding (22px) indents leaf labels past the parent twistie.
-			btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px 3px 22px;background:${baseBg};border:none;border-radius:4px;cursor:pointer;text-align:left;color:${baseFg};font-size:13px;font-weight:${isActive ? '600' : '400'};`;
+			// Native settings-TOC look: 22px row; selected = selection bg + bold;
+			// inactive = 0.9 opacity. Left padding (24px) indents past the twistie.
+			btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;height:22px;padding:0 8px 0 24px;background:${baseBg};border:none;cursor:pointer;text-align:left;color:${baseFg};opacity:${isActive ? '1' : '0.9'};font-size:13px;line-height:22px;font-weight:${isActive ? 'bold' : '400'};`;
 			const label = DOM.append(btn, DOM.$('span'));
 			label.textContent = item.label;
-			label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			label.style.cssText = 'flex:1;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			btn.addEventListener('mouseenter', () => { if (!isActive) { btn.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; } });
 			btn.addEventListener('mouseleave', () => { btn.style.background = baseBg; });
 			btn.addEventListener('click', () => { this.dispatchNavCommand(item); });
