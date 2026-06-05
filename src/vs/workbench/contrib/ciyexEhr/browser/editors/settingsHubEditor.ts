@@ -142,9 +142,9 @@ interface SidebarItem {
 type SidebarGroup = 'general' | 'user-mgmt' | 'system';
 
 const GROUP_LABELS: Record<SidebarGroup, string> = {
-	'general': 'GENERAL',
-	'user-mgmt': 'USER MANAGEMENT',
-	'system': 'SYSTEM',
+	'general': 'General',
+	'user-mgmt': 'User Management',
+	'system': 'System',
 };
 
 const ADMIN_ITEMS: SidebarItem[] = [
@@ -242,6 +242,8 @@ export class SettingsHubEditor extends EditorPane {
 	private fhirItems: SidebarItem[] = [];
 	private activeKey: string = '';
 	private mode: Mode = 'list';
+	/** Collapsed sidebar groups (by group key). Empty = all expanded. */
+	private collapsedGroups = new Set<SidebarGroup>();
 
 	// Per-tab state
 	private currentConfig: TabFieldConfig | null = null;
@@ -365,50 +367,55 @@ export class SettingsHubEditor extends EditorPane {
 		headerText.style.cssText = 'margin:0;font-size:11px;font-weight:600;letter-spacing:1.4px;color:var(--vscode-descriptionForeground);';
 
 		const nav = DOM.append(this.sidebarEl, DOM.$('nav'));
-		nav.style.cssText = 'padding:8px 6px;display:flex;flex-direction:column;gap:1px;flex:1;overflow-y:auto;';
+		nav.style.cssText = 'padding:4px 4px 8px;display:flex;flex-direction:column;gap:0;flex:1;overflow-y:auto;';
 
-		// "General" group — FHIR resource settings (Practice, Facilities, Providers, Insurance, etc.)
-		// Always rendered first because it contains the practice-level data users
-		// most often need to edit. Matches the EHR Web UI which puts these at the top.
-		if (this.fhirItems.length > 0) {
-			this._renderGroupHeader(nav, GROUP_LABELS['general']);
-			for (const item of this.fhirItems) {
-				this._renderSidebarBtn(nav, item);
-			}
-		}
-
-		// Other groups, in declared order. Each group prints its header label
-		// once, then all items belonging to that group.
-		const groupedItems: Array<[SidebarGroup, SidebarItem[]]> = [
+		// Render each section as a collapsible tree group (twistie + indented
+		// children), matching the native settings tree look. "General" first
+		// because it carries the practice-level data users edit most often.
+		const groups: Array<[SidebarGroup, SidebarItem[]]> = [
+			['general', this.fhirItems],
 			['user-mgmt', ADMIN_ITEMS],
 			['system', BUILTIN_ITEMS.filter(i => i.group === 'system')],
 		];
-		for (const [groupKey, items] of groupedItems) {
+		for (const [groupKey, items] of groups) {
 			if (items.length === 0) { continue; }
-			this._renderGroupHeader(nav, GROUP_LABELS[groupKey]);
-			for (const item of items) {
-				this._renderSidebarBtn(nav, item);
-			}
+			this._renderTreeGroup(nav, groupKey, GROUP_LABELS[groupKey], items);
 		}
 	}
 
-	private _renderGroupHeader(parent: HTMLElement, text: string): void {
-		const h = DOM.append(parent, DOM.$('div'));
-		h.textContent = text;
-		h.style.cssText = 'padding:14px 10px 6px;font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--vscode-descriptionForeground);text-transform:uppercase;';
+	/** A collapsible parent row + (when expanded) its indented child rows. */
+	private _renderTreeGroup(parent: HTMLElement, groupKey: SidebarGroup, label: string, items: SidebarItem[]): void {
+		const collapsed = this.collapsedGroups.has(groupKey);
+
+		const row = DOM.append(parent, DOM.$('.sh-tree-group'));
+		row.style.cssText = 'display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px 3px 3px;cursor:pointer;border-radius:4px;user-select:none;';
+		const twistie = DOM.append(row, DOM.$('span.codicon'));
+		twistie.classList.add(collapsed ? 'codicon-chevron-right' : 'codicon-chevron-down');
+		twistie.style.cssText = 'flex-shrink:0;font-size:16px;opacity:0.85;';
+		const lbl = DOM.append(row, DOM.$('span'));
+		lbl.textContent = label;
+		lbl.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
+		row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+		row.addEventListener('click', () => {
+			if (collapsed) { this.collapsedGroups.delete(groupKey); } else { this.collapsedGroups.add(groupKey); }
+			this._renderSidebar();
+		});
+
+		if (collapsed) { return; }
+		for (const item of items) {
+			this._renderTreeItem(parent, item);
+		}
 	}
 
-	private _renderSidebarBtn(parent: HTMLElement, item: SidebarItem): void {
+	/** A leaf row, indented under its group to align past the twistie. */
+	private _renderTreeItem(parent: HTMLElement, item: SidebarItem): void {
 		const btn = DOM.append(parent, DOM.$('button'));
 		btn.dataset.key = item.key;
 		const isActive = this.activeKey === item.key;
-		// Match the EHR Web UI: active = blue-600 bg + white text + slight shadow,
-		// inactive = transparent + foreground text with subtle hover. Padding 7px
-		// 10px keeps row height ~32px (matches w-56 sidebar in the web).
-		btn.style.cssText = `display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;background:${isActive ? '#2563eb' : 'transparent'};color:${isActive ? '#ffffff' : 'var(--vscode-foreground)'};border:none;border-radius:6px;cursor:pointer;text-align:left;font-size:13px;font-weight:${isActive ? '500' : '400'};transition:background 0.08s;`;
-		const icon = DOM.append(btn, DOM.$('span'));
-		icon.textContent = item.icon;
-		icon.style.cssText = 'flex-shrink:0;width:16px;font-size:13px;text-align:center;opacity:0.95;';
+		// Native list look: active = list selection bg + bold; inactive = subtle
+		// hover. Left padding (22px) indents the label past the parent twistie.
+		btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px 3px 22px;background:${isActive ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent'};color:${isActive ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)'};border:none;border-radius:4px;cursor:pointer;text-align:left;font-size:13px;font-weight:${isActive ? '600' : '400'};`;
 		const label = DOM.append(btn, DOM.$('span'));
 		label.textContent = item.label;
 		label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';

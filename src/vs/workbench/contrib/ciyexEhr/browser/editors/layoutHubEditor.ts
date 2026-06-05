@@ -45,6 +45,8 @@ export class LayoutHubEditor extends EditorPane {
 	private root!: HTMLElement;
 	private sidebarEl!: HTMLElement;
 	private contentEl!: HTMLElement;
+	/** Whether the "Layout Settings" tree group is collapsed in the sidebar. */
+	private sidebarCollapsed = false;
 
 	// Ciyex EHR: enable "embedded" mode where nav clicks mount their target
 	// editor inside this hub's content area (keeping the LAYOUT SETTINGS
@@ -120,20 +122,34 @@ export class LayoutHubEditor extends EditorPane {
 		headerText.style.cssText = 'margin:0;font-size:11px;font-weight:600;letter-spacing:1px;color:var(--vscode-descriptionForeground);';
 
 		const nav = DOM.append(this.sidebarEl, DOM.$('nav'));
-		nav.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:2px;';
+		nav.style.cssText = 'padding:4px;display:flex;flex-direction:column;gap:0;';
+
+		// Collapsible "Layout" parent row (twistie) — matches the native
+		// settings tree look: chevron + indented child rows.
+		const group = DOM.append(nav, DOM.$('.lh-tree-group'));
+		group.style.cssText = 'display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px 3px 3px;cursor:pointer;border-radius:4px;user-select:none;';
+		const twistie = DOM.append(group, DOM.$('span.codicon'));
+		twistie.classList.add(this.sidebarCollapsed ? 'codicon-chevron-right' : 'codicon-chevron-down');
+		twistie.style.cssText = 'flex-shrink:0;font-size:16px;opacity:0.85;';
+		const groupLabel = DOM.append(group, DOM.$('span'));
+		groupLabel.textContent = 'Layout';
+		groupLabel.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		group.addEventListener('mouseenter', () => { group.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; });
+		group.addEventListener('mouseleave', () => { group.style.background = 'transparent'; });
+		group.addEventListener('click', () => { this.sidebarCollapsed = !this.sidebarCollapsed; this._renderSidebar(); });
+
+		if (this.sidebarCollapsed) { return; }
 
 		for (const item of NAV_ITEMS) {
 			const btn = DOM.append(nav, DOM.$('button'));
 			const isActive = this.nestedKey === item.key;
 			const baseBg = isActive ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent';
 			const baseFg = isActive ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)';
-			btn.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:${baseBg};border:none;border-radius:4px;cursor:pointer;text-align:left;color:${baseFg};font-size:13px;`;
-			const icon = DOM.append(btn, DOM.$('span'));
-			icon.textContent = item.icon;
-			icon.style.cssText = 'flex-shrink:0;width:16px;text-align:center;';
+			// Left padding (22px) indents leaf labels past the parent twistie.
+			btn.style.cssText = `display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px 3px 22px;background:${baseBg};border:none;border-radius:4px;cursor:pointer;text-align:left;color:${baseFg};font-size:13px;font-weight:${isActive ? '600' : '400'};`;
 			const label = DOM.append(btn, DOM.$('span'));
 			label.textContent = item.label;
-			label.style.cssText = 'flex:1;font-weight:500;';
+			label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			btn.addEventListener('mouseenter', () => { if (!isActive) { btn.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.05))'; } });
 			btn.addEventListener('mouseleave', () => { btn.style.background = baseBg; });
 			btn.addEventListener('click', () => { this.dispatchNavCommand(item); });
