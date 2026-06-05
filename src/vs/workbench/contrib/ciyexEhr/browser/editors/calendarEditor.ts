@@ -121,6 +121,10 @@ export class CalendarEditor extends EditorPane {
 	// when they change. Workspace-scoped + machine-target so the value is
 	// per-window and not synced across machines.
 	private static readonly STORAGE_KEY = 'ciyex.calendar.viewState';
+	/** Last view-state JSON this editor itself wrote, so the storage listener
+	 *  below can ignore its own writes and only react to changes published by
+	 *  other parts (e.g. the Schedule sidebar's "Go to Today" menu). */
+	private _lastPublishedStateRaw = '';
 	private _publishCalendarState(): void {
 		try {
 			const state = {
@@ -128,8 +132,32 @@ export class CalendarEditor extends EditorPane {
 				currentDate: this.currentDate.toISOString(),
 				updatedAt: Date.now(),
 			};
-			this._storageService.store(CalendarEditor.STORAGE_KEY, JSON.stringify(state), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+			const raw = JSON.stringify(state);
+			this._lastPublishedStateRaw = raw;
+			this._storageService.store(CalendarEditor.STORAGE_KEY, raw, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		} catch { /* storage write is best-effort */ }
+	}
+
+	/** Apply a view-state published by another part (Schedule sidebar's
+	 *  three-dot menu: Go to Today / View Week / View Month). Without this the
+	 *  sidebar updated only itself and the main grid never moved — the QA
+	 *  "Today function is not working" report. */
+	private _applyPublishedCalendarState(): void {
+		try {
+			const raw = this._storageService.get(CalendarEditor.STORAGE_KEY, StorageScope.WORKSPACE);
+			if (!raw || raw === this._lastPublishedStateRaw) { return; }
+			this._lastPublishedStateRaw = raw;
+			const state = JSON.parse(raw) as { viewMode?: string; currentDate?: string };
+			if (state.viewMode === 'day' || state.viewMode === 'week' || state.viewMode === 'month') {
+				this.viewMode = state.viewMode;
+			}
+			if (state.currentDate) {
+				const d = new Date(state.currentDate);
+				if (!isNaN(d.getTime())) { this.currentDate = d; }
+			}
+			this._headerRendered = false;
+			void this._refresh();
+		} catch { /* ignore malformed state */ }
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -173,6 +201,10 @@ export class CalendarEditor extends EditorPane {
 				this._loadAndRender();
 			}
 		}));
+		// React to view-state published by other parts (e.g. the Schedule
+		// sidebar's "Go to Today / View Week / View Month" menu) so those
+		// actions move the main calendar grid, not just the sidebar.
+		this._register(this._storageService.onDidChangeValue(StorageScope.WORKSPACE, CalendarEditor.STORAGE_KEY, this._store)(() => this._applyPublishedCalendarState()));
 		// Note: setInput() also calls _loadAndRender() on editor open
 	}
 

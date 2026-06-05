@@ -17,6 +17,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { LayoutSettingsEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createCustomDropdown } from '../customDropdown.js';
 
 interface TabItem {
 	key: string;
@@ -669,18 +670,19 @@ export class LayoutSettingsEditor extends EditorPane {
 		selLbl.textContent = 'Tab:';
 		selLbl.style.cssText = 'font-size:12px;font-weight:500;';
 
-		const select = DOM.append(selectorRow, DOM.$('select')) as HTMLSelectElement;
-		select.style.cssText = 'padding:6px 10px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));font-size:13px;cursor:pointer;min-width:240px;';
-		const placeholder = DOM.append(select, DOM.$('option')) as HTMLOptionElement;
-		placeholder.value = '';
-		placeholder.textContent = '\u2014 Select a tab \u2014';
-		for (const t of this.availableTabs) {
-			const opt = DOM.append(select, DOM.$('option')) as HTMLOptionElement;
-			opt.value = t.tabKey;
-			opt.textContent = t.label || t.tabKey;
-			if (t.tabKey === this.selectedFieldTab) { opt.selected = true; }
-		}
-		select.addEventListener('change', () => { this.selectedFieldTab = select.value; this._loadFieldConfig(); });
+		// Themed dropdown (shared helper) instead of a native <select>: the OS
+		// select popup ignores the workbench theme and the long tab list rendered
+		// as unreadable grey-on-grey on dark themes. The custom dropdown paints
+		// with --vscode-* colours and matches the rest of the EHR forms.
+		const selectWrap = DOM.append(selectorRow, DOM.$('div'));
+		selectWrap.style.cssText = 'width:260px;flex-shrink:0;';
+		createCustomDropdown({
+			parent: selectWrap,
+			options: this.availableTabs.map(t => ({ value: t.tabKey, label: t.label || t.tabKey })),
+			initialValue: this.selectedFieldTab || '',
+			placeholder: '\u2014 Select a tab \u2014',
+			onChange: (value) => { this.selectedFieldTab = value; this._loadFieldConfig(); },
+		});
 
 		const saveFcBtn = DOM.append(selectorRow, DOM.$('button')) as HTMLButtonElement;
 		saveFcBtn.textContent = this._saving ? 'Saving\u2026' : '\u{1F4BE} Save Fields';

@@ -2227,7 +2227,13 @@ export class ReportsEditor extends EditorPane {
 		// Resolve theme colours from live CSS variables so the preview matches the active theme.
 		const activeWindow = DOM.getActiveWindow();
 		const activeDoc = activeWindow.document;
-		const cs = activeWindow.getComputedStyle(activeDoc.documentElement);
+		// VS Code scopes its theme CSS variables under `.monaco-workbench`, NOT on
+		// documentElement/:root — reading from documentElement returned empty so
+		// every var fell back to the dark defaults and the preview was always dark
+		// regardless of theme (QA report). Resolve them from the workbench element.
+		// eslint-disable-next-line no-restricted-syntax
+		const themeHost = (activeDoc.getElementsByClassName('monaco-workbench')[0] as HTMLElement | undefined) || activeDoc.body;
+		const cs = activeWindow.getComputedStyle(themeHost);
 		const get = (v: string, fallback: string) => cs.getPropertyValue(v).trim() || fallback;
 		const themeBg = get('--vscode-editor-background', '#1e1e1e');
 		const themeFg = get('--vscode-editor-foreground', '#cccccc');

@@ -495,12 +495,16 @@ export class MessagingEditor extends EditorPane {
 				onClick();
 			});
 		};
+		// Three distinct pickers so each option does something different (QA: all
+		// three previously opened an image/file picker that behaved identically on
+		// desktop). Image = pictures only; Document = office/PDF/text files;
+		// File = any file type.
 		// allow-any-unicode-next-line
 		mkAttachOpt('🖼', 'Image', () => this._attachFile('image/*'));
 		// allow-any-unicode-next-line
-		mkAttachOpt('📄', 'File', () => this._attachFile('*/*'));
+		mkAttachOpt('📄', 'Document', () => this._attachFile('.pdf,.doc,.docx,.txt,.rtf,.xls,.xlsx,.ppt,.pptx,.csv,application/pdf'));
 		// allow-any-unicode-next-line
-		mkAttachOpt('📷', 'Camera', () => this._attachFile('image/*', true)); // capture=true
+		mkAttachOpt('📎', 'File', () => this._attachFile('*/*'));
 		attachBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			attachMenu.style.display = attachMenu.style.display === 'none' ? 'block' : 'none';

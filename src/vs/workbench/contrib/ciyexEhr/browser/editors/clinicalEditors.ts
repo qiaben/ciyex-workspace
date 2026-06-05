@@ -2222,14 +2222,29 @@ export class RecallEditor extends ClinicalListEditorBase {
 			{
 				// allow-any-unicode-next-line
 				label: 'Log Outreach', icon: '📞', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE' }] });
-					const method = res.confirmed ? res.values?.[0]?.trim() : undefined;
-					if (method) {
-						await api.fetch(`/api/recalls/${item.id}/outreach`, {
+					const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE', value: String(item.preferredContact || '') }] });
+					if (!res.confirmed) { return; }
+					const method = (res.values?.[0] || '').trim().toUpperCase();
+					// Validate against the allowed methods so a typo doesn't silently
+					// post a value the backend rejects (the old handler swallowed every
+					// outcome, so a failed POST looked like "nothing happened").
+					if (!['PHONE', 'EMAIL', 'SMS'].includes(method)) {
+						await dlg.error('Enter one of: PHONE, EMAIL, SMS');
+						return;
+					}
+					try {
+						const r = await api.fetch(`/api/recalls/${item.id}/outreach`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ method: method.toUpperCase(), outcome: 'contacted' }),
+							body: JSON.stringify({ method, outcome: 'contacted' }),
 						});
+						if (!r.ok) {
+							const err = await r.json().catch(() => null) as Record<string, unknown> | null;
+							await dlg.error(String(err?.['message'] || `Failed to log outreach (${r.status})`));
+							return;
+						}
 						reload();
+					} catch (e) {
+						await dlg.error(`Failed to log outreach: ${e instanceof Error ? e.message : String(e)}`);
 					}
 				}
 			},
