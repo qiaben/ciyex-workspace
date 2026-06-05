@@ -6,6 +6,7 @@
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { ColorScheme } from '../../../../../platform/theme/common/theme.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
@@ -136,23 +137,39 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		super(id, group, telemetryService, themeService, storageService);
 	}
 
+	private _isLightTheme(): boolean {
+		const type = this.themeService.getColorTheme().type;
+		return type === ColorScheme.LIGHT || type === ColorScheme.HIGH_CONTRAST_LIGHT;
+	}
+
+	private _applyTheme(): void {
+		if (!this.root) { return; }
+		const light = this._isLightTheme();
+		let bg: string;
+		let fg: string;
+		let headerBorder: string;
+		if (light) {
+			bg = this.mode === 'staff' ? '#f1f5f9' : 'linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%)';
+			fg = '#0f172a';
+			headerBorder = 'rgba(0,0,0,0.1)';
+		} else {
+			bg = this.mode === 'staff' ? '#0a0a0a' : 'linear-gradient(135deg, #0c1e3b 0%, #0f172a 100%)';
+			fg = '#ffffff';
+			headerBorder = 'rgba(255,255,255,0.1)';
+		}
+		this.root.style.cssText = `height:100%;display:flex;flex-direction:column;background:${bg};color:${fg};font-family:system-ui,-apple-system,sans-serif;`;
+		this.headerEl.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid ${headerBorder};`;
+		this._renderHeader();
+		this._renderMain();
+	}
+
 	protected createEditor(parent: HTMLElement): void {
 		this.root = DOM.append(parent, DOM.$('.tv-display-editor.ciyex-editor-root'));
-		// Follow the active workbench theme for both modes (QA: previously the
-		// staff board was hardcoded black and the waiting room a fixed blue
-		// gradient, ignoring the user's theme). The waiting room keeps a subtle
-		// accent gradient layered on top of the theme background so it still
-		// reads as a distinct, welcoming screen — but the gradient is built from
-		// theme tokens, so it adapts to light/dark instead of being fixed blue.
-		const bg = this.mode === 'staff'
-			? 'var(--vscode-editor-background)'
-			: 'linear-gradient(135deg, var(--vscode-editorWidget-background, var(--vscode-editor-background)) 0%, var(--vscode-editor-background) 100%)';
-		this.root.style.cssText = `height:100%;display:flex;flex-direction:column;background:${bg};color:var(--vscode-editor-foreground);font-family:var(--vscode-font-family, system-ui, -apple-system, sans-serif);`;
 		this.headerEl = DOM.append(this.root, DOM.$('div'));
-		this.headerEl.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.25));';
 		this.mainEl = DOM.append(this.root, DOM.$('div'));
 		this.mainEl.style.cssText = 'flex:1;overflow-y:auto;padding:24px;';
-		this._renderHeader();
+		this._applyTheme();
+		this._register(this.themeService.onDidColorThemeChange(() => this._applyTheme()));
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -219,13 +236,16 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	}
 
 	private _makeIconButton(parent: HTMLElement, title: string, pathData: string): HTMLButtonElement {
+		const light = this._isLightTheme();
+		const btnBg = light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)';
+		const btnBgHover = light ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.18)';
+		const btnBorder = light ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)';
+		const btnColor = light ? '#0f172a' : '#fff';
 		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 		btn.title = title;
 		btn.setAttribute('aria-label', title);
-		const btnBg = 'var(--vscode-button-secondaryBackground, rgba(127,127,127,0.12))';
-		const btnHover = 'var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.22))';
-		btn.style.cssText = `display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:${btnBg};border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.25));border-radius:8px;color:var(--vscode-foreground);cursor:pointer;padding:0;`;
-		btn.addEventListener('mouseenter', () => { btn.style.background = btnHover; });
+		btn.style.cssText = `display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:${btnBg};border:1px solid ${btnBorder};border-radius:8px;color:${btnColor};cursor:pointer;padding:0;`;
+		btn.addEventListener('mouseenter', () => { btn.style.background = btnBgHover; });
 		btn.addEventListener('mouseleave', () => { btn.style.background = btnBg; });
 		const SVG_NS = 'http://www.w3.org/2000/svg';
 		const svg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
@@ -429,9 +449,13 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		const table = DOM.append(this.mainEl, DOM.$('table'));
 		table.style.cssText = 'width:100%;border-collapse:collapse;';
 
+		const light = this._isLightTheme();
+		const headBorder = light ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.2)';
+		const rowBorder = light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)';
+
 		const thead = DOM.append(table, DOM.$('thead'));
 		const headRow = DOM.append(thead, DOM.$('tr'));
-		headRow.style.cssText = 'border-bottom:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.35));text-align:left;';
+		headRow.style.cssText = `border-bottom:1px solid ${headBorder};text-align:left;`;
 		for (const h of ['Time', 'Patient', 'Provider', 'Location', 'Type', 'Status']) {
 			const th = DOM.append(headRow, DOM.$('th'));
 			th.style.cssText = 'padding:12px 16px;font-size:12px;font-weight:600;opacity:0.6;text-transform:uppercase;letter-spacing:0.5px;';
@@ -442,7 +466,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		for (const a of this.appointments) {
 			const tr = DOM.append(tbody, DOM.$('tr'));
 			const isCancelled = a.status === 'cancelled';
-			tr.style.cssText = `border-bottom:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.15));${isCancelled ? 'opacity:0.3;' : ''}`;
+			tr.style.cssText = `border-bottom:1px solid ${rowBorder};${isCancelled ? 'opacity:0.3;' : ''}`;
 
 			const timeCell = DOM.append(tr, DOM.$('td'));
 			timeCell.style.cssText = 'padding:14px 16px;font-size:16px;font-weight:500;font-variant-numeric:tabular-nums;';
@@ -470,8 +494,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		}
 
 		// Summary bar
+		const summaryBg = this._isLightTheme() ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)';
 		const summary = DOM.append(this.mainEl, DOM.$('div'));
-		summary.style.cssText = 'margin-top:24px;display:flex;align-items:center;gap:24px;padding:12px 16px;background:var(--vscode-editorWidget-background, rgba(127,127,127,0.08));border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.2));border-radius:8px;font-size:14px;flex-wrap:wrap;';
+		summary.style.cssText = `margin-top:24px;display:flex;align-items:center;gap:24px;padding:12px 16px;background:${summaryBg};border-radius:8px;font-size:14px;flex-wrap:wrap;`;
 
 		const counts: Record<string, number> = {};
 		for (const a of this.appointments) { counts[a.status] = (counts[a.status] || 0) + 1; }
@@ -533,10 +558,11 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		const grid = DOM.append(this.mainEl, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;';
 
+		const cardBg = this._isLightTheme() ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.08)';
 		for (const a of active) {
 			const color = this._getStatusColor(a.status);
 			const card = DOM.append(grid, DOM.$('div'));
-			card.style.cssText = `padding:20px;border-radius:12px;text-align:center;background:var(--vscode-editorWidget-background, rgba(127,127,127,0.08));border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.18));border-left:4px solid ${color};`;
+			card.style.cssText = `padding:20px;border-radius:12px;text-align:center;background:${cardBg};border-left:4px solid ${color};`;
 
 			const initials = DOM.append(card, DOM.$('div'));
 			initials.style.cssText = 'font-size:28px;font-weight:700;margin-bottom:8px;opacity:0.9;';

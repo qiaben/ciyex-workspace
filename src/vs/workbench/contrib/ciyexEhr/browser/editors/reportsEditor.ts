@@ -6,6 +6,7 @@
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { ColorScheme } from '../../../../../platform/theme/common/theme.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
@@ -2227,19 +2228,15 @@ export class ReportsEditor extends EditorPane {
 		// Resolve theme colours from live CSS variables so the preview matches the active theme.
 		const activeWindow = DOM.getActiveWindow();
 		const activeDoc = activeWindow.document;
-		// VS Code scopes its theme CSS variables under `.monaco-workbench`, NOT on
-		// documentElement/:root — reading from documentElement returned empty so
-		// every var fell back to the dark defaults and the preview was always dark
-		// regardless of theme (QA report). Resolve them from the workbench element.
-		// eslint-disable-next-line no-restricted-syntax
-		const themeHost = (activeDoc.getElementsByClassName('monaco-workbench')[0] as HTMLElement | undefined) || activeDoc.body;
-		const cs = activeWindow.getComputedStyle(themeHost);
+		const themeType = this.themeService.getColorTheme().type;
+		const isLight = themeType === ColorScheme.LIGHT || themeType === ColorScheme.HIGH_CONTRAST_LIGHT;
+		const cs = activeWindow.getComputedStyle(activeDoc.documentElement);
 		const get = (v: string, fallback: string) => cs.getPropertyValue(v).trim() || fallback;
-		const themeBg = get('--vscode-editor-background', '#1e1e1e');
-		const themeFg = get('--vscode-editor-foreground', '#cccccc');
-		const themeBorder = get('--vscode-editorWidget-border', '#454545');
-		const themeSubtle = get('--vscode-descriptionForeground', '#999');
-		const themeThBg = get('--vscode-editorGroupHeader-tabsBackground', themeBg);
+		const themeBg = get('--vscode-editor-background', isLight ? '#ffffff' : '#1e1e1e');
+		const themeFg = get('--vscode-editor-foreground', isLight ? '#1f1f1f' : '#cccccc');
+		const themeBorder = get('--vscode-editorWidget-border', isLight ? '#d4d4d4' : '#454545');
+		const themeSubtle = get('--vscode-descriptionForeground', isLight ? '#717171' : '#999');
+		const themeThBg = get('--vscode-editorGroupHeader-tabsBackground', isLight ? '#f3f3f3' : themeBg);
 
 		// Preview HTML uses theme colours; @media print overrides to black-on-white for paper.
 		const previewHtml = `<!DOCTYPE html><html><head><title>${esc(reportName)}</title><style>

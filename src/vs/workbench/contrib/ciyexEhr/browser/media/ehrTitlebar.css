@@ -332,11 +332,18 @@
 .ehr-overlay input[type="time"]:hover::-webkit-calendar-picker-indicator {
 	opacity: 1;
 }
+.vs-dark .ehr-form-input[type="time"],
+.vs-dark .ehr-overlay input[type="time"],
+.hc-black .ehr-form-input[type="time"],
+.hc-black .ehr-overlay input[type="time"] {
+	color-scheme: dark;
+}
 .vs-dark .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
 .vs-dark .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator,
 .hc-black .ehr-form-input[type="time"]::-webkit-calendar-picker-indicator,
 .hc-black .ehr-overlay input[type="time"]::-webkit-calendar-picker-indicator {
-	filter: invert(1) brightness(1.8);
+	filter: invert(1) brightness(2);
+	opacity: 1;
 }
 .vs-dark .ehr-form-label {
 	color: var(--vscode-descriptionForeground, #999);
@@ -853,4 +860,13 @@
 .ehr-no-scrollbar {
 	scrollbar-width: none !important;
 	-ms-overflow-style: none !important;
+}
+
+/* Hide scrollbar on custom dropdowns — keep scrollability, hide the bar */
+.ciyex-custom-dropdown-panel {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+.ciyex-custom-dropdown-panel::-webkit-scrollbar {
+	display: none;
 }
