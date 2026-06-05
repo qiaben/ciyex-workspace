@@ -41,38 +41,6 @@ interface LocationResult {
 	name: string;
 }
 
-interface NavItem {
-	label: string;
-	keywords: string[];
-	commandId: string;
-	description: string;
-}
-
-const NAV_ITEMS: NavItem[] = [
-	{ label: 'Calendar', keywords: ['calendar', 'schedule'], commandId: 'ciyex.openCalendar', description: 'Open appointment calendar' },
-	{ label: 'Appointments', keywords: ['appointments', 'appt', 'booking'], commandId: 'ciyex.appointments.sidebar', description: 'View appointments sidebar' },
-	{ label: 'Patients', keywords: ['patients', 'patient list'], commandId: 'ciyex.patients.list', description: 'Open patient list' },
-	{ label: 'Tasks', keywords: ['tasks', 'task'], commandId: 'ciyex.openTasks', description: 'Open tasks' },
-	{ label: 'Messaging', keywords: ['messaging', 'messages', 'chat', 'communication'], commandId: 'ciyex.openMessaging', description: 'Open messaging channels' },
-	{ label: 'Payments', keywords: ['payments', 'payment', 'billing', 'pay', 'invoice', 'rcm'], commandId: 'ciyex.openPayments', description: 'Open payments & billing' },
-	{ label: 'Claims', keywords: ['claims', 'claim', 'insurance'], commandId: 'ciyex.openClaims', description: 'Open claim management' },
-	{ label: 'Prescriptions', keywords: ['prescriptions', 'prescription', 'rx', 'medication', 'clinical'], commandId: 'ciyex.openPrescriptions', description: 'Clinical — Prescriptions' },
-	{ label: 'Labs', keywords: ['labs', 'lab', 'laboratory', 'clinical', 'results'], commandId: 'ciyex.openLabs', description: 'Clinical — Lab results' },
-	{ label: 'Immunizations', keywords: ['immunizations', 'immunization', 'vaccine', 'clinical'], commandId: 'ciyex.openImmunizations', description: 'Clinical — Immunizations' },
-	{ label: 'Referrals', keywords: ['referrals', 'referral', 'clinical'], commandId: 'ciyex.openReferrals', description: 'Clinical — Referrals' },
-	{ label: 'Authorizations', keywords: ['authorizations', 'authorization', 'auth', 'prior auth', 'clinical'], commandId: 'ciyex.openAuthorizations', description: 'Clinical — Authorizations' },
-	{ label: 'Care Plans', keywords: ['care plans', 'care plan', 'clinical'], commandId: 'ciyex.openCarePlans', description: 'Clinical — Care Plans' },
-	{ label: 'Education', keywords: ['education', 'clinical'], commandId: 'ciyex.openEducation', description: 'Clinical — Patient Education' },
-	{ label: 'Recall', keywords: ['recall', 'operations'], commandId: 'ciyex.openRecall', description: 'Operations — Recall' },
-	{ label: 'Codes', keywords: ['codes', 'icd', 'cpt', 'operations'], commandId: 'ciyex.openCodes', description: 'Operations — Codes' },
-	{ label: 'Inventory', keywords: ['inventory', 'inventory management', 'operations', 'supplies'], commandId: 'ciyex.openInventory', description: 'Operations — Inventory' },
-	{ label: 'Clinical Alerts', keywords: ['alerts', 'clinical alerts', 'system'], commandId: 'ciyex.system.alerts', description: 'System — Clinical Alerts' },
-	{ label: 'Fax', keywords: ['fax', 'efax', 'system'], commandId: 'ciyex.system.fax', description: 'System — Fax' },
-	{ label: 'Audit Log', keywords: ['audit', 'audit log', 'system'], commandId: 'ciyex.system.auditlog', description: 'System — Audit Log' },
-	{ label: 'Reports', keywords: ['reports', 'report', 'analytics'], commandId: 'ciyex.reports.view', description: 'Open reports' },
-	{ label: 'Document Reviews', keywords: ['documents', 'document reviews', 'portal'], commandId: 'ciyex.portal.docreviews', description: 'Portal — Document Reviews' },
-];
-
 /**
  * EHR Titlebar Controls — search bar, add patient, add appointment buttons.
  * Inserted into the titlebar right section.
@@ -209,9 +177,8 @@ export class EhrTitlebarControls extends Disposable {
 
 				const patients = value ? this._clientFilterPatients(rawPatients, value).slice(0, 8) : [];
 				const providers = value ? this._clientFilterProviders(rawProviders, value).slice(0, 8) : [];
-				const navItems = value ? this._filterNavItems(value).slice(0, 5) : [];
 
-				this._renderSearchResults(patients, providers, navItems);
+				this._renderSearchResults(patients, providers);
 			} catch {
 				if (this.searchCts.token.isCancellationRequested) { return; }
 				this._renderSearchResults([], []);
@@ -249,21 +216,13 @@ export class EhrTitlebarControls extends Disposable {
 		});
 	}
 
-	private _filterNavItems(rawQuery: string): NavItem[] {
-		const q = rawQuery.toLowerCase();
-		return NAV_ITEMS.filter(item =>
-			item.label.toLowerCase().includes(q) ||
-			item.keywords.some(k => k.includes(q))
-		);
-	}
-
-	private _renderSearchResults(patients: PatientResult[], providers: ProviderResult[] = [], navItems: NavItem[] = []): void {
+	private _renderSearchResults(patients: PatientResult[], providers: ProviderResult[] = []): void {
 		DOM.clearNode(this.searchDropdown);
 		this._positionSearchDropdown();
 
-		if (patients.length === 0 && providers.length === 0 && navItems.length === 0) {
+		if (patients.length === 0 && providers.length === 0) {
 			const empty = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
-			empty.textContent = 'No matches found';
+			empty.textContent = 'No matches';
 			this.searchDropdown.style.display = '';
 			return;
 		}
@@ -324,23 +283,6 @@ export class EhrTitlebarControls extends Disposable {
 			}
 		}
 
-		if (navItems.length > 0) {
-			section('Navigate To');
-			for (const nav of navItems) {
-				const item = DOM.append(this.searchDropdown, DOM.$('.ehr-search-item'));
-				const nameEl = DOM.append(item, DOM.$('.ehr-search-name'));
-				nameEl.textContent = nav.label;
-				const subEl = DOM.append(item, DOM.$('.ehr-search-dob'));
-				subEl.textContent = nav.description;
-
-				this._register(DOM.addDisposableListener(item, 'click', () => {
-					this.searchDropdown.style.display = 'none';
-					this.searchInput.value = '';
-					this.commandService.executeCommand(nav.commandId).catch(() => { });
-				}));
-			}
-		}
-
 		this.searchDropdown.style.display = '';
 	}
 
@@ -381,7 +323,8 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Donate';
 		btn.setAttribute('aria-label', 'Donate');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-heart'));
+		const icon = DOM.append(btn, DOM.$('span.ehr-currency-icon'));
+		icon.textContent = '$';
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
@@ -487,8 +430,9 @@ export class EhrTitlebarControls extends Disposable {
 		dobPicker.max = todayIso;
 		dobPicker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 		dobPicker.title = 'Open calendar';
-		const dobIcon = DOM.append(dobWrap, DOM.$('span.codicon.codicon-calendar'));
-		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none;line-height:1;color:#9e9e9e;';
+		const dobIcon = DOM.append(dobWrap, DOM.$('span'));
+		dobIcon.textContent = '\u{1F4C5}';
+		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
 		const usToIso = (us: string): string => {
 			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
 			if (!m) { return ''; }
@@ -1152,9 +1096,10 @@ export class EhrTitlebarControls extends Disposable {
 				visible.dispatchEvent(new Event('input'));
 				hidden.dispatchEvent(new Event('change', { bubbles: false }));
 			});
-			// Calendar codicon — visual only (pointer-events:none); clicks go through to the picker overlay above
-			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none;line-height:1;color:#9e9e9e;';
+			// Calendar emoji icon — visual only (pointer-events:none); clicks go through to the picker overlay above
+			const icon = DOM.append(wrap, DOM.$('span'));
+			icon.textContent = '\u{1F4C5}';
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none;line-height:1;';
 			return hidden;
 		}
 

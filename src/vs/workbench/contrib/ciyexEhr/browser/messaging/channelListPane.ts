@@ -412,81 +412,6 @@ export class ChannelListPane extends ViewPane {
 		nameInput.style.cssText = inputStyle;
 		nameInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { form.remove(); this._formEl = null; } if (e.key === 'Enter') { createBtn.click(); } });
 
-		// Patient search (channel type only, optional)
-		const patientSection = DOM.append(form, DOM.$('div'));
-		patientSection.style.cssText = 'margin-bottom:6px;';
-		const patientLbl = DOM.append(patientSection, DOM.$('label'));
-		patientLbl.textContent = 'Patient (optional)';
-		patientLbl.style.cssText = 'font-size:10px;font-weight:600;display:block;margin-bottom:3px;color:var(--vscode-descriptionForeground);';
-		const patientWrap = DOM.append(patientSection, DOM.$('div'));
-		patientWrap.style.cssText = 'position:relative;';
-		const patientInput = DOM.append(patientWrap, DOM.$('input')) as HTMLInputElement;
-		patientInput.type = 'text';
-		patientInput.placeholder = 'Search patient by name or DOB…';
-		patientInput.style.cssText = inputStyle + 'margin-bottom:0;';
-		const patientDropdown = DOM.append(patientWrap, DOM.$('div'));
-		patientDropdown.style.cssText = 'position:absolute;left:0;right:0;top:100%;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:3px;z-index:100;max-height:140px;overflow-y:auto;display:none;';
-
-		let selectedPatientId = '';
-		let selectedPatientName = '';
-		let patientTimer: ReturnType<typeof setTimeout> | undefined;
-
-		const showPatientResults = (items: Array<{ id: string; fhirId?: string; firstName: string; lastName: string; dateOfBirth?: string }>) => {
-			DOM.clearNode(patientDropdown);
-			if (items.length === 0) {
-				const none = DOM.append(patientDropdown, DOM.$('div'));
-				none.style.cssText = 'padding:6px 8px;font-size:11px;opacity:0.6;';
-				none.textContent = 'No patients found';
-				patientDropdown.style.display = 'block';
-				return;
-			}
-			for (const p of items) {
-				const row = DOM.append(patientDropdown, DOM.$('div'));
-				row.style.cssText = 'padding:5px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--vscode-editorWidget-border);';
-				row.textContent = `${p.firstName} ${p.lastName}${p.dateOfBirth ? ' · ' + p.dateOfBirth : ''}`;
-				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
-				row.addEventListener('mouseleave', () => { row.style.background = ''; });
-				row.addEventListener('mousedown', (e) => {
-					e.preventDefault();
-					selectedPatientId = String(p.fhirId || p.id);
-					selectedPatientName = `${p.firstName} ${p.lastName}`;
-					patientInput.value = selectedPatientName;
-					patientDropdown.style.display = 'none';
-				});
-			}
-			patientDropdown.style.display = 'block';
-		};
-
-		patientInput.addEventListener('input', () => {
-			selectedPatientId = '';
-			selectedPatientName = '';
-			if (patientTimer) { clearTimeout(patientTimer); }
-			const q = patientInput.value.trim();
-			if (!q) { patientDropdown.style.display = 'none'; return; }
-			patientTimer = setTimeout(async () => {
-				try {
-					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=8`);
-					if (!res.ok) { return; }
-					const data = await res.json();
-					const list = (data?.data?.content || data?.content || data?.data || data || []) as Array<{ id: string; fhirId?: string; firstName: string; lastName: string; dateOfBirth?: string }>;
-					showPatientResults(list);
-				} catch { /* */ }
-			}, 300);
-		});
-		patientInput.addEventListener('blur', () => { setTimeout(() => { patientDropdown.style.display = 'none'; }, 150); });
-		patientInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { patientDropdown.style.display = 'none'; patientInput.blur(); } });
-
-		// Hide patient section for DM type
-		const refreshPatientSection = () => {
-			patientSection.style.display = selectedType === 'channel' ? '' : 'none';
-		};
-
-		// Patch type buttons to also toggle patient section
-		for (const entry of typeBtns) {
-			entry.btn.addEventListener('click', refreshPatientSection);
-		}
-		refreshPatientSection();
-
 		const errEl = DOM.append(form, DOM.$('div'));
 		errEl.style.cssText = 'font-size:10px;color:#f48771;margin-bottom:4px;display:none;';
 
@@ -510,12 +435,10 @@ export class ChannelListPane extends ViewPane {
 
 			try {
 				if (selectedType === 'channel') {
-					const payload: Record<string, string> = { name: value, type: 'public' };
-					if (selectedPatientId) { payload.patientId = selectedPatientId; }
 					const res = await this.apiService.fetch('/api/channels', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify(payload),
+						body: JSON.stringify({ name: value, type: 'public' }),
 					});
 					if (res.ok) {
 						const data = await res.json();

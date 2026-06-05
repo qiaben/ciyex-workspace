@@ -171,17 +171,26 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// to the browser default serif at an inconsistent size — that was the
 	// "big & uneven" dropdown the QA team flagged. Pin it to the workbench font
 	// so options match the trigger (which inherits it) exactly.
-	// width:auto overrides the monaco-workbench class's width:100% which would
-	// otherwise expand a position:fixed panel to full viewport width.
-	panel.style.cssText = `position:fixed;width:auto;box-sizing:border-box;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
+	// `right:auto;bottom:auto` are set explicitly because the panel copies the
+	// `monaco-workbench` class (for theme-var inheritance) and that class applies
+	// `inset:0`. Without overriding right/bottom, the fixed-position panel would
+	// stretch from its `left` all the way to the viewport's right edge — the
+	// "dropdown covers too much space / huge width" the QA team flagged on every
+	// create+edit form (gender, priority, status, provider, location, expiry, …).
+	panel.style.cssText = `position:fixed;right:auto;bottom:auto;box-sizing:border-box;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
 	(doc.body || doc.documentElement).appendChild(panel);
 
 	const positionPanel = () => {
 		const rect = trigger.getBoundingClientRect();
 		panel.style.left = `${rect.left}px`;
 		panel.style.top = `${rect.bottom + 2}px`;
+		// Match the panel to the trigger width so the popover lines up with the
+		// field instead of sprawling across the form. Long option labels are
+		// truncated with an ellipsis (rows use white-space:nowrap + text-overflow)
+		// rather than widening the panel.
+		panel.style.width = `${rect.width}px`;
 		panel.style.minWidth = `${rect.width}px`;
-		panel.style.maxWidth = `${Math.max(rect.width, 280)}px`;
+		panel.style.maxWidth = `${rect.width}px`;
 	};
 	const renderOptions = () => {
 		DOM.clearNode(panel);
@@ -204,7 +213,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 			// radius matches the panel, and hover/selection share one rounded
 			// highlight. No per-row border — the previous border-bottom on every
 			// row made the list read like a heavy table (QA "uneven look").
-			row.style.cssText = `padding:6px 10px;cursor:pointer;font-size:13px;line-height:18px;border-radius:4px;white-space:normal;overflow:hidden;text-overflow:ellipsis;background-color:${isSelected ? COLORS.hoverBackground : 'transparent'};color:${COLORS.foreground};${extraStyle}`;
+			row.style.cssText = `padding:6px 10px;cursor:pointer;font-size:13px;line-height:18px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background-color:${isSelected ? COLORS.hoverBackground : 'transparent'};color:${COLORS.foreground};${extraStyle}`;
 			row.textContent = opt.label;
 			row.addEventListener('mouseenter', () => { row.style.backgroundColor = COLORS.hoverBackground; });
 			row.addEventListener('mouseleave', () => { row.style.backgroundColor = opt.value === hidden.value ? COLORS.hoverBackground : 'transparent'; });
