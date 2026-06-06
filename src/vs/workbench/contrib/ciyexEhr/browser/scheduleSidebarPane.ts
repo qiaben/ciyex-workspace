@@ -776,7 +776,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.ctxMenuService.showContextMenu({
 				getAnchor: () => moreBtn,
 				getActions: () => [
-					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this._miniCalAnchor = null; this._publishCalendarState(); void this._loadAndRender(); } },
+					{ id: 'today', label: 'Go to Today', tooltip: '', class: '', enabled: true, run: () => { this.currentDate = new Date(); this.viewMode = 'day'; this._miniCalAnchor = null; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'week', label: 'View Week', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'week'; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'month', label: 'View Month', tooltip: '', class: '', enabled: true, run: () => { this.viewMode = 'month'; this._publishCalendarState(); void this._loadAndRender(); } },
 					{ id: 'refresh', label: 'Refresh', tooltip: '', class: '', enabled: true, run: () => { void this._loadAndRender(); } },

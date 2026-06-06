@@ -612,19 +612,48 @@ export class CiyexAuthGate extends Disposable {
 			});
 			err.textContent = this._error;
 			card.appendChild(err);
-			// When server is down, add a clickable hint pointing to the Environment selector
+			// When server is down, show Retry + one-click environment switch buttons
 			if (this._error.includes('temporarily unavailable')) {
-				const hint = h('div', {
-					marginTop: '8px', fontSize: '12px', color: '#4F6AF0',
-					cursor: 'pointer', textDecoration: 'underline',
+				const actions = document.createElement('div');
+				Object.assign(actions.style, { marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' });
+
+				const retryBtn = document.createElement('button');
+				retryBtn.textContent = 'Retry';
+				Object.assign(retryBtn.style, {
+					padding: '6px 14px', fontSize: '12px', fontWeight: '600', borderRadius: '6px',
+					border: '1px solid #4F6AF0', background: 'transparent', color: '#4F6AF0', cursor: 'pointer',
 				});
-				hint.textContent = '→ Try switching to "Staging" in the Environment dropdown above';
-				hint.addEventListener('click', () => {
-					// The channel select was created above and appended to channelWrap inside card's parent.
-					// Scroll the overlay into view so the user sees the Environment dropdown.
-					this._overlay?.scrollTo({ top: 0, behavior: 'smooth' });
+				retryBtn.addEventListener('click', () => {
+					this._error = '';
+					this._render();
+					if (this._email.trim()) { this._handleDiscover(); }
 				});
-				card.appendChild(hint);
+				actions.appendChild(retryBtn);
+
+				const currentChannel = this._authService.selectedChannel;
+				for (const [key, ch] of Object.entries(this._authService.availableChannels)) {
+					if (key === currentChannel) { continue; }
+					const switchBtn = document.createElement('button');
+					Object.assign(switchBtn.style, {
+						padding: '6px 14px', fontSize: '12px', fontWeight: '600', borderRadius: '6px',
+						border: '1px solid #6c757d', background: 'transparent', color: '#6c757d', cursor: 'pointer',
+					});
+					const label = (ch as { label?: string }).label ?? key;
+					switchBtn.textContent = '→ Switch to ' + label;
+					switchBtn.addEventListener('click', async () => {
+						switchBtn.disabled = true;
+						switchBtn.textContent = 'Switching…';
+						try {
+							await this._authService.setChannel(key as 'dev' | 'stage' | 'prod');
+						} finally {
+							this._error = '';
+							this._render();
+						}
+					});
+					actions.appendChild(switchBtn);
+				}
+
+				card.appendChild(actions);
 			}
 		}
 

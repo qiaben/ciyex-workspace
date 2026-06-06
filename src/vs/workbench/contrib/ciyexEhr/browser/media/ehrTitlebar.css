@@ -216,11 +216,6 @@
 	color: inherit;
 }
 
-/* Donate heart: outline heart, rendered gray rather than the inherited titlebar foreground. */
-.ehr-action-btn-currency .codicon-heart {
-	color: #8a8a8a;
-}
-
 /* Patient icon: outline person (ring head + open body curve) */
 .ehr-patient-icon {
 	display: inline-block;

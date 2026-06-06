@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
@@ -48,6 +49,14 @@ interface OperationsItem {
 	actions: RowAction[];
 	/** Optional explicit field schema for the Edit drawer. */
 	editFields?: IEditFieldDef[];
+	/**
+	 * Whether this resource can be created from the sidebar "+" button. Defaults
+	 * to true. Set false for read-only / derived resources (e.g. Claims, which
+	 * are generated from invoices — `/api/all-claims` has no create endpoint, so
+	 * a POST there 500s). Mirrors the `creatable: false` rule on the matching
+	 * editor config.
+	 */
+	creatable?: boolean;
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -268,6 +277,10 @@ const ITEMS: OperationsItem[] = [
 		description: 'Claim submission, status tracking',
 		command: 'ciyex.openClaims',
 		color: '#06b6d4',
+		// Claims are derived from invoices via the patient flow — /api/all-claims
+		// has no create route, so POSTing a new claim 500s. Mirror the Claims
+		// editor's `creatable: false` and hide the sidebar "+" (QA #20).
+		creatable: false,
 		apiPath: '/api/all-claims?page=0&size=10',
 		titleField: ['claimNumber', 'patientName'],
 		subtitleField: ['payerName', 'status'],
@@ -337,6 +350,7 @@ export class OperationsMenuPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, k, cm, c, ck, v, i, o, t, h);
 	}
@@ -487,7 +501,11 @@ export class OperationsMenuPane extends ViewPane {
 		// The previous version always called `executeCommand` which opened the
 		// editor tab but didn't trigger its New form — the test team reported
 		// these as "+ button not working".
-		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
+		// Read-only / derived resources (creatable === false, e.g. Claims) get no
+		// "+" button — their backing endpoint has no create route, so a POST 500s.
+		if (item.creatable !== false) {
+			createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
+		}
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
@@ -589,13 +607,26 @@ export class OperationsMenuPane extends ViewPane {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'question' });
 				if (!r.confirmed) { return; }
 			}
+			// Previously the result was ignored (errors swallowed, res.ok never
+			// checked), so a failed action — e.g. voiding a payment whose status
+			// isn't pending/completed (400), or a missing scope (403) — looked
+			// like "nothing happened". Surface success and the backend's error
+			// message so the action's outcome is always visible.
 			try {
-				await this.apiService.fetch(k.path(row), {
+				const res = await this.apiService.fetch(k.path(row), {
 					method: k.method,
 					headers: k.body ? { 'Content-Type': 'application/json' } : undefined,
 					body: k.body ? JSON.stringify(k.body) : undefined,
 				});
-			} catch { /* */ }
+				if (res.ok) {
+					this.notificationService.notify({ severity: Severity.Info, message: `${a.label} succeeded.` });
+				} else {
+					const detail = await res.json().catch(() => null) as { message?: string } | null;
+					this.notificationService.notify({ severity: Severity.Error, message: detail?.message || `${a.label} failed (${res.status}).` });
+				}
+			} catch {
+				this.notificationService.notify({ severity: Severity.Error, message: `${a.label} failed. Please try again.` });
+			}
 			await this._loadItemData(item);
 		}
 	}

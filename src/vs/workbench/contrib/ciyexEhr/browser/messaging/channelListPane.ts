@@ -36,6 +36,9 @@ interface Channel {
 
 type ChannelFilter = 'all' | 'unread' | 'mentions' | 'pinned';
 
+/** A searchable person (staff user or patient) that can be added as a channel member. */
+interface MemberCandidate { id: string; name: string; detail: string; tag: 'Staff' | 'Patient' }
+
 const STATUS_COLORS: Record<string, string> = {
 	online: '#22c55e',
 	away: '#f59e0b',
@@ -225,7 +228,7 @@ export class ChannelListPane extends ViewPane {
 		addBtn.style.cssText = 'padding:0 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-descriptionForeground);height:16px;line-height:16px;';
 		addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
 		addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; });
-		addBtn.addEventListener('click', (e) => { e.stopPropagation(); this._createChannel(); });
+		addBtn.addEventListener('click', (e) => { e.stopPropagation(); this._createChannel(title === 'CHANNELS' ? 'channel' : 'dm'); });
 
 		for (const ch of channels) {
 			this._renderChannelRow(ch);
@@ -366,86 +369,278 @@ export class ChannelListPane extends ViewPane {
 
 	private _formEl: HTMLElement | null = null;
 
-	private _createChannel(): void {
+	/** Open the "Create a channel" / "Start a direct message" modal. Channel
+	 *  mode shows the Public/Private type toggle, name, optional topic and —
+	 *  for private channels — a members people-picker. DM mode collects a user
+	 *  email. */
+	private _createChannel(initialMode: 'channel' | 'dm' = 'channel'): void {
 		if (this._formEl) { this._formEl.remove(); this._formEl = null; return; }
 
-		const form = DOM.append(this.container, DOM.$('div'));
-		this._formEl = form;
-		form.style.cssText = 'position:absolute;top:40px;left:0;right:0;background:var(--vscode-editorWidget-background,#252526);border-bottom:1px solid var(--vscode-editorWidget-border);padding:10px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+		const targetWindow = DOM.getWindow(this.container);
+		const isDm = initialMode === 'dm';
 
-		const inputStyle = 'width:100%;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;margin-bottom:6px;';
+		// Full-window dimmed backdrop + centered modal card.
+		const overlay = DOM.append(targetWindow.document.body, DOM.$('.ciyex-channel-modal-overlay'));
+		this._formEl = overlay;
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:2600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);';
 
-		const typeRow = DOM.append(form, DOM.$('div'));
-		typeRow.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;';
-		let selectedType = 'channel';
-		const typeBtns: Array<{ btn: HTMLButtonElement; type: string }> = [];
+		const close = () => { overlay.remove(); this._formEl = null; };
+		overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) { close(); } });
+
+		const card = DOM.append(overlay, DOM.$('.ciyex-channel-modal'));
+		card.style.cssText = 'width:460px;max-width:92vw;max-height:88vh;overflow:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);box-sizing:border-box;';
+		card.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); } });
+
+		// Header
+		const header = DOM.append(card, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const title = DOM.append(header, DOM.$('span'));
+		title.textContent = isDm ? 'Start a direct message' : 'Create a channel';
+		title.style.cssText = 'font-size:16px;font-weight:700;';
+		const closeBtn = DOM.append(header, DOM.$('span')) as HTMLElement;
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'cursor:pointer;font-size:15px;color:var(--vscode-descriptionForeground);padding:2px 6px;border-radius:4px;';
+		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = ''; });
+		closeBtn.addEventListener('click', close);
+
+		const body = DOM.append(card, DOM.$('div'));
+		body.style.cssText = 'padding:18px 22px;';
+
+		const labelStyle = 'font-size:12px;font-weight:600;display:block;margin-bottom:6px;';
+		const inputStyle = 'width:100%;padding:9px 11px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+
+		// ---- Channel type (Public / Private) ----
+		let selectedType: 'public' | 'private' = 'private';
+		const typeBtns: Array<{ btn: HTMLButtonElement; type: 'public' | 'private' }> = [];
+		if (!isDm) {
+			selectedType = 'public';
+			const typeLbl = DOM.append(body, DOM.$('label'));
+			typeLbl.textContent = 'Channel type';
+			typeLbl.style.cssText = labelStyle;
+
+			const typeRow = DOM.append(body, DOM.$('div'));
+			typeRow.style.cssText = 'display:flex;gap:10px;margin-bottom:18px;';
+
+			const makeTypeBtn = (label: string, icon: string, type: 'public' | 'private') => {
+				const btn = DOM.append(typeRow, DOM.$('button')) as HTMLButtonElement;
+				btn.textContent = `${icon}  ${label}`;
+				btn.style.cssText = 'flex:1;padding:11px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;';
+				typeBtns.push({ btn, type });
+				btn.addEventListener('click', () => { selectedType = type; refreshTypeBtns(); });
+				return btn;
+			};
+			makeTypeBtn('Public', '#', 'public');
+			makeTypeBtn('Private', '\u{1F512}', 'private');
+		}
 		const refreshTypeBtns = () => {
 			for (const entry of typeBtns) {
 				const active = entry.type === selectedType;
-				entry.btn.style.background = active ? 'var(--vscode-button-background)' : 'transparent';
-				entry.btn.style.color = active ? 'var(--vscode-button-foreground)' : 'var(--vscode-foreground)';
+				entry.btn.style.border = `1px solid ${active ? 'var(--vscode-focusBorder)' : 'var(--vscode-input-border,#3c3c3c)'}`;
+				entry.btn.style.background = active ? 'var(--vscode-list-activeSelectionBackground,rgba(0,120,212,0.12))' : 'transparent';
+				entry.btn.style.color = active ? 'var(--vscode-focusBorder)' : 'var(--vscode-foreground)';
 			}
 		};
-		const makeTypeBtn = (label: string, type: string) => {
-			const btn = DOM.append(typeRow, DOM.$('button')) as HTMLButtonElement;
-			btn.textContent = label;
-			const active = type === selectedType;
-			btn.style.cssText = `flex:1;padding:4px 8px;border-radius:3px;font-size:11px;cursor:pointer;border:1px solid var(--vscode-editorWidget-border);background:${active ? 'var(--vscode-button-background)' : 'transparent'};color:${active ? 'var(--vscode-button-foreground)' : 'var(--vscode-foreground)'};`;
-			typeBtns.push({ btn, type });
-			btn.addEventListener('click', () => {
-				selectedType = type;
-				refreshTypeBtns();
-				nameLbl.textContent = selectedType === 'dm' ? 'User Email' : 'Channel Name';
-			});
-			return btn;
-		};
-		makeTypeBtn('# Channel', 'channel');
-		makeTypeBtn('DM', 'dm');
+		refreshTypeBtns();
 
-		const nameLbl = DOM.append(form, DOM.$('label'));
-		nameLbl.textContent = 'Channel Name';
-		nameLbl.style.cssText = 'font-size:10px;font-weight:600;display:block;margin-bottom:3px;color:var(--vscode-descriptionForeground);';
+		// ---- Name (channel) / User Email (dm) ----
+		const nameLbl = DOM.append(body, DOM.$('label'));
+		nameLbl.textContent = isDm ? 'User email' : 'Name';
+		nameLbl.style.cssText = labelStyle;
 
-		const nameInput = DOM.append(form, DOM.$('input')) as HTMLInputElement;
+		const nameInput = DOM.append(body, DOM.$('input')) as HTMLInputElement;
 		nameInput.type = 'text';
-		nameInput.placeholder = 'e.g. general';
+		nameInput.placeholder = isDm ? 'name@example.com' : '# e.g. lab-results';
 		nameInput.style.cssText = inputStyle;
-		nameInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { form.remove(); this._formEl = null; } if (e.key === 'Enter') { createBtn.click(); } });
+		nameInput.addEventListener('focus', () => { nameInput.style.borderColor = 'var(--vscode-focusBorder)'; });
+		nameInput.addEventListener('blur', () => { nameInput.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+		if (!isDm) {
+			// Channel names: lowercase letters, numbers and hyphens only.
+			nameInput.addEventListener('input', () => {
+				const cleaned = nameInput.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '');
+				if (cleaned !== nameInput.value) { nameInput.value = cleaned; }
+			});
+			const hint = DOM.append(body, DOM.$('div'));
+			hint.textContent = 'Lowercase letters, numbers, and hyphens only';
+			hint.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:6px;';
+		}
 
-		const errEl = DOM.append(form, DOM.$('div'));
-		errEl.style.cssText = 'font-size:10px;color:#f48771;margin-bottom:4px;display:none;';
+		// ---- Topic (channel only) ----
+		let topicInput: HTMLInputElement | undefined;
+		if (!isDm) {
+			const topicLbl = DOM.append(body, DOM.$('label'));
+			topicLbl.style.cssText = labelStyle + 'margin-top:18px;';
+			topicLbl.textContent = 'Topic ';
+			const optional = DOM.append(topicLbl, DOM.$('span'));
+			optional.textContent = '(optional)';
+			optional.style.cssText = 'font-weight:400;color:var(--vscode-descriptionForeground);';
 
-		const btnRow = DOM.append(form, DOM.$('div'));
-		btnRow.style.cssText = 'display:flex;gap:6px;';
+			topicInput = DOM.append(body, DOM.$('input')) as HTMLInputElement;
+			topicInput.type = 'text';
+			topicInput.placeholder = 'What is this channel about?';
+			topicInput.style.cssText = inputStyle;
+			topicInput.addEventListener('focus', () => { topicInput!.style.borderColor = 'var(--vscode-focusBorder)'; });
+			topicInput.addEventListener('blur', () => { topicInput!.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+		}
 
-		const cancelBtn = DOM.append(btnRow, DOM.$('button'));
+		// ---- Members (private channels only) ----
+		const selectedMembers = new Map<string, string>();
+		let membersWrap: HTMLElement | undefined;
+		if (!isDm) {
+			membersWrap = DOM.append(body, DOM.$('div'));
+			membersWrap.style.cssText = 'margin-top:18px;';
+			const memberLbl = DOM.append(membersWrap, DOM.$('label'));
+			memberLbl.textContent = 'Members';
+			memberLbl.style.cssText = labelStyle;
+
+			const chips = DOM.append(membersWrap, DOM.$('div'));
+			chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;';
+
+			const renderChips = () => {
+				DOM.clearNode(chips);
+				chips.style.display = selectedMembers.size ? 'flex' : 'none';
+				for (const [id, name] of selectedMembers) {
+					const chip = DOM.append(chips, DOM.$('span'));
+					chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);border-radius:12px;font-size:12px;';
+					const txt = DOM.append(chip, DOM.$('span'));
+					txt.textContent = name;
+					const x = DOM.append(chip, DOM.$('span'));
+					// allow-any-unicode-next-line
+					x.textContent = '✕';
+					x.style.cssText = 'cursor:pointer;opacity:0.8;';
+					x.addEventListener('click', () => { selectedMembers.delete(id); renderChips(); });
+				}
+			};
+
+			const memberInput = DOM.append(membersWrap, DOM.$('input')) as HTMLInputElement;
+			memberInput.type = 'text';
+			memberInput.placeholder = 'Search people...';
+			memberInput.style.cssText = inputStyle;
+			memberInput.addEventListener('focus', () => { memberInput.style.borderColor = 'var(--vscode-focusBorder)'; });
+			memberInput.addEventListener('blur', () => { memberInput.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+
+			const results = DOM.append(membersWrap, DOM.$('div'));
+			results.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;margin-top:4px;max-height:160px;overflow:auto;display:none;';
+
+			let searchTimer: number | undefined;
+			let searchSeq = 0;
+			// Search both staff users and patients so either can be added as a
+			// channel member.
+			const searchStaff = async (q: string): Promise<MemberCandidate[]> => {
+				try {
+					const res = await this.apiService.fetch(`/api/admin/users?size=10&search=${encodeURIComponent(q)}`);
+					if (!res.ok) { return []; }
+					const data = await res.json();
+					const users = (data?.data || data?.content || data || []) as Array<{ id: string; firstName?: string; lastName?: string; email?: string }>;
+					return users.filter(u => u.id).map(u => ({
+						id: u.id,
+						name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id,
+						detail: u.email || '',
+						tag: 'Staff' as const,
+					}));
+				} catch { return []; }
+			};
+			const searchPatients = async (q: string): Promise<MemberCandidate[]> => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+					if (!res.ok) { return []; }
+					const data = await res.json();
+					const patients = (data?.data?.content || data?.content || data?.data || []) as Array<{ id?: string; fhirId?: string; firstName?: string; lastName?: string; dateOfBirth?: string }>;
+					return patients.map(p => {
+						const id = p.fhirId || p.id || '';
+						return {
+							id,
+							name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || id,
+							detail: p.dateOfBirth || '',
+							tag: 'Patient' as const,
+						};
+					}).filter(c => c.id);
+				} catch { return []; }
+			};
+			const runSearch = async (q: string) => {
+				const seq = ++searchSeq;
+				const [staff, patients] = await Promise.all([searchStaff(q), searchPatients(q)]);
+				if (seq !== searchSeq) { return; } // a newer search superseded this one
+				const matches = [...staff, ...patients].filter(c => !selectedMembers.has(c.id));
+				DOM.clearNode(results);
+				if (matches.length === 0) { results.style.display = 'none'; return; }
+				results.style.display = 'block';
+				for (const c of matches) {
+					const row = DOM.append(results, DOM.$('div'));
+					row.style.cssText = 'padding:8px 11px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px;';
+					const label = DOM.append(row, DOM.$('span'));
+					label.textContent = c.detail ? `${c.name} — ${c.detail}` : c.name;
+					label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+					const tag = DOM.append(row, DOM.$('span'));
+					tag.textContent = c.tag;
+					tag.style.cssText = `flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;background:${c.tag === 'Patient' ? 'rgba(52,168,83,0.18)' : 'var(--vscode-badge-background)'};color:${c.tag === 'Patient' ? '#34a853' : 'var(--vscode-badge-foreground)'};`;
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+					row.addEventListener('click', () => {
+						selectedMembers.set(c.id, c.name);
+						memberInput.value = '';
+						results.style.display = 'none';
+						renderChips();
+					});
+				}
+			};
+			memberInput.addEventListener('input', () => {
+				const q = memberInput.value.trim();
+				if (searchTimer) { targetWindow.clearTimeout(searchTimer); }
+				if (q.length < 2) { results.style.display = 'none'; return; }
+				searchTimer = targetWindow.setTimeout(() => runSearch(q), 250);
+			});
+
+			renderChips();
+		}
+
+		// ---- Error + footer ----
+		const errEl = DOM.append(body, DOM.$('div'));
+		errEl.style.cssText = 'font-size:12px;color:#f48771;margin-top:12px;display:none;';
+
+		const footer = DOM.append(card, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--vscode-editorWidget-border);';
+
+		const cancelBtn = DOM.append(footer, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
-		cancelBtn.style.cssText = 'flex:1;padding:4px;border:1px solid var(--vscode-editorWidget-border);border-radius:3px;background:transparent;color:var(--vscode-foreground);font-size:11px;cursor:pointer;';
-		cancelBtn.addEventListener('click', () => { form.remove(); this._formEl = null; });
+		cancelBtn.style.cssText = 'padding:8px 18px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;background:transparent;color:var(--vscode-foreground);font-size:13px;cursor:pointer;';
+		cancelBtn.addEventListener('click', close);
 
-		const createBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
-		createBtn.textContent = 'Create';
-		createBtn.style.cssText = 'flex:1;padding:4px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;font-size:11px;cursor:pointer;font-weight:600;';
-		createBtn.addEventListener('click', async () => {
+		const createBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		createBtn.textContent = isDm ? 'Start' : 'Create Channel';
+		createBtn.style.cssText = 'padding:8px 18px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600;';
+		createBtn.addEventListener('mouseenter', () => { createBtn.style.opacity = '0.9'; });
+		createBtn.addEventListener('mouseleave', () => { createBtn.style.opacity = '1'; });
+
+		const submit = async () => {
 			const value = nameInput.value.trim();
 			if (!value) { errEl.textContent = 'This field is required'; errEl.style.display = 'block'; return; }
 			errEl.style.display = 'none';
 			createBtn.disabled = true;
+			const original = createBtn.textContent;
 			createBtn.textContent = '...';
-
 			try {
-				if (selectedType === 'channel') {
+				if (!isDm) {
+					const payload: Record<string, unknown> = { name: value, type: selectedType };
+					const topic = topicInput?.value.trim();
+					if (topic) { payload.topic = topic; }
+					if (selectedType === 'private' && selectedMembers.size) {
+						payload.memberIds = Array.from(selectedMembers.keys());
+						payload.memberNames = Object.fromEntries(selectedMembers);
+					}
 					const res = await this.apiService.fetch('/api/channels', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ name: value, type: 'public' }),
+						body: JSON.stringify(payload),
 					});
 					if (res.ok) {
 						const data = await res.json();
 						const ch = data?.data || data;
-						form.remove(); this._formEl = null;
+						close();
 						await this._loadChannels();
-						const inp = new MessagingEditorInput(ch.id, ch.name, ch.type || 'public');
+						const inp = new MessagingEditorInput(ch.id, ch.name, ch.type || selectedType);
 						this.editorService.openEditor(inp, { pinned: true });
 					} else {
 						errEl.textContent = 'Failed to create channel';
@@ -460,7 +655,7 @@ export class ChannelListPane extends ViewPane {
 					if (res.ok) {
 						const data = await res.json();
 						const ch = data?.data || data;
-						form.remove(); this._formEl = null;
+						close();
 						await this._loadChannels();
 						const inp = new MessagingEditorInput(ch.id, ch.name || value, 'dm');
 						this.editorService.openEditor(inp, { pinned: true });
@@ -474,9 +669,11 @@ export class ChannelListPane extends ViewPane {
 				errEl.style.display = 'block';
 			} finally {
 				createBtn.disabled = false;
-				createBtn.textContent = 'Create';
+				createBtn.textContent = original;
 			}
-		});
+		};
+		createBtn.addEventListener('click', submit);
+		nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { void submit(); } });
 
 		setTimeout(() => nameInput.focus(), 50);
 	}

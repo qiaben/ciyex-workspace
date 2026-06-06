@@ -1635,6 +1635,29 @@ export class EducationEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['title', 'category', 'contentType', 'source', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// `tags` is a JSON column in education_material, but the form captures it as
+		// a comma-separated text field. Sending the raw text (e.g. "YES") makes
+		// Postgres reject it ("invalid input syntax for type json"). Normalise it
+		// into a JSON array string here so the column always receives valid JSON.
+		// Handles both create (comma list) and edit (already a JSON array string).
+		beforeSave: (payload) => {
+			if (Object.prototype.hasOwnProperty.call(payload, 'tags')) {
+				const raw = (payload.tags ?? '').toString().trim();
+				let arr: string[] = [];
+				if (raw.startsWith('[')) {
+					try {
+						const parsed = JSON.parse(raw);
+						arr = Array.isArray(parsed) ? parsed.map(t => String(t)) : [];
+					} catch {
+						arr = raw.split(',').map(t => t.trim()).filter(Boolean);
+					}
+				} else if (raw) {
+					arr = raw.split(',').map(t => t.trim()).filter(Boolean);
+				}
+				payload.tags = arr.length ? JSON.stringify(arr) : null;
+			}
+			return payload;
+		},
 		// Issue #24: enable horizontal scroll on narrow viewports so the Actions
 		// column stays visible rather than being clipped by the right edge.
 		tableMinWidth: '900px',

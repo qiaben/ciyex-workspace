@@ -1394,6 +1394,7 @@ export class CalendarEditor extends EditorPane {
 
 			if (!patName) { this.notificationService.notify({ severity: Severity.Warning, message: 'Patient is required' }); return; }
 			if (!startD || !startT) { this.notificationService.notify({ severity: Severity.Warning, message: 'Date and time are required' }); return; }
+			if (!locId) { this.notificationService.notify({ severity: Severity.Warning, message: 'Location is required' }); return; }
 
 			// Calculate duration in minutes
 			const startMins = parseInt(startT.split(':')[0]) * 60 + parseInt(startT.split(':')[1]);
@@ -1688,6 +1689,7 @@ export class CalendarEditor extends EditorPane {
 			todayBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.currentDate = new Date();
+				this.viewMode = 'day';
 				this._publishCalendarState();
 				updateTriggerLabel();
 				panel.style.display = 'none';
