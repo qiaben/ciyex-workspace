@@ -26,6 +26,15 @@ const OVERLAY_DEFINITIONS: ReadonlyArray<{ className: string; type: BrowserOverl
 	{ className: 'suggest-details-container', type: BrowserOverlayType.Hover },
 	{ className: 'monaco-dialog-modal-block', type: BrowserOverlayType.Dialog },
 	{ className: 'monaco-modal-editor-block', type: BrowserOverlayType.Dialog },
+	// Ciyex custom full-screen / modal overlays. These render as ordinary DOM on
+	// top of the workbench, but the browser view is a separate WebContentsView
+	// composited above the DOM — so without registering them here the browser
+	// (e.g. the donation page) bleeds over the login gate and the Create Patient /
+	// Add Appointment forms. Treating them as dialogs hides the view while they show.
+	{ className: 'ciyex-auth-gate', type: BrowserOverlayType.Dialog },
+	{ className: 'ehr-overlay-backdrop', type: BrowserOverlayType.Dialog },
+	{ className: 'ehr-overlay', type: BrowserOverlayType.Dialog },
+	{ className: 'ciyex-edit-dialog-overlay', type: BrowserOverlayType.Dialog },
 	{ className: 'notifications-center', type: BrowserOverlayType.Notification },
 	{ className: 'notification-toast-container', type: BrowserOverlayType.Notification },
 	// Context view is very generic, so treat the content as unknown

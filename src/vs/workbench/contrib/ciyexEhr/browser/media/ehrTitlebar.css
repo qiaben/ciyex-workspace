@@ -216,6 +216,11 @@
 	color: inherit;
 }
 
+/* Donate heart: outline heart, rendered gray rather than the inherited titlebar foreground. */
+.ehr-action-btn-currency .codicon-heart {
+	color: #8a8a8a;
+}
+
 /* Patient icon: outline person (ring head + open body curve) */
 .ehr-patient-icon {
 	display: inline-block;
@@ -278,21 +283,6 @@
 	line-height: 1;
 	color: inherit;
 	font-weight: 400;
-}
-
-
-/* Currency $ icon — larger than codicons so the donate button stands out */
-.ehr-currency-icon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 18px;
-	height: 18px;
-	font-size: 18px;
-	font-weight: 400;
-	line-height: 1;
-	color: inherit;
-	font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
 

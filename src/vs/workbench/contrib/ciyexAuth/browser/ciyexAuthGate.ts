@@ -224,6 +224,10 @@ export class CiyexAuthGate extends Disposable {
 		if (!this._overlay) {
 			this._overlay = document.createElement('div');
 			this._overlay.id = 'ciyex-auth-gate';
+			// Also expose as a class so the browser-view overlay manager recognises
+			// the gate and hides the WebContentsView-based browser (e.g. the donation
+			// page) while login/lock is shown — it composites above the DOM otherwise.
+			this._overlay.classList.add('ciyex-auth-gate');
 			this._parent.appendChild(this._overlay);
 		}
 		this._overlay.style.display = '';

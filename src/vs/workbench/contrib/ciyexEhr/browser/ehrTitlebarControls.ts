@@ -323,11 +323,11 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Donate';
 		btn.setAttribute('aria-label', 'Donate');
 
-		const icon = DOM.append(btn, DOM.$('span.ehr-currency-icon'));
-		icon.textContent = '$';
+		DOM.append(btn, DOM.$('span.codicon.codicon-heart'));
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();
+			// Open the donation form in a new in-app tab via the Simple Browser.
 			this.commandService.executeCommand('simpleBrowser.show', 'https://www.zeffy.com/en-US/donation-form/ciyex-ehr');
 		}));
 	}
