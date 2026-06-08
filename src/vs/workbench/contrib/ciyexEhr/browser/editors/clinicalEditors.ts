@@ -2398,7 +2398,10 @@ export class CodesEditor extends ClinicalListEditorBase {
 export class InventoryEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexInventory';
 
-	private invView: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings' = 'inventory';
+	// Default to the inventory list: the base editor's initial load renders the
+	// table view, so landing on a custom view (dashboard/settings) here would
+	// desync the tab state. Those are reachable via their tabs.
+	private invView: 'dashboard' | 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings' = 'inventory';
 
 	private readonly _inventoryConfig: ClinicalEditorConfig = {
 		title: 'Inventory', apiPath: '/api/inventory',
@@ -2527,48 +2530,55 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
 		title: 'Purchase Orders', apiPath: '/api/orders',
-		// Mirrors ciyex-ehr-ui Orders.tsx columns exactly: PO # | Supplier | Status
-		// | Date | Total | Lines. Search box covers PO# / supplier name.
-		searchPlaceholder: 'Search by PO #, supplier...',
-		clientSideFilter: ['orderNumber', 'poNumber', 'supplierName', 'status', 'id'],
+		// Issue #14: mirror the ciyex-ehr-ui order form, which is a flat
+		// single-item purchase order — Supplier | Item | Category | Date | Qty |
+		// Amount | Status — posted to /api/orders.
+		searchPlaceholder: 'Search by PO #, supplier, item...',
+		clientSideFilter: ['orderNumber', 'poNumber', 'supplier', 'supplierName', 'itemName', 'category', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		columns: [
-			{ key: 'orderNumber', label: 'PO #', width: '130px' },
-			{ key: 'supplierName', label: 'Supplier', width: '1.5fr' },
+			{ key: 'orderNumber', label: 'Order #', width: '130px' },
+			{ key: 'supplier', label: 'Supplier', width: 'minmax(0,1.3fr)' },
+			{ key: 'itemName', label: 'Item', width: 'minmax(0,1.2fr)' },
+			{ key: 'category', label: 'Category', width: '120px' },
+			{ key: 'date', label: 'Date', width: '110px' },
+			{ key: 'stock', label: 'Qty', width: '70px' },
+			{ key: 'amount', label: 'Amount', width: '100px' },
 			{ key: 'status', label: 'Status', width: '110px' },
-			{ key: 'orderDate', label: 'Date', width: '110px' },
-			{ key: 'totalCost', label: 'Total', width: '100px' },
-			{ key: 'lineCount', label: 'Lines', width: '70px' },
 		],
 		statusTabs: [
-			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
-			{ label: 'Partial', value: 'partial' },
-			{ label: 'Received', value: 'received' }, { label: 'Cancelled', value: 'cancelled' },
+			{ label: 'Pending', value: 'Pending' }, { label: 'Submitted', value: 'Submitted' },
+			{ label: 'Received', value: 'Received' }, { label: 'Cancelled', value: 'Cancelled' },
 		],
-		cellRenderer: (key, value) => {
-			if (key === 'totalCost' && (typeof value === 'number' || typeof value === 'string')) {
+		cellRenderer: (key, value, item) => {
+			// The flat order may surface the supplier as `supplier` or `supplierName`.
+			if (key === 'supplier' && !value) { return String(item.supplierName ?? item.supplier ?? ''); }
+			if (key === 'amount' && (typeof value === 'number' || typeof value === 'string') && value !== '') {
 				const n = Number(value);
-				if (!isFinite(n)) { return String(value ?? '—'); }
-				return `$${n.toFixed(2)}`;
+				return isFinite(n) ? `$${n.toFixed(2)}` : String(value);
 			}
-			if ((key === 'orderDate' || key === 'expectedDate') && typeof value === 'string' && value) {
-				try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return value; }
+			if (key === 'date') {
+				const d = (value || item.orderDate) as string;
+				if (d) { try { return new Date(String(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(d); } }
 			}
 			return String(value ?? '');
 		},
 		formFields: [
-			{ key: 'supplierName', label: 'Supplier', type: 'search', placeholder: 'Search supplier...', apiPath: '/api/inventory/suppliers', searchDisplayField: 'name' },
-			{ key: 'orderNumber', label: 'Order #', type: 'text', placeholder: 'Auto-generated' },
-			{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
-			{ key: 'expectedDate', label: 'Expected Date', type: 'date' },
+			// Match ciyex-ehr-ui CreateOrderForm field set + payload keys.
+			{ key: 'supplier', label: 'Supplier', type: 'text', required: true, placeholder: 'Supplier name', aliases: ['supplierName', 'supplier.name'] },
+			{ key: 'itemName', label: 'Item Name', type: 'text', required: true, placeholder: 'Item name' },
+			{ key: 'category', label: 'Category', type: 'text', required: true, placeholder: 'Category' },
+			{ key: 'date', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10), aliases: ['orderDate'] },
 			{
 				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
-					{ label: 'Received', value: 'received' }, { label: 'Cancelled', value: 'cancelled' },
-				], defaultValue: 'draft'
+					{ label: 'Pending', value: 'Pending' }, { label: 'Submitted', value: 'Submitted' },
+					{ label: 'Received', value: 'Received' }, { label: 'Cancelled', value: 'Cancelled' },
+				], defaultValue: 'Pending'
 			},
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Order notes...' },
+			{ key: 'stock', label: 'Quantity', type: 'number', defaultValue: 0 },
+			{ key: 'amount', label: 'Amount', type: 'number', placeholder: '0.00' },
+			{ key: 'orderNumber', label: 'Order #', type: 'text', placeholder: 'Auto-generated', defaultValue: () => `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 6).toUpperCase()}` },
 		],
 		actions: [
 			// allow-any-unicode-next-line
@@ -2759,8 +2769,18 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			case 'suppliers': return this._suppliersConfig;
 			case 'records': return this._recordsConfig;
 			case 'maintenance': return this._maintenanceConfig;
+			// dashboard + settings render custom content (see _resetAndReload);
+			// the inventory config is a harmless placeholder for those views.
 			default: return this._inventoryConfig;
 		}
+	}
+
+	// Dashboard + Settings are custom (non-table) views, so intercept the base
+	// list render and draw them ourselves; everything else uses the table. (#18)
+	protected override _resetAndReload(): void {
+		if (this.invView === 'dashboard') { void this._renderDashboard(); return; }
+		if (this.invView === 'settings') { void this._renderSettings(); return; }
+		super._resetAndReload();
 	}
 
 	private _invTabBtns: HTMLButtonElement[] = [];
@@ -2782,12 +2802,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			btn.style.fontWeight = active ? '600' : '400';
 		};
 
-		const invTabs: Array<{ view: 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings'; label: string }> = [
+		const invTabs: Array<{ view: 'dashboard' | 'inventory' | 'orders' | 'records' | 'suppliers' | 'maintenance' | 'settings'; label: string }> = [
+			{ view: 'dashboard', label: 'Dashboard' },
 			{ view: 'inventory', label: 'Inventory' },
 			{ view: 'orders', label: 'Orders' },
 			{ view: 'records', label: 'Records' },
 			{ view: 'suppliers', label: 'Suppliers' },
 			{ view: 'maintenance', label: 'Maintenance' },
+			{ view: 'settings', label: 'Settings' },
 		];
 		invTabs.forEach(({ view, label }) => {
 			const btn = DOM.append(tabRow, DOM.$('button')) as HTMLButtonElement;
@@ -2807,6 +2829,251 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		const main = DOM.append(wrapper, DOM.$('div'));
 		main.style.cssText = 'flex:1;min-height:0;overflow:hidden;position:relative;';
 		return main;
+	}
+
+	// --- #18 Dashboard ---
+	private async _renderDashboard(): Promise<void> {
+		const c = this.contentEl;
+		DOM.clearNode(c);
+		c.style.overflowY = 'auto';
+
+		const head = DOM.append(c, DOM.$('div'));
+		head.style.cssText = 'margin-bottom:16px;';
+		const h = DOM.append(head, DOM.$('div'));
+		h.textContent = 'Inventory Dashboard';
+		h.style.cssText = 'font-size:20px;font-weight:700;color:var(--vscode-foreground);';
+		const sub = DOM.append(head, DOM.$('div'));
+		sub.textContent = 'Stock levels, alerts and purchasing at a glance.';
+		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+		const grid = DOM.append(c, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;';
+		const card = (title: string, value: string, subtext: string, tone?: string): void => {
+			const cd = DOM.append(grid, DOM.$('div'));
+			cd.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:10px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:16px 18px;';
+			const t = DOM.append(cd, DOM.$('div'));
+			t.textContent = title; t.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+			const v = DOM.append(cd, DOM.$('div'));
+			v.textContent = value; v.style.cssText = `font-size:28px;font-weight:700;margin-top:6px;color:${tone || 'var(--vscode-foreground)'};`;
+			const s = DOM.append(cd, DOM.$('div'));
+			s.textContent = subtext; s.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+		};
+		const renderCards = (skus: string, low: string, pending: string, suppliers: string): void => {
+			DOM.clearNode(grid);
+			card('Total SKUs', skus, 'Tracked items');
+			card('Low / Critical', low, 'Needs restock', '#f59e0b');
+			card('Pending Orders', pending, 'Awaiting receipt');
+			card('Suppliers', suppliers, 'Active partners');
+		};
+		renderCards('…', '…', '…', '…');
+
+		const toNum = (d: unknown): number => {
+			if (typeof d === 'number') { return d; }
+			if (Array.isArray(d)) { return d.length; }
+			if (d && typeof d === 'object') {
+				const o = d as Record<string, unknown>;
+				const cand = o.count ?? o.total ?? o.value ?? o.data;
+				return typeof cand === 'number' ? cand : (Array.isArray(cand) ? cand.length : 0);
+			}
+			const n = Number(d); return isFinite(n) ? n : 0;
+		};
+		const getNum = async (path: string): Promise<number> => {
+			try {
+				const res = await this.apiService.fetch(path);
+				if (!res.ok) { return 0; }
+				const json = await res.json();
+				return toNum(json?.data ?? json);
+			} catch { return 0; }
+		};
+		const [skus, lowCrit, pending, suppliers] = await Promise.all([
+			getNum('/api/inventory/count'),
+			getNum('/api/inventory/low-critical'),
+			getNum('/api/orders/pending/count'),
+			getNum('/api/suppliers/count'),
+		]);
+		// Guard against a view switch while awaiting.
+		if (this.invView !== 'dashboard') { return; }
+		renderCards(String(skus), String(lowCrit), String(pending), String(suppliers));
+	}
+
+	// --- #18 Settings ---
+	private _settingsTab: 'general' | 'categories' | 'locations' = 'general';
+
+	private async _renderSettings(): Promise<void> {
+		const c = this.contentEl;
+		DOM.clearNode(c);
+		c.style.overflowY = 'auto';
+
+		const sub = DOM.append(c, DOM.$('div'));
+		sub.textContent = 'Configure inventory thresholds, categories, and storage locations.';
+		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:14px;';
+
+		const tabRow = DOM.append(c, DOM.$('div'));
+		tabRow.style.cssText = 'display:flex;gap:4px;margin-bottom:18px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:4px;max-width:520px;';
+		const tabs: Array<{ key: 'general' | 'categories' | 'locations'; label: string }> = [
+			{ key: 'general', label: 'General' }, { key: 'categories', label: 'Categories' }, { key: 'locations', label: 'Locations' },
+		];
+		for (const t of tabs) {
+			const b = DOM.append(tabRow, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = t.label;
+			const active = this._settingsTab === t.key;
+			b.style.cssText = `flex:1;padding:8px 12px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${active ? '600' : '400'};background:${active ? 'var(--vscode-button-background,#0e639c)' : 'transparent'};color:${active ? 'var(--vscode-button-foreground,#fff)' : 'var(--vscode-foreground)'};`;
+			b.addEventListener('click', () => { if (this._settingsTab !== t.key) { this._settingsTab = t.key; void this._renderSettings(); } });
+		}
+
+		const body = DOM.append(c, DOM.$('div'));
+		if (this._settingsTab === 'general') { await this._renderSettingsGeneral(body); }
+		else if (this._settingsTab === 'categories') { await this._renderSettingsList(body, 'Category', '/api/inventory/categories', 'e.g. Consumable'); }
+		else { await this._renderSettingsList(body, 'Location', '/api/inventory/locations', 'e.g. Main Storage'); }
+	}
+
+	private _settingsCard(parent: HTMLElement, title: string): HTMLElement {
+		const card = DOM.append(parent, DOM.$('div'));
+		card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:10px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:16px 18px;margin-bottom:16px;';
+		const t = DOM.append(card, DOM.$('div'));
+		t.textContent = title;
+		t.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);margin-bottom:10px;';
+		return card;
+	}
+
+	private _settingsToggle(parent: HTMLElement, label: string, subText: string, get: () => boolean, set: (v: boolean) => void): void {
+		const row = DOM.append(parent, DOM.$('div'));
+		row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;';
+		const txt = DOM.append(row, DOM.$('div'));
+		const l = DOM.append(txt, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:13px;color:var(--vscode-foreground);';
+		const s = DOM.append(txt, DOM.$('div')); s.textContent = subText; s.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+		const sw = DOM.append(row, DOM.$('div'));
+		const paint = (): void => {
+			const on = get();
+			sw.style.cssText = `width:40px;height:22px;border-radius:11px;cursor:pointer;flex-shrink:0;position:relative;transition:background 0.15s;background:${on ? 'var(--vscode-button-background,#0e639c)' : 'var(--vscode-input-background,#3c3c3c)'};border:1px solid var(--vscode-editorWidget-border);`;
+			DOM.clearNode(sw);
+			const knob = DOM.append(sw, DOM.$('div'));
+			knob.style.cssText = `position:absolute;top:1px;left:${on ? '19px' : '1px'};width:18px;height:18px;border-radius:50%;background:#fff;transition:left 0.15s;`;
+		};
+		paint();
+		sw.addEventListener('click', () => { set(!get()); paint(); });
+	}
+
+	private async _renderSettingsGeneral(body: HTMLElement): Promise<void> {
+		let loaded: Record<string, unknown> = {};
+		try {
+			const res = await this.apiService.fetch('/api/inventory-settings');
+			if (res.ok) { const j = await res.json(); loaded = (j?.data ?? j ?? {}) as Record<string, unknown>; }
+		} catch { /* fall back to defaults */ }
+		if (this.invView !== 'settings' || this._settingsTab !== 'general') { return; }
+
+		const state = {
+			lowStockAlerts: loaded.lowStockAlerts !== false,
+			autoReorder: loaded.autoReorder === true,
+			criticalLowPct: Number(loaded.criticalLowPct ?? loaded.criticalLowPercentage ?? 10),
+			defaultCostMethod: String(loaded.defaultCostMethod ?? 'fifo'),
+			poApprovalRequired: loaded.poApprovalRequired === true,
+			poApprovalThreshold: Number(loaded.poApprovalThreshold ?? 0),
+		};
+		const save = async (): Promise<void> => {
+			try {
+				await this.apiService.fetch('/api/inventory-settings', {
+					method: 'PUT',
+					body: JSON.stringify({
+						lowStockAlerts: state.lowStockAlerts,
+						autoReorder: state.autoReorder,
+						criticalLowPct: state.criticalLowPct,
+						defaultCostMethod: state.defaultCostMethod,
+						poApprovalRequired: state.poApprovalRequired,
+						poApprovalThreshold: state.poApprovalThreshold,
+					}),
+				});
+			} catch { /* ignore */ }
+		};
+
+		const grid = DOM.append(body, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;';
+		const left = DOM.append(grid, DOM.$('div'));
+		const right = DOM.append(grid, DOM.$('div'));
+
+		// Alerts & Automation
+		const alerts = this._settingsCard(left, 'Alerts & Automation');
+		this._settingsToggle(alerts, 'Low Stock Alerts', 'Notify when stock dips below minimum', () => state.lowStockAlerts, v => { state.lowStockAlerts = v; void save(); });
+		this._settingsToggle(alerts, 'Auto Reorder', 'Automatically generate POs for low stock', () => state.autoReorder, v => { state.autoReorder = v; void save(); });
+
+		// Purchase Order Approval
+		const poCard = this._settingsCard(left, 'Purchase Order Approval');
+		this._settingsToggle(poCard, 'Require PO Approval', 'Orders above threshold need manager sign-off', () => state.poApprovalRequired, v => { state.poApprovalRequired = v; void save(); });
+
+		// Thresholds & Cost
+		const thresholds = this._settingsCard(right, 'Thresholds & Cost');
+		const lbl1 = DOM.append(thresholds, DOM.$('div'));
+		lbl1.textContent = 'Critical Low (%)';
+		lbl1.style.cssText = 'font-size:12px;color:var(--vscode-foreground);margin-bottom:4px;';
+		const pct = DOM.append(thresholds, DOM.$('input')) as HTMLInputElement;
+		pct.type = 'number'; pct.value = String(state.criticalLowPct);
+		pct.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		pct.addEventListener('change', () => { const n = Number(pct.value); if (isFinite(n)) { state.criticalLowPct = n; void save(); } });
+		const help = DOM.append(thresholds, DOM.$('div'));
+		help.textContent = 'Items below this % of minimum stock are marked Critical.';
+		help.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin:4px 0 14px;';
+
+		const lbl2 = DOM.append(thresholds, DOM.$('div'));
+		lbl2.textContent = 'Default Cost Method';
+		lbl2.style.cssText = 'font-size:12px;color:var(--vscode-foreground);margin-bottom:4px;';
+		createCustomDropdown({
+			parent: thresholds,
+			options: [{ label: 'FIFO', value: 'fifo' }, { label: 'LIFO', value: 'lifo' }, { label: 'Average', value: 'avg' }],
+			initialValue: state.defaultCostMethod,
+			placeholder: 'Select method...',
+			triggerStyle: 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;',
+			onChange: (v) => { state.defaultCostMethod = v; void save(); },
+		});
+	}
+
+	private async _renderSettingsList(body: HTMLElement, singular: string, apiPath: string, placeholder: string): Promise<void> {
+		const card = this._settingsCard(body, `${singular === 'Category' ? 'Categories' : 'Locations'}`);
+		const addRow = DOM.append(card, DOM.$('div'));
+		addRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
+		const input = DOM.append(addRow, DOM.$('input')) as HTMLInputElement;
+		input.placeholder = placeholder;
+		input.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		const addBtn = DOM.append(addRow, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = `Add ${singular}`;
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;';
+		addBtn.addEventListener('click', async () => {
+			const name = input.value.trim();
+			if (!name) { return; }
+			addBtn.disabled = true;
+			try {
+				await this.apiService.fetch(apiPath, { method: 'POST', body: JSON.stringify({ name }) });
+				input.value = '';
+				void this._renderSettings();
+			} catch { addBtn.disabled = false; }
+		});
+
+		const listEl = DOM.append(card, DOM.$('div'));
+		listEl.textContent = 'Loading…';
+		listEl.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		try {
+			const res = await this.apiService.fetch(`${apiPath}?page=0&size=200`);
+			const json = res.ok ? await res.json() : null;
+			const wrapper = json?.data ?? json;
+			const items = (wrapper?.content || (Array.isArray(wrapper) ? wrapper : [])) as Array<Record<string, unknown>>;
+			DOM.clearNode(listEl);
+			listEl.style.color = 'var(--vscode-foreground)';
+			if (items.length === 0) { listEl.textContent = `No ${singular.toLowerCase()} records yet.`; return; }
+			for (const item of items) {
+				const row = DOM.append(listEl, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.12);font-size:13px;';
+				const name = DOM.append(row, DOM.$('span'));
+				name.textContent = String(item.name ?? item.id ?? '');
+				name.style.color = 'var(--vscode-foreground)';
+				if (item.type) {
+					const tag = DOM.append(row, DOM.$('span'));
+					tag.textContent = String(item.type);
+					tag.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+				}
+			}
+		} catch {
+			DOM.clearNode(listEl);
+			listEl.textContent = `Could not load ${singular.toLowerCase()} list.`;
+		}
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }

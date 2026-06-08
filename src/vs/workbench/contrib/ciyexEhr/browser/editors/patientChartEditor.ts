@@ -3484,8 +3484,107 @@ export class PatientChartEditor extends EditorPane {
 				addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
 			}
 
-			this._renderListWithFilters(content, tab, config, data);
+			// Issue #9: Vitals renders as a flowsheet (measurements as rows ×
+			// recordings as columns) to match the ciyex-ehr-ui Vitals page,
+			// instead of the generic one-row-per-recording list.
+			if (tab.key === 'vitals') {
+				this._renderVitalsFlowsheet(content, data);
+			} else {
+				this._renderListWithFilters(content, tab, config, data);
+			}
 		}
+	}
+
+	/** Issue #9: Vitals Flowsheet — a transposed table where each row is a
+	 *  measurement (Weight, Height, BMI, BP, Pulse, …) and each column is a
+	 *  recording (newest first), mirroring the ciyex-ehr-ui Vitals page. */
+	private _renderVitalsFlowsheet(content: HTMLElement, data: Record<string, unknown>[]): void {
+		const get = (rec: Record<string, unknown>, keys: string[]): unknown => {
+			for (const k of keys) { const v = rec[k]; if (v !== undefined && v !== null && v !== '') { return v; } }
+			return undefined;
+		};
+		const dateKeys = ['recordedAt', 'effectiveDateTime', 'recordedDate', 'dateRecorded', 'createdAt'];
+		const recs = [...data].sort((a, b) => {
+			const da = new Date(String(get(a, dateKeys) ?? 0)).getTime();
+			const db = new Date(String(get(b, dateKeys) ?? 0)).getTime();
+			return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
+		});
+
+		// Header: "Vitals Flowsheet · N recordings · Newest first"
+		const head = DOM.append(content, DOM.$('div'));
+		head.style.cssText = 'display:flex;align-items:baseline;gap:10px;margin-bottom:12px;';
+		const title = DOM.append(head, DOM.$('span'));
+		title.textContent = 'Vitals Flowsheet';
+		title.style.cssText = 'font-size:14px;font-weight:600;color:var(--vscode-foreground);';
+		const meta = DOM.append(head, DOM.$('span'));
+		meta.textContent = `${recs.length} recording${recs.length === 1 ? '' : 's'}${recs.length ? ' · Newest first' : ''}`;
+		meta.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
+		if (recs.length === 0) {
+			const empty = DOM.append(content, DOM.$('div'));
+			empty.textContent = 'No vitals records.';
+			empty.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+			return;
+		}
+
+		const rows: Array<{ label: string; keys: string[]; unit?: string }> = [
+			{ label: 'Weight', keys: ['weightKg', 'weight'], unit: ' kg' },
+			{ label: 'Height', keys: ['heightCm', 'height'], unit: ' cm' },
+			{ label: 'BMI', keys: ['bmi'] },
+			{ label: 'BP Systolic', keys: ['bpSystolic', 'systolicBP', 'systolic'] },
+			{ label: 'BP Diastolic', keys: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
+			{ label: 'Pulse', keys: ['pulse', 'heartRate', 'hr'] },
+			{ label: 'Respiration', keys: ['respiration', 'respiratoryRate', 'rr'] },
+			// allow-any-unicode-next-line
+			{ label: 'Temperature', keys: ['temperatureC', 'temperature', 'temp'], unit: ' °C' },
+			{ label: 'O2 Saturation', keys: ['oxygenSaturation', 'spo2', 'o2sat'], unit: '%' },
+			{ label: 'Notes', keys: ['notes', 'note'] },
+		];
+
+		const wrap = DOM.append(content, DOM.$('div'));
+		wrap.style.cssText = 'overflow-x:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+		const table = DOM.append(wrap, DOM.$('table')) as HTMLTableElement;
+		table.style.cssText = 'border-collapse:collapse;width:100%;font-size:12px;';
+
+		const cellCss = 'padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.12);text-align:left;white-space:nowrap;';
+		const firstColCss = `${cellCss}position:sticky;left:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));font-weight:500;color:var(--vscode-foreground);`;
+
+		// Header row
+		const thead = DOM.append(table, DOM.$('thead'));
+		const htr = DOM.append(thead, DOM.$('tr'));
+		const corner = DOM.append(htr, DOM.$('th'));
+		corner.textContent = 'Measurement';
+		corner.style.cssText = `${firstColCss}background:var(--vscode-sideBar-background,var(--vscode-editor-background));text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);z-index:2;`;
+		for (const rec of recs) {
+			const th = DOM.append(htr, DOM.$('th'));
+			const raw = get(rec, dateKeys);
+			let label = '—';
+			if (raw) { try { label = new Date(String(raw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { label = String(raw).slice(0, 10); } }
+			th.textContent = label;
+			th.style.cssText = `${cellCss}text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);background:var(--vscode-sideBar-background,var(--vscode-editor-background));`;
+		}
+
+		// Measurement rows
+		const tbody = DOM.append(table, DOM.$('tbody'));
+		const renderRow = (label: string, render: (rec: Record<string, unknown>) => string): void => {
+			const tr = DOM.append(tbody, DOM.$('tr'));
+			const td0 = DOM.append(tr, DOM.$('td'));
+			td0.textContent = label;
+			td0.style.cssText = firstColCss;
+			for (const rec of recs) {
+				const td = DOM.append(tr, DOM.$('td'));
+				td.textContent = render(rec) || '—';
+				td.style.cssText = `${cellCss}color:var(--vscode-foreground);`;
+			}
+		};
+		for (const r of rows) {
+			renderRow(r.label, (rec) => { const v = get(rec, r.keys); return v === undefined ? '' : `${v}${r.unit ?? ''}`; });
+		}
+		// Signed row
+		renderRow('Signed', (rec) => {
+			const signed = get(rec, ['signed', 'signedAt', 'isSigned']);
+			return signed ? (typeof signed === 'string' && signed.length > 4 ? '✓ Signed' : '✓') : '—';
+		});
 	}
 
 	// Status filter options per tab — different resources use different status vocabularies.
