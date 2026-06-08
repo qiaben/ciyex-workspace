@@ -137,11 +137,18 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 				key: 'education', label: 'Education', icon: 'BookOpen', emoji: '\u{1F4D6}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/education/assignments',
 				// Match the reference EHR UI: only Status / Topic / Category / Date
 				// Provided columns (plus the auto-appended Actions column).
+				// NB: the list columns are auto-derived from the form fields
+				// (first 6 non-textarea fields when none set showInTable), so these
+				// entries primarily supply value-resolution aliases — the Delivery
+				// Method / Educator columns are populated from the matching keys the
+				// backend now persists (educator resolves to its display name).
 				columns: [
 					{ key: 'status', label: 'Status' },
 					{ key: 'materialTitle', label: 'Topic / Title', aliases: ['materialTitle', 'topic', 'title', 'materialName'] },
 					{ key: 'category', label: 'Category', aliases: ['category', 'materialCategory'] },
 					{ key: 'dateProvided', label: 'Date Provided', aliases: ['dateProvided', 'assignedDate', 'dateAssigned', 'createdAt'] },
+					{ key: 'deliveryMethod', label: 'Delivery Method', aliases: ['deliveryMethod', 'delivery_method'] },
+					{ key: 'educator', label: 'Educator', aliases: ['educatorName', 'educatorDisplay', 'educator', 'educatorId'] },
 				],
 			},
 			// Messaging uses the FHIR Communication resource via the generic FHIR controller
@@ -340,7 +347,14 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// the generic add/edit form doesn't supply, which was producing the
 			// "null value in column form_id" save error on every retest.
 			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
-			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'], apiPath: '/api/fhir-resource/claims?status=denied' },
+			// Denials are FHIR ClaimResponse resources — the same model the EHR-UI's
+			// claim-denials tab uses. TAB_API_SLUG maps 'denials' → 'claim-denials',
+			// so list/create/update route to /api/fhir-resource/claim-denials and the
+			// backend resolves the ClaimResponse field mapping (Denial Information /
+			// Adjudication Summary / Process Notes). The previous apiPath pointed at
+			// /claims?status=denied (the Claim resource), which rendered the wrong,
+			// minimal denial form instead of the rich EHR-UI layout.
+			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ClaimResponse'] },
 			// readOnly was true for a long time; the test team needs the Add New
 			// button to manually post a remittance entry until the 835 ingestion
 			// pipeline is wired up. PaymentReconciliation is FHIR-write capable.
@@ -1015,7 +1029,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Phone', value: 'phone' },
 						]
 					},
-					{ key: 'educator', label: 'Educator', type: 'search', placeholder: 'Search educator…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+					// `educator` stores the selected provider id; `relatedField`
+					// captures the chosen display NAME into the `educatorName`
+					// companion field so the save payload carries both and the
+					// list shows a name (not a bare id) — same pattern as the
+					// medications Prescriber field.
+					{ key: 'educator', label: 'Educator', type: 'search', placeholder: 'Search educator…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'], relatedField: 'educatorName' },
 					{ key: 'content', label: 'Content / Summary', type: 'textarea', placeholder: 'Enter content / summary…', colSpan: 2 },
 					// URL link to the education material (matches the reference EHR UI).
 					// localOnly so it's appended even when the backend tab_field_config
@@ -1593,26 +1612,71 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Denials mirror the EHR-UI's claim-denials tab_field_config (ciyex V17 +
+	// V140/V141): a FHIR ClaimResponse with Denial Information, Adjudication
+	// Summary, and Process Notes sections. Field keys MUST match the backend
+	// claim-denials config — the workspace routes saves through TAB_API_SLUG
+	// 'denials' → 'claim-denials' and the backend FhirPathMapper resolves these
+	// keys onto ClaimResponse paths (status, outcome, disposition, created,
+	// insurer, request, preAuthRef, use, type, total[*], payment.*, processNote).
 	denials: {
 		tabKey: 'denials',
 		sections: [
 			{
-				key: 'denial', title: 'Denial', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'identifier', label: 'Claim Number', type: 'text', required: true, placeholder: 'Original claim #' },
-					{ key: 'serviceDate', label: 'Service Date', type: 'date' },
-					{ key: 'denialDate', label: 'Denial Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'denialReason', label: 'Denial Reason', type: 'text', required: true, placeholder: 'CARC / RARC code or text' },
-					{ key: 'totalAmount', label: 'Denied Amount', type: 'number', placeholder: '0.00' },
-					{ key: 'payerId', label: 'Payer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
+				key: 'denial-header', title: 'Denial Information', columns: 3, visible: true, collapsible: false, fields: [
 					{
-						key: 'appealStatus', label: 'Appeal Status', type: 'select', options: [
-							{ label: 'Not Appealed', value: 'not-appealed' },
-							{ label: 'Appeal Pending', value: 'appeal-pending' },
-							{ label: 'Appeal Approved', value: 'appeal-approved' },
-							{ label: 'Appeal Denied', value: 'appeal-denied' },
+						key: 'status', label: 'Status', type: 'select', required: true, showInTable: true, options: [
+							{ label: 'Active', value: 'active' },
+							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Draft', value: 'draft' },
+							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+					{
+						key: 'outcome', label: 'Outcome', type: 'select', required: true, showInTable: true, options: [
+							{ label: 'Queued', value: 'queued' },
+							{ label: 'Complete', value: 'complete' },
+							{ label: 'Error', value: 'error' },
+							{ label: 'Partial', value: 'partial' },
+						]
+					},
+					{ key: 'disposition', label: 'Disposition', type: 'textarea', placeholder: 'Enter your message' },
+					{ key: 'created', label: 'Response Date', type: 'datetime', required: true, showInTable: true, defaultValue: () => new Date().toISOString().slice(0, 16) },
+					{ key: 'insurer', label: 'Insurer', type: 'lookup', placeholder: 'Search Insurer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name', searchable: true } },
+					// Stored as a plain string reference (e.g. "Claim/123"); kept as text
+					// to avoid HAPI validating that the referenced Claim exists (ciyex V134/V136).
+					{ key: 'request', label: 'Original Claim Ref', type: 'text', placeholder: 'e.g. Claim/123' },
+					{ key: 'preAuthRef', label: 'Pre-Auth Reference', type: 'text' },
+					{
+						key: 'use', label: 'Use', type: 'select', options: [
+							{ label: 'Claim', value: 'claim' },
+							{ label: 'Pre-authorization', value: 'preauthorization' },
+							{ label: 'Pre-determination', value: 'predetermination' },
+						]
+					},
+					{
+						key: 'type', label: 'Claim Type', type: 'select', showInTable: true, options: [
+							{ label: 'Professional', value: 'professional' },
+							{ label: 'Institutional', value: 'institutional' },
+							{ label: 'Oral/Dental', value: 'oral' },
+						]
+					},
+				],
+			},
+			{
+				key: 'denial-adjudication', title: 'Adjudication Summary', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'totalSubmitted', label: 'Submitted Amount', type: 'number', placeholder: '0.00', showInTable: true },
+					{ key: 'totalBenefit', label: 'Benefit Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'paymentAmount', label: 'Payment Amount', type: 'number', placeholder: '0.00', showInTable: true },
+					{ key: 'paymentDate', label: 'Payment Date', type: 'date' },
+					{ key: 'adjustmentAmount', label: 'Adjustment', type: 'number', placeholder: '0.00' },
+					{ key: 'adjustmentReason', label: 'Adjustment Reason', type: 'text' },
+				],
+			},
+			{
+				key: 'denial-notes', title: 'Process Notes', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'processNote', label: 'Process Note', type: 'textarea' },
+					{ key: 'errorCode', label: 'Error Code', type: 'text' },
 				],
 			},
 		],
@@ -3618,7 +3682,6 @@ export class PatientChartEditor extends EditorPane {
 				];
 			case 'billing':
 			case 'claims':
-			case 'denials':
 				return [
 					{ label: 'All Statuses', value: '' },
 					{ label: 'Draft', value: 'draft' },
@@ -3626,6 +3689,15 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Cancelled', value: 'cancelled' },
 					{ label: 'Paid', value: 'paid' },
 					{ label: 'Denied', value: 'denied' },
+				];
+			case 'denials':
+				// ClaimResponse.status value set (matches the Denial form's Status field).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Draft', value: 'draft' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
 			default:
 				return [
@@ -5723,6 +5795,23 @@ export class PatientChartEditor extends EditorPane {
 		const start = page * pageSize;
 		const pageItems = data.slice(start, start + pageSize);
 
+		// Map a select field's stored value back to its human label so list
+		// cells show "In Person" / "Disease Management" rather than the raw
+		// "in_person" / "disease-management" the form persists. Keyed by field
+		// key; a no-op for any column without matching select options.
+		const optionLabels = new Map<string, Map<string, string>>();
+		for (const section of (config?.sections || [])) {
+			for (const field of (section.fields || [])) {
+				if (!field || field.type !== 'select' || !Array.isArray(field.options)) { continue; }
+				const labels = new Map<string, string>();
+				for (const opt of field.options) {
+					if (typeof opt === 'string') { labels.set(opt, opt); }
+					else if (opt && opt.value !== '') { labels.set(opt.value, opt.label); }
+				}
+				if (labels.size > 0) { optionLabels.set(field.key, labels); }
+			}
+		}
+
 		const rows = pageItems.map(item => {
 			const cells = usedKeys.map((k, idx) => {
 				// Walk the alias chain: first non-empty value wins.
@@ -5742,6 +5831,12 @@ export class PatientChartEditor extends EditorPane {
 				// that doesn't look like an ID.
 				v = this._resolveIdToName(k, v);
 				if (v === null || v === undefined || v === '') { return ''; }
+				// Select fields persist the option value (e.g. "in_person"); show
+				// its label (e.g. "In Person") in the table.
+				if (typeof v === 'string') {
+					const label = optionLabels.get(k)?.get(v);
+					if (label) { v = label; }
+				}
 				if (typeof v === 'object') {
 					const obj = v as Record<string, unknown>;
 					return String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || '');
