@@ -3611,6 +3611,12 @@ export class PatientChartEditor extends EditorPane {
 				saveBtn.style.display = 'none';
 				cancelBtn.style.display = 'none';
 			});
+		} else if (tab.key === 'statements') {
+			// Financial > Statements: render the ciyex-ehr-ui StatementsTab layout
+			// (Generate Statement action + Select Claims picker + Statement
+			// History) instead of dropping the raw New-Statement field form into
+			// the tab body, which QA flagged as "completely different from the web".
+			await this._renderStatementsTab(content, actionSlot, tab, config, data);
 		} else if (tab.key === 'payment') {
 			// Financial > Payment: render credit-card grid matching ciyex-ehr-ui PaymentFlat
 			this._renderPatientCreditCards(content, actionSlot);
@@ -3631,6 +3637,132 @@ export class PatientChartEditor extends EditorPane {
 			} else {
 				this._renderListWithFilters(content, tab, config, data);
 			}
+		}
+	}
+
+	/** Statements tab — mirrors the ciyex-ehr-ui StatementsTab: a "Generate
+	 *  Statement" action in the header, a "Select Claims for Statement" picker,
+	 *  and a "Statement History" list (with the same empty state). "Generate
+	 *  Statement" opens the existing New-Statement modal prefilled from the
+	 *  selected claims, so the proven create/POST path is reused unchanged. */
+	private async _renderStatementsTab(content: HTMLElement, actionSlot: HTMLElement, tab: ChartTab, config: FieldConfig | null, statements: Record<string, unknown>[]): Promise<void> {
+		const getField = (obj: Record<string, unknown>, aliases: string[]): unknown => {
+			for (const a of aliases) {
+				const v = a.split('.').reduce<unknown>((acc, k) => (acc !== null && acc !== undefined ? (acc as Record<string, unknown>)[k] : undefined), obj);
+				if (v !== undefined && v !== null && String(v) !== '') { return v; }
+			}
+			return undefined;
+		};
+		const money = (n: unknown): string => {
+			const v = Number(n);
+			return isFinite(v) ? `$${v.toFixed(2)}` : '$0.00';
+		};
+
+		// Generate Statement button in the header action slot.
+		const genBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
+		genBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+		DOM.append(genBtn, DOM.$('span.codicon.codicon-file-add')).style.cssText = 'font-size:13px;';
+		const genLbl = DOM.append(genBtn, DOM.$('span')); genLbl.textContent = 'Generate Statement';
+
+		const selectedClaims = new Map<string, Record<string, unknown>>();
+
+		// --- Select Claims for Statement ---------------------------------------
+		const claimsSection = DOM.append(content, DOM.$('div'));
+		claimsSection.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:14px;overflow:hidden;';
+		const claimsHdr = DOM.append(claimsSection, DOM.$('div'));
+		claimsHdr.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.06);border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;font-weight:600;';
+		claimsHdr.textContent = 'Select Claims for Statement';
+		const claimsBody = DOM.append(claimsSection, DOM.$('div'));
+		claimsBody.style.cssText = 'padding:8px 14px;max-height:240px;overflow-y:auto;';
+		const claimsLoading = DOM.append(claimsBody, DOM.$('div'));
+		claimsLoading.textContent = 'Loading claims…';
+		claimsLoading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:12px 0;text-align:center;';
+
+		// --- Statement History --------------------------------------------------
+		const histSection = DOM.append(content, DOM.$('div'));
+		histSection.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		const histHdr = DOM.append(histSection, DOM.$('div'));
+		histHdr.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.06);border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;';
+		const histTitle = DOM.append(histHdr, DOM.$('span')); histTitle.textContent = 'Statement History';
+		const histCount = DOM.append(histHdr, DOM.$('span'));
+		histCount.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-weight:500;';
+		histCount.textContent = statements.length ? `${statements.length} statement${statements.length === 1 ? '' : 's'} generated` : '0 statements generated';
+		const histBody = DOM.append(histSection, DOM.$('div'));
+		histBody.style.cssText = 'padding:8px 14px;';
+
+		if (!statements || statements.length === 0) {
+			const empty = DOM.append(histBody, DOM.$('div'));
+			empty.style.cssText = 'text-align:center;padding:32px 16px;color:var(--vscode-descriptionForeground);';
+			const ei = DOM.append(empty, DOM.$('div')); ei.textContent = '\u{1F4C4}'; ei.style.cssText = 'font-size:30px;margin-bottom:8px;opacity:0.7;';
+			const em = DOM.append(empty, DOM.$('div')); em.textContent = 'No statements generated'; em.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+			const es = DOM.append(empty, DOM.$('div')); es.textContent = 'Click "Generate Statement" to create a patient billing statement.'; es.style.cssText = 'font-size:11.5px;margin-top:4px;';
+		} else {
+			for (const st of statements) {
+				const row = DOM.append(histBody, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:9px 4px;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;cursor:pointer;';
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+				row.addEventListener('mouseleave', () => { row.style.background = ''; });
+				const num = DOM.append(row, DOM.$('span')); num.textContent = String(getField(st, ['statementNumber', 'identifier', 'id']) ?? '—'); num.style.cssText = 'font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+				const date = DOM.append(row, DOM.$('span')); date.textContent = String(getField(st, ['statementDate', 'date', 'created', 'createdAt']) ?? ''); date.style.cssText = 'flex:1;color:var(--vscode-descriptionForeground);';
+				const bal = DOM.append(row, DOM.$('span')); bal.textContent = money(getField(st, ['balance', 'totalNet.value', 'patientBalance'])); bal.style.cssText = 'flex:0 0 auto;font-weight:600;';
+				const stat = DOM.append(row, DOM.$('span')); stat.textContent = String(getField(st, ['status']) ?? '').toUpperCase(); stat.style.cssText = 'flex:0 0 auto;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
+				row.addEventListener('click', () => this._openRecordDialog(tab, config, st));
+			}
+		}
+
+		// "Generate Statement": prefill the New-Statement modal from the selected
+		// claims (charges summed → balance), generate a sequential statement
+		// number, and reuse the existing create dialog/POST.
+		genBtn.addEventListener('click', () => {
+			const chosen = Array.from(selectedClaims.values());
+			const totalCharges = chosen.reduce((sum, c) => sum + (Number(getField(c, ['totalAmount', 'amount', 'totalNet.value'])) || 0), 0);
+			const year = new Date().getFullYear();
+			const seq = String(statements.length + 1).padStart(4, '0');
+			const charges = totalCharges > 0 ? totalCharges.toFixed(2) : '';
+			const prefill: Record<string, unknown> = {
+				statementNumber: `STM-${year}-${seq}`,
+				statementDate: new Date().toISOString().slice(0, 10),
+				status: 'draft',
+				recipient: this.patientName || '',
+				totalCharges: charges,
+				patientBalance: charges,
+				balance: charges,
+			};
+			this._openRecordDialog(tab, config, null, prefill);
+		});
+
+		// Load this patient's claims for the picker.
+		try {
+			const res = await this.apiService.fetch(`${FHIR_MAP['Claim']}/patient/${this.patientId}?page=0&size=100`);
+			const json = res.ok ? await res.json() : null;
+			const claims = (json?.data?.content || json?.content || json?.data || (Array.isArray(json) ? json : [])) as Record<string, unknown>[];
+			DOM.clearNode(claimsBody);
+			if (!claims || claims.length === 0) {
+				const none = DOM.append(claimsBody, DOM.$('div'));
+				none.textContent = 'No claims found for this patient.';
+				none.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);text-align:center;padding:20px 0;';
+			} else {
+				for (const c of claims) {
+					const id = String(getField(c, ['id', 'claimNumber', 'identifier']) ?? '');
+					const rowL = DOM.append(claimsBody, DOM.$('label'));
+					rowL.style.cssText = 'display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;cursor:pointer;';
+					const cb = DOM.append(rowL, DOM.$('input')) as HTMLInputElement;
+					cb.type = 'checkbox';
+					cb.style.cssText = 'flex:0 0 auto;cursor:pointer;';
+					cb.addEventListener('change', () => {
+						if (cb.checked) { selectedClaims.set(id, c); } else { selectedClaims.delete(id); }
+					});
+					const nm = DOM.append(rowL, DOM.$('span')); nm.textContent = String(getField(c, ['claimNumber', 'identifier', 'id']) ?? '—'); nm.style.cssText = 'font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+					const dt = DOM.append(rowL, DOM.$('span')); dt.textContent = String(getField(c, ['serviceDate', 'date', 'period.start', 'created']) ?? ''); dt.style.cssText = 'flex:1;color:var(--vscode-descriptionForeground);';
+					const amt = DOM.append(rowL, DOM.$('span')); amt.textContent = money(getField(c, ['totalAmount', 'amount', 'totalNet.value'])); amt.style.cssText = 'flex:0 0 auto;font-weight:600;';
+					const stt = DOM.append(rowL, DOM.$('span')); stt.textContent = String(getField(c, ['status']) ?? '').toUpperCase(); stt.style.cssText = 'flex:0 0 auto;font-size:10px;opacity:0.8;';
+				}
+			}
+		} catch {
+			DOM.clearNode(claimsBody);
+			const err = DOM.append(claimsBody, DOM.$('div'));
+			err.textContent = 'Unable to load claims.';
+			err.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);text-align:center;padding:20px 0;';
 		}
 	}
 

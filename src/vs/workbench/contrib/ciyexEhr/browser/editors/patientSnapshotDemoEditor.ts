@@ -1265,6 +1265,29 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		return '—';
 	}
 
+	/** Resolve the appointment duration (minutes) from whichever field the
+	 *  backend supplied — a numeric duration, or the gap between start and end.
+	 *  The card previously read only `apt.duration`, which the appointments API
+	 *  often omits, so Duration always showed "—" (QA report). */
+	private _apptDurationMin(apt: Record<string, unknown>): number {
+		const direct = Number(apt.duration ?? apt.minutesDuration ?? apt.durationMinutes ?? apt.lengthMinutes ?? 0);
+		if (direct > 0) { return Math.round(direct); }
+		const startRaw = String(apt.start || apt.startTime || '');
+		const endRaw = String(apt.end || apt.endTime || apt.appointmentEndTime || '');
+		if (startRaw && endRaw) {
+			const s = new Date(startRaw).getTime();
+			let e = new Date(endRaw).getTime();
+			if (isNaN(e)) {
+				// `end` may be a bare "HH:mm" — combine it with the start's date.
+				const tm = /^(\d{2}):(\d{2})/.exec(endRaw);
+				const dm = /^(\d{4}-\d{2}-\d{2})/.exec(startRaw);
+				if (tm && dm) { e = new Date(`${dm[1]}T${tm[1]}:${tm[2]}:00`).getTime(); }
+			}
+			if (!isNaN(s) && !isNaN(e) && e > s) { return Math.round((e - s) / 60000); }
+		}
+		return 0;
+	}
+
 	/** PUT a new appointment status, then refresh the dashboard so the card,
 	 *  status pill and available actions all reflect the new state. */
 	private async _changeApptStatus(id: string, status: string): Promise<void> {
@@ -1367,7 +1390,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			values: {
 				appointmentDate: initialDate,
 				appointmentTime: initialTime,
-				duration: String(apt.duration || ''),
+				duration: (() => { const d = this._apptDurationMin(apt); return d > 0 ? String(d) : ''; })(),
 				appointmentType: currentType === '—' ? '' : currentType,
 				status: currentStatus,
 				providerName: currentProvider,
@@ -1434,14 +1457,14 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 				const d = new Date(startRaw);
 				dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 				timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-				const dur = Number(apt.duration || 0);
+				const dur = this._apptDurationMin(apt);
 				if (dur > 0) {
 					const end = new Date(d.getTime() + dur * 60000);
 					endStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 				}
 			} catch { /* */ }
 		}
-		const durVal = Number(apt.duration || 0);
+		const durVal = this._apptDurationMin(apt);
 		const reason = String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || '').trim();
 		const notes = String(apt.notes || apt.note || apt.comment || '').trim();
 		const location = String(apt.locationName || apt.location || apt.facility || '').trim();
@@ -1850,6 +1873,18 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
 	];
 
+	/** BMI = weight(kg) / height(m)^2. Returns a 1-decimal string, or '' when
+	 *  either input is missing/invalid so callers can fall back to a dash. */
+	private static _computeBmi(heightCm: unknown, weightKg: unknown): string {
+		const h = Number(heightCm);
+		const w = Number(weightKg);
+		if (!h || !w || h <= 0 || w <= 0) { return ''; }
+		const m = h / 100;
+		const bmi = w / (m * m);
+		if (!isFinite(bmi) || bmi <= 0) { return ''; }
+		return bmi.toFixed(1);
+	}
+
 	/** Direct references for {@link _focusVitalsEntry} — captured at render
 	 *  time so the Quick Action "Record Vitals" can scroll/focus without
 	 *  querying the DOM (hygiene forbids querySelector). */
@@ -1881,9 +1916,12 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		}
 
 		const bpVal = (latest.bpSystolic && latest.bpDiastolic) ? `${latest.bpSystolic}/${latest.bpDiastolic}` : '';
+		const bmiVal = PatientSnapshotDemoEditor._computeBmi(latest.heightCm, latest.weightKg);
 		const vitalRows: Array<[string, unknown, string?]> = [
 			['Height', latest.heightCm, 'cm'],
 			['Weight', latest.weightKg, 'kg'],
+			// allow-any-unicode-next-line
+			['BMI', bmiVal, bmiVal ? 'kg/m²' : ''],
 			['BP', bpVal, 'mmHg'],
 			['Pulse', latest.pulse, '/min'],
 			// allow-any-unicode-next-line
@@ -1904,17 +1942,19 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			v.style.cssText = `font-size:15px;font-weight:800;color:${val ? 'var(--vscode-editor-foreground)' : 'var(--vscode-descriptionForeground)'};margin-top:2px;`;
 		}
 
-		// "+ New reading" reveals the same inline entry form below.
+		// "Edit / new reading" reveals the inline entry form below, PREFILLED with
+		// today's latest values so the MA can adjust any vital and save — the read
+		// -only grid is no longer a dead end (QA: make today's vitals editable).
 		const addToggle = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
 		addToggle.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:10px;padding:6px 0;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3b9edd);font-size:12px;font-weight:600;cursor:pointer;';
-		DOM.append(addToggle, DOM.$('span.codicon.codicon-add'));
-		const atl = DOM.append(addToggle, DOM.$('span')); atl.textContent = 'New reading';
+		DOM.append(addToggle, DOM.$('span.codicon.codicon-edit'));
+		const atl = DOM.append(addToggle, DOM.$('span')); atl.textContent = 'Edit / new reading';
 		const formHolder = DOM.append(body, DOM.$('div'));
 		formHolder.style.display = 'none';
 		let formFirstInput: HTMLInputElement | null = null;
 		const revealForm = (): void => {
 			formHolder.style.display = '';
-			if (!formHolder.hasChildNodes()) { formFirstInput = this._renderInlineVitalsForm(formHolder); }
+			if (!formHolder.hasChildNodes()) { formFirstInput = this._renderInlineVitalsForm(formHolder, latest); }
 			formFirstInput?.focus();
 		};
 		addToggle.addEventListener('click', (e) => {
@@ -1930,7 +1970,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 	/** Inline number inputs for the core vital signs + a Save button that POSTs
 	 *  a new vitals reading directly — no modal, no leaving the page. Returns
 	 *  the first input so callers can focus it. */
-	private _renderInlineVitalsForm(container: HTMLElement): HTMLInputElement | null {
+	private _renderInlineVitalsForm(container: HTMLElement, initial?: Record<string, unknown>): HTMLInputElement | null {
 		const inputs = new Map<string, HTMLInputElement>();
 		let firstInput: HTMLInputElement | null = null;
 		const formGrid = DOM.append(container, DOM.$('div'));
@@ -1945,10 +1985,31 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			inp.type = 'number';
 			if (f.step) { inp.step = f.step; }
 			inp.placeholder = '—';
+			// Prefill with today's value so the user edits rather than re-keys.
+			const seed = initial ? initial[f.key] : undefined;
+			if (seed !== undefined && seed !== null && String(seed) !== '') { inp.value = String(seed); }
 			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;';
 			inputs.set(f.key, inp);
 			if (!firstInput) { firstInput = inp; }
 		}
+
+		// Live, read-only BMI cell — recomputed from Height & Weight as they change.
+		const bmiCell = DOM.append(formGrid, DOM.$('div'));
+		bmiCell.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+		const bmiLabel = DOM.append(bmiCell, DOM.$('label'));
+		// allow-any-unicode-next-line
+		bmiLabel.textContent = 'BMI (kg/m²)';
+		bmiLabel.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;';
+		const bmiOut = DOM.append(bmiCell, DOM.$('div'));
+		bmiOut.style.cssText = 'box-sizing:border-box;padding:7px 9px;border:1px dashed var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);opacity:0.85;';
+		const refreshBmi = (): void => {
+			const bmi = PatientSnapshotDemoEditor._computeBmi(inputs.get('heightCm')?.value, inputs.get('weightKg')?.value);
+			// allow-any-unicode-next-line
+			bmiOut.textContent = bmi || '—';
+		};
+		inputs.get('heightCm')?.addEventListener('input', refreshBmi);
+		inputs.get('weightKg')?.addEventListener('input', refreshBmi);
+		refreshBmi();
 
 		const footer = DOM.append(container, DOM.$('div'));
 		footer.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:10px;';

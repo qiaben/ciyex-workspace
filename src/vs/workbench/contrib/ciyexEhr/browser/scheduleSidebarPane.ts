@@ -728,11 +728,13 @@ export class ScheduleSidebarPane extends ViewPane {
 		nextBtn.addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(1); });
 		// Status filter button - shows a dropdown of statuses (Scheduled, Checked-in, ...)
 		// to filter the appointments list. Highlighted in blue when a filter is active.
-		const filterBtn = DOM.append(hdr, DOM.$('div'));
 		const hasActiveFilter = this.statusFilter !== '';
+		// Use the workbench codicon funnel glyph (filled when a filter is active)
+		// instead of the old "\u2261" hamburger character, which read as a menu rather
+		// than a filter control (QA feedback).
+		const filterBtn = DOM.append(hdr, DOM.$(`div.codicon.codicon-${hasActiveFilter ? 'filter-filled' : 'filter'}`));
 		filterBtn.title = hasActiveFilter ? `Status filter: ${this.statusFilter}` : 'Filter by status';
-		filterBtn.textContent = '\u2261';
-		filterBtn.style.cssText = `width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer;color:${hasActiveFilter ? '#0078d4' : 'var(--vscode-editor-foreground)'};transition:background 0.1s;flex-shrink:0;margin-right:2px;${hasActiveFilter ? 'background:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15));' : ''}`;
+		filterBtn.style.cssText = `width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;color:${hasActiveFilter ? '#0078d4' : 'var(--vscode-editor-foreground)'};transition:background 0.1s;flex-shrink:0;margin-right:2px;${hasActiveFilter ? 'background:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15));' : ''}`;
 		filterBtn.addEventListener('mouseenter', () => { filterBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))'; });
 		filterBtn.addEventListener('mouseleave', () => { filterBtn.style.background = hasActiveFilter ? 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.15))' : ''; });
 		filterBtn.addEventListener('click', (e) => {

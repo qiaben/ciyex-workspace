@@ -2214,7 +2214,7 @@ export class RecallEditor extends ClinicalListEditorBase {
 				apiPath: '/api/patients',
 				relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
-				relatedFieldsMap: { patientPhone: 'phone', patientEmail: 'email' },
+				relatedFieldsMap: { patientPhone: 'phoneNumber||phone||mobile||cellPhone||homePhone', patientEmail: 'email||emailAddress' },
 				validationMessage: 'Pick a patient from the dropdown — typing a name alone is not enough',
 			},
 			// patientId is filled by the patientName search; hidden + not required

@@ -1359,12 +1359,19 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 											relatedInput.value = String(result[valueField] ?? '');
 										}
 									}
-									// Auto-fill additional related fields from the result (e.g. patientLastName, phone)
+									// Auto-fill additional related fields from the result (e.g. patientLastName, phone).
+									// `resultKey` may list several candidate source keys separated by '||'
+									// (e.g. 'phoneNumber||phone||mobile') so the first one the API actually
+									// returns wins — different endpoints name the same value differently.
 									if (field.relatedFieldsMap) {
 										for (const [formKey, resultKey] of Object.entries(field.relatedFieldsMap)) {
 											const relatedInput = inputs.get(formKey);
 											if (relatedInput) {
-												const v = getPath(result, resultKey);
+												let v: unknown;
+												for (const candidate of resultKey.split('||')) {
+													v = getPath(result, candidate.trim());
+													if (v !== null && v !== undefined && String(v) !== '') { break; }
+												}
 												relatedInput.value = String(v ?? '');
 											}
 										}

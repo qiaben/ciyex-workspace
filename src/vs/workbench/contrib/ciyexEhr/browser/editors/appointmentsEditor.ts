@@ -19,6 +19,7 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { editorBackground, editorForeground, editorWidgetBackground, editorWidgetBorder } from '../../../../../platform/theme/common/colors/editorColors.js';
 import { descriptionForeground, errorForeground, textLinkForeground } from '../../../../../platform/theme/common/colors/baseColors.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { createCustomDropdown } from '../customDropdown.js';
 
 // allow-any-unicode-next-line
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1368,18 +1369,23 @@ export class AppointmentsEditor extends EditorPane {
 			tdRoom.style.cssText = cellStyle;
 			if (this.editingRoomId === row.id) {
 				if (this.roomOptions.length > 0) {
-					const sel = DOM.append(tdRoom, DOM.$('select')) as HTMLSelectElement;
-					sel.style.cssText = 'padding:4px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-focusBorder);border-radius:4px;color:var(--vscode-input-foreground);';
-					const emptyOpt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
-					emptyOpt.value = ''; emptyOpt.textContent = '—';
-					for (const rm of this.roomOptions) {
-						const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
-						o.value = rm; o.textContent = rm;
-						if (rm === row.room) { o.selected = true; }
-					}
-					sel.addEventListener('change', () => this._updateRoom(row.id, sel.value));
-					sel.addEventListener('blur', () => { this.editingRoomId = null; this._renderTableBody(this._getFilteredRows()); });
-					sel.focus();
+					// Compact, theme-aware popover (createCustomDropdown) instead of the
+					// native <select>, whose OS-rendered popup looked oversized and
+					// inconsistent on the workbench themes the QA team flagged.
+					const wrap = DOM.append(tdRoom, DOM.$('div'));
+					wrap.style.cssText = 'min-width:120px;max-width:150px;';
+					const hidden = createCustomDropdown({
+						parent: wrap,
+						options: this.roomOptions.map(rm => ({ value: rm, label: rm })),
+						initialValue: row.room || '',
+						placeholder: 'Unassigned',
+						triggerStyle: 'width:100%;box-sizing:border-box;padding:4px 8px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-focusBorder);border-radius:4px;color:var(--vscode-input-foreground);cursor:pointer;',
+						onChange: (value) => this._updateRoom(row.id, value),
+					});
+					// Open the popover immediately so the single click that switched the
+					// cell into edit mode also reveals the choices.
+					const trigger = (hidden as unknown as { ciyexDropdownTrigger?: HTMLElement }).ciyexDropdownTrigger;
+					if (trigger) { trigger.focus(); trigger.click(); }
 				} else {
 					const inp = DOM.append(tdRoom, DOM.$('input')) as HTMLInputElement;
 					inp.style.cssText = 'padding:4px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-focusBorder);border-radius:4px;color:var(--vscode-input-foreground);width:60px;';
@@ -1572,29 +1578,26 @@ export class AppointmentsEditor extends EditorPane {
 		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-sheet'));
 		sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(720px,65vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family);`;
 
-		// Header with title + Print + Close.
+		// Header: title + a single, icon-only Close control. The action buttons
+		// (Download / Print) were moved to a bottom footer toolbar: on the
+		// Windows/Mac desktop exe this slide-over reaches the very top of the
+		// window, so header buttons sat directly under the native window controls
+		// (minimise / maximise / close) and crowded them — exactly the
+		// "not user-friendly" overlap QA flagged. A footer toolbar never collides
+		// with the OS titlebar and gives the actions room to breathe.
 		const header = DOM.append(sheet, DOM.$('div.ciyex-summary-header'));
 		header.style.cssText = `display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
 		const headerTitle = DOM.append(header, DOM.$('span'));
 		// allow-any-unicode-next-line
 		headerTitle.textContent = `Visit Summary — ${patientName}`;
 		headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
-		// Action buttons rendered as prominent, icon-labelled controls so the
-		// Download / Print actions are clearly visible (issue: visit summary
-		// download/options not user-friendly visible).
-		const primaryBtnStyle = 'display:inline-flex;align-items:center;gap:6px;padding:7px 16px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;';
-		const makeIconBtn = (codicon: string, label: string, style: string): HTMLButtonElement => {
-			const btn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-			btn.style.cssText = style;
-			const ic = DOM.append(btn, DOM.$('span.codicon.codicon-' + codicon));
-			ic.style.cssText = 'font-size:14px;';
-			const lbl = DOM.append(btn, DOM.$('span'));
-			lbl.textContent = label;
-			return btn;
-		};
-		const downloadBtn = makeIconBtn('cloud-download', 'Download', primaryBtnStyle);
-		const printBtn = makeIconBtn('printer', 'Print', primaryBtnStyle);
-		const closeBtn = makeIconBtn('close', 'Close', `display:inline-flex;align-items:center;gap:6px;padding:7px 16px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;`);
+		const closeBtn = DOM.append(header, DOM.$('button.codicon.codicon-close')) as HTMLButtonElement;
+		closeBtn.title = 'Close';
+		closeBtn.setAttribute('aria-label', 'Close');
+		// Extra right margin keeps the × clear of the desktop window controls.
+		closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:96px;`;
+		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; closeBtn.style.color = col.fg; });
+		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = col.desc; });
 
 		// Scrollable body where the summary content is rendered.
 		const body = DOM.append(sheet, DOM.$('div.ciyex-summary-body'));
@@ -1603,11 +1606,58 @@ export class AppointmentsEditor extends EditorPane {
 		loading.textContent = 'Loading encounter summary…';
 		loading.style.cssText = `font-size:13px;color:${col.desc};`;
 
+		// Footer action toolbar — clearly-labelled Download / Print buttons.
+		const footer = DOM.append(sheet, DOM.$('div.ciyex-summary-footer'));
+		footer.style.cssText = `display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
+		const makeFooterBtn = (codicon: string, label: string, primary: boolean): { btn: HTMLButtonElement; lbl: HTMLElement } => {
+			const btn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+			btn.style.cssText = primary
+				? 'display:inline-flex;align-items:center;gap:7px;padding:8px 18px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;'
+				: `display:inline-flex;align-items:center;gap:7px;padding:8px 18px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;`;
+			const ic = DOM.append(btn, DOM.$('span.codicon.codicon-' + codicon));
+			ic.style.cssText = 'font-size:14px;';
+			const lbl = DOM.append(btn, DOM.$('span'));
+			lbl.textContent = label;
+			return { btn, lbl };
+		};
+		const { btn: downloadBtn, lbl: downloadLbl } = makeFooterBtn('cloud-download', 'Download PDF', true);
+		const { btn: printBtn } = makeFooterBtn('printer', 'Print', false);
+
 		const dismiss = () => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
 		closeBtn.addEventListener('click', dismiss);
 		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
 
-		const printOrDownload = () => {
+		// Download: fetch the server-generated PDF (same endpoint the EHR-UI uses)
+		// and save it. Falls back to the print dialog if the endpoint is missing,
+		// so "Download" no longer just re-opens the print dialog (QA: Download did
+		// not actually download).
+		downloadBtn.addEventListener('click', async () => {
+			const original = downloadLbl.textContent;
+			downloadLbl.textContent = 'Generating…';
+			downloadBtn.disabled = true;
+			try {
+				const res = await this.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary/print`, {
+					headers: { Accept: 'application/pdf' },
+				});
+				if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+				const blob = await res.blob();
+				const blobUrl = URL.createObjectURL(blob);
+				const a = DOM.append(doc.body, DOM.$('a')) as HTMLAnchorElement;
+				a.href = blobUrl;
+				a.download = `encounter-${encounterId}-summary.pdf`;
+				a.style.display = 'none';
+				a.click();
+				URL.revokeObjectURL(blobUrl);
+				a.remove();
+			} catch (err) {
+				this.notificationService.notify({ severity: Severity.Warning, message: `Could not generate PDF (${String(err)}). Use Print to save as PDF instead.` });
+			} finally {
+				downloadLbl.textContent = original;
+				downloadBtn.disabled = false;
+			}
+		});
+
+		printBtn.addEventListener('click', () => {
 			// Transient print stylesheet: hide the workbench + chrome so only the
 			// summary body lands on paper / the saved PDF.
 			const printStyle = doc.createElement('style');
@@ -1616,7 +1666,7 @@ export class AppointmentsEditor extends EditorPane {
 				'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
 				'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
 				'  .ciyex-summary-sheet{box-shadow:none !important;width:100% !important;height:auto !important;}',
-				'  .ciyex-summary-header button{display:none !important;}',
+				'  .ciyex-summary-header button,.ciyex-summary-footer{display:none !important;}',
 				'  .ciyex-summary-body{overflow:visible !important;padding:0 !important;}',
 				'  @page{margin:14mm;}',
 				'}',
@@ -1624,11 +1674,7 @@ export class AppointmentsEditor extends EditorPane {
 			doc.head.appendChild(printStyle);
 			try { DOM.getActiveWindow().print(); }
 			finally { try { doc.head.removeChild(printStyle); } catch { /* ignore */ } }
-		};
-		// Both buttons use the browser print/save-as-PDF dialog (the user can pick
-		// "Save as PDF" to download).
-		printBtn.addEventListener('click', printOrDownload);
-		downloadBtn.addEventListener('click', printOrDownload);
+		});
 
 		void this._loadVisitSummary(patientId, encounterId, body, loading);
 	}
