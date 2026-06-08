@@ -40,6 +40,9 @@ jobs:
     env:
       VSCODE_ARCH: ${{ matrix.arch }}
       VSCODE_QUALITY: 'oss'
+      # Pull the Electron binary from a mirror instead of GitHub's release CDN,
+      # which has been returning 504 Gateway Time-out and breaking the build.
+      ELECTRON_MIRROR: 'https://npmmirror.com/mirrors/electron/'
       CHANNEL: ${{ github.event.inputs.channel || 'dev' }}
       BUILD_REF: ${{ github.event.inputs.ref || github.sha }}
 
