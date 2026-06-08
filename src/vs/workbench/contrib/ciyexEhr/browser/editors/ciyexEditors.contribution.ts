@@ -33,6 +33,7 @@ import {
 	DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput,
 	// Patient Snapshot
 	PatientSnapshotEditorInput,
+	PatientSnapshotDemoEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -71,6 +72,7 @@ import { DeveloperPortalEditor } from './developerPortalEditor.js';
 import { AppointmentsEditor } from './appointmentsEditor.js';
 import { StaffTvBoardEditor, WaitingRoomEditor } from './tvDisplayEditor.js';
 import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
+import { PatientSnapshotDemoEditor } from './patientSnapshotDemoEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -128,6 +130,7 @@ reg.registerEditorPane(EditorPaneDescriptor.create(WaitingRoomEditor, WaitingRoo
 // Telehealth video UI is provided by the ciyex-telehealth extension — no
 // workbench-baked editor pane.
 reg.registerEditorPane(EditorPaneDescriptor.create(PatientSnapshotEditor, PatientSnapshotEditor.ID, localize('patientSnapshot', "Patient Snapshot")), [new SyncDescriptor(PatientSnapshotEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(PatientSnapshotDemoEditor, PatientSnapshotDemoEditor.ID, localize('patientSnapshotDemo', "Patient Snapshot (Demo)")), [new SyncDescriptor(PatientSnapshotDemoEditorInput)]);
 
 // System editors
 reg.registerEditorPane(EditorPaneDescriptor.create(ConsentsEditor, ConsentsEditor.ID, localize('consents', "Consents")), [new SyncDescriptor(ConsentsEditorInput)]);

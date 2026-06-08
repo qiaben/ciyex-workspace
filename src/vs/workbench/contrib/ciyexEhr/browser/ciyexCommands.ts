@@ -17,7 +17,7 @@ import { IQuickInputService } from '../../../../platform/quickinput/common/quick
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput, PatientSnapshotDemoEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -115,6 +115,25 @@ registerAction2(class extends Action2 {
 		if (!patientId) { return; }
 		const input = new PatientSnapshotEditorInput(patientId, patientName || `Patient ${patientId}`, appointmentId);
 		await editorService.openEditor(input, { pinned: false });
+	}
+});
+
+// Demo variant of the Patient Snapshot — opens the workflow-driven redesign
+// for TL review. Triggered from a "Demo" button on the live snapshot header.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.openPatientSnapshotDemo',
+			title: localize2('openPatientSnapshotDemo', "Open Patient Snapshot (Demo)"),
+			f1: false,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, patientId?: string, patientName?: string, appointmentId?: string): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		if (!patientId) { return; }
+		const input = new PatientSnapshotDemoEditorInput(patientId, patientName || `Patient ${patientId}`, appointmentId);
+		await editorService.openEditor(input, { pinned: true });
 	}
 });
 

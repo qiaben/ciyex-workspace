@@ -181,6 +181,32 @@ export class PatientSnapshotEditorInput extends EditorInput {
 	}
 }
 
+/**
+ * Demo variant of the Patient Snapshot — a workflow-driven redesign opened
+ * side-by-side with the original for TL review. Backed by its own editor
+ * pane (`PatientSnapshotDemoEditor`) so it never collides with the live
+ * snapshot. Remove once the redesign is folded back into the original.
+ */
+export class PatientSnapshotDemoEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexPatientSnapshotDemo';
+	override get typeId(): string { return PatientSnapshotDemoEditorInput.ID; }
+
+	constructor(
+		readonly patientId: string,
+		readonly patientName: string,
+		readonly appointmentId?: string,
+	) { super(); }
+
+	override getName(): string { return `${this.patientName || 'Patient'} — Snapshot (Demo)`; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('beaker'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-snapshot-demo', path: `/${this.patientId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof PatientSnapshotDemoEditorInput && this.patientId === other.patientId;
+	}
+}
+
 // allow-any-unicode-next-line
 // ─── Messaging EditorInput (channel-scoped) ───
 
