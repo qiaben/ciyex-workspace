@@ -14,8 +14,10 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
@@ -29,18 +31,10 @@ export class EncounterListPane extends ViewPane {
 	private allItems: Record<string, unknown>[] = [];
 	private loaded = false;
 	private filterValue = '';
-	private dateFrom = EncounterListPane._defaultFrom();
-	private dateTo = EncounterListPane._defaultTo();
-
-	/** Range start: one year before today's system date (recomputed per render). */
-	private static _defaultFrom(): string {
-		return new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-	}
-
-	/** Range end: 30 days after today's system date (recomputed per render). */
-	private static _defaultTo(): string {
-		return new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-	}
+	// Date range filters start empty so the list is not pre-filtered to a fixed
+	// default window — the user opts in by picking a From/To date.
+	private dateFrom = '';
+	private dateTo = '';
 	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
 
 	// FHIR type code → readable label
@@ -64,6 +58,7 @@ export class EncounterListPane extends ViewPane {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -87,10 +82,6 @@ export class EncounterListPane extends ViewPane {
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
-		// Recompute the default range against the current system date so the
-		// inputs are never anchored to a stale construction-time "today".
-		this.dateFrom = EncounterListPane._defaultFrom();
-		this.dateTo = EncounterListPane._defaultTo();
 		this.container = DOM.append(parent, DOM.$('.encounter-list-pane.ciyex-editor-root'));
 		this.container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-size:12px;';
 
@@ -300,7 +291,7 @@ export class EncounterListPane extends ViewPane {
 				{ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
 				{ symbol: '\u{270F}', label: 'Edit Encounter', onClick: () => this._openEditDialog(item, encId, patName) },
 				{ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
-				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Summary — ${patName}`, 'plan') },
+				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => showVisitSummaryPanel({ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService }, patientId, encId, patName) },
 			]);
 
 			row.addEventListener('mouseenter', () => {

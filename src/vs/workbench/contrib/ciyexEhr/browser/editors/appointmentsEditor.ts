@@ -16,9 +16,8 @@ import { AppointmentsEditorInput, CalendarEditorInput, StaffTvBoardEditorInput, 
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { editorBackground, editorForeground, editorWidgetBackground, editorWidgetBorder } from '../../../../../platform/theme/common/colors/editorColors.js';
-import { descriptionForeground, errorForeground, textLinkForeground } from '../../../../../platform/theme/common/colors/baseColors.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { showVisitSummaryPanel } from './visitSummaryPanel.js';
 
 // allow-any-unicode-next-line
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -76,26 +75,6 @@ interface Provider {
 	'identification.lastName'?: string;
 }
 interface Location { id: number; name: string }
-
-/** Shape of the encounter `EncounterSummaryDto` returned by
- *  `GET /api/encounters/{patientId}/{encounterId}/summary` (only the fields the
- *  Visit Summary panel renders). */
-interface VisitSummaryMeta {
-	visitCategory?: string;
-	type?: string;
-	facility?: string;
-	dateOfService?: string;
-	reasonForVisit?: string;
-}
-interface VisitSummaryChiefComplaint {
-	title?: string;
-	complaint?: string;
-	notes?: string;
-}
-interface VisitSummaryDTO {
-	meta?: VisitSummaryMeta;
-	chiefComplaints?: VisitSummaryChiefComplaint[];
-}
 
 /** Build a provider display name from any of the assorted field shapes the
  *  backend may return (`identification.*` flat keys, `firstName`/`lastName`,
@@ -1526,175 +1505,10 @@ export class AppointmentsEditor extends EditorPane {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'No encounter is linked to this appointment yet.' });
 			return;
 		}
-		this._showVisitSummaryPanel(patientId, String(row.encounterId), row.patientName || 'Patient');
-	}
-
-	/** Resolve concrete theme colours for the visit-summary slide-over.
-	 *  The panel is mounted on `document.body`, which sits OUTSIDE the workbench
-	 *  element that scopes the `--vscode-*` CSS variables — so a bare
-	 *  `var(--vscode-editor-background)` resolves to nothing and the panel paints
-	 *  transparent (QA report). Resolving real hex values from the active theme
-	 *  keeps the panel opaque and theme-aware in every theme. */
-	private _summaryColors(): { bg: string; widgetBg: string; fg: string; border: string; desc: string; link: string; error: string } {
-		const theme = this.themeService.getColorTheme();
-		const c = (id: string, fallback: string): string => {
-			const col = theme.getColor(id);
-			return col ? col.toString() : fallback;
-		};
-		return {
-			bg: c(editorBackground, '#1e1e1e'),
-			widgetBg: c(editorWidgetBackground, '#252526'),
-			fg: c(editorForeground, '#d4d4d4'),
-			border: c(editorWidgetBorder, '#454545'),
-			desc: c(descriptionForeground, '#999999'),
-			link: c(textLinkForeground, '#3794ff'),
-			error: c(errorForeground, '#f48771'),
-		};
-	}
-
-	/** Builds the Visit Summary slide-over (panel + backdrop) and loads its data.
-	 *  Reuses the body-mounted overlay pattern used by `_printTable`. */
-	private _showVisitSummaryPanel(patientId: string, encounterId: string, patientName: string): void {
-		const doc = DOM.getActiveWindow().document;
-		const col = this._summaryColors();
-
-		// Backdrop dimmer — click outside to dismiss.
-		const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-summary-backdrop'));
-		backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;display:flex;justify-content:flex-end;';
-
-		// Right-anchored slide-over sheet.
-		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-sheet'));
-		sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(720px,65vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family);`;
-
-		// Header with title + Print + Close.
-		const header = DOM.append(sheet, DOM.$('div.ciyex-summary-header'));
-		header.style.cssText = `display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
-		const headerTitle = DOM.append(header, DOM.$('span'));
-		// allow-any-unicode-next-line
-		headerTitle.textContent = `Visit Summary — ${patientName}`;
-		headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
-		const printBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-		printBtn.textContent = 'Print';
-		printBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
-		const closeBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-		closeBtn.textContent = 'Close';
-		closeBtn.style.cssText = `padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:4px;cursor:pointer;font-size:12px;`;
-
-		// Scrollable body where the summary content is rendered.
-		const body = DOM.append(sheet, DOM.$('div.ciyex-summary-body'));
-		body.style.cssText = `overflow:auto;padding:20px 22px;flex:1;background:${col.bg};`;
-		const loading = DOM.append(body, DOM.$('div'));
-		loading.textContent = 'Loading encounter summary…';
-		loading.style.cssText = `font-size:13px;color:${col.desc};`;
-
-		const dismiss = () => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
-		closeBtn.addEventListener('click', dismiss);
-		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
-
-		printBtn.addEventListener('click', () => {
-			// Transient print stylesheet: hide the workbench + chrome so only the
-			// summary body lands on paper / the saved PDF.
-			const printStyle = doc.createElement('style');
-			printStyle.textContent = [
-				'@media print{',
-				'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-				'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
-				'  .ciyex-summary-sheet{box-shadow:none !important;width:100% !important;height:auto !important;}',
-				'  .ciyex-summary-header button{display:none !important;}',
-				'  .ciyex-summary-body{overflow:visible !important;padding:0 !important;}',
-				'  @page{margin:14mm;}',
-				'}',
-			].join('');
-			doc.head.appendChild(printStyle);
-			try { DOM.getActiveWindow().print(); }
-			finally { try { doc.head.removeChild(printStyle); } catch { /* ignore */ } }
-		});
-
-		void this._loadVisitSummary(patientId, encounterId, body, loading);
-	}
-
-	/** Fetches the encounter summary and renders it into the panel body. */
-	private async _loadVisitSummary(patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<void> {
-		try {
-			const res = await this.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`);
-			const json = res.ok ? await res.json() : null;
-			const data = json?.success ? (json.data ?? null) : null;
-			loading.remove();
-			if (!data) {
-				const errMsg = DOM.append(body, DOM.$('div'));
-				errMsg.textContent = json?.message || 'Unable to load encounter summary.';
-				errMsg.style.cssText = `font-size:13px;color:${this._summaryColors().error};`;
-				return;
-			}
-			this._renderVisitSummary(body, data);
-		} catch (err) {
-			loading.textContent = `Failed to load encounter summary: ${String(err)}`;
-			loading.style.color = this._summaryColors().error;
-		}
-	}
-
-	/** Renders the Encounter Summary card (Type / Facility / Chief Complaint, …)
-	 *  from the EncounterSummaryDto returned by the backend. */
-	private _renderVisitSummary(body: HTMLElement, data: VisitSummaryDTO): void {
-		const meta = data.meta || {};
-		const chiefComplaints = data.chiefComplaints || [];
-		const col = this._summaryColors();
-
-		// Encounter Summary card.
-		const card = DOM.append(body, DOM.$('div'));
-		card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;margin-bottom:16px;`;
-		const cardTitle = DOM.append(card, DOM.$('div'));
-		cardTitle.textContent = 'Encounter Summary';
-		cardTitle.style.cssText = `font-size:16px;font-weight:700;color:${col.link};border-bottom:2px solid ${col.border};padding-bottom:8px;margin-bottom:14px;`;
-
-		const fields: Array<[string, string | undefined]> = [
-			['Visit Category', meta.visitCategory],
-			['Type', meta.type],
-			['Facility', meta.facility],
-			['Date of Service', meta.dateOfService],
-			['Reason for Visit', meta.reasonForVisit],
-		];
-		const grid = DOM.append(card, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;';
-		let anyMeta = false;
-		for (const [label, value] of fields) {
-			if (!value) { continue; }
-			anyMeta = true;
-			const fieldRow = DOM.append(grid, DOM.$('div'));
-			fieldRow.style.cssText = 'display:flex;font-size:13px;';
-			const lbl = DOM.append(fieldRow, DOM.$('span'));
-			lbl.textContent = `${label}:`;
-			lbl.style.cssText = `font-weight:600;color:${col.desc};min-width:140px;`;
-			const val = DOM.append(fieldRow, DOM.$('span'));
-			val.textContent = String(value);
-			val.style.cssText = `color:${col.fg};`;
-		}
-		if (!anyMeta) {
-			const none = DOM.append(grid, DOM.$('div'));
-			none.textContent = 'No encounter details recorded.';
-			none.style.cssText = `font-size:13px;color:${col.desc};`;
-		}
-
-		// Chief Complaint section.
-		if (chiefComplaints.length > 0) {
-			const ccCard = DOM.append(body, DOM.$('div'));
-			ccCard.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.bg};padding:16px;box-shadow:0 1px 2px rgba(0,0,0,0.05);`;
-			const ccTitle = DOM.append(ccCard, DOM.$('div'));
-			ccTitle.textContent = 'Chief Complaint';
-			ccTitle.style.cssText = `font-weight:600;color:${col.fg};margin-bottom:8px;font-size:14px;`;
-			for (const cc of chiefComplaints) {
-				const item = DOM.append(ccCard, DOM.$('div'));
-				item.style.cssText = 'font-size:13px;margin-bottom:6px;';
-				const t = DOM.append(item, DOM.$('div'));
-				t.textContent = cc.title || cc.complaint || 'Chief Complaint';
-				t.style.cssText = `font-weight:500;color:${col.fg};`;
-				if (cc.notes) {
-					const n = DOM.append(item, DOM.$('div'));
-					n.textContent = cc.notes;
-					n.style.cssText = `color:${col.desc};white-space:pre-wrap;`;
-				}
-			}
-		}
+		showVisitSummaryPanel(
+			{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService },
+			patientId, String(row.encounterId), row.patientName || 'Patient',
+		);
 	}
 
 	override layout(dimension: DOM.Dimension): void {

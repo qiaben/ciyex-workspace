@@ -362,6 +362,12 @@ export class EncounterFormEditor extends EditorPane {
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
 	private sectionCards = new Map<string, HTMLElement>();
 
+	// Complex (non-input) field values — diagnosis list, procedure list, plan
+	// items, ROS/exam grids — that live as in-memory arrays/objects rather than
+	// as DOM inputs. `_collectFormData()` merges these in so they actually get
+	// saved. Holds live references, so in-place push/splice are picked up.
+	private _complexFields = new Map<string, unknown>();
+
 	private get _isSigned(): boolean {
 		return this._encounterStatus.toUpperCase() === 'SIGNED';
 	}
@@ -592,6 +598,13 @@ export class EncounterFormEditor extends EditorPane {
 			};
 			walk(card);
 		}
+		// Merge in the complex field values (diagnosis/procedure lists, plan
+		// items, grids) that aren't backed by DOM inputs. Issue #1: the
+		// Diagnosis (ICD-10) and CPT/HCPCS codes were edited as in-memory arrays
+		// that the DOM walk never saw, so they were silently dropped on save.
+		for (const [key, value] of this._complexFields) {
+			formData[key] = value;
+		}
 		return formData;
 	}
 
@@ -782,6 +795,7 @@ export class EncounterFormEditor extends EditorPane {
 		const container = DOM.append(this.scrollArea, DOM.$('div'));
 		container.style.cssText = 'max-width:900px;margin:0 auto;padding:16px 24px 60px;';
 		this.sectionCards.clear();
+		this._complexFields.clear();
 
 		const readOnly = this._isSigned;
 
@@ -1075,6 +1089,8 @@ export class EncounterFormEditor extends EditorPane {
 	/** Diagnosis list with ICD-10 search */
 	private _renderDiagnosisList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const diagnoses = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string }>;
+		// Register the live array so edits persist on save (issue #1).
+		this._complexFields.set(dataKey, diagnoses);
 
 		// Order matches the EHR-UI Assessment & Diagnosis layout:
 		//   1. "Diagnosis" label
@@ -1230,6 +1246,8 @@ export class EncounterFormEditor extends EditorPane {
 	/** Procedures & Coding list */
 	private _renderProcedureList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const procs = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string; units: number }>;
+		// Register the live array so CPT/HCPCS edits persist on save (issue #1).
+		this._complexFields.set(dataKey, procs);
 
 		// Container for the CPT/HCPCS code-search rows. Mounted BEFORE the
 		// selected-procedures list so the search inputs sit at the top of the
