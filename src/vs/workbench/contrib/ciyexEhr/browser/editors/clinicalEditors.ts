@@ -645,12 +645,29 @@ export class LabsEditor extends ClinicalListEditorBase {
 	private readonly _resultsConfig: ClinicalEditorConfig = {
 		title: 'Lab Results', apiPath: '/api/lab-results',
 		searchPlaceholder: 'Search by test name, code, value, panel...',
-		clientSideFilter: ['testName', 'loincCode', 'resultValue', 'units', 'panelName', 'status', 'abnormalFlag', 'id'],
+		clientSideFilter: ['testName', 'loincCode', 'value', 'units', 'panelName', 'status', 'abnormalFlag', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// The lab-result DTO only carries `patientId`, so fetch the patient and
+		// inject the name fields the edit form's patient search expects (issue #6a).
+		transformEditItem: async (item, api) => {
+			const pid = item.patientId;
+			if (!pid || item.patientFirstName) { return item; }
+			try {
+				const res = await api.fetch(`/api/patients/${pid}`);
+				if (res.ok) {
+					const json = await res.json().catch(() => null);
+					const p = (json && (json.data ?? json)) as Record<string, unknown> | null;
+					if (p) { return { ...item, patientFirstName: p.firstName ?? '', patientLastName: p.lastName ?? '' }; }
+				}
+			} catch { /* keep item as-is */ }
+			return item;
+		},
 		columns: [
 			{ key: 'testName', label: 'Test', width: '1.5fr' },
-			{ key: 'resultValue', label: 'Value', width: '90px' },
+			// Backend returns `value` (not `resultValue`) — column key must match
+			// or the Value column renders blank (issue #6b).
+			{ key: 'value', label: 'Value', width: '90px' },
 			{ key: 'referenceRange', label: 'Range', width: '100px' },
 			{ key: 'abnormalFlag', label: 'Flag', width: '70px' },
 			{ key: 'status', label: 'Status', width: '90px' },
@@ -722,11 +739,11 @@ export class LabsEditor extends ClinicalListEditorBase {
 					{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' }, { label: 'Abnormal', value: 'abnormal' },
 				], defaultValue: 'normal'
 			},
-			{ key: 'resultValue', label: 'Value', type: 'text', required: true, placeholder: 'Result value' },
+			{ key: 'value', label: 'Value', type: 'text', required: true, placeholder: 'Result value', aliases: ['resultValue'] },
 			{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
 			{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
-			{ key: 'refLow', label: 'Ref Low', type: 'number' },
-			{ key: 'refHigh', label: 'Ref High', type: 'number' },
+			{ key: 'referenceLow', label: 'Ref Low', type: 'number', aliases: ['refLow'] },
+			{ key: 'referenceHigh', label: 'Ref High', type: 'number', aliases: ['refHigh'] },
 			{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
 			{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 			{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
@@ -1457,13 +1474,16 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 		},
 		// Columns matching ciyex-ehr-ui: Patient, Insurance, Procedure, Diagnosis, Auth#, Units, Expiry, Status
 		// Priority filter removed per QA request (issue #13).
+		// Explicit, balanced widths for the text columns — without them Patient /
+		// Insurance / Procedure each defaulted to an equal 1fr and left huge gaps
+		// between short values (issue #7: "more space and misaligned").
 		columns: [
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'insuranceName', label: 'Insurance' },
-			{ key: 'procedureDescription', label: 'Procedure' },
-			{ key: 'diagnosisCode', label: 'Diagnosis', width: '90px' },
-			{ key: 'authNumber', label: 'Auth #', width: '120px' },
-			{ key: 'approvedUnits', label: 'Units', width: '70px' },
+			{ key: 'patientName', label: 'Patient', width: '1.2fr' },
+			{ key: 'insuranceName', label: 'Insurance', width: '1fr' },
+			{ key: 'procedureDescription', label: 'Procedure', width: '1.6fr' },
+			{ key: 'diagnosisCode', label: 'Diagnosis', width: '110px' },
+			{ key: 'authNumber', label: 'Auth #', width: '100px' },
+			{ key: 'approvedUnits', label: 'Units', width: '60px' },
 			{ key: 'expiryDate', label: 'Expiry', width: '90px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
@@ -1716,8 +1736,9 @@ export class EducationEditor extends ClinicalListEditorBase {
 					{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
 				], defaultValue: 'article'
 			},
-			{ key: 'content', label: 'Content', type: 'textarea', placeholder: 'Education material content...', width: 'span 2' },
-			{ key: 'source', label: 'Source', type: 'text', placeholder: 'Source / author' },
+			// Content is mandatory; Source removed to match the ciyex-ehr-ui
+			// New Education Library form (issue #8).
+			{ key: 'content', label: 'Content', type: 'textarea', required: true, placeholder: 'Education material content...', width: 'span 2' },
 			{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
 			{
 				key: 'language', label: 'Language', type: 'select', options: [
@@ -1741,7 +1762,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 				], defaultValue: 'true'
 			},
 			{ key: 'tags', label: 'Tags', type: 'text', placeholder: 'Comma-separated tags', width: 'span 2' },
-			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Brief description...', width: 'span 2' },
+			// Description removed to match the ciyex-ehr-ui form (issue #8).
 		],
 		actions: [
 			// allow-any-unicode-next-line

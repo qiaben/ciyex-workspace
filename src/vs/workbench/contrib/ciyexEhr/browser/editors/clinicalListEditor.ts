@@ -188,6 +188,13 @@ export interface ClinicalEditorConfig {
 	 */
 	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean) => Record<string, unknown>;
 	/**
+	 * Optional async transformer applied to the record before the EDIT form is
+	 * seeded. Use to backfill fields the row/GET-by-id doesn't carry — e.g. the
+	 * lab-result DTO only has `patientId`, so this fetches the patient and adds
+	 * `patientFirstName`/`patientLastName` so the patient name shows on edit.
+	 */
+	transformEditItem?: (item: Record<string, unknown>, api: ICiyexApiService) => Promise<Record<string, unknown>>;
+	/**
 	 * URL builder for GET-by-id (refetch on edit) and PUT (update). Use when the
 	 * backend isn't a flat REST resource (e.g. patient-scoped /api/lab-order/{patientId}/{orderId}).
 	 * Defaults to `${apiPath}/${item.id}`.
@@ -1017,6 +1024,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			} catch { /* fall through with row data */ }
 		}
+		// Backfill fields the record doesn't carry (e.g. patient name from
+		// patientId on lab results) before seeding the edit form.
+		if (item && this.config.transformEditItem) {
+			try { item = await this.config.transformEditItem(item, this.apiService); } catch { /* keep record as-is */ }
+		}
 		this.editingItem = item;
 		this._renderForm();
 	}
@@ -1238,6 +1250,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					}
 					this.searchDebounceTimers.set(timerKey, setTimeout(async () => {
 						let results: Record<string, unknown>[] = [];
+						// Track an upstream service failure (e.g. the ciyex-codes
+						// proxy returning 5xx) so we can tell the user the lookup
+						// service is down rather than silently showing "No results".
+						let serviceError = false;
 						try {
 							const param = field.searchParam || 'search';
 							const sep = searchEndpoint.includes('?') ? '&' : '?';
@@ -1246,9 +1262,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 								const data = await res.json();
 								const wrapper = data?.data || data;
 								results = wrapper?.content || (Array.isArray(wrapper) ? wrapper : []);
+							} else if (res.status >= 500) {
+								serviceError = true;
 							}
 						} catch {
-							// fall through to fallback
+							serviceError = true;
 						}
 						// Client-side fallback when API returns empty/fails (e.g. CVX codes
 						// when ciyex-codes has no CVX data loaded).
@@ -1261,8 +1279,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						DOM.clearNode(dropdown);
 						if (results.length === 0) {
 							const noRes = DOM.append(dropdown, DOM.$('div'));
-							noRes.textContent = 'No results found';
-							noRes.style.cssText = 'padding:8px 10px;font-size:12px;color:var(--vscode-descriptionForeground);';
+							noRes.textContent = serviceError ? 'Code lookup service unavailable — try again later' : 'No results found';
+							noRes.style.cssText = `padding:8px 10px;font-size:12px;color:${serviceError ? '#f59e0b' : 'var(--vscode-descriptionForeground)'};`;
 							showDropdown();
 							return;
 						}
