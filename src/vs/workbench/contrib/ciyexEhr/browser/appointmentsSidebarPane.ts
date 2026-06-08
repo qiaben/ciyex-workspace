@@ -595,6 +595,15 @@ export class AppointmentsSidebarPane extends ViewPane {
 			room.style.cssText = 'margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(99,102,241,0.8);color:#fff;font-weight:500;';
 		}
 
+		// Telehealth appointments get an always-visible video-call icon so the
+		// user can join the session directly from the side menu (issue: schedule
+		// page telehealth video-call icon).
+		if ((getAppointmentType(apt) || '').toLowerCase() === 'telehealth') {
+			const videoBtn = createActionIconButton(actions, 'device-camera-video', 'Join Video Visit', () => this._joinTelehealth(apt));
+			videoBtn.style.opacity = '1';
+			videoBtn.style.color = 'var(--vscode-charts-green, #22c55e)';
+		}
+
 		createOverflowMenuButton(actions, (): IOverflowMenuItem[] => {
 			const items: IOverflowMenuItem[] = [];
 			const isTele = (getAppointmentType(apt) || '').toLowerCase() === 'telehealth';

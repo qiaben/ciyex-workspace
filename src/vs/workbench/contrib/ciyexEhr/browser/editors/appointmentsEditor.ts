@@ -1406,9 +1406,17 @@ export class AppointmentsEditor extends EditorPane {
 
 			const iconBtn = (icon: string, title: string, color: string, onClick: () => void) => {
 				const b = DOM.append(actionsWrap, DOM.$('button')) as HTMLButtonElement;
-				b.textContent = icon;
+				// A plain lowercase/hyphenated identifier (e.g. "device-camera-video")
+				// is treated as a codicon name and rendered as a crisp icon glyph;
+				// anything else (emoji) is rendered as text.
+				if (/^[a-z][a-z-]+$/.test(icon)) {
+					const ic = DOM.append(b, DOM.$('span.codicon.codicon-' + icon));
+					ic.style.cssText = 'font-size:16px;';
+				} else {
+					b.textContent = icon;
+				}
 				b.title = title;
-				b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:4px;color:${color};`;
+				b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:4px;color:${color};display:inline-flex;align-items:center;`;
 				b.addEventListener('mouseenter', () => { b.style.background = `${color}20`; });
 				b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
 				b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
@@ -1418,8 +1426,7 @@ export class AppointmentsEditor extends EditorPane {
 			// Telehealth visits only get the join + start-session controls so the
 			// user is funnelled into the video session instead of paper-chart flows.
 			if ((row.visitType || '').toLowerCase() === 'telehealth') {
-				// allow-any-unicode-next-line
-				iconBtn('📞', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
+				iconBtn('device-camera-video', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
 				// allow-any-unicode-next-line
 				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
 			} else {

@@ -13,7 +13,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
@@ -169,6 +169,14 @@ export class EncounterListPane extends ViewPane {
 			if (this.loaded) { mainWindow.clearInterval(retry); return; }
 			this._loadData();
 		}, 2000);
+
+		// Allow other components (e.g. the encounter form editor) to force a
+		// re-fetch after creating/saving an encounter so the new row appears
+		// without a manual reload (issue 6).
+		this._register(CommandsRegistry.registerCommand('ciyex.refreshEncounters', () => {
+			this.loaded = false;
+			return this._loadData();
+		}));
 	}
 
 	protected override layoutBody(height: number, width: number): void {

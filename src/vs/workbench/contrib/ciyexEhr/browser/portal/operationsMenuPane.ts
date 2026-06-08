@@ -358,7 +358,9 @@ export class OperationsMenuPane extends ViewPane {
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
 		this.container = DOM.append(parent, DOM.$('.operations-menu-pane'));
-		this.container.style.cssText = 'height:100%;overflow-y:auto;font-size:12px;';
+		// Keep scroll capability but hide the visible scrollbar so the operations
+		// side menu reads as a clean nav list (issue: operations sidemenu scrollbar).
+		this.container.style.cssText = 'height:100%;overflow-y:auto;overflow-x:hidden;font-size:12px;scrollbar-width:none;-ms-overflow-style:none;';
 		this._render();
 
 		const win = DOM.getWindow(this.container);

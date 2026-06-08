@@ -1392,9 +1392,30 @@ export class CalendarEditor extends EditorPane {
 			const status = statusEl.value;
 			const notes = notesEl.value;
 
-			if (!patName) { this.notificationService.notify({ severity: Severity.Warning, message: 'Patient is required' }); return; }
-			if (!startD || !startT) { this.notificationService.notify({ severity: Severity.Warning, message: 'Date and time are required' }); return; }
-			if (!locId) { this.notificationService.notify({ severity: Severity.Warning, message: 'Location is required' }); return; }
+			// Validate every mandatory (*) field before booking. Previously only
+			// patient / start / location were checked, so an appointment could be
+			// saved with no provider or end date/time. Highlight + focus the first
+			// missing field and block submit.
+			const startDateEl = formFields.get('startDate') as HTMLInputElement | undefined;
+			const startTimeEl = formFields.get('startTime') as HTMLInputElement | undefined;
+			const endDateEl = formFields.get('endDate') as HTMLInputElement | undefined;
+			const endTimeEl = formFields.get('endTime') as HTMLInputElement | undefined;
+			for (const el of [patInput, startDateEl, startTimeEl, endDateEl, endTimeEl, providerIdEl, locationIdEl]) {
+				if (el) { el.style.borderColor = ''; }
+			}
+			const requireField = (ok: boolean, el: HTMLElement | undefined, message: string): boolean => {
+				if (ok) { return false; }
+				this.notificationService.notify({ severity: Severity.Warning, message });
+				if (el) { el.style.borderColor = '#ef4444'; el.focus(); }
+				return true;
+			};
+			if (requireField(!!patName, patInput, 'Patient is required')) { return; }
+			if (requireField(!!startD, startDateEl, 'Start Date is required')) { return; }
+			if (requireField(!!startT, startTimeEl, 'Start Time is required')) { return; }
+			if (requireField(!!(endDateEl?.value), endDateEl, 'End Date is required')) { return; }
+			if (requireField(!!endT, endTimeEl, 'End Time is required')) { return; }
+			if (requireField(!!provId, providerIdEl, 'Provider is required')) { return; }
+			if (requireField(!!locId, locationIdEl, 'Location is required')) { return; }
 
 			// Calculate duration in minutes
 			const startMins = parseInt(startT.split(':')[0]) * 60 + parseInt(startT.split(':')[1]);

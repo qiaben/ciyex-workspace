@@ -35,6 +35,16 @@
 	-webkit-appearance: none !important;
 }
 
+/* Sidebar nav panes (Operations / Clinical / Reports / Settings) live OUTSIDE
+ * `.ciyex-editor-root`, so the global rule above doesn't reach them. Hide the
+ * native vertical scrollbar here too while keeping scroll capability. */
+.operations-menu-pane::-webkit-scrollbar {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
+	-webkit-appearance: none !important;
+}
+
 /* Opt-in: keep a slim hover scrollbar for horizontal overflow (e.g. wide tables).
  * Add the `.ciyex-thin-h-scroll` class on the overflow-x container. The
  * `!important`s here are needed to override the global `width:0 !important`

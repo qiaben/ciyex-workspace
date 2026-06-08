@@ -152,6 +152,9 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 		triggerLabel.style.opacity = v ? '1' : '0.6';
 	};
 	refreshTriggerLabel();
+	// Allow callers that set `hidden.value` programmatically to refresh the
+	// visible trigger label by dispatching a `change` event on the hidden input.
+	hidden.addEventListener('change', refreshTriggerLabel);
 
 	parent.appendChild(trigger);
 

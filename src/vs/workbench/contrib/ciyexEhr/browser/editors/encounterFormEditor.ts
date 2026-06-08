@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -54,6 +55,7 @@ export class EncounterFormEditor extends EditorPane {
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(EncounterFormEditor.ID, group, telemetryService, themeService, storageService);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
@@ -499,7 +501,15 @@ export class EncounterFormEditor extends EditorPane {
 
 			if (compRes.ok) {
 				this._isDirty = false;
+				// Re-fetch the persisted composition (now keyed to the real encounter id)
+				// and re-render so the saved data is reflected immediately (issue 1).
+				await this._loadEncounterData().catch(() => { /* keep current view on reload failure */ });
+				this._renderHeader();
+				this._renderForm();
 				this._updateAutoSaveIndicator('Saved');
+				// Notify the encounters list so a newly created/saved encounter appears
+				// without requiring a manual reload (issue 6).
+				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
 				return true;
 			} else {
 				const err = await compRes.text().catch(() => 'Unknown error');

@@ -975,7 +975,11 @@ export class ScheduleSidebarPane extends ViewPane {
 		// joined directly from the schedule row (also in the overflow menu).
 		const visitTypeStr = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
 		const isTelehealth = visitTypeStr.includes('telehealth') || visitTypeStr.includes('virtual') || visitTypeStr.includes('video');
-		if (isTelehealth && this.installationsService.isInstalled('ciyex-telehealth')) {
+		// Show the video-call icon for every telehealth appointment (the
+		// telehealth-install gate was hiding it whenever the org hadn't formally
+		// installed the ciyex-telehealth app — the test team wants it always
+		// visible on telehealth rows).
+		if (isTelehealth) {
 			const videoBtn = createActionIconButton(sub, 'device-camera-video', 'Video Call', () => {
 				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
 			});
@@ -1059,7 +1063,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			// Telehealth
 			const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
 			const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
-			if (isTele && this.installationsService.isInstalled('ciyex-telehealth')) {
+			if (isTele) {
 				items.push({ symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName) });
 			}
 

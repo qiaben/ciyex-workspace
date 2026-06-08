@@ -238,7 +238,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 				columns: [
 					{ key: 'procedureName', label: 'Procedure' },
 					{ key: 'cptCode', label: 'CPT Code' },
-					{ key: 'datePerformed', label: 'Date Performed' },
+					{ key: 'datePerformed', label: 'Date Performed', aliases: ['datePerformed', 'performedDateTime', 'performedPeriod'] },
 					{ key: 'performerName', label: 'Performer' },
 					{ key: 'status', label: 'Status' },
 				],
@@ -831,7 +831,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'proc', title: 'Procedure', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'procedureName', label: 'Procedure Name', type: 'text', required: true, placeholder: 'Procedure name' },
 					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT code', lookupConfig: { system: 'CPT' }, relatedField: 'procedureName' },
-					{ key: 'datePerformed', label: 'Date Performed', type: 'date', required: true },
+					{ key: 'performedDateTime', label: 'Date Performed', type: 'date', required: true }, // key matches backend so overlay promotes datetime→date (auto-closing picker) — issue 10
 					{ key: 'performerId', label: 'Performer', type: 'practitioner-search', placeholder: 'Search Performer' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
@@ -907,20 +907,20 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'subscriberFirstName', label: 'Subscriber First Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberLastName', label: 'Subscriber Last Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberDOB', label: 'Subscriber Date of Birth', type: 'date', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberFirstName', label: 'Subscriber First Name', type: 'text' },
+					{ key: 'subscriberLastName', label: 'Subscriber Last Name', type: 'text' },
+					{ key: 'subscriberDOB', label: 'Subscriber Date of Birth', type: 'date' },
 					{
 						key: 'subscriberGender', label: 'Subscriber Sex', type: 'select', options: [
 							{ label: 'Male', value: 'male' },
 							{ label: 'Female', value: 'female' },
 							{ label: 'Other', value: 'other' },
-						], showWhen: { field: 'subscriberRelationship', notEquals: 'self' }
+						]
 					},
-					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX' },
+					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone' },
+					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address' },
+					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text' },
 				],
 			},
 		],
@@ -1698,6 +1698,21 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
+					// Payment Type — overlays the backend `paymentType` (default free
+					// text) and promotes it to a dropdown matching ciyex-ehr-ui.
+					{
+						key: 'paymentType', label: 'Payment Type', type: 'select', options: [
+							{ label: 'Insurance Payment', value: 'insurance-payment' },
+							{ label: 'Patient Copay', value: 'patient-copay' },
+							{ label: 'Patient Coinsurance', value: 'patient-coinsurance' },
+							{ label: 'Patient Deductible', value: 'patient-deductible' },
+							{ label: 'Patient Self-Pay', value: 'patient-self-pay' },
+							{ label: 'Cash', value: 'cash' },
+							{ label: 'Check', value: 'check' },
+							{ label: 'Credit Card', value: 'credit-card' },
+							{ label: 'EFT/ACH', value: 'eft-ach' },
+						]
+					},
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Active', value: 'active' },
@@ -1737,6 +1752,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'totalCharge', label: 'Total Charge', type: 'number', placeholder: '0.00' },
 					{ key: 'insurer', label: 'Insurer / Payer', type: 'lookup', placeholder: 'Search Payer', lookupConfig: { endpoint: '/api/organizations', displayField: 'name', valueField: 'id', searchable: true } },
 					{ key: 'billingProvider', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
+					// Service period (FHIR Claim.billablePeriod.start/.end) — matches
+					// the ciyex-ehr-ui submission "Service From / Service To" fields.
+					{ key: 'billablePeriodStart', label: 'Service From', type: 'date' },
+					{ key: 'billablePeriodEnd', label: 'Service To', type: 'date' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
@@ -1968,6 +1987,9 @@ export class PatientChartEditor extends EditorPane {
 			.sort((a, b) => a.position - b.position)
 			.map(cat => {
 				let tabs = cat.tabs.filter(t => t.visible !== false).sort((a, b) => a.position - b.position);
+				// Hide the Messaging section from the patient chart for every
+				// practice, regardless of any persisted/backend layout (issue 11).
+				tabs = tabs.filter(t => t.key !== 'messaging');
 				if (cat.key === 'clinical') {
 					const byKey = new Map<string, ChartTab>();
 					for (const t of tabs) { byKey.set(t.key, t); }
@@ -2113,7 +2135,7 @@ export class PatientChartEditor extends EditorPane {
 		// (e.g. "13643") and must resolve to the prescriber name. `doctor` /
 		// `physician` likewise cover *Doctor / *Physician practitioner columns.
 		const isProviderCol = prefix === 'Practitioner' || prefix === 'PractitionerRole'
-			|| /(provider|practitioner|performer|author|prescrib|administeredby|orderedby|ordering|referrer|referredby|signedby|physician|doctor|encounterprovider|recorder|reporter|enterer|orderer|requester)/.test(key);
+			|| /(provider|practitioner|performer|author|prescrib|administeredby|orderedby|ordering|referrer|referredby|signedby|physician|doctor|encounterprovider|recorder|reporter|enterer|orderer|requester|educator)/.test(key);
 		const isOrgCol = prefix === 'Organization'
 			|| /(insur|payer|payor|organization|company)/.test(key);
 		const isLocationCol = prefix === 'Location'
@@ -2292,6 +2314,12 @@ export class PatientChartEditor extends EditorPane {
 			// bound to /api/education/materials and the save handler can
 			// resolve the chosen material's FK.
 			'education',
+			// Procedures: the backend ships "Date Performed" as a datetime field
+			// (datetime-local picker that waits for a time and never auto-closes).
+			// The local config declares it as a date-only `performedDateTime`
+			// field (auto-closing MM/DD/YYYY picker) — force local so the date
+			// selection closes the calendar immediately. Issue 10.
+			'procedures',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
@@ -2565,10 +2593,42 @@ export class PatientChartEditor extends EditorPane {
 				console.error(`[patientChart] ${tab.key} GET ${url} threw:`, e);
 			}
 		}
+		// The deployed education backend drops `deliveryMethod` / `educator`
+		// (its DTO has no such columns), so the workspace persists them inside
+		// the form-unused `notes` field as JSON. Decode them back here so the
+		// table columns and the edit form populate. Issue: education delivery
+		// method / educator blank after refresh.
+		if (tab.key === 'education') {
+			data = data.map(r => this._decodeEducationMeta(r));
+		}
 		data = this._mergePendingCreates(tab.key, data);
 		const result = { config, data };
 		this._tabDataCache.set(tab.key, result);
 		return result;
+	}
+
+	/**
+	 * Education assignments persist `deliveryMethod` / `educator` as a JSON blob
+	 * in the otherwise-unused `notes` field (the backend DTO has no columns for
+	 * them). Parse that blob back onto the record so the table and edit form see
+	 * the real values; records without our marker are returned untouched.
+	 */
+	private _decodeEducationMeta(record: Record<string, unknown>): Record<string, unknown> {
+		const notes = record['notes'];
+		if (typeof notes === 'string' && notes.trim().startsWith('{')) {
+			try {
+				const meta = JSON.parse(notes) as Record<string, unknown>;
+				if (meta && meta['__ciyexEdu']) {
+					return {
+						...record,
+						deliveryMethod: meta['deliveryMethod'] ?? record['deliveryMethod'],
+						educator: meta['educator'] ?? record['educator'],
+						notes: '',
+					};
+				}
+			} catch { /* not our JSON — leave the record as-is */ }
+		}
+		return record;
 	}
 
 	private async _loadQuickInfo(): Promise<void> {
@@ -3995,8 +4055,10 @@ export class PatientChartEditor extends EditorPane {
 		]);
 		const monthEl = makeSelect('Expiry Month *', Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') })));
 		const yearEl = makeSelect('Expiry Year *', Array.from({ length: 16 }, (_, i) => { const y = now.getFullYear() + i; return { value: String(y), label: String(y) }; }));
-		const cvvEl = makeInput('CVV *', false, { maxLength: 4, placeholder: '123' });
-		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, ''); });
+		const cvvEl = makeInput('CVV *', false, { maxLength: 3, placeholder: '123' });
+		// Digits only, capped at 3 (issue 16) — slice guards against paste that
+		// bypasses the maxLength attribute.
+		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, '').slice(0, 3); });
 		const addrEl = makeInput('Billing Address', true, { placeholder: '123 Main St' });
 		const cityEl = makeInput('City', false, { maxLength: 50, placeholder: 'New York' });
 		const stateEl = makeInput('State', false, { maxLength: 50, placeholder: 'NY' });
@@ -4049,6 +4111,7 @@ export class PatientChartEditor extends EditorPane {
 			if (!holder) { errEl.textContent = 'Card holder name is required.'; errEl.style.display = ''; return; }
 			if (!card && !num) { errEl.textContent = 'Card number is required.'; errEl.style.display = ''; return; }
 			if (!card && !cvv) { errEl.textContent = 'CVV is required.'; errEl.style.display = ''; return; }
+			if (cvv && !/^\d{3}$/.test(cvv)) { errEl.textContent = 'CVV must be exactly 3 digits.'; errEl.style.display = ''; return; }
 
 			const payload: Record<string, unknown> = {
 				patientId: this.patientId,
@@ -4512,7 +4575,7 @@ export class PatientChartEditor extends EditorPane {
 					if (v && f.validationPattern) {
 						let matched = true;
 						try {
-							const rx = new RegExp(f.validationPattern);
+							const rx = new RegExp(f.validationPattern, 'i'); // case-insensitive so unit suffixes match any casing (e.g. dose "1.5 ml") — issue 9
 							matched = rx.test(v);
 						} catch { /* malformed regex — skip */ }
 						if (!matched) {
@@ -4700,6 +4763,18 @@ export class PatientChartEditor extends EditorPane {
 					}
 					delete payload.material;
 					delete payload.patient;
+				}
+				// Education (create AND edit): the backend DTO has no
+				// deliveryMethod/educator columns, so carry them in the unused
+				// `notes` field as JSON. _decodeEducationMeta restores them on read.
+				if (tab.key === 'education') {
+					const dm = payload.deliveryMethod;
+					const ed = payload.educator;
+					const hasDm = dm !== undefined && dm !== null && dm !== '';
+					const hasEd = ed !== undefined && ed !== null && ed !== '';
+					if (hasDm || hasEd) {
+						payload.notes = JSON.stringify({ __ciyexEdu: 1, deliveryMethod: hasDm ? dm : '', educator: hasEd ? ed : '' });
+					}
 				}
 				// Documents — the FHIR DocumentReference URI search-parameter
 				// has a uniqueness constraint on HAPI's hfj_spidx_uri index.
@@ -5168,6 +5243,56 @@ export class PatientChartEditor extends EditorPane {
 			}
 			applyVisibility();
 		}
+
+		// Insurance: when "Self (Patient is Subscriber)" is selected, copy the
+		// patient's demographics into the subscriber fields (issue 2).
+		this._wireSubscriberSelfFill();
+	}
+
+	/**
+	 * When the insurance "Relationship to Patient" dropdown is set to "Self",
+	 * auto-populate the subscriber identity fields from the patient's
+	 * demographics so the user doesn't re-enter them. Re-runs on every change to
+	 * the relationship control and once on initial render.
+	 */
+	private _wireSubscriberSelfFill(): void {
+		const rel = this._formInputs.get('subscriberRelationship');
+		if (!rel) { return; }
+		const pd = (this.patientData || {}) as Record<string, unknown>;
+		const isoToUs = (iso: string): string => {
+			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+		};
+		const refs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | undefined>();
+		for (const k of ['subscriberFirstName', 'subscriberLastName', 'subscriberDOB', 'subscriberGender', 'subscriberSSN', 'subscriberPhone', 'subscriberAddress']) {
+			refs.set(k, this._formInputs.get(k));
+		}
+		const setVal = (key: string, raw: unknown): void => {
+			const el = refs.get(key);
+			if (!el) { return; }
+			const value = (raw === null || raw === undefined) ? '' : String(raw);
+			el.value = value;
+			// Date fields register a hidden ISO input; its visible MM/DD/YYYY
+			// sibling must be updated too.
+			const sib = el.previousElementSibling;
+			if (el.type === 'hidden' && DOM.isHTMLInputElement(sib) && sib.placeholder === 'MM/DD/YYYY') {
+				sib.value = isoToUs(value.split('T')[0]);
+			}
+			// Custom dropdowns refresh their visible label on a `change` event.
+			el.dispatchEvent(new Event('change', { bubbles: false }));
+		};
+		const fill = (): void => {
+			if (String(rel.value) !== 'self') { return; }
+			setVal('subscriberFirstName', pd['firstName']);
+			setVal('subscriberLastName', pd['lastName']);
+			setVal('subscriberDOB', String(pd['dateOfBirth'] ?? '').split('T')[0]);
+			setVal('subscriberGender', String(pd['gender'] ?? '').toLowerCase());
+			setVal('subscriberSSN', pd['ssn']);
+			setVal('subscriberPhone', pd['phoneNumber'] ?? pd['phone']);
+			setVal('subscriberAddress', pd['address']);
+		};
+		rel.addEventListener('change', fill);
+		fill();
 	}
 
 	/**
@@ -5261,7 +5386,15 @@ export class PatientChartEditor extends EditorPane {
 		input.placeholder = f.placeholder || `Search ${f.label}...`;
 		// Reserve right padding for the magnifying-glass icon.
 		input.style.cssText = inputStyle + 'padding-right:30px;';
-		input.value = currentValue;
+		// For id-bearing reference fields (billing provider, insurer, facility,
+		// payer, …) the edit form receives the raw id. Show the resolved NAME in
+		// the visible input while keeping the id in the hidden value (issue 12).
+		const resolveDisplay = (): string => {
+			if (isCodeSearch || !currentValue) { return currentValue; }
+			const r = this._resolveIdToName(f.key, currentValue);
+			return r === null || r === undefined ? '' : String(r);
+		};
+		input.value = resolveDisplay();
 
 		// Decorative search icon on the right edge of the input.
 		const searchIcon = DOM.append(wrap, DOM.$('span'));
@@ -5284,6 +5417,14 @@ export class PatientChartEditor extends EditorPane {
 			const relHidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			relHidden.type = 'hidden';
 			this._formInputs.set(f.relatedField, relHidden);
+		}
+		// Name caches may not be loaded on first render — resolve asynchronously
+		// and replace the raw id with the name once the caches populate (issue 12).
+		if (!isCodeSearch && currentValue && input.value === currentValue) {
+			void this._loadLookups().then(() => {
+				const resolved = resolveDisplay();
+				if (resolved && resolved !== currentValue) { input.value = resolved; }
+			}).catch(() => { /* leave the id visible if lookups fail */ });
 		}
 		// Foreign-key references — patient / practitioner pickers and
 		// `lookup` fields whose key is an id (numeric / UUID) — MUST come
@@ -5422,10 +5563,26 @@ export class PatientChartEditor extends EditorPane {
 							items = this._extractSearchItems(f, data);
 						}
 					} catch { /* fall through to fallback */ }
-					// When the code-search endpoint returns nothing (e.g. ciyex-codes
-					// has no CVX data loaded for this org/version), filter our
-					// built-in fallback list locally so the user still gets a
-					// usable picker. The web app uses the same trick for CVX.
+					// When the ciyex-codes proxy returns nothing (e.g. the org has
+					// no app_installation row so the proxy 404s, or the service is
+					// unreachable), fall back to the main backend's /api/global_codes
+					// search — the exact multi-tier strategy the reference EHR UI
+					// uses. This is why ICD-10 / CPT / LOINC search works in
+					// ciyex-ehr-ui but returned "No matches" here.
+					if (items.length === 0 && isCodeSearch) {
+						const gUrl = this._buildGlobalCodesUrl(f, q.trim());
+						if (gUrl) {
+							try {
+								const gRes = await this.apiService.fetch(gUrl);
+								if (gRes.ok) {
+									items = this._extractSearchItems(f, await gRes.json());
+								}
+							} catch { /* fall through to static fallback */ }
+						}
+					}
+					// Final fallback: filter our built-in static list locally so the
+					// user still gets a usable picker (e.g. CVX when no service has
+					// data loaded for this org/version).
 					if (items.length === 0 && isCodeSearch) {
 						items = this._codeSearchFallback(f, q.trim());
 					}
@@ -5563,6 +5720,33 @@ export class PatientChartEditor extends EditorPane {
 			default:
 				return null;
 		}
+	}
+
+	/**
+	 * Resolve the code system for a code-search field (same logic as
+	 * `_buildSearchUrl`) and map it to the `codeType` the main backend's
+	 * `/api/global_codes` endpoint expects.
+	 */
+	private _buildGlobalCodesUrl(f: FieldDef, q: string): string | null {
+		if (f.type !== 'code-search' && f.type !== 'coded') { return null; }
+		let raw = (f.lookupConfig?.system || '').toUpperCase();
+		if (!raw) {
+			const fhirSystem = (f as unknown as { fhirMapping?: { system?: string } }).fhirMapping?.system || '';
+			if (/icd-10-cm/i.test(fhirSystem)) { raw = 'ICD10_CM'; }
+			else if (/icd-9/i.test(fhirSystem)) { raw = 'ICD9_CM'; }
+			else if (/ama-assn.*cpt|cpt-?4/i.test(fhirSystem)) { raw = 'CPT'; }
+			else if (/loinc/i.test(fhirSystem)) { raw = 'LOINC'; }
+			else if (/cvx/i.test(fhirSystem)) { raw = 'CVX'; }
+			else if (/hcpcs/i.test(fhirSystem)) { raw = 'HCPCS'; }
+			else if (/snomed/i.test(fhirSystem)) { raw = 'SNOMED'; }
+			else { raw = 'ICD10_CM'; }
+		}
+		// /api/global_codes uses short codeType names (ICD10, ICD9) rather than
+		// the ciyex-codes enum (ICD10_CM, ICD9_CM).
+		const codeTypeMap: Record<string, string> = { ICD10_CM: 'ICD10', ICD10: 'ICD10', ICD9_CM: 'ICD9', ICD9: 'ICD9' };
+		const codeType = codeTypeMap[raw] || raw;
+		const enc = encodeURIComponent(q);
+		return `/api/global_codes/search?q=${enc}&codeType=${encodeURIComponent(codeType)}&page=0&size=20`;
 	}
 
 	/**
