@@ -146,9 +146,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 					{ key: 'materialTitle', label: 'Topic / Title', aliases: ['materialTitle', 'topic', 'title', 'materialName'] },
 					{ key: 'category', label: 'Category', aliases: ['category', 'materialCategory'] },
+					{ key: 'deliveryMethod', label: 'Delivery Method', aliases: ['deliveryMethod', 'method', 'deliveryMethodDisplay'] },
+					{ key: 'educator', label: 'Educator', aliases: ['educatorName', 'educator', 'educatorDisplay', 'providerName', 'educatorId'] },
 					{ key: 'dateProvided', label: 'Date Provided', aliases: ['dateProvided', 'assignedDate', 'dateAssigned', 'createdAt'] },
-					{ key: 'deliveryMethod', label: 'Delivery Method', aliases: ['deliveryMethod', 'delivery_method'] },
-					{ key: 'educator', label: 'Educator', aliases: ['educatorName', 'educatorDisplay', 'educator', 'educatorId'] },
 				],
 			},
 			// Messaging uses the FHIR Communication resource via the generic FHIR controller
@@ -1623,9 +1623,25 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		tabKey: 'denials',
 		sections: [
 			{
-				key: 'denial-header', title: 'Denial Information', columns: 3, visible: true, collapsible: false, fields: [
+				key: 'denial', title: 'Denial Information', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'identifier', label: 'Claim Number', type: 'text', required: true, placeholder: 'Original claim #' },
+					{ key: 'serviceDate', label: 'Service Date', type: 'date' },
+					{ key: 'denialDate', label: 'Denial Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'denialReason', label: 'Denial Reason', type: 'text', required: true, placeholder: 'CARC / RARC code or text' },
+					{ key: 'totalAmount', label: 'Denied Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'payerId', label: 'Payer', type: 'lookup', placeholder: 'Search payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
 					{
-						key: 'status', label: 'Status', type: 'select', required: true, showInTable: true, options: [
+						key: 'appealStatus', label: 'Appeal Status', type: 'select', options: [
+							{ label: 'Not Appealed', value: 'not-appealed' },
+							{ label: 'Appeal Pending', value: 'appeal-pending' },
+							{ label: 'Appeal Approved', value: 'appeal-approved' },
+							{ label: 'Appeal Denied', value: 'appeal-denied' },
+						]
+					},
+					// Additional ClaimResponse fields ported from ciyex-ehr-ui so the
+					// denials create/edit form is no longer missing fields (issue 14).
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Active', value: 'active' },
 							{ label: 'Cancelled', value: 'cancelled' },
 							{ label: 'Draft', value: 'draft' },
@@ -1633,49 +1649,48 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'outcome', label: 'Outcome', type: 'select', required: true, showInTable: true, options: [
+						key: 'outcome', label: 'Outcome', type: 'select', options: [
 							{ label: 'Queued', value: 'queued' },
 							{ label: 'Complete', value: 'complete' },
 							{ label: 'Error', value: 'error' },
 							{ label: 'Partial', value: 'partial' },
 						]
 					},
-					{ key: 'disposition', label: 'Disposition', type: 'textarea', placeholder: 'Enter your message' },
-					{ key: 'created', label: 'Response Date', type: 'datetime', required: true, showInTable: true, defaultValue: () => new Date().toISOString().slice(0, 16) },
-					{ key: 'insurer', label: 'Insurer', type: 'lookup', placeholder: 'Search Insurer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name', searchable: true } },
-					// Stored as a plain string reference (e.g. "Claim/123"); kept as text
-					// to avoid HAPI validating that the referenced Claim exists (ciyex V134/V136).
+					{ key: 'disposition', label: 'Disposition', type: 'textarea', colSpan: 2 },
+					{ key: 'created', label: 'Response Date', type: 'date' },
+					{ key: 'insurer', label: 'Insurer', type: 'lookup', placeholder: 'Search insurer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
 					{ key: 'request', label: 'Original Claim Ref', type: 'text', placeholder: 'e.g. Claim/123' },
 					{ key: 'preAuthRef', label: 'Pre-Auth Reference', type: 'text' },
 					{
 						key: 'use', label: 'Use', type: 'select', options: [
 							{ label: 'Claim', value: 'claim' },
 							{ label: 'Pre-authorization', value: 'preauthorization' },
-							{ label: 'Pre-determination', value: 'predetermination' },
+							{ label: 'Predetermination', value: 'predetermination' },
 						]
 					},
 					{
-						key: 'type', label: 'Claim Type', type: 'select', showInTable: true, options: [
+						key: 'type', label: 'Claim Type', type: 'select', options: [
 							{ label: 'Professional', value: 'professional' },
 							{ label: 'Institutional', value: 'institutional' },
-							{ label: 'Oral/Dental', value: 'oral' },
+							{ label: 'Oral', value: 'oral' },
 						]
 					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
 			{
-				key: 'denial-adjudication', title: 'Adjudication Summary', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'totalSubmitted', label: 'Submitted Amount', type: 'number', placeholder: '0.00', showInTable: true },
+				key: 'adjudication', title: 'Adjudication Summary', columns: 2, visible: true, collapsible: true, fields: [
+					{ key: 'totalSubmitted', label: 'Submitted Amount', type: 'number', placeholder: '0.00' },
 					{ key: 'totalBenefit', label: 'Benefit Amount', type: 'number', placeholder: '0.00' },
-					{ key: 'paymentAmount', label: 'Payment Amount', type: 'number', placeholder: '0.00', showInTable: true },
+					{ key: 'paymentAmount', label: 'Payment Amount', type: 'number', placeholder: '0.00' },
 					{ key: 'paymentDate', label: 'Payment Date', type: 'date' },
 					{ key: 'adjustmentAmount', label: 'Adjustment', type: 'number', placeholder: '0.00' },
 					{ key: 'adjustmentReason', label: 'Adjustment Reason', type: 'text' },
 				],
 			},
 			{
-				key: 'denial-notes', title: 'Process Notes', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'processNote', label: 'Process Note', type: 'textarea' },
+				key: 'process-notes', title: 'Process Notes', columns: 2, visible: true, collapsible: true, fields: [
+					{ key: 'processNote', label: 'Process Note', type: 'textarea', colSpan: 2 },
 					{ key: 'errorCode', label: 'Error Code', type: 'text' },
 				],
 			},
