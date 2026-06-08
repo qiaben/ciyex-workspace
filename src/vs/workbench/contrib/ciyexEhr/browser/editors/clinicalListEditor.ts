@@ -47,6 +47,16 @@ export interface FormFieldDef {
 	required?: boolean;
 	placeholder?: string;
 	options?: Array<{ label: string; value: string }>;
+	/** For 'select' type: load the dropdown options from this API endpoint
+	 * (e.g. /api/inventory/categories). Response may be an array or
+	 * { data: { content: [...] } }. Each item is mapped via
+	 * {@link optionsLabelField} (default 'name') and {@link optionsValueField}
+	 * (default 'id'). Lets a select behave like the ehr-ui native dropdowns. */
+	optionsApiPath?: string;
+	/** For 'select' with {@link optionsApiPath}: item field to show. Default 'name'. */
+	optionsLabelField?: string;
+	/** For 'select' with {@link optionsApiPath}: item field used as the value. Default 'id'. */
+	optionsValueField?: string;
 	/** For 'search' type: API path to search. Expects { data: { content: [...] } } or array */
 	searchApiPath?: string;
 	/** For 'search' type: which field to display from results */
@@ -1168,20 +1178,46 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 			let inputEl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
-			if (field.type === 'select' && field.options) {
+			if (field.type === 'select' && (field.options || field.optionsApiPath)) {
 				// Use the shared custom dropdown instead of a native <select>.
 				// Native <option> popups are rendered by the OS using its own
 				// colour scheme — on dark workbench themes that produces faint
 				// grey-on-grey non-highlighted options, which the QA team
 				// flagged as the unreadable dropdown across every create/edit
 				// form drawer.
-				inputEl = createCustomDropdown({
+				// `dynOptions` is the live array the dropdown reads on every open;
+				// for optionsApiPath fields we start empty and fill it after the
+				// fetch resolves (issue #13: Category/Location/Supplier dropdowns).
+				const dynOptions: Array<{ label: string; value: string }> = field.options ? [...field.options] : [];
+				const dropdown = createCustomDropdown({
 					parent: group,
-					options: field.options,
+					options: dynOptions,
 					initialValue: '',
 					placeholder: `Select ${field.label}...`,
 					triggerStyle: inputStyle + 'min-width:200px;',
 				});
+				inputEl = dropdown;
+				if (field.optionsApiPath) {
+					const labelField = field.optionsLabelField || 'name';
+					const valueField = field.optionsValueField || 'id';
+					void (async () => {
+						try {
+							const res = await this.apiService.fetch(`${field.optionsApiPath}?page=0&size=200`);
+							if (!res.ok) { return; }
+							const data = await res.json();
+							const wrapper = data?.data ?? data;
+							const list = (wrapper?.content || (Array.isArray(wrapper) ? wrapper : [])) as Array<Record<string, unknown>>;
+							for (const item of list) {
+								const value = item[valueField];
+								if (value === undefined || value === null) { continue; }
+								dynOptions.push({ label: String(item[labelField] ?? value), value: String(value) });
+							}
+							// Re-assert the current value so a seeded edit value now
+							// resolves to its freshly-loaded label.
+							dropdown.value = dropdown.value;
+						} catch { /* leave dropdown empty on failure */ }
+					})();
+				}
 			} else if (field.type === 'textarea') {
 				inputEl = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				// Issue #17: 60px was too tall — the prescription dialog felt

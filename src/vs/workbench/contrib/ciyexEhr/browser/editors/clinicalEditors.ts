@@ -2309,11 +2309,16 @@ export class CodesEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['code', 'codeType', 'modifier', 'shortDescription', 'description', 'category', 'relateTo', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Issue #12: Description used to be the only flexible column (2fr) so it
+		// absorbed all slack and left a huge gap between Type and Category. Add a
+		// Modifier column and let Description + Category share the flex so the
+		// columns read evenly instead of spread far apart.
 		columns: [
 			{ key: 'code', label: 'Code', width: '100px' },
 			{ key: 'codeType', label: 'Type', width: '80px' },
-			{ key: 'description', label: 'Description', width: '2fr' },
-			{ key: 'category', label: 'Category', width: '130px' },
+			{ key: 'modifier', label: 'Modifier', width: '90px' },
+			{ key: 'description', label: 'Description', width: 'minmax(0,2fr)' },
+			{ key: 'category', label: 'Category', width: 'minmax(0,1fr)' },
 			{ key: 'active', label: 'Active', width: '80px' },
 		],
 		statusTabs: [
@@ -2404,14 +2409,16 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		refetchOnEdit: true,
 		// Mirrors ciyex-ehr-ui Inventory.tsx columns exactly: Name | SKU | Stock |
 		// Min | Unit | Category | Location | Status (Actions provided automatically).
+		// Issue #13: distribute the flex across Name/Category/Location instead of
+		// letting Name (the only fr column) absorb all slack and leave big gaps.
 		columns: [
-			{ key: 'name', label: 'Name', width: '1.4fr' },
+			{ key: 'name', label: 'Name', width: 'minmax(0,1.6fr)' },
 			{ key: 'sku', label: 'SKU', width: '110px' },
 			{ key: 'stockOnHand', label: 'Stock', width: '70px' },
 			{ key: 'minStock', label: 'Min', width: '60px' },
 			{ key: 'unit', label: 'Unit', width: '80px' },
-			{ key: 'categoryName', label: 'Category', width: '110px' },
-			{ key: 'locationName', label: 'Location', width: '110px' },
+			{ key: 'categoryName', label: 'Category', width: 'minmax(0,1fr)' },
+			{ key: 'locationName', label: 'Location', width: 'minmax(0,1fr)' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
 		statusTabs: [
@@ -2483,9 +2490,11 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'Average', value: 'avg' },
 				], defaultValue: 'fifo'
 			},
-			{ key: 'categoryId', label: 'Category ID', type: 'number', aliases: ['category.id'] },
-			{ key: 'locationId', label: 'Location ID', type: 'number', aliases: ['location.id'] },
-			{ key: 'supplierId', label: 'Supplier ID', type: 'number', aliases: ['supplier.id'] },
+			// Issue #13: Category / Location / Supplier are dropdowns loaded from
+			// the backend (matching ciyex-ehr-ui) instead of free-text ID inputs.
+			{ key: 'categoryId', label: 'Category', type: 'select', optionsApiPath: '/api/inventory/categories', aliases: ['category.id'] },
+			{ key: 'locationId', label: 'Location', type: 'select', optionsApiPath: '/api/inventory/locations', aliases: ['location.id'] },
+			{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers', aliases: ['supplier.id'] },
 		],
 		actions: [
 			{
@@ -2595,10 +2604,9 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			{ key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'Primary contact' },
 			{ key: 'email', label: 'Email', type: 'text', placeholder: 'contact@supplier.com' },
 			{ key: 'phone', label: 'Phone', type: 'text', placeholder: '(555) 123-4567' },
-			{ key: 'address', label: 'Address', type: 'text', placeholder: 'Street address' },
-			{ key: 'website', label: 'Website', type: 'text', placeholder: 'https://...' },
-			{ key: 'accountNumber', label: 'Account #', type: 'text' },
-			{ key: 'paymentTerms', label: 'Payment Terms', type: 'text', placeholder: 'Net 30, COD...' },
+			// Address / Website / Account # / Payment Terms removed to match the
+			// ciyex-ehr-ui Suppliers form (issue #16) — Name | Contact | Email |
+			// Phone | Status | Notes only.
 			{
 				key: 'isActive', label: 'Status', type: 'select', options: [
 					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
@@ -2696,6 +2704,17 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			{ key: 'equipmentName', label: 'Equipment Name', type: 'text', required: true, placeholder: 'Equipment...' },
+			// Equipment ID + Category + Last/Next Service Date added to match the
+			// ciyex-ehr-ui New Maintenance Task form (issue #17).
+			{ key: 'equipmentId', label: 'Equipment ID', type: 'text', placeholder: 'e.g. EQ-001 or XR-2024' },
+			{
+				key: 'category', label: 'Category', type: 'select', options: [
+					{ label: 'Preventive', value: 'preventive' },
+					{ label: 'Corrective', value: 'corrective' },
+					{ label: 'Calibration', value: 'calibration' },
+					{ label: 'Inspection', value: 'inspection' },
+				], defaultValue: 'preventive',
+			},
 			{ key: 'location', label: 'Location', type: 'text', placeholder: 'Where is the equipment?' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
@@ -2707,7 +2726,9 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'assignee', label: 'Assignee', type: 'text', placeholder: 'Person responsible' },
 			{ key: 'vendor', label: 'Vendor', type: 'text', placeholder: 'External vendor' },
-			{ key: 'scheduledDate', label: 'Scheduled Date', type: 'date' },
+			{ key: 'scheduledDate', label: 'Due Date', type: 'date' },
+			{ key: 'lastServiceDate', label: 'Last Service Date', type: 'date' },
+			{ key: 'nextServiceDate', label: 'Next Service Date', type: 'date' },
 			{ key: 'completedDate', label: 'Completed Date', type: 'date' },
 			{ key: 'cost', label: 'Cost ($)', type: 'number', placeholder: '0.00' },
 			{
