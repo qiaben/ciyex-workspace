@@ -598,6 +598,17 @@ export class AppointmentsEditor extends EditorPane {
 			});
 			this.editingStatusId = null;
 			await this._loadAppointments();
+			// When the new status creates an encounter (e.g. Checked-in), redirect
+			// to the encounter screen for that appointment so the provider lands on
+			// the chart instead of having to open it manually. Prefer the backend's
+			// flag, falling back to the built-in status table if it isn't provided.
+			const loaded = this.statusOptions.find(s => s.value === newStatus);
+			const fallback = FALLBACK_STATUS_OPTIONS.find(s => s.value === newStatus);
+			const triggersEncounter = loaded?.triggersEncounter ?? fallback?.triggersEncounter ?? false;
+			if (triggersEncounter) {
+				const row = this.rows.find(r => r.id === id);
+				if (row) { this._openVisitChart(row); }
+			}
 		} catch { /* */ }
 	}
 

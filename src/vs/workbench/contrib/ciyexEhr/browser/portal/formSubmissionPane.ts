@@ -64,10 +64,17 @@ export class FormSubmissionPane extends ViewPane {
 		const lbl = DOM.append(header, DOM.$('span'));
 		lbl.textContent = 'Pending';
 		lbl.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.4px;';
-		const openBtn = DOM.append(header, DOM.$('button'));
+		const btnGroup = DOM.append(header, DOM.$('div'));
+		btnGroup.style.cssText = 'display:flex;gap:4px;';
+		const sendBtn = DOM.append(btnGroup, DOM.$('button'));
+		sendBtn.textContent = '+ Send Intake';
+		sendBtn.title = 'Send an intake form to a patient by SMS or email';
+		sendBtn.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;';
+		sendBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.sendIntakeForm'));
+		const openBtn = DOM.append(btnGroup, DOM.$('button'));
 		openBtn.textContent = 'View All';
 		openBtn.title = 'Open Form Submissions full page';
-		openBtn.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;';
+		openBtn.style.cssText = 'font-size:10px;padding:2px 6px;background:var(--vscode-button-secondaryBackground,rgba(128,128,128,0.2));color:var(--vscode-button-secondaryForeground,inherit);border:none;border-radius:3px;cursor:pointer;';
 		openBtn.addEventListener('click', () => this.commandService.executeCommand('ciyex.openFormSubmissions'));
 
 		this.listEl = DOM.append(this.container, DOM.$('div'));

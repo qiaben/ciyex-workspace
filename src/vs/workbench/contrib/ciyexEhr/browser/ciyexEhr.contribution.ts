@@ -26,6 +26,8 @@ import './ciyexCommands.js';
 
 // Register patient search (Cmd+K)
 import './patientSearch.js';
+// Register "Send Intake Form to Patient"
+import './intakeForm.js';
 
 // Register settings commands and Admin menu
 import './ciyexSettingsCommands.js';

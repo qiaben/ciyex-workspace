@@ -36,6 +36,9 @@ export class EncounterListPane extends ViewPane {
 	private dateFrom = '';
 	private dateTo = '';
 	private visibleCount = SIDEBAR_INITIAL_PAGE_SIZE;
+	// patient id → display name, used to backfill encounter rows whose backend
+	// display fields are empty (common right after creating an encounter).
+	private patientNameById = new Map<string, string>();
 
 	// FHIR type code → readable label
 	private static TYPE_MAP: Record<string, string> = {
@@ -208,11 +211,49 @@ export class EncounterListPane extends ViewPane {
 				const db = new Date(String(b.encounterDate || b.startDate || b.start || '0')).getTime();
 				return db - da;
 			});
+			// Backfill patient names for encounters whose backend display fields are
+			// empty (common right after creating one, before the FHIR subject
+			// reference is denormalized) so the rail doesn't show "Unknown".
+			const needsNames = this.allItems.some(it => !this._patientDisplayOf(it) && this._patientIdOf(it));
+			if (needsNames) { await this._ensurePatientNameMap(); }
 			this.loaded = true;
 			this._renderList('');
 		} catch {
 			this.listEl.textContent = 'Waiting for login...';
 		}
+	}
+
+	/** Patient display name from the encounter's backend fields (may be empty). */
+	private _patientDisplayOf(item: Record<string, unknown>): string {
+		return String(item.patientRefDisplay || item.patientDisplay || item.patientName || item.subjectDisplay || '');
+	}
+
+	/** Patient id for an encounter row, normalized (no `Patient/` prefix). */
+	private _patientIdOf(item: Record<string, unknown>): string {
+		return String(item.patientId || item.patientRef || item.subjectRef || item.subject || '').replace('Patient/', '');
+	}
+
+	/** Patient name for a row: prefer backend display, else the id→name fallback. */
+	private _patientNameOf(item: Record<string, unknown>): string {
+		const display = this._patientDisplayOf(item);
+		if (display) { return display; }
+		const id = this._patientIdOf(item);
+		return (id && this.patientNameById.get(id)) || '';
+	}
+
+	/** Populate {@link patientNameById} from the patients API (best-effort). */
+	private async _ensurePatientNameMap(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/patients?page=0&size=500');
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+			for (const p of list) {
+				const id = String(p.id ?? p.patientId ?? '').replace('Patient/', '');
+				const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || '');
+				if (id && name) { this.patientNameById.set(id, name); }
+			}
+		} catch { /* best-effort: leave rows as "Unknown" if patients can't be fetched */ }
 	}
 
 	private _renderList(search: string): void {
@@ -250,7 +291,7 @@ export class EncounterListPane extends ViewPane {
 			row.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(128,128,128,0.06);position:relative;';
 
 			// Avatar (patient initials)
-			const patName = String(item.patientRefDisplay || item.patientDisplay || item.patientName || item.subjectDisplay || '');
+			const patName = this._patientNameOf(item);
 			const provName = String(item.providerDisplay || item.encounterProvider || item.provider || '').replace('Practitioner/', '');
 			const initials = patName.split(' ').map(w => (w[0] || '')).join('').substring(0, 2).toUpperCase() || '?';
 			const hue = Math.abs(patName.split('').reduce((h, c) => (h << 5) - h + c.charCodeAt(0), 0)) % 360;

@@ -601,6 +601,7 @@ export class ScheduleSidebarPane extends ViewPane {
 					if (apt.patientId) {
 						items.push({ symbol: 'person', label: 'Open Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', apt.patientId, apt.patientName).catch(() => { }) });
 					}
+					items.push({ symbol: 'mail', label: 'Send Intake Form', onClick: () => this.commandService.executeCommand('ciyex.sendIntakeForm', { patientId: apt.patientId, patientName: apt.patientName }).catch(() => { }) });
 					items.push({ symbol: 'edit', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
 					items.push({
 						symbol: 'pulse', label: 'Record Vitals', disabled: !apt.encounterId && isTerminal,

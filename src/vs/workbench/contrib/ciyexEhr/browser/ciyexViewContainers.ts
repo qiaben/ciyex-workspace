@@ -29,7 +29,7 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	calendar: registerIcon('ciyex-calendar', Codicon.calendar, localize('cCalendar', 'Calendar')),
 	appointments: registerIcon('ciyex-appointments', Codicon.checklist, localize('cAppointments', 'Appointments')),
 	patients: registerIcon('ciyex-patients', Codicon.organization, localize('cPatients', 'Patients')),
-	encounters: registerIcon('ciyex-encounters', Codicon.book, localize('cEncounters', 'Encounters')),
+	encounters: registerIcon('ciyex-encounters', Codicon.note, localize('cEncounters', 'Encounters')),
 	tasks: registerIcon('ciyex-tasks', Codicon.tasklist, localize('cTasks', 'Tasks')),
 	messaging: registerIcon('ciyex-messaging', Codicon.mail, localize('cMessaging', 'Messaging')),
 	portalMgmt: registerIcon('ciyex-portal-mgmt', Codicon.shield, localize('cPortalMgmt', 'Portal Management')),

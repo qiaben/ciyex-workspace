@@ -19,7 +19,9 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown } from '../customDropdown.js';
+import { PaginationControl } from '../paginationControl.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -1868,6 +1870,11 @@ export class PatientChartEditor extends EditorPane {
 	// prescriber NAME instead of a bare id like "13656" (QA issue 9).
 	private readonly _unresolvedProviderIds = new Set<string>();
 	private readonly _attemptedProviderIds = new Set<string>();
+	// Disposables scoped to one Dashboard render — pagination controls for the
+	// "Recent Activity" and "Upcoming" feeds. Cleared (not disposed) at the
+	// start of every dashboard render so re-rendering the tab doesn't leak the
+	// previous render's pagers.
+	private readonly _dashboardDisposables = this._register(new DisposableStore());
 
 	constructor(
 		group: IEditorGroup,
@@ -3058,6 +3065,10 @@ export class PatientChartEditor extends EditorPane {
 	// --- Dashboard view ---
 
 	private _renderDashboard(): void {
+		// Dispose the previous render's pagination controls before building new
+		// ones (this method runs on every tab switch back to the dashboard).
+		this._dashboardDisposables.clear();
+
 		// Recent & Upcoming card
 		const card = DOM.append(this.mainEl, DOM.$('div'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:20px;margin-bottom:20px;';
@@ -3102,13 +3113,131 @@ export class PatientChartEditor extends EditorPane {
 		void this._loadRecentActivity(recentList);
 		void this._loadUpcomingAppointments(upList);
 
-		// Summary cards grid
+		// Summary cards grid — mirrors the OpenEMR patient summary dashboard,
+		// one widget per clinical domain. Each card pulls its own resource and
+		// links to the matching chart tab via "View all".
 		const cardsGrid = DOM.append(this.mainEl, DOM.$('div'));
 		cardsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:16px;';
+		this._renderDemographicsCard(cardsGrid);
 		this._renderSummaryCard(cardsGrid, 'allergies', '\u{1F6E1}\u{FE0F}', 'Allergies', 'AllergyIntolerance', ['allergyName', 'name', 'code', 'substance'], 'NKA — No Known Allergies');
 		this._renderSummaryCard(cardsGrid, 'problems', '\u{1F90D}', 'Medical Problems', 'Condition', ['conditionName', 'condition', 'code', 'display'], 'No problems recorded');
+		this._renderSummaryCard(cardsGrid, 'medications', '\u{1F48A}', 'Medications', 'MedicationRequest', ['medicationName', 'medication', 'name', 'code', 'display'], 'No active medications');
+		this._renderSummaryCard(cardsGrid, 'vitals', '\u{2764}\u{FE0F}', 'Vitals', 'Observation', ['vitalName', 'observationName', 'name', 'code', 'display', 'value'], 'No vitals recorded');
+		this._renderSummaryCard(cardsGrid, 'labs', '\u{1F9EA}', 'Lab Results', 'DiagnosticReport', ['testName', 'reportName', 'name', 'code', 'display'], 'No lab results');
+		this._renderSummaryCard(cardsGrid, 'immunizations', '\u{1F489}', 'Immunizations', 'Immunization', ['vaccineName', 'vaccine', 'name', 'code', 'display'], 'No immunizations');
+		this._renderSummaryCard(cardsGrid, 'procedures', '\u{1FA7A}', 'Procedures', 'Procedure', ['procedureName', 'procedure', 'name', 'code', 'display'], 'No procedures');
+		this._renderSummaryCard(cardsGrid, 'documents', '\u{1F4C4}', 'Documents', 'DocumentReference', ['description', 'title', 'name', 'type'], 'No documents');
 		this._renderSummaryCard(cardsGrid, 'insurance', '\u{1F512}', 'Insurance', 'Coverage', ['payerName', 'insurerName', 'organizationDisplay', 'planName'], 'No insurance on file');
 		this._renderPortalAccountCard(cardsGrid);
+	}
+
+	/**
+	 * Demographics / contact summary card built from the already-loaded patient
+	 * record (no fetch). Mirrors the OpenEMR demographics widget — the key
+	 * identity + contact fields with a "View all" link to the Demographics tab.
+	 */
+	private _renderDemographicsCard(parent: HTMLElement): void {
+		const pd = (this.patientData || {}) as Record<string, unknown>;
+		const card = DOM.append(parent, DOM.$('div'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
+
+		const hdr = DOM.append(card, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
+		const titleRow = DOM.append(hdr, DOM.$('div'));
+		titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		const ic = DOM.append(titleRow, DOM.$('span'));
+		ic.textContent = '\u{1F464}';
+		ic.style.cssText = 'font-size:16px;';
+		const t = DOM.append(titleRow, DOM.$('span'));
+		t.textContent = 'Demographics';
+		t.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);';
+		const viewAll = DOM.append(hdr, DOM.$('a'));
+		viewAll.textContent = 'View all';
+		viewAll.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
+		viewAll.addEventListener('click', () => this._navigate('demographics'));
+
+		const body = DOM.append(card, DOM.$('div'));
+		body.style.cssText = 'font-size:12px;color:var(--vscode-foreground);min-height:40px;';
+
+		const dob = this._formatDate(pd.dateOfBirth) || String(pd.dateOfBirth || '');
+		const address = [pd.addressLine1 || pd.address || pd.street, pd.city, pd.state, pd.postalCode || pd.zip || pd.zipcode]
+			.map(v => String(v || '').trim()).filter(Boolean).join(', ');
+		const rows: Array<[string, string]> = [
+			['MRN', String(pd.mrn || pd.medicalRecordNumber || pd.id || this.patientId)],
+			['DOB', dob],
+			['Sex', this._genderLabel(String(pd.gender || ''))],
+			['Phone', String(pd.phoneNumber || pd.phone || '')],
+			['Email', String(pd.email || '')],
+			['Address', address],
+		];
+		let painted = 0;
+		for (const [label, value] of rows) {
+			if (!value) { continue; }
+			painted++;
+			const row = DOM.append(body, DOM.$('div'));
+			row.style.cssText = 'display:flex;gap:6px;padding:3px 0;';
+			const l = DOM.append(row, DOM.$('span'));
+			l.textContent = `${label}:`;
+			l.style.cssText = 'color:var(--vscode-descriptionForeground);flex-shrink:0;min-width:54px;';
+			const v = DOM.append(row, DOM.$('span'));
+			v.textContent = value;
+			v.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		}
+		if (painted === 0) { body.textContent = 'No demographics on file'; }
+	}
+
+	/**
+	 * Wire a vertical list into `parent` backed by a {@link PaginationControl}.
+	 * Returns an `update(items, done?)` callback: call it whenever the data set
+	 * changes (e.g. as async sources resolve). The control is registered to
+	 * `_dashboardDisposables` so it's cleaned up on the next dashboard render.
+	 *
+	 * While `done` is false the list shows a "Loading…" placeholder for an empty
+	 * set; once `done` is true an empty set shows `opts.emptyMessage` instead.
+	 */
+	private _createPaginatedFeed<T>(
+		parent: HTMLElement,
+		renderRow: (item: T, container: HTMLElement) => void,
+		opts: { pageSize?: number; itemLabel?: string; emptyMessage?: string },
+	): (items: readonly T[], done?: boolean) => void {
+		DOM.clearNode(parent);
+		const listEl = DOM.append(parent, DOM.$('div'));
+		const pagerHost = DOM.append(parent, DOM.$('div'));
+
+		let current: readonly T[] = [];
+		let finished = false;
+
+		const showMessage = (text: string): void => {
+			const el = DOM.append(listEl, DOM.$('div'));
+			el.textContent = text;
+			el.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
+		};
+
+		const renderPage = (): void => {
+			DOM.clearNode(listEl);
+			if (current.length === 0) {
+				showMessage(finished ? (opts.emptyMessage ?? '') : 'Loading...');
+				return;
+			}
+			for (const item of pager.slice(current)) { renderRow(item, listEl); }
+		};
+
+		const pager = this._dashboardDisposables.add(new PaginationControl({
+			pageSize: opts.pageSize ?? 5,
+			pageSizeOptions: [5, 10, 25],
+			itemLabel: opts.itemLabel ?? 'items',
+			showPageNumbers: false,
+			onChange: () => renderPage(),
+		}));
+		pagerHost.appendChild(pager.element);
+		renderPage();
+
+		return (items: readonly T[], done = true) => {
+			current = items;
+			finished = done;
+			pager.setTotal(items.length);
+			renderPage();
+		};
 	}
 
 	private async _loadRecentActivity(parent: HTMLElement): Promise<void> {
@@ -3119,10 +3248,13 @@ export class PatientChartEditor extends EditorPane {
 		// We merge them into a single timeline, sorted newest-first.
 		const sources: Array<{ ep: string; emoji: string; build: (it: Record<string, unknown>) => ActivityItem | null }> = [
 			{
-				ep: `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=5`,
+				ep: `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F4C5}',
 				build: (a) => ({
-					title: `Appointment: ${this._displayText(a.appointmentType) || this._displayText(a.visitType) || 'Visit'}`,
+					// Show just the visit type (Consultation, Telehealth, Annual
+					// Physical, …) — the calendar icon already marks it as an
+					// appointment, so the redundant "Appointment:" prefix is dropped.
+					title: this._displayText(a.appointmentType) || this._displayText(a.visitType) || 'Appointment',
 					description: String(a.appointmentStartTime || this._formatDate(a.appointmentStartDate) || ''),
 					timestamp: this._formatDate(a.appointmentStartDate) || '',
 					sortKey: this._toEpoch(a.appointmentStartDate),
@@ -3131,7 +3263,7 @@ export class PatientChartEditor extends EditorPane {
 				}),
 			},
 			{
-				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=5`,
+				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F4CB}',
 				build: (e) => ({
 					title: `Encounter: ${this._displayText(e.visitType) || this._displayText(e.type) || 'Visit'}`,
@@ -3143,7 +3275,7 @@ export class PatientChartEditor extends EditorPane {
 				}),
 			},
 			{
-				ep: `${FHIR_MAP['AllergyIntolerance']}/patient/${this.patientId}?page=0&size=5`,
+				ep: `${FHIR_MAP['AllergyIntolerance']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F6A8}',
 				build: (a) => {
 					// Allergy display can come back as a CodeableConcept object
@@ -3164,7 +3296,7 @@ export class PatientChartEditor extends EditorPane {
 				},
 			},
 			{
-				ep: `${FHIR_MAP['Condition']}/patient/${this.patientId}?page=0&size=5`,
+				ep: `${FHIR_MAP['Condition']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{26A0}\u{FE0F}',
 				build: (c) => {
 					const name = this._displayText(c.conditionName) || this._displayText(c.condition) || this._displayText(c.code) || this._displayText(c.display);
@@ -3180,7 +3312,7 @@ export class PatientChartEditor extends EditorPane {
 				},
 			},
 			{
-				ep: `${FHIR_MAP['MedicationRequest']}/patient/${this.patientId}?page=0&size=5`,
+				ep: `${FHIR_MAP['MedicationRequest']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F48A}',
 				build: (m) => ({
 					title: `Medication: ${this._displayText(m.medicationName) || this._displayText(m.medication) || ''}`,
@@ -3193,8 +3325,8 @@ export class PatientChartEditor extends EditorPane {
 			},
 		];
 
-		const renderRow = (act: ActivityItem): void => {
-			const row = DOM.append(parent, DOM.$('div'));
+		const renderRow = (act: ActivityItem, container: HTMLElement): void => {
+			const row = DOM.append(container, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);';
 
 			const ic = DOM.append(row, DOM.$('div'));
@@ -3222,15 +3354,14 @@ export class PatientChartEditor extends EditorPane {
 			time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
 		};
 
-		const repaint = (): void => {
-			DOM.clearNode(parent);
+		// Paginated feed over the full merged timeline — no longer capped at 8.
+		const update = this._createPaginatedFeed<ActivityItem>(parent, renderRow, { pageSize: 5, itemLabel: 'records', emptyMessage: 'No recent activity' });
+		const repaint = (done: boolean): void => {
 			acts.sort((a, b) => b.sortKey - a.sortKey);
-			const top = acts.slice(0, 8);
-			if (top.length === 0) { return; }
-			for (const act of top) { renderRow(act); }
+			update(acts, done);
 		};
 
-		// Each source paints its rows as soon as its fetch returns; we no longer
+		// Each source feeds its rows in as soon as its fetch returns; we no longer
 		// block the whole "Recent Activity" section on the slowest endpoint.
 		const tasks = sources.map(async (src) => {
 			try {
@@ -3243,29 +3374,25 @@ export class PatientChartEditor extends EditorPane {
 					const act = src.build(it);
 					if (act && act.title.trim()) { acts.push(act); added = true; }
 				}
-				if (added) { repaint(); }
+				if (added) { repaint(false); }
 			} catch { /* ignore source */ }
 		});
 
 		await Promise.allSettled(tasks);
-		// Final repaint: if every source returned 0 items, show the empty state.
-		if (acts.length === 0) {
-			DOM.clearNode(parent);
-			const empty = DOM.append(parent, DOM.$('div'));
-			empty.textContent = 'No recent activity';
-			empty.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;padding:8px 0;';
-		}
+		// Final repaint flips the feed to "done" so an empty timeline shows the
+		// empty state instead of the loading placeholder.
+		repaint(true);
 	}
 
 	/**
-	 * Right-hand "Upcoming" panel on the Dashboard. Pulls the next 5
-	 * scheduled appointments for the current patient from the same FHIR
-	 * Appointment endpoint as the Appointments tab, and paints them as a
-	 * compact list. Empty state mirrors the ehr-ui dashboard's "Go to
-	 * Appointments" call to action.
+	 * Right-hand "Upcoming" panel on the Dashboard. Pulls the patient's
+	 * scheduled appointments from the same FHIR Appointment endpoint as the
+	 * Appointments tab and paints them as a paginated list (5 per page) so the
+	 * full upcoming schedule is reachable, not just the next few. Empty state
+	 * mirrors the ehr-ui dashboard's "Go to Appointments" call to action.
 	 */
 	private async _loadUpcomingAppointments(parent: HTMLElement): Promise<void> {
-		const ep = `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=10`;
+		const ep = `${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=50`;
 		try {
 			const res = await this.apiService.fetch(ep);
 			if (!res.ok) { throw new Error('appointments fetch failed'); }
@@ -3279,8 +3406,7 @@ export class PatientChartEditor extends EditorPane {
 					return { a, start, ms };
 				})
 				.filter(x => x.ms && x.ms >= todayMs - 24 * 3600 * 1000)
-				.sort((x, y) => x.ms - y.ms)
-				.slice(0, 5);
+				.sort((x, y) => x.ms - y.ms);
 
 			DOM.clearNode(parent);
 			if (items.length === 0) {
@@ -3300,8 +3426,9 @@ export class PatientChartEditor extends EditorPane {
 				return;
 			}
 
-			for (const { a, start } of items) {
-				const row = DOM.append(parent, DOM.$('div'));
+			const renderRow = (item: { a: Record<string, unknown>; start: string }, container: HTMLElement): void => {
+				const { a, start } = item;
+				const row = DOM.append(container, DOM.$('div'));
 				row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,0.08);cursor:pointer;';
 				row.addEventListener('click', () => this._navigate('appointments'));
 
@@ -3330,7 +3457,10 @@ export class PatientChartEditor extends EditorPane {
 				const time = DOM.append(content, DOM.$('div'));
 				time.textContent = this._formatDate(start) || start;
 				time.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
-			}
+			};
+
+			const update = this._createPaginatedFeed<{ a: Record<string, unknown>; start: string }>(parent, renderRow, { pageSize: 5, itemLabel: 'appointments' });
+			update(items, true);
 		} catch {
 			DOM.clearNode(parent);
 			const upBox = DOM.append(parent, DOM.$('div'));
@@ -3346,7 +3476,7 @@ export class PatientChartEditor extends EditorPane {
 		}
 	}
 
-	private _renderSummaryCard(parent: HTMLElement, _key: string, icon: string, title: string, resource: string, displayFields: string | string[], emptyMsg: string): void {
+	private _renderSummaryCard(parent: HTMLElement, navTab: string, icon: string, title: string, resource: string, displayFields: string | string[], emptyMsg: string): void {
 		const fieldList = Array.isArray(displayFields) ? displayFields : [displayFields];
 		const card = DOM.append(parent, DOM.$('div'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px;';
@@ -3366,8 +3496,7 @@ export class PatientChartEditor extends EditorPane {
 		const viewAll = DOM.append(hdr, DOM.$('a'));
 		viewAll.textContent = 'View all';
 		viewAll.style.cssText = 'font-size:11px;color:#3b82f6;cursor:pointer;text-decoration:none;';
-		const tabKey = title === 'Allergies' ? 'allergies' : title === 'Medical Problems' ? 'problems' : 'insurance';
-		viewAll.addEventListener('click', () => this._navigate(tabKey));
+		viewAll.addEventListener('click', () => this._navigate(navTab));
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.setAttribute('data-card-body', resource);

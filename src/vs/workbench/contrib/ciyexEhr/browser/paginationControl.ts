@@ -25,6 +25,11 @@ export interface IPaginationOptions {
 	onChange?: () => void;
 	/** Optional label for the unit being paginated (e.g. "appointments"). */
 	itemLabel?: string;
+	/**
+	 * Whether to render the numbered page buttons (1 2 3 … ). Defaults to true.
+	 * Set false for a compact Prev/Next-only control.
+	 */
+	showPageNumbers?: boolean;
 }
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -39,6 +44,7 @@ export class PaginationControl extends Disposable {
 	private readonly _pageSizeOptions: number[];
 	private readonly _onChange?: () => void;
 	private readonly _itemLabel: string;
+	private readonly _showPageNumbers: boolean;
 
 	constructor(options: IPaginationOptions = {}) {
 		super();
@@ -46,6 +52,7 @@ export class PaginationControl extends Disposable {
 		this._pageSizeOptions = options.pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS;
 		this._onChange = options.onChange;
 		this._itemLabel = options.itemLabel ?? 'items';
+		this._showPageNumbers = options.showPageNumbers ?? true;
 		this.element = DOM.$('div.ciyex-pagination');
 		this.element.style.display = 'none';
 		this.render();
@@ -132,13 +139,15 @@ export class PaginationControl extends Disposable {
 		const totalPages = this.totalPages;
 		mkBtn('Prev', this._page - 1, { disabled: this._page === 1 });
 
-		const pageNumbers = computePageNumbers(this._page, totalPages);
-		for (const item of pageNumbers) {
-			if (item === '...') {
-				const span = DOM.append(pages, DOM.$('span.ciyex-pagination-ellipsis'));
-				span.textContent = '...';
-			} else {
-				mkBtn(String(item), item, { active: item === this._page });
+		if (this._showPageNumbers) {
+			const pageNumbers = computePageNumbers(this._page, totalPages);
+			for (const item of pageNumbers) {
+				if (item === '...') {
+					const span = DOM.append(pages, DOM.$('span.ciyex-pagination-ellipsis'));
+					span.textContent = '...';
+				} else {
+					mkBtn(String(item), item, { active: item === this._page });
+				}
 			}
 		}
 
