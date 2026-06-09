@@ -138,18 +138,22 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			listPath: (pid) => `/api/fhir-resource/medications/patient/${pid}?page=0&size=50`,
 		},
 		insurance: {
-			// Chart editor: tab.key 'insurance' → /api/fhir-resource/insurance
-			// (no TAB_API_SLUG remap). The 'insurance-coverage' read path is a
-			// legacy alias the snapshot uses for fetching; writes must go to
-			// /api/fhir-resource/insurance to match backend tab_field_config.
-			title: 'Insurance Coverage', configKey: 'insurance', basePath: '/api/fhir-resource/insurance', fhirPatientScoped: true,
+			// The Coverage tab_field_config (FHIR paths for save/read) is seeded
+			// under the backend slug 'insurance-coverage' (ciyex V41/V44), NOT
+			// 'insurance'. The chart editor routes both saves and reads through
+			// it via TAB_API_SLUG ('insurance' → 'insurance-coverage'). Writing to
+			// /api/fhir-resource/insurance returns a hollow 201 (no id, nothing
+			// persisted) because the backend can't resolve the field config, and
+			// reading it 400s (HAPI-0524 "subject" param). Use insurance-coverage
+			// for both so Coverage create/read actually resolve.
+			title: 'Insurance Coverage', configKey: 'insurance', basePath: '/api/fhir-resource/insurance-coverage', fhirPatientScoped: true,
 			columns: [
 				{ key: 'payerName', label: 'Payor', width: '2fr' },
 				{ key: 'policyNumber', label: 'Member ID', width: '140px' },
 				{ key: 'groupNumber', label: 'Group #', width: '120px' },
 				{ key: 'insuranceType', label: 'Priority', width: '100px' },
 			],
-			listPath: (pid) => `/api/fhir-resource/insurance/patient/${pid}?page=0&size=20`,
+			listPath: (pid) => `/api/fhir-resource/insurance-coverage/patient/${pid}?page=0&size=20`,
 		},
 		labs: {
 			title: 'Lab Orders', configKey: 'labs', basePath: '/api/fhir-resource/labs', fhirPatientScoped: true,
@@ -193,15 +197,22 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			listPath: (pid) => `/api/fhir-resource/claims/patient/${pid}?page=0&size=50`,
 		},
 		payment: {
-			title: 'Payments', configKey: 'payment', basePath: '/api/fhir-resource/payments', fhirPatientScoped: true,
+			// Payments are NOT a FHIR resource: the backend tab_field_config has no
+			// resource type for 'payments', so POST /api/fhir-resource/payments
+			// 403s ("Cannot determine resource type for tab 'payments'"). The
+			// workspace records payments via POST /api/payments/collect (see the
+			// clinicalEditors PAYMENTS config) and lists them at
+			// /api/payments/transactions/patient/{id}. Create is special-cased in
+			// _savePayment; edit/delete fall through to /api/payments/transactions/{id}.
+			title: 'Payments', configKey: 'payment', basePath: '/api/payments/transactions', fhirPatientScoped: false, nonFhir: true,
 			columns: [
-				{ key: 'paymentDate', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'collectedAt', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
 				{ key: 'amount', label: 'Amount', width: '100px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
-				{ key: 'paymentMethod', label: 'Method', width: '140px' },
-				{ key: 'reference', label: 'Reference', width: '160px' },
+				{ key: 'transactionType', label: 'Type', width: '110px' },
+				{ key: 'paymentMethodType', label: 'Method', width: '130px' },
 				{ key: 'status', label: 'Status', width: '110px' },
 			],
-			listPath: (pid) => `/api/fhir-resource/payments/patient/${pid}?page=0&size=50`,
+			listPath: (pid) => `/api/payments/transactions/patient/${pid}?page=0&size=50`,
 		},
 		demographics: {
 			title: 'Demographics', configKey: 'demographics', basePath: '/api/patients', fhirPatientScoped: false, nonFhir: true,
@@ -578,6 +589,38 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		});
 	}
 
+	/**
+	 * Collect a payment for the current patient. Payments are not a FHIR
+	 * resource — the workspace records them via POST /api/payments/collect
+	 * (mirrors the clinicalEditors PAYMENTS config). Maps the chart-editor
+	 * payment form keys (paymentMethod / amount / reference / …) onto the
+	 * collect endpoint's transaction shape.
+	 */
+	private async _savePayment(values: Record<string, string>): Promise<Response> {
+		// Collect only accepts a fixed method enum; fold the chart form's richer
+		// list down to it so the backend doesn't reject the transaction.
+		const METHOD_MAP: Record<string, string> = {
+			credit_card: 'credit_card', debit_card: 'debit_card', cash: 'cash',
+			check: 'check', eft: 'ach', bank_account: 'ach',
+		};
+		const rawMethod = String(values['paymentMethod'] || '').trim();
+		const payload: Record<string, unknown> = {
+			patientId: this._currentPatientId,
+			amount: Number(values['amount'] || 0),
+			transactionType: 'payment',
+			paymentMethodType: METHOD_MAP[rawMethod] || 'other',
+			description: String(values['description'] || values['payerName'] || '').trim() || undefined,
+			invoiceId: String(values['invoiceNumber'] || '').trim() || undefined,
+			notes: String(values['reference'] || '').trim() || undefined,
+			status: 'completed',
+		};
+		return this.apiService.fetch('/api/payments/collect', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload),
+		});
+	}
+
 	/** Build the create / update URL the same way the full chart editor does. */
 	private _saveUrl(entity: string, existingId: string | undefined): { url: string; method: 'POST' | 'PUT' } {
 		const reg = PatientSnapshotDemoEditor._ENTITY_REGISTRY[entity];
@@ -637,6 +680,23 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 					} catch { /* */ }
 					if (!existingId && saved) { this._trackCreated(entity, { ...next, ...saved }); }
 					this.notificationService.notify({ severity: Severity.Info, message: `Encounter ${existingId ? 'updated' : 'created'}.` });
+					this._rerender();
+					return;
+				}
+				// Payment create routes through /api/payments/collect (not a FHIR
+				// resource). Edits fall through to the generic PUT on
+				// /api/payments/transactions/{id}.
+				if (entity === 'payment' && !existingId) {
+					const res = await this._savePayment(next);
+					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+					let saved: Record<string, unknown> | null = null;
+					try {
+						const j = await res.json();
+						const cand = (j?.data ?? j) as Record<string, unknown> | null;
+						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+					} catch { /* non-JSON body */ }
+					if (saved) { this._trackCreated(entity, { ...next, ...saved }); }
+					this.notificationService.notify({ severity: Severity.Info, message: 'Payment collected.' });
 					this._rerender();
 					return;
 				}
@@ -950,7 +1010,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			this._fetch(`/api/fhir-resource/vitals/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/encounters/patient/${patientId}?page=0&size=50`),
 			this._fetch(`/api/fhir-resource/labs/patient/${patientId}?page=0&size=20`),
-			this._fetch(`/api/fhir-resource/payments/patient/${patientId}?page=0&size=20`),
+			this._fetch(`/api/payments/transactions/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
 			this._fetch(`/api/fhir-resource/insurance-coverage/patient/${patientId}?page=0&size=1`),
 		]);
