@@ -707,6 +707,10 @@ export class EhrTitlebarControls extends Disposable {
 		const durationDisplay = DOM.append(durationGroup, DOM.$('.ehr-duration-display'));
 		durationDisplay.textContent = '\u2014';
 
+		// Track the chosen appointment length so changing the start time keeps
+		// the same duration instead of leaving the end time frozen.
+		let durationMin = 15;
+
 		// Auto-calc duration
 		const calcDuration = () => {
 			const st = startTime.value;
@@ -716,21 +720,25 @@ export class EhrTitlebarControls extends Disposable {
 				const [eh, em] = et.split(':').map(Number);
 				const mins = (eh * 60 + em) - (sh * 60 + sm);
 				durationDisplay.textContent = mins > 0 ? `${mins} min` : '\u2014';
+				if (mins > 0) { durationMin = mins; }
 			}
 		};
-		this._register(DOM.addDisposableListener(startTime, 'change', calcDuration));
+		// When the user edits the end time directly, treat it as a new duration.
 		this._register(DOM.addDisposableListener(endTime, 'change', calcDuration));
 
-		// Auto-set end time 15 min after start
+		// Whenever the start time changes, shift the end time so the existing
+		// duration is preserved (default 15 min the first time). Previously this
+		// only ran when the end time was still empty, so a second change to the
+		// start time left the end time unchanged.
 		this._register(DOM.addDisposableListener(startTime, 'change', () => {
 			const st = startTime.value;
-			if (st && !endTime.value) {
+			if (st) {
 				const [h, m] = st.split(':').map(Number);
-				const totalMin = h * 60 + m + 15;
+				const totalMin = h * 60 + m + durationMin;
 				const nh = Math.floor(totalMin / 60) % 24;
 				const nm = totalMin % 60;
 				endTime.value = `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
-				calcDuration();
+				durationDisplay.textContent = `${durationMin} min`;
 			}
 			// end date already synced by startDate change listener above
 		}));

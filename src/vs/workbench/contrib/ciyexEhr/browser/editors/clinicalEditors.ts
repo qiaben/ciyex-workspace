@@ -2533,53 +2533,45 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		// Issue #14: mirror the ciyex-ehr-ui order form, which is a flat
 		// single-item purchase order — Supplier | Item | Category | Date | Qty |
 		// Amount | Status — posted to /api/orders.
-		searchPlaceholder: 'Search by PO #, supplier, item...',
-		clientSideFilter: ['orderNumber', 'poNumber', 'supplier', 'supplierName', 'itemName', 'category', 'status', 'id'],
+		searchPlaceholder: 'Search by PO #, supplier...',
+		clientSideFilter: ['poNumber', 'supplierName', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Create/edit are handled by the custom _openOrderForm modal (line items),
+		// but the base editor only shows the create button when formFields is
+		// non-empty — this token entry is never rendered (the _openForm override
+		// intercepts orders before the generic form runs).
+		createLabel: '+ New Purchase Order',
+		formFields: [{ key: 'status', label: 'Status', type: 'text' }],
+		// Mirrors ciyex-ehr-ui Orders.tsx columns: PO # | Supplier | Status | Date |
+		// Total | Lines. Creation/editing use the custom _openOrderForm modal.
 		columns: [
-			{ key: 'orderNumber', label: 'Order #', width: '130px' },
-			{ key: 'supplier', label: 'Supplier', width: 'minmax(0,1.3fr)' },
-			{ key: 'itemName', label: 'Item', width: 'minmax(0,1.2fr)' },
-			{ key: 'category', label: 'Category', width: '120px' },
-			{ key: 'date', label: 'Date', width: '110px' },
-			{ key: 'stock', label: 'Qty', width: '70px' },
-			{ key: 'amount', label: 'Amount', width: '100px' },
-			{ key: 'status', label: 'Status', width: '110px' },
+			{ key: 'poNumber', label: 'PO #', width: '150px' },
+			{ key: 'supplierName', label: 'Supplier', width: 'minmax(0,1.4fr)' },
+			{ key: 'status', label: 'Status', width: '120px' },
+			{ key: 'orderDate', label: 'Date', width: '120px' },
+			{ key: 'totalAmount', label: 'Total', width: '110px' },
+			{ key: 'lines', label: 'Lines', width: '70px' },
 		],
 		statusTabs: [
-			{ label: 'Pending', value: 'Pending' }, { label: 'Submitted', value: 'Submitted' },
-			{ label: 'Received', value: 'Received' }, { label: 'Cancelled', value: 'Cancelled' },
+			{ label: 'Draft', value: 'draft' }, { label: 'Submitted', value: 'submitted' },
+			{ label: 'Partial', value: 'partial' }, { label: 'Received', value: 'received' },
+			{ label: 'Cancelled', value: 'cancelled' },
 		],
 		cellRenderer: (key, value, item) => {
-			// The flat order may surface the supplier as `supplier` or `supplierName`.
-			if (key === 'supplier' && !value) { return String(item.supplierName ?? item.supplier ?? ''); }
-			if (key === 'amount' && (typeof value === 'number' || typeof value === 'string') && value !== '') {
+			if (key === 'supplierName' && !value) { return String(item.supplier ?? ''); }
+			if (key === 'totalAmount' && value !== '' && value !== null && value !== undefined) {
 				const n = Number(value);
 				return isFinite(n) ? `$${n.toFixed(2)}` : String(value);
 			}
-			if (key === 'date') {
-				const d = (value || item.orderDate) as string;
+			if (key === 'orderDate') {
+				const d = value as string;
 				if (d) { try { return new Date(String(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(d); } }
 			}
+			if (key === 'lines') { return String(Array.isArray(value) ? value.length : (value ?? 0)); }
+			if (key === 'status' && typeof value === 'string') { return value.replace(/\b\w/g, c => c.toUpperCase()); }
 			return String(value ?? '');
 		},
-		formFields: [
-			// Match ciyex-ehr-ui CreateOrderForm field set + payload keys.
-			{ key: 'supplier', label: 'Supplier', type: 'text', required: true, placeholder: 'Supplier name', aliases: ['supplierName', 'supplier.name'] },
-			{ key: 'itemName', label: 'Item Name', type: 'text', required: true, placeholder: 'Item name' },
-			{ key: 'category', label: 'Category', type: 'text', required: true, placeholder: 'Category' },
-			{ key: 'date', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10), aliases: ['orderDate'] },
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Pending', value: 'Pending' }, { label: 'Submitted', value: 'Submitted' },
-					{ label: 'Received', value: 'Received' }, { label: 'Cancelled', value: 'Cancelled' },
-				], defaultValue: 'Pending'
-			},
-			{ key: 'stock', label: 'Quantity', type: 'number', defaultValue: 0 },
-			{ key: 'amount', label: 'Amount', type: 'number', placeholder: '0.00' },
-			{ key: 'orderNumber', label: 'Order #', type: 'text', placeholder: 'Auto-generated', defaultValue: () => `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 6).toUpperCase()}` },
-		],
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this order?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/orders/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -2610,13 +2602,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			return String(value ?? '');
 		},
 		formFields: [
-			{ key: 'name', label: 'Supplier Name', type: 'text', required: true, placeholder: 'Company name' },
-			{ key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'Primary contact' },
-			{ key: 'email', label: 'Email', type: 'text', placeholder: 'contact@supplier.com' },
-			{ key: 'phone', label: 'Phone', type: 'text', placeholder: '(555) 123-4567' },
-			// Address / Website / Account # / Payment Terms removed to match the
-			// ciyex-ehr-ui Suppliers form (issue #16) — Name | Contact | Email |
-			// Phone | Status | Notes only.
+			{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Medline Industries' },
+			{ key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'e.g. John Smith' },
+			{ key: 'phone', label: 'Phone', type: 'text', placeholder: 'e.g. (555) 123-4567' },
+			{ key: 'email', label: 'Email', type: 'text', placeholder: 'e.g. contact@supplier.com' },
+			// Address is part of the ciyex-ehr-ui Add Supplier form (and the backend
+			// InvSupplierDto supports it) — Name | Contact | Phone | Email | Address |
+			// Notes | Status.
+			{ key: 'address', label: 'Address', type: 'text', placeholder: 'e.g. 123 Main St, City, State' },
 			{
 				key: 'isActive', label: 'Status', type: 'select', options: [
 					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
@@ -2775,12 +2768,22 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		}
 	}
 
-	// Dashboard + Settings are custom (non-table) views, so intercept the base
-	// list render and draw them ourselves; everything else uses the table. (#18)
+	// Dashboard + Settings + Records are custom (non-table) views, so intercept
+	// the base list render and draw them ourselves; everything else uses the
+	// table. (#18)
 	protected override _resetAndReload(): void {
 		if (this.invView === 'dashboard') { void this._renderDashboard(); return; }
 		if (this.invView === 'settings') { void this._renderSettings(); return; }
+		if (this.invView === 'records') { void this._renderRecords(); return; }
 		super._resetAndReload();
+	}
+
+	// Orders use a bespoke "New Purchase Order" modal (supplier + multi-line
+	// items + grand total) matching ciyex-ehr-ui; everything else uses the
+	// generic add/edit form from the base editor.
+	protected override async _openForm(item: Record<string, unknown> | null): Promise<void> {
+		if (this.invView === 'orders') { await this._openOrderForm(item); return; }
+		await super._openForm(item);
 	}
 
 	private _invTabBtns: HTMLButtonElement[] = [];
@@ -2831,70 +2834,136 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		return main;
 	}
 
-	// --- #18 Dashboard ---
+	// --- #18 Dashboard --- mirrors ciyex-ehr-ui inventory Dashboard.tsx: an alert
+	// banner, the full KPI card set, a category-breakdown bar and a low-stock table.
 	private async _renderDashboard(): Promise<void> {
 		const c = this.contentEl;
 		DOM.clearNode(c);
 		c.style.overflowY = 'auto';
 
 		const head = DOM.append(c, DOM.$('div'));
-		head.style.cssText = 'margin-bottom:16px;';
+		head.style.cssText = 'margin-bottom:14px;';
 		const h = DOM.append(head, DOM.$('div'));
 		h.textContent = 'Inventory Dashboard';
 		h.style.cssText = 'font-size:20px;font-weight:700;color:var(--vscode-foreground);';
 		const sub = DOM.append(head, DOM.$('div'));
-		sub.textContent = 'Stock levels, alerts and purchasing at a glance.';
+		sub.textContent = 'Track stock, purchase orders, suppliers, and equipment upkeep.';
 		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-top:2px;';
 
-		const grid = DOM.append(c, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;';
-		const card = (title: string, value: string, subtext: string, tone?: string): void => {
-			const cd = DOM.append(grid, DOM.$('div'));
-			cd.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:10px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:16px 18px;';
-			const t = DOM.append(cd, DOM.$('div'));
-			t.textContent = title; t.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
-			const v = DOM.append(cd, DOM.$('div'));
-			v.textContent = value; v.style.cssText = `font-size:28px;font-weight:700;margin-top:6px;color:${tone || 'var(--vscode-foreground)'};`;
-			const s = DOM.append(cd, DOM.$('div'));
-			s.textContent = subtext; s.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
-		};
-		const renderCards = (skus: string, low: string, pending: string, suppliers: string): void => {
-			DOM.clearNode(grid);
-			card('Total SKUs', skus, 'Tracked items');
-			card('Low / Critical', low, 'Needs restock', '#f59e0b');
-			card('Pending Orders', pending, 'Awaiting receipt');
-			card('Suppliers', suppliers, 'Active partners');
-		};
-		renderCards('…', '…', '…', '…');
+		// Slot for the low-stock alert banner (filled once data arrives).
+		const alertSlot = DOM.append(c, DOM.$('div'));
 
-		const toNum = (d: unknown): number => {
-			if (typeof d === 'number') { return d; }
-			if (Array.isArray(d)) { return d.length; }
-			if (d && typeof d === 'object') {
-				const o = d as Record<string, unknown>;
-				const cand = o.count ?? o.total ?? o.value ?? o.data;
-				return typeof cand === 'number' ? cand : (Array.isArray(cand) ? cand.length : 0);
-			}
-			const n = Number(d); return isFinite(n) ? n : 0;
+		const grid = DOM.append(c, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;';
+		const card = (title: string, value: string, tone?: string): void => {
+			const cd = DOM.append(grid, DOM.$('div'));
+			cd.style.cssText = `border:1px solid var(--vscode-editorWidget-border);border-left:3px solid ${tone || 'var(--vscode-editorWidget-border)'};border-radius:8px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:12px 14px;`;
+			const t = DOM.append(cd, DOM.$('div'));
+			t.textContent = title; t.style.cssText = 'font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+			const v = DOM.append(cd, DOM.$('div'));
+			v.textContent = value; v.style.cssText = `font-size:24px;font-weight:700;margin-top:6px;color:${tone || 'var(--vscode-foreground)'};`;
 		};
-		const getNum = async (path: string): Promise<number> => {
-			try {
-				const res = await this.apiService.fetch(path);
-				if (!res.ok) { return 0; }
-				const json = await res.json();
-				return toNum(json?.data ?? json);
-			} catch { return 0; }
+		const renderCards = (d: Record<string, unknown>): void => {
+			DOM.clearNode(grid);
+			const num = (k: string): string => String(Number(d[k] ?? 0));
+			const money = (k: string): string => { const n = Number(d[k] ?? 0); return `$${isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : 0}`; };
+			card('Total Items', num('totalItems'));
+			card('Low Stock', num('lowStockCount'), '#f59e0b');
+			card('Out of Stock', num('outOfStockCount'), '#ef4444');
+			card('Pending Orders', num('pendingOrders'));
+			card('Total Value', money('totalValue'));
+			card('Expiring (30d)', num('expiringWithin30Days'), '#f59e0b');
+			card('Overdue Maint.', num('overdueMaintenanceTasks'), '#ef4444');
+			card('Active Suppliers', String(this._dashSuppliers ?? 0));
 		};
-		const [skus, lowCrit, pending, suppliers] = await Promise.all([
-			getNum('/api/inventory/count'),
-			getNum('/api/inventory/low-critical'),
-			getNum('/api/orders/pending/count'),
-			getNum('/api/suppliers/count'),
-		]);
+		renderCards({});
+
+		let dash: Record<string, unknown> = {};
+		try {
+			const [dashRes, supRes] = await Promise.all([
+				this.apiService.fetch('/api/inventory/dashboard'),
+				this.apiService.fetch('/api/suppliers/count'),
+			]);
+			if (dashRes.ok) { const j = await dashRes.json(); dash = (j?.data ?? j ?? {}) as Record<string, unknown>; }
+			if (supRes.ok) { const j = await supRes.json(); const v = j?.data ?? j; this._dashSuppliers = typeof v === 'number' ? v : Number((v as Record<string, unknown>)?.count ?? 0); }
+		} catch { /* leave zeros */ }
 		// Guard against a view switch while awaiting.
 		if (this.invView !== 'dashboard') { return; }
-		renderCards(String(skus), String(lowCrit), String(pending), String(suppliers));
+		renderCards(dash);
+
+		// Low stock alert banner.
+		const lowItems = (dash.lowStockItems as Array<Record<string, unknown>> | undefined) ?? [];
+		if (lowItems.length) {
+			DOM.clearNode(alertSlot);
+			const banner = DOM.append(alertSlot, DOM.$('div'));
+			banner.style.cssText = 'border:1px solid rgba(239,68,68,0.4);border-left:3px solid #ef4444;background:rgba(239,68,68,0.08);border-radius:8px;padding:10px 14px;margin-bottom:14px;';
+			const bt = DOM.append(banner, DOM.$('div'));
+			bt.textContent = `⚠ Low Stock Alerts`;
+			bt.style.cssText = 'font-size:12px;font-weight:700;color:#ef4444;';
+			const bs = DOM.append(banner, DOM.$('div'));
+			bs.textContent = `${lowItems.length} item${lowItems.length === 1 ? '' : 's'} below minimum.`;
+			bs.style.cssText = 'font-size:11.5px;color:var(--vscode-foreground);margin-top:2px;';
+		}
+
+		// Two-column section: Category Breakdown + Low Stock Items.
+		const cols = DOM.append(c, DOM.$('div'));
+		cols.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;';
+
+		// Category Breakdown bars.
+		const catCard = DOM.append(cols, DOM.$('div'));
+		catCard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:14px 16px;';
+		const catTitle = DOM.append(catCard, DOM.$('div'));
+		catTitle.textContent = 'Category Breakdown';
+		catTitle.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:12px;';
+		const breakdown = (dash.categoryBreakdown as Array<Record<string, unknown>> | undefined) ?? [];
+		if (!breakdown.length) {
+			const none = DOM.append(catCard, DOM.$('div'));
+			none.textContent = 'No category data.';
+			none.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		} else {
+			const max = Math.max(1, ...breakdown.map(b => Number(b.count ?? b.value ?? 0)));
+			for (const b of breakdown) {
+				const name = String(b.category ?? b.name ?? b.categoryName ?? '—');
+				const count = Number(b.count ?? b.value ?? 0);
+				const rowEl = DOM.append(catCard, DOM.$('div'));
+				rowEl.style.cssText = 'margin-bottom:10px;';
+				const lblRow = DOM.append(rowEl, DOM.$('div'));
+				lblRow.style.cssText = 'display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;color:var(--vscode-foreground);';
+				const ln = DOM.append(lblRow, DOM.$('span')); ln.textContent = name;
+				const lc = DOM.append(lblRow, DOM.$('span')); lc.textContent = String(count); lc.style.color = 'var(--vscode-descriptionForeground)';
+				const track = DOM.append(rowEl, DOM.$('div'));
+				track.style.cssText = 'height:6px;border-radius:3px;background:var(--vscode-input-background,#3c3c3c);overflow:hidden;';
+				const bar = DOM.append(track, DOM.$('div'));
+				bar.style.cssText = `height:100%;width:${Math.round((count / max) * 100)}%;background:#6366f1;border-radius:3px;`;
+			}
+		}
+
+		// Low Stock Items table.
+		const lowCard = DOM.append(cols, DOM.$('div'));
+		lowCard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));padding:14px 16px;';
+		const lowTitle = DOM.append(lowCard, DOM.$('div'));
+		lowTitle.textContent = 'Low Stock Items';
+		lowTitle.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:12px;';
+		if (!lowItems.length) {
+			const none = DOM.append(lowCard, DOM.$('div'));
+			none.textContent = 'All items above minimum.';
+			none.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		} else {
+			const hdr = DOM.append(lowCard, DOM.$('div'));
+			hdr.style.cssText = 'display:grid;grid-template-columns:1.6fr 1fr 60px 60px;gap:8px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding-bottom:6px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			for (const col of ['Name', 'SKU', 'Stock', 'Min']) { const s = DOM.append(hdr, DOM.$('span')); s.textContent = col; }
+			for (const it of lowItems.slice(0, 8)) {
+				const r = DOM.append(lowCard, DOM.$('div'));
+				r.style.cssText = 'display:grid;grid-template-columns:1.6fr 1fr 60px 60px;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.12);';
+				const nm = DOM.append(r, DOM.$('span')); nm.textContent = String(it.name ?? ''); nm.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+				const sk = DOM.append(r, DOM.$('span')); sk.textContent = String(it.sku ?? ''); sk.style.color = 'var(--vscode-descriptionForeground)';
+				const st = DOM.append(r, DOM.$('span')); st.textContent = String(it.stockOnHand ?? 0); st.style.color = '#ef4444';
+				const mn = DOM.append(r, DOM.$('span')); mn.textContent = String(it.minStock ?? 0);
+			}
+		}
 	}
+
+	private _dashSuppliers = 0;
 
 	// --- #18 Settings ---
 	private _settingsTab: 'general' | 'categories' | 'locations' = 'general';
@@ -2924,7 +2993,15 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		const body = DOM.append(c, DOM.$('div'));
 		if (this._settingsTab === 'general') { await this._renderSettingsGeneral(body); }
 		else if (this._settingsTab === 'categories') { await this._renderSettingsList(body, 'Category', '/api/inventory/categories', 'e.g. Consumable'); }
-		else { await this._renderSettingsList(body, 'Location', '/api/inventory/locations', 'e.g. Main Storage'); }
+		else {
+			// Locations carry a type (Room / Cabinet / Shelf / …), matching the
+			// ciyex-ehr-ui Locations tab which posts { name, type }.
+			await this._renderSettingsList(body, 'Location', '/api/inventory/locations', 'e.g. Main Storage', [
+				{ label: 'Room', value: 'room' }, { label: 'Cabinet', value: 'cabinet' },
+				{ label: 'Shelf', value: 'shelf' }, { label: 'Bin', value: 'bin' },
+				{ label: 'Refrigerator', value: 'refrigerator' },
+			]);
+		}
 	}
 
 	private _settingsCard(parent: HTMLElement, title: string): HTMLElement {
@@ -3026,13 +3103,25 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		});
 	}
 
-	private async _renderSettingsList(body: HTMLElement, singular: string, apiPath: string, placeholder: string): Promise<void> {
+	private async _renderSettingsList(body: HTMLElement, singular: string, apiPath: string, placeholder: string, types?: Array<{ label: string; value: string }>): Promise<void> {
 		const card = this._settingsCard(body, `${singular === 'Category' ? 'Categories' : 'Locations'}`);
 		const addRow = DOM.append(card, DOM.$('div'));
 		addRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
 		const input = DOM.append(addRow, DOM.$('input')) as HTMLInputElement;
 		input.placeholder = placeholder;
 		input.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+		// Locations also pick a storage type next to the name input.
+		let typeHidden: HTMLInputElement | undefined;
+		if (types && types.length) {
+			const typeWrap = DOM.append(addRow, DOM.$('div'));
+			typeWrap.style.cssText = 'width:150px;flex-shrink:0;';
+			typeHidden = createCustomDropdown({
+				parent: typeWrap,
+				options: types,
+				initialValue: types[0].value,
+				triggerStyle: 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;',
+			});
+		}
 		const addBtn = DOM.append(addRow, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = `Add ${singular}`;
 		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;';
@@ -3041,7 +3130,9 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			if (!name) { return; }
 			addBtn.disabled = true;
 			try {
-				await this.apiService.fetch(apiPath, { method: 'POST', body: JSON.stringify({ name }) });
+				const payload: Record<string, unknown> = { name };
+				if (typeHidden) { payload.type = typeHidden.value; }
+				await this.apiService.fetch(apiPath, { method: 'POST', body: JSON.stringify(payload) });
 				input.value = '';
 				void this._renderSettings();
 			} catch { addBtn.disabled = false; }
@@ -3074,6 +3165,332 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			DOM.clearNode(listEl);
 			listEl.textContent = `Could not load ${singular.toLowerCase()} list.`;
 		}
+	}
+
+	// --- Orders: New Purchase Order modal (supplier + line items + grand total),
+	// mirroring ciyex-ehr-ui CreateOrderForm and posting InvOrderDto to /api/orders.
+	private async _openOrderForm(existing: Record<string, unknown> | null): Promise<void> {
+		const isEdit = !!existing;
+		// On edit, refetch the full order so its line items are present (the list
+		// row may only carry header fields).
+		if (existing && existing.id !== undefined && existing.id !== null) {
+			try {
+				const res = await this.apiService.fetch(`/api/orders/${existing.id}`);
+				if (res.ok) { const j = await res.json(); const full = (j?.data ?? j) as Record<string, unknown> | null; if (full && typeof full === 'object') { existing = { ...existing, ...full }; } }
+			} catch { /* keep row data */ }
+		}
+		// Load suppliers + items for the dropdowns.
+		const fetchList = async (path: string): Promise<Array<Record<string, unknown>>> => {
+			try {
+				const res = await this.apiService.fetch(path);
+				if (!res.ok) { return []; }
+				const j = await res.json();
+				const w = j?.data ?? j;
+				return (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			} catch { return []; }
+		};
+		const [suppliers, items] = await Promise.all([
+			fetchList('/api/suppliers/list'),
+			fetchList('/api/inventory/list'),
+		]);
+
+		const overlay = DOM.append(this.root, DOM.$('div'));
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;';
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);';
+		backdrop.addEventListener('click', () => overlay.remove());
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'position:relative;width:620px;max-width:94vw;max-height:88%;display:flex;flex-direction:column;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
+
+		const hdr = DOM.append(panel, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const title = DOM.append(hdr, DOM.$('div')); title.textContent = isEdit ? 'Edit Purchase Order' : 'New Purchase Order';
+		title.style.cssText = 'font-size:15px;font-weight:600;';
+		const xBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		xBtn.textContent = '✕'; xBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);';
+		xBtn.addEventListener('click', () => overlay.remove());
+
+		const body = DOM.append(panel, DOM.$('div'));
+		body.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:18px 20px;scrollbar-width:none;';
+
+		const inputStyle = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+		const fieldLabel = (parent: HTMLElement, text: string): void => {
+			const l = DOM.append(parent, DOM.$('label')); l.textContent = text;
+			l.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		};
+
+		// Header row: Supplier + Status.
+		const hr1 = DOM.append(body, DOM.$('div')); hr1.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;';
+		const supWrap = DOM.append(hr1, DOM.$('div')); fieldLabel(supWrap, 'Supplier *');
+		const supplierHidden = createCustomDropdown({
+			parent: supWrap,
+			options: [{ value: '', label: 'Select supplier…' }, ...suppliers.map(s => ({ value: String(s.id), label: String(s.name ?? s.id) }))],
+			initialValue: existing ? String(existing.supplierId ?? '') : '',
+			triggerStyle: inputStyle + 'cursor:pointer;',
+		});
+		const statWrap = DOM.append(hr1, DOM.$('div')); fieldLabel(statWrap, 'Status');
+		const statusHidden = createCustomDropdown({
+			parent: statWrap,
+			options: [
+				{ value: 'draft', label: 'Draft' }, { value: 'submitted', label: 'Submitted' },
+				{ value: 'partial', label: 'Partial' }, { value: 'received', label: 'Received' },
+				{ value: 'cancelled', label: 'Cancelled' },
+			],
+			initialValue: existing ? String(existing.status ?? 'draft').toLowerCase() : 'draft',
+			triggerStyle: inputStyle + 'cursor:pointer;',
+		});
+
+		// Header row: Order Date + Expected Date.
+		const hr2 = DOM.append(body, DOM.$('div')); hr2.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;';
+		const odWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(odWrap, 'Order Date');
+		const orderDate = DOM.append(odWrap, DOM.$('input')) as HTMLInputElement;
+		orderDate.type = 'date'; orderDate.style.cssText = inputStyle;
+		orderDate.value = String(existing?.orderDate ?? '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+		const edWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(edWrap, 'Expected Date');
+		const expectedDate = DOM.append(edWrap, DOM.$('input')) as HTMLInputElement;
+		expectedDate.type = 'date'; expectedDate.style.cssText = inputStyle;
+		expectedDate.value = String(existing?.expectedDate ?? '').slice(0, 10);
+
+		// Notes.
+		const ntWrap = DOM.append(body, DOM.$('div')); ntWrap.style.cssText = 'margin-bottom:14px;'; fieldLabel(ntWrap, 'Notes');
+		const notes = DOM.append(ntWrap, DOM.$('textarea')) as HTMLTextAreaElement;
+		notes.style.cssText = inputStyle + 'min-height:48px;resize:vertical;'; notes.value = String(existing?.notes ?? '');
+
+		// Line items.
+		const liHdr = DOM.append(body, DOM.$('div'));
+		liHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+		const liTitle = DOM.append(liHdr, DOM.$('div')); liTitle.textContent = 'Line Items'; liTitle.style.cssText = 'font-size:12px;font-weight:600;';
+		const addLineBtn = DOM.append(liHdr, DOM.$('button')) as HTMLButtonElement;
+		addLineBtn.textContent = '+ Add Line';
+		addLineBtn.style.cssText = 'background:none;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:12px;font-weight:600;';
+		const linesWrap = DOM.append(body, DOM.$('div'));
+
+		const grand = DOM.append(body, DOM.$('div'));
+		grand.style.cssText = 'text-align:right;font-size:13px;font-weight:700;margin-top:10px;';
+
+		interface LineRow { itemHidden: HTMLInputElement; qty: HTMLInputElement; unit: HTMLInputElement; total: HTMLInputElement; lot: HTMLInputElement; expiry: HTMLInputElement; row: HTMLElement }
+		const lineRows: LineRow[] = [];
+		const recomputeGrand = (): void => {
+			let g = 0;
+			for (const lr of lineRows) { g += (Number(lr.qty.value) || 0) * (Number(lr.unit.value) || 0); }
+			grand.textContent = `Grand Total: $${g.toFixed(2)}`;
+		};
+		const addLine = (seed?: Record<string, unknown>): void => {
+			const row = DOM.append(linesWrap, DOM.$('div'));
+			row.style.cssText = 'display:grid;grid-template-columns:minmax(0,2fr) 52px 64px 70px 70px 90px 22px;gap:6px;align-items:center;margin-bottom:6px;';
+			const itemWrap = DOM.append(row, DOM.$('div'));
+			const itemHidden = createCustomDropdown({
+				parent: itemWrap,
+				options: [{ value: '', label: 'Select item…' }, ...items.map(it => ({ value: String(it.id), label: String(it.name ?? it.id) }))],
+				initialValue: seed ? String(seed.itemId ?? '') : '',
+				triggerStyle: inputStyle + 'cursor:pointer;font-size:12px;padding:4px 8px;',
+			});
+			const mkCell = (ph: string, val: string, type = 'text'): HTMLInputElement => {
+				const i = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				i.type = type; i.placeholder = ph; i.value = val;
+				i.style.cssText = inputStyle + 'font-size:12px;padding:4px 6px;';
+				return i;
+			};
+			const qty = mkCell('Qty', String(seed?.quantityOrdered ?? '1'), 'number');
+			const unit = mkCell('Unit $', String(seed?.unitCost ?? '0'), 'number');
+			const total = mkCell('Total', '0.00'); total.readOnly = true;
+			const lot = mkCell('Lot #', String(seed?.lotNumber ?? ''));
+			const expiry = mkCell('', String(seed?.expiryDate ?? '').slice(0, 10), 'date');
+			const del = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+			// allow-any-unicode-next-line
+			del.textContent = '✕'; del.style.cssText = 'background:none;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:12px;';
+			const lr: LineRow = { itemHidden, qty, unit, total, lot, expiry, row };
+			const recalc = (): void => { total.value = ((Number(qty.value) || 0) * (Number(unit.value) || 0)).toFixed(2); recomputeGrand(); };
+			qty.addEventListener('input', recalc); unit.addEventListener('input', recalc);
+			del.addEventListener('click', () => { const i = lineRows.indexOf(lr); if (i >= 0) { lineRows.splice(i, 1); } row.remove(); recomputeGrand(); });
+			lineRows.push(lr); recalc();
+		};
+		addLineBtn.addEventListener('click', () => addLine());
+		const existingLines = (existing?.lines as Array<Record<string, unknown>> | undefined) ?? [];
+		if (existingLines.length) { for (const l of existingLines) { addLine(l); } } else { addLine(); }
+
+		// Footer.
+		const footer = DOM.append(panel, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);';
+		const err = DOM.append(footer, DOM.$('div'));
+		err.style.cssText = 'flex:1;color:#f48771;font-size:11.5px;align-self:center;display:none;';
+		const cancel = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		cancel.textContent = 'Cancel';
+		cancel.style.cssText = 'padding:7px 16px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:4px;cursor:pointer;font-size:13px;';
+		cancel.addEventListener('click', () => overlay.remove());
+		const create = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		create.textContent = isEdit ? 'Update Order' : 'Create Order';
+		create.style.cssText = 'padding:7px 16px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+		create.addEventListener('click', async () => {
+			err.style.display = 'none';
+			if (!supplierHidden.value) { err.textContent = 'Supplier is required.'; err.style.display = ''; return; }
+			const lines = lineRows
+				.filter(lr => lr.itemHidden.value)
+				.map(lr => ({
+					itemId: Number(lr.itemHidden.value),
+					quantityOrdered: Number(lr.qty.value) || 0,
+					unitCost: Number(lr.unit.value) || 0,
+					lotNumber: lr.lot.value.trim() || undefined,
+					expiryDate: lr.expiry.value || undefined,
+				}));
+			if (lines.length === 0) { err.textContent = 'Add at least one line item.'; err.style.display = ''; return; }
+			const payload: Record<string, unknown> = {
+				supplierId: Number(supplierHidden.value),
+				status: statusHidden.value,
+				orderDate: orderDate.value || undefined,
+				expectedDate: expectedDate.value || undefined,
+				notes: notes.value.trim() || undefined,
+				lines,
+			};
+			create.disabled = true; create.textContent = 'Saving…';
+			try {
+				const url = isEdit ? `/api/orders/${existing!.id}` : '/api/orders';
+				const res = await this.apiService.fetch(url, {
+					method: isEdit ? 'PUT' : 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				if (res.ok) { overlay.remove(); this.reload(); }
+				else {
+					const e = await res.json().catch(() => ({})) as Record<string, string>;
+					err.textContent = e.message || `Error ${res.status}`; err.style.display = '';
+				}
+			} catch { err.textContent = 'Failed to save order.'; err.style.display = ''; }
+			create.disabled = false; create.textContent = isEdit ? 'Update Order' : 'Create Order';
+		});
+	}
+
+	// --- Records: master-detail (left item list, right Adjustments / Waste Log
+	// tabs) mirroring ciyex-ehr-ui Records.tsx.
+	private _recItems: Array<Record<string, unknown>> = [];
+	private _recSelectedId: string | null = null;
+	private _recTab: 'adjustments' | 'waste' = 'adjustments';
+
+	private async _renderRecords(): Promise<void> {
+		const c = this.contentEl;
+		DOM.clearNode(c);
+		c.style.overflow = 'hidden';
+
+		const sub = DOM.append(c, DOM.$('div'));
+		sub.textContent = 'View stock adjustment history and waste logs per item.';
+		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:12px;flex-shrink:0;';
+
+		const split = DOM.append(c, DOM.$('div'));
+		split.style.cssText = 'flex:1;min-height:0;display:grid;grid-template-columns:300px 1fr;gap:14px;';
+
+		// Left: search + item list.
+		const left = DOM.append(split, DOM.$('div'));
+		left.style.cssText = 'display:flex;flex-direction:column;min-height:0;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		const search = DOM.append(left, DOM.$('input')) as HTMLInputElement;
+		search.placeholder = 'Search items…';
+		search.style.cssText = 'margin:10px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+		const listEl = DOM.append(left, DOM.$('div'));
+		listEl.style.cssText = 'flex:1;min-height:0;overflow-y:auto;';
+
+		// Right: detail.
+		const right = DOM.append(split, DOM.$('div'));
+		right.style.cssText = 'display:flex;flex-direction:column;min-height:0;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+		const renderList = (): void => {
+			DOM.clearNode(listEl);
+			const q = search.value.trim().toLowerCase();
+			const filtered = this._recItems.filter(it => !q || String(it.name ?? '').toLowerCase().includes(q) || String(it.sku ?? '').toLowerCase().includes(q));
+			if (filtered.length === 0) {
+				const none = DOM.append(listEl, DOM.$('div'));
+				none.textContent = 'No items.'; none.style.cssText = 'padding:14px;font-size:12px;color:var(--vscode-descriptionForeground);';
+				return;
+			}
+			for (const it of filtered) {
+				const id = String(it.id);
+				const rowEl = DOM.append(listEl, DOM.$('div'));
+				const active = id === this._recSelectedId;
+				rowEl.style.cssText = `padding:9px 12px;cursor:pointer;border-bottom:1px solid rgba(128,128,128,0.1);${active ? 'background:var(--vscode-list-activeSelectionBackground);' : ''}`;
+				const nm = DOM.append(rowEl, DOM.$('div')); nm.textContent = String(it.name ?? '—');
+				nm.style.cssText = `font-size:13px;font-weight:600;${active ? 'color:var(--vscode-list-activeSelectionForeground);' : ''}`;
+				const meta = DOM.append(rowEl, DOM.$('div'));
+				meta.textContent = `${String(it.categoryName ?? it.category ?? 'Uncategorized')} · Stock: ${String(it.stockOnHand ?? 0)} ${String(it.unit ?? '')}`;
+				meta.style.cssText = `font-size:11px;color:var(--vscode-descriptionForeground);${active ? 'color:var(--vscode-list-activeSelectionForeground);opacity:0.85;' : ''}`;
+				rowEl.addEventListener('click', () => { this._recSelectedId = id; renderList(); void renderDetail(); });
+			}
+		};
+
+		const renderDetail = async (): Promise<void> => {
+			DOM.clearNode(right);
+			const sel = this._recItems.find(it => String(it.id) === this._recSelectedId);
+			if (!sel) {
+				const none = DOM.append(right, DOM.$('div'));
+				none.textContent = 'Select an item to view its history.';
+				none.style.cssText = 'margin:auto;font-size:12px;color:var(--vscode-descriptionForeground);';
+				return;
+			}
+			const dh = DOM.append(right, DOM.$('div'));
+			dh.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+			const dn = DOM.append(dh, DOM.$('div')); dn.textContent = String(sel.name ?? ''); dn.style.cssText = 'font-size:14px;font-weight:600;';
+			const dm = DOM.append(dh, DOM.$('div'));
+			dm.textContent = `${String(sel.categoryName ?? sel.category ?? 'Uncategorized')} · Stock: ${String(sel.stockOnHand ?? 0)} ${String(sel.unit ?? '')}`;
+			dm.style.cssText = 'font-size:11.5px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+			const tabs = DOM.append(right, DOM.$('div'));
+			tabs.style.cssText = 'display:flex;gap:16px;padding:0 16px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+			const mkTab = (key: 'adjustments' | 'waste', label: string): void => {
+				const t = DOM.append(tabs, DOM.$('button')) as HTMLButtonElement;
+				t.textContent = label;
+				const on = this._recTab === key;
+				t.style.cssText = `padding:9px 2px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${on ? '#0e639c' : 'transparent'};color:${on ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${on ? '600' : '400'};`;
+				t.addEventListener('click', () => { if (this._recTab !== key) { this._recTab = key; void renderDetail(); } });
+			};
+			mkTab('adjustments', 'Adjustments');
+			mkTab('waste', 'Waste Log');
+
+			const tableWrap = DOM.append(right, DOM.$('div'));
+			tableWrap.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:12px 16px;';
+			tableWrap.textContent = 'Loading…';
+			const isAdj = this._recTab === 'adjustments';
+			let rows: Array<Record<string, unknown>> = [];
+			try {
+				const res = await this.apiService.fetch(`/api/inventory/${sel.id}/${isAdj ? 'adjustments' : 'waste'}`);
+				if (res.ok) { const j = await res.json(); const w = j?.data ?? j; rows = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>; }
+			} catch { /* show empty */ }
+			if (this._recSelectedId !== String(sel.id) || this.invView !== 'records') { return; }
+			DOM.clearNode(tableWrap);
+			if (rows.length === 0) {
+				const none = DOM.append(tableWrap, DOM.$('div'));
+				none.textContent = isAdj ? 'No adjustments recorded.' : 'No waste logged.';
+				none.style.cssText = 'text-align:center;padding:24px;font-size:12px;color:var(--vscode-descriptionForeground);';
+				return;
+			}
+			const cols = isAdj ? ['Date', 'Qty', 'Reason', 'Notes', 'By'] : ['Date', 'Qty', 'Reason', 'Notes', 'By'];
+			const hdr = DOM.append(tableWrap, DOM.$('div'));
+			hdr.style.cssText = 'display:grid;grid-template-columns:150px 60px 110px 1fr 110px;gap:8px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding-bottom:6px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			for (const col of cols) { const s = DOM.append(hdr, DOM.$('span')); s.textContent = col; }
+			for (const r of rows) {
+				const rowEl = DOM.append(tableWrap, DOM.$('div'));
+				rowEl.style.cssText = 'display:grid;grid-template-columns:150px 60px 110px 1fr 110px;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
+				const date = DOM.append(rowEl, DOM.$('span'));
+				try { date.textContent = new Date(String(r.createdAt ?? '')).toLocaleString(); } catch { date.textContent = String(r.createdAt ?? ''); }
+				const qtyVal = isAdj ? Number(r.quantityChange ?? 0) : Number(r.quantity ?? 0);
+				const qty = DOM.append(rowEl, DOM.$('span'));
+				qty.textContent = isAdj ? (qtyVal > 0 ? `+${qtyVal}` : String(qtyVal)) : `-${Math.abs(qtyVal)}`;
+				qty.style.color = (isAdj && qtyVal >= 0) ? '#22c55e' : '#ef4444';
+				const reason = DOM.append(rowEl, DOM.$('span')); reason.textContent = String(r.reasonCode ?? '').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+				const notesS = DOM.append(rowEl, DOM.$('span')); notesS.textContent = String(r.notes ?? ''); notesS.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vscode-descriptionForeground);';
+				const by = DOM.append(rowEl, DOM.$('span')); by.textContent = String(r.adjustedBy ?? r.loggedBy ?? '');
+			}
+		};
+
+		search.addEventListener('input', renderList);
+
+		// Load items, then render.
+		listEl.textContent = 'Loading…';
+		try {
+			const res = await this.apiService.fetch('/api/inventory/list');
+			if (res.ok) { const j = await res.json(); const w = j?.data ?? j; this._recItems = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>; }
+		} catch { this._recItems = []; }
+		if (this.invView !== 'records') { return; }
+		if (!this._recSelectedId && this._recItems.length) { this._recSelectedId = String(this._recItems[0].id); }
+		renderList();
+		await renderDetail();
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }

@@ -909,20 +909,20 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'subscriberFirstName', label: 'Subscriber First Name', type: 'text' },
-					{ key: 'subscriberLastName', label: 'Subscriber Last Name', type: 'text' },
-					{ key: 'subscriberDOB', label: 'Subscriber Date of Birth', type: 'date' },
+					{ key: 'subscriberFirstName', label: 'Subscriber First Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberLastName', label: 'Subscriber Last Name', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberDOB', label: 'Subscriber Date of Birth', type: 'date', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 					{
-						key: 'subscriberGender', label: 'Subscriber Sex', type: 'select', options: [
+						key: 'subscriberGender', label: 'Subscriber Sex', type: 'select', showWhen: { field: 'subscriberRelationship', notEquals: 'self' }, options: [
 							{ label: 'Male', value: 'male' },
 							{ label: 'Female', value: 'female' },
 							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX' },
-					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone' },
-					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address' },
-					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text' },
+					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 				],
 			},
 		],
@@ -3796,8 +3796,11 @@ export class PatientChartEditor extends EditorPane {
 		const selectedClaims = new Map<string, Record<string, unknown>>();
 
 		// --- Select Claims for Statement ---------------------------------------
+		// Matches ciyex-ehr-ui: the claims picker is hidden on first load (only the
+		// Statement History shows) and is revealed inline by the "Generate
+		// Statement" button — no separate New-Statement modal is opened.
 		const claimsSection = DOM.append(content, DOM.$('div'));
-		claimsSection.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:14px;overflow:hidden;';
+		claimsSection.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:14px;overflow:hidden;display:none;';
 		const claimsHdr = DOM.append(claimsSection, DOM.$('div'));
 		claimsHdr.style.cssText = 'padding:10px 14px;background:rgba(0,122,204,0.06);border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;font-weight:600;';
 		claimsHdr.textContent = 'Select Claims for Statement';
@@ -3806,6 +3809,19 @@ export class PatientChartEditor extends EditorPane {
 		const claimsLoading = DOM.append(claimsBody, DOM.$('div'));
 		claimsLoading.textContent = 'Loading claims…';
 		claimsLoading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:12px 0;text-align:center;';
+
+		// Footer: Cancel hides the picker again; Save creates the statement inline
+		// from the selected claims (reusing the statements POST path).
+		const claimsFooter = DOM.append(claimsSection, DOM.$('div'));
+		claimsFooter.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:10px 14px;border-top:1px solid var(--vscode-editorWidget-border);';
+		const claimsErr = DOM.append(claimsFooter, DOM.$('div'));
+		claimsErr.style.cssText = 'flex:1;color:#f48771;font-size:11.5px;align-self:center;display:none;';
+		const cancelGenBtn = DOM.append(claimsFooter, DOM.$('button')) as HTMLButtonElement;
+		cancelGenBtn.textContent = 'Cancel';
+		cancelGenBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:4px;cursor:pointer;font-size:12px;';
+		const saveGenBtn = DOM.append(claimsFooter, DOM.$('button')) as HTMLButtonElement;
+		saveGenBtn.textContent = 'Save Statement';
+		saveGenBtn.style.cssText = 'padding:5px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
 
 		// --- Statement History --------------------------------------------------
 		const histSection = DOM.append(content, DOM.$('div'));
@@ -3839,25 +3855,65 @@ export class PatientChartEditor extends EditorPane {
 			}
 		}
 
-		// "Generate Statement": prefill the New-Statement modal from the selected
-		// claims (charges summed → balance), generate a sequential statement
-		// number, and reuse the existing create dialog/POST.
+		// "Generate Statement": reveal the inline claims picker (instead of opening
+		// the New-Statement modal) and hide the header button while it is open,
+		// matching the ciyex-ehr-ui flow.
 		genBtn.addEventListener('click', () => {
+			claimsSection.style.display = '';
+			genBtn.style.display = 'none';
+			claimsErr.style.display = 'none';
+		});
+		cancelGenBtn.addEventListener('click', () => {
+			claimsSection.style.display = 'none';
+			genBtn.style.display = '';
+		});
+
+		// Save: build the statement from the selected claims (charges summed →
+		// balance) with a sequential statement number, POST it through the
+		// statements endpoint, then refresh the tab.
+		saveGenBtn.addEventListener('click', async () => {
+			claimsErr.style.display = 'none';
 			const chosen = Array.from(selectedClaims.values());
 			const totalCharges = chosen.reduce((sum, c) => sum + (Number(getField(c, ['totalAmount', 'amount', 'totalNet.value'])) || 0), 0);
 			const year = new Date().getFullYear();
 			const seq = String(statements.length + 1).padStart(4, '0');
-			const charges = totalCharges > 0 ? totalCharges.toFixed(2) : '';
-			const prefill: Record<string, unknown> = {
+			const charges = totalCharges > 0 ? Number(totalCharges.toFixed(2)) : 0;
+			const payload: Record<string, unknown> = {
+				patientId: this.patientId,
 				statementNumber: `STM-${year}-${seq}`,
+				identifier: `STM-${year}-${seq}`,
 				statementDate: new Date().toISOString().slice(0, 10),
+				date: new Date().toISOString().slice(0, 10),
 				status: 'draft',
+				type: 'Statement',
 				recipient: this.patientName || '',
 				totalCharges: charges,
+				totalGross: charges,
 				patientBalance: charges,
 				balance: charges,
+				balanceDue: charges,
+				notes: chosen.length ? `Claims: ${chosen.map(c => String(getField(c, ['claimNumber', 'identifier', 'id']) ?? '')).filter(Boolean).join(', ')}` : '',
 			};
-			this._openRecordDialog(tab, config, null, prefill);
+			saveGenBtn.disabled = true; saveGenBtn.textContent = 'Saving…';
+			try {
+				const res = await this.apiService.fetch(`${FHIR_MAP['PaymentNotice']}/patient/${this.patientId}`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				if (res.ok) {
+					this._tabDataCache.delete(tab.key);
+					if (this.activeTab === tab.key) { this._renderMain(); }
+				} else {
+					const errData = await res.json().catch(() => ({})) as Record<string, string>;
+					claimsErr.textContent = errData['message'] || `Error ${res.status}`;
+					claimsErr.style.display = '';
+				}
+			} catch {
+				claimsErr.textContent = 'Failed to save statement. Please try again.';
+				claimsErr.style.display = '';
+			}
+			saveGenBtn.disabled = false; saveGenBtn.textContent = 'Save Statement';
 		});
 
 		// Load this patient's claims for the picker.
@@ -4346,6 +4402,11 @@ export class PatientChartEditor extends EditorPane {
 		// Pre-fill on edit
 		if (card) {
 			holderEl.value = String(card['cardHolderName'] || '');
+			// Show the stored card number and CVV (the backend returns the full
+			// values on the patient cards response) so the edit form reflects the
+			// saved data instead of empty placeholders.
+			numberEl.value = String(card['cardNumber'] || '');
+			cvvEl.value = String(card['cvv'] || '');
 			typeEl.value = String(card['cardType'] || 'VISA');
 			monthEl.value = String(card['expiryMonth'] || 1);
 			yearEl.value = String(card['expiryYear'] || now.getFullYear());
@@ -5208,6 +5269,14 @@ export class PatientChartEditor extends EditorPane {
 	private _renderForm(container: HTMLElement, sections: FieldSection[], data: Record<string, unknown>[]): void {
 		const record = ((data[0] as Record<string, unknown>)?.data as Record<string, unknown>) || data[0] || {};
 
+		// Capture the inputs map for this render. `_openRecordDialog` swaps
+		// `this._formInputs` to a temporary map during render and restores the
+		// main map afterward, so the deferred showWhen `applyVisibility` (which
+		// fires on later user interaction) must look up controls in THIS map, not
+		// `this._formInputs` at call time — otherwise conditional fields never
+		// toggle in the New/Edit drawer (e.g. insurance "Relationship = Self").
+		const formInputs = this._formInputs;
+
 		// Track cells for fields with showWhen, so we can hide/show them based on another field's value.
 		const conditionalFields: Array<{ field: FieldDef; cell: HTMLElement }> = [];
 
@@ -5499,7 +5568,7 @@ export class PatientChartEditor extends EditorPane {
 			const applyVisibility = () => {
 				for (const { field, cell } of conditionalFields) {
 					const when = field.showWhen!;
-					const ctrl = this._formInputs.get(when.field);
+					const ctrl = formInputs.get(when.field);
 					const ctrlVal = DOM.isHTMLInputElement(ctrl) && ctrl.type === 'checkbox'
 						? (ctrl.checked ? 'true' : 'false')
 						: (ctrl?.value ?? '');
@@ -5514,7 +5583,7 @@ export class PatientChartEditor extends EditorPane {
 				const ctrlKey = field.showWhen!.field;
 				if (listeners.has(ctrlKey)) { continue; }
 				listeners.add(ctrlKey);
-				const ctrl = this._formInputs.get(ctrlKey);
+				const ctrl = formInputs.get(ctrlKey);
 				if (ctrl) { ctrl.addEventListener('change', applyVisibility); }
 			}
 			applyVisibility();

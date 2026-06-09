@@ -1170,11 +1170,13 @@ export class AppointmentsEditor extends EditorPane {
 		const table = DOM.append(tableWrap, DOM.$('table'));
 		// `table-layout:fixed` honours the column widths set via <colgroup> so all
 		// rows stay aligned even when individual cells contain multi-line content.
-		table.style.cssText = 'width:100%;min-width:980px;border-collapse:collapse;table-layout:fixed;';
+		table.style.cssText = 'width:100%;min-width:1030px;border-collapse:collapse;table-layout:fixed;';
 
 		// Column widths — matched between <colgroup> and the renderTableBody
 		// cell order (DATE, PATIENT, PROVIDER, LOCATION, TYPE, STATUS, ROOM, WAIT, ACTIONS).
-		const colWidths = ['120px', '170px', '130px', '120px', '100px', '100px', '80px', '70px', '120px'];
+		// ROOM is wide enough (130px) to hold the room-assignment dropdown so its
+		// trigger/popover no longer overflows into the WAIT column.
+		const colWidths = ['120px', '170px', '130px', '120px', '100px', '100px', '130px', '70px', '120px'];
 		const colgroup = DOM.append(table, DOM.$('colgroup'));
 		for (const w of colWidths) {
 			const col = DOM.append(colgroup, DOM.$('col')) as HTMLTableColElement;
@@ -1383,8 +1385,11 @@ export class AppointmentsEditor extends EditorPane {
 					// Compact, theme-aware popover (createCustomDropdown) instead of the
 					// native <select>, whose OS-rendered popup looked oversized and
 					// inconsistent on the workbench themes the QA team flagged.
+					// Keep the dropdown within the ROOM cell so its trigger and the
+					// popover (which mirrors the trigger width) don't overflow into
+					// the adjacent WAIT column.
 					const wrap = DOM.append(tdRoom, DOM.$('div'));
-					wrap.style.cssText = 'min-width:120px;max-width:150px;';
+					wrap.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;';
 					const hidden = createCustomDropdown({
 						parent: wrap,
 						options: this.roomOptions.map(rm => ({ value: rm, label: rm })),

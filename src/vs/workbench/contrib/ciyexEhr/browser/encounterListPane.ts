@@ -188,7 +188,12 @@ export class EncounterListPane extends ViewPane {
 
 	private async _loadData(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/fhir-resource/encounters?page=0&size=200');
+			// Use the /api/encounters facade endpoint (not the generic
+			// /api/fhir-resource/encounters): it runs enrichEncounterFields server
+			// side so each row carries a resolved `patientName`. The generic
+			// endpoint left the subject display empty, so the rail showed
+			// "Unknown" for every encounter (new and existing practices alike).
+			const res = await this.apiService.fetch('/api/encounters?status=ALL&page=0&size=200');
 			if (!res.ok) { this.listEl.textContent = 'Waiting for login...'; return; }
 			const data = await res.json();
 			this.allItems = data?.data?.content || data?.content || [];
