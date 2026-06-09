@@ -2190,12 +2190,17 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 				isDefault: 'false',
 			},
 			onSave: async (next) => {
+				// Card-on-file is tied to a patient: the backend CreditCard entity
+				// requires a non-null patientId (FK). Omitting it 500s — mirror the
+				// chart editor's payload, which always sends patientId.
+				if (!this._currentPatientId) { throw new Error('No patient selected.'); }
 				const num = String(next.cardNumber || '').replace(/\D/g, '');
 				const cvv = String(next.cvv || '').replace(/\D/g, '');
 				if (!String(next.cardHolderName || '').trim()) { throw new Error('Card holder name is required.'); }
 				if (!num) { throw new Error('Card number is required.'); }
 				if (!cvv) { throw new Error('CVV is required.'); }
 				const payload: Record<string, unknown> = {
+					patientId: this._currentPatientId,
 					cardHolderName: String(next.cardHolderName).trim(),
 					cardNumber: num,
 					cvv,
