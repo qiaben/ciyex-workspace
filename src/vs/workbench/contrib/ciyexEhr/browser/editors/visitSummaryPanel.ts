@@ -307,24 +307,202 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	void loadVisitSummary(deps, patientId, encounterId, body, loading);
 }
 
-/** Fetches the encounter summary and renders it into the panel body. */
+/** Fetches the encounter summary and renders it into the panel body.
+ *
+ *  The clinical data the user types in the encounter form (chief complaint,
+ *  HPI, vitals, ROS, exam, assessment, plan, …) is persisted as a FHIR
+ *  Composition via `/api/fhir-resource/encounter-form/...`. The `/summary`
+ *  endpoint reads a different/derived store, so it showed stale or unrelated
+ *  data (QA: "the data I entered isn't in the visit summary"). We therefore
+ *  load the encounter-form Composition too and render the actual entered
+ *  values from it, keeping `/summary` only for the encounter meta header. */
 async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<void> {
 	try {
-		const res = await deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`);
-		const json = res.ok ? await res.json() : null;
-		const data = json?.success ? (json.data ?? null) : null;
+		const [summaryData, formComp] = await Promise.all([
+			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
+				.then(async r => (r.ok ? await r.json() : null))
+				.then(j => (j?.success ? (j.data ?? null) : (j?.data ?? j ?? null)))
+				.catch(() => null),
+			loadEncounterFormComposition(deps, patientId, encounterId).catch(() => null),
+		]);
 		loading.remove();
-		if (!data) {
-			const errMsg = DOM.append(body, DOM.$('div'));
-			errMsg.textContent = json?.message || 'Unable to load encounter summary.';
-			errMsg.style.cssText = `font-size:13px;color:${summaryColors(deps.themeService).error};`;
-			return;
+
+		// Prefer the encounter-form Composition for the clinical sections — it's
+		// the source of truth for what the provider actually entered.
+		const renderedForm = formComp ? renderEncounterFormSections(deps, body, formComp, summaryData) : false;
+
+		if (!renderedForm) {
+			// No form Composition yet — fall back to the /summary DTO rendering.
+			if (!summaryData) {
+				const errMsg = DOM.append(body, DOM.$('div'));
+				errMsg.textContent = 'Unable to load encounter summary.';
+				errMsg.style.cssText = `font-size:13px;color:${summaryColors(deps.themeService).error};`;
+				return;
+			}
+			renderVisitSummary(deps, body, summaryData as VisitSummaryDTO);
 		}
-		renderVisitSummary(deps, body, data);
 	} catch (err) {
 		loading.textContent = `Failed to load encounter summary: ${String(err)}`;
 		loading.style.color = summaryColors(deps.themeService).error;
 	}
+}
+
+/** Loads the encounter-form Composition for an encounter and returns the most
+ *  recent one (the form re-creates a Composition on each save, so the highest
+ *  id is the current state). Returns null when none exists yet. */
+async function loadEncounterFormComposition(deps: IVisitSummaryDeps, patientId: string, encounterId: string): Promise<Record<string, unknown> | null> {
+	const res = await deps.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encounterId}`);
+	if (!res.ok) { return null; }
+	const json = await res.json().catch(() => null);
+	const data = (json && (json.data ?? json)) as Record<string, unknown> | null;
+	if (!data) { return null; }
+	const content = Array.isArray(data) ? data : (data.content as unknown[]) || (Array.isArray(data.data) ? data.data as unknown[] : null);
+	const list = (content && Array.isArray(content) ? content : [data]) as Array<Record<string, unknown>>;
+	const comps = list.filter(c => c && typeof c === 'object');
+	if (!comps.length) { return null; }
+	// Most recent composition = highest numeric id.
+	comps.sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+	return comps[0];
+}
+
+/** Section groups for the encounter-form Composition, keyed by the field-name
+ *  prefix the form uses (cc_*, hpi_*, vitals_*, …). Mirrors the encounter form's
+ *  own section order so the summary reads top-to-bottom like the chart. */
+const FORM_SECTION_GROUPS: Array<{ prefix: string; title: string }> = [
+	{ prefix: 'cc', title: 'Chief Complaint' },
+	{ prefix: 'hpi', title: 'History of Present Illness' },
+	{ prefix: 'ros', title: 'Review of Systems' },
+	{ prefix: 'vitals', title: 'Vitals' },
+	{ prefix: 'pe', title: 'Physical Exam' },
+	{ prefix: 'pmh', title: 'Past Medical / Surgical History' },
+	{ prefix: 'fh', title: 'Family History' },
+	{ prefix: 'sh', title: 'Social History' },
+	{ prefix: 'assessment', title: 'Assessment & Diagnosis' },
+	{ prefix: 'plan', title: 'Plan' },
+	{ prefix: 'provider', title: 'Provider Notes' },
+	{ prefix: 'procedures', title: 'Procedures & Coding' },
+];
+
+/** Humanize a Composition field key into a readable label, stripping the
+ *  section prefix and upper-casing common clinical abbreviations. */
+function humanizeFieldKey(key: string, prefix: string): string {
+	let rest = key.startsWith(prefix + '_') ? key.slice(prefix.length + 1) : key;
+	if (!rest) { rest = key; }
+	const abbr: Record<string, string> = { bp: 'BP', spo2: 'SpO2', bmi: 'BMI', hr: 'HR', rr: 'RR', icd: 'ICD', cpt: 'CPT', ros: 'ROS', pe: 'PE', hpi: 'HPI' };
+	return rest.split('_').map(w => abbr[w.toLowerCase()] || (w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
+}
+
+/** Renders the encounter-form Composition (the provider's actual entries) into
+ *  the panel, grouped into the same sections as the chart. Returns true when at
+ *  least one clinical value was rendered. */
+function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement, comp: Record<string, unknown>, summaryData: unknown): boolean {
+	const col = summaryColors(deps.themeService);
+
+	// --- Encounter Summary (meta) header, reusing the /summary meta when present.
+	const meta = (summaryData && typeof summaryData === 'object' ? (summaryData as VisitSummaryDTO).meta : undefined) || {};
+	const metaCard = DOM.append(body, DOM.$('div'));
+	metaCard.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;margin-bottom:14px;`;
+	const cardTitle = DOM.append(metaCard, DOM.$('div'));
+	cardTitle.textContent = 'Encounter Summary';
+	cardTitle.style.cssText = `font-size:16px;font-weight:700;color:${col.link};border-bottom:2px solid ${col.border};padding-bottom:8px;margin-bottom:14px;`;
+	const grid = DOM.append(metaCard, DOM.$('div'));
+	grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;';
+	const metaFields: Array<[string, string | undefined]> = [
+		['Visit Category', meta.visitCategory], ['Type', meta.type], ['Facility', meta.facility],
+		['Date of Service', meta.dateOfService], ['Reason for Visit', meta.reasonForVisit],
+	];
+	let anyMeta = false;
+	for (const [label, value] of metaFields) {
+		if (!value) { continue; }
+		anyMeta = true;
+		const fieldRow = DOM.append(grid, DOM.$('div'));
+		fieldRow.style.cssText = 'display:flex;font-size:13px;';
+		const lbl = DOM.append(fieldRow, DOM.$('span'));
+		lbl.textContent = `${label}:`;
+		lbl.style.cssText = `font-weight:600;color:${col.desc};min-width:140px;`;
+		const val = DOM.append(fieldRow, DOM.$('span'));
+		val.textContent = String(value);
+		val.style.cssText = `color:${col.fg};`;
+	}
+	if (!anyMeta) {
+		const none = DOM.append(grid, DOM.$('div'));
+		none.textContent = 'No encounter details recorded.';
+		none.style.cssText = `font-size:13px;color:${col.desc};`;
+	}
+
+	// Format a single field value for display; returns '' to skip the field.
+	const fmtValue = (key: string, raw: unknown): string => {
+		if (raw === null || raw === undefined || raw === '') { return ''; }
+		if (typeof raw === 'boolean') { return raw ? (/_normal$/.test(key) ? 'Normal' : 'Yes') : ''; }
+		if (Array.isArray(raw)) {
+			if (raw.length === 0) { return ''; }
+			return raw.map(it => {
+				if (it && typeof it === 'object') {
+					const o = it as Record<string, unknown>;
+					const code = o.code ?? o.cpt4 ?? o.cpt ?? o.icd ?? o.icd10 ?? '';
+					const desc = o.description ?? o.text ?? o.name ?? o.label ?? '';
+					const joined = [code, desc].filter(Boolean).join(' - ');
+					return joined || JSON.stringify(o);
+				}
+				return String(it);
+			}).join('; ');
+		}
+		if (typeof raw === 'object') {
+			const o = raw as Record<string, unknown>;
+			const parts = Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== '' && v !== false)
+				.map(([k, v]) => `${k}: ${String(v)}`);
+			return parts.join(', ');
+		}
+		return String(raw);
+	};
+
+	// Keys that are metadata, not clinical content.
+	const isMetaKey = (k: string): boolean => /^_/.test(k) || /^(id|fhirId|resourceType|lastUpdated|encounterRef|encounterId|patientId|status|version|createdAt|updatedAt|author|title|date)$/i.test(k);
+
+	const allKeys = Object.keys(comp).filter(k => !isMetaKey(k));
+	const usedKeys = new Set<string>();
+	let renderedAny = false;
+
+	for (const grp of FORM_SECTION_GROUPS) {
+		// Fields whose key is exactly the prefix or starts with `${prefix}_`.
+		const keys = allKeys.filter(k => k === grp.prefix || k.startsWith(grp.prefix + '_'));
+		const rows: Array<[string, string]> = [];
+		for (const k of keys) {
+			const v = fmtValue(k, comp[k]);
+			if (v) { rows.push([humanizeFieldKey(k, grp.prefix), v]); usedKeys.add(k); }
+		}
+		if (!rows.length) { continue; }
+		renderedAny = true;
+		const card = DOM.append(body, DOM.$('div'));
+		card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:16px;margin-bottom:14px;`;
+		const t = DOM.append(card, DOM.$('div'));
+		t.textContent = grp.title;
+		t.style.cssText = `font-weight:600;color:${col.fg};margin-bottom:10px;font-size:14px;`;
+		// Chief complaint is a single free-text value — show it without a label.
+		if (grp.prefix === 'cc' && rows.length === 1) {
+			const p = DOM.append(card, DOM.$('div'));
+			p.textContent = rows[0][1];
+			p.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;`;
+		} else {
+			for (const [label, value] of rows) {
+				const row = DOM.append(card, DOM.$('div'));
+				row.style.cssText = 'font-size:13px;margin-bottom:4px;';
+				const b = DOM.append(row, DOM.$('span'));
+				b.textContent = `${label}: `;
+				b.style.cssText = `font-weight:600;color:${col.desc};`;
+				const val = DOM.append(row, DOM.$('span'));
+				val.textContent = value;
+				val.style.cssText = `color:${col.fg};white-space:pre-wrap;`;
+			}
+		}
+	}
+
+	if (!renderedAny) {
+		const none = DOM.append(body, DOM.$('div'));
+		none.textContent = 'No clinical sections recorded for this encounter yet.';
+		none.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;text-align:center;font-size:13px;color:${col.desc};`;
+	}
+	return true;
 }
 
 /** Renders the full Encounter Summary (meta + every recorded section) from the

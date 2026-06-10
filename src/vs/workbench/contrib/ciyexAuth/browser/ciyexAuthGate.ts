@@ -392,31 +392,6 @@ export class CiyexAuthGate extends Disposable {
 		return h('div', { background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' });
 	}
 
-	/**
-	 * Top-right pill button that flips between light and dark workbench themes.
-	 * Sun icon = currently dark (click → light); moon icon = currently light.
-	 */
-	private _buildThemeToggle(): HTMLElement {
-		const dark = this._isDark();
-		const btn = document.createElement('button');
-		btn.id = 'ciyex-theme-toggle';
-		btn.type = 'button';
-		btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
-		btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
-		Object.assign(btn.style, {
-			position: 'absolute', top: '16px', right: '20px',
-			width: '36px', height: '36px',
-			display: 'flex', alignItems: 'center', justifyContent: 'center',
-			background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-			border: dark ? '1px solid rgba(255,255,255,0.14)' : '1px solid rgba(0,0,0,0.08)',
-			borderRadius: '50%',
-			color: dark ? '#F9FAFB' : '#374151',
-			cursor: 'pointer', padding: '0',
-		});
-		btn.appendChild(this._themeIcon(dark));
-		btn.addEventListener('click', () => { void this._toggleTheme(); });
-		return btn;
-	}
 
 	private _themeIcon(dark: boolean, size = 18): HTMLElement {
 		// Sun while in dark mode (so the icon previews "what clicking will give you")
@@ -476,6 +451,51 @@ export class CiyexAuthGate extends Disposable {
 		return wrap;
 	}
 
+	/**
+	 * Left brand panel (logo + tagline + feature list), shared by the email step
+	 * and the two-panel auth shell. Theme-aware: in light mode it uses a light
+	 * background with dark text so the left side flips with the theme toggle
+	 * instead of staying solid black (the panel previously hardcoded #000/#fff).
+	 */
+	private _buildBrandPanel(): HTMLElement {
+		const dark = this._isDark();
+		const leftBg = dark ? '#000000' : 'linear-gradient(160deg,#EEF2FF 0%,#F4F5F7 100%)';
+		const leftText = dark ? '#ffffff' : '#1a1a2e';
+		const featureBg = dark ? 'rgba(255,255,255,0.13)' : 'rgba(0,0,0,0.04)';
+		const featureBorder = dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
+
+		const left = h('div', {
+			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
+			alignItems: 'center', justifyContent: 'center',
+			padding: '48px 56px', color: leftText, background: leftBg,
+		});
+		left.appendChild(this._logo(80));
+		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: leftText }), 'Ciyex EHR'));
+		left.appendChild(text(h('p', { fontSize: '15px', opacity: '0.82', marginBottom: '44px', textAlign: 'center', color: leftText }), 'Open Source Public Health Infrastructure'));
+
+		const featureList = h('div', { display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '380px' });
+		const features: Array<{ icon: 'shield' | 'database' | 'doc' | 'cloud'; label: string }> = [
+			{ icon: 'shield', label: 'HIPAA-compliant with enterprise-grade security' },
+			{ icon: 'database', label: 'FHIR R4 interoperable health data exchange' },
+			{ icon: 'doc', label: 'Patient charting, scheduling & e-prescribing' },
+			{ icon: 'cloud', label: 'Cloud-native with self-hosting option' },
+		];
+		for (const f of features) {
+			const item = h('div', {
+				display: 'flex', alignItems: 'center', gap: '14px',
+				background: featureBg, border: `1px solid ${featureBorder}`,
+				borderRadius: '10px', padding: '13px 18px', fontSize: '14px', fontWeight: '500', color: leftText,
+			});
+			item.appendChild(this._featureIcon(f.icon));
+			const span = document.createElement('span');
+			span.textContent = f.label;
+			item.appendChild(span);
+			featureList.appendChild(item);
+		}
+		left.appendChild(featureList);
+		return left;
+	}
+
 	// --- Step builders ---
 	private _buildEmailStep(_c: ReturnType<typeof this._colors>): HTMLElement {
 		const dark = this._isDark();
@@ -493,39 +513,8 @@ export class CiyexAuthGate extends Disposable {
 		// Full-screen two-panel layout matching app-dev.ciyex.org/signin
 		const wrapper = h('div', { position: 'absolute', inset: '0', display: 'flex' });
 
-		// \u2500\u2500 Left brand panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-		const left = h('div', {
-			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
-			alignItems: 'center', justifyContent: 'center',
-			padding: '48px 56px', color: '#fff',
-			background: '#000000',
-		});
-
-		left.appendChild(this._logo(80));
-		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: '#fff' }), 'Ciyex EHR'));
-		left.appendChild(text(h('p', { fontSize: '15px', opacity: '0.82', marginBottom: '44px', textAlign: 'center', color: '#fff' }), 'Open Source Public Health Infrastructure'));
-
-		const featureList = h('div', { display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '380px' });
-		const features: Array<{ icon: 'shield' | 'database' | 'doc' | 'cloud'; label: string }> = [
-			{ icon: 'shield', label: 'HIPAA-compliant with enterprise-grade security' },
-			{ icon: 'database', label: 'FHIR R4 interoperable health data exchange' },
-			{ icon: 'doc', label: 'Patient charting, scheduling & e-prescribing' },
-			{ icon: 'cloud', label: 'Cloud-native with self-hosting option' },
-		];
-		for (const f of features) {
-			const item = h('div', {
-				display: 'flex', alignItems: 'center', gap: '14px',
-				background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.18)',
-				borderRadius: '10px', padding: '13px 18px', fontSize: '14px', fontWeight: '500', color: '#fff',
-			});
-			item.appendChild(this._featureIcon(f.icon));
-			const span = document.createElement('span');
-			span.textContent = f.label;
-			item.appendChild(span);
-			featureList.appendChild(item);
-		}
-		left.appendChild(featureList);
-		wrapper.appendChild(left);
+		// \u2500\u2500 Left brand panel (theme-aware) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+		wrapper.appendChild(this._buildBrandPanel());
 
 		// \u2500\u2500 Right sign-in panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 		const right = h('div', {
@@ -849,36 +838,8 @@ export class CiyexAuthGate extends Disposable {
 
 		const wrapper = h('div', { position: 'absolute', inset: '0', display: 'flex' });
 
-		// -- Left brand panel --
-		const left = h('div', {
-			flex: '0 0 50%', display: 'flex', flexDirection: 'column',
-			alignItems: 'center', justifyContent: 'center',
-			padding: '48px 56px', color: '#fff',
-			background: '#000000',
-		});
-		left.appendChild(this._logo(80));
-		left.appendChild(text(h('h2', { fontSize: '32px', fontWeight: '700', letterSpacing: '-0.5px', margin: '20px 0 8px', color: '#fff' }), 'Ciyex EHR'));
-		left.appendChild(text(h('p', { fontSize: '15px', opacity: '0.82', marginBottom: '44px', textAlign: 'center', color: '#fff' }), 'Open Source Public Health Infrastructure'));
-		const featureList = h('div', { display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '380px' });
-		const features: Array<{ icon: 'shield' | 'database' | 'doc' | 'cloud'; label: string }> = [
-			{ icon: 'shield', label: 'HIPAA-compliant with enterprise-grade security' },
-			{ icon: 'database', label: 'FHIR R4 interoperable health data exchange' },
-			{ icon: 'doc', label: 'Patient charting, scheduling & e-prescribing' },
-			{ icon: 'cloud', label: 'Cloud-native with self-hosting option' },
-		];
-		for (const f of features) {
-			const item = h('div', {
-				display: 'flex', alignItems: 'center', gap: '14px',
-				background: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.18)',
-				borderRadius: '10px', padding: '13px 18px', fontSize: '14px', fontWeight: '500', color: '#fff',
-			});
-			item.appendChild(this._featureIcon(f.icon));
-			const span = document.createElement('span'); span.textContent = f.label;
-			item.appendChild(span);
-			featureList.appendChild(item);
-		}
-		left.appendChild(featureList);
-		wrapper.appendChild(left);
+		// -- Left brand panel (theme-aware) --
+		wrapper.appendChild(this._buildBrandPanel());
 
 		// -- Right panel --
 		const right = h('div', {
@@ -894,9 +855,9 @@ export class CiyexAuthGate extends Disposable {
 		card.appendChild(text(h('h1', { fontSize: '24px', fontWeight: '700', color: titleColor, textAlign: 'center', marginBottom: '6px' }), title));
 		card.appendChild(text(h('p', { fontSize: '14px', color: subColor, textAlign: 'center', marginBottom: '28px' }), subtitle));
 		right.appendChild(card);
-		// Keep the theme toggle reachable from every auth step (welcome back,
-		// signup, forgot password, …), not just the email entry screen.
-		right.appendChild(this._buildThemeToggle());
+		// No theme toggle on these inner auth steps (password / signup / forgot):
+		// the theme is chosen on the email entry screen, and the password page
+		// must not show the light-theme switch (per design request).
 		wrapper.appendChild(right);
 		return { wrapper, card };
 	}

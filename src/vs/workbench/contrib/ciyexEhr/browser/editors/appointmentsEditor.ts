@@ -97,8 +97,8 @@ function buildProviderName(p: Provider | undefined | null): string {
 const FALLBACK_STATUS_OPTIONS: StatusOption[] = [
 	{ value: 'Scheduled', label: 'Scheduled', color: '#3b82f6', order: 0, nextStatus: 'Confirmed' },
 	{ value: 'Confirmed', label: 'Confirmed', color: '#6366f1', order: 1, nextStatus: 'Checked-in' },
-	{ value: 'Checked-in', label: 'Checked-in', color: '#f59e0b', order: 2, nextStatus: 'Completed', triggersEncounter: true },
-	{ value: 'Completed', label: 'Completed', color: '#10b981', order: 3, terminal: true },
+	{ value: 'Checked-in', label: 'Checked-in', color: '#f59e0b', order: 2, nextStatus: 'Completed' },
+	{ value: 'Completed', label: 'Completed', color: '#10b981', order: 3, terminal: true, triggersEncounter: true },
 	{ value: 'Re-Scheduled', label: 'Re-Scheduled', color: '#8b5cf6', order: 4, nextStatus: 'Scheduled' },
 	{ value: 'No Show', label: 'No Show', color: '#ef4444', order: 5, terminal: true },
 	{ value: 'Cancelled', label: 'Cancelled', color: '#6b7280', order: 6, terminal: true },
@@ -583,13 +583,16 @@ export class AppointmentsEditor extends EditorPane {
 			});
 			this.editingStatusId = null;
 			await this._loadAppointments();
-			// When the new status creates an encounter (e.g. Checked-in), redirect
-			// to the encounter screen for that appointment so the provider lands on
-			// the chart instead of having to open it manually. Prefer the backend's
-			// flag, falling back to the built-in status table if it isn't provided.
+			// Marking an appointment "Completed" auto-creates its encounter and opens
+			// the encounter screen so the provider lands on the chart instead of
+			// creating one manually. This is the canonical trigger and is enforced on
+			// the client regardless of the backend's per-status `triggersEncounter`
+			// flag (the dev backend reports it as false for Completed). Any other
+			// status that the backend/fallback flags as a trigger is still honored.
 			const loaded = this.statusOptions.find(s => s.value === newStatus);
 			const fallback = FALLBACK_STATUS_OPTIONS.find(s => s.value === newStatus);
-			const triggersEncounter = loaded?.triggersEncounter ?? fallback?.triggersEncounter ?? false;
+			const triggersEncounter = newStatus === 'Completed'
+				|| (loaded?.triggersEncounter ?? fallback?.triggersEncounter ?? false);
 			if (triggersEncounter) {
 				const row = this.rows.find(r => r.id === id);
 				if (row) { this._openVisitChart(row); }
@@ -1507,6 +1510,13 @@ export class AppointmentsEditor extends EditorPane {
 			if (!encId) { return null; }
 			const encPatient = data['encounterPatientId'] ?? data['patientId'];
 			const patientId = (encPatient !== undefined && encPatient !== null && encPatient !== '') ? String(encPatient) : this._resolveActionPatientId(row);
+			// Cache the resolved encounter back onto the row so every action on this
+			// appointment (Open Chart, Record Vitals, Visit Summary) reuses the SAME
+			// encounter. Without this, Open Chart's POST (create) and Visit Summary's
+			// GET (read-only) could resolve to different encounters — so the summary
+			// showed a different/seed encounter's data than the one the user just
+			// charted (QA: "data I filled isn't showing, irrelevant summary").
+			row.encounterId = String(encId);
 			return { encounterId: String(encId), patientId };
 		} catch { return null; }
 	}

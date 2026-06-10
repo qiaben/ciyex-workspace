@@ -1016,7 +1016,11 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// `.monaco-workbench`.
 			panel.className = 'ciyex-select-panel';
 			panel.setAttribute('role', 'listbox');
-			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;`;
+			// max-height fits the common option lists (e.g. 8 task types) without
+			// overflowing, and the scrollbar is hidden (scrollbar-width + the
+			// ::-webkit-scrollbar rule in ciyexCommon.css) so the sidebar "+ New
+			// Task" Task Type dropdown no longer shows a vertical scrollbar.
+			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:320px;overflow-y:auto;display:none;scrollbar-width:none;-ms-overflow-style:none;`;
 			workbenchRoot.appendChild(panel);
 
 			const positionSelectPanel = () => {
