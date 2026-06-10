@@ -12,9 +12,11 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { AppointmentsEditorInput, CalendarEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
+import { AppointmentsEditorInput, CalendarEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { EncounterFormEditor } from './encounterFormEditor.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { editorBackground, editorForeground, editorWidgetBackground, editorWidgetBorder } from '../../../../../platform/theme/common/colors/editorColors.js';
 import { descriptionForeground, errorForeground, textLinkForeground } from '../../../../../platform/theme/common/colors/baseColors.js';
@@ -345,6 +347,7 @@ export class AppointmentsEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super(AppointmentsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -1503,58 +1506,133 @@ export class AppointmentsEditor extends EditorPane {
 		return (id !== undefined && id !== null) ? String(id) : '';
 	}
 
-	/** "Open Chart" — for an appointment row, opens the encounter form (parity
-	 *  with EHR-UI). Falls back to the patient chart when no encounter is linked
-	 *  yet (e.g. status is still Scheduled and an encounter hasn't been created). */
-	private _openVisitChart(row: AppointmentDTO): void {
-		const patientId = this._resolveActionPatientId(row);
-		const label = row.patientName ? `Visit — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
+	/** Resolve the encounter linked to an appointment row. When the row already
+	 *  carries an `encounterId` it's used directly; otherwise the backend is
+	 *  asked via `/api/appointments/{id}/encounter` — POST when `create` is true
+	 *  (creates the encounter if the appointment has none yet, e.g. a Scheduled
+	 *  visit) or GET for a read-only lookup. Returns null when none resolves. */
+	private async _resolveAppointmentEncounter(row: AppointmentDTO, create: boolean): Promise<{ encounterId: string; patientId: string } | null> {
 		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', patientId, String(row.encounterId), row.patientName || '', label)
-				.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Open Chart failed: ${String(err)}` }));
-			return;
+			return { encounterId: String(row.encounterId), patientId: this._resolveActionPatientId(row) };
 		}
-		// Always open on encounters tab so payment/billing tab is never shown unexpectedly.
-		this._openPatientChartTab(patientId, row.patientName || '', 'encounters');
+		if (!row.id) { return null; }
+		try {
+			const res = await this.apiService.fetch(`/api/appointments/${row.id}/encounter`, create ? { method: 'POST' } : undefined);
+			if (!res.ok) { return null; }
+			const json = await res.json().catch(() => null) as Record<string, unknown> | null;
+			const data = (json && (json['data'] as Record<string, unknown>)) || {};
+			const encId = data['encounterId'];
+			if (!encId) { return null; }
+			const encPatient = data['encounterPatientId'] ?? data['patientId'];
+			const patientId = (encPatient !== undefined && encPatient !== null && encPatient !== '') ? String(encPatient) : this._resolveActionPatientId(row);
+			return { encounterId: String(encId), patientId };
+		} catch { return null; }
 	}
 
-	/** "Record Vitals" — opens the encounter form (which has a Vitals
-	 *  section). Without an encounter, opens the patient chart on the Vitals
-	 *  tab so the user lands somewhere they can record values. */
-	private _openVitalsForRow(row: AppointmentDTO): void {
-		const patientId = this._resolveActionPatientId(row);
+	/** "Open Chart" — opens the encounter form in a right-side slide-over drawer
+	 *  (same overlay as Visit Summary), matching the web EHR-UI. When the
+	 *  appointment has no encounter yet, one is created — so it never falls back
+	 *  to the full patient chart and never opens a separate editor tab. */
+	private async _openVisitChart(row: AppointmentDTO): Promise<void> {
+		const label = row.patientName ? `Encounter — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
+		const resolved = await this._resolveAppointmentEncounter(row, true);
+		if (!resolved) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Could not open an encounter for this appointment.' });
+			return;
+		}
+		this._showEncounterDrawer(resolved.patientId, resolved.encounterId, row.patientName || 'Patient', label);
+		if (!row.encounterId) { void this._loadAppointments(); }
+	}
+
+	/** "Record Vitals" — opens the encounter form drawer scrolled to its Vitals
+	 *  section. Creates the encounter first when the appointment doesn't have one
+	 *  yet, so it lands on the encounter's Vitals rather than the patient chart. */
+	private async _openVitalsForRow(row: AppointmentDTO): Promise<void> {
 		const label = row.patientName ? `Vitals — ${row.patientName}` : `Encounter ${row.encounterId || ''}`;
-		if (row.encounterId) {
-			this.commandService.executeCommand('ciyex.openEncounter', patientId, String(row.encounterId), row.patientName || '', label, 'vitals')
-				.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Record Vitals failed: ${String(err)}` }));
+		const resolved = await this._resolveAppointmentEncounter(row, true);
+		if (!resolved) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Could not open an encounter for this appointment.' });
 			return;
 		}
-		this._openPatientChartTab(patientId, row.patientName || '', 'vitals');
+		this._showEncounterDrawer(resolved.patientId, resolved.encounterId, row.patientName || 'Patient', label, 'vitals');
+		if (!row.encounterId) { void this._loadAppointments(); }
 	}
 
-	/** Opens the patient chart with a specific initial tab pre-selected
-	 *  (used by "Record Vitals" → vitals tab, etc.). */
-	private _openPatientChartTab(patientId: string, patientName: string, tabKey: string): void {
-		if (!patientId) {
-			this.notificationService.notify({ severity: Severity.Warning, message: 'No patient is linked to this appointment yet.' });
-			return;
+	/** Opens the editable encounter form inside a right-anchored slide-over drawer
+	 *  (the same body-mounted overlay used by Visit Summary), hosting the existing
+	 *  EncounterFormEditor pane so the full form — sections, vitals, sign/save —
+	 *  is reused without a separate editor tab. The pane is disposed on close. */
+	private _showEncounterDrawer(patientId: string, encounterId: string, patientName: string, label: string, sectionKey?: string): void {
+		const doc = DOM.getActiveWindow().document;
+		const col = this._summaryColors();
+
+		const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-encounter-backdrop'));
+		backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;display:flex;justify-content:flex-end;';
+
+		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-encounter-sheet'));
+		sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(900px,72vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;position:relative;`;
+
+		// Slim drawer chrome: a title on the left and a Close control on the right.
+		// The hosted encounter pane renders its own Save / Sign header just below.
+		const header = DOM.append(sheet, DOM.$('div'));
+		header.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
+		const headerTitle = DOM.append(header, DOM.$('span'));
+		headerTitle.textContent = label;
+		headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
+		const closeBtn = DOM.append(header, DOM.$('button.codicon.codicon-close')) as HTMLButtonElement;
+		closeBtn.title = 'Close';
+		closeBtn.setAttribute('aria-label', 'Close');
+		closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:96px;`;
+		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; closeBtn.style.color = col.fg; });
+		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = col.desc; });
+
+		// Host element the encounter pane is created into.
+		const host = DOM.append(sheet, DOM.$('div.editor-instance'));
+		host.style.cssText = 'flex:1;min-height:0;overflow:hidden;position:relative;';
+
+		const editor = this.instantiationService.createInstance(EncounterFormEditor, this.group);
+		const input = new EncounterFormEditorInput(patientId, encounterId, patientName, label, sectionKey);
+
+		let disposed = false;
+		const ro = new ResizeObserver(() => { const r = host.getBoundingClientRect(); editor.layout(new DOM.Dimension(r.width, r.height)); });
+		const dismiss = () => {
+			if (disposed) { return; }
+			disposed = true;
+			ro.disconnect();
+			try { editor.clearInput(); } catch { /* ignore */ }
+			try { editor.dispose(); } catch { /* ignore */ }
+			try { input.dispose(); } catch { /* ignore */ }
+			try { doc.body.removeChild(backdrop); } catch { /* ignore */ }
+		};
+		closeBtn.addEventListener('click', dismiss);
+		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
+		backdrop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { dismiss(); } });
+
+		try {
+			editor.create(host);
+			editor.setVisible(true);
+			const layout = () => { const r = host.getBoundingClientRect(); editor.layout(new DOM.Dimension(r.width, r.height)); };
+			ro.observe(host);
+			void editor.setInput(input, undefined, Object.create(null) as IEditorOpenContext, CancellationToken.None).then(() => layout(), () => layout());
+			layout();
+		} catch (err) {
+			dismiss();
+			this.notificationService.notify({ severity: Severity.Error, message: `Failed to open encounter: ${String(err)}` });
 		}
-		this.commandService.executeCommand('ciyex.openPatientChart', patientId, patientName, tabKey)
-			.catch(err => this.notificationService.notify({ severity: Severity.Error, message: `Open Patient Chart failed: ${String(err)}` }));
 	}
 
-	/** "Visit Summary": opens a themed slide-over panel showing the encounter's
-	 *  read-only summary (Encounter Summary section with Type, Facility, Chief
-	 *  Complaint, etc.) fetched from the backend, plus a Print button — mirroring
-	 *  the EHR-UI `Encountersummary` slide-over. It deliberately does NOT redirect
-	 *  to the encounter editor or patient chart. */
-	private _openVisitSummary(row: AppointmentDTO): void {
-		const patientId = this._resolveActionPatientId(row);
-		if (!patientId || !row.encounterId) {
+	/** "Visit Summary": opens a themed read-only slide-over for the encounter
+	 *  (Encounter Summary section with Type, Facility, Chief Complaint, etc.) plus
+	 *  a Print button — mirroring the EHR-UI `Encountersummary` slide-over. It
+	 *  never redirects to the encounter editor or patient chart, and uses a
+	 *  read-only lookup so it won't create an encounter that doesn't exist. */
+	private async _openVisitSummary(row: AppointmentDTO): Promise<void> {
+		const resolved = await this._resolveAppointmentEncounter(row, false);
+		if (!resolved) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'No encounter is linked to this appointment yet.' });
 			return;
 		}
-		this._showVisitSummaryPanel(patientId, String(row.encounterId), row.patientName || 'Patient');
+		this._showVisitSummaryPanel(resolved.patientId, resolved.encounterId, row.patientName || 'Patient');
 	}
 
 	/** Resolve concrete theme colours for the visit-summary slide-over.
