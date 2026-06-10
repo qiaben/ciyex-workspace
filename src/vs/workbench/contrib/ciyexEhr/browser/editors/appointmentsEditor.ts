@@ -40,9 +40,26 @@ interface VisitSummaryChiefComplaint {
 	notes?: string;
 }
 
+interface VisitSummaryVitals {
+	weightKg?: number;
+	weightLbs?: number;
+	heightCm?: number;
+	heightIn?: number;
+	bpSystolic?: number;
+	bpDiastolic?: number;
+	pulse?: number;
+	respiration?: number;
+	temperatureC?: number;
+	temperatureF?: number;
+	oxygenSaturation?: number;
+	bmi?: number;
+	notes?: string;
+}
+
 interface VisitSummaryDTO {
 	meta?: VisitSummaryMeta;
 	chiefComplaints?: VisitSummaryChiefComplaint[];
+	vitals?: VisitSummaryVitals[];
 }
 
 interface AppointmentDTO {
@@ -1852,6 +1869,46 @@ export class AppointmentsEditor extends EditorPane {
 					const n = DOM.append(item, DOM.$('div'));
 					n.textContent = cc.notes;
 					n.style.cssText = `color:${col.desc};white-space:pre-wrap;`;
+				}
+			}
+		}
+
+		// Vitals section — mirrors the web summary's BP / Pulse / Temp / O2 /
+		// Weight / Height / BMI block. Uses the most recent recorded set.
+		const vitals = (data.vitals || []).filter(Boolean);
+		if (vitals.length > 0) {
+			const v = vitals[vitals.length - 1];
+			const has = (x: number | undefined | null): boolean => x !== null && x !== undefined;
+			const pairs: Array<[string, string]> = [];
+			if (has(v.bpSystolic) && has(v.bpDiastolic)) { pairs.push(['BP', `${v.bpSystolic}/${v.bpDiastolic} mmHg`]); }
+			if (has(v.pulse)) { pairs.push(['Pulse', `${v.pulse} bpm`]); }
+			if (has(v.temperatureC)) { pairs.push(['Temp', `${v.temperatureC} \u00B0C`]); }
+			else if (has(v.temperatureF)) { pairs.push(['Temp', `${v.temperatureF} \u00B0F`]); }
+			if (has(v.oxygenSaturation)) { pairs.push(['O2 Sat', `${v.oxygenSaturation}%`]); }
+			if (has(v.respiration)) { pairs.push(['Resp', `${v.respiration} /min`]); }
+			if (has(v.weightKg)) { pairs.push(['Weight', `${v.weightKg} kg`]); }
+			else if (has(v.weightLbs)) { pairs.push(['Weight', `${v.weightLbs} lbs`]); }
+			if (has(v.heightCm)) { pairs.push(['Height', `${v.heightCm} cm`]); }
+			else if (has(v.heightIn)) { pairs.push(['Height', `${v.heightIn} in`]); }
+			if (has(v.bmi)) { pairs.push(['BMI', `${v.bmi}`]); }
+
+			if (pairs.length > 0) {
+				const vCard = DOM.append(body, DOM.$('div'));
+				vCard.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.bg};padding:16px;box-shadow:0 1px 2px rgba(0,0,0,0.05);margin-top:16px;`;
+				const vTitle = DOM.append(vCard, DOM.$('div'));
+				vTitle.textContent = 'Vitals';
+				vTitle.style.cssText = `font-weight:600;color:${col.fg};margin-bottom:10px;font-size:14px;`;
+				const vGrid = DOM.append(vCard, DOM.$('div'));
+				vGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;';
+				for (const [label, value] of pairs) {
+					const fieldRow = DOM.append(vGrid, DOM.$('div'));
+					fieldRow.style.cssText = 'font-size:13px;';
+					const lbl = DOM.append(fieldRow, DOM.$('span'));
+					lbl.textContent = `${label}: `;
+					lbl.style.cssText = `font-weight:600;color:${col.desc};`;
+					const val = DOM.append(fieldRow, DOM.$('span'));
+					val.textContent = value;
+					val.style.cssText = `color:${col.fg};`;
 				}
 			}
 		}
