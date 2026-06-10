@@ -2521,17 +2521,20 @@ export class CodesEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['code', 'codeType', 'modifier', 'shortDescription', 'description', 'category', 'relateTo', 'id'],
 		editable: true,
 		refetchOnEdit: true,
-		// Issue #12: Description used to be the only flexible column (2fr) so it
-		// absorbed all slack and left a huge gap between Type and Category. Add a
-		// Modifier column and let Description + Category share the flex so the
-		// columns read evenly instead of spread far apart.
+		// Fixed pixel widths (no `fr`) keep the columns compact and readable
+		// instead of the flexible Description/Category columns stretching across
+		// the whole editor and leaving a big empty gap ("too much space"). Fixed
+		// widths are identical for the header and every row so columns stay aligned
+		// (content-based sizes like fit-content/auto differ per row, as each row is
+		// its own grid). Row borders still span the full width, so the table reads
+		// as compact-on-the-left with no cut-off edge.
 		columns: [
-			{ key: 'code', label: 'Code', width: '100px' },
-			{ key: 'codeType', label: 'Type', width: '80px' },
-			{ key: 'modifier', label: 'Modifier', width: '90px' },
-			{ key: 'description', label: 'Description', width: 'minmax(0,2fr)' },
-			{ key: 'category', label: 'Category', width: 'minmax(0,1fr)' },
-			{ key: 'active', label: 'Active', width: '80px' },
+			{ key: 'code', label: 'Code', width: '110px' },
+			{ key: 'codeType', label: 'Type', width: '90px' },
+			{ key: 'modifier', label: 'Modifier', width: '110px' },
+			{ key: 'description', label: 'Description', width: '320px' },
+			{ key: 'category', label: 'Category', width: '180px' },
+			{ key: 'active', label: 'Active', width: '100px' },
 		],
 		statusTabs: [
 			{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
