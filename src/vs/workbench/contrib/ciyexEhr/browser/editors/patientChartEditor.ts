@@ -5626,8 +5626,7 @@ export class PatientChartEditor extends EditorPane {
 			// Custom dropdowns refresh their visible label on a `change` event.
 			el.dispatchEvent(new Event('change', { bubbles: false }));
 		};
-		const fill = (): void => {
-			if (String(rel.value) !== 'self') { return; }
+		const fillFromPatient = (): void => {
 			setVal('subscriberFirstName', pd['firstName']);
 			setVal('subscriberLastName', pd['lastName']);
 			setVal('subscriberDOB', String(pd['dateOfBirth'] ?? '').split('T')[0]);
@@ -5636,8 +5635,21 @@ export class PatientChartEditor extends EditorPane {
 			setVal('subscriberPhone', pd['phoneNumber'] ?? pd['phone']);
 			setVal('subscriberAddress', pd['address']);
 		};
-		rel.addEventListener('change', fill);
-		fill();
+		const clearSubscriber = (): void => {
+			for (const k of refs.keys()) { setVal(k, ''); }
+		};
+		// Keep the subscriber identity in sync with the chosen relationship when
+		// the user changes it: "Self" copies the patient's demographics in; any
+		// other relationship clears them so the user enters the actual subscriber's
+		// details. The previous handler only filled on "self" and returned early
+		// otherwise, leaving the patient's info stuck in the subscriber fields when
+		// switched to Spouse/Child/Parent/Other (reported bug).
+		rel.addEventListener('change', () => {
+			if (String(rel.value) === 'self') { fillFromPatient(); } else { clearSubscriber(); }
+		});
+		// Initial render: only auto-fill when the default selection is "Self".
+		// Never wipe an existing non-self subscriber loaded into an edit form.
+		if (String(rel.value) === 'self') { fillFromPatient(); }
 	}
 
 	/**

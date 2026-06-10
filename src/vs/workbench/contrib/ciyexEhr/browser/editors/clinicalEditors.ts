@@ -2118,6 +2118,230 @@ export class EducationEditor extends ClinicalListEditorBase {
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface IRecallOutreachLog {
+	attemptNumber?: number;
+	attemptDate?: string;
+	method?: string;
+	outcome?: string;
+	performedByName?: string;
+}
+
+interface IRecallDetail {
+	id?: number;
+	patientId?: number;
+	patientName?: string;
+	patientPhone?: string;
+	patientEmail?: string;
+	providerName?: string;
+	status?: string;
+	priority?: string;
+	preferredContact?: string;
+	attemptCount?: number;
+	lastAttemptDate?: string;
+	lastAttemptMethod?: string;
+	recallTypeName?: string;
+	dueDate?: string;
+	outreachLogs?: IRecallOutreachLog[];
+}
+
+/** Accent colour for a recall status badge, mirroring the web RecallBoard pills. */
+function recallStatusColor(status: string): string {
+	switch ((status || '').toUpperCase()) {
+		case 'CONTACTED': return '#b45309';
+		case 'SCHEDULED': return '#2563eb';
+		case 'COMPLETED': return '#16a34a';
+		case 'CANCELLED': return '#6b7280';
+		case 'OVERDUE': return '#dc2626';
+		case 'PENDING': return '#7c3aed';
+		default: return '#6b7280';
+	}
+}
+
+/** Format an ISO date/datetime string as a short locale date; falls back to the raw value. */
+function formatRecallDate(value: string | undefined): string {
+	if (!value) { return '—'; }
+	try { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return value; }
+}
+
+/**
+ * Right-side detail drawer shown when the Recall "call" action is clicked.
+ * Mirrors the web RecallBoard detail panel: a status/priority header with
+ * Mark Complete / Cancel, a patient & provider summary, and an outreach history
+ * list with a Log Outreach button. Data comes from GET /api/recalls/{id} (which
+ * includes nested outreachLogs); Mark Complete / Cancel PUT a partial status
+ * change; Log Outreach POSTs to /api/recalls/{id}/outreach. Every mutation
+ * re-fetches the panel and reloads the underlying list.
+ */
+async function showRecallDetailPanel(opts: { recallId: string | number; api: ICiyexApiService; reload: () => void; dlg: IDialogService }): Promise<void> {
+	const { recallId, api, reload, dlg } = opts;
+	const doc = DOM.getActiveWindow().document;
+	const mount = findWorkbenchRoot(doc.body || doc.documentElement, doc);
+
+	const overlay = DOM.append(mount, DOM.$('div'));
+	// Mirror the workbench classList so the drawer's children stay themed, but
+	// keep the overlay itself transparent — otherwise the `.monaco-workbench`
+	// class paints its opaque editor background over the whole viewport and the
+	// page "goes out" behind the panel. The 40% backdrop below provides the dim.
+	// (Matches the create/edit form drawer in ClinicalListEditorBase._openForm.)
+	overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;justify-content:flex-end;background:transparent;color:var(--vscode-foreground);';
+	overlay.tabIndex = -1;
+
+	const backdrop = DOM.append(overlay, DOM.$('div'));
+	backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+
+	// Sit the drawer below the title bar with a small gap and rounded inner edge,
+	// matching the form drawer so the two panels look consistent.
+	// eslint-disable-next-line no-restricted-syntax
+	const titlebarEl = doc.querySelector('.part.titlebar');
+	const titlebarHeight = titlebarEl ? (titlebarEl as HTMLElement).getBoundingClientRect().height : 35;
+	const GAP = 12;
+	const panel = DOM.append(overlay, DOM.$('div'));
+	panel.style.cssText = `position:relative;width:460px;max-width:95vw;height:calc(100% - ${titlebarHeight + GAP * 2}px);margin-top:${titlebarHeight + GAP}px;margin-bottom:${GAP}px;overflow-y:auto;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);border-radius:8px 0 0 8px;box-shadow:-8px 0 24px rgba(0,0,0,0.3);padding:18px 20px;box-sizing:border-box;color:var(--vscode-foreground);`;
+
+	let settled = false;
+	const close = () => { if (settled) { return; } settled = true; overlay.remove(); };
+	backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) { close(); } });
+	overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); } });
+
+	const mutateStatus = async (status: string, reason?: string) => {
+		try {
+			const body: Record<string, string> = reason ? { status, cancelledReason: reason } : { status };
+			const r = await api.fetch(`/api/recalls/${recallId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+			if (!r.ok) { await dlg.error(`Failed to update recall (${r.status})`); return; }
+			reload();
+			await load();
+		} catch (e) { await dlg.error(`Failed to update recall: ${e instanceof Error ? e.message : String(e)}`); }
+	};
+
+	const logOutreach = async (preferred: string) => {
+		const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE', value: preferred }] });
+		if (!res.confirmed) { return; }
+		const method = (res.values?.[0] || '').trim().toUpperCase();
+		if (!['PHONE', 'EMAIL', 'SMS'].includes(method)) { await dlg.error('Enter one of: PHONE, EMAIL, SMS'); return; }
+		try {
+			const r = await api.fetch(`/api/recalls/${recallId}/outreach`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, outcome: 'contacted' }) });
+			if (!r.ok) { const err = await r.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || `Failed to log outreach (${r.status})`)); return; }
+			reload();
+			await load();
+		} catch (e) { await dlg.error(`Failed to log outreach: ${e instanceof Error ? e.message : String(e)}`); }
+	};
+
+	const infoRow = (grid: HTMLElement, label: string, value: string) => {
+		const cell = DOM.append(grid, DOM.$('div'));
+		const l = DOM.append(cell, DOM.$('div'));
+		l.textContent = label;
+		l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+		const v = DOM.append(cell, DOM.$('div'));
+		v.textContent = value || '—';
+		v.style.cssText = 'font-size:13px;font-weight:500;word-break:break-word;';
+	};
+
+	const render = (recall: IRecallDetail) => {
+		DOM.clearNode(panel);
+		const status = (recall.status || '').toUpperCase();
+		const terminal = status === 'COMPLETED' || status === 'CANCELLED';
+
+		const closeBtn = DOM.append(panel, DOM.$('button'));
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'position:absolute;top:12px;right:14px;background:transparent;border:none;color:var(--vscode-descriptionForeground);font-size:14px;cursor:pointer;';
+		closeBtn.addEventListener('click', () => close());
+
+		// Header: status badge + priority | Mark Complete / Cancel
+		const header = DOM.append(panel, DOM.$('div'));
+		header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 26px 16px 0;flex-wrap:wrap;';
+		const left = DOM.append(header, DOM.$('div'));
+		left.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		const badge = DOM.append(left, DOM.$('span'));
+		badge.textContent = status || '—';
+		badge.style.cssText = `padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;color:#fff;background:${recallStatusColor(status)};`;
+		const prio = DOM.append(left, DOM.$('span'));
+		prio.textContent = (recall.priority || '').toUpperCase();
+		prio.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);';
+
+		const actions = DOM.append(header, DOM.$('div'));
+		actions.style.cssText = 'display:flex;gap:6px;';
+		const mkBtn = (label: string, color: string, fn: () => void) => {
+			const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.style.cssText = `padding:4px 10px;border-radius:4px;border:1px solid ${color};background:transparent;color:${color};font-size:11px;font-weight:600;cursor:pointer;`;
+			if (terminal) { b.style.opacity = '0.4'; b.style.cursor = 'default'; b.disabled = true; } else { b.addEventListener('click', fn); }
+		};
+		mkBtn('Mark Complete', '#16a34a', () => { void mutateStatus('COMPLETED'); });
+		mkBtn('Cancel', '#dc2626', async () => {
+			const r = await dlg.input({ type: 'question', message: 'Cancel this recall?', inputs: [{ placeholder: 'Reason (optional)' }] });
+			if (!r.confirmed) { return; }
+			await mutateStatus('CANCELLED', (r.values?.[0] || '').trim());
+		});
+
+		// Patient / provider summary grid
+		const grid = DOM.append(panel, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;margin-bottom:18px;';
+		infoRow(grid, 'Patient ID', recall.patientId !== null && recall.patientId !== undefined ? String(recall.patientId) : '—');
+		infoRow(grid, 'Provider', recall.providerName || '—');
+		infoRow(grid, 'Phone', recall.patientPhone || '—');
+		infoRow(grid, 'Email', recall.patientEmail || '—');
+		infoRow(grid, 'Preferred Contact', recall.preferredContact || '—');
+		infoRow(grid, 'Attempts', recall.attemptCount !== null && recall.attemptCount !== undefined ? String(recall.attemptCount) : '0');
+		const lastAttempt = recall.lastAttemptDate ? `${formatRecallDate(recall.lastAttemptDate)}${recall.lastAttemptMethod ? ` (${recall.lastAttemptMethod})` : ''}` : '—';
+		infoRow(grid, 'Last Attempt', lastAttempt);
+
+		// Outreach History header + Log Outreach button
+		const histHead = DOM.append(panel, DOM.$('div'));
+		histHead.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:14px;';
+		const histTitle = DOM.append(histHead, DOM.$('div'));
+		histTitle.textContent = 'Outreach History';
+		histTitle.style.cssText = 'font-size:13px;font-weight:600;';
+		const logBtn = DOM.append(histHead, DOM.$('button'));
+		// allow-any-unicode-next-line
+		logBtn.textContent = '📞 Log Outreach';
+		logBtn.style.cssText = 'padding:4px 10px;border-radius:4px;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background,#2563eb);font-size:11px;font-weight:600;cursor:pointer;';
+		logBtn.addEventListener('click', () => { void logOutreach(recall.preferredContact || ''); });
+
+		// History list (newest first)
+		const logs = (recall.outreachLogs || []).slice().sort((a, b) => (b.attemptNumber || 0) - (a.attemptNumber || 0));
+		if (logs.length === 0) {
+			const empty = DOM.append(panel, DOM.$('div'));
+			empty.textContent = 'No outreach logged yet.';
+			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
+		} else {
+			for (const logItem of logs) {
+				const card = DOM.append(panel, DOM.$('div'));
+				card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:8px 10px;margin-bottom:8px;';
+				const top = DOM.append(card, DOM.$('div'));
+				top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+				const idDate = DOM.append(top, DOM.$('div'));
+				idDate.textContent = `#${logItem.attemptNumber ?? '?'}  ${formatRecallDate(logItem.attemptDate)}`;
+				idDate.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);';
+				if (logItem.outcome) {
+					const oc = DOM.append(top, DOM.$('span'));
+					oc.textContent = logItem.outcome;
+					oc.style.cssText = 'font-size:10px;padding:1px 8px;border-radius:999px;background:rgba(22,163,74,0.15);color:#16a34a;text-transform:capitalize;';
+				}
+				const method = DOM.append(card, DOM.$('div'));
+				method.textContent = logItem.method || '—';
+				method.style.cssText = 'font-size:13px;font-weight:500;margin-top:4px;';
+			}
+		}
+	};
+
+	const load = async () => {
+		try {
+			const r = await api.fetch(`/api/recalls/${recallId}`);
+			if (!r.ok) { DOM.clearNode(panel); panel.textContent = `Failed to load recall (${r.status}).`; return; }
+			const json = await r.json().catch(() => null) as Record<string, unknown> | null;
+			const recall = ((json && json['data']) || json) as IRecallDetail;
+			render(recall);
+		} catch (e) { DOM.clearNode(panel); panel.textContent = `Failed to load recall: ${e instanceof Error ? e.message : String(e)}`; }
+	};
+
+	panel.textContent = 'Loading…';
+	overlay.focus();
+	await load();
+}
+
 export class RecallEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexRecall';
 	protected readonly config: ClinicalEditorConfig = {
@@ -2141,6 +2365,11 @@ export class RecallEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// 8 data columns + Actions overflow a narrow pane and crush the Contact
+		// and Actions cells until they look empty/missing. A min-width lets the
+		// table scroll horizontally so every column keeps its width and stays
+		// aligned — matching the web RecallBoard layout.
+		tableMinWidth: '1040px',
 		// Columns ordered to match the web app's RecallBoard:
 		// Patient | Type | Provider | Due Date | Status | Priority | Attempts | Contact
 		columns: [
@@ -2264,32 +2493,15 @@ export class RecallEditor extends ClinicalListEditorBase {
 		],
 		actions: [
 			{
+				// The call action opens the recall detail drawer (status header with
+				// Mark Complete / Cancel, patient/provider summary, and an outreach
+				// history list with its own Log Outreach button) — matching the web
+				// RecallBoard's row detail panel. Logging outreach now happens inside
+				// that panel so the user sees the full history and current status.
 				// allow-any-unicode-next-line
-				label: 'Log Outreach', icon: '📞', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE', value: String(item.preferredContact || '') }] });
-					if (!res.confirmed) { return; }
-					const method = (res.values?.[0] || '').trim().toUpperCase();
-					// Validate against the allowed methods so a typo doesn't silently
-					// post a value the backend rejects (the old handler swallowed every
-					// outcome, so a failed POST looked like "nothing happened").
-					if (!['PHONE', 'EMAIL', 'SMS'].includes(method)) {
-						await dlg.error('Enter one of: PHONE, EMAIL, SMS');
-						return;
-					}
-					try {
-						const r = await api.fetch(`/api/recalls/${item.id}/outreach`, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ method, outcome: 'contacted' }),
-						});
-						if (!r.ok) {
-							const err = await r.json().catch(() => null) as Record<string, unknown> | null;
-							await dlg.error(String(err?.['message'] || `Failed to log outreach (${r.status})`));
-							return;
-						}
-						reload();
-					} catch (e) {
-						await dlg.error(`Failed to log outreach: ${e instanceof Error ? e.message : String(e)}`);
-					}
+				label: 'View Details', icon: '📞', handler: async (item, api, reload, dlg) => {
+					if (item.id === null || item.id === undefined) { await dlg.error('This recall has no id.'); return; }
+					await showRecallDetailPanel({ recallId: item.id as string | number, api, reload, dlg });
 				}
 			},
 			// allow-any-unicode-next-line
@@ -2727,7 +2939,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'Critical', value: 'critical' },
 				], defaultValue: 'medium',
 			},
-			{ key: 'assignee', label: 'Assignee', type: 'text', placeholder: 'Person responsible' },
+			{ key: 'assignee', label: 'Assignee', type: 'search', placeholder: 'Search staff...', apiPath: '/api/providers', relatedDisplayFields: ['identification.firstName', 'identification.lastName'] },
 			{ key: 'vendor', label: 'Vendor', type: 'text', placeholder: 'External vendor' },
 			{ key: 'scheduledDate', label: 'Due Date', type: 'date' },
 			{ key: 'lastServiceDate', label: 'Last Service Date', type: 'date' },
