@@ -17,6 +17,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
+import { showVisitSummaryPanel } from './visitSummaryPanel.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -2762,12 +2763,11 @@ export class PatientChartEditor extends EditorPane {
 		// Spacer
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
 
-		// Action buttons
-		const newEnc = DOM.append(this.headerBar, DOM.$('button'));
-		newEnc.textContent = '+ New Encounter';
-		newEnc.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);white-space:nowrap;flex-shrink:0;';
-		newEnc.addEventListener('click', () => this._openNewEncounter());
-
+		// Action buttons.
+		// Encounters are no longer created manually from the patient chart — they
+		// are auto-created when an appointment is marked "Completed" on the
+		// Appointments page. The "+ New Encounter" button was removed so the only
+		// path to an encounter is the appointment workflow.
 		const schedBtn = DOM.append(this.headerBar, DOM.$('button'));
 		schedBtn.textContent = '\u{1F4C5} Schedule Appointment';
 		schedBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);white-space:nowrap;flex-shrink:0;';
@@ -3750,8 +3750,10 @@ export class PatientChartEditor extends EditorPane {
 			// Financial > Payment: render credit-card grid matching ciyex-ehr-ui PaymentFlat
 			this._renderPatientCreditCards(content, actionSlot);
 		} else {
-			// List tab: show "+ Add" unless the tab is read-only (ledgers, system reports, etc.).
-			if (!tab.readOnly) {
+			// List tab: show "+ Add" unless the tab is read-only (ledgers, system
+			// reports, etc.). Encounters are excluded too — they are auto-created
+			// from the Appointments page ("Completed" status), never added here.
+			if (!tab.readOnly && tab.key !== 'encounters') {
 				const addBtn = DOM.append(actionSlot, DOM.$('button'));
 				addBtn.textContent = '+ Add';
 				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
@@ -6390,29 +6392,56 @@ export class PatientChartEditor extends EditorPane {
 			// Final cell text is set by _table when onDelete is provided.
 			cells.push('');
 
-			const onClick = () => this._openRecordDialog(tab, config, item);
+			let onClick: (() => void) | undefined = () => this._openRecordDialog(tab, config, item);
 
 			const recordId = String(item.id || item.fhirId || '');
 			// Tabs whose backend only supports create/read — no PUT or DELETE — must
-			// suppress the row delete handler so users don't hit 405s. Encounters do
-			// support DELETE via /api/fhir-resource/encounters/{id} even though their
-			// row click opens a side editor instead of the inline overlay.
+			// suppress the row delete handler so users don't hit 405s.
 			const writeOnceTabs = new Set<string>();
-			const onDelete = !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
+			let onDelete: (() => void) | undefined = !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
 
-			// Billing rows expose Open Chart / Record Vitals / Visit Summary —
-			// the test team flagged these were missing from the Billing
-			// actions column. They reach the same encounter editor used from
-			// the calendar; if a row has no linked encounter we fall back to
-			// the chart's encounters tab.
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
-			// Open Chart / Record Vitals / Visit Summary shortcuts. The QA team
-			// asked that the Encounters, Appointments, Visit Notes, Claims, and
-			// Submissions tabs show ONLY the edit + delete pair, so every tab is
-			// excluded here (the set is empty). Re-add a tab key to surface the
-			// encounter shortcuts on that tab again.
+
+			// Encounters are auto-created when an appointment is marked "Completed"
+			// (Appointments page) — they are never added or edited through the chart's
+			// generic inline dialog. Their actions expose "Open Chart" (the editable
+			// SOAP encounter form, which enforces Save / Sign & Lock — once signed the
+			// form is read-only) and "Visit Summary" (the read-only summary slide-over).
+			// The generic edit and delete actions are suppressed so the column
+			// shows exactly Open Chart + Visit Summary.
+			if (tab.key === 'encounters') {
+				const encId = (recordId || '').split('/').pop() || '';
+				onClick = undefined;
+				onDelete = undefined;
+				const openChart = (): void => {
+					if (!encId) { this._navigate('encounters'); return; }
+					this.editorService.openEditor(
+						new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter'),
+						{},
+						SIDE_GROUP,
+					);
+				};
+				const openSummary = (): void => {
+					if (!encId) { return; }
+					showVisitSummaryPanel(
+						{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService },
+						this.patientId, encId, this.patientName,
+					);
+				};
+				extraActions = [
+					// allow-any-unicode-next-line
+					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: openChart },
+					// allow-any-unicode-next-line
+					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: openSummary },
+				];
+				return { cells, onClick, onDelete, extraActions };
+			}
+
+			// Open Chart / Record Vitals / Visit Summary shortcuts for other
+			// encounter-linked tabs (e.g. Billing). The set is empty by default;
+			// re-add a tab key to surface the encounter shortcuts on that tab.
 			const encounterLinkedTabs = new Set<string>();
 			if (encounterLinkedTabs.has(tab.key)) {
 				// Row may surface the encounter via different keys: `encounterId`,
@@ -6646,10 +6675,6 @@ export class PatientChartEditor extends EditorPane {
 				}
 			}
 		}
-	}
-
-	private _openNewEncounter(): void {
-		this.editorService.openEditor(new EncounterFormEditorInput(this.patientId, 'new', this.patientName, 'New Encounter'), {}, SIDE_GROUP);
 	}
 
 	// --- Formatting helpers ---
