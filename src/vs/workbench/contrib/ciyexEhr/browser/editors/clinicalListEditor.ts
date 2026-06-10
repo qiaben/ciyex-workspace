@@ -291,9 +291,13 @@ const STATUS_COLORS: Record<string, string> = {
 interface IThemedModalField {
 	key: string;
 	label: string;
-	type?: 'text' | 'number' | 'date';
+	type?: 'text' | 'number' | 'date' | 'textarea';
 	value?: string;
 	placeholder?: string;
+	/** When true, the confirm button is blocked until this field has a value. */
+	required?: boolean;
+	/** For 'textarea' type: number of visible rows (taller reason boxes). Default 4. */
+	rows?: number;
 }
 
 interface IThemedModalOptions {
@@ -323,10 +327,17 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 		const mount = findWorkbenchRoot(opts.anchor || doc.body || doc.documentElement, doc);
 		const overlay = DOM.append(mount, DOM.$('div'));
 		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
-		overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);';
+		// `background:transparent` is REQUIRED: copying the workbench className above
+		// also copies `.monaco-workbench`'s opaque editor background, which would
+		// paint the whole screen solid dark and hide the page behind the popup
+		// (issues #11/#12: "popup background black — make it a transparent overlay").
+		// The semi-transparent backdrop child below provides the only dimming.
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);background:transparent;';
 
+		// Light scrim so the page stays visible behind the popup (issues #11/#12:
+		// the Approve/Deny popup must be a transparent overlay, not a black screen).
 		const backdrop = DOM.append(overlay, DOM.$('div'));
-		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.12);';
 
 		const modal = DOM.append(overlay, DOM.$('div'));
 		modal.style.cssText = 'position:relative;width:420px;max-width:92vw;max-height:90vh;overflow-y:auto;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);padding:20px;box-sizing:border-box;';
@@ -342,19 +353,28 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 		}
 
 		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
-		const inputs = new Map<string, HTMLInputElement>();
+		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
 		for (const f of opts.fields) {
 			const grp = DOM.append(modal, DOM.$('div'));
 			grp.style.cssText = 'margin-bottom:12px;';
 			const lbl = DOM.append(grp, DOM.$('label'));
-			lbl.textContent = f.label;
+			lbl.textContent = f.label + (f.required ? ' *' : '');
 			lbl.style.cssText = 'display:block;font-size:11px;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
-			const input = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
-			input.type = f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
-			input.value = f.value ?? '';
-			input.placeholder = f.placeholder ?? '';
-			input.style.cssText = inputStyle + (f.type === 'date' ? 'color-scheme:dark light;' : '');
-			inputs.set(f.key, input);
+			if (f.type === 'textarea') {
+				const ta = DOM.append(grp, DOM.$('textarea')) as HTMLTextAreaElement;
+				ta.value = f.value ?? '';
+				ta.placeholder = f.placeholder ?? '';
+				ta.rows = f.rows ?? 4;
+				ta.style.cssText = inputStyle + 'resize:vertical;min-height:90px;line-height:1.5;';
+				inputs.set(f.key, ta);
+			} else {
+				const input = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
+				input.type = f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
+				input.value = f.value ?? '';
+				input.placeholder = f.placeholder ?? '';
+				input.style.cssText = inputStyle + (f.type === 'date' ? 'color-scheme:dark light;' : '');
+				inputs.set(f.key, input);
+			}
 		}
 
 		const footer = DOM.append(modal, DOM.$('div'));
@@ -377,6 +397,17 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 		confirmBtn.textContent = opts.confirmLabel;
 		confirmBtn.style.cssText = `padding:6px 14px;background:${opts.confirmColor || 'var(--vscode-button-background)'};color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;`;
 		confirmBtn.addEventListener('click', () => {
+			// Enforce required fields — block the confirm and flag the empty field
+			// instead of silently submitting (e.g. discontinuation Reason is mandatory).
+			for (const f of opts.fields) {
+				if (!f.required) { continue; }
+				const el = inputs.get(f.key);
+				if (el && !el.value.trim()) {
+					el.style.borderColor = 'var(--vscode-inputValidation-errorBorder,#be1100)';
+					el.focus();
+					return;
+				}
+			}
 			const out: Record<string, string> = {};
 			for (const [k, el] of inputs.entries()) { out[k] = el.value.trim(); }
 			close(out);
@@ -410,6 +441,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private clientPageSize = 20;
 	private formOverlay: HTMLElement | null = null;
 	private editingItem: Record<string, unknown> | null = null;
+	/** Initial values for a CREATE form (editingItem === null). Lets callers open a
+	 *  pre-filled "New …" dialog — e.g. Education Library "Assign to Patient" seeds
+	 *  the new-assignment form with the chosen material. Cleared when the form closes. */
+	private formSeed: Record<string, unknown> | null = null;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchDebounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 	private refocusSearchAfterRender = false;
@@ -816,10 +851,26 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// grid; `auto` would size independently per row and shift columns left/right).
 		const actionCount = (cfg.actions?.length || 0) + (cfg.editable && cfg.formFields ? 1 : 0);
 		const cols = colWidths + (actionCount > 0 ? ` ${Math.max(80, actionCount * 26 + 8)}px` : '');
-		// Optional minimum table width (issue #24). Pages with many columns or a
-		// must-show Actions column (e.g. Patient Education library) set this so the
-		// outer wrap can scroll horizontally instead of collapsing the Actions cell.
-		const tableMinW = cfg.tableMinWidth ? `min-width:${cfg.tableMinWidth};` : '';
+		// Minimum table width (issues #8 / #24). Without one, `minmax(0,1fr)` columns
+		// collapse toward 0 on a narrow pane and clip their content, while fixed-px
+		// columns stay — so resizing the app appeared to "hide" columns/data. Every
+		// table now gets a sensible min-width: when the pane is narrower the wrapper
+		// scrolls horizontally (all columns reachable); when wider the flexible
+		// columns expand to fill. Configs may still override via `tableMinWidth`.
+		const computeDefaultMinWidth = (): string => {
+			let total = 0;
+			for (const c of cfg.columns) {
+				const w = c.width;
+				const px = w ? /^(\d+)px$/.exec(w) : null;
+				// Fixed-px columns keep their width; flexible (fr / minmax / unset)
+				// columns get a readable minimum so they never collapse to nothing.
+				total += px ? parseInt(px[1], 10) : 130;
+			}
+			if (actionCount > 0) { total += Math.max(80, actionCount * 26 + 8); }
+			total += cfg.columns.length * 8; // inter-column gaps
+			return `${total}px`;
+		};
+		const tableMinW = `min-width:${cfg.tableMinWidth || computeDefaultMinWidth()};`;
 
 		// Header
 		const hr = DOM.append(tbl, DOM.$('div'));
@@ -1040,13 +1091,27 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			try { item = await this.config.transformEditItem(item, this.apiService); } catch { /* keep record as-is */ }
 		}
 		this.editingItem = item;
+		this.formSeed = null;
+		this._renderForm();
+	}
+
+	/** Open a pre-filled CREATE form. Saves as a new record (POST) while seeding the
+	 *  given field values — used by Education Library "Assign to Patient". */
+	protected _openCreateForm(seed: Record<string, unknown>): void {
+		if (!this.config.formFields) { return; }
+		this.editingItem = null;
+		this.formSeed = seed;
 		this._renderForm();
 	}
 
 	/** Resolve a (possibly dot-pathed) key against the editing record. */
 	private _readFieldValue(field: FormFieldDef): unknown {
 		const item = this.editingItem;
-		if (!item) { return undefined; }
+		if (!item) {
+			// Create mode: fall back to any seeded initial values.
+			const sv = this.formSeed ? this.formSeed[field.key] : undefined;
+			return (sv !== undefined && sv !== null && sv !== '') ? sv : undefined;
+		}
 		const direct = (item as Record<string, unknown>)[field.key];
 		if (direct !== undefined && direct !== null && direct !== '') { return direct; }
 		if (!field.aliases) { return direct; }
@@ -1717,6 +1782,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			this.formOverlay = null;
 		}
 		this.editingItem = null;
+		this.formSeed = null;
 	}
 
 	override layout(dimension: DOM.Dimension): void {

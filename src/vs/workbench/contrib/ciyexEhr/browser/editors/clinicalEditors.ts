@@ -448,14 +448,34 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Discontinue', icon: '⏹', handler: async (item, api, reload, dlg) => {
-					const r = await dlg.input({ type: 'question', message: 'Reason for discontinuation', inputs: [{ placeholder: 'Reason...' }] });
-					const reason = r.confirmed ? r.values?.[0]?.trim() : undefined;
+				label: 'Discontinue', icon: '⏹',
+				// Only offer Discontinue while the prescription is still active / on hold.
+				// Once discontinued (or completed/cancelled) the row shows just Edit + Delete.
+				visible: (item) => {
+					const s = String(item['status'] || '').toLowerCase().replace(/-/g, '_');
+					return s === 'active' || s === 'on_hold';
+				},
+				handler: async (item, api, reload, dlg) => {
+					// Themed modal with a large, mandatory Reason textarea — mirrors the
+					// EHR-UI "Discontinue Prescription" popup (bigger box, required reason).
+					const result = await showThemedModal({
+						title: 'Discontinue Prescription',
+						subtitle: 'Please provide a reason for discontinuing.',
+						fields: [{ key: 'reason', label: 'Reason', type: 'textarea', required: true, rows: 4, placeholder: 'Reason for discontinuation...' }],
+						confirmLabel: 'Discontinue',
+						confirmColor: '#f59e0b',
+					});
+					const reason = result?.['reason']?.trim();
 					if (reason) {
-						await api.fetch(`/api/prescriptions/${item.id}/discontinue`, {
+						const r = await api.fetch(`/api/prescriptions/${item.id}/discontinue`, {
 							method: 'POST', headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ reason }),
 						});
+						if (!r.ok) {
+							const err = await r.json().catch(() => ({}));
+							await dlg.error(String(err?.['message'] || `Failed to discontinue (HTTP ${r.status}).`));
+							return;
+						}
 						reload();
 					}
 				}
@@ -606,32 +626,67 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 		],
+		// Action column mirrors the EHR-UI Lab Orders page: View, Mark Complete,
+		// View Results, Edit (auto, from editable:true) and Delete (issue #7).
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Update Status', icon: '\u{1F504}', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({ type: 'question', message: 'Update lab order status', inputs: [{ placeholder: 'New status: active, pending, completed, cancelled' }] });
-					if (!res.confirmed || !res.values?.[0]?.trim()) { return; }
-					const newStatus = res.values[0].trim().toLowerCase();
-					await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, {
+				label: 'View', icon: '\u{1F441}', handler: async (item, api, _reload, dlg) => {
+					// Read-only order summary + attached results, like the web "View" modal.
+					const fmt = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? '—' : String(v); };
+					let resultsLine = '';
+					try {
+						const res = await api.fetch(`/api/lab-results/order/${item.id}`);
+						if (res.ok) {
+							const json = await res.json().catch(() => null);
+							const arr = (json?.data ?? json) as unknown[];
+							if (Array.isArray(arr)) { resultsLine = `\n\nAttached results: ${arr.length}`; }
+						}
+					} catch { /* ignore — results are optional */ }
+					await dlg.info(
+						`Order ${fmt('orderNumber')}\n` +
+						`Test: ${fmt('orderName')}\n` +
+						`Provider: ${fmt('physicianName')}\n` +
+						`Priority: ${fmt('priority')}\n` +
+						`Status: ${fmt('status')}\n` +
+						`Result: ${fmt('result')}\n` +
+						`Order Date: ${fmt('orderDate')}` +
+						resultsLine
+					);
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Mark as Complete', icon: '✅',
+				// Only offer while the order is not already completed / cancelled.
+				visible: (item) => {
+					const s = String(item['status'] || '').toLowerCase();
+					return s !== 'completed' && s !== 'cancelled';
+				},
+				handler: async (item, api, reload, dlg) => {
+					const r = await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, {
 						method: 'PUT', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ ...item, status: newStatus }),
+						body: JSON.stringify({ ...item, status: 'completed' }),
 					});
+					if (!r.ok) {
+						const err = await r.json().catch(() => ({}));
+						await dlg.error(String(err?.['message'] || `Failed to mark complete (HTTP ${r.status}).`));
+						return;
+					}
 					reload();
 				}
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Print Order', icon: '\u{1F5A8}', handler: async (item, api, _reload, dlg) => {
-					const res = await api.fetch(`/api/lab-order/${item.patientId}/${item.id}/print`, { method: 'POST' });
-					if (!res.ok) { await dlg.info('Print request sent (check printer queue).'); }
-					else { await dlg.info('Lab order sent to printer.'); }
-				}
-			},
-			{
-				// allow-any-unicode-next-line
-				label: 'View Results', icon: '\u{1F4CA}', handler: async (item, _api, _reload, dlg) => {
-					await dlg.info(`Switch to "Lab Results" in the sidebar to view results for order ${item.orderNumber || item.id}.`);
+				label: 'View Results', icon: '\u{1F4CA}', handler: async (item, _api, _reload, _dlg) => {
+					// Switch the Labs sidebar to the Lab Results view (arrow fn captures
+					// the editor instance), matching the web "View Results" navigation.
+					if (this._activeView !== 'results') {
+						this._activeView = 'results';
+						this._updateSidebarActive();
+						this._resetAndReload();
+					}
+					void item;
 				}
 			},
 			// allow-any-unicode-next-line
@@ -831,9 +886,25 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'vaccineName', 'cvxCode', 'site', 'route', 'administeredBy', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// The Dose field is free text so units (mL, gtt, liter, units) can be typed.
+		// Backend `doseNumber` is an Integer, so extract the leading number for it and
+		// preserve the full "0.5 mL" text — units included — in `doseSeries`. This
+		// fixes the "Cannot deserialize Integer from String '1 ml'" save error.
+		beforeSave: (payload) => {
+			const raw = String(payload['doseNumber'] ?? '').trim();
+			if (raw) {
+				const m = raw.match(/-?\d+(?:\.\d+)?/);
+				const num = m ? parseFloat(m[0]) : NaN;
+				payload['doseNumber'] = Number.isFinite(num) ? Math.round(num) : null;
+				payload['doseSeries'] = raw;
+			} else {
+				payload['doseNumber'] = null;
+			}
+			return payload;
+		},
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'vaccineName', label: 'Vaccine', width: '1.5fr' },
-			{ key: 'cvxCode', label: 'CVX', width: '60px' }, { key: 'doseNumber', label: 'Dose', width: '50px' },
+			{ key: 'cvxCode', label: 'CVX', width: '60px' }, { key: 'doseSeries', label: 'Dose', width: '70px', aliases: ['doseNumber'] },
 			{ key: 'site', label: 'Site', width: '80px' }, { key: 'route', label: 'Route', width: '70px' },
 			{ key: 'administrationDate', label: 'Admin Date', width: '90px' }, { key: 'administeredBy', label: 'Administered By' },
 			{ key: 'status', label: 'Status', width: '80px' },
@@ -933,7 +1004,12 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 					{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
 				]
 			},
-			{ key: 'doseNumber', label: 'Dose Number', type: 'text', placeholder: 'e.g., 0.5 mL or 1' },
+			// Free-text dose so units (mL, gtt, liter, lit, units) can be entered.
+			// The backend `doseNumber` column is an Integer (dose-in-series), so
+			// `beforeSave` below splits "0.5 mL" into the integer part (doseNumber)
+			// and keeps the full text — units included — in `doseSeries`. Previously
+			// posting "1 ml" straight to the Integer column threw a JSON parse error.
+			{ key: 'doseNumber', label: 'Dose', type: 'text', placeholder: 'e.g. 0.5 mL, 1 gtt, 2 units', aliases: ['doseSeries'] },
 			// Provider Information
 			{
 				key: 'administeredBy', label: 'Administered By', type: 'search',
@@ -1033,7 +1109,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				validationMessage: 'Please select a referring provider from the search results',
 			},
 			{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
+			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, placeholder: 'e.g. Dr. Jane Smith', validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
 			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
 			{
 				key: 'specialty', label: 'Specialty', type: 'select', options: [
@@ -1062,20 +1138,30 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'Other' },
 				]
 			},
-			{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
-			{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: 'Street address' },
-			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
-			{ key: 'facilityFax', label: 'Facility Fax', type: 'text', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
-			{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true },
-			{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea' },
+			{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g. City Medical Center', validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
+			{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: '123 Main St, City, ST 12345' },
+			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
+			{ key: 'facilityFax', label: 'Facility Fax', type: 'text', placeholder: '(555) 123-4568', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
+			{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true, placeholder: 'Reason for referral...' },
+			{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea', placeholder: 'Relevant clinical information...' },
 			{
 				key: 'urgency', label: 'Urgency', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
 			},
-			{ key: 'insuranceName', label: 'Insurance Name', type: 'text' },
+			{
+				// Status field was missing from the New/Edit Referral form (issue #10).
+				// Mirrors the EHR-UI Clinical Details "Status" dropdown.
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Draft', value: 'draft' }, { label: 'Sent', value: 'sent' },
+					{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
+					{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Denied', value: 'denied' },
+				], defaultValue: 'draft'
+			},
+			{ key: 'insuranceName', label: 'Insurance Name', type: 'text', placeholder: 'e.g. Blue Cross' },
 			{ key: 'insuranceId', label: 'Insurance ID', type: 'text', placeholder: 'Member/policy ID' },
-			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text' },
+			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'AUTH-001' },
 			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
 			{ key: 'appointmentDate', label: 'Appointment Date', type: 'date' },
 			{ key: 'appointmentNotes', label: 'Appointment Notes', type: 'textarea', placeholder: 'Scheduling notes...' },
@@ -1516,7 +1602,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
 				validationMessage: 'Procedure must be at least 2 characters and contain only letters/numbers/punctuation',
 			},
-			{ key: 'procedureCode', label: 'CPT Code', type: 'text', required: true, placeholder: 'Auto-filled', validationPattern: '^[0-9A-Z]{4,7}$', validationMessage: 'CPT code must be 4-7 alphanumerics (e.g. 99213, J0696)' },
+			{ key: 'procedureCode', label: 'Procedure Code', type: 'text', required: true, placeholder: 'Auto-filled', validationPattern: '^[0-9A-Z]{4,7}$', validationMessage: 'Procedure code must be 4-7 alphanumerics (e.g. 99213, J0696)' },
 			{
 				key: 'diagnosisDescription', label: 'Diagnosis', type: 'search',
 				placeholder: 'Search ICD-10 diagnosis...',
@@ -1542,6 +1628,16 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 				], defaultValue: 'routine'
+			},
+			{
+				// Status field was missing from the New/Edit Prior Authorization form
+				// (issue #11). Mirrors the EHR-UI Authorization Details "Status" dropdown.
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Pending', value: 'pending' }, { label: 'Submitted', value: 'submitted' },
+					{ label: 'Approved', value: 'approved' }, { label: 'Denied', value: 'denied' },
+					{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
+					{ label: 'Cancelled', value: 'cancelled' },
+				], defaultValue: 'pending'
 			},
 			{ key: 'denialReason', label: 'Denial Reason', type: 'textarea', placeholder: 'Reason for denial if applicable' },
 			{ key: 'appealDeadline', label: 'Appeal Deadline', type: 'date' },
@@ -1606,16 +1702,23 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 						await dlg.info('This authorization is already denied.');
 						return;
 					}
-					const res = await dlg.input({
-						type: 'question',
+					// Issue #12: themed "Deny Authorization" popup matching the EHR-UI —
+					// a Denial Reason textarea (required) plus an Appeal Deadline date,
+					// instead of the bare single-line prompt.
+					const proc = [item.procedureCode, item.procedureDescription].filter(Boolean).join(' ');
+					const result = await showThemedModal({
+						title: 'Deny Authorization',
 						// allow-any-unicode-next-line
-						message: 'Deny authorization',
-						// allow-any-unicode-next-line
-						detail: `Patient: ${item.patientName || '—'}\nThe reason is saved with the denial.`,
-						inputs: [{ placeholder: 'Denial reason (required)' }],
+						subtitle: `Denying authorization for ${item.patientName || '—'}${proc ? ` — ${proc}` : ''}`,
+						confirmLabel: 'Deny',
+						confirmColor: '#dc2626',
+						fields: [
+							{ key: 'denialReason', label: 'Denial Reason', type: 'textarea', required: true, rows: 4, placeholder: 'Enter reason for denial...' },
+							{ key: 'appealDeadline', label: 'Appeal Deadline', type: 'date', value: String(item.appealDeadline || '') },
+						],
 					});
-					if (!res.confirmed) { return; }
-					const reason = res.values?.[0]?.trim() || '';
+					if (!result) { return; }
+					const reason = result['denialReason']?.trim() || '';
 					if (!reason) {
 						await dlg.error('A denial reason is required.');
 						return;
@@ -1624,9 +1727,11 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 					// request body and ALSO accepts the existing record-shape fields
 					// — sending just `{ reason }` silently dropped the reason (QA
 					// report 2026-05-11). Send both keys for safety.
+					const denyBody: Record<string, unknown> = { denialReason: reason, reason };
+					if (result['appealDeadline']) { denyBody.appealDeadline = result['appealDeadline']; }
 					const r = await api.fetch(`/api/prior-auth/${item.id}/deny`, {
 						method: 'POST', headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ denialReason: reason, reason }),
+						body: JSON.stringify(denyBody),
 					});
 					if (!r.ok) {
 						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
@@ -1652,7 +1757,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 	private readonly _libraryConfig: ClinicalEditorConfig = {
 		title: 'Education Library', apiPath: '/api/education/materials',
 		searchPlaceholder: 'Search by title, category, content type...',
-		clientSideFilter: ['title', 'category', 'contentType', 'source', 'id'],
+		clientSideFilter: ['title', 'category', 'contentType', 'id'],
 		editable: true,
 		refetchOnEdit: true,
 		// `tags` is a JSON column in education_material, but the form captures it as
@@ -1681,11 +1786,12 @@ export class EducationEditor extends ClinicalListEditorBase {
 		// Issue #24: enable horizontal scroll on narrow viewports so the Actions
 		// column stays visible rather than being clipped by the right edge.
 		tableMinWidth: '900px',
+		// Source column removed; an Actions column (Assign to Patient / Edit / Delete)
+		// is rendered automatically from `actions` + `editable` below (issue #13).
 		columns: [
 			{ key: 'title', label: 'Title', width: '1.5fr' },
 			{ key: 'category', label: 'Category', width: '120px' },
 			{ key: 'contentType', label: 'Type', width: '90px' },
-			{ key: 'source', label: 'Source' },
 			{ key: 'isActive', label: 'Active', width: '60px' },
 			{ key: 'viewCount', label: 'Views', width: '60px' },
 		],
@@ -1765,6 +1871,19 @@ export class EducationEditor extends ClinicalListEditorBase {
 			// Description removed to match the ciyex-ehr-ui form (issue #8).
 		],
 		actions: [
+			{
+				// Issue #13: "Assign to Patient" opens the Patient Assignments view and
+				// a pre-filled New Assignment form so the chosen material can be
+				// assigned to a patient — mirrors the EHR-UI library row action.
+				// allow-any-unicode-next-line
+				label: 'Assign to Patient', icon: '\u{1F4E4}', handler: async (item) => {
+					this.eduView = 'assignments';
+					this._updateEduSidebarActive();
+					this._eduLibraryMain.style.display = 'none';
+					this._eduAssignPanel.style.display = 'flex';
+					this._openCreateForm({ materialTitle: item.title, materialId: item.id, category: item.category });
+				}
+			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this material?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/education/materials/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],

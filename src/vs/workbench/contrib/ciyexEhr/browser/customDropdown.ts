@@ -180,7 +180,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// stretch from its `left` all the way to the viewport's right edge — the
 	// "dropdown covers too much space / huge width" the QA team flagged on every
 	// create+edit form (gender, priority, status, provider, location, expiry, …).
-	panel.style.cssText = `position:fixed;right:auto;bottom:auto;box-sizing:border-box;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
+	panel.style.cssText = `position:fixed;right:auto;bottom:auto;box-sizing:border-box;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;max-height:320px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
 	(doc.body || doc.documentElement).appendChild(panel);
 
 	const positionPanel = () => {

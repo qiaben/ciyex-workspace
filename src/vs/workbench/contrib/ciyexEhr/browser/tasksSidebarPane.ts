@@ -216,10 +216,10 @@ export class TasksSidebarPane extends ViewPane {
 		const overdue = this.tasks.filter(t => this._isOverdue(t)).length;
 
 		this._statBadge(stats, String(total), 'Total', 'var(--vscode-foreground)');
-		this._statBadge(stats, String(done), 'Done', '#22c55e');
+		this._statBadge(stats, String(done), 'Completed', '#22c55e');
 		this._statBadge(stats, String(pending), 'Open', '#3b82f6');
 		if (overdue > 0) {
-			this._statBadge(stats, String(overdue), 'Late', '#ef4444');
+			this._statBadge(stats, String(overdue), 'Overdue', '#ef4444');
 		}
 	}
 
@@ -257,7 +257,7 @@ export class TasksSidebarPane extends ViewPane {
 		for (const f of ['active', 'overdue', 'done', 'all'] as const) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
 			btn.type = 'button';
-			btn.textContent = f === 'active' ? 'Active' : f === 'overdue' ? 'Late' : f === 'done' ? 'Done' : 'All';
+			btn.textContent = f === 'active' ? 'Active' : f === 'overdue' ? 'Overdue' : f === 'done' ? 'Completed' : 'All';
 			const isActive = this.filter === f;
 			btn.style.cssText = `flex:1;padding:3px;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:500;${isActive ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);' : 'background:transparent;color:var(--vscode-descriptionForeground);'}`;
 			btn.addEventListener('click', (e) => { e.preventDefault(); this.filter = f; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); });

@@ -219,15 +219,14 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// allow-any-unicode-next-line
 	headerTitle.textContent = `Visit Summary — ${patientName}`;
 	headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
-	const pdfBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-	pdfBtn.textContent = 'Download PDF';
-	pdfBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
-	const printBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-	printBtn.textContent = 'Print';
-	printBtn.style.cssText = `padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:4px;cursor:pointer;font-size:12px;`;
-	const closeBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
-	closeBtn.textContent = 'Close';
-	closeBtn.style.cssText = `padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:4px;cursor:pointer;font-size:12px;`;
+	// Icon-only Close in the header; Download / Print live in a bottom footer so
+	// they never collide with the desktop window controls (minimise/maximise/close).
+	const closeBtn = DOM.append(header, DOM.$('button.codicon.codicon-close')) as HTMLButtonElement;
+	closeBtn.title = 'Close';
+	closeBtn.setAttribute('aria-label', 'Close');
+	closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:96px;`;
+	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; closeBtn.style.color = col.fg; });
+	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = col.desc; });
 
 	// Scrollable body where the summary content is rendered.
 	const body = DOM.append(sheet, DOM.$('div.ciyex-summary-body'));
@@ -235,6 +234,23 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	const loading = DOM.append(body, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
+
+	// Footer action toolbar — clearly-labelled Download / Print buttons.
+	const footer = DOM.append(sheet, DOM.$('div.ciyex-summary-footer'));
+	footer.style.cssText = `display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
+	const makeFooterBtn = (codicon: string, label: string, primary: boolean): { btn: HTMLButtonElement; lbl: HTMLElement } => {
+		const btn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		btn.style.cssText = primary
+			? 'display:inline-flex;align-items:center;gap:7px;padding:8px 18px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;'
+			: `display:inline-flex;align-items:center;gap:7px;padding:8px 18px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid ${col.border};border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;`;
+		const ic = DOM.append(btn, DOM.$('span.codicon.codicon-' + codicon));
+		ic.style.cssText = 'font-size:14px;';
+		const lbl = DOM.append(btn, DOM.$('span'));
+		lbl.textContent = label;
+		return { btn, lbl };
+	};
+	const { btn: pdfBtn, lbl: pdfLbl } = makeFooterBtn('cloud-download', 'Download PDF', true);
+	const { btn: printBtn } = makeFooterBtn('printer', 'Print', false);
 
 	const dismiss = () => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
 	closeBtn.addEventListener('click', dismiss);
@@ -244,8 +260,8 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// /summary/print (same endpoint the EHR-UI uses) and trigger a download.
 	// Falls back to the in-app browser print dialog if the endpoint is missing.
 	pdfBtn.addEventListener('click', async () => {
-		const original = pdfBtn.textContent;
-		pdfBtn.textContent = 'Generating…';
+		const original = pdfLbl.textContent;
+		pdfLbl.textContent = 'Generating…';
 		pdfBtn.disabled = true;
 		try {
 			const res = await deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary/print`, {
@@ -264,7 +280,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		} catch (err) {
 			deps.notificationService.notify({ severity: Severity.Warning, message: `Could not generate PDF (${String(err)}). Use Print to save as PDF instead.` });
 		} finally {
-			pdfBtn.textContent = original;
+			pdfLbl.textContent = original;
 			pdfBtn.disabled = false;
 		}
 	});
@@ -278,7 +294,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 			'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
 			'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
 			'  .ciyex-summary-sheet{box-shadow:none !important;width:100% !important;height:auto !important;}',
-			'  .ciyex-summary-header button{display:none !important;}',
+			'  .ciyex-summary-header button,.ciyex-summary-footer{display:none !important;}',
 			'  .ciyex-summary-body{overflow:visible !important;padding:0 !important;}',
 			'  @page{margin:14mm;}',
 			'}',

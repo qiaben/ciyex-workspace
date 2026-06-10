@@ -617,15 +617,28 @@ export class TasksEditor extends EditorPane {
 						const list = data?.data?.content || data?.content || data?.data || [];
 						DOM.clearNode(provDropdown);
 						for (const p of list) {
+							const ident = (p.identification && typeof p.identification === 'object') ? p.identification as Record<string, unknown> : {};
+							const fn = String(p.firstName || p['identification.firstName'] || ident.firstName || '');
+							const ln = String(p.lastName || p['identification.lastName'] || ident.lastName || '');
+							const npi = String(p.npi || p['identification.npi'] || ident.npi || '');
+							// Show the provider name as the primary label (the EHR-UI shows the
+							// name, never the bare NPI). Fall back to display name / username
+							// only when no first/last name is present.
+							const displayName = `${fn} ${ln}`.trim() || String(p.name || p.fullName || p.username || '').trim() || (npi ? `Provider (NPI ${npi})` : String(p.id || ''));
 							const item = DOM.append(provDropdown, DOM.$('div'));
 							item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
-							const fn = String(p.firstName || p['identification.firstName'] || '');
-							const ln = String(p.lastName || p['identification.lastName'] || '');
-							item.textContent = `${fn} ${ln}`.trim() || String(p.name || p.username || p.id || '');
+							const nameLine = DOM.append(item, DOM.$('div'));
+							nameLine.textContent = displayName;
+							nameLine.style.cssText = 'font-weight:500;color:var(--vscode-foreground);';
+							if (npi) {
+								const npiLine = DOM.append(item, DOM.$('div'));
+								npiLine.textContent = `NPI ${npi}`;
+								npiLine.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+							}
 							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
 							item.addEventListener('click', () => {
-								assignedToInput.value = item.textContent || '';
+								assignedToInput.value = displayName;
 								provDropdown.style.display = 'none';
 							});
 						}
