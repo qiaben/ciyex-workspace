@@ -93,13 +93,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		void this.editorService.openEditor(input, { pinned: true });
 	}
 
-	/** Open the workflow-driven snapshot redesign (demo) for the same patient,
-	 *  side-by-side for TL review. Remove once the redesign is folded in. */
-	private _openDemoSnapshot(): void {
-		if (!this._currentPatientId) { return; }
-		void this.commandService.executeCommand('ciyex.openPatientSnapshotDemo', this._currentPatientId, this._currentPatientName, this._lastRenderArgs?.appointmentId);
-	}
-
 	// --- Popup CRUD --------------------------------------------------------
 	//
 	// Every entity surfaced on the snapshot dashboard routes through one
@@ -145,18 +138,22 @@ export class PatientSnapshotEditor extends EditorPane {
 			listPath: (pid) => `/api/fhir-resource/medications/patient/${pid}?page=0&size=50`,
 		},
 		insurance: {
-			// Chart editor: tab.key 'insurance' → /api/fhir-resource/insurance
-			// (no TAB_API_SLUG remap). The 'insurance-coverage' read path is a
-			// legacy alias the snapshot uses for fetching; writes must go to
-			// /api/fhir-resource/insurance to match backend tab_field_config.
-			title: 'Insurance Coverage', configKey: 'insurance', basePath: '/api/fhir-resource/insurance', fhirPatientScoped: true,
+			// The Coverage tab_field_config (FHIR paths for save/read) is seeded
+			// under the backend slug 'insurance-coverage' (ciyex V41/V44), NOT
+			// 'insurance'. The chart editor routes both saves and reads through
+			// it via TAB_API_SLUG ('insurance' → 'insurance-coverage'). Writing to
+			// /api/fhir-resource/insurance returns a hollow 201 (no id, nothing
+			// persisted) because the backend can't resolve the field config, and
+			// reading it 400s (HAPI-0524 "subject" param). Use insurance-coverage
+			// for both so Coverage create/read actually resolve.
+			title: 'Insurance Coverage', configKey: 'insurance', basePath: '/api/fhir-resource/insurance-coverage', fhirPatientScoped: true,
 			columns: [
 				{ key: 'payerName', label: 'Payor', width: '2fr' },
 				{ key: 'policyNumber', label: 'Member ID', width: '140px' },
 				{ key: 'groupNumber', label: 'Group #', width: '120px' },
 				{ key: 'insuranceType', label: 'Priority', width: '100px' },
 			],
-			listPath: (pid) => `/api/fhir-resource/insurance/patient/${pid}?page=0&size=20`,
+			listPath: (pid) => `/api/fhir-resource/insurance-coverage/patient/${pid}?page=0&size=20`,
 		},
 		labs: {
 			title: 'Lab Orders', configKey: 'labs', basePath: '/api/fhir-resource/labs', fhirPatientScoped: true,
@@ -200,15 +197,22 @@ export class PatientSnapshotEditor extends EditorPane {
 			listPath: (pid) => `/api/fhir-resource/claims/patient/${pid}?page=0&size=50`,
 		},
 		payment: {
-			title: 'Payments', configKey: 'payment', basePath: '/api/fhir-resource/payments', fhirPatientScoped: true,
+			// Payments are NOT a FHIR resource: the backend tab_field_config has no
+			// resource type for 'payments', so POST /api/fhir-resource/payments
+			// 403s ("Cannot determine resource type for tab 'payments'"). The
+			// workspace records payments via POST /api/payments/collect (see the
+			// clinicalEditors PAYMENTS config) and lists them at
+			// /api/payments/transactions/patient/{id}. Create is special-cased in
+			// _savePayment; edit/delete fall through to /api/payments/transactions/{id}.
+			title: 'Payments', configKey: 'payment', basePath: '/api/payments/transactions', fhirPatientScoped: false, nonFhir: true,
 			columns: [
-				{ key: 'paymentDate', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'collectedAt', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
 				{ key: 'amount', label: 'Amount', width: '100px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
-				{ key: 'paymentMethod', label: 'Method', width: '140px' },
-				{ key: 'reference', label: 'Reference', width: '160px' },
+				{ key: 'transactionType', label: 'Type', width: '110px' },
+				{ key: 'paymentMethodType', label: 'Method', width: '130px' },
 				{ key: 'status', label: 'Status', width: '110px' },
 			],
-			listPath: (pid) => `/api/fhir-resource/payments/patient/${pid}?page=0&size=50`,
+			listPath: (pid) => `/api/payments/transactions/patient/${pid}?page=0&size=50`,
 		},
 		demographics: {
 			title: 'Demographics', configKey: 'demographics', basePath: '/api/patients', fhirPatientScoped: false, nonFhir: true,
@@ -585,6 +589,38 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 	}
 
+	/**
+	 * Collect a payment for the current patient. Payments are not a FHIR
+	 * resource — the workspace records them via POST /api/payments/collect
+	 * (mirrors the clinicalEditors PAYMENTS config). Maps the chart-editor
+	 * payment form keys (paymentMethod / amount / reference / …) onto the
+	 * collect endpoint's transaction shape.
+	 */
+	private async _savePayment(values: Record<string, string>): Promise<Response> {
+		// Collect only accepts a fixed method enum; fold the chart form's richer
+		// list down to it so the backend doesn't reject the transaction.
+		const METHOD_MAP: Record<string, string> = {
+			credit_card: 'credit_card', debit_card: 'debit_card', cash: 'cash',
+			check: 'check', eft: 'ach', bank_account: 'ach',
+		};
+		const rawMethod = String(values['paymentMethod'] || '').trim();
+		const payload: Record<string, unknown> = {
+			patientId: this._currentPatientId,
+			amount: Number(values['amount'] || 0),
+			transactionType: 'payment',
+			paymentMethodType: METHOD_MAP[rawMethod] || 'other',
+			description: String(values['description'] || values['payerName'] || '').trim() || undefined,
+			invoiceId: String(values['invoiceNumber'] || '').trim() || undefined,
+			notes: String(values['reference'] || '').trim() || undefined,
+			status: 'completed',
+		};
+		return this.apiService.fetch('/api/payments/collect', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload),
+		});
+	}
+
 	/** Build the create / update URL the same way the full chart editor does. */
 	private _saveUrl(entity: string, existingId: string | undefined): { url: string; method: 'POST' | 'PUT' } {
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
@@ -644,6 +680,23 @@ export class PatientSnapshotEditor extends EditorPane {
 					} catch { /* */ }
 					if (!existingId && saved) { this._trackCreated(entity, { ...next, ...saved }); }
 					this.notificationService.notify({ severity: Severity.Info, message: `Encounter ${existingId ? 'updated' : 'created'}.` });
+					this._rerender();
+					return;
+				}
+				// Payment create routes through /api/payments/collect (not a FHIR
+				// resource). Edits fall through to the generic PUT on
+				// /api/payments/transactions/{id}.
+				if (entity === 'payment' && !existingId) {
+					const res = await this._savePayment(next);
+					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+					let saved: Record<string, unknown> | null = null;
+					try {
+						const j = await res.json();
+						const cand = (j?.data ?? j) as Record<string, unknown> | null;
+						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+					} catch { /* non-JSON body */ }
+					if (saved) { this._trackCreated(entity, { ...next, ...saved }); }
+					this.notificationService.notify({ severity: Severity.Info, message: 'Payment collected.' });
 					this._rerender();
 					return;
 				}
@@ -918,17 +971,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	private async _fetchTodayAppointment(patientId: string, appointmentId?: string): Promise<Record<string, unknown> | null> {
-		// If a specific appointment ID is provided, fetch it directly.
-		if (appointmentId) {
-			const raw = await this._fetch(`/api/appointments/${appointmentId}`);
-			if (raw) {
-				// Unwrap { data: {...} } if needed
-				return ((raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data))
-					? raw.data as Record<string, unknown>
-					: raw);
-			}
-		}
-		// Fallback: fetch today's appointments for this patient.
+		// The backend has no GET /api/appointments/{id} (it 500s with "Request
+		// method 'GET' is not supported"), so resolve the appointment from the
+		// patient's day list instead and match by id when one was provided.
 		const today = new Date().toISOString().split('T')[0];
 		const urls = [
 			`/api/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
@@ -942,7 +987,12 @@ export class PatientSnapshotEditor extends EditorPane {
 				const inner = (raw.data ?? raw) as Record<string, unknown>;
 				const arr: Record<string, unknown>[] = (inner.content || inner.list || inner.items || inner.records ||
 					(Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Record<string, unknown>[];
-				if (arr.length > 0) { return arr[0]; }
+				if (arr.length === 0) { continue; }
+				if (appointmentId) {
+					const match = arr.find(a => String(a.id ?? a.appointmentId ?? '') === String(appointmentId));
+					if (match) { return match; }
+				}
+				return arr[0];
 			} catch { /* try next */ }
 		}
 		return null;
@@ -957,7 +1007,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			this._fetch(`/api/fhir-resource/vitals/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/encounters/patient/${patientId}?page=0&size=50`),
 			this._fetch(`/api/fhir-resource/labs/patient/${patientId}?page=0&size=20`),
-			this._fetch(`/api/fhir-resource/payments/patient/${patientId}?page=0&size=20`),
+			this._fetch(`/api/payments/transactions/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
 			this._fetch(`/api/fhir-resource/insurance-coverage/patient/${patientId}?page=0&size=1`),
 		]);
@@ -982,7 +1032,90 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
+		this._renderWorkflowBanner(apt, vit, encs);
 		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt);
+	}
+
+	// --- Workflow model (demo) --------------------------------------------
+	//
+	// The redesign is workflow-driven: Front Desk → Medical Staff → Doctor.
+	// Every action card derives its state from these five ordered steps so the
+	// UI can highlight the *next* required action and disable steps that are
+	// not yet reachable.
+
+	private _isToday(dateRaw: unknown): boolean {
+		if (!dateRaw) { return false; }
+		try {
+			const d = new Date(String(dateRaw));
+			const now = new Date();
+			return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+		} catch { return false; }
+	}
+
+	/** Vitals recorded during today's visit only — the redesign deliberately
+	 *  hides older imported readings from the "Today's Vitals" card. */
+	private _todaysVitals(vit: Record<string, unknown>[]): Record<string, unknown>[] {
+		return vit.filter(v => this._isToday(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date));
+	}
+
+	private _workflowSteps(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): Array<{ key: string; label: string; icon: string; done: boolean }> {
+		const status = String(apt?.status || apt?.appointmentStatus || '').toLowerCase();
+		const checkedIn = ['checked-in', 'in-room', 'with-provider', 'completed', 'fulfilled'].includes(status);
+		const roomAssigned = !!String(apt?.room || apt?.roomName || '').trim();
+		const vitalsDone = this._todaysVitals(vit).length > 0;
+		const hasEncounter = !!(apt?.encounterId) || encs.some(e => this._isToday(e.encounterDate || e.startDate || e.start || e.date || e.periodStart));
+		const completed = ['completed', 'fulfilled'].includes(status);
+		return [
+			{ key: 'checkin', label: 'Check In', icon: 'check', done: checkedIn },
+			{ key: 'room', label: 'Assign Room', icon: 'home', done: roomAssigned },
+			{ key: 'vitals', label: 'Record Vitals', icon: 'pulse', done: vitalsDone },
+			{ key: 'encounter', label: 'Open Encounter', icon: 'note', done: hasEncounter },
+			{ key: 'complete', label: 'Complete', icon: 'pass', done: completed },
+		];
+	}
+
+	/** Banner pinned above the grid that tells first-time users exactly what to
+	 *  do next — the single biggest concern in Siva's feedback. */
+	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
+		if (!apt) { return; }
+		const steps = this._workflowSteps(apt, vit, encs);
+		const next = steps.find(s => !s.done);
+
+		const banner = DOM.append(this.root, DOM.$('.snap-workflow-banner'));
+		banner.style.cssText = 'margin:14px 24px 0;padding:12px 16px;border-radius:10px;border:1px solid var(--vscode-editorWidget-border);background:linear-gradient(90deg,rgba(14,99,156,0.16),rgba(14,99,156,0.04));display:flex;align-items:center;gap:16px;flex-wrap:wrap;';
+
+		const lead = DOM.append(banner, DOM.$('div'));
+		lead.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:200px;';
+		const leadIco = DOM.append(lead, DOM.$('span.codicon.codicon-' + (next ? 'arrow-right' : 'check-all')));
+		(leadIco as HTMLElement).style.cssText = `font-size:20px;color:${next ? '#3b9edd' : '#22c55e'};`;
+		const leadText = DOM.append(lead, DOM.$('div'));
+		const leadLbl = DOM.append(leadText, DOM.$('div'));
+		leadLbl.textContent = next ? 'NEXT ACTION REQUIRED' : 'WORKFLOW COMPLETE';
+		leadLbl.style.cssText = 'font-size:9.5px;font-weight:800;letter-spacing:0.08em;color:var(--vscode-descriptionForeground);';
+		const leadVal = DOM.append(leadText, DOM.$('div'));
+		leadVal.textContent = next ? next.label : 'All steps done';
+		leadVal.style.cssText = `font-size:16px;font-weight:800;color:${next ? 'var(--vscode-editor-foreground)' : '#22c55e'};`;
+
+		// Inline progress trail
+		const trail = DOM.append(banner, DOM.$('div'));
+		trail.style.cssText = 'display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;';
+		steps.forEach((s, i) => {
+			const isNext = next && s.key === next.key;
+			const chip = DOM.append(trail, DOM.$('div'));
+			chip.style.cssText = `display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;font-size:11.5px;font-weight:700;white-space:nowrap;${s.done
+				? 'background:rgba(34,197,94,0.16);color:#22c55e;'
+				: isNext
+					? 'background:rgba(59,158,221,0.18);color:#3b9edd;border:1px solid rgba(59,158,221,0.5);'
+					: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));color:var(--vscode-descriptionForeground);'}`;
+			const ci = DOM.append(chip, DOM.$('span.codicon.codicon-' + (s.done ? 'check' : isNext ? 'circle-large-outline' : 'circle-outline')));
+			(ci as HTMLElement).style.cssText = 'font-size:13px;';
+			const cl = DOM.append(chip, DOM.$('span'));
+			cl.textContent = s.label;
+			if (i < steps.length - 1) {
+				const sep = DOM.append(trail, DOM.$('span.codicon.codicon-chevron-right'));
+				(sep as HTMLElement).style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);opacity:0.5;';
+			}
+		});
 	}
 
 	private _renderHeader(p: Record<string, unknown> | null, fallbackName: string, apt: Record<string, unknown> | null, cov: Record<string, unknown>[]): void {
@@ -1056,7 +1189,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		actions.style.cssText = 'position:absolute;top:18px;right:24px;display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
 		const primary: QuickAction[] = [
-			{ icon: 'beaker', title: 'Open Workflow Demo (TL review)', onClick: () => this._openDemoSnapshot() },
 			{ icon: '', customClass: 'ehr-patient-icon', title: 'Open Demographics', onClick: () => this._openPatientChartPage('demographics') },
 			{ icon: 'credit-card', title: 'Add Payment / Statement', onClick: () => this._openCreateModal('payment') },
 			{ icon: 'file-text', title: 'Billing & Claims', onClick: () => this._openCreateModal('claims') },
@@ -1190,6 +1322,29 @@ export class PatientSnapshotEditor extends EditorPane {
 		return '—';
 	}
 
+	/** Resolve the appointment duration (minutes) from whichever field the
+	 *  backend supplied — a numeric duration, or the gap between start and end.
+	 *  The card previously read only `apt.duration`, which the appointments API
+	 *  often omits, so Duration always showed "—" (QA report). */
+	private _apptDurationMin(apt: Record<string, unknown>): number {
+		const direct = Number(apt.duration ?? apt.minutesDuration ?? apt.durationMinutes ?? apt.lengthMinutes ?? 0);
+		if (direct > 0) { return Math.round(direct); }
+		const startRaw = String(apt.start || apt.startTime || '');
+		const endRaw = String(apt.end || apt.endTime || apt.appointmentEndTime || '');
+		if (startRaw && endRaw) {
+			const s = new Date(startRaw).getTime();
+			let e = new Date(endRaw).getTime();
+			if (isNaN(e)) {
+				// `end` may be a bare "HH:mm" — combine it with the start's date.
+				const tm = /^(\d{2}):(\d{2})/.exec(endRaw);
+				const dm = /^(\d{4}-\d{2}-\d{2})/.exec(startRaw);
+				if (tm && dm) { e = new Date(`${dm[1]}T${tm[1]}:${tm[2]}:00`).getTime(); }
+			}
+			if (!isNaN(s) && !isNaN(e) && e > s) { return Math.round((e - s) / 60000); }
+		}
+		return 0;
+	}
+
 	/** PUT a new appointment status, then refresh the dashboard so the card,
 	 *  status pill and available actions all reflect the new state. */
 	private async _changeApptStatus(id: string, status: string): Promise<void> {
@@ -1292,7 +1447,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			values: {
 				appointmentDate: initialDate,
 				appointmentTime: initialTime,
-				duration: String(apt.duration || ''),
+				duration: (() => { const d = this._apptDurationMin(apt); return d > 0 ? String(d) : ''; })(),
 				appointmentType: currentType === '—' ? '' : currentType,
 				status: currentStatus,
 				providerName: currentProvider,
@@ -1325,9 +1480,29 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _renderAppointmentCard(parent: HTMLElement, apt: Record<string, unknown>): void {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 
-		const card = DOM.append(parent, DOM.$('.snap-card'));
-		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
-		this._cardHeader(card, 'calendar', 'Today\'s Appointment', 1, undefined);
+		const card = DOM.append(parent, DOM.$('.snap-card.snap-appointment-card'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:0;grid-column:span 4;overflow:hidden;';
+
+		// Strong, separated header bar — Siva: the title blended into the card.
+		const titleBar = DOM.append(card, DOM.$('div'));
+		titleBar.style.cssText = 'display:flex;align-items:center;gap:9px;padding:11px 16px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);';
+		const tIco = DOM.append(titleBar, DOM.$('span.codicon.codicon-calendar'));
+		(tIco as HTMLElement).style.cssText = 'font-size:16px;';
+		const tLbl = DOM.append(titleBar, DOM.$('span'));
+		tLbl.textContent = 'TODAY\'S APPOINTMENT';
+		tLbl.style.cssText = 'font-size:13px;font-weight:800;letter-spacing:0.09em;';
+		const hasEnc0 = !!(apt.encounterId);
+		const encPill = DOM.append(titleBar, DOM.$('span'));
+		encPill.style.cssText = `margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,0.18);`;
+		const epIco = DOM.append(encPill, DOM.$('span.codicon.codicon-' + (hasEnc0 ? 'link' : 'link-external')));
+		(epIco as HTMLElement).style.cssText = 'font-size:12px;';
+		const epTxt = DOM.append(encPill, DOM.$('span'));
+		epTxt.textContent = hasEnc0 ? 'Encounter Linked' : 'No Encounter Yet';
+
+		// Body wrapper (header is full-bleed; content keeps its padding).
+		const body0 = DOM.append(card, DOM.$('div'));
+		body0.style.cssText = 'padding:14px 16px 16px;';
+		const cardBody = body0; // alias so the remaining code appends into the padded body
 
 		// --- All appointment fields, shown as label / value pairs --------------
 		const startRaw = String(apt.start || apt.startTime || '');
@@ -1339,14 +1514,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				const d = new Date(startRaw);
 				dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 				timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-				const dur = Number(apt.duration || 0);
+				const dur = this._apptDurationMin(apt);
 				if (dur > 0) {
 					const end = new Date(d.getTime() + dur * 60000);
 					endStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 				}
 			} catch { /* */ }
 		}
-		const durVal = Number(apt.duration || 0);
+		const durVal = this._apptDurationMin(apt);
 		const reason = String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || '').trim();
 		const notes = String(apt.notes || apt.note || apt.comment || '').trim();
 		const location = String(apt.locationName || apt.location || apt.facility || '').trim();
@@ -1368,7 +1543,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (reason) { fields.push(['Reason', reason]); }
 		if (notes) { fields.push(['Notes', notes]); }
 
-		const detailGrid = DOM.append(card, DOM.$('div'));
+		const detailGrid = DOM.append(cardBody, DOM.$('div'));
 		detailGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin:6px 0 12px;';
 		for (const [label, value] of fields) {
 			const isWide = label === 'Reason' || label === 'Notes';
@@ -1383,107 +1558,25 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (label === 'Encounter') { v.style.color = hasEncounter ? '#22c55e' : 'var(--vscode-descriptionForeground)'; }
 		}
 
-		// --- Inline status + room controls -------------------------------------
-		const controls = DOM.append(card, DOM.$('div'));
-		controls.style.cssText = 'display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;padding-top:10px;border-top:1px solid var(--vscode-editorWidget-border);';
-
-		const statusGroup = DOM.append(controls, DOM.$('div'));
-		statusGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:170px;';
-		const statusLbl = DOM.append(statusGroup, DOM.$('div'));
-		statusLbl.textContent = 'STATUS';
-		statusLbl.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);';
-		const currentStatus = String(apt.status || apt.appointmentStatus || 'Scheduled');
-		const statusSelect = DOM.append(statusGroup, DOM.$('select')) as HTMLSelectElement;
-		statusSelect.style.cssText = 'background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:7px;padding:6px 9px;font-size:12px;cursor:pointer;outline:none;';
-		const populateStatuses = (opts: string[]) => {
-			DOM.clearNode(statusSelect);
-			for (const s of opts) {
-				const opt = DOM.append(statusSelect, DOM.$('option')) as HTMLOptionElement;
-				opt.value = s;
-				opt.textContent = s;
-				if (s.toLowerCase() === currentStatus.toLowerCase()) { opt.selected = true; }
-			}
-		};
-		populateStatuses(['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'No Show', 'Cancelled']);
-		void (async () => {
-			try {
-				const res = await this.apiService.fetch('/api/appointments/status-options');
-				if (res.ok) {
-					const data = await res.json();
-					const opts = ((data?.data || data || []) as Array<{ label?: string; value?: string } | string>)
-						.map(o => (typeof o === 'string' ? o : o.label || o.value || ''))
-						.filter(Boolean);
-					if (opts.length > 0) { populateStatuses(opts); }
-				}
-			} catch { /* keep defaults */ }
-		})();
-		statusSelect.addEventListener('change', () => {
-			if (!appointmentId) { return; }
-			void this._changeApptStatus(appointmentId, statusSelect.value);
-		});
-
-		const roomGroup = DOM.append(controls, DOM.$('div'));
-		roomGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1;';
-		const roomLbl = DOM.append(roomGroup, DOM.$('div'));
-		roomLbl.textContent = 'ROOM';
-		roomLbl.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);';
-		const roomRow = DOM.append(roomGroup, DOM.$('div'));
-		roomRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
-		const currentRoom = String(apt.room || apt.roomName || '');
-		const roomSelect = DOM.append(roomRow, DOM.$('select')) as HTMLSelectElement;
-		roomSelect.style.cssText = 'flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:7px;padding:6px 9px;font-size:12px;cursor:pointer;outline:none;min-width:0;';
-		const loadingOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
-		loadingOpt.value = '';
-		loadingOpt.textContent = 'Loading rooms…';
-		loadingOpt.disabled = true;
-		loadingOpt.selected = true;
-		void this._fetchRoomOptions().then(rooms => {
-			DOM.clearNode(roomSelect);
-			const blankOpt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
-			blankOpt.value = '';
-			blankOpt.textContent = '— Select room —';
-			for (const r of rooms) {
-				const opt = DOM.append(roomSelect, DOM.$('option')) as HTMLOptionElement;
-				opt.value = r;
-				opt.textContent = r;
-				if (r === currentRoom) { opt.selected = true; }
-			}
-			if (!currentRoom) { blankOpt.selected = true; }
-		});
-		const assignBtn = DOM.append(roomRow, DOM.$('button')) as HTMLButtonElement;
-		assignBtn.textContent = 'Assign';
-		assignBtn.style.cssText = 'padding:6px 12px;font-size:11px;font-weight:700;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:7px;cursor:pointer;white-space:nowrap;flex-shrink:0;';
-		assignBtn.addEventListener('mouseenter', () => { assignBtn.style.opacity = '0.85'; });
-		assignBtn.addEventListener('mouseleave', () => { assignBtn.style.opacity = '1'; });
-		assignBtn.addEventListener('click', async e => {
-			e.stopPropagation();
-			if (!appointmentId || !roomSelect.value) { return; }
-			assignBtn.disabled = true;
-			assignBtn.textContent = 'Saving…';
-			await this._updateAppointmentRoom(appointmentId, roomSelect.value);
-			assignBtn.disabled = false;
-			assignBtn.textContent = 'Assign';
-			this._rerender();
-		});
-
-		// --- Full appointment action toolbar -----------------------------------
-		this._renderAppointmentActions(card, apt, appointmentId);
+		// NOTE: All forward workflow actions (Check In, Assign Room, Record
+		// Vitals, Open Encounter, Complete) live in ONE place — the Quick
+		// Actions card below — so staff never hunt across duplicate controls.
+		// The appointment card keeps only secondary / correction actions.
+		this._renderAppointmentActions(cardBody, apt, appointmentId);
 	}
 
-	/** Render the complete appointment workflow action bar — status
-	 *  progression, encounter, chart, telehealth and destructive actions —
-	 *  mirroring the schedule pane's per-appointment menu. */
+	/** Secondary / correction actions only. The main workflow (Check In →
+	 *  Room → Vitals → Encounter → Complete) lives in the Quick Actions card,
+	 *  so this bar is intentionally short: Edit, Video, No Show, Cancel. */
 	private _renderAppointmentActions(card: HTMLElement, apt: Record<string, unknown>, appointmentId: string): void {
 		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'canceled', 'noshow', 'no-show', 'no show']);
 		const isTerminal = terminal.has(status);
-		const hasEncounter = !!(apt.encounterId);
-		const encounterId = String(apt.encounterId || '');
 		const vt = this._apptTypeStr(apt).toLowerCase();
 		const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
 
 		const bar = DOM.append(card, DOM.$('div'));
-		bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
+		bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
 
 		const mkBtn = (icon: string, label: string, onClick: () => void, tone: 'default' | 'primary' | 'danger' = 'default'): void => {
 			const b = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
@@ -1512,37 +1605,13 @@ export class PatientSnapshotEditor extends EditorPane {
 			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 		};
 
-		// Status progression — only meaningful while the visit is live.
-		if (!isTerminal) {
-			if (status !== 'arrived' && status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
-				mkBtn('person', 'Mark Arrived', () => void this._changeApptStatus(appointmentId, 'Arrived'));
-			}
-			if (status !== 'checked-in' && status !== 'in-room' && status !== 'with-provider') {
-				mkBtn('check', 'Check In', () => void this._changeApptStatus(appointmentId, 'Checked-in'), 'primary');
-			}
-			if (status === 'checked-in' || status === 'arrived') {
-				mkBtn('home', 'Move to Room', () => void this._changeApptStatus(appointmentId, 'In Room'));
-			}
-			if (status !== 'with-provider') {
-				mkBtn('account', 'With Provider', () => void this._changeApptStatus(appointmentId, 'With Provider'));
-			}
-			mkBtn('pass', 'Mark Completed', () => void this._changeApptStatus(appointmentId, 'Completed'));
-		}
-
-		// Encounter + navigation
-		if (hasEncounter) {
-			mkBtn('note', 'Open Encounter', () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName));
-			mkBtn('pulse', 'Record Vitals', () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName, 'Vitals', 'vitals'));
-		} else if (!isTerminal) {
-			mkBtn('add', 'Create Encounter', () => void this._createEncounterFromAppointment(apt), 'primary');
-		}
-		mkBtn('edit', 'Edit', () => void this._openApptEdit(apt));
-		mkBtn('book', 'Open Chart', () => this._openPatientChartPage('demographics'));
+		// Edit appointment details (date / time / provider / reason …)
+		mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
 		if (isTele) {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
 
-		// Destructive actions
+		// Destructive / correction actions
 		if (!isTerminal) {
 			mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show'), 'danger');
 			mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled'), 'danger');
@@ -1565,8 +1634,23 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		if (apt) {
 			this._renderAppointmentCard(grid, apt);
+			// Large workflow buttons for medical staff — Siva: "MA should
+			// immediately know the next step".
+			this._renderQuickActions(grid, apt, vit, encs);
 		}
 
+		// Today's Vitals + Financials pair (recommended layout row 1)
+		this._renderTodayVitalsCard(grid, vit);
+		this._renderFinancialsCard(grid, payments, statements);
+
+		// Visit History (2) + Encounter History (2)
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('encounters'));
+		this._renderEncounterRows(visitCard, encs);
+
+		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openCreateModal('encounters'));
+		this._renderEncounterClinicalRows(encCard, encs);
+
+		// Active Problems (2) + Medications (2)
 		const activeProblems = conds.filter(c => {
 			const s = String(c.status || c.clinicalStatus || '').toLowerCase();
 			return !s || s === 'active';
@@ -1576,28 +1660,121 @@ export class PatientSnapshotEditor extends EditorPane {
 			const onset = c.onsetDate || c.onsetDateTime || c.recordedDate || '';
 			const yr = onset ? new Date(String(onset)).getFullYear() : '';
 			return { primary: String(name), secondary: yr ? String(yr) : '', badge: { text: 'Active', color: '#22c55e' } };
-		}, () => this._openCreateModal('problems'), 'problems');
+		}, () => this._openCreateModal('problems'), 'problems', 2);
 
 		this._renderCard(grid, 'medications', 'symbol-method', 'Medications', meds, (m) => {
 			const name = m.medicationName || m.name || '—';
 			const dose = m.dosage || '';
 			const freq = m.frequency || '';
 			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
-		}, () => this._openCreateModal('medications'), 'medications');
+		}, () => this._openCreateModal('medications'), 'medications', 2);
 
-		this._renderVitalsCard(grid, vit);
-		this._renderPaymentsCard(grid, payments, statements);
-
-		// Middle row: Visit History (2 cols) + Encounter History (2 cols)
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('encounters'));
-		this._renderEncounterRows(visitCard, encs);
-
-		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openCreateModal('encounters'));
-		this._renderEncounterClinicalRows(encCard, encs);
+		// Pending Items — unfinished work the doctor must action (full width)
+		this._renderPendingItems(grid, labs, encs, apt ?? null);
 
 		// Bottom row: Lab Results (full width)
 		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openCreateModal('labs'));
 		this._renderLabRows(labCard, labs);
+	}
+
+	/** Large workflow buttons for the Front Desk → Medical Staff hand-off. Each
+	 *  button is enabled only when its prerequisite step is complete, so users
+	 *  are guided through the sequence without training. */
+	private _renderQuickActions(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
+		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
+		const steps = this._workflowSteps(apt, vit, encs);
+		const done = (k: string) => steps.find(s => s.key === k)?.done ?? false;
+		const next = steps.find(s => !s.done);
+		const encounterId = String(apt.encounterId || '');
+
+		const card = DOM.append(grid, DOM.$('.snap-card'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
+		this._cardHeader(card, 'rocket', 'Quick Actions', 0, undefined);
+
+		const row = DOM.append(card, DOM.$('div'));
+		row.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:4px;';
+
+		const tile = (icon: string, label: string, sub: string, state: 'done' | 'next' | 'todo' | 'disabled', onClick: () => void): void => {
+			const t = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+			const disabled = state === 'disabled';
+			t.disabled = disabled;
+			t.style.cssText = [
+				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px 8px;border-radius:10px;cursor:' + (disabled ? 'default' : 'pointer') + ';text-align:center;transition:background 0.12s,border-color 0.12s;min-height:92px;',
+				state === 'done'
+					? 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.45);color:#22c55e;'
+					: state === 'next'
+						? 'background:var(--vscode-button-background,#0e639c);border:1px solid transparent;color:var(--vscode-button-foreground,#fff);box-shadow:0 0 0 2px rgba(59,158,221,0.35);'
+						: disabled
+							? 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.05));border:1px dashed var(--vscode-editorWidget-border);color:var(--vscode-descriptionForeground);opacity:0.55;'
+							: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);color:var(--vscode-foreground);',
+			].join('');
+			const ico = DOM.append(t, DOM.$('span.codicon.codicon-' + (state === 'done' ? 'check' : icon)));
+			(ico as HTMLElement).style.cssText = 'font-size:24px;';
+			const lbl = DOM.append(t, DOM.$('div'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'font-size:13px;font-weight:700;';
+			const subEl = DOM.append(t, DOM.$('div'));
+			subEl.textContent = state === 'done' ? 'Done' : sub;
+			subEl.style.cssText = 'font-size:10px;font-weight:600;opacity:0.85;';
+			if (!disabled) {
+				t.addEventListener('mouseenter', () => { if (state !== 'next') { t.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; } });
+				t.addEventListener('mouseleave', () => {
+					if (state === 'done') { t.style.background = 'rgba(34,197,94,0.10)'; }
+					else if (state !== 'next') { t.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; }
+				});
+				t.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+			}
+		};
+
+		const stateFor = (k: string, reachable: boolean): 'done' | 'next' | 'todo' | 'disabled' => {
+			if (done(k)) { return 'done'; }
+			if (next && next.key === k) { return 'next'; }
+			return reachable ? 'todo' : 'disabled';
+		};
+
+		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in'));
+		tile('home', '2 · Assign Room', 'Front desk', stateFor('room', done('checkin')), () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
+		tile('pulse', '3 · Record Vitals', 'Medical staff', stateFor('vitals', done('checkin')), () => this._focusVitalsEntry());
+		tile('note', '4 · Open Encounter', 'Provider', stateFor('encounter', done('checkin')), () => {
+			if (encounterId) { void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName); }
+			else { void this._createEncounterFromAppointment(apt); }
+		});
+		tile('pass', '5 · Complete', 'Provider', stateFor('complete', done('encounter')), () => void this._changeApptStatus(appointmentId, 'Completed'));
+	}
+
+	/** One-field room picker — clearer than a buried dropdown for busy front
+	 *  desks. Picks a room and assigns it in two clicks. */
+	private async _openRoomPicker(appointmentId: string, currentRoom: string): Promise<void> {
+		if (!appointmentId) { return; }
+		const rooms = await this._fetchRoomOptions();
+		const options = [{ value: '', label: '— Select Room —' }, ...rooms.map(r => ({ value: r, label: r }))];
+		if (currentRoom && !options.find(o => o.value === currentRoom)) { options.push({ value: currentRoom, label: currentRoom }); }
+		openRecordEditDialog({
+			title: `Assign Room — ${this._currentPatientName || 'Patient'}`,
+			themeAnchor: this.root,
+			variant: 'modal',
+			fields: [{ key: 'room', label: 'Room', kind: 'select', required: true, widthPct: 100, options }],
+			values: { room: currentRoom },
+			onSave: async (next) => {
+				if (!next.room) { return; }
+				await this._updateAppointmentRoom(appointmentId, next.room);
+				this._rerender();
+			},
+		});
+	}
+
+	/** Scroll to the Today's Vitals card and focus its first inline input, so
+	 *  the MA can start typing vitals immediately (no modal). Uses direct
+	 *  element references captured at render time (no DOM querying). */
+	private _focusVitalsEntry(): void {
+		const card = this._vitalsCardEl;
+		if (card) {
+			card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			card.style.transition = 'box-shadow 0.3s';
+			card.style.boxShadow = '0 0 0 2px rgba(59,158,221,0.6)';
+			setTimeout(() => { card.style.boxShadow = ''; }, 1400);
+		}
+		this._revealVitalsEntry?.();
 	}
 
 	private _renderEncounterClinicalRows(card: HTMLElement, encs: Record<string, unknown>[]): void {
@@ -1655,9 +1832,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		row: (item: Record<string, unknown>) => { primary: string; secondary: string; badge?: { text: string; color: string } },
 		onAdd?: () => void,
 		entity?: string,
+		cols: number = 1,
 	): HTMLElement {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
-		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;display:flex;flex-direction:column;min-height:140px;';
+		card.style.cssText = `background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;display:flex;flex-direction:column;min-height:140px;grid-column:span ${cols};`;
 
 		this._cardHeader(card, icon, title, items.length, onAdd);
 
@@ -1737,84 +1915,233 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 	}
 
-	private _renderVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[]): void {
-		const card = DOM.append(parent, DOM.$('.snap-card'));
-		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
-		this._cardHeader(card, 'pulse', 'Latest Vitals', vit.length, () => this._openCreateModal('vitals'));
+	// Vital signs captured by the inline entry form. Keys match the backend
+	// FHIR vitals resource exactly (verified against the chart editor's
+	// DEFAULT_FIELD_CONFIGS['vitals']). 'bp' is split into systolic/diastolic
+	// on save.
+	private static readonly _VITAL_INPUTS: Array<{ key: string; label: string; unit: string; step?: string }> = [
+		{ key: 'heightCm', label: 'Height', unit: 'cm', step: '0.1' },
+		{ key: 'weightKg', label: 'Weight', unit: 'kg', step: '0.1' },
+		{ key: 'bpSystolic', label: 'BP Systolic', unit: 'mmHg' },
+		{ key: 'bpDiastolic', label: 'BP Diastolic', unit: 'mmHg' },
+		{ key: 'pulse', label: 'Pulse', unit: '/min' },
+		// allow-any-unicode-next-line
+		{ key: 'temperatureC', label: 'Temperature', unit: '°C', step: '0.1' },
+		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
+	];
+
+	/** BMI = weight(kg) / height(m)^2. Returns a 1-decimal string, or '' when
+	 *  either input is missing/invalid so callers can fall back to a dash. */
+	private static _computeBmi(heightCm: unknown, weightKg: unknown): string {
+		const h = Number(heightCm);
+		const w = Number(weightKg);
+		if (!h || !w || h <= 0 || w <= 0) { return ''; }
+		const m = h / 100;
+		const bmi = w / (m * m);
+		if (!isFinite(bmi) || bmi <= 0) { return ''; }
+		return bmi.toFixed(1);
+	}
+
+	/** Direct references for {@link _focusVitalsEntry} — captured at render
+	 *  time so the Quick Action "Record Vitals" can scroll/focus without
+	 *  querying the DOM (hygiene forbids querySelector). */
+	private _vitalsCardEl: HTMLElement | null = null;
+	private _revealVitalsEntry: (() => void) | null = null;
+
+	/** Today's Vitals only — older imported readings are hidden behind a link.
+	 *  When none are recorded for today, an INLINE entry form lets the MA type
+	 *  values straight in and save (no modal). */
+	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[]): void {
+		const todays = this._todaysVitals(vit);
+		const card = DOM.append(parent, DOM.$('.snap-card.snap-vitals-card'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
+		this._cardHeader(card, 'pulse', 'Today\'s Vitals', todays.length, undefined);
+		this._vitalsCardEl = card;
 
 		const body = DOM.append(card, DOM.$('div'));
-		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
+		body.style.cssText = 'flex:1;overflow-y:auto;max-height:320px;';
 
-		const latest = vit[0] as Record<string, unknown> | undefined;
+		const latest = todays[0] as Record<string, unknown> | undefined;
 		if (!latest) {
-			const empty = DOM.append(body, DOM.$('div'));
-			empty.textContent = 'No vitals recorded';
-			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
+			const msg = DOM.append(body, DOM.$('div'));
+			msg.textContent = 'No vitals recorded for today\'s visit — enter below:';
+			msg.style.cssText = 'font-size:12.5px;color:var(--vscode-descriptionForeground);font-weight:500;margin-bottom:8px;';
+			const firstInput = this._renderInlineVitalsForm(body);
+			this._revealVitalsEntry = () => firstInput?.focus();
+			this._renderVitalsHistoryLink(body, vit);
 			return;
 		}
 
 		const bpVal = (latest.bpSystolic && latest.bpDiastolic) ? `${latest.bpSystolic}/${latest.bpDiastolic}` : '';
+		const bmiVal = PatientSnapshotEditor._computeBmi(latest.heightCm, latest.weightKg);
 		const vitalRows: Array<[string, unknown, string?]> = [
-			['BP', bpVal, 'mmHg'],
-			['Weight', latest.weightKg, 'kg'],
 			['Height', latest.heightCm, 'cm'],
+			['Weight', latest.weightKg, 'kg'],
 			// allow-any-unicode-next-line
-			['BMI', latest.bmi, 'kg/m²'],
-			['O2 Sat', latest.oxygenSaturation, '%'],
-			// allow-any-unicode-next-line
-			['Temp', latest.temperatureC, '°C'],
+			['BMI', bmiVal, bmiVal ? 'kg/m²' : ''],
+			['BP', bpVal, 'mmHg'],
 			['Pulse', latest.pulse, '/min'],
-			['Resp', latest.respiration, '/min'],
+			// allow-any-unicode-next-line
+			['Temperature', latest.temperatureC, '°C'],
+			['SpO2', latest.oxygenSaturation, '%'],
 		];
 
 		const grid2 = DOM.append(body, DOM.$('div'));
-		grid2.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-top:4px;';
+		grid2.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px;';
 		for (const [lbl, val, unit] of vitalRows) {
-			if (!val) { continue; }
 			const cell = DOM.append(grid2, DOM.$('div'));
-			cell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			cell.style.cssText = 'padding:8px 10px;border-radius:8px;background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.07));border:1px solid var(--vscode-editorWidget-border);';
 			const l = DOM.append(cell, DOM.$('div'));
 			l.textContent = lbl;
-			l.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;';
+			l.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;';
 			const v = DOM.append(cell, DOM.$('div'));
-			v.textContent = `${val}${unit ? ' ' + unit : ''}`;
-			v.style.cssText = 'font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);';
+			v.textContent = val ? `${val}${unit ? ' ' + unit : ''}` : '—';
+			v.style.cssText = `font-size:15px;font-weight:800;color:${val ? 'var(--vscode-editor-foreground)' : 'var(--vscode-descriptionForeground)'};margin-top:2px;`;
 		}
 
-		// History: remaining vitals readings (paginated)
-		const history = vit.slice(1);
-		if (history.length > 0) {
-			const histLabel = DOM.append(body, DOM.$('div'));
-			histLabel.textContent = 'VITALS HISTORY';
-			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:10px;margin-bottom:4px;';
-			const { page, pageIdx, pageCount, total } = this._paginate('vitals-history', history);
-			for (const v of page) {
-				const dateRaw = v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date || '';
-				const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-				const bp = (v.bpSystolic && v.bpDiastolic) ? `${v.bpSystolic}/${v.bpDiastolic}` : '';
-				const wt = v.weightKg || '';
-				const summary = [bp ? `BP ${bp}` : '', wt ? `Wt ${wt} kg` : ''].filter(Boolean).join(' · ') || '—';
-				const row = DOM.append(body, DOM.$('div'));
-				row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:11px;';
-				const dateEl = DOM.append(row, DOM.$('span'));
-				dateEl.textContent = dateStr;
-				dateEl.style.cssText = 'color:var(--vscode-descriptionForeground);';
-				const summaryEl = DOM.append(row, DOM.$('span'));
-				summaryEl.textContent = summary;
-				summaryEl.style.cssText = 'color:var(--vscode-editor-foreground);font-weight:500;flex:1;text-align:right;';
-				this._attachRowActions(row, 'vitals', v);
-			}
-			this._renderPagerFooter(card, 'vitals-history', pageIdx, pageCount, total);
-		}
+		// "Edit / new reading" reveals the inline entry form below, PREFILLED with
+		// today's latest values so the MA can adjust any vital and save — the read
+		// -only grid is no longer a dead end (QA: make today's vitals editable).
+		const addToggle = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
+		addToggle.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:10px;padding:6px 0;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3b9edd);font-size:12px;font-weight:600;cursor:pointer;';
+		DOM.append(addToggle, DOM.$('span.codicon.codicon-edit'));
+		const atl = DOM.append(addToggle, DOM.$('span')); atl.textContent = 'Edit / new reading';
+		const formHolder = DOM.append(body, DOM.$('div'));
+		formHolder.style.display = 'none';
+		let formFirstInput: HTMLInputElement | null = null;
+		const revealForm = (): void => {
+			formHolder.style.display = '';
+			if (!formHolder.hasChildNodes()) { formFirstInput = this._renderInlineVitalsForm(formHolder, latest); }
+			formFirstInput?.focus();
+		};
+		addToggle.addEventListener('click', (e) => {
+			e.stopPropagation();
+			if (formHolder.style.display === 'none') { revealForm(); }
+			else { formHolder.style.display = 'none'; }
+		});
+		this._revealVitalsEntry = revealForm;
+
+		this._renderVitalsHistoryLink(body, vit);
 	}
 
-	private _renderPaymentsCard(parent: HTMLElement, payments: Record<string, unknown>[], statements: Record<string, unknown>[]): void {
+	/** Inline number inputs for the core vital signs + a Save button that POSTs
+	 *  a new vitals reading directly — no modal, no leaving the page. Returns
+	 *  the first input so callers can focus it. */
+	private _renderInlineVitalsForm(container: HTMLElement, initial?: Record<string, unknown>): HTMLInputElement | null {
+		const inputs = new Map<string, HTMLInputElement>();
+		let firstInput: HTMLInputElement | null = null;
+		const formGrid = DOM.append(container, DOM.$('div'));
+		formGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;';
+		for (const f of PatientSnapshotEditor._VITAL_INPUTS) {
+			const cell = DOM.append(formGrid, DOM.$('div'));
+			cell.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+			const l = DOM.append(cell, DOM.$('label'));
+			l.textContent = `${f.label} (${f.unit})`;
+			l.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;';
+			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'number';
+			if (f.step) { inp.step = f.step; }
+			inp.placeholder = '—';
+			// Prefill with today's value so the user edits rather than re-keys.
+			const seed = initial ? initial[f.key] : undefined;
+			if (seed !== undefined && seed !== null && String(seed) !== '') { inp.value = String(seed); }
+			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;';
+			inputs.set(f.key, inp);
+			if (!firstInput) { firstInput = inp; }
+		}
+
+		// Live, read-only BMI cell — recomputed from Height & Weight as they change.
+		const bmiCell = DOM.append(formGrid, DOM.$('div'));
+		bmiCell.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+		const bmiLabel = DOM.append(bmiCell, DOM.$('label'));
+		// allow-any-unicode-next-line
+		bmiLabel.textContent = 'BMI (kg/m²)';
+		bmiLabel.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;';
+		const bmiOut = DOM.append(bmiCell, DOM.$('div'));
+		bmiOut.style.cssText = 'box-sizing:border-box;padding:7px 9px;border:1px dashed var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);opacity:0.85;';
+		const refreshBmi = (): void => {
+			const bmi = PatientSnapshotEditor._computeBmi(inputs.get('heightCm')?.value, inputs.get('weightKg')?.value);
+			// allow-any-unicode-next-line
+			bmiOut.textContent = bmi || '—';
+		};
+		inputs.get('heightCm')?.addEventListener('input', refreshBmi);
+		inputs.get('weightKg')?.addEventListener('input', refreshBmi);
+		refreshBmi();
+
+		const footer = DOM.append(container, DOM.$('div'));
+		footer.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:10px;';
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 16px;font-size:12.5px;font-weight:700;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:7px;cursor:pointer;';
+		DOM.append(saveBtn, DOM.$('span.codicon.codicon-check'));
+		const sl = DOM.append(saveBtn, DOM.$('span')); sl.textContent = 'Save Vitals';
+		const note = DOM.append(footer, DOM.$('span'));
+		note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
+		saveBtn.addEventListener('click', async (e) => {
+			e.stopPropagation();
+			const payload: Record<string, unknown> = {};
+			for (const [key, inp] of inputs) {
+				const raw = inp.value.trim();
+				if (raw !== '') { payload[key] = Number(raw); }
+			}
+			if (Object.keys(payload).length === 0) { note.textContent = 'Enter at least one value.'; note.style.color = '#ef4444'; return; }
+			saveBtn.disabled = true; sl.textContent = 'Saving…'; note.textContent = '';
+			try {
+				await this._saveInlineVitals(payload);
+				this.notificationService.notify({ severity: Severity.Info, message: 'Vitals recorded.' });
+				this._rerender();
+			} catch (err) {
+				note.textContent = err instanceof Error ? err.message : 'Save failed.'; note.style.color = '#ef4444';
+				saveBtn.disabled = false; sl.textContent = 'Save Vitals';
+			}
+		});
+		return firstInput;
+	}
+
+	/** POST a new vitals reading for the current patient. Mirrors the chart
+	 *  editor: injects recordedAt (FhirPathMapper rejects empty) + patientId. */
+	private async _saveInlineVitals(payload: Record<string, unknown>): Promise<void> {
+		const pid = this._currentPatientId;
+		if (!pid) { throw new Error('No patient.'); }
+		const body = { ...payload, patientId: pid, recordedAt: new Date().toISOString() };
+		const res = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+		let saved: Record<string, unknown> | null = null;
+		try {
+			const j = await res.json();
+			const cand = (j?.data ?? j) as Record<string, unknown> | null;
+			if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+		} catch { /* non-JSON body */ }
+		this._trackCreated('vitals', { ...body, ...(saved || {}) });
+	}
+
+	/** "View historical vitals" link — older readings live in a popup so they
+	 *  don't clutter the today's-visit view. */
+	private _renderVitalsHistoryLink(body: HTMLElement, vit: Record<string, unknown>[]): void {
+		const todaysIds = new Set(this._todaysVitals(vit).map(v => String(v.id ?? v.fhirId ?? '')));
+		const history = vit.filter(v => !todaysIds.has(String(v.id ?? v.fhirId ?? '')));
+		if (history.length === 0) { return; }
+		const link = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
+		link.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:12px;padding:6px 0;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3b9edd);font-size:12px;font-weight:600;cursor:pointer;';
+		DOM.append(link, DOM.$('span.codicon.codicon-history'));
+		const ll = DOM.append(link, DOM.$('span'));
+		ll.textContent = `View historical vitals (${history.length})`;
+		link.addEventListener('click', (e) => { e.stopPropagation(); this._openManager('vitals', 'list'); });
+	}
+
+	/** Financials with action capability — Front Desk collects payment without
+	 *  leaving the snapshot. */
+	private _renderFinancialsCard(parent: HTMLElement, payments: Record<string, unknown>[], statements: Record<string, unknown>[]): void {
 		const card = DOM.append(parent, DOM.$('.snap-card'));
-		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;';
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
 		this._cardHeader(card, 'credit-card', 'Financials', payments.length, () => this._openCreateModal('payment'));
 
 		const body = DOM.append(card, DOM.$('div'));
-		body.style.cssText = 'flex:1;overflow-y:auto;max-height:260px;';
+		body.style.cssText = 'flex:1;overflow-y:auto;max-height:300px;';
 
 		// Outstanding balance from the latest statement
 		const stmt = statements[0] as Record<string, unknown> | undefined;
@@ -1822,18 +2149,32 @@ export class PatientSnapshotEditor extends EditorPane {
 		const balNum = parseFloat(String(balance));
 
 		const balRow = DOM.append(body, DOM.$('div'));
-		balRow.style.cssText = 'margin-top:4px;margin-bottom:8px;';
+		balRow.style.cssText = 'margin-top:4px;margin-bottom:10px;';
 		const balLabel = DOM.append(balRow, DOM.$('div'));
 		balLabel.textContent = 'OUTSTANDING BALANCE';
 		balLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);';
 		const balVal = DOM.append(balRow, DOM.$('div'));
 		balVal.textContent = isNaN(balNum) ? '—' : `$${balNum.toFixed(2)}`;
-		balVal.style.cssText = `font-size:22px;font-weight:800;color:${!isNaN(balNum) && balNum > 0 ? '#ef4444' : '#22c55e'};margin-top:2px;`;
+		balVal.style.cssText = `font-size:26px;font-weight:800;color:${!isNaN(balNum) && balNum > 0 ? '#ef4444' : '#22c55e'};margin-top:2px;`;
+
+		// Action buttons — collect payment / add card / payment history.
+		const actions = DOM.append(body, DOM.$('div'));
+		actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;';
+		const finBtn = (icon: string, label: string, tone: 'primary' | 'default', onClick: () => void): void => {
+			const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+			b.style.cssText = `display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;font-weight:700;border-radius:7px;cursor:pointer;white-space:nowrap;${tone === 'primary' ? 'background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:1px solid transparent;' : 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);'}`;
+			DOM.append(b, DOM.$('span.codicon.codicon-' + icon));
+			const l = DOM.append(b, DOM.$('span')); l.textContent = label;
+			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+		};
+		finBtn('credit-card', 'Collect Payment', 'primary', () => this._openCreateModal('payment'));
+		finBtn('add', 'Add Credit Card', 'default', () => this._openAddCardForm());
+		finBtn('history', 'Payment History', 'default', () => this._openManager('payment', 'list'));
 
 		if (payments.length > 0) {
 			const histLabel = DOM.append(body, DOM.$('div'));
-			histLabel.textContent = 'PAYMENT HISTORY';
-			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:6px;margin-bottom:4px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
+			histLabel.textContent = 'RECENT PAYMENTS';
+			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:2px;margin-bottom:4px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
 			const { page, pageIdx, pageCount, total } = this._paginate('payments', payments);
 			for (const pay of page) {
 				const dateRaw = (pay.paymentDate || pay.date || pay.transactionDate || pay.created || '') as string;
@@ -1864,6 +2205,151 @@ export class PatientSnapshotEditor extends EditorPane {
 			const empty = DOM.append(body, DOM.$('div'));
 			empty.textContent = 'No payment history';
 			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
+		}
+	}
+
+	/** Add a credit card on file — uses the SAME fields and endpoint as the
+	 *  workspace's card-on-file form (POST /api/credit-cards): cardholder, card
+	 *  number, type, expiry, CVV, billing. This is the correct card-capture
+	 *  form (distinct from recording a payment transaction). */
+	private _openAddCardForm(): void {
+		const now = new Date();
+		const months = Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') }));
+		const years = Array.from({ length: 16 }, (_, i) => ({ value: String(now.getFullYear() + i), label: String(now.getFullYear() + i) }));
+		openRecordEditDialog({
+			title: `Add Payment Method — ${this._currentPatientName || 'Patient'}`,
+			themeAnchor: this.root,
+			variant: 'modal',
+			fields: [
+				{ key: 'cardHolderName', label: 'Card Holder Name', kind: 'text', required: true, placeholder: 'John Doe', widthPct: 100 },
+				{ key: 'cardNumber', label: 'Card Number', kind: 'text', required: true, placeholder: '1234567890123456', widthPct: 100 },
+				{
+					key: 'cardType', label: 'Card Type', kind: 'select', widthPct: 50, options: [
+						{ value: 'VISA', label: 'Visa' }, { value: 'MASTERCARD', label: 'Mastercard' },
+						{ value: 'AMEX', label: 'Amex' }, { value: 'DISCOVER', label: 'Discover' },
+					]
+				},
+				{ key: 'cvv', label: 'CVV', kind: 'text', required: true, placeholder: '123', widthPct: 50 },
+				{ key: 'expiryMonth', label: 'Expiry Month', kind: 'select', required: true, widthPct: 50, options: months },
+				{ key: 'expiryYear', label: 'Expiry Year', kind: 'select', required: true, widthPct: 50, options: years },
+				{ key: 'billingAddress', label: 'Billing Address', kind: 'text', placeholder: '123 Main St', widthPct: 100 },
+				{ key: 'billingCity', label: 'City', kind: 'text', widthPct: 50 },
+				{ key: 'billingState', label: 'State', kind: 'text', widthPct: 50 },
+				{ key: 'billingZip', label: 'Zip Code', kind: 'text', widthPct: 50 },
+				{ key: 'billingCountry', label: 'Country', kind: 'text', widthPct: 50 },
+				{ key: 'isDefault', label: 'Set as default', kind: 'select', widthPct: 100, options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
+			],
+			values: {
+				cardType: 'VISA',
+				expiryMonth: String(now.getMonth() + 1),
+				expiryYear: String(now.getFullYear()),
+				billingCountry: 'USA',
+				isDefault: 'false',
+			},
+			onSave: async (next) => {
+				// Card-on-file is tied to a patient: the backend CreditCard entity
+				// requires a non-null patientId (FK). Omitting it 500s — mirror the
+				// chart editor's payload, which always sends patientId.
+				if (!this._currentPatientId) { throw new Error('No patient selected.'); }
+				const num = String(next.cardNumber || '').replace(/\D/g, '');
+				const cvv = String(next.cvv || '').replace(/\D/g, '');
+				if (!String(next.cardHolderName || '').trim()) { throw new Error('Card holder name is required.'); }
+				if (!num) { throw new Error('Card number is required.'); }
+				if (!cvv) { throw new Error('CVV is required.'); }
+				// Match the backend CreditCardDto constraints so a malformed card
+				// fails here with a clear message instead of an opaque 400. The
+				// inline form only checked presence, so a short/long number or a
+				// 1-2 digit CVV reached the server and bounced as "Save failed".
+				if (!/^\d{13,16}$/.test(num)) { throw new Error('Card number must be 13-16 digits.'); }
+				if (!/^\d{3,4}$/.test(cvv)) { throw new Error('CVV must be 3 or 4 digits.'); }
+				const payload: Record<string, unknown> = {
+					patientId: this._currentPatientId,
+					cardHolderName: String(next.cardHolderName).trim(),
+					cardNumber: num,
+					cvv,
+					cardType: next.cardType || 'VISA',
+					expiryMonth: Number(next.expiryMonth),
+					expiryYear: Number(next.expiryYear),
+					billingAddress: String(next.billingAddress || '').trim() || undefined,
+					billingCity: String(next.billingCity || '').trim() || undefined,
+					billingState: String(next.billingState || '').trim() || undefined,
+					billingZip: String(next.billingZip || '').trim() || undefined,
+					billingCountry: String(next.billingCountry || '').trim() || 'USA',
+					isDefault: next.isDefault === 'true',
+					isActive: true,
+				};
+				const res = await this.apiService.fetch('/api/credit-cards', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				if (!res.ok) {
+					// Surface the backend's real reason instead of a bare status.
+					// CreditCardController returns { message, data: { field: msg } }
+					// for @Valid failures and { message } for IllegalArgumentException.
+					let msg = `Save failed (${res.status})`;
+					try {
+						const err = await res.json() as { message?: string; data?: Record<string, string> };
+						const fieldErrs = err?.data && typeof err.data === 'object' ? Object.values(err.data).filter(Boolean) : [];
+						if (fieldErrs.length) { msg = fieldErrs.join(' '); }
+						else if (err?.message) { msg = err.message; }
+					} catch { /* non-JSON body — keep the generic status message */ }
+					throw new Error(msg);
+				}
+				this.notificationService.notify({ severity: Severity.Info, message: 'Card on file saved.' });
+			},
+		});
+	}
+
+	/** Pending Items — unfinished clinical work the provider must action. The
+	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
+	 *  unfinished work"). Each item is derived from real record state. */
+	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[], apt: Record<string, unknown> | null): void {
+		const pendingLabs = labs.filter(l => {
+			const s = String(l.status || '').toLowerCase();
+			return s === '' || s === 'ordered' || s === 'pending' || s === 'in-progress' || s === 'collected';
+		});
+		const openEncounters = encs.filter(e => {
+			const s = String(e.status || '').toLowerCase();
+			return s.includes('progress') || s.includes('unsign') || s === 'arrived' || s === 'planned';
+		});
+		const hasEncounter = !!(apt?.encounterId) || openEncounters.length > 0;
+
+		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
+		if (pendingLabs.length > 0) {
+			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labs', 'list') });
+		}
+		if (openEncounters.length > 0) {
+			items.push({ icon: 'note', label: 'Encounter Unsigned', detail: `${openEncounters.length} open encounter${openEncounters.length > 1 ? 's' : ''} to finalize`, color: '#3b9edd', onClick: () => this._openManager('encounters', 'list') });
+		}
+		if (apt && !hasEncounter) {
+			items.push({ icon: 'add', label: 'Procedure / Encounter Pending', detail: 'No encounter started for today\'s visit', color: '#f59e0b', onClick: () => void this._createEncounterFromAppointment(apt) });
+		}
+		// Treatment plan visibility — always offer a quick entry point.
+		items.push({ icon: 'checklist', label: 'Treatment Plan', detail: 'Review or update the care plan', color: '#a78bfa', onClick: () => this._openManager('visit-notes', 'list') });
+
+		const card = DOM.append(grid, DOM.$('.snap-card'));
+		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
+		this._cardHeader(card, 'tasklist', 'Pending Items', items.length, undefined);
+
+		const rowWrap = DOM.append(card, DOM.$('div'));
+		rowWrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:4px;';
+		for (const it of items) {
+			const tile = DOM.append(rowWrap, DOM.$('button')) as HTMLButtonElement;
+			tile.style.cssText = `display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:9px;cursor:pointer;text-align:left;background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.06));border:1px solid var(--vscode-editorWidget-border);border-left:3px solid ${it.color};`;
+			const ico = DOM.append(tile, DOM.$('span.codicon.codicon-' + it.icon));
+			(ico as HTMLElement).style.cssText = `font-size:20px;color:${it.color};flex-shrink:0;`;
+			const txt = DOM.append(tile, DOM.$('div'));
+			txt.style.cssText = 'min-width:0;';
+			const lbl = DOM.append(txt, DOM.$('div'));
+			lbl.textContent = it.label;
+			lbl.style.cssText = 'font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);';
+			const det = DOM.append(txt, DOM.$('div'));
+			det.textContent = it.detail;
+			det.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+			tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; });
+			tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.06))'; });
+			tile.addEventListener('click', (e) => { e.stopPropagation(); it.onClick(); });
 		}
 	}
 

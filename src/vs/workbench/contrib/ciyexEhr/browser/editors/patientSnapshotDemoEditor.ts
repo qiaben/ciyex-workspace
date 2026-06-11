@@ -971,17 +971,9 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 	}
 
 	private async _fetchTodayAppointment(patientId: string, appointmentId?: string): Promise<Record<string, unknown> | null> {
-		// If a specific appointment ID is provided, fetch it directly.
-		if (appointmentId) {
-			const raw = await this._fetch(`/api/appointments/${appointmentId}`);
-			if (raw) {
-				// Unwrap { data: {...} } if needed
-				return ((raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data))
-					? raw.data as Record<string, unknown>
-					: raw);
-			}
-		}
-		// Fallback: fetch today's appointments for this patient.
+		// The backend has no GET /api/appointments/{id} (it 500s with "Request
+		// method 'GET' is not supported"), so resolve the appointment from the
+		// patient's day list instead and match by id when one was provided.
 		const today = new Date().toISOString().split('T')[0];
 		const urls = [
 			`/api/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
@@ -995,7 +987,12 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 				const inner = (raw.data ?? raw) as Record<string, unknown>;
 				const arr: Record<string, unknown>[] = (inner.content || inner.list || inner.items || inner.records ||
 					(Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Record<string, unknown>[];
-				if (arr.length > 0) { return arr[0]; }
+				if (arr.length === 0) { continue; }
+				if (appointmentId) {
+					const match = arr.find(a => String(a.id ?? a.appointmentId ?? '') === String(appointmentId));
+					if (match) { return match; }
+				}
+				return arr[0];
 			} catch { /* try next */ }
 		}
 		return null;
@@ -2259,6 +2256,12 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 				if (!String(next.cardHolderName || '').trim()) { throw new Error('Card holder name is required.'); }
 				if (!num) { throw new Error('Card number is required.'); }
 				if (!cvv) { throw new Error('CVV is required.'); }
+				// Match the backend CreditCardDto constraints so a malformed card
+				// fails here with a clear message instead of an opaque 400. The
+				// inline form only checked presence, so a short/long number or a
+				// 1-2 digit CVV reached the server and bounced as "Save failed".
+				if (!/^\d{13,16}$/.test(num)) { throw new Error('Card number must be 13-16 digits.'); }
+				if (!/^\d{3,4}$/.test(cvv)) { throw new Error('CVV must be 3 or 4 digits.'); }
 				const payload: Record<string, unknown> = {
 					patientId: this._currentPatientId,
 					cardHolderName: String(next.cardHolderName).trim(),
@@ -2280,7 +2283,19 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
 				});
-				if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
+				if (!res.ok) {
+					// Surface the backend's real reason instead of a bare status.
+					// CreditCardController returns { message, data: { field: msg } }
+					// for @Valid failures and { message } for IllegalArgumentException.
+					let msg = `Save failed (${res.status})`;
+					try {
+						const err = await res.json() as { message?: string; data?: Record<string, string> };
+						const fieldErrs = err?.data && typeof err.data === 'object' ? Object.values(err.data).filter(Boolean) : [];
+						if (fieldErrs.length) { msg = fieldErrs.join(' '); }
+						else if (err?.message) { msg = err.message; }
+					} catch { /* non-JSON body — keep the generic status message */ }
+					throw new Error(msg);
+				}
 				this.notificationService.notify({ severity: Severity.Info, message: 'Card on file saved.' });
 			},
 		});
