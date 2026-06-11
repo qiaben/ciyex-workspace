@@ -6,6 +6,7 @@
 import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -630,29 +631,11 @@ export class LabsEditor extends ClinicalListEditorBase {
 		// View Results, Edit (auto, from editable:true) and Delete (issue #7).
 		actions: [
 			{
+				// Issue #6: open a proper read-only detail view (matching the
+				// LabOrderPage.tsx "View" modal) instead of a bare text dialog.
 				// allow-any-unicode-next-line
-				label: 'View', icon: '\u{1F441}', handler: async (item, api, _reload, dlg) => {
-					// Read-only order summary + attached results, like the web "View" modal.
-					const fmt = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? '—' : String(v); };
-					let resultsLine = '';
-					try {
-						const res = await api.fetch(`/api/lab-results/order/${item.id}`);
-						if (res.ok) {
-							const json = await res.json().catch(() => null);
-							const arr = (json?.data ?? json) as unknown[];
-							if (Array.isArray(arr)) { resultsLine = `\n\nAttached results: ${arr.length}`; }
-						}
-					} catch { /* ignore — results are optional */ }
-					await dlg.info(
-						`Order ${fmt('orderNumber')}\n` +
-						`Test: ${fmt('orderName')}\n` +
-						`Provider: ${fmt('physicianName')}\n` +
-						`Priority: ${fmt('priority')}\n` +
-						`Status: ${fmt('status')}\n` +
-						`Result: ${fmt('result')}\n` +
-						`Order Date: ${fmt('orderDate')}` +
-						resultsLine
-					);
+				label: 'View', icon: '\u{1F441}', handler: async (item, _api, reload, _dlg) => {
+					await this._openLabOrderView(item, reload);
 				}
 			},
 			{
@@ -876,6 +859,162 @@ export class LabsEditor extends ClinicalListEditorBase {
 			el.style.color = isActive ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			el.style.fontWeight = isActive ? '600' : '500';
 		}
+	}
+
+	/**
+	 * Issue #6: read-only Lab Order detail view, mirroring the LabOrderPage.tsx
+	 * "View" modal — Order Details + Specimen & Clinical sections, an Attached
+	 * Results table, and Close / Print / Edit / Delete footer actions.
+	 */
+	private async _openLabOrderView(item: Record<string, unknown>, reload: () => void): Promise<void> {
+		const api = this.apiService;
+		const dlg = this.dialogService;
+		const val = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? '—' : String(v); };
+
+		const overlay = DOM.append(this.root, DOM.$('div'));
+		overlay.style.cssText = 'position:absolute;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;';
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);';
+		backdrop.addEventListener('click', () => overlay.remove());
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'position:relative;width:720px;max-width:94vw;max-height:88%;display:flex;flex-direction:column;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
+
+		const hdr = DOM.append(panel, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const title = DOM.append(hdr, DOM.$('div'));
+		title.textContent = `Order ${val('orderNumber')}`;
+		title.style.cssText = 'font-size:15px;font-weight:600;';
+		const xBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		// allow-any-unicode-next-line
+		xBtn.textContent = '✕';
+		xBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:var(--vscode-foreground);';
+		xBtn.addEventListener('click', () => overlay.remove());
+
+		const body = DOM.append(panel, DOM.$('div'));
+		body.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:18px 20px;scrollbar-width:none;-ms-overflow-style:none;';
+
+		const grid = DOM.append(body, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:24px;';
+
+		const sectionTitleStyle = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-foreground);margin:0 0 8px;';
+		const buildSection = (heading: string, rows: Array<[string, string]>): void => {
+			const sec = DOM.append(grid, DOM.$('div'));
+			const h = DOM.append(sec, DOM.$('div')); h.textContent = heading; h.style.cssText = sectionTitleStyle;
+			const dl = DOM.append(sec, DOM.$('div'));
+			dl.style.cssText = 'display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;align-items:start;';
+			for (const [k, v] of rows) {
+				const ks = DOM.append(dl, DOM.$('span')); ks.textContent = k; ks.style.cssText = 'color:var(--vscode-descriptionForeground);';
+				const vs = DOM.append(dl, DOM.$('span')); vs.textContent = v; vs.style.cssText = 'color:var(--vscode-foreground);word-break:break-word;';
+			}
+		};
+
+		const testCodeLine = item.testCode
+			? `${String(item.testCode)}${item.testDisplay ? ` (${String(item.testDisplay)})` : ''}`
+			: val('orderName');
+		buildSection('Order Details', [
+			['Order #', val('orderNumber')],
+			['Order Name', val('orderName')],
+			['Test Code', testCodeLine],
+			['Priority', val('priority')],
+			['Status', val('status')],
+			['Date', `${val('orderDate')}${item.orderTime ? ` at ${String(item.orderTime)}` : ''}`],
+			['Lab', val('labName')],
+			['Result Status', String(item.result ?? 'Pending')],
+		]);
+		buildSection('Specimen & Clinical', [
+			['Specimen ID', val('specimenId')],
+			['Provider', String(item.physicianName ?? item.orderingProvider ?? '—')],
+			['Diagnosis', val('diagnosisCode')],
+			['Procedure', val('procedureCode')],
+			['Notes', val('notes')],
+		]);
+
+		// Attached results table.
+		const resultsSec = DOM.append(body, DOM.$('div'));
+		resultsSec.style.cssText = 'margin-top:20px;';
+		const resTitle = DOM.append(resultsSec, DOM.$('div'));
+		resTitle.style.cssText = sectionTitleStyle;
+		resTitle.textContent = 'Attached Results';
+		const resBody = DOM.append(resultsSec, DOM.$('div'));
+		resBody.textContent = 'Loading…';
+		resBody.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		try {
+			const res = await api.fetch(`/api/lab-results/order/${item.id}`);
+			let arr: Array<Record<string, unknown>> = [];
+			if (res.ok) {
+				const json = await res.json().catch(() => null);
+				const w = (json && typeof json === 'object' && (json as Record<string, unknown>).data !== undefined) ? (json as Record<string, unknown>).data : json;
+				arr = (Array.isArray(w) ? w : []) as Array<Record<string, unknown>>;
+			}
+			DOM.clearNode(resBody);
+			resTitle.textContent = `Attached Results (${arr.length})`;
+			if (arr.length === 0) {
+				resBody.textContent = 'No results attached yet.';
+			} else {
+				resBody.style.cssText = '';
+				const cols = ['Test', 'Value', 'Status', 'Flag', 'Reported'];
+				const head = DOM.append(resBody, DOM.$('div'));
+				head.style.cssText = 'display:grid;grid-template-columns:1.6fr 1fr 0.9fr 0.7fr 1fr;gap:10px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:6px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+				for (const c of cols) { const s = DOM.append(head, DOM.$('span')); s.textContent = c; }
+				for (const r of arr) {
+					const rowEl = DOM.append(resBody, DOM.$('div'));
+					rowEl.style.cssText = 'display:grid;grid-template-columns:1.6fr 1fr 0.9fr 0.7fr 1fr;gap:10px;font-size:12px;padding:7px 8px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;';
+					const tn = DOM.append(rowEl, DOM.$('span')); tn.textContent = String(r.testName ?? '—');
+					const vv = DOM.append(rowEl, DOM.$('span')); vv.textContent = String(r.value ?? '—'); vv.style.fontWeight = '600';
+					const st = DOM.append(rowEl, DOM.$('span')); st.textContent = String(r.status ?? '—');
+					const fl = DOM.append(rowEl, DOM.$('span'));
+					const flag = String(r.abnormalFlag ?? '').trim();
+					if (flag) { fl.textContent = flag; fl.style.cssText = 'font-weight:700;color:#ef4444;'; } else { fl.textContent = 'Normal'; fl.style.color = 'var(--vscode-descriptionForeground)'; }
+					const rd = DOM.append(rowEl, DOM.$('span')); rd.textContent = String(r.reportedDate ?? '—'); rd.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+				}
+			}
+		} catch {
+			DOM.clearNode(resBody);
+			resBody.textContent = 'Unable to load attached results.';
+		}
+
+		// Footer: Close / Print / Edit / Delete.
+		const footer = DOM.append(panel, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);';
+		const mkBtn = (label: string, primary: boolean, danger = false): HTMLButtonElement => {
+			const b = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			const bg = danger ? '#dc2626' : primary ? 'var(--vscode-button-background,#0e639c)' : 'var(--vscode-button-secondaryBackground,#3a3d41)';
+			const fg = (primary || danger) ? '#fff' : 'var(--vscode-button-secondaryForeground,#ccc)';
+			const border = (primary || danger) ? 'none' : '1px solid var(--vscode-input-border,#555)';
+			b.style.cssText = `padding:7px 16px;background:${bg};color:${fg};border:${border};border-radius:4px;cursor:pointer;font-size:13px;font-weight:${primary || danger ? '600' : '400'};`;
+			return b;
+		};
+		const closeBtn = mkBtn('Close', false);
+		closeBtn.addEventListener('click', () => overlay.remove());
+		const printBtn = mkBtn('Print', false);
+		printBtn.addEventListener('click', () => {
+			const w = mainWindow;
+			const lines = [
+				`Order: ${val('orderNumber')}`, `Order Name: ${val('orderName')}`,
+				`Test Code: ${testCodeLine}`, `Priority: ${val('priority')}`, `Status: ${val('status')}`,
+				`Date: ${val('orderDate')}`, `Lab: ${val('labName')}`,
+				`Specimen ID: ${val('specimenId')}`,
+				`Provider: ${String(item.physicianName ?? item.orderingProvider ?? '—')}`,
+				`Diagnosis: ${val('diagnosisCode')}`, `Procedure: ${val('procedureCode')}`,
+				`Notes: ${val('notes')}`,
+			];
+			const html = `<html><head><title>Lab Order ${val('orderNumber')}</title></head><body style="font-family:sans-serif;padding:24px;"><h2>Lab Order ${val('orderNumber')}</h2><pre style="font-size:13px;">${lines.join('\n')}</pre></body></html>`;
+			if (w) { const pw = w.open('', '_blank'); if (pw) { pw.document.write(html); pw.document.close(); pw.focus(); pw.print(); } }
+		});
+		const editBtn = mkBtn('Edit', true);
+		editBtn.addEventListener('click', () => { overlay.remove(); void this._openForm(item); });
+		const deleteBtn = mkBtn('Delete', false, true);
+		deleteBtn.addEventListener('click', async () => {
+			const r = await dlg.confirm({ message: 'Delete this lab order?', type: 'warning', primaryButton: 'Delete' });
+			if (r.confirmed) {
+				await api.fetch(`/api/lab-order/${item.patientId}/${item.id}`, { method: 'DELETE' });
+				overlay.remove();
+				reload();
+			}
+		});
+
+		overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { overlay.remove(); } });
 	}
 }
 
@@ -1364,7 +1503,32 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ key: 'triggerEvent', label: 'Trigger', width: '120px' },
 			{ key: 'severity', label: 'Severity', width: '90px' },
 			{ key: 'actionType', label: 'Action', width: '100px' },
-			{ key: 'isActive', label: 'Status', width: '80px' },
+			// Issue #13: Status renders as a clickable Active/Inactive toggle inside
+			// the table (matching CDSRuleTable.tsx's onToggle pill). Clicking it
+			// activates/deactivates the rule via the same /toggle endpoint the row
+			// Toggle action used.
+			{
+				// emptyLabel keeps the cell clickable when isActive is false (the base
+				// onClick renderer treats falsy values as "empty" and would otherwise
+				// render a blank, non-clickable cell).
+				key: 'isActive', label: 'Status', width: '90px', emptyLabel: 'Inactive',
+				onClick: async (item, api, reload, dlg) => {
+					let res = await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' });
+					if (!res.ok) {
+						const next = !(item.isActive === true || item.status === 'active');
+						res = await api.fetch(`/api/cds/rules/${item.id}`, {
+							method: 'PUT', headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ ...item, isActive: next, status: next ? 'active' : 'inactive' }),
+						});
+					}
+					if (!res.ok) {
+						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
+						await dlg.error(String(err?.['message'] || `Failed to toggle rule (HTTP ${res.status})`));
+						return;
+					}
+					reload();
+				},
+			},
 		],
 		statusTabs: [
 			{ label: 'Active', value: 'active' },
@@ -1489,25 +1653,8 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ key: 'snoozeDays', label: 'Snooze (days)', type: 'number', placeholder: 'Leave empty for no snooze', aliases: ['snooze_days'] },
 		],
 		actions: [
-			{
-				// allow-any-unicode-next-line
-				label: 'Toggle', icon: '⏻', handler: async (item, api, reload, dlg) => {
-					let res = await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' });
-					if (!res.ok) {
-						const next = !(item.isActive === true || item.status === 'active');
-						res = await api.fetch(`/api/cds/rules/${item.id}`, {
-							method: 'PUT', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ ...item, isActive: next, status: next ? 'active' : 'inactive' }),
-						});
-					}
-					if (!res.ok) {
-						const err = await res.json().catch(() => null) as Record<string, unknown> | null;
-						await dlg.error(String(err?.['message'] || `Failed to toggle rule (HTTP ${res.status})`));
-						return;
-					}
-					reload();
-				},
-			},
+			// Issue #13: the Active/Inactive toggle now lives in the Status column
+			// (above), so the actions column only keeps Edit (editable) + Delete.
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
@@ -2061,6 +2208,16 @@ export class EducationEditor extends ClinicalListEditorBase {
 		// ── Library main area (returned as base-class content host) ──────────
 		this._eduLibraryMain = DOM.append(wrapper, DOM.$('.education-main'));
 		this._eduLibraryMain.style.cssText = 'flex:1;min-width:0;height:100%;overflow:hidden;';
+		// Issue #5: the shared table header (rendered by ClinicalListEditorBase as the
+		// sticky grid row inside `.cle-table-wrap`) used `padding:8px 14px` + 11px text
+		// which made the Education Library header bar feel tall and heavy. The base file
+		// can't be touched here, so scope a compact-header override to the Education
+		// library only — matching MaterialLibrary.tsx's tight, low-profile list header.
+		const eduHeaderStyle = DOM.append(this._eduLibraryMain, DOM.$('style'));
+		eduHeaderStyle.textContent =
+			'.education-main .cle-table-wrap > div[style*="sticky"]{' +
+			'padding-top:4px !important;padding-bottom:4px !important;' +
+			'font-size:10px !important;letter-spacing:0.2px !important;line-height:1.3 !important;}';
 
 		// allow-any-unicode-next-line
 		// ── Patient Assignments panel (ehr-ui search-by-patient approach) ────
@@ -2773,16 +2930,27 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'PPE', value: 'PPE' },
 					{ label: 'Medication', value: 'Medication' },
 					{ label: 'Equipment', value: 'Equipment' },
+					{ label: 'Device', value: 'Device' },
 				],
 			},
 			{
 				key: 'locationName', placeholder: 'All Locations',
-				options: [
-					{ label: 'Main Storage', value: 'Main Storage' },
-					{ label: 'Pharmacy', value: 'Pharmacy' },
-					{ label: 'Front Desk', value: 'Front Desk' },
-					{ label: 'Exam Room', value: 'Exam Room' },
-				],
+				// Issue #8a: locations fetched live from the DB so the filter is
+				// never empty and reflects the practice's actual storage locations.
+				options: [],
+				optionsLoader: async () => {
+					try {
+						const res = await this.apiService.fetch('/api/inventory/locations');
+						if (!res.ok) { return []; }
+						const j = await res.json();
+						const w = j?.data ?? j;
+						const arr = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>;
+						return arr
+							.map(l => String(l.name ?? '').trim())
+							.filter(Boolean)
+							.map(name => ({ label: name, value: name }));
+					} catch { return []; }
+				},
 			},
 		],
 		cellRenderer: (key, value) => {
@@ -2811,27 +2979,30 @@ export class InventoryEditor extends ClinicalListEditorBase {
 				], defaultValue: 'active'
 			},
 			{
+				// Issue #11: Item Type options match ciyex-ehr-ui Inventory.tsx exactly.
 				key: 'itemType', label: 'Item Type', type: 'select', options: [
 					{ label: 'Consumable', value: 'consumable' },
-					{ label: 'Durable', value: 'durable' },
+					{ label: 'Device', value: 'device' },
 					{ label: 'Medication', value: 'medication' },
-					{ label: 'Equipment', value: 'equipment' },
+					{ label: 'Other', value: 'other' },
 				], defaultValue: 'consumable'
 			},
 			{ key: 'barcode', label: 'Barcode', type: 'text' },
 			{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
 			{
+				// Issue #11: Cost Method "Average" uses value `average` to match ehr-ui.
 				key: 'costMethod', label: 'Cost Method', type: 'select', options: [
 					{ label: 'FIFO', value: 'fifo' },
 					{ label: 'LIFO', value: 'lifo' },
-					{ label: 'Average', value: 'avg' },
+					{ label: 'Average', value: 'average' },
 				], defaultValue: 'fifo'
 			},
-			// Issue #13: Category / Location / Supplier are dropdowns loaded from
+			// Issue #13/#11: Category / Location / Supplier are dropdowns loaded from
 			// the backend (matching ciyex-ehr-ui) instead of free-text ID inputs.
+			// Suppliers use /api/suppliers/list (the list endpoint ehr-ui calls).
 			{ key: 'categoryId', label: 'Category', type: 'select', optionsApiPath: '/api/inventory/categories', aliases: ['category.id'] },
 			{ key: 'locationId', label: 'Location', type: 'select', optionsApiPath: '/api/inventory/locations', aliases: ['location.id'] },
-			{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers', aliases: ['supplier.id'] },
+			{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers/list', aliases: ['supplier.id'] },
 		],
 		actions: [
 			{
@@ -3052,7 +3223,19 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					{ label: 'Inspection', value: 'inspection' },
 				], defaultValue: 'preventive',
 			},
-			{ key: 'location', label: 'Location', type: 'text', placeholder: 'Where is the equipment?' },
+			// Issue #10: Location is a search field backed by the DB locations list
+			// (same /api/inventory/locations source the Inventory form uses). Selecting
+			// a result fills the visible `location` name and the hidden `locationId`.
+			{
+				key: 'location', label: 'Location', type: 'search',
+				placeholder: 'Search location…',
+				apiPath: '/api/inventory/locations',
+				searchDisplayField: 'name',
+				searchValueField: 'name',
+				relatedField: 'locationId',
+				relatedDisplayFields: ['name'],
+			},
+			{ key: 'locationId', label: 'Location ID', type: 'number', hidden: true, placeholder: 'Auto-filled' },
 			{
 				key: 'priority', label: 'Priority', type: 'select', options: [
 					{ label: 'Low', value: 'low' },
@@ -3087,6 +3270,11 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
+		// Issue #10: Delete action on the Maintenance table (Edit comes from editable:true).
+		actions: [
+			// allow-any-unicode-next-line
+			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this maintenance task?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/maintenances/${item.id}`, { method: 'DELETE' }); reload(); } } },
+		],
 	};
 
 	// @ts-ignore — override abstract readonly with getter
@@ -3577,13 +3765,18 @@ export class InventoryEditor extends ClinicalListEditorBase {
 
 		// Header row: Order Date + Expected Date.
 		const hr2 = DOM.append(body, DOM.$('div')); hr2.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;';
+		// Issue #9: `color-scheme:dark light` makes the native date picker glyph +
+		// text render with proper contrast on the dark workbench theme (otherwise the
+		// value/calendar icon were nearly invisible). MM/DD/YYYY display is the
+		// browser default for type=date when the OS locale is US.
+		const dateInputStyle = inputStyle + 'color-scheme:dark light;';
 		const odWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(odWrap, 'Order Date');
 		const orderDate = DOM.append(odWrap, DOM.$('input')) as HTMLInputElement;
-		orderDate.type = 'date'; orderDate.style.cssText = inputStyle;
+		orderDate.type = 'date'; orderDate.style.cssText = dateInputStyle;
 		orderDate.value = String(existing?.orderDate ?? '').slice(0, 10) || new Date().toISOString().slice(0, 10);
 		const edWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(edWrap, 'Expected Date');
 		const expectedDate = DOM.append(edWrap, DOM.$('input')) as HTMLInputElement;
-		expectedDate.type = 'date'; expectedDate.style.cssText = inputStyle;
+		expectedDate.type = 'date'; expectedDate.style.cssText = dateInputStyle;
 		expectedDate.value = String(existing?.expectedDate ?? '').slice(0, 10);
 
 		// Notes.
@@ -3598,6 +3791,17 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		const addLineBtn = DOM.append(liHdr, DOM.$('button')) as HTMLButtonElement;
 		addLineBtn.textContent = '+ Add Line';
 		addLineBtn.style.cssText = 'background:none;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:12px;font-weight:600;';
+
+		// Issue #9: column headers for the line-item grid (Item | Qty | Unit $ |
+		// Total | Lot # | Expiry) — same labels/order as ciyex-ehr-ui Orders.tsx.
+		// Grid template MUST match the per-row template below so headers align.
+		const lineColsTemplate = 'minmax(0,2fr) 52px 64px 70px 70px 90px 22px';
+		const liColHdr = DOM.append(body, DOM.$('div'));
+		liColHdr.style.cssText = `display:grid;grid-template-columns:${lineColsTemplate};gap:6px;align-items:center;margin-bottom:4px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;color:var(--vscode-descriptionForeground);`;
+		for (const h of ['Item', 'Qty', 'Unit $', 'Total', 'Lot #', 'Expiry', '']) {
+			const s = DOM.append(liColHdr, DOM.$('span')); s.textContent = h;
+			s.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		}
 		const linesWrap = DOM.append(body, DOM.$('div'));
 
 		const grand = DOM.append(body, DOM.$('div'));
@@ -3612,7 +3816,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		};
 		const addLine = (seed?: Record<string, unknown>): void => {
 			const row = DOM.append(linesWrap, DOM.$('div'));
-			row.style.cssText = 'display:grid;grid-template-columns:minmax(0,2fr) 52px 64px 70px 70px 90px 22px;gap:6px;align-items:center;margin-bottom:6px;';
+			row.style.cssText = `display:grid;grid-template-columns:${lineColsTemplate};gap:6px;align-items:center;margin-bottom:6px;`;
 			const itemWrap = DOM.append(row, DOM.$('div'));
 			const itemHidden = createCustomDropdown({
 				parent: itemWrap,
@@ -3623,7 +3827,8 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			const mkCell = (ph: string, val: string, type = 'text'): HTMLInputElement => {
 				const i = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				i.type = type; i.placeholder = ph; i.value = val;
-				i.style.cssText = inputStyle + 'font-size:12px;padding:4px 6px;';
+				// Issue #9: date cells get color-scheme so the picker glyph/value is visible.
+				i.style.cssText = inputStyle + 'font-size:12px;padding:4px 6px;' + (type === 'date' ? 'color-scheme:dark light;' : '');
 				return i;
 			};
 			const qty = mkCell('Qty', String(seed?.quantityOrdered ?? '1'), 'number');
@@ -3932,18 +4137,26 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 			{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
 			{
+				// Issue #12: Type options match the CollectPaymentModal.tsx dropdown.
 				key: 'transactionType', label: 'Type', type: 'select', options: [
 					{ label: 'Payment', value: 'payment' },
+					{ label: 'Encounter', value: 'encounter' },
+					{ label: 'Claim', value: 'claim' },
+					{ label: 'Invoice', value: 'invoice' },
 					{ label: 'Copay', value: 'copay' },
 					{ label: 'Deductible', value: 'deductible' },
 					{ label: 'Coinsurance', value: 'coinsurance' },
-					{ label: 'Self-Pay', value: 'self_pay' },
+					{ label: 'Self Pay', value: 'self_pay' },
+					{ label: 'Other', value: 'other' },
 				], defaultValue: 'payment'
 			},
 			{
 				key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
 					{ label: 'Credit Card', value: 'credit_card' },
 					{ label: 'Debit Card', value: 'debit_card' },
+					{ label: 'Bank Account', value: 'bank_account' },
+					{ label: 'FSA', value: 'fsa' },
+					{ label: 'HSA', value: 'hsa' },
 					{ label: 'Cash', value: 'cash' },
 					{ label: 'Check', value: 'check' },
 					{ label: 'ACH', value: 'ach' },
@@ -3951,6 +4164,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				]
 			},
 			{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
+			// Issue #12: keep a Receipt Email field (matches CollectPaymentModal.tsx).
+			{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com', validationPattern: '^$|^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$', validationMessage: 'Please enter a valid email address' },
 			{ key: 'invoiceId', label: 'Invoice ID', type: 'text', placeholder: 'Optional — link to invoice' },
 			{ key: 'notes', label: 'Notes / Stripe Charge ID', type: 'text', placeholder: 'Stripe charge id (ch_...), check #, ...' },
 			{
@@ -3978,27 +4193,81 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
+		// Issue #12: full action set — View, Edit, Refund, Void, Delete — matching
+		// the TransactionsTab.tsx row actions.
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'Refund', icon: '↩️', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({
-						type: 'question', message: 'Issue a refund',
-						inputs: [
-							{ placeholder: 'Amount', value: String(item.amount || '') },
-							{ placeholder: 'Reason (optional)' },
+				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, dlg) => {
+					const fmt = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? '—' : String(v); };
+					const amt = typeof item.amount === 'number' ? `$${(item.amount as number).toFixed(2)}` : fmt('amount');
+					await dlg.info(
+						`Transaction ${fmt('transactionId')}\n` +
+						`Patient: ${item.patientName || (item.patientId ? `Patient #${item.patientId}` : '—')}\n` +
+						`Amount: ${amt}\n` +
+						`Type: ${fmt('transactionType')}\n` +
+						`Method: ${fmt('paymentMethodType')}\n` +
+						`Status: ${fmt('status')}\n` +
+						`Description: ${fmt('description')}\n` +
+						`Date: ${fmt('collectedAt')}`
+					);
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Edit', icon: '✏️', handler: async (item, api, reload, dlg) => {
+					// Mirrors TransactionsTab.tsx edit modal: amount, description, method.
+					const result = await showThemedModal({
+						title: 'Edit Transaction',
+						subtitle: String(item.patientName || (item.patientId ? `Patient #${item.patientId}` : '')),
+						confirmLabel: 'Save',
+						fields: [
+							{ key: 'amount', label: 'Amount ($)', type: 'number', value: String(item.amount ?? ''), required: true },
+							{ key: 'description', label: 'Description', type: 'text', value: String(item.description ?? '') },
+							{ key: 'paymentMethodType', label: 'Method', type: 'text', value: String(item.paymentMethodType ?? '') },
 						],
+						anchor: this.root,
 					});
-					if (!res.confirmed) { return; }
-					const amount = res.values?.[0]?.trim();
-					const reason = res.values?.[1]?.trim() || 'Refund';
-					if (amount) {
-						await api.fetch(`/api/payments/transactions/${item.id}/refund`, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ amount: Number(amount), reason }),
-						});
-						reload();
-					}
+					if (!result) { return; }
+					const amt = Number(result.amount);
+					if (!amt || amt <= 0) { await dlg.error('Invalid amount.'); return; }
+					const res = await api.fetch(`/api/payments/transactions/${item.id}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ amount: amt, description: result.description, paymentMethodType: result.paymentMethodType }),
+					});
+					if (!res.ok) { const e = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(e?.['message'] || 'Update failed')); return; }
+					reload();
+				}
+			},
+			{
+				// Issue #12: Refund opens the same refund UI as ehr-ui — amount
+				// pre-filled to the maximum refundable (amount - already refunded) and
+				// a reason — posting to the same /refund endpoint.
+				// allow-any-unicode-next-line
+				label: 'Refund', icon: '↩️', handler: async (item, api, reload, dlg) => {
+					const paid = Number(item.amount) || 0;
+					const alreadyRefunded = Number(item.refundAmount) || 0;
+					const maxRefund = Math.max(0, paid - alreadyRefunded);
+					const result = await showThemedModal({
+						title: 'Issue a Refund',
+						subtitle: `Max refundable: $${maxRefund.toFixed(2)}`,
+						confirmLabel: 'Process Refund',
+						confirmColor: '#8b5cf6',
+						fields: [
+							{ key: 'amount', label: 'Refund Amount ($)', type: 'number', value: maxRefund.toFixed(2), required: true },
+							{ key: 'reason', label: 'Reason', type: 'textarea', placeholder: 'Reason for refund...', rows: 3 },
+						],
+						anchor: this.root,
+					});
+					if (!result) { return; }
+					const amount = Number(result.amount);
+					if (!amount || amount <= 0) { await dlg.error('Invalid refund amount.'); return; }
+					const res = await api.fetch(`/api/payments/transactions/${item.id}/refund`, {
+						method: 'POST', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ amount, reason: result.reason || 'Refund' }),
+					});
+					if (!res.ok) { const e = await res.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(e?.['message'] || 'Refund failed')); return; }
+					reload();
 				}
 			},
 			{
@@ -4007,6 +4276,16 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					const r = await dlg.confirm({ message: 'Void this transaction?', type: 'warning', primaryButton: 'Void' });
 					if (r.confirmed) {
 						await api.fetch(`/api/payments/transactions/${item.id}/void`, { method: 'POST' });
+						reload();
+					}
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Delete this transaction?', type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
+						await api.fetch(`/api/payments/transactions/${item.id}`, { method: 'DELETE' });
 						reload();
 					}
 				}
@@ -4241,21 +4520,32 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
 		const backdrop = doc.createElement('div');
 		backdrop.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
-		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);';
+		// Transparent backdrop — still captures click-to-close but does not dim
+		// the rest of the screen (matches the other right-side drawers).
+		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:transparent;';
 		mount.appendChild(backdrop);
 		this._cardFormBackdrop = backdrop;
 
+		// Full-viewport flex wrapper that right-aligns the panel. Using
+		// justify-content:flex-end (rather than `right:0` on the panel itself)
+		// is what the base list-editor drawer does — it pins reliably to the
+		// right even when a transformed workbench ancestor would otherwise make
+		// a `position:fixed;right:0` element resolve to the wrong edge (issue 18).
 		const overlay = doc.createElement('div');
 		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
-		overlay.style.cssText = `position:fixed;top:0;right:0;bottom:0;z-index:10000;width:560px;max-width:95vw;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
+		overlay.style.cssText = `position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;color-scheme:${colorScheme};`;
 		mount.appendChild(overlay);
 		this._cardFormOverlay = overlay;
+
+		// The actual right-side drawer panel.
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'width:560px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;color:var(--vscode-foreground);';
 
 		const close = () => { overlay.remove(); backdrop.remove(); this._cardFormOverlay = null; this._cardFormBackdrop = null; };
 		backdrop.addEventListener('click', close);
 
 		// Header
-		const hdr = DOM.append(overlay, DOM.$('div'));
+		const hdr = DOM.append(panel, DOM.$('div'));
 		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
 		const titleEl = DOM.append(hdr, DOM.$('h3'));
 		titleEl.textContent = card ? 'Edit Card' : 'Add Payment Method';
@@ -4266,7 +4556,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		closeBtn.addEventListener('click', close);
 
 		// Scrollable form body
-		const body = DOM.append(overlay, DOM.$('div'));
+		const body = DOM.append(panel, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;scrollbar-width:none;';
 
 		const inp = (label: string, key: string, span2 = false, opts: Partial<HTMLInputElement> = {}): HTMLInputElement => {
@@ -4328,8 +4618,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const y = now.getFullYear() + i; return { value: String(y), label: String(y) };
 		}));
 
-		const cvvEl = inp('CVV *', 'cvv', false, { maxLength: 4, placeholder: '123' });
-		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, ''); });
+		// Issue #18: CVV accepts a MAXIMUM of 3 digits, numeric only. The maxLength
+		// attribute blocks typing past 3, and the input guard strips non-digits and
+		// hard-truncates to 3 (covering paste / IME that bypass maxLength).
+		const cvvEl = inp('CVV *', 'cvv', false, { maxLength: 3, placeholder: '123', inputMode: 'numeric' });
+		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, '').slice(0, 3); });
 
 		const addrEl = inp('Billing Address', 'billingAddress', true, { placeholder: '123 Main St' });
 		const cityEl = inp('City', 'billingCity', false, { maxLength: 50, placeholder: 'New York' });
@@ -4366,7 +4659,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		errEl.style.cssText = 'grid-column:span 2;color:#f48771;font-size:12px;padding:6px 10px;background:rgba(244,135,113,0.1);border:1px solid rgba(244,135,113,0.3);border-radius:4px;display:none;';
 
 		// Footer
-		const footer = DOM.append(overlay, DOM.$('div'));
+		const footer = DOM.append(panel, DOM.$('div'));
 		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
 		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';

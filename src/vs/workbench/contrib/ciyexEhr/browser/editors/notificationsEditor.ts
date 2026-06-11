@@ -91,6 +91,9 @@ export class NotificationsEditor extends EditorPane {
 	private emailConfig: Record<string, unknown> = {};
 	private smsConfig: Record<string, unknown> = {};
 	private editingTemplate: Record<string, unknown> | null = null;
+	private creatingCampaign = false;
+	private campaignForm: Record<string, unknown> = {};
+	private editingTemplateActive = false;
 
 	constructor(
 		group: IEditorGroup,
@@ -203,7 +206,7 @@ export class NotificationsEditor extends EditorPane {
 			// allow-any-unicode-next-line
 			btn.textContent = `${TAB_ICONS[i]} ${TABS[i]}`;
 			btn.style.cssText = `padding:8px 16px;border:none;background:none;cursor:pointer;font-size:12px;border-bottom:2px solid ${active ? '#0e639c' : 'transparent'};margin-bottom:-2px;color:${active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-weight:${active ? '600' : '400'};white-space:nowrap;`;
-			btn.addEventListener('click', () => { this.activeTab = i; this._loadTab(); });
+			btn.addEventListener('click', () => { this.activeTab = i; this.creatingCampaign = false; this.editingTemplate = null; this.editingTemplateActive = false; this._loadTab(); });
 		}
 
 		// Tab content
@@ -350,19 +353,117 @@ export class NotificationsEditor extends EditorPane {
 	// allow-any-unicode-next-line
 	// ─── Tab 1: Campaigns ───
 	private _renderCampaigns(): void {
-		// Create campaign form
+		if (this.creatingCampaign) {
+			this._renderCampaignForm();
+			return;
+		}
+
+		// Header row with "+ New Campaign" button
+		const hdrRow = DOM.append(this.contentEl, DOM.$('div'));
+		hdrRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;';
+		const hdrTitle = DOM.append(hdrRow, DOM.$('h3'));
+		// allow-any-unicode-next-line
+		hdrTitle.textContent = '👥 Bulk Campaigns';
+		hdrTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+		const newBtn = DOM.append(hdrRow, DOM.$('button'));
+		// allow-any-unicode-next-line
+		newBtn.textContent = '+ New Campaign';
+		newBtn.style.cssText = btnPrimary;
+		newBtn.addEventListener('click', () => { this.creatingCampaign = true; this.campaignForm = { name: '', channelType: 'email', subject: '', body: '' }; this._render(); });
+
+		// Campaign list / empty state
+		if (this.campaigns.length === 0) {
+			const empty = DOM.append(this.contentEl, DOM.$('div'));
+			empty.textContent = 'No campaigns yet. Create your first one.';
+			empty.style.cssText = 'text-align:center;color:var(--vscode-descriptionForeground);padding:60px 40px;font-size:13px;';
+			return;
+		}
+
+		this._renderTable(this.contentEl, this.campaigns,
+			[{ key: 'name', label: 'Name' }, { key: 'channelType', label: 'Channel', w: '70px' }, { key: 'status', label: 'Status', w: '90px' }, { key: 'totalRecipients', label: 'Recipients', w: '80px' }, { key: 'sentCount', label: 'Sent', w: '60px' }, { key: 'failedCount', label: 'Failed', w: '60px' }],
+			(item) => {
+				const d = document.createElement('div');
+				d.style.cssText = 'display:flex;gap:4px;';
+				const view = DOM.append(d, DOM.$('button'));
+				// allow-any-unicode-next-line
+				view.textContent = '👁';
+				view.title = 'View Campaign';
+				view.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
+				view.addEventListener('click', e => { e.stopPropagation(); this.creatingCampaign = true; this.campaignForm = { ...item }; this._render(); });
+				if (item.status === 'draft' || item.status === 'scheduled') {
+					const start = DOM.append(d, DOM.$('button'));
+					start.textContent = 'Start';
+					start.title = 'Start Campaign';
+					start.style.cssText = 'padding:2px 8px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;';
+					start.addEventListener('click', async e => { e.stopPropagation(); await this.apiService.fetch(`/api/notifications/campaigns/${item.id}/start`, { method: 'POST' }); this._loadTab(); });
+				}
+				if (item.status === 'draft' || item.status === 'scheduled' || item.status === 'sending') {
+					const cancel = DOM.append(d, DOM.$('button'));
+					cancel.textContent = 'Cancel';
+					cancel.title = 'Cancel Campaign';
+					cancel.style.cssText = 'padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;';
+					cancel.addEventListener('click', async e => { e.stopPropagation(); await this.apiService.fetch(`/api/notifications/campaigns/${item.id}/cancel`, { method: 'POST' }); this._loadTab(); });
+				}
+				return d;
+			},
+		);
+	}
+
+	private _renderCampaignForm(): void {
+		const form = this.campaignForm;
 		const formCard = DOM.append(this.contentEl, DOM.$('div'));
 		formCard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:16px;margin-bottom:16px;';
-		const fTitle = DOM.append(formCard, DOM.$('h3'));
-		fTitle.textContent = 'New Campaign';
-		fTitle.style.cssText = 'margin:0 0 12px;font-size:14px;font-weight:600;';
 
+		const fTitleRow = DOM.append(formCard, DOM.$('div'));
+		fTitleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+		const fTitle = DOM.append(fTitleRow, DOM.$('h3'));
+		fTitle.textContent = 'New Campaign';
+		fTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+		const closeBtn = DOM.append(fTitleRow, DOM.$('button'));
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.style.cssText = 'background:none;border:none;color:var(--vscode-foreground);font-size:16px;cursor:pointer;';
+		closeBtn.addEventListener('click', () => { this.creatingCampaign = false; this._render(); });
+
+		// Name + Channel
 		const grid = DOM.append(formCard, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
-
-		const nameIn = this._addInput(grid, 'Campaign Name', 'text', 'Campaign name');
+		const nameIn = this._addInput(grid, 'Campaign Name', 'text', '', String(form.name || ''));
 		const channelSel = this._addSelect(grid, 'Channel', [{ label: 'Email', value: 'email' }, { label: 'SMS', value: 'sms' }]);
+		channelSel.value = String(form.channelType || 'email');
 
+		// Template (optional)
+		const templateSel = this._addSelect(formCard, 'Template (optional)', []);
+		(templateSel.parentElement as HTMLElement).style.marginTop = '12px';
+		const populateTemplates = () => {
+			DOM.clearNode(templateSel);
+			const none = DOM.append(templateSel, DOM.$('option')) as HTMLOptionElement;
+			none.value = ''; none.textContent = '-- None --';
+			for (const t of this.templates) {
+				if (t.isActive === false) { continue; }
+				if (String(t.channelType) !== channelSel.value) { continue; }
+				const opt = DOM.append(templateSel, DOM.$('option')) as HTMLOptionElement;
+				opt.value = String(t.id); opt.textContent = String(t.name);
+			}
+			templateSel.value = String(form.templateId ?? '');
+		};
+		populateTemplates();
+
+		// Subject (email only)
+		const subjectGrp = DOM.append(formCard, DOM.$('div'));
+		subjectGrp.style.cssText = 'margin-top:12px;';
+		const sLbl = DOM.append(subjectGrp, DOM.$('label'));
+		sLbl.textContent = 'Subject';
+		sLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
+		const subjectIn = DOM.append(subjectGrp, DOM.$('input')) as HTMLInputElement;
+		subjectIn.style.cssText = inputStyle;
+		subjectIn.value = String(form.subject || '');
+
+		const toggleSubject = () => { subjectGrp.style.display = channelSel.value === 'sms' ? 'none' : 'block'; };
+		toggleSubject();
+		channelSel.addEventListener('change', () => { populateTemplates(); toggleSubject(); });
+
+		// Recipients
 		const recipientsGrp = DOM.append(formCard, DOM.$('div'));
 		recipientsGrp.style.cssText = 'margin-top:12px;';
 		const rLbl = DOM.append(recipientsGrp, DOM.$('label'));
@@ -371,20 +472,29 @@ export class NotificationsEditor extends EditorPane {
 		const recipientsIn = DOM.append(recipientsGrp, DOM.$('textarea')) as HTMLTextAreaElement;
 		recipientsIn.placeholder = 'Enter recipient emails, one per line or comma-separated';
 		recipientsIn.style.cssText = inputStyle + 'min-height:60px;resize:vertical;font-family:inherit;';
+		const tc = form.targetCriteria as Record<string, unknown> | undefined;
+		recipientsIn.value = String(tc?.recipientEmails ?? '');
+		const rHelp = DOM.append(recipientsGrp, DOM.$('p'));
+		rHelp.textContent = 'Enter patient emails separated by commas or newlines';
+		rHelp.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin:4px 0 0;';
 
+		// Body
 		const bodyGrp = DOM.append(formCard, DOM.$('div'));
 		bodyGrp.style.cssText = 'margin-top:12px;';
 		const bLbl = DOM.append(bodyGrp, DOM.$('label'));
 		bLbl.textContent = 'Body';
 		bLbl.style.cssText = 'display:block;font-size:11px;font-weight:500;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
 		const bodyIn = DOM.append(bodyGrp, DOM.$('textarea')) as HTMLTextAreaElement;
-		bodyIn.style.cssText = inputStyle + 'min-height:80px;resize:vertical;font-family:inherit;';
+		bodyIn.style.cssText = inputStyle + 'min-height:100px;resize:vertical;font-family:var(--vscode-editor-font-family,monospace);';
+		bodyIn.value = String(form.body || '');
 
+		// Actions
 		const formBtns = DOM.append(formCard, DOM.$('div'));
-		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:12px;justify-content:flex-end;';
+		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
 		const cancelBtn = DOM.append(formBtns, DOM.$('button'));
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = btnSecondary;
+		cancelBtn.addEventListener('click', () => { this.creatingCampaign = false; this._render(); });
 		const createBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
 		createBtn.textContent = 'Create Campaign';
 		createBtn.style.cssText = btnPrimary;
@@ -394,53 +504,107 @@ export class NotificationsEditor extends EditorPane {
 				return;
 			}
 			createBtn.disabled = true;
+			createBtn.textContent = 'Creating...';
 			try {
+				const payload: Record<string, unknown> = {
+					name: nameIn.value,
+					channelType: channelSel.value,
+					subject: channelSel.value === 'email' ? subjectIn.value : '',
+					body: bodyIn.value,
+					status: 'draft',
+				};
+				if (templateSel.value) { payload.templateId = Number(templateSel.value); }
+				// Backend expects targetCriteria as a JSON string
+				payload.targetCriteria = JSON.stringify({ recipientEmails: recipientsIn.value });
 				const res = await this.apiService.fetch('/api/notifications/campaigns', {
 					method: 'POST', headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ name: nameIn.value, channelType: channelSel.value, targetCriteria: recipientsIn.value, body: bodyIn.value }),
+					body: JSON.stringify(payload),
 				});
 				const json = await res.json().catch(() => ({}));
 				if (res.ok && json?.success !== false) {
 					this.notificationService.notify({ severity: Severity.Info, message: 'Campaign created.' });
+					this.creatingCampaign = false;
+					this._loadTab();
 				} else {
-					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to create campaign.' });
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Create failed.' });
 				}
 			} catch (err) {
-				this.notificationService.notify({ severity: Severity.Error, message: `Failed: ${String(err)}` });
+				this.notificationService.notify({ severity: Severity.Error, message: `Network error: ${String(err)}` });
 			} finally {
 				createBtn.disabled = false;
-				this._loadTab();
+				createBtn.textContent = 'Create Campaign';
 			}
 		});
-
-		// Campaign list
-		if (this.campaigns.length > 0) {
-			this._renderTable(this.contentEl, this.campaigns,
-				[{ key: 'name', label: 'Name' }, { key: 'channelType', label: 'Channel', w: '70px' }, { key: 'status', label: 'Status', w: '90px' }, { key: 'totalRecipients', label: 'Recipients', w: '80px' }, { key: 'sentCount', label: 'Sent', w: '60px' }, { key: 'failedCount', label: 'Failed', w: '60px' }],
-				(item) => {
-					const d = document.createElement('div');
-					d.style.cssText = 'display:flex;gap:4px;';
-					if (item.status === 'draft') {
-						const start = DOM.append(d, DOM.$('button'));
-						start.textContent = 'Start';
-						start.style.cssText = 'padding:2px 8px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;';
-						start.addEventListener('click', async () => { await this.apiService.fetch(`/api/notifications/campaigns/${item.id}/start`, { method: 'POST' }); this._loadTab(); });
-					}
-					if (item.status === 'sending' || item.status === 'scheduled') {
-						const cancel = DOM.append(d, DOM.$('button'));
-						cancel.textContent = 'Cancel';
-						cancel.style.cssText = 'padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;';
-						cancel.addEventListener('click', async () => { await this.apiService.fetch(`/api/notifications/campaigns/${item.id}/cancel`, { method: 'POST' }); this._loadTab(); });
-					}
-					return d;
-				},
-			);
-		}
 	}
 
 	// allow-any-unicode-next-line
 	// ─── Tab 2: Templates ───
 	private _renderTemplates(): void {
+		// Default: list view + "+ New Template" button. The form is shown only
+		// when the user clicks "+ New Template" or edits an existing template.
+		if (!this.editingTemplateActive) {
+			this._renderTemplateList();
+			return;
+		}
+		this._renderTemplateForm();
+	}
+
+	private _renderTemplateList(): void {
+		// Header row with "+ New Template" button
+		const hdrRow = DOM.append(this.contentEl, DOM.$('div'));
+		hdrRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;';
+		const hdrTitle = DOM.append(hdrRow, DOM.$('h3'));
+		// allow-any-unicode-next-line
+		hdrTitle.textContent = '📋 Message Templates';
+		hdrTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
+		const newBtn = DOM.append(hdrRow, DOM.$('button'));
+		// allow-any-unicode-next-line
+		newBtn.textContent = '+ New Template';
+		newBtn.style.cssText = btnPrimary;
+		newBtn.addEventListener('click', () => { this.editingTemplate = null; this.editingTemplateActive = true; this._render(); });
+
+		if (this.templates.length === 0) {
+			const empty = DOM.append(this.contentEl, DOM.$('div'));
+			empty.textContent = 'No templates yet. Create your first one.';
+			empty.style.cssText = 'text-align:center;color:var(--vscode-descriptionForeground);padding:60px 40px;font-size:13px;';
+			return;
+		}
+
+		this._renderTable(this.contentEl, this.templates,
+			[{ key: 'name', label: 'Name' }, { key: 'templateKey', label: 'Key' }, { key: 'channelType', label: 'Channel', w: '70px' }, { key: 'subject', label: 'Subject' }, { key: 'isActive', label: 'Active', w: '60px' }],
+			(item) => {
+				const d = document.createElement('div');
+				d.style.cssText = 'display:flex;gap:4px;';
+				const edit = DOM.append(d, DOM.$('button'));
+				// allow-any-unicode-next-line
+				edit.textContent = '✎';
+				edit.title = 'Edit';
+				edit.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;color:var(--vscode-foreground);';
+				edit.addEventListener('click', e => { e.stopPropagation(); this.editingTemplate = item; this.editingTemplateActive = true; this._render(); });
+				const del = DOM.append(d, DOM.$('button'));
+				// allow-any-unicode-next-line
+				del.textContent = '🗑️';
+				del.title = 'Delete';
+				del.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
+				del.addEventListener('click', async e => {
+					e.stopPropagation();
+					const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${String(item.name)}"?` });
+					if (!confirmed) { return; }
+					const res = await this.apiService.fetch(`/api/notifications/config/templates/${item.id}`, { method: 'DELETE' });
+					const json = await res.json().catch(() => ({}));
+					if (res.ok && json?.success !== false) {
+						this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
+					} else {
+						this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Delete failed.' });
+					}
+					this._loadTab();
+				});
+				return d;
+			},
+		);
+	}
+
+	private _renderTemplateForm(): void {
 		const editing = this.editingTemplate;
 		const isEdit = !!editing?.id;
 
@@ -454,12 +618,12 @@ export class NotificationsEditor extends EditorPane {
 		fTitle.textContent = isEdit ? `Edit Template: ${String(editing?.name || '')}` : 'New Template';
 		fTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
 
-		if (isEdit) {
-			const cancelEdit = DOM.append(fTitleRow, DOM.$('button'));
-			cancelEdit.textContent = 'Cancel Edit';
-			cancelEdit.style.cssText = btnSecondary;
-			cancelEdit.addEventListener('click', () => { this.editingTemplate = null; this._render(); });
-		}
+		const closeBtn = DOM.append(fTitleRow, DOM.$('button'));
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'background:none;border:none;color:var(--vscode-foreground);font-size:16px;cursor:pointer;';
+		closeBtn.addEventListener('click', () => { this.editingTemplate = null; this.editingTemplateActive = false; this._render(); });
 
 		const grid = DOM.append(formCard, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;';
@@ -553,7 +717,12 @@ export class NotificationsEditor extends EditorPane {
 
 		// Save buttons
 		const formBtns = DOM.append(formCard, DOM.$('div'));
-		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:14px;justify-content:flex-end;';
+		formBtns.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
+
+		const cancelBtn = DOM.append(formBtns, DOM.$('button'));
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = btnSecondary;
+		cancelBtn.addEventListener('click', () => { this.editingTemplate = null; this.editingTemplateActive = false; this._render(); });
 
 		const saveBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = isEdit ? 'Update Template' : 'Create Template';
@@ -584,6 +753,7 @@ export class NotificationsEditor extends EditorPane {
 				if (res.ok && json?.success !== false) {
 					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Template updated.' : 'Template created.' });
 					this.editingTemplate = null;
+					this.editingTemplateActive = false;
 					this._loadTab();
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to save template.' });
@@ -594,46 +764,6 @@ export class NotificationsEditor extends EditorPane {
 				saveBtn.disabled = false;
 			}
 		});
-
-		// Template list
-		if (this.templates.length > 0) {
-			this._renderTable(this.contentEl, this.templates,
-				[{ key: 'name', label: 'Name' }, { key: 'templateKey', label: 'Key' }, { key: 'channelType', label: 'Channel', w: '70px' }, { key: 'subject', label: 'Subject' }, { key: 'isActive', label: 'Active', w: '60px' }],
-				(item) => {
-					const d = document.createElement('div');
-					d.style.cssText = 'display:flex;gap:4px;';
-					const edit = DOM.append(d, DOM.$('button'));
-					// allow-any-unicode-next-line
-					edit.textContent = '✎';
-					edit.title = 'Edit';
-					edit.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;color:var(--vscode-foreground);';
-					edit.addEventListener('click', e => { e.stopPropagation(); this.editingTemplate = item; this._render(); });
-					const del = DOM.append(d, DOM.$('button'));
-					// allow-any-unicode-next-line
-					del.textContent = '🗑️';
-					del.title = 'Delete';
-					del.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
-					del.addEventListener('click', async e => {
-						e.stopPropagation();
-						const { confirmed } = await this.dialogService.confirm({ message: `Delete template "${String(item.name)}"?` });
-						if (!confirmed) { return; }
-						const res = await this.apiService.fetch(`/api/notifications/config/templates/${item.id}`, { method: 'DELETE' });
-						const json = await res.json().catch(() => ({}));
-						if (res.ok && json?.success !== false) {
-							this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
-						} else {
-							this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Delete failed.' });
-						}
-						this._loadTab();
-					});
-					return d;
-				},
-			);
-		} else {
-			const empty = DOM.append(this.contentEl, DOM.$('div'));
-			empty.textContent = 'No templates found. Create one above.';
-			empty.style.cssText = 'text-align:center;color:var(--vscode-descriptionForeground);padding:40px;';
-		}
 	}
 
 	// allow-any-unicode-next-line

@@ -1331,6 +1331,45 @@ export class CalendarEditor extends EditorPane {
 		// End Date + End Time row — both required, both render as mm/dd/yyyy
 		// via buildDateField. End Date defaults to the same day as Start.
 		row('End Date', 'endDate', 'date', date, true, 'End Time', 'endTime', 'time', endTime, true);
+		// Duration — read-only computed display (matches ehr-ui AppointmentModal).
+		// Shows the gap between Start Time and End Time as "30 min" / "1h 30m" / "—".
+		const durationGroup = DOM.append(form, DOM.$('.form-group'));
+		durationGroup.style.cssText = 'margin-bottom:12px;';
+		const durationLbl = DOM.append(durationGroup, DOM.$('label'));
+		durationLbl.textContent = 'Duration';
+		durationLbl.style.cssText = 'display:block;font-size:12px;font-weight:500;margin-bottom:4px;color:var(--vscode-foreground);';
+		const durationDisplay = DOM.append(durationGroup, DOM.$('div'));
+		durationDisplay.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-descriptionForeground,#888);font-size:13px;box-sizing:border-box;';
+		const hmToMinutes = (hm: string): number => {
+			const [h, m] = (hm || '').split(':').map(n => parseInt(n || '0', 10));
+			return (h || 0) * 60 + (m || 0);
+		};
+		const updateDuration = () => {
+			const sT = (formFields.get('startTime') as HTMLInputElement | undefined)?.value || '';
+			const eT = (formFields.get('endTime') as HTMLInputElement | undefined)?.value || '';
+			const diff = hmToMinutes(eT) - hmToMinutes(sT);
+			if (!sT || !eT || diff <= 0) { durationDisplay.textContent = '—'; return; }
+			const h = Math.floor(diff / 60);
+			const m = diff % 60;
+			durationDisplay.textContent = h > 0 ? `${h}h ${m > 0 ? m + 'm' : ''}`.trim() : `${m} min`;
+		};
+		const startTimeInput = formFields.get('startTime') as HTMLInputElement | undefined;
+		const endTimeInput = formFields.get('endTime') as HTMLInputElement | undefined;
+		// When Start Time changes, mirror ehr-ui: default End Time to start + 15 min
+		// (only if End Time is empty or no longer after Start), then recompute.
+		startTimeInput?.addEventListener('input', () => {
+			const sT = startTimeInput.value;
+			if (sT && endTimeInput && (!endTimeInput.value || hmToMinutes(endTimeInput.value) <= hmToMinutes(sT))) {
+				const total = hmToMinutes(sT) + 15;
+				const nh = Math.floor(total / 60) % 24;
+				const nm = total % 60;
+				endTimeInput.value = `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+			}
+			updateDuration();
+		});
+		endTimeInput?.addEventListener('input', updateDuration);
+		updateDuration();
+
 		const priorityRow = DOM.append(form, DOM.$('.form-row'));
 		priorityRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
 		const priorityGroup = DOM.append(priorityRow, DOM.$('.fg'));

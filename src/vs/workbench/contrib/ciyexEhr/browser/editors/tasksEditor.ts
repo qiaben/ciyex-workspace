@@ -320,10 +320,11 @@ export class TasksEditor extends EditorPane {
 		// Rows
 		for (const task of this.tasks) {
 			const row = DOM.append(tableWrap, DOM.$('div'));
-			row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;cursor:pointer;';
+			row.style.cssText = 'display:grid;grid-template-columns:30px 1fr 90px 120px 120px 90px 80px 90px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(128,128,128,0.1);align-items:center;';
 			row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 			row.addEventListener('mouseleave', () => { row.style.background = ''; });
-			row.addEventListener('click', () => this._openForm(task));
+			// Note: row click intentionally does NOT open the edit form. The edit form
+			// opens only via the edit (pencil) icon in the Actions column (issue #1).
 
 			// Priority dot
 			const dot = DOM.append(row, DOM.$('span'));

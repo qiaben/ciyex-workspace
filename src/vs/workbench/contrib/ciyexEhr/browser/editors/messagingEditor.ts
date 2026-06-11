@@ -46,6 +46,20 @@ interface ChannelInfo {
 	memberCount?: number;
 }
 
+/**
+ * A selectable person (provider or patient) shown in the "New Message" people
+ * picker. Mirrors the EHR-UI ChannelSidebar user-picker entry: id is used as the
+ * DM `targetUserId`, name as `targetUserName`, and the subtitle/badge are derived
+ * from the role (Provider specialty / Patient DOB).
+ */
+interface PersonEntry {
+	id: string;
+	name: string;
+	type: 'provider' | 'patient';
+	dob?: string;
+	subtitle?: string;
+}
+
 // allow-any-unicode-next-line
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '🙏'];
 
@@ -65,6 +79,11 @@ export class MessagingEditor extends EditorPane {
 	private currentUserId = '';
 	private pollTimer: Timeout | null = null;
 	private loading = false;
+	// People-picker state (the "New Message" DM flow). `people` is fetched once on
+	// first use; `peopleSearch` holds the live filter text so re-rendering keeps it.
+	private people: PersonEntry[] = [];
+	private peopleLoaded = false;
+	private peopleSearch = '';
 
 	constructor(
 		group: IEditorGroup,
@@ -105,8 +124,23 @@ export class MessagingEditor extends EditorPane {
 			this.currentUserId = localStorage.getItem('ciyex_user_id') || '';
 		} catch { /* */ }
 
+		// Reset the people-picker filter whenever the editor switches inputs so a
+		// stale search term doesn't leak across DM conversations.
+		this.peopleSearch = '';
+
 		this.channelInfo = { id: input.channelId, name: input.channelName, type: input.channelType };
 		this._renderHeader(input);
+
+		// An empty channelId means this DM editor was opened as a placeholder
+		// ("New Message") — there is no conversation to load yet, so render the
+		// people picker instead of polling a non-existent channel.
+		if (!input.channelId) {
+			this._stopPolling();
+			this.messages = [];
+			this._renderPeoplePicker();
+			return;
+		}
+
 		await this._loadMessages(input.channelId, input.threadParentId);
 
 		// Mark channel as read
@@ -197,6 +231,14 @@ export class MessagingEditor extends EditorPane {
 		DOM.clearNode(this.messageListEl);
 
 		if (this.messages.length === 0) {
+			// For a brand-new DM placeholder (no channel yet) show the searchable
+			// people list so the user can pick who to message — matches EHR-UI's
+			// "New Message" panel. Existing DMs with history fall through to the
+			// normal message rendering below.
+			if (!this._getInput()?.channelId) {
+				this._renderPeoplePicker();
+				return;
+			}
 			const empty = DOM.append(this.messageListEl, DOM.$('div'));
 			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
 			empty.textContent = this.channelInfo?.type === 'dm'
@@ -242,6 +284,224 @@ export class MessagingEditor extends EditorPane {
 
 		// Scroll to bottom
 		this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+	}
+
+	/**
+	 * Fetch all messageable people (providers + patients) for the "New Message"
+	 * picker. Mirrors EHR-UI's ChannelSidebar.loadUsers: hit `/api/providers` and
+	 * `/api/patients` in parallel, normalise the differing shapes, prefer
+	 * Keycloak id → email → fhirId/id as the DM target id, and tag each entry with
+	 * its role plus a subtitle (specialty for providers, DOB for patients).
+	 */
+	private async _loadPeople(): Promise<void> {
+		const seen = new Set<string>();
+		const all: PersonEntry[] = [];
+
+		const extractList = (json: { data?: unknown; content?: unknown }): Array<Record<string, unknown>> => {
+			const payload = (json?.data ?? json) as Record<string, unknown>;
+			if (Array.isArray(payload)) { return payload as Array<Record<string, unknown>>; }
+			if (Array.isArray(payload?.content)) { return payload.content as Array<Record<string, unknown>>; }
+			return [];
+		};
+
+		const str = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
+
+		const extract = (p: Record<string, unknown>, type: PersonEntry['type']): PersonEntry | null => {
+			const systemAccess = p.systemAccess as Record<string, unknown> | undefined;
+			const identification = p.identification as Record<string, unknown> | undefined;
+			const keycloakId = str(systemAccess?.keycloakUserId) || str(p['systemAccess.keycloakUserId']);
+			const email = str(identification?.email) || str(p.email) || str(p.emailAddress)
+				|| str(p.contactEmail) || str(systemAccess?.email);
+			const id = keycloakId || email || str(p.fhirId) || str(p.id);
+			const name = identification
+				? `${str(identification.firstName)} ${str(identification.lastName)}`.trim()
+				: (p.firstName || p.lastName)
+					? `${str(p.firstName)} ${str(p.lastName)}`.trim()
+					: str(p.name || p.displayName || p.fullName);
+			if (!id || !name) { return null; }
+			const dob = str(identification?.dateOfBirth) || str(p.dateOfBirth) || str(p.dob) || undefined;
+			const profDetails = p.professionalDetails as Record<string, unknown> | undefined;
+			const subtitle = str(profDetails?.specialty) || str(p.specialty) || undefined;
+			return { id, name, type, dob: dob || undefined, subtitle: subtitle || undefined };
+		};
+
+		const [providersRes, patientsRes] = await Promise.allSettled([
+			this.apiService.fetch('/api/providers?status=ACTIVE&size=200'),
+			this.apiService.fetch('/api/patients?size=500'),
+		]);
+
+		const collect = async (settled: PromiseSettledResult<Response>, type: PersonEntry['type']) => {
+			if (settled.status !== 'fulfilled' || !settled.value.ok) { return; }
+			try {
+				const json = await settled.value.json();
+				for (const raw of extractList(json)) {
+					const person = extract(raw, type);
+					if (person && !seen.has(person.id)) {
+						seen.add(person.id);
+						all.push(person);
+					}
+				}
+			} catch { /* ignore malformed payload */ }
+		};
+
+		await collect(providersRes, 'provider');
+		await collect(patientsRes, 'patient');
+
+		this.people = all;
+		this.peopleLoaded = true;
+	}
+
+	private _filteredPeople(): PersonEntry[] {
+		const q = this.peopleSearch.trim().toLowerCase();
+		if (!q) { return this.people; }
+		return this.people.filter(p => p.name.toLowerCase().includes(q));
+	}
+
+	/**
+	 * Render the "New Message" people picker into the message list area: a header
+	 * with the available count, a search box, and a scrollable list of people each
+	 * showing avatar, name, role/DOB sub-text and a role badge. Selecting a person
+	 * starts (or opens) a DM with them. Matches the EHR-UI ChannelSidebar picker.
+	 */
+	private _renderPeoplePicker(): void {
+		DOM.clearNode(this.messageListEl);
+
+		const wrap = DOM.append(this.messageListEl, DOM.$('div'));
+		wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;';
+
+		// Header — title + "N people available"
+		const head = DOM.append(wrap, DOM.$('div'));
+		head.style.cssText = 'padding:14px 16px 8px;flex-shrink:0;';
+		const title = DOM.append(head, DOM.$('div'));
+		title.textContent = 'New Message';
+		title.style.cssText = 'font-weight:600;font-size:14px;color:var(--vscode-foreground);';
+		const sub = DOM.append(head, DOM.$('div'));
+		sub.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+		// Search box
+		const searchWrap = DOM.append(wrap, DOM.$('div'));
+		searchWrap.style.cssText = 'padding:0 16px 10px;flex-shrink:0;';
+		const search = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
+		search.type = 'text';
+		search.placeholder = 'Search by name...';
+		search.value = this.peopleSearch;
+		search.style.cssText = 'width:100%;padding:8px 12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;outline:none;box-sizing:border-box;';
+		search.addEventListener('focus', () => { search.style.borderColor = 'var(--vscode-focusBorder)'; });
+		search.addEventListener('blur', () => { search.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+
+		// Scrollable list
+		const list = DOM.append(wrap, DOM.$('div'));
+		list.style.cssText = 'flex:1;overflow-y:auto;padding:0 8px 12px;';
+
+		const renderList = () => {
+			DOM.clearNode(list);
+			const people = this._filteredPeople();
+			sub.textContent = this.peopleLoaded
+				? `${people.length} ${people.length === 1 ? 'person' : 'people'} available`
+				: 'Loading people...';
+
+			if (people.length === 0) {
+				const empty = DOM.append(list, DOM.$('div'));
+				empty.style.cssText = 'padding:32px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+				empty.textContent = !this.peopleLoaded
+					? 'Loading...'
+					: this.peopleSearch ? 'No people found' : 'No people available';
+				return;
+			}
+
+			for (const person of people) {
+				const row = DOM.append(list, DOM.$('div'));
+				row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;';
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+				row.addEventListener('mouseleave', () => { row.style.background = ''; });
+				row.addEventListener('click', () => this._startDmWith(person));
+
+				// Avatar
+				const initials = person.name.split(' ').map(w => (w[0] || '')).join('').substring(0, 2).toUpperCase() || '?';
+				const hue = Math.abs(person.name.split('').reduce((h, c) => (h << 5) - h + c.charCodeAt(0), 0)) % 360;
+				const av = DOM.append(row, DOM.$('div'));
+				av.textContent = initials;
+				av.style.cssText = `width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#fff;flex-shrink:0;background:hsl(${hue},45%,45%);`;
+
+				// Name + subtitle
+				const col = DOM.append(row, DOM.$('div'));
+				col.style.cssText = 'flex:1;min-width:0;';
+				const nameEl = DOM.append(col, DOM.$('div'));
+				nameEl.textContent = person.name;
+				nameEl.style.cssText = 'font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+				const subText = person.type === 'patient'
+					? (person.dob ? `Patient · DOB: ${person.dob}` : 'Patient')
+					: (person.subtitle || 'Provider');
+				const subEl = DOM.append(col, DOM.$('div'));
+				subEl.textContent = subText;
+				subEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+				// Role badge
+				const badge = DOM.append(row, DOM.$('span'));
+				badge.textContent = person.type === 'patient' ? 'Patient' : 'Provider';
+				badge.style.cssText = `flex-shrink:0;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;${person.type === 'patient'
+					? 'background:rgba(52,168,83,0.18);color:#34a853;'
+					: 'background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);'}`;
+			}
+		};
+
+		search.addEventListener('input', () => { this.peopleSearch = search.value; renderList(); });
+
+		renderList();
+
+		// Lazily load the people list the first time the picker is shown, then
+		// re-render so badges/sub-text appear.
+		if (!this.peopleLoaded) {
+			this._loadPeople().then(() => {
+				// Only re-render if the picker is still the active view.
+				if (!this._getInput()?.channelId || this.messages.length === 0) {
+					renderList();
+				}
+			}).catch(() => { this.peopleLoaded = true; renderList(); });
+		}
+	}
+
+	/**
+	 * Start (or open the existing) DM with the selected person via
+	 * `POST /api/channels/dm`, then re-point this editor at the resulting channel
+	 * so messaging works immediately. Backend resolves email/keycloak ids and
+	 * returns `{ data: { id, name, type } }`.
+	 */
+	private async _startDmWith(person: PersonEntry): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/channels/dm', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ targetUserId: person.id, targetUserName: person.name }),
+			});
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const ch = data?.data || data;
+			if (!ch?.id) { return; }
+
+			// Re-point the current editor at the real DM channel and load it.
+			this.channelInfo = { id: ch.id, name: ch.name || person.name, type: ch.type || 'dm' };
+			const input = this._getInput();
+			if (input) {
+				// Mutate the input's channel identifiers so subsequent sends/polls
+				// target the resolved channel even though we keep the same editor.
+				(input as { channelId: string }).channelId = ch.id;
+				(input as { channelName: string }).channelName = ch.name || person.name;
+				(input as { channelType: string }).channelType = ch.type || 'dm';
+				this._renderHeader(input);
+				await this._loadMessages(ch.id, input.threadParentId);
+				this.apiService.fetch(`/api/channels/${ch.id}/read`, { method: 'POST' }).catch(() => { });
+
+				// Begin polling the now-real channel.
+				this._stopPolling();
+				// eslint-disable-next-line no-restricted-globals
+				this.pollTimer = setInterval(() => {
+					if (!this.loading) {
+						this._loadMessages(ch.id, input.threadParentId);
+					}
+				}, 5000);
+			}
+		} catch { /* failed to start DM */ }
 	}
 
 	private _renderMessage(msg: Message): void {

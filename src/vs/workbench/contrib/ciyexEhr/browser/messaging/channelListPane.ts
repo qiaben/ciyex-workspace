@@ -376,8 +376,20 @@ export class ChannelListPane extends ViewPane {
 	private _createChannel(initialMode: 'channel' | 'dm' = 'channel'): void {
 		if (this._formEl) { this._formEl.remove(); this._formEl = null; return; }
 
+		// For a new direct message, route to the in-editor "New Message" people
+		// picker (matches ciyex-ehr-ui: list providers/patients, select to start a
+		// DM) instead of the legacy email-prompt modal. Opening a MessagingEditor
+		// with an empty channelId triggers the picker (see messagingEditor.ts).
+		if (initialMode === 'dm') {
+			const input = new MessagingEditorInput('', 'New Message', 'dm');
+			this.editorService.openEditor(input, { pinned: true });
+			return;
+		}
+
 		const targetWindow = DOM.getWindow(this.container);
-		const isDm = initialMode === 'dm';
+		// DM mode is handled above (routed to the people picker), so the modal
+		// below only ever builds the channel-creation form.
+		const isDm = false;
 
 		// Full-window dimmed backdrop + centered modal card.
 		const overlay = DOM.append(targetWindow.document.body, DOM.$('.ciyex-channel-modal-overlay'));

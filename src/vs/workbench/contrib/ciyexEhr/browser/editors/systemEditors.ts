@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, showThemedModal } from './clinicalListEditor.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -266,22 +266,30 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 				// allow-any-unicode-next-line
 				label: 'Sign', icon: '✍️', handler: async (item, api, reload, dlg) => {
 					if (item.status !== 'pending') { return; }
-					const res = await dlg.input({
-						type: 'question', message: 'Sign consent',
-						inputs: [
-							{ placeholder: 'Signed by (patient or guardian name)' },
-							{ placeholder: 'Witness name (optional)' },
+					// Themed "Sign Consent" modal mirroring ehr-ui app/consents/page.tsx
+					// SignModal: "Signed By *" (required) + "Witness Name" (optional),
+					// Cancel / Sign buttons — replaces the bare dialog prompt.
+					const result = await showThemedModal({
+						title: 'Sign Consent',
+						fields: [
+							{ key: 'signedBy', label: 'Signed By', type: 'text', required: true, placeholder: 'Patient or guardian name' },
+							{ key: 'witnessName', label: 'Witness Name', type: 'text', placeholder: 'Witness name (optional)' },
 						],
+						confirmLabel: 'Sign',
 					});
-					if (!res.confirmed) { return; }
-					const signedBy = res.values?.[0]?.trim();
-					const witnessName = res.values?.[1]?.trim() || '';
+					const signedBy = result?.['signedBy']?.trim();
+					const witnessName = result?.['witnessName']?.trim() || '';
 					if (signedBy) {
-						await api.fetch(`/api/consents/${item.id}/sign`, {
+						const r = await api.fetch(`/api/consents/${item.id}/sign`, {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ signedBy, witnessName }),
 						});
+						if (!r.ok) {
+							const err = await r.json().catch(() => ({}));
+							await dlg.error(String(err?.['message'] || `Failed to sign consent (HTTP ${r.status}).`));
+							return;
+						}
 						reload();
 					}
 				}
@@ -369,7 +377,10 @@ export class FaxEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '+1-555-555-5555' },
+			// Fax number validation mirrors ehr-ui isValidFax (utils/validation.ts
+			// FAX_RE = /^[+]?[\d\s().-]{7,20}$/). Required + pattern rejects empty
+			// or malformed fax numbers (issue #17b negative test case).
+			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '+1 (555) 123-4567', validationPattern: '^[+]?[\\d\\s().-]{7,20}$', validationMessage: 'Please enter a valid fax number with at least 7 digits' },
 			{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
 			{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
 			{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
@@ -381,6 +392,18 @@ export class FaxEditor extends ClinicalListEditorBase {
 					{ label: 'Prior Auth', value: 'prior_auth' },
 					{ label: 'Medical Records', value: 'medical_records' },
 					{ label: 'Other', value: 'other' },
+				]
+			},
+			// Status select — mirrors ehr-ui FaxFormPanel.tsx outbound statuses
+			// (Pending/Sending/Sent/Delivered/Failed) for new (outbound) faxes.
+			{
+				key: 'status', label: 'Status', type: 'select', defaultValue: 'pending', options: [
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Sending', value: 'sending' },
+					{ label: 'Sent', value: 'sent' },
+					{ label: 'Delivered', value: 'delivered' },
+					{ label: 'Failed', value: 'failed' },
+					{ label: 'Received', value: 'received' },
 				]
 			},
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
@@ -412,26 +435,27 @@ export class FaxEditor extends ClinicalListEditorBase {
 		},
 		actions: [
 			{
+				// View action — mirrors ehr-ui FaxTable.tsx "View details" (Eye) button.
+				// Read-only fax detail summary; the "Assign to Patient" action was
+				// removed (issue #17c) but the View option is kept.
 				// allow-any-unicode-next-line
-				label: 'Assign to Patient', icon: '👤', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({
-						type: 'question', message: 'Assign fax to patient',
-						inputs: [
-							{ placeholder: 'Patient ID' },
-							{ placeholder: 'Patient Name' },
-						],
-					});
-					if (!res.confirmed) { return; }
-					const patientId = res.values?.[0]?.trim();
-					const patientName = res.values?.[1]?.trim();
-					if (patientId && patientName) {
-						await api.fetch(`/api/fax/${item.id}/assign`, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ patientId, patientName }),
-						});
-						reload();
-					}
+				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, dlg) => {
+					const dir = String(item['direction'] || '').toLowerCase();
+					const contact = dir === 'inbound'
+						? (item['senderName'] || item['recipientName'] || '\u2014')
+						: (item['recipientName'] || item['senderName'] || '\u2014');
+					const lines = [
+						`Direction: ${dir ? dir.charAt(0).toUpperCase() + dir.slice(1) : '\u2014'}`,
+						`${dir === 'inbound' ? 'From' : 'To'}: ${String(contact)}`,
+						`Fax Number: ${String(item['faxNumber'] || '\u2014')}`,
+						`Subject: ${String(item['subject'] || '\u2014')}`,
+						`Pages: ${String(item['pageCount'] ?? '\u2014')}`,
+						`Category: ${String(item['category'] || '\u2014')}`,
+						`Patient: ${String(item['patientName'] || '\u2014')}`,
+						`Status: ${String(item['status'] || '\u2014')}`,
+						`Notes: ${String(item['notes'] || '\u2014')}`,
+					];
+					await dlg.info('Fax Details', lines.join('\n'));
 				}
 			},
 			{
