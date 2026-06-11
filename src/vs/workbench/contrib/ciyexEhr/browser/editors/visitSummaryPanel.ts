@@ -212,19 +212,24 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-sheet'));
 	sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(720px,65vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family);`;
 
-	// Header with title + Download PDF + Print + Close.
+	// Header with title + Close. Download / Print live in a bottom footer.
+	// The slide-over reaches the very top of the window, so its header overlaps the
+	// native window controls (minimise / maximise / close) on the desktop exe — the
+	// header's own Close (×) ended up hidden underneath them. Pad the header down by
+	// the titlebar band so the title + × sit BELOW the OS controls and stay visible /
+	// clickable. `env(titlebar-area-height)` resolves to the real control height when
+	// Window Controls Overlay is on and falls back to the custom-titlebar height
+	// (35px) otherwise — correct in both desktop configurations.
 	const header = DOM.append(sheet, DOM.$('div.ciyex-summary-header'));
-	header.style.cssText = `display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
+	header.style.cssText = `display:flex;align-items:center;gap:8px;padding:calc(12px + env(titlebar-area-height, 35px)) 16px 12px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
 	const headerTitle = DOM.append(header, DOM.$('span'));
 	// allow-any-unicode-next-line
 	headerTitle.textContent = `Visit Summary — ${patientName}`;
 	headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
-	// Icon-only Close in the header; Download / Print live in a bottom footer so
-	// they never collide with the desktop window controls (minimise/maximise/close).
 	const closeBtn = DOM.append(header, DOM.$('button.codicon.codicon-close')) as HTMLButtonElement;
 	closeBtn.title = 'Close';
 	closeBtn.setAttribute('aria-label', 'Close');
-	closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:96px;`;
+	closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:8px;`;
 	closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; closeBtn.style.color = col.fg; });
 	closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = col.desc; });
 
@@ -285,26 +290,87 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 	});
 
+	// Tracks whether the summary finished loading, so Print can refuse to open a
+	// preview of a still-loading panel.
+	let summaryLoaded = false;
+
 	printBtn.addEventListener('click', () => {
-		// Transient print stylesheet: hide the workbench + chrome so only the
-		// summary body lands on paper / the saved PDF.
-		const printStyle = doc.createElement('style');
-		printStyle.textContent = [
-			'@media print{',
-			'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-			'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
-			'  .ciyex-summary-sheet{box-shadow:none !important;width:100% !important;height:auto !important;}',
-			'  .ciyex-summary-header button,.ciyex-summary-footer{display:none !important;}',
-			'  .ciyex-summary-body{overflow:visible !important;padding:0 !important;}',
-			'  @page{margin:14mm;}',
-			'}',
-		].join('');
-		doc.head.appendChild(printStyle);
-		try { DOM.getActiveWindow().print(); }
-		finally { try { doc.head.removeChild(printStyle); } catch { /* ignore */ } }
+		// Electron's renderer `window.print()` opens the OS dialog, which has no
+		// print preview ("This app doesn't support print preview"). So we show our
+		// own visible, light-themed preview of the summary first, then let the user
+		// trigger the OS Print / Save-as-PDF dialog from inside that preview.
+		if (!summaryLoaded) {
+			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
+			return;
+		}
+		showSummaryPrintPreview(doc, body, patientName);
 	});
 
-	void loadVisitSummary(deps, patientId, encounterId, body, loading);
+	void loadVisitSummary(deps, patientId, encounterId, body, loading).then(ok => { summaryLoaded = ok; });
+}
+
+/** Shows a visible, white print-preview of the visit summary and lets the user
+ *  invoke the OS Print / Save-as-PDF dialog from it. The OS print dialog cannot
+ *  render a preview on its own in Electron, so we render one in-app by cloning
+ *  the already-rendered summary body (render-path agnostic) and forcing it to a
+ *  legible black-on-white palette for screen and paper alike. */
+function showSummaryPrintPreview(doc: Document, sourceBody: HTMLElement, patientName: string): void {
+	// Modal backdrop — full-viewport dimmer; click outside to dismiss.
+	const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-summary-print-backdrop'));
+	backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+	const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-print-sheet'));
+	sheet.style.cssText = 'background:#fff;color:#222;width:min(820px,92vw);max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;font-family:sans-serif;';
+
+	const toolbar = DOM.append(sheet, DOM.$('div.ciyex-summary-print-toolbar'));
+	toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e5e5;background:#f7f7f7;flex-shrink:0;';
+	const toolbarTitle = DOM.append(toolbar, DOM.$('span'));
+	// allow-any-unicode-next-line
+	toolbarTitle.textContent = `Print Preview — ${patientName}`;
+	toolbarTitle.style.cssText = 'font-size:13px;font-weight:600;color:#222;flex:1;';
+	const doPrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+	doPrintBtn.textContent = 'Print / Save as PDF';
+	doPrintBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+	const closePrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+	closePrintBtn.textContent = 'Close';
+	closePrintBtn.style.cssText = 'padding:6px 14px;background:#e5e5e5;color:#222;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:12px;';
+
+	const preview = DOM.append(sheet, DOM.$('div.ciyex-summary-print-preview'));
+	preview.style.cssText = 'overflow:auto;padding:24px 28px;flex:1;background:#fff;';
+	const heading = DOM.append(preview, DOM.$('h2'));
+	// allow-any-unicode-next-line
+	heading.textContent = `Visit Summary — ${patientName}`;
+	heading.style.cssText = 'margin:0 0 16px;font-size:18px;color:#222;';
+	// Clone the live summary so the preview matches exactly whatever was rendered
+	// (form Composition or /summary DTO), then force legible colours via the
+	// scoped stylesheet below — the source uses theme (often dark) inline colours.
+	preview.appendChild(sourceBody.cloneNode(true));
+
+	// Scoped stylesheet: force readable black-on-white inside the preview (screen +
+	// paper), and a transient @media print block that hides everything except the
+	// preview so only the summary lands on the page / saved PDF.
+	const printStyle = doc.createElement('style');
+	printStyle.textContent = [
+		'.ciyex-summary-print-preview, .ciyex-summary-print-preview *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
+		'.ciyex-summary-print-preview{background:#fff !important;}',
+		'@media print{',
+		'  body>*:not(.ciyex-summary-print-backdrop){display:none !important;}',
+		'  .ciyex-summary-print-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+		'  .ciyex-summary-print-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;max-height:none !important;}',
+		'  .ciyex-summary-print-toolbar{display:none !important;}',
+		'  .ciyex-summary-print-preview{overflow:visible !important;padding:0 !important;}',
+		'  @page{margin:14mm;}',
+		'}',
+	].join('');
+	doc.head.appendChild(printStyle);
+
+	const dismiss = () => {
+		try { doc.body.removeChild(backdrop); } catch { /* ignore */ }
+		try { doc.head.removeChild(printStyle); } catch { /* ignore */ }
+	};
+	closePrintBtn.addEventListener('click', dismiss);
+	backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
+	doPrintBtn.addEventListener('click', () => { DOM.getActiveWindow().print(); });
 }
 
 /** Fetches the encounter summary and renders it into the panel body.
@@ -316,7 +382,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
  *  data (QA: "the data I entered isn't in the visit summary"). We therefore
  *  load the encounter-form Composition too and render the actual entered
  *  values from it, keeping `/summary` only for the encounter meta header. */
-async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<void> {
+async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<boolean> {
 	try {
 		const [summaryData, formComp] = await Promise.all([
 			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
@@ -337,13 +403,15 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 				const errMsg = DOM.append(body, DOM.$('div'));
 				errMsg.textContent = 'Unable to load encounter summary.';
 				errMsg.style.cssText = `font-size:13px;color:${summaryColors(deps.themeService).error};`;
-				return;
+				return false;
 			}
 			renderVisitSummary(deps, body, summaryData as VisitSummaryDTO);
 		}
+		return true;
 	} catch (err) {
 		loading.textContent = `Failed to load encounter summary: ${String(err)}`;
 		loading.style.color = summaryColors(deps.themeService).error;
+		return false;
 	}
 }
 
