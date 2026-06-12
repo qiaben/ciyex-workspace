@@ -785,7 +785,7 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 			}
 
 			const searchText = options.text.toLowerCase();
-			const localExtensions = this.extensionsWorkbenchService.local.filter(e => !e.isBuiltin && (e.name.toLowerCase().indexOf(searchText) > -1 || e.displayName.toLowerCase().indexOf(searchText) > -1 || e.description.toLowerCase().indexOf(searchText) > -1));
+			const localExtensions = this.getMatchingLocalExtensions(searchText);
 			if (localExtensions.length) {
 				const message = this.getMessage(error);
 				return { model: new PagedModel(localExtensions), disposables: new DisposableStore(), message: { text: localize('showing local extensions only', "{0} Showing local extensions.", message.text), severity: message.severity } };
@@ -795,8 +795,12 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 		}
 	}
 
+	private getMatchingLocalExtensions(searchText: string): IExtension[] {
+		return this.extensionsWorkbenchService.local.filter(e => e.name.toLowerCase().indexOf(searchText) > -1 || e.displayName.toLowerCase().indexOf(searchText) > -1 || e.description.toLowerCase().indexOf(searchText) > -1);
+	}
+
 	private async getPreferredExtensions(searchText: string, token: CancellationToken): Promise<IExtension[]> {
-		const preferredExtensions = this.extensionsWorkbenchService.local.filter(e => !e.isBuiltin && (e.name.toLowerCase().indexOf(searchText) > -1 || e.displayName.toLowerCase().indexOf(searchText) > -1 || e.description.toLowerCase().indexOf(searchText) > -1));
+		const preferredExtensions = this.getMatchingLocalExtensions(searchText);
 		const preferredExtensionUUIDs = new Set<string>();
 
 		if (preferredExtensions.length) {

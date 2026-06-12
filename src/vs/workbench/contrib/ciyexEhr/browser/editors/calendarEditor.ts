@@ -195,9 +195,15 @@ export class CalendarEditor extends EditorPane {
 		// do nothing on the Calendar page even though it worked elsewhere.
 		this._attachTitlebarSearchBridge();
 
-		// Also reload on auth state changes
+		// Also reload on auth state changes. Clear the cached provider/location
+		// roster on (re)authentication so a login as a different organisation's
+		// user never shows the previous org's stale providers — the root cause of
+		// a phantom third provider ("steven mendosa") lingering in the day view.
 		this._register(this.authService.onDidChangeAuthState(state => {
 			if (state === CiyexAuthState.Authenticated) {
+				this.providers = [];
+				this.locations = [];
+				this._headerRendered = false;
 				this._loadAndRender();
 			}
 		}));
@@ -322,10 +328,54 @@ export class CalendarEditor extends EditorPane {
 
 			const loadProviders = async () => {
 				if (this.providers.length > 0) { return; }
-				// Derive providers from the appointments API — it is already scoped
-				// to the logged-in user's organisation, so only their practice's
-				// providers appear (unlike /api/fhir-resource/providers which returns
-				// all system-wide providers).
+				// Authoritative provider roster — mirror the ciyex-ehr-ui calendar:
+				// merge /api/providers (facade, enriched) and /api/fhir-resource/providers
+				// by ID so we get exactly the practice's real, active providers. We must
+				// NOT derive the list from appointments — an appointment can reference a
+				// provider who has since been removed from the practice (e.g. a stale
+				// "steven mendosa" still attached to an old visit), which made a phantom
+				// third provider appear in the day-view columns even though Settings →
+				// Providers lists only two. Deriving from appointments is now only a
+				// last-resort fallback when both real endpoints return nothing.
+				const isActive = (p: Record<string, string>): boolean => {
+					const raw = (p['systemAccess.status'] as string | undefined) ?? (p as { systemAccess?: { status?: string } }).systemAccess?.status;
+					if (raw === null || raw === undefined || raw === '') { return true; }
+					return !['INACTIVE', 'DISABLED', 'FALSE', 'SUSPENDED', '0', 'BLOCKED'].includes(String(raw).toUpperCase());
+				};
+				const toProvider = (p: Record<string, string>): { id: string; name: string } => {
+					const first = (p as { identification?: { firstName?: string } }).identification?.firstName || p['identification.firstName'] || p.firstName || '';
+					const last = (p as { identification?: { lastName?: string } }).identification?.lastName || p['identification.lastName'] || p.lastName || '';
+					const full = `${p['identification.prefix'] || ''} ${first} ${last}`.trim();
+					return {
+						id: String(p.id || p.fhirId || p.username || ''),
+						name: full || p.name || p.fullName || p.displayName || p.username || String(p.id || ''),
+					};
+				};
+				const seen = new Map<string, { id: string; name: string }>();
+				const providerUrls = ['/api/providers', '/api/fhir-resource/providers?size=200'];
+				for (const url of providerUrls) {
+					try {
+						const res = await this.apiService.fetch(url);
+						if (!res.ok) { continue; }
+						const data = await res.json();
+						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+						for (const raw of list as Record<string, string>[]) {
+							if (!isActive(raw)) { continue; }
+							const prov = toProvider(raw);
+							if (prov.id && prov.name && prov.name.trim().length > 0 && !seen.has(prov.id)) {
+								seen.set(prov.id, prov);
+							}
+						}
+					} catch { /* try next endpoint */ }
+				}
+				if (seen.size > 0) {
+					this.providers = Array.from(seen.values());
+					return;
+				}
+				// Last-resort fallback: derive from appointments only when neither real
+				// provider endpoint returned anything (e.g. a backend without the
+				// provider roster API). This can surface stale providers, so it runs
+				// only when we'd otherwise have an empty list.
 				try {
 					const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=500');
 					if (res.ok) {
@@ -339,28 +389,9 @@ export class CalendarEditor extends EditorPane {
 						}
 						if (provMap.size > 0) {
 							this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
-							return;
 						}
 					}
-				} catch { /* fall through to API */ }
-				// Fallback: if no appointments found, try org-scoped provider endpoints
-				const providerUrls = ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
-				for (const url of providerUrls) {
-					try {
-						const res = await this.apiService.fetch(url);
-						if (res.ok) {
-							const data = await res.json();
-							const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-							if (list.length > 0) {
-								this.providers = list.map((p: Record<string, string>) => ({
-									id: p.id || p.fhirId || p.username || '',
-									name: `${p['identification.prefix'] || ''} ${p['identification.firstName'] || p.firstName || ''} ${p['identification.lastName'] || p.lastName || ''}`.trim() || p.name || p.fullName || p.username || p.id,
-								})).filter((p: { id: string; name: string }) => p.name && p.name.trim().length > 0);
-								break;
-							}
-						}
-					} catch { /* try next */ }
-				}
+				} catch { /* leave providers empty; retry timer will re-run */ }
 			};
 
 			const loadLocations = async () => {
@@ -983,23 +1014,43 @@ export class CalendarEditor extends EditorPane {
 		const month = this.currentDate.getMonth();
 		const firstDay = new Date(year, month, 1);
 		const lastDay = new Date(year, month + 1, 0);
-		const startDayOfWeek = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1; // Monday-based
+		// Sunday-based week to match the ciyex-ehr-ui (FullCalendar) month grid,
+		// whose default `firstDay` is 0 (Sunday). The previous Monday-based layout
+		// shifted every day one column to the left of where the weekday header
+		// said it should be — the "misaligned / extra left column" the screenshot
+		// flagged. getDay() already returns 0=Sun..6=Sat, so the leading-blank
+		// count is exactly firstDay.getDay().
+		const startDayOfWeek = firstDay.getDay();
 
 		const grid = DOM.append(this.gridContainer, DOM.$('.month-grid'));
-		grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:8px;';
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:8px;box-sizing:border-box;';
 
-		// Day headers
-		for (const d of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']) {
+		// Weekday header row — uppercase short names (SUN MON TUE …) to match the
+		// ehr-ui FullCalendar column headers.
+		for (const d of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
 			const hdr = DOM.append(grid, DOM.$('.month-header'));
 			hdr.textContent = d;
-			hdr.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:4px;text-transform:uppercase;';
+			hdr.style.cssText = 'text-align:center;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);padding:6px 4px;text-transform:uppercase;letter-spacing:0.4px;';
 		}
 
-		// Empty cells before first day
+		// Empty leading cells so day 1 lands under the correct weekday column.
 		for (let i = 0; i < startDayOfWeek; i++) {
 			const cell = DOM.append(grid, DOM.$('.month-empty'));
-			cell.style.cssText = 'min-height:80px;background:rgba(128,128,128,0.03);border-radius:3px;';
+			cell.style.cssText = 'min-height:96px;background:rgba(128,128,128,0.03);border-radius:3px;';
 		}
+
+		// Stable provider→color mapping shared with day/week views so the same
+		// provider keeps the same color across all view modes.
+		const PROVIDER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#e11d48', '#0891b2', '#a855f7'];
+		const providerColorFor = (apt: Appointment): string => {
+			const key = String(apt.providerId || apt.providerName || apt.practitionerName || '');
+			if (!key) { return '#607D8B'; }
+			const idx = this.providers.findIndex(p => p.id === key || p.name === key);
+			if (idx >= 0) { return PROVIDER_COLORS[idx % PROVIDER_COLORS.length]; }
+			let h = 0;
+			for (let i = 0; i < key.length; i++) { h = ((h << 5) - h) + key.charCodeAt(i); }
+			return PROVIDER_COLORS[Math.abs(h) % PROVIDER_COLORS.length];
+		};
 
 		// Day cells
 		const monthAppointments = this._getViewFilteredAppointments();
@@ -1010,45 +1061,40 @@ export class CalendarEditor extends EditorPane {
 				const d = this._parseAptDate(a);
 				if (!d) { return false; }
 				try { return localDateStr(d) === dateStr; } catch { return false; }
+			}).sort((a, b) => {
+				const da = this._parseAptDate(a)?.getTime() ?? 0;
+				const db = this._parseAptDate(b)?.getTime() ?? 0;
+				return da - db;
 			});
 
 			const cell = DOM.append(grid, DOM.$('.month-cell'));
-			cell.style.cssText = `min-height:80px;background:var(--vscode-editorWidget-background);border-radius:3px;padding:4px;cursor:pointer;${isToday ? 'border:2px solid var(--vscode-focusBorder);' : 'border:1px solid rgba(128,128,128,0.1);'}`;
+			cell.style.cssText = `min-height:96px;background:var(--vscode-editorWidget-background);border-radius:3px;padding:4px;cursor:pointer;display:flex;flex-direction:column;${isToday ? 'border:2px solid var(--vscode-focusBorder);' : 'border:1px solid rgba(128,128,128,0.1);'}`;
 			cell.addEventListener('mouseenter', () => { cell.style.background = 'var(--vscode-list-hoverBackground,rgba(255,255,255,0.04))'; });
 			cell.addEventListener('mouseleave', () => { cell.style.background = 'var(--vscode-editorWidget-background)'; });
 			cell.addEventListener('click', () => { this.currentDate = new Date(dateStr + 'T00:00:00'); this.viewMode = 'day'; this._publishCalendarState(); this._refresh(); });
 
-			// Day number
-			const numEl = DOM.append(cell, DOM.$('div'));
+			// Top row: day number (left) + appointment-count pill (right) — mirrors
+			// the ehr-ui `.fc-month-card-inner` layout (day number + green count
+			// badge). The badge shows "N appts" so the count is self-describing.
+			const topRow = DOM.append(cell, DOM.$('div'));
+			topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px;';
+			const numEl = DOM.append(topRow, DOM.$('span'));
 			numEl.textContent = String(day);
-			numEl.style.cssText = `font-size:13px;font-weight:${isToday ? '700' : '500'};${isToday ? 'color:var(--vscode-textLink-foreground);' : ''}margin-bottom:2px;`;
-
-			// Appointment count + previews — each chip shows time + provider so
-			// multiple providers on the same day are distinguishable per row,
-			// matching the ciyex-ehr-ui month-view chip layout.
+			numEl.style.cssText = `font-size:13px;font-weight:${isToday ? '700' : '500'};line-height:1.5;${isToday ? 'color:var(--vscode-textLink-foreground);' : ''}`;
 			if (dayAppts.length > 0) {
-				const countBadge = DOM.append(cell, DOM.$('div'));
+				const countBadge = DOM.append(topRow, DOM.$('span'));
 				countBadge.textContent = `${dayAppts.length} appt${dayAppts.length > 1 ? 's' : ''}`;
-				countBadge.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+				countBadge.title = `${dayAppts.length} appointment${dayAppts.length > 1 ? 's' : ''}`;
+				countBadge.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;height:18px;padding:0 7px;border-radius:9px;background:#22c55e;color:#fff;font-size:10px;font-weight:600;line-height:1;white-space:nowrap;';
+			}
 
-				// Stable provider→color mapping shared with day/week views so
-				// the same provider keeps the same color across all view modes.
-				const PROVIDER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#e11d48', '#0891b2', '#a855f7'];
-				const providerColorFor = (apt: Appointment): string => {
-					const key = String(apt.providerId || apt.providerName || apt.practitionerName || '');
-					if (!key) { return '#607D8B'; }
-					const idx = this.providers.findIndex(p => p.id === key || p.name === key);
-					if (idx >= 0) { return PROVIDER_COLORS[idx % PROVIDER_COLORS.length]; }
-					let h = 0;
-					for (let i = 0; i < key.length; i++) { h = ((h << 5) - h) + key.charCodeAt(i); }
-					return PROVIDER_COLORS[Math.abs(h) % PROVIDER_COLORS.length];
-				};
-
-				// Show first 3 appointments
+			// Appointment chips — each shows TIME · Provider · Patient (matches the
+			// ehr-ui month-view event content), colored by provider.
+			if (dayAppts.length > 0) {
 				for (const apt of dayAppts.slice(0, 3)) {
 					const aptEl = DOM.append(cell, DOM.$('div'));
 					const provColor = providerColorFor(apt);
-					aptEl.style.cssText = `font-size:9px;padding:1px 4px;border-radius:3px;margin-bottom:1px;background:${provColor}25;border-left:2px solid ${provColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;`;
+					aptEl.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;margin-bottom:1px;background:${provColor}25;border-left:2px solid ${provColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;line-height:1.4;`;
 					const parsedTime = this._parseAptDate(apt);
 					const provName = this._resolveProviderName(apt);
 					const parts: string[] = [];
@@ -1064,7 +1110,7 @@ export class CalendarEditor extends EditorPane {
 				if (dayAppts.length > 3) {
 					const more = DOM.append(cell, DOM.$('div'));
 					more.textContent = `+${dayAppts.length - 3} more`;
-					more.style.cssText = 'font-size:9px;color:var(--vscode-textLink-foreground);';
+					more.style.cssText = 'font-size:10px;font-weight:600;color:var(--vscode-textLink-foreground);padding:1px 4px;';
 				}
 			}
 		}
@@ -1103,6 +1149,25 @@ export class CalendarEditor extends EditorPane {
 		await this._loadAppointments();
 		this._renderHeader();
 		this._renderGrid();
+	}
+
+	/** Auto-dismiss the native time picker once a complete time is chosen.
+	 *  Chromium's `<input type="time">` spinner/popup stays open after the user
+	 *  picks a value (the QA "Start Time wheel does not close" report). A full
+	 *  HH:MM selection fires a `change` event; blurring the input then collapses
+	 *  the native popup so the wheel closes the moment a time is selected. We use
+	 *  `change` (not `input`) so blurring doesn't fight the user mid-edit while
+	 *  they're still typing/scrolling toward a value. */
+	private _autoCloseTimePicker(input: HTMLInputElement): void {
+		input.addEventListener('change', () => {
+			// Only close once a valid, complete HH:MM value is present.
+			if (/^\d{2}:\d{2}$/.test(input.value)) {
+				// Defer the blur to the next microtask so the change handlers that
+				// recompute duration / mirror end-time run against the new value
+				// before focus leaves the field.
+				DOM.getActiveWindow().setTimeout(() => input.blur(), 0);
+			}
+		});
 	}
 
 	private async _createAppointment(date: string, time: string, providerId?: string): Promise<void> {
@@ -1233,6 +1298,7 @@ export class CalendarEditor extends EditorPane {
 			} else {
 				const inp = DOM.append(group, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value; inp.style.cssText = inputStyle;
+				if (type === 'time') { this._autoCloseTimePicker(inp); }
 				formFields.set(id, inp);
 				return inp;
 			}
@@ -1254,6 +1320,7 @@ export class CalendarEditor extends EditorPane {
 				const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value;
 				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+				if (type === 'time') { this._autoCloseTimePicker(inp); }
 				formFields.set(id, inp);
 				return inp;
 			};

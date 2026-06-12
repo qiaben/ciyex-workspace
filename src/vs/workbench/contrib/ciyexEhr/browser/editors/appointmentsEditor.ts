@@ -1587,15 +1587,24 @@ export class AppointmentsEditor extends EditorPane {
 
 		// Slim drawer chrome: a title on the left and a Close control on the right.
 		// The hosted encounter pane renders its own Save / Sign header just below.
+		// The drawer reaches the very top of the window, so its header would overlap
+		// the native window controls (minimise / maximise / close) on the desktop
+		// exe — which previously left the Close (×) hidden underneath them, so the
+		// Open Chart / Record Vitals panel appeared to have no close option (issue
+		// 18). Pad the header DOWN by the titlebar band (same fix as the Visit
+		// Summary slide-over) so the title + × sit BELOW the OS controls and stay
+		// visible / clickable. `env(titlebar-area-height)` resolves to the real
+		// control height when Window Controls Overlay is on and falls back to the
+		// custom-titlebar height (35px) otherwise — correct in both desktop configs.
 		const header = DOM.append(sheet, DOM.$('div'));
-		header.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
+		header.style.cssText = `display:flex;align-items:center;gap:8px;padding:calc(10px + env(titlebar-area-height, 35px)) 16px 10px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
 		const headerTitle = DOM.append(header, DOM.$('span'));
 		headerTitle.textContent = label;
 		headerTitle.style.cssText = `font-size:14px;font-weight:600;color:${col.fg};flex:1;`;
 		const closeBtn = DOM.append(header, DOM.$('button.codicon.codicon-close')) as HTMLButtonElement;
 		closeBtn.title = 'Close';
 		closeBtn.setAttribute('aria-label', 'Close');
-		closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:96px;`;
+		closeBtn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;color:${col.desc};border:none;border-radius:5px;cursor:pointer;font-size:15px;margin-right:8px;`;
 		closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; closeBtn.style.color = col.fg; });
 		closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = col.desc; });
 

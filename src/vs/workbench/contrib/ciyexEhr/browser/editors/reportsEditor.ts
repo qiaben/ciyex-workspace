@@ -76,6 +76,12 @@ interface ReportDef {
 	kpis: KpiDef[];
 	charts: ChartDef[];
 	pageSize?: number;
+	/**
+	 * When true, after the main fetch we enrich each patient row with its insurance/payer name
+	 * by loading coverage data (the `/api/patients` endpoint does not include insurance). This
+	 * mirrors ciyex-ehr-ui's patient-demographics report which joins coverage data.
+	 */
+	enrichInsurance?: boolean;
 }
 
 const DATE_FROM: FilterDef = { type: 'date-from', key: 'dateFrom', label: 'From' };
@@ -102,6 +108,7 @@ function getReportDef(key: string): ReportDef {
 		case 'patient-demographics':
 			return {
 				apiPath: '/api/patients?page=0&size=1000',
+				enrichInsurance: true,
 				columns: [
 					{ key: 'name', label: 'Name' },
 					{ key: 'gender', label: 'Gender' },
@@ -178,13 +185,19 @@ function getReportDef(key: string): ReportDef {
 				filters: [
 					DATE_FROM, DATE_TO, PROVIDER_FILTER,
 					{ type: 'select', key: 'visitType', label: 'Visit Type', searchable: true, dynamic: true },
+					// Status values come from the backend encounterAll endpoint: SIGNED / UNSIGNED / INCOMPLETE.
+					// (matched case-insensitively against the row's status). Include both raw and friendly labels.
 					STATUS_FILTER([
 						{ value: '', label: 'All Status' },
-						{ value: 'completed', label: 'Completed' },
+						{ value: 'signed', label: 'Signed' },
 						{ value: 'unsigned', label: 'Unsigned' },
+						{ value: 'incomplete', label: 'Incomplete' },
+						{ value: 'completed', label: 'Completed' },
 						{ value: 'cancelled', label: 'Cancelled' },
 						{ value: 'pending', label: 'Pending' },
 					]),
+					// Diagnosis filter (dynamic, derived from the loaded encounter rows' diagnosis field)
+					{ type: 'select', key: 'diagnosis', label: 'Diagnosis', searchable: true, dynamic: true, searchPlaceholder: 'Search diagnosis...' },
 				],
 				kpis: [
 					{ label: 'Total Encounters', calc: items => String(items.length), color: COLORS[0] },
@@ -390,44 +403,36 @@ function getReportDef(key: string): ReportDef {
 			};
 
 		case 'problem-list':
+			// NOTE: there is no bulk `/api/fhir-resource/conditions` list endpoint
+			// (GenericFhirResourceController only exposes patient-scoped routes), which is why
+			// this page was blank. ciyex-ehr-ui derives the problem list from encounters' diagnosis
+			// field, so we use the working encounterAll endpoint here too.
 			return {
-				apiPath: '/api/fhir-resource/conditions?page=0&size=1000',
-				// Columns match ciyex-ehr-ui: ICD-10 Code, Description, Patient, Category, Status, Recorded
+				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				// Per-diagnosis rows derived from encounters: Diagnosis, Patient, Provider, Date, Status
 				columns: [
-					{ key: 'icdCode', label: 'ICD-10 Code' },
-					{ key: 'description', label: 'Description' },
+					{ key: 'diagnosis', label: 'Diagnosis' },
 					{ key: 'patientRefDisplay', label: 'Patient' },
-					{ key: 'category', label: 'Category' },
-					{ key: 'clinicalStatus', label: 'Status' },
-					{ key: 'recordedDate', label: 'Recorded' },
+					{ key: 'providerDisplay', label: 'Provider' },
+					{ key: 'startDate', label: 'Date' },
+					{ key: 'status', label: 'Status' },
 				],
 				filters: [
 					DATE_FROM, DATE_TO,
 					// Searchable provider filter matching reference
 					{ type: 'select', key: 'provider', label: 'Provider', searchable: true, dynamic: true, searchPlaceholder: 'Search provider name...' },
-					// Category searchable dropdown
-					{ type: 'select', key: 'category', label: 'Category', searchable: true, dynamic: true, searchPlaceholder: 'Search category...' },
-					// Clinical status filter
-					STATUS_FILTER([
-						{ value: '', label: 'All Status' },
-						{ value: 'active', label: 'Active' },
-						{ value: 'recurrence', label: 'Recurrence' },
-						{ value: 'relapse', label: 'Relapse' },
-						{ value: 'inactive', label: 'Inactive' },
-						{ value: 'remission', label: 'Remission' },
-						{ value: 'resolved', label: 'Resolved' },
-					]),
+					// Diagnosis searchable dropdown (derived from loaded encounter rows)
+					{ type: 'select', key: 'diagnosis', label: 'Diagnosis', searchable: true, dynamic: true, searchPlaceholder: 'Search diagnosis...' },
 				],
 				kpis: [
-					{ label: 'Total Diagnoses', calc: items => String(items.length), color: COLORS[0] },
-					{ label: 'Unique Conditions', calc: items => String(new Set(items.map(i => i.icdCode || i.code).filter(Boolean)).size), color: COLORS[1] },
-					{ label: 'Chronic Conditions', calc: items => String(countWhere(items, i => /chronic|long[-_ ]?term|persistent/i.test(i.category || i.clinicalStatus || ''))), color: COLORS[2] },
-					{ label: 'Patients w/ Dx', calc: items => String(new Set(items.map(i => i.patientId || i.patientRefDisplay).filter(Boolean)).size), color: COLORS[3] },
+					{ label: 'Total Diagnoses', calc: items => String(countWhere(items, i => !!i.diagnosis)), color: COLORS[0] },
+					{ label: 'Unique Conditions', calc: items => String(new Set(items.map(i => i.diagnosis).filter(Boolean)).size), color: COLORS[1] },
+					{ label: 'Chronic Conditions', calc: items => String(countWhere(items, i => /chronic|long[-_ ]?term|persistent/i.test(i.diagnosis || ''))), color: COLORS[2] },
+					{ label: 'Patients w/ Dx', calc: items => String(new Set(items.filter(i => i.diagnosis).map(i => i.patientId || i.patientRefDisplay).filter(Boolean)).size), color: COLORS[3] },
 				],
 				charts: [
-					{ type: 'horizontalBar', groupKey: 'icdCode', label: 'Top 15 Diagnoses', limit: 15, topN: true },
-					{ type: 'pie', groupKey: 'category', label: 'By Category' },
-					{ type: 'donut', groupKey: 'clinicalStatus', label: 'By Status' },
+					{ type: 'horizontalBar', groupKey: 'diagnosis', label: 'Top 15 Diagnoses', limit: 15, topN: true },
+					{ type: 'donut', groupKey: 'status', label: 'By Status' },
 				],
 				pageSize: 25,
 			};
@@ -1290,19 +1295,26 @@ export class ReportsEditor extends EditorPane {
 		const spacer = DOM.append(this.filtersEl, DOM.$('span'));
 		spacer.style.flex = '1';
 
-		const clearBtn = DOM.append(this.filtersEl, DOM.$('button'));
-		clearBtn.textContent = 'Clear Filters';
-		clearBtn.style.cssText = 'padding:6px 12px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);';
-		clearBtn.addEventListener('click', () => {
-			this.filterValues = {};
-			this.currentPage = 0;
-			this._buildFilters();
-			this._render();
+		// Single "Generate" button matching ciyex-ehr-ui: it re-fetches data with the
+		// current filters and re-renders. There is no separate "Clear Filters" / "Refresh".
+		const generateBtn = DOM.append(this.filtersEl, DOM.$('button')) as HTMLButtonElement;
+		generateBtn.textContent = 'Generate';
+		generateBtn.style.cssText = BTN_PRIMARY + 'font-weight:600;padding:6px 18px;';
+		generateBtn.addEventListener('click', async () => {
+			generateBtn.disabled = true;
+			generateBtn.textContent = 'Loading...';
+			generateBtn.style.opacity = '0.6';
+			try {
+				await this._loadData();
+				this._buildFilters();
+				this._populateProviderFilter();
+				this._render();
+			} finally {
+				generateBtn.disabled = false;
+				generateBtn.textContent = 'Generate';
+				generateBtn.style.opacity = '';
+			}
 		});
-		const refreshBtn = DOM.append(this.filtersEl, DOM.$('button'));
-		refreshBtn.textContent = 'Refresh';
-		refreshBtn.style.cssText = BTN_PRIMARY;
-		refreshBtn.addEventListener('click', async () => { await this._loadData(); this._populateProviderFilter(); this._render(); });
 	}
 
 	private _populateProviderFilter(): void {
@@ -1327,7 +1339,7 @@ export class ReportsEditor extends EditorPane {
 	private _dynamicOptions(filter: FilterDef): Array<{ value: string; label: string }> {
 		const sourceKey = filter.dynamicKey || filter.key;
 		const accessors: Record<string, (i: Record<string, string>) => string> = {
-			provider: i => i.providerName || i.providerDisplay || i.prescriberName || i.orderingProvider || '',
+			provider: i => i.providerName || i.providerDisplay || i.encounterProvider || i.prescriberName || i.orderingProvider || '',
 			patient: i => i.patientName || i.patientDisplay || i.patientRefDisplay || '',
 			medication: i => i.medicationName || '',
 			prescriber: i => i.prescriberName || i.providerName || '',
@@ -1337,6 +1349,7 @@ export class ReportsEditor extends EditorPane {
 			site: i => i.site || i.bodySite || '',
 			payer: i => i.payerDisplay || i.insurance || '',
 			insurance: i => i.insurance || i.payerDisplay || '',
+			diagnosis: i => i.diagnosis || '',
 			test: i => i.testDisplay || i.orderName || i.code || '',
 			cptCode: i => i.cptCode || i.code || '',
 			description: i => i.description || i.code || '',
@@ -1480,7 +1493,54 @@ export class ReportsEditor extends EditorPane {
 			const raw = json?.data?.content || json?.data || json?.content || json || [];
 			const arr = Array.isArray(raw) ? raw : [];
 			this.items = arr.map((r: Record<string, unknown>) => this._normalizeRow(r)) as Record<string, string>[];
+			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
 		} catch { this.items = []; }
+	}
+
+	/**
+	 * Patient records from `/api/patients` do not carry insurance. Join the coverage list
+	 * (`/api/coverages`) by patient id so the Insurance column and "All Insurance" filter populate.
+	 */
+	private async _enrichInsurance(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/coverages?page=0&size=2000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const coverages = Array.isArray(raw) ? raw : [];
+			const byPatient: Record<string, string> = {};
+			const refId = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v.includes('/') ? v.substring(v.lastIndexOf('/') + 1) : v; }
+				const o = v as Record<string, unknown>;
+				const r = o.reference;
+				return typeof r === 'string' ? (r.includes('/') ? r.substring(r.lastIndexOf('/') + 1) : r) : '';
+			};
+			const payerName = (c: Record<string, unknown>): string => {
+				const direct = c.payerName || c.insurerName || c.insuranceName || c.planName || c.companyName
+					|| c.insuranceType || c.coverageName;
+				if (typeof direct === 'string' && direct) { return direct; }
+				if (Array.isArray(c.payor) && c.payor.length > 0) {
+					const p = c.payor[0] as Record<string, unknown>;
+					if (typeof p?.display === 'string' && p.display) { return p.display; }
+				}
+				return '';
+			};
+			for (const cov of coverages) {
+				const c = cov as Record<string, unknown>;
+				const pid = String(c.patientId || c.beneficiaryId || refId(c.beneficiary) || refId(c.subscriber) || '');
+				if (!pid) { continue; }
+				const name = payerName(c);
+				if (name && !byPatient[pid]) { byPatient[pid] = name; }
+			}
+			if (Object.keys(byPatient).length === 0) { return; }
+			for (const item of this.items) {
+				const pid = item.id || item.patientId || item.fhirId;
+				const ins = (pid && byPatient[pid]) || '';
+				if (ins) { item.insurance = ins; item.payerDisplay = ins; }
+				else if (!item.insurance) { item.insurance = 'Self-Pay'; }
+			}
+		} catch { /* coverage endpoint may be unavailable — leave insurance as-is */ }
 	}
 
 	private _normalizeRow(r: Record<string, unknown>): Record<string, string> {
@@ -1541,8 +1601,8 @@ export class ReportsEditor extends EditorPane {
 		if (!out['patientDisplay']) { out['patientDisplay'] = pickFirst(out['patientName'], out['patientRefDisplay'], out['subjectDisplay']); }
 		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = pickFirst(out['patientDisplay'], out['patientName'], out['subjectDisplay']); }
 
-		if (!out['providerName']) { out['providerName'] = pickFirst(out['providerDisplay'], out['practitionerName'], out['orderingProvider'], out['prescriberName'], out['referringProvider'], out['provider']); }
-		if (!out['providerDisplay']) { out['providerDisplay'] = pickFirst(out['providerName'], out['practitionerName'], out['prescriberName']); }
+		if (!out['providerName']) { out['providerName'] = pickFirst(out['encounterProvider'], out['providerDisplay'], out['practitionerName'], out['orderingProvider'], out['prescriberName'], out['referringProvider'], out['provider']); }
+		if (!out['providerDisplay']) { out['providerDisplay'] = pickFirst(out['encounterProvider'], out['providerName'], out['practitionerName'], out['prescriberName']); }
 		if (!out['prescriberName']) { out['prescriberName'] = pickFirst(out['providerName'], out['providerDisplay']); }
 		if (!out['orderingProvider']) { out['orderingProvider'] = pickFirst(out['providerName'], out['providerDisplay']); }
 
@@ -1626,8 +1686,9 @@ export class ReportsEditor extends EditorPane {
 		}
 
 		const fieldAccessors: Record<string, (i: Record<string, string>) => string> = {
-			provider: i => i.providerName || i.providerDisplay || i.prescriberName || i.orderingProvider || '',
+			provider: i => i.providerName || i.providerDisplay || i.encounterProvider || i.prescriberName || i.orderingProvider || '',
 			status: i => i.status || i.clinicalStatus || '',
+			diagnosis: i => i.diagnosis || '',
 			patient: i => i.patientName || i.patientDisplay || i.patientRefDisplay || '',
 			medication: i => i.medicationName || '',
 			prescriber: i => i.prescriberName || i.providerName || '',

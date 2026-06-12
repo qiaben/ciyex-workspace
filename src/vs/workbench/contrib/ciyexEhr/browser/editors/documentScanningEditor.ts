@@ -440,12 +440,26 @@ export class DocScanningEditor extends EditorPane {
 
 		const tbl = DOM.append(this.tableContainer, DOM.$('div'));
 		tbl.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:auto;flex:1;min-height:0;';
+		// Column template MUST stay in sync between the header row and every body
+		// row so they line up. Each entry maps 1:1 to a rendered cell.
 		const cols = '1.6fr 130px 1fr 110px 80px 140px 130px';
 
 		const hr = DOM.append(tbl, DOM.$('div'));
 		hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:9px 14px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);background:rgba(0,122,204,0.05);text-transform:uppercase;position:sticky;top:0;`;
-		for (const h of ['Document', 'Category', 'Patient', 'OCR Status', 'Size', 'Uploaded', 'Actions']) {
-			DOM.append(hr, DOM.$('span')).textContent = h;
+		// "OCR Status" is centred and "Actions" is right-aligned so their header
+		// labels sit directly above the centred status badge / right-aligned
+		// action buttons in the body — otherwise the left-aligned "Actions"
+		// label floated far from its buttons and looked like an empty extra
+		// (phantom "location") column.
+		const headers: Array<{ label: string; align?: string }> = [
+			{ label: 'Document' }, { label: 'Category' }, { label: 'Patient' },
+			{ label: 'OCR Status', align: 'center' }, { label: 'Size' },
+			{ label: 'Uploaded' }, { label: 'Actions', align: 'right' },
+		];
+		for (const h of headers) {
+			const cell = DOM.append(hr, DOM.$('span'));
+			cell.textContent = h.label;
+			if (h.align) { cell.style.textAlign = h.align; }
 		}
 
 		for (const doc of this.documents) {
@@ -454,21 +468,21 @@ export class DocScanningEditor extends EditorPane {
 			r.addEventListener('mouseenter', () => { r.style.background = 'var(--vscode-list-hoverBackground)'; });
 			r.addEventListener('mouseleave', () => { r.style.background = ''; });
 
-			// Document name + mime
+			// Document name. The grey secondary "location"/mime line that used to
+			// sit under the filename was removed per request — it read like a
+			// stray file-location column.
 			const nameCell = DOM.append(r, DOM.$('div'));
 			nameCell.style.cssText = 'min-width:0;';
 			const nm = DOM.append(nameCell, DOM.$('div'));
 			nm.textContent = doc.originalFileName || doc.fileName;
 			nm.style.cssText = 'font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-			const mt = DOM.append(nameCell, DOM.$('div'));
-			mt.textContent = doc.mimeType || '';
-			mt.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 			DOM.append(r, DOM.$('span')).textContent = CATEGORY_LABELS[doc.category] || doc.category || '-';
 			DOM.append(r, DOM.$('span')).textContent = doc.patientName || '-';
 
-			// OCR status badge
+			// OCR status badge (centred to line up under the centred header)
 			const statusCell = DOM.append(r, DOM.$('span'));
+			statusCell.style.cssText = 'text-align:center;';
 			const badge = DOM.append(statusCell, DOM.$('span'));
 			const color = OCR_STATUS_COLORS[doc.ocrStatus] || '#9ca3af';
 			badge.textContent = OCR_STATUS_LABELS[doc.ocrStatus] || doc.ocrStatus;
@@ -488,9 +502,7 @@ export class DocScanningEditor extends EditorPane {
 			if (doc.ocrStatus === 'failed' || doc.ocrStatus === 'pending') {
 				this._actionBtn(actions, 'codicon-sync', 'Run OCR', () => { void this._reOcr(doc); });
 			}
-			if (doc.fileUrl) {
-				this._actionBtn(actions, 'codicon-cloud-download', 'Download', () => { mainWindow.open(doc.fileUrl, '_blank'); });
-			}
+			this._actionBtn(actions, 'codicon-cloud-download', 'Download', () => { void this._download(doc); });
 			this._actionBtn(actions, 'codicon-trash', 'Delete', () => { void this._delete(doc); });
 		}
 
@@ -542,6 +554,52 @@ export class DocScanningEditor extends EditorPane {
 			}
 		} catch {
 			this.notificationService.error('Failed to start OCR');
+		}
+	}
+
+	/**
+	 * Download the original document file.
+	 *
+	 * The previous implementation did `mainWindow.open(doc.fileUrl, '_blank')`.
+	 * The backend serves `fileUrl` as a *relative* path for local storage
+	 * (`/api/files-proxy/by-key/download?key=...`). In the Electron renderer the
+	 * page origin is `vscode-file://`, so that relative URL resolved against that
+	 * origin and Windows tried to open a `vscode-file://` link ("Get an app to
+	 * open this 'vscode-file' link"). Relative URLs also need the API host +
+	 * Bearer/tenant headers, which `mainWindow.open` cannot supply.
+	 *
+	 * Fix: fetch the bytes ourselves and trigger a real blob download via a
+	 * temporary anchor (the convention used by settingsHubEditor / systemEditors).
+	 *  - relative `fileUrl` (starts with '/') -> go through the authenticated API
+	 *    service, which prefixes the absolute API base and attaches the
+	 *    Bearer + X-Tenant-Name headers.
+	 *  - absolute http(s) `fileUrl` (e.g. an S3/Vaultik presigned URL) -> fetch
+	 *    it directly; it is already self-authorizing.
+	 */
+	private async _download(doc: ScannedDocument): Promise<void> {
+		const fileUrl = doc.fileUrl;
+		if (!fileUrl) {
+			this.notificationService.error('No file is available to download for this document.');
+			return;
+		}
+		try {
+			const res = /^https?:\/\//i.test(fileUrl)
+				? await fetch(fileUrl)
+				: await this.apiService.fetch(fileUrl);
+			if (!res.ok) {
+				this.notificationService.error('Failed to download document');
+				return;
+			}
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = mainWindow.document.createElement('a');
+			a.href = url;
+			a.download = doc.originalFileName || doc.fileName || `document-${doc.id}`;
+			mainWindow.document.body.appendChild(a);
+			a.click();
+			setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+		} catch {
+			this.notificationService.error('Failed to download document');
 		}
 	}
 

@@ -254,111 +254,100 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		lbl.textContent = label;
 		return { btn, lbl };
 	};
-	const { btn: pdfBtn, lbl: pdfLbl } = makeFooterBtn('cloud-download', 'Download PDF', true);
+	const { btn: pdfBtn } = makeFooterBtn('cloud-download', 'Download PDF', true);
 	const { btn: printBtn } = makeFooterBtn('printer', 'Print', false);
 
 	const dismiss = () => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
 	closeBtn.addEventListener('click', dismiss);
 	backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
 
-	// Render an actual PDF of the encounter. Pull the server-generated PDF from
-	// /summary/print (same endpoint the EHR-UI uses) and trigger a download.
-	// Falls back to the in-app browser print dialog if the endpoint is missing.
-	pdfBtn.addEventListener('click', async () => {
-		const original = pdfLbl.textContent;
-		pdfLbl.textContent = 'Generating…';
-		pdfBtn.disabled = true;
-		try {
-			const res = await deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary/print`, {
-				headers: { Accept: 'application/pdf' },
-			});
-			if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-			const blob = await res.blob();
-			const blobUrl = URL.createObjectURL(blob);
-			const a = DOM.append(doc.body, DOM.$('a')) as HTMLAnchorElement;
-			a.href = blobUrl;
-			a.download = `encounter-${encounterId}-summary.pdf`;
-			a.style.display = 'none';
-			a.click();
-			URL.revokeObjectURL(blobUrl);
-			a.remove();
-		} catch (err) {
-			deps.notificationService.notify({ severity: Severity.Warning, message: `Could not generate PDF (${String(err)}). Use Print to save as PDF instead.` });
-		} finally {
-			pdfLbl.textContent = original;
-			pdfBtn.disabled = false;
-		}
-	});
-
-	// Tracks whether the summary finished loading, so Print can refuse to open a
-	// preview of a still-loading panel.
+	// Tracks whether the summary finished loading, so the print / PDF actions can
+	// refuse to operate on a still-loading panel.
 	let summaryLoaded = false;
 
-	printBtn.addEventListener('click', () => {
-		// Electron's renderer `window.print()` opens the OS dialog, which has no
-		// print preview ("This app doesn't support print preview"). So we show our
-		// own visible, light-themed preview of the summary first, then let the user
-		// trigger the OS Print / Save-as-PDF dialog from inside that preview.
+	// Both "Download PDF" and "Print" open the SAME in-app print preview. The
+	// preview clones the LIVE summary `body` that is rendered above (the encounter-
+	// form Composition — the provider's actual entries), so the saved PDF always
+	// contains THIS encounter's data. Previously "Download PDF" fetched a
+	// server-generated PDF from `/summary/print`, which reads the derived /summary
+	// store and therefore returned a generic/empty encounter that did not match
+	// what the panel showed. Routing both buttons through the live-DOM preview
+	// guarantees the PDF == the panel for the specific patient/encounter being viewed.
+	const openPreview = () => {
 		if (!summaryLoaded) {
 			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
 			return;
 		}
-		showSummaryPrintPreview(doc, body, patientName);
-	});
+		// Electron's renderer `window.print()` opens the OS dialog with no preview
+		// ("This app doesn't support print preview"). We render our own visible
+		// preview of the live summary first, then let the user trigger the OS
+		// Print / Save-as-PDF dialog from inside it.
+		showSummaryPrintPreview(deps.themeService, doc, body, patientName, encounterId);
+	};
+	pdfBtn.addEventListener('click', openPreview);
+	printBtn.addEventListener('click', openPreview);
 
 	void loadVisitSummary(deps, patientId, encounterId, body, loading).then(ok => { summaryLoaded = ok; });
 }
 
-/** Shows a visible, white print-preview of the visit summary and lets the user
- *  invoke the OS Print / Save-as-PDF dialog from it. The OS print dialog cannot
- *  render a preview on its own in Electron, so we render one in-app by cloning
- *  the already-rendered summary body (render-path agnostic) and forcing it to a
- *  legible black-on-white palette for screen and paper alike. */
-function showSummaryPrintPreview(doc: Document, sourceBody: HTMLElement, patientName: string): void {
+/** Shows a visible print-preview of the visit summary and lets the user invoke
+ *  the OS Print / Save-as-PDF dialog from it. The OS print dialog cannot render a
+ *  preview on its own in Electron, so we render one in-app by cloning the
+ *  already-rendered summary body (render-path agnostic — it is the LIVE panel
+ *  content for THIS encounter, so the printed PDF always matches the panel).
+ *
+ *  The on-screen preview shell is theme-aware (it follows the active light/dark
+ *  workbench theme instead of always painting a hard-coded white card). The
+ *  actual paper / saved-PDF output is always forced to legible black-on-white via
+ *  the `@media print` block below, so a dark theme still prints a readable page. */
+function showSummaryPrintPreview(themeService: IThemeService, doc: Document, sourceBody: HTMLElement, patientName: string, encounterId: string): void {
+	const col = summaryColors(themeService);
+
 	// Modal backdrop — full-viewport dimmer; click outside to dismiss.
 	const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-summary-print-backdrop'));
 	backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
 
 	const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-print-sheet'));
-	sheet.style.cssText = 'background:#fff;color:#222;width:min(820px,92vw);max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;font-family:sans-serif;';
+	sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(820px,92vw);max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family,sans-serif);`;
 
 	const toolbar = DOM.append(sheet, DOM.$('div.ciyex-summary-print-toolbar'));
-	toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e5e5;background:#f7f7f7;flex-shrink:0;';
+	toolbar.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid ${col.border};background:${col.widgetBg};flex-shrink:0;`;
 	const toolbarTitle = DOM.append(toolbar, DOM.$('span'));
 	// allow-any-unicode-next-line
 	toolbarTitle.textContent = `Print Preview — ${patientName}`;
-	toolbarTitle.style.cssText = 'font-size:13px;font-weight:600;color:#222;flex:1;';
+	toolbarTitle.style.cssText = `font-size:13px;font-weight:600;color:${col.fg};flex:1;`;
 	const doPrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
 	doPrintBtn.textContent = 'Print / Save as PDF';
-	doPrintBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+	doPrintBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
 	const closePrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
 	closePrintBtn.textContent = 'Close';
-	closePrintBtn.style.cssText = 'padding:6px 14px;background:#e5e5e5;color:#222;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:12px;';
+	closePrintBtn.style.cssText = `padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,${col.fg});border:1px solid ${col.border};border-radius:4px;cursor:pointer;font-size:12px;`;
 
 	const preview = DOM.append(sheet, DOM.$('div.ciyex-summary-print-preview'));
-	preview.style.cssText = 'overflow:auto;padding:24px 28px;flex:1;background:#fff;';
+	preview.style.cssText = `overflow:auto;padding:24px 28px;flex:1;background:${col.bg};`;
 	const heading = DOM.append(preview, DOM.$('h2'));
 	// allow-any-unicode-next-line
 	heading.textContent = `Visit Summary — ${patientName}`;
-	heading.style.cssText = 'margin:0 0 16px;font-size:18px;color:#222;';
-	// Clone the live summary so the preview matches exactly whatever was rendered
-	// (form Composition or /summary DTO), then force legible colours via the
-	// scoped stylesheet below — the source uses theme (often dark) inline colours.
+	heading.style.cssText = `margin:0 0 16px;font-size:18px;color:${col.fg};`;
+	// Clone the live summary so the preview matches EXACTLY whatever was rendered
+	// for this encounter (form Composition or /summary DTO). The clone keeps the
+	// summary's theme-aware inline colours so the on-screen preview follows the
+	// active theme; the @media print block recolours it for paper only.
 	preview.appendChild(sourceBody.cloneNode(true));
 
-	// Scoped stylesheet: force readable black-on-white inside the preview (screen +
-	// paper), and a transient @media print block that hides everything except the
-	// preview so only the summary lands on the page / saved PDF.
+	// Scoped stylesheet: the on-screen preview keeps the theme colours (no screen
+	// override), and a transient @media print block forces readable black-on-white
+	// and hides everything except the preview so only the summary lands on the page
+	// / saved PDF — regardless of the active light/dark theme.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		'.ciyex-summary-print-preview, .ciyex-summary-print-preview *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		'.ciyex-summary-print-preview{background:#fff !important;}',
 		'@media print{',
 		'  body>*:not(.ciyex-summary-print-backdrop){display:none !important;}',
 		'  .ciyex-summary-print-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
-		'  .ciyex-summary-print-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;max-height:none !important;}',
+		'  .ciyex-summary-print-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;max-height:none !important;background:#fff !important;color:#222 !important;}',
 		'  .ciyex-summary-print-toolbar{display:none !important;}',
-		'  .ciyex-summary-print-preview{overflow:visible !important;padding:0 !important;}',
+		'  .ciyex-summary-print-preview{overflow:visible !important;padding:0 !important;background:#fff !important;}',
+		'  .ciyex-summary-print-preview, .ciyex-summary-print-preview *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
 		'  @page{margin:14mm;}',
 		'}',
 	].join('');
@@ -370,7 +359,15 @@ function showSummaryPrintPreview(doc: Document, sourceBody: HTMLElement, patient
 	};
 	closePrintBtn.addEventListener('click', dismiss);
 	backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
-	doPrintBtn.addEventListener('click', () => { DOM.getActiveWindow().print(); });
+	// `document.title` becomes the default filename in the OS "Save as PDF" dialog,
+	// so name it after this encounter for a sensible, per-encounter PDF file name.
+	doPrintBtn.addEventListener('click', () => {
+		const prevTitle = doc.title;
+		doc.title = `encounter-${encounterId}-summary`;
+		const win = DOM.getActiveWindow();
+		win.print();
+		doc.title = prevTitle;
+	});
 }
 
 /** Fetches the encounter summary and renders it into the panel body.

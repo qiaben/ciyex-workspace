@@ -292,8 +292,15 @@ export class NotificationsEditor extends EditorPane {
 		const overlay = DOM.append(win.document.body, DOM.$('.ciyex-log-detail-overlay'));
 		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
 
+		// The overlay is mounted on document.body, OUTSIDE the workbench/editor
+		// container where the `--vscode-*` theme variables are applied. Those
+		// variables do NOT cascade onto document.body, so referencing them with
+		// no fallback resolved to nothing and the modal rendered transparent
+		// (the underlying table showed through). Provide solid hex fallbacks so
+		// the panel is always opaque while still honouring the theme when the
+		// variables do resolve.
 		const modal = DOM.append(overlay, DOM.$('div'));
-		modal.style.cssText = 'background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:8px;width:min(720px,90vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+		modal.style.cssText = 'background:var(--vscode-editorWidget-background,var(--vscode-editor-background,#1e1e1e));color:var(--vscode-editor-foreground,#cccccc);border:1px solid var(--vscode-editorWidget-border,#454545);border-radius:8px;width:min(720px,90vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
 
 		const hdr = DOM.append(modal, DOM.$('div'));
 		hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--vscode-editorWidget-border);';

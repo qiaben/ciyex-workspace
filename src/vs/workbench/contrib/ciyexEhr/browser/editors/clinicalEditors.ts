@@ -4533,7 +4533,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// a `position:fixed;right:0` element resolve to the wrong edge (issue 18).
 		const overlay = doc.createElement('div');
 		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
-		overlay.style.cssText = `position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;color-scheme:${colorScheme};`;
+		// `background:transparent` is REQUIRED: copying the workbench className above
+		// also copies `.monaco-workbench`'s runtime-injected opaque editor background
+		// (style.ts registers `.monaco-workbench { background-color: <workbenchBackground> }`).
+		// Without this override the overlay paints the whole viewport solid, so the
+		// empty flex space to the LEFT of the right-aligned 560px panel renders as a
+		// blank opaque grey/white block (Payment Method modal issue: blank left panel).
+		overlay.style.cssText = `position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;color-scheme:${colorScheme};background:transparent;`;
 		mount.appendChild(overlay);
 		this._cardFormOverlay = overlay;
 

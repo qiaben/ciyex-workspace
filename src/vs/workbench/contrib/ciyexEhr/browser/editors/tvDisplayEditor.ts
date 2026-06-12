@@ -167,12 +167,14 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	override clearInput(): void {
 		this._stopClock();
 		this._stopAutoRefresh();
+		if (this._cssFullscreen) { this._setCssFullscreen(false); }
 		super.clearInput();
 	}
 
 	override dispose(): void {
 		this._stopClock();
 		this._stopAutoRefresh();
+		if (this._cssFullscreen) { this._setCssFullscreen(false); }
 		super.dispose();
 	}
 
@@ -268,15 +270,74 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	// allow-any-unicode-next-line
 	// ─── Fullscreen ────────────────────────────────────────────────────────
 
+	/** True while the editor pane is shown as a CSS-maximized overlay (the
+	 *  fallback used when the native Fullscreen API is unavailable / rejects,
+	 *  which is common inside the Electron workbench where the document is not
+	 *  allowed to enter fullscreen). */
+	private _cssFullscreen = false;
+	private _savedRootCss = '';
+
 	private _toggleFullscreen(): void {
-		const doc = DOM.getActiveWindow().document;
-		const target = (this.root.ownerDocument?.documentElement || doc.documentElement) as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
-		const docAny = doc as Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> };
-		const isFs = !!(doc.fullscreenElement || docAny.webkitFullscreenElement);
-		if (isFs) {
+		const win = DOM.getActiveWindow();
+		const doc = win.document;
+		// Fullscreen the editor pane itself (the panel the button lives in), not
+		// the whole document — the user asked for "that panel" to go fullscreen.
+		const target = this.root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+		const docAny = doc as Document & {
+			webkitFullscreenElement?: Element | null;
+			webkitExitFullscreen?: () => Promise<void>;
+			fullscreenEnabled?: boolean;
+			webkitFullscreenEnabled?: boolean;
+		};
+
+		// If we're currently in CSS-overlay fullscreen, just collapse it back.
+		if (this._cssFullscreen) {
+			this._setCssFullscreen(false);
+			return;
+		}
+
+		const nativeFsElement = doc.fullscreenElement || docAny.webkitFullscreenElement;
+		if (nativeFsElement) {
 			(doc.exitFullscreen || docAny.webkitExitFullscreen)?.call(doc);
+			return;
+		}
+
+		// Prefer the native Fullscreen API when the document permits it; fall back
+		// to a CSS-maximized overlay if it's disabled or the request rejects (the
+		// previous implementation called requestFullscreen() on documentElement and
+		// silently did nothing when the promise rejected — the QA "fullscreen button
+		// does nothing" report).
+		const fullscreenAllowed = docAny.fullscreenEnabled ?? docAny.webkitFullscreenEnabled ?? false;
+		const request = target.requestFullscreen || target.webkitRequestFullscreen;
+		if (fullscreenAllowed && request) {
+			try {
+				const result = request.call(target) as Promise<void> | undefined;
+				if (result && typeof result.catch === 'function') {
+					result.catch(() => this._setCssFullscreen(true));
+				}
+				return;
+			} catch {
+				// fall through to CSS overlay
+			}
+		}
+		this._setCssFullscreen(true);
+	}
+
+	/** Show / hide the editor pane as a viewport-filling overlay. Used when the
+	 *  native Fullscreen API isn't available inside the workbench. */
+	private _setCssFullscreen(on: boolean): void {
+		if (on === this._cssFullscreen) { return; }
+		if (on) {
+			this._savedRootCss = this.root.style.cssText;
+			// position:fixed + inset:0 lifts the pane above the workbench chrome so
+			// the board fills the whole window. z-index sits above editor tabs.
+			this.root.style.position = 'fixed';
+			this.root.style.inset = '0';
+			this.root.style.zIndex = '2147483646';
+			this._cssFullscreen = true;
 		} else {
-			(target.requestFullscreen || target.webkitRequestFullscreen)?.call(target);
+			this.root.style.cssText = this._savedRootCss;
+			this._cssFullscreen = false;
 		}
 	}
 

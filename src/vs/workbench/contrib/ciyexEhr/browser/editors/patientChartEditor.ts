@@ -875,7 +875,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Inactive', value: 'inactive' },
 						]
 					},
-					{ key: 'payerName', label: 'Insurance Company / Payer', type: 'text', required: true, placeholder: 'Insurance company name' },
+					// Issue #7a: searchable payer typeahead (matches ciyex-ehr-ui GenericFhirTab,
+					// which rewrites the insurance payerName field to a /api/insurance-companies
+					// lookup). valueField:'name' stores the company name so the existing payerName
+					// text semantics (and FHIR payor.display mapping) are preserved.
+					{ key: 'payerName', label: 'Insurance Company / Payer', type: 'lookup', required: true, placeholder: 'Search insurance company...', lookupConfig: { endpoint: '/api/insurance-companies', displayField: 'name', valueField: 'name', searchable: true } },
 					{ key: 'planName', label: 'Plan Name', type: 'text', placeholder: 'e.g. Blue Cross PPO Gold' },
 					{
 						key: 'policyType', label: 'Plan Type', type: 'select', options: [
@@ -921,7 +925,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', placeholder: 'XXXXXXXXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 				],
@@ -3962,28 +3966,50 @@ export class PatientChartEditor extends EditorPane {
 			return undefined;
 		};
 		const dateKeys = ['recordedAt', 'effectiveDateTime', 'recordedDate', 'dateRecorded', 'createdAt'];
-		const recs = [...data].sort((a, b) => {
+		// Base ordering is newest-first; the sort toggle (issue #5) flips this.
+		const recsDesc = [...data].sort((a, b) => {
 			const da = new Date(String(get(a, dateKeys) ?? 0)).getTime();
 			const db = new Date(String(get(b, dateKeys) ?? 0)).getTime();
 			return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
 		});
 
-		// Header: "Vitals Flowsheet · N recordings · Newest first"
+		// Issue #5: Header carries a recording count plus an up/down arrow toggle
+		// that reorders the date columns newest-first / oldest-first — mirroring
+		// the ciyex-ehr-ui VitalsFlowsheet (ArrowUpDown toggle reading
+		// "Newest first" / "Oldest first").
+		let sortAsc = false; // false = newest first (default), true = oldest first
 		const head = DOM.append(content, DOM.$('div'));
-		head.style.cssText = 'display:flex;align-items:baseline;gap:10px;margin-bottom:12px;';
+		head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:12px;';
 		const title = DOM.append(head, DOM.$('span'));
 		title.textContent = 'Vitals Flowsheet';
 		title.style.cssText = 'font-size:14px;font-weight:600;color:var(--vscode-foreground);';
 		const meta = DOM.append(head, DOM.$('span'));
-		meta.textContent = `${recs.length} recording${recs.length === 1 ? '' : 's'}${recs.length ? ' · Newest first' : ''}`;
+		meta.textContent = `${recsDesc.length} recording${recsDesc.length === 1 ? '' : 's'}`;
 		meta.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
-		if (recs.length === 0) {
+		if (recsDesc.length === 0) {
 			const empty = DOM.append(content, DOM.$('div'));
 			empty.textContent = 'No vitals records.';
 			empty.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
 			return;
 		}
+
+		// Sort-order toggle: an up/down arrow glyph + label. Clicking flips the
+		// column order and re-renders the table in place.
+		const sortBtn = DOM.append(head, DOM.$('button'));
+		sortBtn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--vscode-input-border,rgba(127,127,127,0.4));border-radius:4px;background:transparent;color:var(--vscode-descriptionForeground);font-size:11px;cursor:pointer;';
+		sortBtn.title = 'Toggle sort order';
+		const sortArrows = DOM.append(sortBtn, DOM.$('span'));
+		// allow-any-unicode-next-line
+		sortArrows.textContent = '↕';
+		sortArrows.style.cssText = 'font-size:12px;line-height:1;';
+		const sortLabel = DOM.append(sortBtn, DOM.$('span'));
+		const refreshSortBtn = () => {
+			// allow-any-unicode-next-line
+			sortArrows.textContent = sortAsc ? '↑' : '↓';
+			sortLabel.textContent = sortAsc ? 'Oldest first' : 'Newest first';
+		};
+		refreshSortBtn();
 
 		const rows: Array<{ label: string; keys: string[]; unit?: string }> = [
 			{ label: 'Weight', keys: ['weightKg', 'weight'], unit: ' kg' },
@@ -3999,50 +4025,68 @@ export class PatientChartEditor extends EditorPane {
 			{ label: 'Notes', keys: ['notes', 'note'] },
 		];
 
-		const wrap = DOM.append(content, DOM.$('div'));
-		wrap.style.cssText = 'overflow-x:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
-		const table = DOM.append(wrap, DOM.$('table')) as HTMLTableElement;
-		table.style.cssText = 'border-collapse:collapse;width:100%;font-size:12px;';
+		// Host container that the table is (re)built into. Re-rendered in place
+		// whenever the sort order is toggled so the date columns reorder without
+		// rebuilding the header/toggle above it.
+		const tableHost = DOM.append(content, DOM.$('div'));
 
 		const cellCss = 'padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.12);text-align:left;white-space:nowrap;';
 		const firstColCss = `${cellCss}position:sticky;left:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));font-weight:500;color:var(--vscode-foreground);`;
 
-		// Header row
-		const thead = DOM.append(table, DOM.$('thead'));
-		const htr = DOM.append(thead, DOM.$('tr'));
-		const corner = DOM.append(htr, DOM.$('th'));
-		corner.textContent = 'Measurement';
-		corner.style.cssText = `${firstColCss}background:var(--vscode-sideBar-background,var(--vscode-editor-background));text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);z-index:2;`;
-		for (const rec of recs) {
-			const th = DOM.append(htr, DOM.$('th'));
-			const raw = get(rec, dateKeys);
-			let label = '—';
-			if (raw) { try { label = new Date(String(raw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { label = String(raw).slice(0, 10); } }
-			th.textContent = label;
-			th.style.cssText = `${cellCss}text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);background:var(--vscode-sideBar-background,var(--vscode-editor-background));`;
-		}
+		const renderTable = (): void => {
+			DOM.clearNode(tableHost);
+			// recsDesc is newest-first; reverse a copy for oldest-first.
+			const recs = sortAsc ? [...recsDesc].reverse() : recsDesc;
 
-		// Measurement rows
-		const tbody = DOM.append(table, DOM.$('tbody'));
-		const renderRow = (label: string, render: (rec: Record<string, unknown>) => string): void => {
-			const tr = DOM.append(tbody, DOM.$('tr'));
-			const td0 = DOM.append(tr, DOM.$('td'));
-			td0.textContent = label;
-			td0.style.cssText = firstColCss;
+			const wrap = DOM.append(tableHost, DOM.$('div'));
+			wrap.style.cssText = 'overflow-x:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+			const table = DOM.append(wrap, DOM.$('table')) as HTMLTableElement;
+			table.style.cssText = 'border-collapse:collapse;width:100%;font-size:12px;';
+
+			// Header row
+			const thead = DOM.append(table, DOM.$('thead'));
+			const htr = DOM.append(thead, DOM.$('tr'));
+			const corner = DOM.append(htr, DOM.$('th'));
+			corner.textContent = 'Measurement';
+			corner.style.cssText = `${firstColCss}background:var(--vscode-sideBar-background,var(--vscode-editor-background));text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);z-index:2;`;
 			for (const rec of recs) {
-				const td = DOM.append(tr, DOM.$('td'));
-				td.textContent = render(rec) || '—';
-				td.style.cssText = `${cellCss}color:var(--vscode-foreground);`;
+				const th = DOM.append(htr, DOM.$('th'));
+				const raw = get(rec, dateKeys);
+				let label = '—';
+				if (raw) { try { label = new Date(String(raw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { label = String(raw).slice(0, 10); } }
+				th.textContent = label;
+				th.style.cssText = `${cellCss}text-transform:uppercase;font-size:11px;color:var(--vscode-descriptionForeground);background:var(--vscode-sideBar-background,var(--vscode-editor-background));`;
 			}
+
+			// Measurement rows
+			const tbody = DOM.append(table, DOM.$('tbody'));
+			const renderRow = (label: string, render: (rec: Record<string, unknown>) => string): void => {
+				const tr = DOM.append(tbody, DOM.$('tr'));
+				const td0 = DOM.append(tr, DOM.$('td'));
+				td0.textContent = label;
+				td0.style.cssText = firstColCss;
+				for (const rec of recs) {
+					const td = DOM.append(tr, DOM.$('td'));
+					td.textContent = render(rec) || '—';
+					td.style.cssText = `${cellCss}color:var(--vscode-foreground);`;
+				}
+			};
+			for (const r of rows) {
+				renderRow(r.label, (rec) => { const v = get(rec, r.keys); return v === undefined ? '' : `${v}${r.unit ?? ''}`; });
+			}
+			// Signed row
+			renderRow('Signed', (rec) => {
+				const signed = get(rec, ['signed', 'signedAt', 'isSigned']);
+				return signed ? (typeof signed === 'string' && signed.length > 4 ? '✓ Signed' : '✓') : '—';
+			});
 		};
-		for (const r of rows) {
-			renderRow(r.label, (rec) => { const v = get(rec, r.keys); return v === undefined ? '' : `${v}${r.unit ?? ''}`; });
-		}
-		// Signed row
-		renderRow('Signed', (rec) => {
-			const signed = get(rec, ['signed', 'signedAt', 'isSigned']);
-			return signed ? (typeof signed === 'string' && signed.length > 4 ? '✓ Signed' : '✓') : '—';
+
+		sortBtn.addEventListener('click', () => {
+			sortAsc = !sortAsc;
+			refreshSortBtn();
+			renderTable();
 		});
+		renderTable();
 	}
 
 	// Status filter options per tab — different resources use different status vocabularies.
@@ -5408,6 +5452,10 @@ export class PatientChartEditor extends EditorPane {
 					inp.value = raw && raw.length >= 16 ? raw.slice(0, 16) : raw;
 					inp.placeholder = f.placeholder || '';
 					inp.style.cssText = inputStyle;
+					// Issue #6: auto-close the date/time picker once a value is committed.
+					// datetime-local fires `change` after the date+time is chosen; blurring
+					// collapses the still-open native popover (matching the date-only picker).
+					inp.addEventListener('change', () => inp.blur());
 					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
@@ -5448,6 +5496,18 @@ export class PatientChartEditor extends EditorPane {
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
 					inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					inp.style.cssText = inputStyle;
+					if (f.type === 'phone') {
+						// Issue #7b: enforce a 10-digit US phone (matches ciyex-ehr-ui
+						// isValidUSPhone — "must be exactly 10 digits"). Strip any
+						// non-digit input and cap at 10 so the field always carries a
+						// clean 10-digit value, consistent with the XXXXXXXXXX placeholder.
+						inp.setAttribute('inputmode', 'numeric');
+						inp.maxLength = 10;
+						inp.addEventListener('input', () => {
+							const digits = inp.value.replace(/\D/g, '').slice(0, 10);
+							if (inp.value !== digits) { inp.value = digits; }
+						});
+					}
 					this._formInputs.set(f.key, inp);
 				}
 
@@ -5712,6 +5772,11 @@ export class PatientChartEditor extends EditorPane {
 		picker.addEventListener('change', () => {
 			visible.value = isoToUs(picker.value);
 			hidden.value = picker.value;
+			// Issue #6: auto-close the calendar popover once a date is chosen.
+			// Native date pickers keep the popup open after selection; blurring
+			// the (focused) picker collapses it immediately, matching the
+			// ciyex-ehr-ui behaviour where the calendar dismisses on pick.
+			picker.blur();
 		});
 
 		// Visible decorative icon — pointer-events:none so clicks fall through
