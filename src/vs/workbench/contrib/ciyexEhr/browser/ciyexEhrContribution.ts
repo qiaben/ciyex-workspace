@@ -5,6 +5,8 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import * as DOM from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
+import { Event } from '../../../../base/common/event.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { ICiyexPermissionService } from './ciyexPermissionService.js';
@@ -80,6 +82,43 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// Sidebar <-> Editor pairing
 		// When a sidebar container is activated, auto-open its paired editor
 		this._setupSidebarEditorPairing();
+
+		// Auto-close native time/date pickers across every create & edit form.
+		this._installTimePickerAutoClose();
+	}
+
+	/**
+	 * Globally auto-dismiss the browser-native time / datetime picker the moment
+	 * a value is committed. Chromium keeps the `<input type="time">` and
+	 * `<input type="datetime-local">` spinner/popup open after the user picks a
+	 * value — QA reported this across many modules (Appointments Start/End Time,
+	 * Labs Result Date, Tasks, Operations, System, …). A `change` event fires
+	 * once a complete value is selected; blurring the input then collapses the
+	 * native popup so the wheel closes the instant a time is chosen.
+	 *
+	 * Done once here at the workbench level (capturing `change` listener per
+	 * window) so every current and future EHR form gets the behaviour without
+	 * each call site having to wire it up individually.
+	 */
+	private _installTimePickerAutoClose(): void {
+		const attach = (targetWindow: Window) => {
+			return DOM.addDisposableListener(targetWindow.document, 'change', e => {
+				const target = e.target;
+				if (!DOM.isHTMLInputElement(target)) { return; }
+				const type = target.type;
+				if (type !== 'time' && type !== 'datetime-local') { return; }
+				// Only collapse once a complete value is present — `change` on a
+				// native time/datetime input only fires for a full value, but the
+				// guard keeps an empty clear from stealing focus. Defer the blur a
+				// microtask so any sibling change handlers (duration mirroring,
+				// end-time defaulting) run against the new value before focus leaves.
+				if (!target.value) { return; }
+				targetWindow.setTimeout(() => target.blur(), 0);
+			}, true);
+		};
+		this._register(Event.runAndSubscribe(DOM.onDidRegisterWindow, ({ window, disposables }) => {
+			disposables.add(attach(window));
+		}, { window: mainWindow, disposables: this._store }));
 	}
 
 	/**

@@ -14,6 +14,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
+import { findWorkbenchRoot } from '../customDropdown.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 // allow-any-unicode-next-line
@@ -179,6 +180,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	}
 
 	override layout(dimension: DOM.Dimension): void {
+		// While the pane is lifted to <body> for CSS fullscreen it sizes itself to
+		// the viewport (100vw/100vh); don't clobber that with the editor-pane box.
+		if (this._cssFullscreen) { return; }
 		this.root.style.width = `${dimension.width}px`;
 		this.root.style.height = `${dimension.height}px`;
 	}
@@ -276,67 +280,57 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	 *  allowed to enter fullscreen). */
 	private _cssFullscreen = false;
 	private _savedRootCss = '';
+	/** Where `this.root` lived before we lifted it to <body> for fullscreen, so
+	 *  we can put it back exactly where the editor pane expects it. */
+	private _fsRestoreParent: HTMLElement | null = null;
+	private _fsRestoreNextSibling: ChildNode | null = null;
 
 	private _toggleFullscreen(): void {
-		const win = DOM.getActiveWindow();
-		const doc = win.document;
-		// Fullscreen the editor pane itself (the panel the button lives in), not
-		// the whole document — the user asked for "that panel" to go fullscreen.
-		const target = this.root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
-		const docAny = doc as Document & {
-			webkitFullscreenElement?: Element | null;
-			webkitExitFullscreen?: () => Promise<void>;
-			fullscreenEnabled?: boolean;
-			webkitFullscreenEnabled?: boolean;
-		};
-
-		// If we're currently in CSS-overlay fullscreen, just collapse it back.
-		if (this._cssFullscreen) {
-			this._setCssFullscreen(false);
-			return;
-		}
-
-		const nativeFsElement = doc.fullscreenElement || docAny.webkitFullscreenElement;
-		if (nativeFsElement) {
-			(doc.exitFullscreen || docAny.webkitExitFullscreen)?.call(doc);
-			return;
-		}
-
-		// Prefer the native Fullscreen API when the document permits it; fall back
-		// to a CSS-maximized overlay if it's disabled or the request rejects (the
-		// previous implementation called requestFullscreen() on documentElement and
-		// silently did nothing when the promise rejected — the QA "fullscreen button
-		// does nothing" report).
-		const fullscreenAllowed = docAny.fullscreenEnabled ?? docAny.webkitFullscreenEnabled ?? false;
-		const request = target.requestFullscreen || target.webkitRequestFullscreen;
-		if (fullscreenAllowed && request) {
-			try {
-				const result = request.call(target) as Promise<void> | undefined;
-				if (result && typeof result.catch === 'function') {
-					result.catch(() => this._setCssFullscreen(true));
-				}
-				return;
-			} catch {
-				// fall through to CSS overlay
-			}
-		}
-		this._setCssFullscreen(true);
+		// Use the CSS-overlay fullscreen (which lifts the pane to <body>) rather
+		// than the native Fullscreen API: inside the Electron workbench, element
+		// `requestFullscreen()` frequently resolves without visibly doing anything
+		// (the QA "fullscreen button does nothing" report). The overlay reliably
+		// fills the whole window across every workbench build.
+		this._setCssFullscreen(!this._cssFullscreen);
 	}
 
 	/** Show / hide the editor pane as a viewport-filling overlay. Used when the
-	 *  native Fullscreen API isn't available inside the workbench. */
+	 *  native Fullscreen API isn't available inside the workbench.
+	 *
+	 *  `position:fixed` alone is NOT enough here: the workbench editor part (and
+	 *  its ancestors) apply `transform` / `contain`, which make a fixed-positioned
+	 *  descendant resolve against that ancestor's box instead of the viewport — so
+	 *  the overlay only filled the editor pane and the button "did nothing" (QA
+	 *  report). We therefore lift `this.root` out to <body> while fullscreen, where
+	 *  no transformed ancestor traps it, then restore it to its original slot. */
 	private _setCssFullscreen(on: boolean): void {
 		if (on === this._cssFullscreen) { return; }
+		const doc = DOM.getActiveWindow().document;
 		if (on) {
 			this._savedRootCss = this.root.style.cssText;
-			// position:fixed + inset:0 lifts the pane above the workbench chrome so
-			// the board fills the whole window. z-index sits above editor tabs.
+			this._fsRestoreParent = this.root.parentElement;
+			this._fsRestoreNextSibling = this.root.nextSibling;
+			// Lift the pane to the workbench root (the `.monaco-workbench` element)
+			// so it escapes the editor part's transform/contain stacking context
+			// while still inheriting the `--vscode-*` theme variables (which are
+			// only defined under `.monaco-workbench`). Appending to raw <body>
+			// would drop those variables and render the board unthemed.
+			const mount = findWorkbenchRoot(this.root, doc);
+			mount.appendChild(this.root);
 			this.root.style.position = 'fixed';
 			this.root.style.inset = '0';
+			this.root.style.width = '100vw';
+			this.root.style.height = '100vh';
 			this.root.style.zIndex = '2147483646';
 			this._cssFullscreen = true;
 		} else {
+			// Restore the original inline styles + DOM position.
 			this.root.style.cssText = this._savedRootCss;
+			if (this._fsRestoreParent) {
+				this._fsRestoreParent.insertBefore(this.root, this._fsRestoreNextSibling);
+			}
+			this._fsRestoreParent = null;
+			this._fsRestoreNextSibling = null;
 			this._cssFullscreen = false;
 		}
 	}

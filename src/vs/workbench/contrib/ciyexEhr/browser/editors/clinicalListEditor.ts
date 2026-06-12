@@ -86,6 +86,9 @@ export interface FormFieldDef {
 	validationPattern?: string;
 	/** Error message for validationPattern mismatch. */
 	validationMessage?: string;
+	/** For text/number inputs: cap the field to this many digits, stripping any
+	 *  extra digit as the user types (e.g. fax number <= 12 digits). */
+	maxDigits?: number;
 	/**
 	 * For 'search' type: client-side fallback options used when the API returns empty/fails.
 	 * Items are filtered against the typed query (substring match against displayField/value).
@@ -1523,6 +1526,27 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					inputEl.addEventListener('input', () => {
 						const clean = (inputEl as HTMLInputElement).value.split('').filter(c => tpRe.test(c)).join('');
 						if (clean !== (inputEl as HTMLInputElement).value) { (inputEl as HTMLInputElement).value = clean; }
+					});
+				}
+				// maxDigits: cap the number of digits the field can hold (e.g. fax
+				// number <= 12). Strips any digit typed past the limit while keeping
+				// the user's separators, so the field can never carry more digits
+				// than allowed (the validationPattern enforces the exact count on save).
+				if (field.maxDigits) {
+					const maxDigits = field.maxDigits;
+					const capEl = inputEl as HTMLInputElement;
+					capEl.addEventListener('input', () => {
+						if (capEl.value.replace(/\D/g, '').length <= maxDigits) { return; }
+						let kept = '';
+						let count = 0;
+						for (const ch of capEl.value) {
+							if (/\d/.test(ch)) {
+								if (count >= maxDigits) { continue; }
+								count++;
+							}
+							kept += ch;
+						}
+						capEl.value = kept;
 					});
 				}
 				if (field.type === 'number') {

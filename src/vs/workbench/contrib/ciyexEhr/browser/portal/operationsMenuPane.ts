@@ -18,7 +18,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions } from '../sidebarActions.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -206,9 +206,13 @@ const ITEMS: OperationsItem[] = [
 					{ value: 'avg', label: 'Average' },
 				]
 			},
-			{ key: 'categoryId', label: 'Category ID', kind: 'number', widthPct: 50 },
-			{ key: 'locationId', label: 'Location ID', kind: 'number', widthPct: 50 },
-			{ key: 'supplierId', label: 'Supplier ID', kind: 'number', widthPct: 50 },
+			// Category / Location / Supplier are dropdowns loaded from the same
+			// endpoints the full Inventory editor uses (resolved by
+			// loadFieldOptions before the dialog opens) — previously these were
+			// bare numeric "ID" inputs, which QA flagged as the wrong control.
+			{ key: 'categoryId', label: 'Category', kind: 'select', optionsApiPath: '/api/inventory/categories', placeholder: 'Select category...', widthPct: 50 },
+			{ key: 'locationId', label: 'Location', kind: 'select', optionsApiPath: '/api/inventory/locations', placeholder: 'Select location...', widthPct: 50 },
+			{ key: 'supplierId', label: 'Supplier', kind: 'select', optionsApiPath: '/api/suppliers/list', placeholder: 'Select supplier...', widthPct: 50 },
 		],
 		actions: [
 			// allow-any-unicode-next-line
@@ -506,7 +510,7 @@ export class OperationsMenuPane extends ViewPane {
 		// Read-only / derived resources (creatable === false, e.g. Claims) get no
 		// "+" button — their backing endpoint has no create route, so a POST 500s.
 		if (item.creatable !== false) {
-			createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
+			createActionIconButton(actionsEl, '+', `New ${item.label}`, () => { void this._openCreateDialog(item); });
 		}
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
@@ -592,7 +596,7 @@ export class OperationsMenuPane extends ViewPane {
 
 	private async _executeAction(item: OperationsItem, row: DataRow, a: RowAction): Promise<void> {
 		const k = a.action;
-		if (k.kind === 'edit') { this._openEditDialog(item, row); return; }
+		if (k.kind === 'edit') { await this._openEditDialog(item, row); return; }
 		if (k.kind === 'delete') {
 			if (k.confirm) {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'warning', primaryButton: 'Delete' });
@@ -633,7 +637,7 @@ export class OperationsMenuPane extends ViewPane {
 		}
 	}
 
-	private _openCreateDialog(item: OperationsItem): void {
+	private async _openCreateDialog(item: OperationsItem): Promise<void> {
 		if (!item.editFields || item.editFields.length === 0) {
 			// No drawer schema defined yet — fall back to the full editor tab.
 			this.commandService.executeCommand(item.command);
@@ -642,10 +646,11 @@ export class OperationsMenuPane extends ViewPane {
 		const initialValues: Record<string, unknown> = {};
 		for (const f of item.editFields) { initialValues[f.key] = ''; }
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		const fields = withTypeaheadSearch(await loadFieldOptions(item.editFields, this.apiService), this.apiService);
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,
 			themeAnchor: this.container,
-			fields: withTypeaheadSearch(item.editFields, this.apiService),
+			fields,
 			values: initialValues,
 			primaryLabel: 'Create',
 			onSave: async (next) => {
@@ -656,14 +661,14 @@ export class OperationsMenuPane extends ViewPane {
 		});
 	}
 
-	private _openEditDialog(item: OperationsItem, row: DataRow): void {
+	private async _openEditDialog(item: OperationsItem, row: DataRow): Promise<void> {
 		// Prefer the per-resource editFields schema when defined (e.g. Patient
 		// Recall ships the full Patient/Phone/Email/Recall Type/... grid that
 		// the web EHR drawer renders). Otherwise fall back to deriving fields
 		// from the displayed title + subtitle keys plus a Status select.
 		let fields: IEditFieldDef[];
 		if (item.editFields && item.editFields.length > 0) {
-			fields = item.editFields;
+			fields = await loadFieldOptions(item.editFields, this.apiService);
 		} else {
 			const fieldKeys = [...item.titleField];
 			if (item.subtitleField) {

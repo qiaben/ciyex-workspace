@@ -534,6 +534,21 @@ export interface IEditFieldDef {
 	label: string;
 	kind?: 'text' | 'number' | 'email' | 'tel' | 'date' | 'time' | 'textarea' | 'select' | 'search';
 	options?: Array<{ value: string; label: string }>;
+	/** For 'select' fields whose options come from an API rather than a static
+	 *  list. Resolved into {@link options} by {@link loadFieldOptions} before the
+	 *  dialog opens — e.g. Inventory Category / Location / Supplier dropdowns that
+	 *  load from `/api/inventory/categories`, `/api/inventory/locations`,
+	 *  `/api/suppliers/list`. */
+	optionsApiPath?: string;
+	/** Item field used as the option label when loading from {@link optionsApiPath}. Default 'name'. */
+	optionLabelKey?: string;
+	/** Item field used as the option value when loading from {@link optionsApiPath}. Default 'id'. */
+	optionValueKey?: string;
+	/** For numeric/tel inputs: enforce a maximum number of digits. Extra digits
+	 *  are stripped as the user types and a count above this is rejected on save. */
+	maxDigits?: number;
+	/** For numeric/tel inputs: enforce a minimum number of digits on save. */
+	minDigits?: number;
 	required?: boolean;
 	placeholder?: string;
 	hint?: string;
@@ -750,6 +765,46 @@ export function withTypeaheadSearch(
 		}
 		return f;
 	});
+}
+
+/**
+ * Resolve every `kind: 'select'` field that carries an {@link IEditFieldDef.optionsApiPath}
+ * into a concrete `options` list by fetching the endpoint, so the sidebar
+ * create/edit dialog renders a real themed dropdown (not a bare number/text
+ * input). Used by the Operations Inventory `+` quick-create so its Category /
+ * Location / Supplier fields match the full Inventory editor's dropdowns.
+ *
+ * Returns a fresh clone of `fields` (the input array is never mutated, so the
+ * shared static schema doesn't accumulate options across opens). Fields without
+ * an `optionsApiPath` pass through unchanged. A failed fetch leaves the field's
+ * existing options (typically empty) so the form still opens.
+ */
+export async function loadFieldOptions(
+	fields: IEditFieldDef[],
+	api: { fetch(path: string, init?: RequestInit): Promise<Response> }
+): Promise<IEditFieldDef[]> {
+	return Promise.all(fields.map(async f => {
+		if (f.kind !== 'select' || !f.optionsApiPath) { return f; }
+		const labelKey = f.optionLabelKey || 'name';
+		const valueKey = f.optionValueKey || 'id';
+		try {
+			const res = await api.fetch(`${f.optionsApiPath}?page=0&size=200`);
+			if (!res.ok) { return f; }
+			const data = await res.json();
+			const wrapper = (data?.data ?? data) as Record<string, unknown> | unknown[];
+			const list = (Array.isArray(wrapper) ? wrapper : ((wrapper as Record<string, unknown>)?.content as unknown[]) || []) as Array<Record<string, unknown>>;
+			const options = list
+				.map(item => {
+					const value = item[valueKey];
+					if (value === undefined || value === null) { return null; }
+					return { value: String(value), label: String(item[labelKey] ?? value) };
+				})
+				.filter((o): o is { value: string; label: string } => o !== null);
+			return { ...f, options };
+		} catch {
+			return f;
+		}
+	}));
 }
 
 /**
@@ -1020,7 +1075,10 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// overflowing, and the scrollbar is hidden (scrollbar-width + the
 			// ::-webkit-scrollbar rule in ciyexCommon.css) so the sidebar "+ New
 			// Task" Task Type dropdown no longer shows a vertical scrollbar.
-			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:320px;overflow-y:auto;display:none;scrollbar-width:none;-ms-overflow-style:none;`;
+			// Scrollbar styling (thin, themed, visible) comes from the
+			// `.ciyex-select-panel` rule in ciyexCommon.css so long option lists
+			// (Category / Location / Supplier) advertise that they scroll.
+			panel.style.cssText = `position:fixed;background-color:${popoverBg};color:${colors.foreground};border:1px solid ${popoverBorder};border-radius:4px;box-shadow:0 6px 18px ${popoverShadow};z-index:10000;max-height:320px;overflow-y:auto;display:none;`;
 			workbenchRoot.appendChild(panel);
 
 			const positionSelectPanel = () => {
@@ -1173,6 +1231,31 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		if (field.placeholder && (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input))) {
 			input.placeholder = field.placeholder;
 		}
+		// Digit cap for tel / number fields (e.g. fax number <= 12 digits). Strip
+		// any digit typed past the limit so the field can never hold more than
+		// `maxDigits` — the on-save check below also rejects under-length values.
+		if (field.maxDigits && DOM.isHTMLInputElement(input)) {
+			const maxDigits = field.maxDigits;
+			const capped = input as HTMLInputElement;
+			capped.addEventListener('input', () => {
+				const digits = capped.value.replace(/\D/g, '');
+				if (digits.length > maxDigits) {
+					// Re-emit the kept formatting characters but drop the excess
+					// digits — keep only the first `maxDigits` digits, preserving
+					// the user's separators up to that point.
+					let kept = '';
+					let count = 0;
+					for (const ch of capped.value) {
+						if (/\d/.test(ch)) {
+							if (count >= maxDigits) { continue; }
+							count++;
+						}
+						kept += ch;
+					}
+					capped.value = kept;
+				}
+			});
+		}
 		input.addEventListener('focus', () => {
 			input.style.borderColor = 'var(--vscode-focusBorder, #007fd4)';
 		});
@@ -1308,6 +1391,20 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			if (f.required && !v.trim()) {
 				errorMsg.textContent = `${f.label} is required`;
 				return;
+			}
+			// Digit-count constraints (e.g. fax number must be exactly 12 digits).
+			if ((f.minDigits || f.maxDigits) && v.trim()) {
+				const digitCount = v.replace(/\D/g, '').length;
+				if (f.maxDigits && digitCount > f.maxDigits) {
+					errorMsg.textContent = `${f.label} must be at most ${f.maxDigits} digits`;
+					return;
+				}
+				if (f.minDigits && digitCount < f.minDigits) {
+					errorMsg.textContent = f.minDigits === f.maxDigits
+						? `${f.label} must be exactly ${f.minDigits} digits`
+						: `${f.label} must be at least ${f.minDigits} digits`;
+					return;
+				}
 			}
 			result[f.key] = v;
 		}

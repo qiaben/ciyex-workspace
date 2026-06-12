@@ -205,7 +205,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		subtitleField: ['status', 'createdAt'],
 		editFields: [
 			{ key: 'recipientName', label: 'Recipient Name', required: true, placeholder: 'Search recipient...', widthPct: 50 },
-			{ key: 'faxNumber', label: 'Fax Number', kind: 'tel', required: true, placeholder: '+1-555-555-5555', widthPct: 50 },
+			{ key: 'faxNumber', label: 'Fax Number', kind: 'tel', required: true, placeholder: '12 digits, e.g. +1 555 123 4567', minDigits: 12, maxDigits: 12, hint: 'Must be exactly 12 digits', widthPct: 50 },
 			{ key: 'subject', label: 'Subject', required: true, placeholder: 'Fax subject', widthPct: 100 },
 			{ key: 'pageCount', label: 'Page Count', kind: 'number', placeholder: '1', widthPct: 50 },
 			{ key: 'patientName', label: 'Patient Name', placeholder: 'Search patient...', widthPct: 50 },

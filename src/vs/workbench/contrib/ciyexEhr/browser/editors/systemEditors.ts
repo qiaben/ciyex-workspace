@@ -377,10 +377,12 @@ export class FaxEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
-			// Fax number validation mirrors ehr-ui isValidFax (utils/validation.ts
-			// FAX_RE = /^[+]?[\d\s().-]{7,20}$/). Required + pattern rejects empty
-			// or malformed fax numbers (issue #17b negative test case).
-			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '+1 (555) 123-4567', validationPattern: '^[+]?[\\d\\s().-]{7,20}$', validationMessage: 'Please enter a valid fax number with at least 7 digits' },
+			// Fax number must contain exactly 12 digits (QA: the field previously
+			// accepted any 7-20 char value, so > 12 digits slipped through and the
+			// negative test failed). The pattern allows an optional leading "+" and
+			// the usual spaces / parens / dashes / dots as separators, but counts
+			// exactly 12 digits — anything above or below is rejected on submit.
+			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '12 digits, e.g. +1 555 123 4567', maxDigits: 12, validationPattern: '^\\+?(?:[\\s().-]*\\d){12}[\\s().-]*$', validationMessage: 'Fax number must be exactly 12 digits' },
 			{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
 			{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
 			{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
