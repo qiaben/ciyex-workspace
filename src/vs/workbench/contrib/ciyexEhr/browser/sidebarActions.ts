@@ -5,6 +5,7 @@
 
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
+import { createTimeDropdown } from './customDropdown.js';
 
 /**
  * Shared sidebar UI primitives used across every Ciyex side-pane:
@@ -1162,6 +1163,25 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			}
 			form.appendChild(wrap);
 			continue;
+		} else if (field.kind === 'time') {
+			// Custom HH:MM dropdown instead of <input type="time">: the native
+			// time picker can't be reliably closed in the Electron workbench
+			// (blur() is a no-op), so it stayed open after a selection. The
+			// custom dropdown commits + closes deterministically on minute pick.
+			const hidden = createTimeDropdown({
+				parent: wrap,
+				initialValue: initial,
+				placeholder: field.placeholder || 'Select time...',
+			});
+			inputs.set(field.key, hidden);
+			if (field.hint) {
+				const hint = doc.createElement('div');
+				hint.textContent = field.hint;
+				hint.style.cssText = `font-size:11px;color:${colors.foreground};opacity:0.6;`;
+				wrap.appendChild(hint);
+			}
+			form.appendChild(wrap);
+			continue;
 		} else if (field.kind === 'search') {
 			// Typeahead — text input with a dropdown panel for matches.
 			//
@@ -1220,7 +1240,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// `readonly` trick — must NOT block our own search-typeahead
 			// listeners, so we attach a one-shot focus handler that drops the
 			// attribute before the user types the first character.
-			if (field.kind !== 'date' && field.kind !== 'time') {
+			// 'time' is handled earlier via the custom dropdown; here only 'date'
+			// needs the native picker exempted from the readonly autofill trick.
+			if (field.kind !== 'date') {
 				input.setAttribute('readonly', 'readonly');
 				const releaseReadonly = () => { input.removeAttribute('readonly'); };
 				input.addEventListener('focus', releaseReadonly, { once: true });
@@ -1967,9 +1989,18 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 			return;
 		}
 
-		// text / number / email / tel / date / time / search
+		if (field.kind === 'time') {
+			// Custom HH:MM dropdown instead of <input type="time"> so the picker
+			// closes deterministically on selection (native blur is a no-op in the
+			// Electron workbench).
+			const hiddenTime = createTimeDropdown({ parent: host, initialValue: initial, placeholder: field.placeholder || 'Select time...' });
+			inputs.set(field.key, hiddenTime);
+			return;
+		}
+
+		// text / number / email / tel / date / search
 		const inp = doc.createElement('input') as HTMLInputElement;
-		inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date', 'time'].includes(field.kind) ? field.kind : 'text';
+		inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date'].includes(field.kind) ? field.kind : 'text';
 		inp.value = initial;
 		inp.placeholder = field.placeholder || '';
 		inp.setAttribute('autocomplete', 'off');

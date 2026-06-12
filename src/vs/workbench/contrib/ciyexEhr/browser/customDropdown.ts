@@ -349,3 +349,336 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 
 	return hidden;
 }
+
+export interface ICreateTimeDropdownOptions {
+	/** Parent element the visible trigger button is appended to. */
+	parent: HTMLElement;
+	/** Starting value as 24-hour `HH:MM` (e.g. `"09:30"`). */
+	initialValue?: string;
+	/** Placeholder shown in the trigger when no time is selected. */
+	placeholder?: string;
+	/** Optional CSS for the visible trigger so it matches the host form's input. */
+	triggerStyle?: string;
+	/** Minute granularity for the right-hand column. Default 1 (every minute). */
+	minuteStep?: number;
+	/** Called when the user picks a new time. */
+	onChange?: (value: string) => void;
+}
+
+/**
+ * A fully self-managed `HH:MM` time picker that REPLACES the native
+ * `<input type="time">`. The native picker can't be reliably auto-closed inside
+ * the Electron workbench — `element.blur()` is a no-op there (the workbench
+ * focus tracker re-asserts focus), so the native spinner stays open after a
+ * selection (the recurring QA "time picker doesn't close" report).
+ *
+ * This control instead renders a body-mounted popover with two scrollable
+ * columns (hours 00-23, minutes 00-59). Picking a minute commits the value and
+ * closes the popover deterministically — no dependence on native focus/blur.
+ * Picking an hour keeps the popover open (defaulting the minute to `00` so the
+ * value is always well-formed) so the user can still choose the minute.
+ *
+ * Returns a hidden `<input>` whose `.value` is the 24-hour `HH:MM` string, so
+ * existing form code that stored the old `<input type="time">` and reads
+ * `.value` keeps working unchanged.
+ */
+export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputElement {
+	const parent = opts.parent;
+	const doc = parent.ownerDocument || document;
+	const step = Math.max(1, opts.minuteStep ?? 1);
+
+	const hidden = doc.createElement('input');
+	hidden.type = 'hidden';
+	hidden.value = opts.initialValue ?? '';
+	parent.appendChild(hidden);
+
+	const pad = (n: number) => String(n).padStart(2, '0');
+	const parse = (v: string): { hh: string; mm: string } | null => {
+		const m = /^(\d{1,2}):(\d{1,2})/.exec(v || '');
+		if (!m) { return null; }
+		const h = Math.min(23, parseInt(m[1], 10));
+		const mi = Math.min(59, parseInt(m[2], 10));
+		if (isNaN(h) || isNaN(mi)) { return null; }
+		return { hh: pad(h), mm: pad(mi) };
+	};
+	const to12h = (v: string): string => {
+		const p = parse(v);
+		if (!p) { return v || opts.placeholder || 'Select time...'; }
+		const h = parseInt(p.hh, 10);
+		const ampm = h >= 12 ? 'PM' : 'AM';
+		const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+		return `${h12}:${p.mm} ${ampm}`;
+	};
+
+	const trigger = doc.createElement('button');
+	trigger.type = 'button';
+	trigger.setAttribute('aria-haspopup', 'dialog');
+	trigger.setAttribute('aria-expanded', 'false');
+	const fallbackStyle = `width:100%;box-sizing:border-box;padding:6px 10px;background:${COLORS.triggerBackground};color:${COLORS.foreground};border:1px solid ${COLORS.triggerBorder};border-radius:4px;font-size:13px;cursor:pointer;`;
+	trigger.style.cssText = `${opts.triggerStyle || fallbackStyle};display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;font-family:inherit;`;
+	const triggerLabel = doc.createElement('span');
+	triggerLabel.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+	const triggerIcon = doc.createElement('span');
+	// allow-any-unicode-next-line
+	triggerIcon.textContent = '\u{1F551}';
+	triggerIcon.style.cssText = 'opacity:0.7;font-size:12px;flex-shrink:0;margin-left:6px;';
+	trigger.appendChild(triggerLabel);
+	trigger.appendChild(triggerIcon);
+	const refreshTriggerLabel = () => {
+		const v = hidden.value;
+		triggerLabel.textContent = to12h(v);
+		triggerLabel.style.opacity = v ? '1' : '0.6';
+	};
+	refreshTriggerLabel();
+	hidden.addEventListener('change', refreshTriggerLabel);
+	parent.appendChild(trigger);
+
+	const panel = doc.createElement('div');
+	panel.className = 'ciyex-custom-dropdown-panel monaco-workbench';
+	panel.setAttribute('role', 'dialog');
+	panel.style.cssText = `position:fixed;right:auto;bottom:auto;box-sizing:border-box;background-color:${COLORS.background};color:${COLORS.foreground};border:1px solid ${COLORS.border};border-radius:6px;box-shadow:0 6px 18px ${COLORS.shadow};z-index:10000;display:none;padding:0;font-family:var(--vscode-font-family, system-ui, sans-serif);font-size:13px;`;
+	(doc.body || doc.documentElement).appendChild(panel);
+
+	// Two scrollable columns.
+	const grid = doc.createElement('div');
+	grid.style.cssText = 'display:flex;gap:0;height:200px;';
+	panel.appendChild(grid);
+
+	const makeColumn = (header: string): { col: HTMLElement; list: HTMLElement } => {
+		const wrap = doc.createElement('div');
+		wrap.style.cssText = `display:flex;flex-direction:column;min-width:64px;border-right:1px solid ${COLORS.separator};`;
+		const head = doc.createElement('div');
+		head.textContent = header;
+		head.style.cssText = `padding:6px 10px;font-size:11px;font-weight:600;opacity:0.7;text-align:center;border-bottom:1px solid ${COLORS.separator};`;
+		const list = doc.createElement('div');
+		list.style.cssText = 'flex:1;overflow-y:auto;padding:4px;';
+		wrap.appendChild(head);
+		wrap.appendChild(list);
+		grid.appendChild(wrap);
+		return { col: wrap, list };
+	};
+	const hourCol = makeColumn('Hour');
+	const minCol = makeColumn('Min');
+	// Drop the trailing border on the last column.
+	minCol.col.style.borderRight = 'none';
+
+	let panelOpen = false;
+	const state = { hh: '', mm: '' };
+
+	const makeCell = (text: string, selected: boolean, onPick: () => void): HTMLElement => {
+		const cell = doc.createElement('div');
+		cell.setAttribute('role', 'option');
+		cell.textContent = text;
+		cell.style.cssText = `padding:5px 12px;cursor:pointer;font-size:13px;line-height:18px;border-radius:4px;text-align:center;font-variant-numeric:tabular-nums;background-color:${selected ? COLORS.hoverBackground : 'transparent'};${selected ? 'font-weight:600;' : ''}`;
+		cell.addEventListener('mouseenter', () => { cell.style.backgroundColor = COLORS.hoverBackground; });
+		cell.addEventListener('mouseleave', () => { cell.style.backgroundColor = selected ? COLORS.hoverBackground : 'transparent'; });
+		cell.addEventListener('mousedown', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			onPick();
+		});
+		return cell;
+	};
+
+	const commit = (close: boolean) => {
+		if (!state.hh) { return; }
+		if (!state.mm) { state.mm = '00'; }
+		const prev = hidden.value;
+		hidden.value = `${state.hh}:${state.mm}`;
+		refreshTriggerLabel();
+		if (close) { closePanel(); }
+		if (prev !== hidden.value) {
+			hidden.dispatchEvent(new Event('change', { bubbles: true }));
+			if (opts.onChange) { opts.onChange(hidden.value); }
+		}
+	};
+
+	const renderColumns = () => {
+		DOM.clearNode(hourCol.list);
+		DOM.clearNode(minCol.list);
+		let selectedHourCell: HTMLElement | null = null;
+		let selectedMinCell: HTMLElement | null = null;
+		for (let h = 0; h < 24; h++) {
+			const v = pad(h);
+			const sel = v === state.hh;
+			const cell = makeCell(v, sel, () => {
+				state.hh = v;
+				// Hour chosen: keep the panel open so the user can pick a minute,
+				// but commit a well-formed value (minute defaults to 00) immediately.
+				commit(false);
+				renderColumns();
+			});
+			if (sel) { selectedHourCell = cell; }
+			hourCol.list.appendChild(cell);
+		}
+		for (let m = 0; m < 60; m += step) {
+			const v = pad(m);
+			const sel = v === state.mm;
+			const cell = makeCell(v, sel, () => {
+				state.mm = v;
+				if (!state.hh) { state.hh = '00'; }
+				// Minute is the final pick — commit and close deterministically.
+				commit(true);
+			});
+			if (sel) { selectedMinCell = cell; }
+			minCol.list.appendChild(cell);
+		}
+		// Scroll the current selections into view so the user starts near them.
+		selectedHourCell?.scrollIntoView({ block: 'center' });
+		selectedMinCell?.scrollIntoView({ block: 'center' });
+	};
+
+	const positionPanel = () => {
+		const rect = trigger.getBoundingClientRect();
+		panel.style.left = `${rect.left}px`;
+		panel.style.top = `${rect.bottom + 2}px`;
+		panel.style.minWidth = `${Math.max(rect.width, 140)}px`;
+	};
+	const openPanel = () => {
+		if (!panel.isConnected) { (doc.body || doc.documentElement).appendChild(panel); }
+		const parsed = parse(hidden.value);
+		state.hh = parsed?.hh ?? '';
+		state.mm = parsed?.mm ?? '';
+		renderColumns();
+		positionPanel();
+		panel.style.display = 'block';
+		trigger.setAttribute('aria-expanded', 'true');
+		panelOpen = true;
+	};
+	const closePanel = () => {
+		panel.style.display = 'none';
+		trigger.setAttribute('aria-expanded', 'false');
+		panelOpen = false;
+	};
+	trigger.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (panelOpen) { closePanel(); } else { openPanel(); }
+	});
+	trigger.addEventListener('focus', () => { trigger.style.outline = `1px solid var(--vscode-focusBorder, #007fd4)`; trigger.style.outlineOffset = '-1px'; });
+	trigger.addEventListener('blur', () => { trigger.style.outline = 'none'; });
+
+	const onDocClick = (e: MouseEvent) => {
+		if (!panelOpen) { return; }
+		const target = e.target as Node | null;
+		if (target && (panel.contains(target) || trigger.contains(target))) { return; }
+		closePanel();
+	};
+	doc.addEventListener('mousedown', onDocClick, true);
+	const reposition = () => { if (panelOpen) { positionPanel(); } };
+	const win = doc.defaultView;
+	win?.addEventListener('scroll', reposition, true);
+	win?.addEventListener('resize', reposition);
+
+	const cleanup = () => {
+		doc.removeEventListener('mousedown', onDocClick, true);
+		win?.removeEventListener('scroll', reposition, true);
+		win?.removeEventListener('resize', reposition);
+		if (panel.parentElement) { panel.parentElement.removeChild(panel); }
+	};
+	const observer = new MutationObserver(() => {
+		if (!trigger.isConnected) { observer.disconnect(); cleanup(); }
+	});
+	if (trigger.parentNode) { observer.observe(trigger.parentNode, { childList: true, subtree: true }); }
+
+	// Mirror external value writes (form reset) onto the trigger label.
+	const proto = Object.getPrototypeOf(hidden);
+	const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+	if (desc && desc.set && desc.get) {
+		Object.defineProperty(hidden, 'value', {
+			configurable: true,
+			get() { return desc.get!.call(hidden); },
+			set(v: string) { desc.set!.call(hidden, v); refreshTriggerLabel(); },
+		});
+	}
+	Object.defineProperty(hidden, 'ciyexDropdownTrigger', { value: trigger, enumerable: false });
+
+	return hidden;
+}
+
+export interface ICreateDateTimeDropdownOptions {
+	/** Parent the combined date + time control is appended to. */
+	parent: HTMLElement;
+	/** Starting value as `yyyy-MM-ddTHH:mm` (extra precision is trimmed). */
+	initialValue?: string;
+	/** Optional CSS applied to the native date input + the time trigger. */
+	inputStyle?: string;
+	/** Called when either the date or time part changes. */
+	onChange?: (value: string) => void;
+}
+
+/**
+ * A combined date + time control that replaces `<input type="datetime-local">`.
+ * The native datetime-local picker has the same un-closeable problem as the
+ * time picker inside the Electron workbench, so the time half uses the custom
+ * {@link createTimeDropdown} (closes deterministically on minute pick) paired
+ * with a native `<input type="date">` for the calendar half.
+ *
+ * Returns a hidden `<input>` whose `.value` is the `yyyy-MM-ddTHH:mm` string the
+ * old datetime-local control produced, so existing save code is unchanged.
+ */
+export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HTMLInputElement {
+	const parent = opts.parent;
+	const doc = parent.ownerDocument || document;
+
+	const hidden = doc.createElement('input');
+	hidden.type = 'hidden';
+	parent.appendChild(hidden);
+
+	const wrap = doc.createElement('div');
+	wrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
+	parent.appendChild(wrap);
+
+	const raw = (opts.initialValue || '').slice(0, 16);
+	const [initialDate, initialTime] = raw.includes('T') ? raw.split('T') : [raw, ''];
+
+	const dateInp = doc.createElement('input') as HTMLInputElement;
+	dateInp.type = 'date';
+	dateInp.value = initialDate || '';
+	dateInp.style.cssText = (opts.inputStyle || '') + 'flex:1;min-width:0;';
+	wrap.appendChild(dateInp);
+
+	const timeHost = doc.createElement('div');
+	timeHost.style.cssText = 'flex:1;min-width:0;';
+	wrap.appendChild(timeHost);
+
+	const proto = Object.getPrototypeOf(hidden);
+	const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+	const protoSet = desc?.set;
+
+	const sync = (): void => {
+		const d = dateInp.value;
+		const t = timeHidden.value;
+		const combined = d && t ? `${d}T${t}` : (d || '');
+		// Write through the prototype setter to avoid recursing into our override.
+		if (protoSet) { protoSet.call(hidden, combined); } else { hidden.value = combined; }
+		if (opts.onChange) { opts.onChange(combined); }
+	};
+
+	const timeHidden = createTimeDropdown({
+		parent: timeHost,
+		initialValue: initialTime,
+		placeholder: 'Select time...',
+		triggerStyle: opts.inputStyle,
+		onChange: () => sync(),
+	});
+	dateInp.addEventListener('change', sync);
+
+	if (desc && desc.set && desc.get) {
+		Object.defineProperty(hidden, 'value', {
+			configurable: true,
+			get() { return desc.get!.call(hidden); },
+			set(v: string) {
+				const trimmed = (v || '').slice(0, 16);
+				const [d, t] = trimmed.includes('T') ? trimmed.split('T') : [trimmed, ''];
+				dateInp.value = d || '';
+				timeHidden.value = t || '';
+				desc.set!.call(hidden, v);
+			},
+		});
+	}
+	// Seed the combined value from the initial date/time.
+	sync();
+
+	return hidden;
+}

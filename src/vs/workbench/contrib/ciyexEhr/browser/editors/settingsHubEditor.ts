@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { createTimeDropdown } from '../customDropdown.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -1320,17 +1321,12 @@ export class SettingsHubEditor extends EditorPane {
 
 		const timeRow = DOM.append(addForm, DOM.$('div'));
 		timeRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:10px;';
-		const startInp = DOM.append(timeRow, DOM.$('input')) as HTMLInputElement;
-		startInp.type = 'time';
-		startInp.value = '09:00';
-		startInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const timeTriggerStyle = 'min-width:120px;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;cursor:pointer;';
+		const startInp = createTimeDropdown({ parent: timeRow, initialValue: '09:00', triggerStyle: timeTriggerStyle });
 		const toLbl = DOM.append(timeRow, DOM.$('span'));
 		toLbl.textContent = 'to';
 		toLbl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		const endInp = DOM.append(timeRow, DOM.$('input')) as HTMLInputElement;
-		endInp.type = 'time';
-		endInp.value = '17:00';
-		endInp.style.cssText = 'padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const endInp = createTimeDropdown({ parent: timeRow, initialValue: '17:00', triggerStyle: timeTriggerStyle });
 
 		const addBtn = DOM.append(addForm, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+ Add Block';

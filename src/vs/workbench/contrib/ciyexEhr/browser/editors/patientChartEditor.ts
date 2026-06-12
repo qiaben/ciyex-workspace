@@ -21,7 +21,7 @@ import { showVisitSummaryPanel } from './visitSummaryPanel.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { createCustomDropdown } from '../customDropdown.js';
+import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { PaginationControl } from '../paginationControl.js';
 
 // --- Types ---
@@ -5440,23 +5440,18 @@ export class PatientChartEditor extends EditorPane {
 					// Date-only field: mm/dd/yyyy text + native picker; hidden ISO for save.
 					this._buildDateInput(cell, f, String(val).split('T')[0], inputStyle);
 				} else if (f.type === 'datetime') {
-					// Datetime field: native datetime-local input so the user can
-					// pick BOTH the date and the time. Stripping the time (as the
-					// date-only picker did) was breaking encounter save — backend
-					// requires a real datetime on Encounter.period.start.
-					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
-					inp.type = 'datetime-local';
-					// Backend ISO can be `yyyy-mm-ddThh:mm:ss[.sss]Z` — trim to
-					// the `yyyy-mm-ddThh:mm` shape the input element expects.
+					// Datetime field: combined date + custom time dropdown so the user
+					// picks BOTH the date and the time, and the time half closes
+					// deterministically on selection (the native datetime-local picker
+					// can't be reliably auto-closed in the Electron workbench — blur()
+					// is a no-op there, so it stayed open after a pick).
 					const raw = String(val ?? '');
-					inp.value = raw && raw.length >= 16 ? raw.slice(0, 16) : raw;
-					inp.placeholder = f.placeholder || '';
-					inp.style.cssText = inputStyle;
-					// Issue #6: auto-close the date/time picker once a value is committed.
-					// datetime-local fires `change` after the date+time is chosen; blurring
-					// collapses the still-open native popover (matching the date-only picker).
-					inp.addEventListener('change', () => inp.blur());
-					this._formInputs.set(f.key, inp);
+					const dt = createDateTimeDropdown({
+						parent: cell,
+						initialValue: raw && raw.length >= 16 ? raw.slice(0, 16) : raw,
+						inputStyle,
+					});
+					this._formInputs.set(f.key, dt);
 				} else if (f.type === 'number') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '0';

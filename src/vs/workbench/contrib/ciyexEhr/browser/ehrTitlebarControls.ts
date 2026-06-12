@@ -9,7 +9,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
-import { createCustomDropdown, IDropdownOption } from './customDropdown.js';
+import { createCustomDropdown, createTimeDropdown, IDropdownOption } from './customDropdown.js';
 
 interface PatientResult {
 	id: string;
@@ -1108,6 +1108,21 @@ export class EhrTitlebarControls extends Disposable {
 			const icon = DOM.append(wrap, DOM.$('span'));
 			icon.textContent = '\u{1F4C5}';
 			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none;line-height:1;';
+			return hidden;
+		}
+
+		// Time: use the custom HH:MM dropdown instead of <input type="time">. The
+		// native time picker can't be reliably auto-closed in the Electron
+		// workbench (blur() is a no-op there), so it stayed open after a selection
+		// — the QA "time picker doesn't close" report. The custom dropdown commits
+		// + closes deterministically when the minute is chosen.
+		if (type === 'time') {
+			const hidden = createTimeDropdown({
+				parent: group,
+				placeholder: 'Select time...',
+				triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
+			});
+			hidden.name = name;
 			return hidden;
 		}
 

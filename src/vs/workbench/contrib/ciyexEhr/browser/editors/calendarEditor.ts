@@ -18,7 +18,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
+import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
 
 
 interface Appointment {
@@ -1151,25 +1151,6 @@ export class CalendarEditor extends EditorPane {
 		this._renderGrid();
 	}
 
-	/** Auto-dismiss the native time picker once a complete time is chosen.
-	 *  Chromium's `<input type="time">` spinner/popup stays open after the user
-	 *  picks a value (the QA "Start Time wheel does not close" report). A full
-	 *  HH:MM selection fires a `change` event; blurring the input then collapses
-	 *  the native popup so the wheel closes the moment a time is selected. We use
-	 *  `change` (not `input`) so blurring doesn't fight the user mid-edit while
-	 *  they're still typing/scrolling toward a value. */
-	private _autoCloseTimePicker(input: HTMLInputElement): void {
-		input.addEventListener('change', () => {
-			// Only close once a valid, complete HH:MM value is present.
-			if (/^\d{2}:\d{2}$/.test(input.value)) {
-				// Defer the blur to the next microtask so the change handlers that
-				// recompute duration / mirror end-time run against the new value
-				// before focus leaves the field.
-				DOM.getActiveWindow().setTimeout(() => input.blur(), 0);
-			}
-		});
-	}
-
 	private async _createAppointment(date: string, time: string, providerId?: string): Promise<void> {
 		// Calculate end time (default 30 min)
 		const [h, m] = time.split(':').map(Number);
@@ -1295,10 +1276,14 @@ export class CalendarEditor extends EditorPane {
 			} else if (type === 'date') {
 				buildDateField(group, id, value);
 				return formFields.get(id) as HTMLInputElement;
+			} else if (type === 'time') {
+				const hidden = createTimeDropdown({ parent: group, initialValue: value, placeholder: `Select ${label}...`, triggerStyle: inputStyle });
+				hidden.id = id;
+				formFields.set(id, hidden);
+				return hidden;
 			} else {
 				const inp = DOM.append(group, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value; inp.style.cssText = inputStyle;
-				if (type === 'time') { this._autoCloseTimePicker(inp); }
 				formFields.set(id, inp);
 				return inp;
 			}
@@ -1317,10 +1302,16 @@ export class CalendarEditor extends EditorPane {
 					buildDateField(parent, id, value);
 					return formFields.get(id) as HTMLInputElement;
 				}
+				const fieldStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+				if (type === 'time') {
+					const hidden = createTimeDropdown({ parent, initialValue: value, placeholder: `Select ${label}...`, triggerStyle: fieldStyle });
+					hidden.id = id;
+					formFields.set(id, hidden);
+					return hidden;
+				}
 				const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
 				inp.id = id; inp.type = type; inp.value = value;
-				inp.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
-				if (type === 'time') { this._autoCloseTimePicker(inp); }
+				inp.style.cssText = fieldStyle;
 				formFields.set(id, inp);
 				return inp;
 			};
