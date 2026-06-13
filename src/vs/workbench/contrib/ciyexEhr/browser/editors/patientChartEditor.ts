@@ -32,7 +32,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[] }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -2430,7 +2430,15 @@ export class PatientChartEditor extends EditorPane {
 										type: 'patient-search',
 										placeholder: 'Search patient',
 										required: true,
-										defaultValue: this.patientName || this.patientId,
+										// Seed the hidden FK with the patient ID — NEVER the name. A name in
+										// the FK reaches the backend as `Patient/<name>` and is rejected
+										// with HAPI-1094 "Resource Patient/<name> not found". The visible
+										// textbox is filled with the patient name by the prefill block below.
+										defaultValue: this.patientId,
+										// In the patient chart the record is always for the current
+										// patient — lock the field to an auto-filled name display
+										// (no search, no other patients selectable).
+										readonly: true,
 									});
 								}
 								return { ...s, fields };
@@ -2449,7 +2457,15 @@ export class PatientChartEditor extends EditorPane {
 												type: 'patient-search',
 												placeholder: 'Search patient',
 												required: true,
-												defaultValue: this.patientName || this.patientId,
+												// Seed the hidden FK with the patient ID — NEVER the name. A name in
+												// the FK reaches the backend as `Patient/<name>` and is rejected
+												// with HAPI-1094 "Resource Patient/<name> not found". The visible
+												// textbox is filled with the patient name by the prefill block below.
+												defaultValue: this.patientId,
+												// In the patient chart the record is always for the current
+												// patient — lock the field to an auto-filled name display
+												// (no search, no other patients selectable).
+												readonly: true,
 											},
 											...s.fields,
 										],
@@ -3515,7 +3531,11 @@ export class PatientChartEditor extends EditorPane {
 					const row = DOM.append(body, DOM.$('div'));
 					row.style.cssText = 'padding:3px 0;font-size:12px;color:var(--vscode-foreground);';
 					let text = '';
-					for (const f of fieldList) { text = this._displayText(item[f]); if (text) { break; } }
+					// Vitals rows have no single "name" — they carry measurement
+					// columns (weightKg, bpSystolic, pulse, …). Format a compact
+					// summary instead of falling through to the raw record id.
+					if (navTab === 'vitals') { text = this._formatVitalsSummary(item); }
+					if (!text) { for (const f of fieldList) { text = this._displayText(item[f]); if (text) { break; } } }
 					if (!text) { text = this._displayText(item.name) || this._displayText(item.code) || ''; }
 					// Last-ditch: pull any string-like field off the row so a
 					// FHIR record with `code.text` / `valueCodeableConcept` etc.
@@ -3556,11 +3576,44 @@ export class PatientChartEditor extends EditorPane {
 				if (items.length === 0 && legacyMap[resource]) {
 					items = await tryUrl(legacyMap[resource]);
 				}
+				// Some resources are served under their TAB slug rather than the FHIR
+				// resource name — e.g. vitals are stored under the `vitals` tab, so
+				// FHIR_MAP['Observation'] → /observations returns "No configuration
+				// found for tab: observations" while /vitals has the data. Fall back
+				// to the nav-tab slug so the card paints the real records.
+				if (items.length === 0) {
+					const slugEp = `/api/fhir-resource/${navTab}`;
+					if (slugEp !== fhirEp) {
+						items = await tryUrl(`${slugEp}/patient/${this.patientId}?page=0&size=3`);
+					}
+				}
 				renderItems(items);
 			} catch {
 				body.textContent = emptyMsg;
 			}
 		})();
+	}
+
+	/**
+	 * Compact one-line summary of a vitals recording for the dashboard card.
+	 * A vitals record carries measurement columns (bpSystolic, pulse, …) rather
+	 * than a single display name, so show the recorded date plus key readings.
+	 */
+	private _formatVitalsSummary(item: Record<string, unknown>): string {
+		const num = (k: string): string => {
+			const v = item[k];
+			return v === null || v === undefined ? '' : String(v).trim();
+		};
+		const parts: string[] = [];
+		const sys = num('bpSystolic'); const dia = num('bpDiastolic');
+		if (sys && dia) { parts.push(`BP ${sys}/${dia}`); }
+		const hr = num('pulse'); if (hr) { parts.push(`HR ${hr}`); }
+		const temp = num('temperatureC'); if (temp) { parts.push(`Temp ${temp}C`); }
+		const spo2 = num('oxygenSaturation'); if (spo2) { parts.push(`SpO2 ${spo2}%`); }
+		const wt = num('weightKg'); if (wt && parts.length < 3) { parts.push(`Wt ${wt}kg`); }
+		if (parts.length === 0) { return ''; }
+		const when = this._formatDate(num('recordedAt') || num('effectiveDateTime') || num('_lastUpdated'));
+		return when ? `${when}: ${parts.join(', ')}` : parts.join(', ');
 	}
 
 	private _renderPortalAccountCard(parent: HTMLElement): void {
@@ -5104,6 +5157,30 @@ export class PatientChartEditor extends EditorPane {
 						}
 					}
 				}
+				// Appointment references map to FHIR Appointment.participant[].actor.
+				// Like the encounter/medication/claim references above, the backend's
+				// reference-type inference can't resolve the resource type for the
+				// indexed participant path, so a bare id (e.g. patient "13656",
+				// practitioner / location ids) reaches HAPI as "13656" and is
+				// rejected with HAPI-0505 "Does not contain resource type". Prefix
+				// each with its FHIR resource type so the saved references are
+				// well-formed: patient → Patient/, provider → Practitioner/,
+				// location → Location/.
+				if (tab.key === 'appointments') {
+					const refTypes: Array<{ keys: string[]; type: string }> = [
+						{ keys: ['patient', 'patientId'], type: 'Patient' },
+						{ keys: ['provider', 'providerId', 'practitioner'], type: 'Practitioner' },
+						{ keys: ['location', 'locationId'], type: 'Location' },
+					];
+					for (const { keys, type } of refTypes) {
+						for (const k of keys) {
+							const v = payload[k];
+							if (typeof v === 'string' && v.trim() && !v.includes('/')) {
+								payload[k] = `${type}/${v.trim()}`;
+							}
+						}
+					}
+				}
 				if (tab.key === 'vitals' && !isEdit && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
@@ -5602,14 +5679,19 @@ export class PatientChartEditor extends EditorPane {
 		for (const key of ['patient', 'patientId', 'subject'] as const) {
 			const hiddenInput = this._formInputs.get(key) as HTMLInputElement | undefined;
 			if (!hiddenInput) { continue; }
+			// Seed the FK with the real patientId when it isn't already set.
 			if (!hiddenInput.value && this.patientId) {
 				hiddenInput.value = this.patientId;
-				// The visible textbox lives one parent up — `_buildSearchInput`
-				// appends a text input, the magnifying-glass icon, then the
-				// hidden input as siblings. Walk the parent's children to find
-				// the first visible text input so the user sees the patient name.
+			}
+			// Whenever the FK points at the current chart patient (freshly seeded
+			// above, or pre-seeded via the field's defaultValue), show the patient
+			// NAME in the visible textbox. The visible textbox lives one parent up
+			// — `_buildSearchInput` appends a text input, the magnifying-glass icon,
+			// then the hidden input as siblings. Walk the parent's children to find
+			// the first empty visible text input so the user sees the patient name.
+			if (hiddenInput.value === this.patientId && this.patientName) {
 				const wrap = hiddenInput.parentElement;
-				if (wrap && this.patientName) {
+				if (wrap) {
 					for (const child of Array.from(wrap.children)) {
 						if (DOM.isHTMLInputElement(child) && child.type === 'text' && !child.value) {
 							child.value = this.patientName;
@@ -5836,6 +5918,25 @@ export class PatientChartEditor extends EditorPane {
 			const relHidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			relHidden.type = 'hidden';
 			this._formInputs.set(f.relatedField, relHidden);
+		}
+		// Locked display (e.g. the chart's patient on appointment / encounter
+		// forms): show the resolved name only — no typing, no search dropdown,
+		// no other records selectable. The hidden FK is already registered above
+		// and the patient-prefill block fills in the visible name.
+		if (f.readonly) {
+			input.readOnly = true;
+			input.tabIndex = -1;
+			input.style.cursor = 'default';
+			input.style.opacity = '0.85';
+			searchIcon.style.display = 'none';
+			// Show the patient NAME (not the raw id) in the locked field. The id
+			// lookup cache often doesn't hold the current chart patient, so
+			// `resolveDisplay` above leaves the bare id visible — override it with
+			// the known chart patient name when the FK points at that patient.
+			if (this.patientName && (hidden.value === this.patientId || !hidden.value)) {
+				input.value = this.patientName;
+			}
+			return;
 		}
 		// Name caches may not be loaded on first render — resolve asynchronously
 		// and replace the raw id with the name once the caches populate (issue 12).

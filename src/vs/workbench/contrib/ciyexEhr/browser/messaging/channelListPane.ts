@@ -391,8 +391,14 @@ export class ChannelListPane extends ViewPane {
 		// below only ever builds the channel-creation form.
 		const isDm = false;
 
-		// Full-window dimmed backdrop + centered modal card.
-		const overlay = DOM.append(targetWindow.document.body, DOM.$('.ciyex-channel-modal-overlay'));
+		// Full-window dimmed backdrop + centered modal card. Anchor it inside the
+		// `.monaco-workbench` element rather than `document.body`: VS Code only
+		// defines the `--vscode-*` theme custom properties under that selector, so
+		// attaching to `body` would leave every `var(--vscode-…)` unresolved and
+		// fall back to the hardcoded dark values — making the form dark regardless
+		// of the active theme.
+		const modalHost = DOM.findParentWithClass(this.container, 'monaco-workbench') ?? targetWindow.document.body;
+		const overlay = DOM.append(modalHost, DOM.$('.ciyex-channel-modal-overlay'));
 		this._formEl = overlay;
 		overlay.style.cssText = 'position:fixed;inset:0;z-index:2600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);';
 

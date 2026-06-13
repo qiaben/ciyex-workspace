@@ -1152,10 +1152,10 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private async _createAppointment(date: string, time: string, providerId?: string): Promise<void> {
-		// Calculate end time (default 30 min)
+		// Calculate end time (default 15 min)
 		const [h, m] = time.split(':').map(Number);
-		const endH = m + 30 >= 60 ? h + 1 : h;
-		const endM = (m + 30) % 60;
+		const endH = m + 15 >= 60 ? h + 1 : h;
+		const endM = (m + 15) % 60;
 		const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
 		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
@@ -1413,19 +1413,23 @@ export class CalendarEditor extends EditorPane {
 		};
 		const startTimeInput = formFields.get('startTime') as HTMLInputElement | undefined;
 		const endTimeInput = formFields.get('endTime') as HTMLInputElement | undefined;
-		// When Start Time changes, mirror ehr-ui: default End Time to start + 15 min
-		// (only if End Time is empty or no longer after Start), then recompute.
-		startTimeInput?.addEventListener('input', () => {
+		// When Start Time changes, default End Time to start + 15 min, then recompute.
+		// The custom time dropdown (createTimeDropdown) fires a 'change' event — NOT
+		// 'input' — so we listen for 'change'. We also dispatch 'change' on the End
+		// Time hidden input after setting its value so the dropdown's visible label
+		// (which refreshes on 'change') updates too.
+		startTimeInput?.addEventListener('change', () => {
 			const sT = startTimeInput.value;
-			if (sT && endTimeInput && (!endTimeInput.value || hmToMinutes(endTimeInput.value) <= hmToMinutes(sT))) {
+			if (sT && endTimeInput) {
 				const total = hmToMinutes(sT) + 15;
 				const nh = Math.floor(total / 60) % 24;
 				const nm = total % 60;
 				endTimeInput.value = `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+				endTimeInput.dispatchEvent(new Event('change', { bubbles: true }));
 			}
 			updateDuration();
 		});
-		endTimeInput?.addEventListener('input', updateDuration);
+		endTimeInput?.addEventListener('change', updateDuration);
 		updateDuration();
 
 		const priorityRow = DOM.append(form, DOM.$('.form-row'));
