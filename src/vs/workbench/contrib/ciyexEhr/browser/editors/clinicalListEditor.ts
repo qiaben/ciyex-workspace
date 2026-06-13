@@ -443,6 +443,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private totalPages = 1;
 	private clientPageSize = 20;
 	private formOverlay: HTMLElement | null = null;
+	/** Teardown callbacks for the open form's search fields (window scroll/resize
+	 *  listeners that reposition the autocomplete dropdowns). Run whenever the form
+	 *  overlay is torn down so the listeners don't outlive the form. */
+	private formListenerCleanups: Array<() => void> = [];
 	private editingItem: Record<string, unknown> | null = null;
 	/** Initial values for a CREATE form (editingItem === null). Lets callers open a
 	 *  pre-filled "New …" dialog — e.g. Education Library "Assign to Patient" seeds
@@ -1132,6 +1136,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	private _renderForm(): void {
 		if (this.formOverlay) {
+			this._teardownFormListeners();
 			this.formOverlay.remove();
 			this.formOverlay = null;
 		}
@@ -1309,12 +1314,20 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
 
 				const ownerDoc = group.ownerDocument || document;
-				const dropdown = ownerDoc.createElement('div');
-				// monaco-workbench class makes --vscode-* vars resolve on a body-mounted element.
-				// Must mount on body to escape workbench transform + overflow:hidden clipping.
+				// Mount the autocomplete dropdown on the form OVERLAY rather than
+				// document.body. The overlay isn't clipped (only the inner dialog
+				// sets overflow:hidden) and position:fixed keeps the dropdown
+				// viewport-anchored, so it still escapes the dialog's clipping — but
+				// now it is removed together with the overlay when the form closes
+				// instead of leaking. The old body-mount + MutationObserver never
+				// fired on whole-overlay removal, so orphaned `.monaco-workbench`
+				// dropdowns piled up behind the app (QA: background render glitch).
+				const dropdownHost = this.formOverlay ?? (ownerDoc.body || ownerDoc.documentElement);
+				const dropdown = DOM.append(dropdownHost, DOM.$('div'));
+				// monaco-workbench class makes --vscode-* vars resolve even if the
+				// host falls back to body.
 				dropdown.className = 'monaco-workbench';
-				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
-				(ownerDoc.body || ownerDoc.documentElement).appendChild(dropdown);
+				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10001;display:none;';
 				const positionDropdown = () => {
 					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
 					dropdown.style.left = `${rect.left}px`;
@@ -1325,17 +1338,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const win = ownerDoc.defaultView;
 				win?.addEventListener('scroll', repositionDropdown, true);
 				win?.addEventListener('resize', repositionDropdown);
-				// Detach the body-mounted dropdown + listeners once the
-				// search input is removed from the DOM (dialog closed).
-				const dropdownObserver = new MutationObserver(() => {
-					if (!(inputEl as HTMLInputElement).isConnected) {
-						dropdownObserver.disconnect();
-						win?.removeEventListener('scroll', repositionDropdown, true);
-						win?.removeEventListener('resize', repositionDropdown);
-						if (dropdown.parentElement) { dropdown.parentElement.removeChild(dropdown); }
-					}
+				// The dropdown DOM is reclaimed with the overlay; only the window
+				// listeners need explicit teardown on form close.
+				this.formListenerCleanups.push(() => {
+					win?.removeEventListener('scroll', repositionDropdown, true);
+					win?.removeEventListener('resize', repositionDropdown);
 				});
-				if (searchWrapper.parentNode) { dropdownObserver.observe(searchWrapper.parentNode, { childList: true, subtree: true }); }
 				const showDropdown = () => { positionDropdown(); dropdown.style.display = 'block'; };
 
 				const searchEndpoint = field.apiPath || field.searchApiPath || '';
@@ -1402,9 +1410,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 									if (parts.length > 0) { displayText = parts.join(' '); }
 								}
 								if (!displayText) {
-									// Fallback: try firstName + lastName (also via dot-path for nested DTOs)
-									const fn = String(getPath(result, 'firstName') ?? '');
-									const ln = String(getPath(result, 'lastName') ?? '');
+									// Fallback: try firstName + lastName at the top level, then
+									// nested under `identification` (provider DTOs nest the name
+									// there), before giving up and showing the bare value field.
+									const fn = String(getPath(result, 'firstName') ?? getPath(result, 'identification.firstName') ?? '');
+									const ln = String(getPath(result, 'lastName') ?? getPath(result, 'identification.lastName') ?? '');
 									displayText = [fn, ln].filter(Boolean).join(' ') || String(getPath(result, valueField) ?? '');
 								}
 								item.textContent = displayText;
@@ -1802,11 +1812,21 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 	private _closeForm(): void {
 		if (this.formOverlay) {
+			this._teardownFormListeners();
 			this.formOverlay.remove();
 			this.formOverlay = null;
 		}
 		this.editingItem = null;
 		this.formSeed = null;
+	}
+
+	/** Run and clear the open form's search-field listener teardowns. The dropdown
+	 *  DOM is reclaimed with the overlay; this only detaches window listeners. */
+	private _teardownFormListeners(): void {
+		for (const cleanup of this.formListenerCleanups) {
+			try { cleanup(); } catch { /* best-effort */ }
+		}
+		this.formListenerCleanups = [];
 	}
 
 	override layout(dimension: DOM.Dimension): void {

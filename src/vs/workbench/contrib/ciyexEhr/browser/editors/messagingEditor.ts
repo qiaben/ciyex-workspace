@@ -38,12 +38,32 @@ interface Message {
 	updatedAt?: string;
 }
 
+interface ChannelMember {
+	userId: string;
+	displayName: string;
+	role?: string;
+	joinedAt?: string;
+	avatar?: { initials?: string; color?: string };
+}
+
+/** A staff user or patient returned by the member-search, addable to a channel. */
+interface MemberSearchResult {
+	id: string;
+	name: string;
+	detail: string;
+	tag: 'Staff' | 'Patient';
+}
+
 interface ChannelInfo {
 	id: string;
 	name: string;
 	type: string;
 	topic?: string;
+	description?: string;
+	createdAt?: string;
+	createdBy?: string;
 	memberCount?: number;
+	members?: ChannelMember[];
 }
 
 /**
@@ -68,8 +88,17 @@ export class MessagingEditor extends EditorPane {
 
 	private root!: HTMLElement;
 	private headerEl!: HTMLElement;
+	// Horizontal row below the header holding the conversation column and the
+	// (initially hidden) channel-details side panel.
+	private bodyRowEl!: HTMLElement;
+	private mainColEl!: HTMLElement;
 	private messageListEl!: HTMLElement;
 	private composeEl!: HTMLElement;
+	// "Channel details" side panel (About / Members / Pinned / Files) — mirrors the
+	// EHR-UI right-hand info panel. Toggled from the header info button.
+	private detailsEl!: HTMLElement;
+	private detailsOpen = false;
+	private detailsTab: 'about' | 'members' | 'pinned' | 'files' = 'about';
 	// Compose input is a `contentEditable` div so the format buttons (B/I/U/lists)
 	// can drive `document.execCommand` for true WYSIWYG rich-text — matches the
 	// EHR-UI ComposeBar (textareas show only markdown markers, not actual formatting).
@@ -104,13 +133,24 @@ export class MessagingEditor extends EditorPane {
 		this.headerEl = DOM.append(this.root, DOM.$('.messaging-header'));
 		this.headerEl.style.cssText = 'padding:10px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;gap:8px;flex-shrink:0;';
 
+		// Body row: conversation column + (hidden) channel-details side panel.
+		this.bodyRowEl = DOM.append(this.root, DOM.$('.messaging-body'));
+		this.bodyRowEl.style.cssText = 'flex:1;display:flex;min-height:0;overflow:hidden;';
+
+		this.mainColEl = DOM.append(this.bodyRowEl, DOM.$('.messaging-main'));
+		this.mainColEl.style.cssText = 'flex:1;display:flex;flex-direction:column;min-width:0;';
+
 		// Message list
-		this.messageListEl = DOM.append(this.root, DOM.$('.messaging-list'));
+		this.messageListEl = DOM.append(this.mainColEl, DOM.$('.messaging-list'));
 		this.messageListEl.style.cssText = 'flex:1;overflow-y:auto;padding:8px 0;';
 
 		// Compose bar
-		this.composeEl = DOM.append(this.root, DOM.$('.messaging-compose'));
+		this.composeEl = DOM.append(this.mainColEl, DOM.$('.messaging-compose'));
 		this.composeEl.style.cssText = 'padding:8px 16px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;';
+
+		// Channel-details side panel (hidden until toggled from the header).
+		this.detailsEl = DOM.append(this.bodyRowEl, DOM.$('.messaging-details'));
+		this.detailsEl.style.cssText = 'display:none;width:300px;flex-shrink:0;border-left:1px solid var(--vscode-editorWidget-border);flex-direction:column;overflow:hidden;background:var(--vscode-editor-background);';
 
 		this._buildCompose();
 	}
@@ -128,6 +168,12 @@ export class MessagingEditor extends EditorPane {
 		// stale search term doesn't leak across DM conversations.
 		this.peopleSearch = '';
 
+		// Collapse the details panel when switching conversations so stale channel
+		// info isn't shown against a different channel.
+		this.detailsOpen = false;
+		this.detailsTab = 'about';
+		if (this.detailsEl) { this.detailsEl.style.display = 'none'; }
+
 		this.channelInfo = { id: input.channelId, name: input.channelName, type: input.channelType };
 		this._renderHeader(input);
 
@@ -142,6 +188,12 @@ export class MessagingEditor extends EditorPane {
 		}
 
 		await this._loadMessages(input.channelId, input.threadParentId);
+
+		// Fetch full channel metadata (created date, members, topic) for the details
+		// panel. Threads share the parent channel, so skip for thread inputs.
+		if (!input.threadParentId) {
+			void this._loadChannelDetails(input.channelId);
+		}
 
 		// Mark channel as read
 		this.apiService.fetch(`/api/channels/${input.channelId}/read`, { method: 'POST' }).catch(() => { });
@@ -187,12 +239,18 @@ export class MessagingEditor extends EditorPane {
 		searchBtn.title = 'Search messages';
 		searchBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:4px;';
 
-		// Pin button
-		const pinBtn = DOM.append(this.headerEl, DOM.$('button'));
-		// allow-any-unicode-next-line
-		pinBtn.textContent = '📌';
-		pinBtn.title = 'Pinned messages';
-		pinBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:4px;';
+		// Channel details button — opens the About / Members / Pinned / Files side
+		// panel. (Replaces the former inert "Pinned messages" pin button; pinned
+		// messages now live inside the details panel's Pinned tab.) Hidden for the
+		// "New Message" placeholder and threads, where there is no channel.
+		if (!input.threadParentId && input.channelId) {
+			const infoBtn = DOM.append(this.headerEl, DOM.$('button'));
+			// allow-any-unicode-next-line
+			infoBtn.textContent = 'ⓘ';
+			infoBtn.title = 'Channel details';
+			infoBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:16px;padding:4px;border-radius:4px;color:var(--vscode-foreground);${this.detailsOpen ? 'background:var(--vscode-toolbar-hoverBackground);' : ''}`;
+			infoBtn.addEventListener('click', () => this._toggleDetails());
+		}
 	}
 
 	private async _loadMessages(channelId: string, threadParentId?: string): Promise<void> {
@@ -1086,6 +1144,383 @@ export class MessagingEditor extends EditorPane {
 		if (bytes < 1024) { return `${bytes} B`; }
 		if (bytes < 1048576) { return `${(bytes / 1024).toFixed(1)} KB`; }
 		return `${(bytes / 1048576).toFixed(1)} MB`;
+	}
+
+	/** Fetch the channel's full metadata (members, created date, topic) from the
+	 *  channel list — there is no single-channel GET endpoint — and merge it into
+	 *  `channelInfo`. Re-renders the details panel if it is currently open. */
+	private async _loadChannelDetails(channelId: string): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/channels');
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const list: Array<Record<string, unknown>> = data?.data || data?.content || data || [];
+			const ch = Array.isArray(list) ? list.find(c => c.id === channelId) : undefined;
+			if (!ch) { return; }
+			// Ignore a response that arrived after the user switched channels.
+			if (this.channelInfo?.id !== channelId) { return; }
+			this.channelInfo = {
+				...this.channelInfo,
+				id: String(ch.id),
+				name: String(ch.name ?? this.channelInfo.name),
+				type: String(ch.type ?? this.channelInfo.type),
+				topic: (ch.topic as string) ?? this.channelInfo.topic,
+				description: ch.description as string | undefined,
+				createdAt: ch.createdAt as string | undefined,
+				createdBy: ch.createdBy as string | undefined,
+				memberCount: ch.memberCount as number | undefined,
+				members: ch.members as ChannelMember[] | undefined,
+			};
+			if (this.detailsOpen) { this._renderDetails(); }
+		} catch { /* API not ready */ }
+	}
+
+	/** Show/hide the channel-details side panel. */
+	private _toggleDetails(): void {
+		this.detailsOpen = !this.detailsOpen;
+		this.detailsEl.style.display = this.detailsOpen ? 'flex' : 'none';
+		if (this.detailsOpen) { this._renderDetails(); }
+		// Reflect the toggled state on the header info button.
+		const input = this._getInput();
+		if (input) { this._renderHeader(input); }
+	}
+
+	/** Render the channel-details side panel: header, tab strip and active tab. */
+	private _renderDetails(): void {
+		DOM.clearNode(this.detailsEl);
+		const ch = this.channelInfo;
+		if (!ch) { return; }
+
+		// Panel header: name + close button.
+		const head = DOM.append(this.detailsEl, DOM.$('div'));
+		head.style.cssText = 'display:flex;align-items:center;gap:6px;padding:12px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const title = DOM.append(head, DOM.$('span'));
+		// allow-any-unicode-next-line
+		title.textContent = `${ch.type === 'dm' ? '👤' : '#'} ${ch.name}`;
+		title.style.cssText = 'font-weight:700;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		const closeBtn = DOM.append(head, DOM.$('span')) as HTMLElement;
+		// allow-any-unicode-next-line
+		closeBtn.textContent = '✕';
+		closeBtn.title = 'Close';
+		closeBtn.style.cssText = 'cursor:pointer;font-size:14px;color:var(--vscode-descriptionForeground);padding:2px 6px;border-radius:4px;';
+		closeBtn.addEventListener('click', () => this._toggleDetails());
+
+		// Tab strip.
+		const tabs = DOM.append(this.detailsEl, DOM.$('div'));
+		tabs.style.cssText = 'display:flex;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const tabDefs: Array<{ id: 'about' | 'members' | 'pinned' | 'files'; label: string }> = [
+			{ id: 'about', label: 'About' },
+			{ id: 'members', label: 'Members' },
+			{ id: 'pinned', label: 'Pinned' },
+			{ id: 'files', label: 'Files' },
+		];
+		for (const t of tabDefs) {
+			const active = this.detailsTab === t.id;
+			const tab = DOM.append(tabs, DOM.$('button'));
+			tab.textContent = t.label;
+			tab.style.cssText = `flex:1;padding:8px 4px;background:none;border:none;border-bottom:2px solid ${active ? 'var(--vscode-focusBorder)' : 'transparent'};color:${active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)'};font-size:12px;font-weight:${active ? '600' : '400'};cursor:pointer;`;
+			tab.addEventListener('click', () => { this.detailsTab = t.id; this._renderDetails(); });
+		}
+
+		// Tab body.
+		const bodyEl = DOM.append(this.detailsEl, DOM.$('div'));
+		bodyEl.style.cssText = 'flex:1;overflow-y:auto;padding:16px 14px;';
+		switch (this.detailsTab) {
+			case 'about': this._renderAboutTab(bodyEl); break;
+			case 'members': this._renderMembersTab(bodyEl); break;
+			case 'pinned': void this._renderPinnedTab(bodyEl); break;
+			case 'files': this._renderFilesTab(bodyEl); break;
+		}
+	}
+
+	private _renderAboutTab(body: HTMLElement): void {
+		const ch = this.channelInfo;
+		if (!ch) { return; }
+
+		const section = (label: string): HTMLElement => {
+			const lbl = DOM.append(body, DOM.$('div'));
+			lbl.textContent = label;
+			lbl.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
+			return lbl;
+		};
+		const card = (icon: string, text: string, onClick?: () => void): void => {
+			const row = DOM.append(body, DOM.$('div'));
+			row.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;font-size:13px;margin-bottom:10px;${onClick ? 'cursor:pointer;' : ''}`;
+			const ic = DOM.append(row, DOM.$('span'));
+			ic.textContent = icon;
+			ic.style.cssText = 'font-size:14px;';
+			const tx = DOM.append(row, DOM.$('span'));
+			tx.textContent = text;
+			if (onClick) {
+				row.addEventListener('click', onClick);
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+				row.addEventListener('mouseleave', () => { row.style.background = ''; });
+			}
+		};
+
+		if (ch.topic) {
+			section('TOPIC');
+			const topic = DOM.append(body, DOM.$('div'));
+			topic.textContent = ch.topic;
+			topic.style.cssText = 'font-size:13px;margin-bottom:16px;';
+		}
+		if (ch.description) {
+			section('DESCRIPTION');
+			const desc = DOM.append(body, DOM.$('div'));
+			desc.textContent = ch.description;
+			desc.style.cssText = 'font-size:13px;margin-bottom:16px;';
+		}
+
+		section('CREATED');
+		const created = DOM.append(body, DOM.$('div'));
+		created.textContent = ch.createdAt ? new Date(ch.createdAt).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : 'Unknown';
+		created.style.cssText = 'font-size:13px;margin-bottom:16px;';
+
+		const count = ch.memberCount ?? ch.members?.length ?? 0;
+		// allow-any-unicode-next-line
+		card('👥', `${count} member${count === 1 ? '' : 's'}`, () => { this.detailsTab = 'members'; this._renderDetails(); });
+
+		const typeLabel = ch.type === 'private' ? 'Private Channel'
+			: ch.type === 'dm' ? 'Direct Message'
+				: ch.type === 'group_dm' ? 'Group Message'
+					: 'Public Channel';
+		// allow-any-unicode-next-line
+		card(ch.type === 'private' ? '🔒' : ch.type === 'dm' || ch.type === 'group_dm' ? '👤' : '#', typeLabel);
+	}
+
+	private _renderMembersTab(body: HTMLElement): void {
+		const ch = this.channelInfo;
+		const members = ch?.members ?? [];
+
+		// ---- Add-people search (staff + patients), mirroring the Create Channel
+		// modal's people-picker. DMs have a fixed pair of participants, so adding
+		// members only applies to channels. ----
+		if (ch && ch.type !== 'dm') {
+			const addBox = DOM.append(body, DOM.$('div'));
+			addBox.style.cssText = 'margin-bottom:14px;';
+			const input = DOM.append(addBox, DOM.$('input')) as HTMLInputElement;
+			input.type = 'text';
+			input.placeholder = 'Add people…';
+			input.style.cssText = 'width:100%;padding:8px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:6px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
+			input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder)'; });
+			input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+
+			const results = DOM.append(addBox, DOM.$('div'));
+			results.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;margin-top:4px;max-height:180px;overflow:auto;display:none;';
+
+			const existingIds = new Set(members.map(m => m.userId));
+			let timer: number | undefined;
+			let seq = 0;
+			input.addEventListener('input', () => {
+				const q = input.value.trim();
+				if (timer) { mainWindow.clearTimeout(timer); }
+				if (q.length < 2) { results.style.display = 'none'; return; }
+				timer = mainWindow.setTimeout(async () => {
+					const mySeq = ++seq;
+					const matches = (await this._searchPeople(q)).filter(c => !existingIds.has(c.id));
+					if (mySeq !== seq) { return; } // superseded by a newer search
+					DOM.clearNode(results);
+					if (matches.length === 0) { results.style.display = 'none'; return; }
+					results.style.display = 'block';
+					for (const c of matches) {
+						const opt = DOM.append(results, DOM.$('div'));
+						opt.style.cssText = 'padding:8px 10px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px;';
+						const label = DOM.append(opt, DOM.$('span'));
+						label.textContent = c.detail ? `${c.name} — ${c.detail}` : c.name;
+						label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+						const tag = DOM.append(opt, DOM.$('span'));
+						tag.textContent = c.tag;
+						tag.style.cssText = `flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;background:${c.tag === 'Patient' ? 'rgba(52,168,83,0.18)' : 'var(--vscode-badge-background)'};color:${c.tag === 'Patient' ? '#34a853' : 'var(--vscode-badge-foreground)'};`;
+						opt.addEventListener('mouseenter', () => { opt.style.background = 'var(--vscode-list-hoverBackground)'; });
+						opt.addEventListener('mouseleave', () => { opt.style.background = ''; });
+						opt.addEventListener('click', () => { void this._addMemberToChannel(c); });
+					}
+				}, 250);
+			});
+		}
+
+		if (members.length === 0) {
+			this._renderEmpty(body, 'No members to show.');
+			return;
+		}
+		for (const m of members) {
+			const row = DOM.append(body, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;';
+			const av = DOM.append(row, DOM.$('div'));
+			av.textContent = m.avatar?.initials || this._initials(m.displayName);
+			av.style.cssText = 'width:32px;height:32px;border-radius:50%;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;';
+			const info = DOM.append(row, DOM.$('div'));
+			info.style.cssText = 'min-width:0;flex:1;';
+			const nm = DOM.append(info, DOM.$('div'));
+			nm.textContent = m.displayName;
+			nm.style.cssText = 'font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			if (m.role) {
+				const role = DOM.append(info, DOM.$('div'));
+				role.textContent = m.role === 'owner' ? 'Owner' : m.role.charAt(0).toUpperCase() + m.role.slice(1);
+				role.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+			}
+			// Remove control — not offered for the channel owner or in DMs.
+			if (ch && ch.type !== 'dm' && m.role !== 'owner') {
+				const remove = DOM.append(row, DOM.$('span')) as HTMLElement;
+				// allow-any-unicode-next-line
+				remove.textContent = '✕';
+				remove.title = `Remove ${m.displayName}`;
+				remove.style.cssText = 'cursor:pointer;font-size:12px;color:var(--vscode-descriptionForeground);padding:2px 6px;border-radius:4px;flex-shrink:0;';
+				remove.addEventListener('mouseenter', () => { remove.style.background = 'var(--vscode-list-hoverBackground)'; remove.style.color = 'var(--vscode-errorForeground)'; });
+				remove.addEventListener('mouseleave', () => { remove.style.background = ''; remove.style.color = 'var(--vscode-descriptionForeground)'; });
+				remove.addEventListener('click', () => { void this._removeMemberFromChannel(m); });
+			}
+		}
+	}
+
+	/** Search staff users and patients for the add-people picker. Mirrors the
+	 *  Create Channel modal: staff via /api/admin/users, patients via /api/patients
+	 *  (keyed by fhirId so they match the create-flow member ids). */
+	private async _searchPeople(q: string): Promise<MemberSearchResult[]> {
+		const staff = async (): Promise<MemberSearchResult[]> => {
+			try {
+				const res = await this.apiService.fetch(`/api/admin/users?size=10&search=${encodeURIComponent(q)}`);
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const users = (data?.data || data?.content || data || []) as Array<{ id: string; firstName?: string; lastName?: string; email?: string }>;
+				return users.filter(u => u.id).map(u => ({
+					id: u.id,
+					name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id,
+					detail: u.email || '',
+					tag: 'Staff' as const,
+				}));
+			} catch { return []; }
+		};
+		const patients = async (): Promise<MemberSearchResult[]> => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<{ id?: string; fhirId?: string; firstName?: string; lastName?: string; dateOfBirth?: string }>;
+				return list.map(p => {
+					const id = p.fhirId || p.id || '';
+					return { id, name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || id, detail: p.dateOfBirth || '', tag: 'Patient' as const };
+				}).filter(c => c.id);
+			} catch { return []; }
+		};
+		const [s, p] = await Promise.all([staff(), patients()]);
+		return [...s, ...p];
+	}
+
+	/** Add a staff member or patient to the current channel, then refresh. */
+	private async _addMemberToChannel(person: MemberSearchResult): Promise<void> {
+		const channelId = this.channelInfo?.id;
+		if (!channelId) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/channels/${channelId}/members`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: person.id, displayName: person.name }),
+			});
+			if (!res.ok) { return; }
+			// Optimistically reflect the new member, then re-fetch authoritative data.
+			if (this.channelInfo) {
+				const members = this.channelInfo.members ?? [];
+				if (!members.some(m => m.userId === person.id)) {
+					this.channelInfo.members = [...members, { userId: person.id, displayName: person.name, role: 'member' }];
+					this.channelInfo.memberCount = (this.channelInfo.memberCount ?? members.length) + 1;
+				}
+			}
+			this._renderDetails();
+			await this._loadChannelDetails(channelId);
+		} catch { /* add failed */ }
+	}
+
+	/** Remove a member from the current channel, then refresh. */
+	private async _removeMemberFromChannel(member: ChannelMember): Promise<void> {
+		const channelId = this.channelInfo?.id;
+		if (!channelId) { return; }
+		try {
+			const res = await this.apiService.fetch(`/api/channels/${channelId}/members/${encodeURIComponent(member.userId)}`, { method: 'DELETE' });
+			if (!res.ok) { return; }
+			if (this.channelInfo) {
+				const members = (this.channelInfo.members ?? []).filter(m => m.userId !== member.userId);
+				this.channelInfo.members = members;
+				this.channelInfo.memberCount = members.length;
+			}
+			this._renderDetails();
+			await this._loadChannelDetails(channelId);
+		} catch { /* remove failed */ }
+	}
+
+	private async _renderPinnedTab(body: HTMLElement): Promise<void> {
+		const channelId = this.channelInfo?.id;
+		if (!channelId) { return; }
+		const loading = DOM.append(body, DOM.$('div'));
+		loading.textContent = 'Loading…';
+		loading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		let pinned: Message[] = [];
+		try {
+			const res = await this.apiService.fetch(`/api/channels/${channelId}/pinned`);
+			if (res.ok) {
+				const data = await res.json();
+				pinned = data?.data || data?.content || data || [];
+				if (!Array.isArray(pinned)) { pinned = []; }
+			}
+		} catch { /* ignore */ }
+		// Bail if the user navigated away from the Pinned tab while loading.
+		if (this.detailsTab !== 'pinned') { return; }
+		DOM.clearNode(body);
+		if (pinned.length === 0) {
+			// allow-any-unicode-next-line
+			this._renderEmpty(body, '📌 No pinned messages yet.');
+			return;
+		}
+		for (const msg of pinned) {
+			const row = DOM.append(body, DOM.$('div'));
+			row.style.cssText = 'padding:10px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
+			const author = DOM.append(row, DOM.$('div'));
+			author.textContent = msg.senderName || 'Unknown';
+			author.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:2px;';
+			const content = DOM.append(row, DOM.$('div'));
+			content.style.cssText = 'font-size:13px;color:var(--vscode-foreground);word-break:break-word;';
+			this._renderRichContent(content, msg.content);
+		}
+	}
+
+	private _renderFilesTab(body: HTMLElement): void {
+		// Files are not a dedicated endpoint — aggregate attachments from the loaded
+		// messages (most recent first).
+		const files: Array<{ fileName: string; fileSize: number; fileType: string }> = [];
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			for (const a of this.messages[i].attachments ?? []) { files.push(a); }
+		}
+		if (files.length === 0) {
+			// allow-any-unicode-next-line
+			this._renderEmpty(body, '📎 No files shared yet.');
+			return;
+		}
+		for (const f of files) {
+			const row = DOM.append(body, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;';
+			const ic = DOM.append(row, DOM.$('span'));
+			// allow-any-unicode-next-line
+			ic.textContent = f.fileType?.startsWith('image/') ? '🖼️' : f.fileType?.includes('pdf') ? '📄' : '📎';
+			ic.style.cssText = 'font-size:18px;flex-shrink:0;';
+			const info = DOM.append(row, DOM.$('div'));
+			info.style.cssText = 'min-width:0;flex:1;';
+			const nm = DOM.append(info, DOM.$('div'));
+			nm.textContent = f.fileName;
+			nm.style.cssText = 'font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			const sz = DOM.append(info, DOM.$('div'));
+			sz.textContent = `${(f.fileSize / 1024 / 1024).toFixed(2)} MB`;
+			sz.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		}
+	}
+
+	private _renderEmpty(body: HTMLElement, text: string): void {
+		const empty = DOM.append(body, DOM.$('div'));
+		empty.textContent = text;
+		empty.style.cssText = 'padding:24px 0;text-align:center;font-size:12px;color:var(--vscode-descriptionForeground);';
+	}
+
+	private _initials(name: string): string {
+		return name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || '?';
 	}
 
 	private _stopPolling(): void {

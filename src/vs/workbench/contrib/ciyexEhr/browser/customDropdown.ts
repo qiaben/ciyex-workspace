@@ -306,7 +306,15 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 			cleanup();
 		}
 	});
-	if (trigger.parentNode) { observer.observe(trigger.parentNode, { childList: true, subtree: true }); }
+	// Observe the whole document subtree, not just `trigger.parentNode`: when the
+	// host form drawer is closed the overlay is removed wholesale, so the trigger
+	// leaves the DOM via an ANCESTOR removal that never mutates its own parent's
+	// childList. The old parent-only observer therefore never fired and the
+	// body-mounted panel leaked (orphaned panels piling up behind every
+	// create/edit form). The callback only checks `isConnected`, so the broad
+	// scope stays cheap.
+	const observeRoot = doc.body || doc.documentElement;
+	if (observeRoot) { observer.observe(observeRoot, { childList: true, subtree: true }); }
 
 	// Mirror value writes from external callers (e.g. form-reset code that
 	// does `inputs.get(key).value = ''`) back into the visible trigger.
@@ -579,7 +587,15 @@ export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputE
 	const observer = new MutationObserver(() => {
 		if (!trigger.isConnected) { observer.disconnect(); cleanup(); }
 	});
-	if (trigger.parentNode) { observer.observe(trigger.parentNode, { childList: true, subtree: true }); }
+	// Observe the whole document subtree, not just `trigger.parentNode`: when the
+	// host form drawer is closed the overlay is removed wholesale, so the trigger
+	// leaves the DOM via an ANCESTOR removal that never mutates its own parent's
+	// childList. The old parent-only observer therefore never fired and the
+	// body-mounted panel leaked (orphaned panels piling up behind every
+	// create/edit form). The callback only checks `isConnected`, so the broad
+	// scope stays cheap.
+	const observeRoot = doc.body || doc.documentElement;
+	if (observeRoot) { observer.observe(observeRoot, { childList: true, subtree: true }); }
 
 	// Mirror external value writes (form reset) onto the trigger label.
 	const proto = Object.getPrototypeOf(hidden);

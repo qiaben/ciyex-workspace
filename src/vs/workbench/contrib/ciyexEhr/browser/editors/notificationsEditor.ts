@@ -391,10 +391,12 @@ export class NotificationsEditor extends EditorPane {
 			(item) => {
 				const d = document.createElement('div');
 				d.style.cssText = 'display:flex;gap:4px;';
+				// Draft / scheduled campaigns are editable; others open read-only.
+				const canEdit = item.status === 'draft' || item.status === 'scheduled';
 				const view = DOM.append(d, DOM.$('button'));
 				// allow-any-unicode-next-line
-				view.textContent = '👁';
-				view.title = 'View Campaign';
+				view.textContent = canEdit ? '✏️' : '👁';
+				view.title = canEdit ? 'Edit Campaign' : 'View Campaign';
 				view.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;';
 				view.addEventListener('click', e => { e.stopPropagation(); this.creatingCampaign = true; this.campaignForm = { ...item }; this._render(); });
 				if (item.status === 'draft' || item.status === 'scheduled') {
@@ -418,13 +420,20 @@ export class NotificationsEditor extends EditorPane {
 
 	private _renderCampaignForm(): void {
 		const form = this.campaignForm;
+		// Edit vs create is determined by whether an existing campaign id was seeded
+		// into the form (the list's edit/view button does `campaignForm = {...item}`).
+		// Only not-yet-started campaigns (draft / scheduled) are editable; once a
+		// campaign is sending/completed/cancelled it is shown read-only.
+		const isEdit = form.id !== undefined && form.id !== null && form.id !== '';
+		const status = String(form.status || 'draft');
+		const editable = !isEdit || status === 'draft' || status === 'scheduled';
 		const formCard = DOM.append(this.contentEl, DOM.$('div'));
 		formCard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:16px;margin-bottom:16px;';
 
 		const fTitleRow = DOM.append(formCard, DOM.$('div'));
 		fTitleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
 		const fTitle = DOM.append(fTitleRow, DOM.$('h3'));
-		fTitle.textContent = 'New Campaign';
+		fTitle.textContent = isEdit ? (editable ? 'Edit Campaign' : 'View Campaign') : 'New Campaign';
 		fTitle.style.cssText = 'margin:0;font-size:14px;font-weight:600;';
 		const closeBtn = DOM.append(fTitleRow, DOM.$('button'));
 		// allow-any-unicode-next-line
@@ -479,7 +488,17 @@ export class NotificationsEditor extends EditorPane {
 		const recipientsIn = DOM.append(recipientsGrp, DOM.$('textarea')) as HTMLTextAreaElement;
 		recipientsIn.placeholder = 'Enter recipient emails, one per line or comma-separated';
 		recipientsIn.style.cssText = inputStyle + 'min-height:60px;resize:vertical;font-family:inherit;';
-		const tc = form.targetCriteria as Record<string, unknown> | undefined;
+		// targetCriteria is persisted as a JSON string by the backend, so parse it
+		// when editing an existing campaign (a fresh form already holds an object or
+		// nothing). Without this the recipients wouldn't pre-fill on edit — and
+		// saving would then wipe them.
+		const rawTc = form.targetCriteria;
+		let tc: Record<string, unknown> | undefined;
+		if (typeof rawTc === 'string') {
+			try { tc = JSON.parse(rawTc) as Record<string, unknown>; } catch { tc = undefined; }
+		} else {
+			tc = rawTc as Record<string, unknown> | undefined;
+		}
 		recipientsIn.value = String(tc?.recipientEmails ?? '');
 		const rHelp = DOM.append(recipientsGrp, DOM.$('p'));
 		rHelp.textContent = 'Enter patient emails separated by commas or newlines';
@@ -502,8 +521,19 @@ export class NotificationsEditor extends EditorPane {
 		cancelBtn.textContent = 'Cancel';
 		cancelBtn.style.cssText = btnSecondary;
 		cancelBtn.addEventListener('click', () => { this.creatingCampaign = false; this._render(); });
+		// Read-only (sending/completed/cancelled) campaigns get no save button and
+		// disabled fields — there's nothing to persist.
+		if (!editable) {
+			for (const el of [nameIn, channelSel, templateSel, subjectIn, recipientsIn, bodyIn]) {
+				(el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled = true;
+			}
+			return;
+		}
+
 		const createBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
-		createBtn.textContent = 'Create Campaign';
+		const idleLabel = isEdit ? 'Save Changes' : 'Create Campaign';
+		const busyLabel = isEdit ? 'Saving...' : 'Creating...';
+		createBtn.textContent = idleLabel;
 		createBtn.style.cssText = btnPrimary;
 		createBtn.addEventListener('click', async () => {
 			if (!nameIn.value.trim()) {
@@ -511,7 +541,7 @@ export class NotificationsEditor extends EditorPane {
 				return;
 			}
 			createBtn.disabled = true;
-			createBtn.textContent = 'Creating...';
+			createBtn.textContent = busyLabel;
 			try {
 				const payload: Record<string, unknown> = {
 					name: nameIn.value,
@@ -523,23 +553,27 @@ export class NotificationsEditor extends EditorPane {
 				if (templateSel.value) { payload.templateId = Number(templateSel.value); }
 				// Backend expects targetCriteria as a JSON string
 				payload.targetCriteria = JSON.stringify({ recipientEmails: recipientsIn.value });
-				const res = await this.apiService.fetch('/api/notifications/campaigns', {
-					method: 'POST', headers: { 'Content-Type': 'application/json' },
+				// Edit → PUT the existing campaign; create → POST a new one. Posting an
+				// edit used to silently create a duplicate (the form was always the
+				// create form), which is the bug this fixes.
+				const url = isEdit ? `/api/notifications/campaigns/${form.id}` : '/api/notifications/campaigns';
+				const res = await this.apiService.fetch(url, {
+					method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
 				});
 				const json = await res.json().catch(() => ({}));
 				if (res.ok && json?.success !== false) {
-					this.notificationService.notify({ severity: Severity.Info, message: 'Campaign created.' });
+					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Campaign updated.' : 'Campaign created.' });
 					this.creatingCampaign = false;
 					this._loadTab();
 				} else {
-					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Create failed.' });
+					this.notificationService.notify({ severity: Severity.Error, message: json?.message || (isEdit ? 'Update failed.' : 'Create failed.') });
 				}
 			} catch (err) {
 				this.notificationService.notify({ severity: Severity.Error, message: `Network error: ${String(err)}` });
 			} finally {
 				createBtn.disabled = false;
-				createBtn.textContent = 'Create Campaign';
+				createBtn.textContent = idleLabel;
 			}
 		});
 	}

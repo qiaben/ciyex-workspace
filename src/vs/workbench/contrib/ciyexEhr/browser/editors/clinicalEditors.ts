@@ -1418,7 +1418,10 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 					{ label: 'Other', value: 'other' },
 				]
 			},
-			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'authorId', relatedDisplayFields: ['firstName', 'lastName'] },
+			// Provider DTOs nest the name under `identification` (unlike patients,
+			// which are flat), so the display fields use dot-paths — otherwise the
+			// dropdown falls back to showing the bare provider id.
+			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'authorId', relatedDisplayFields: ['identification.firstName', 'identification.lastName'] },
 			{ key: 'startDate', label: 'Start Date', type: 'date' },
 			{ key: 'endDate', label: 'End Date', type: 'date' },
 			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...', width: 'span 2' },
