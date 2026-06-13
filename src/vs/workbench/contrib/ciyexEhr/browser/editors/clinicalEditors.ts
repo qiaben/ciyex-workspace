@@ -2402,6 +2402,7 @@ interface IRecallOutreachLog {
 	attemptDate?: string;
 	method?: string;
 	outcome?: string;
+	notes?: string;
 	performedByName?: string;
 }
 
@@ -2483,6 +2484,12 @@ async function showRecallDetailPanel(opts: { recallId: string | number; api: ICi
 	backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) { close(); } });
 	overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); } });
 
+	// Inline "Log Outreach" form state. Kept across re-renders so toggling open and
+	// reloading data doesn't lose the form.
+	let outreachFormOpen = false;
+	const METHOD_OPTIONS = ['PHONE', 'EMAIL', 'SMS', 'PORTAL', 'MAIL', 'IN_PERSON'];
+	const OUTCOME_OPTIONS = ['REACHED', 'NO_ANSWER', 'LEFT_VOICEMAIL', 'LEFT_MESSAGE', 'BUSY', 'SCHEDULED', 'DECLINED'];
+
 	const mutateStatus = async (status: string, reason?: string) => {
 		try {
 			const body: Record<string, string> = reason ? { status, cancelledReason: reason } : { status };
@@ -2493,14 +2500,13 @@ async function showRecallDetailPanel(opts: { recallId: string | number; api: ICi
 		} catch (e) { await dlg.error(`Failed to update recall: ${e instanceof Error ? e.message : String(e)}`); }
 	};
 
-	const logOutreach = async (preferred: string) => {
-		const res = await dlg.input({ type: 'question', message: 'Log outreach', detail: 'Allowed: PHONE, EMAIL, SMS', inputs: [{ placeholder: 'e.g. PHONE', value: preferred }] });
-		if (!res.confirmed) { return; }
-		const method = (res.values?.[0] || '').trim().toUpperCase();
-		if (!['PHONE', 'EMAIL', 'SMS'].includes(method)) { await dlg.error('Enter one of: PHONE, EMAIL, SMS'); return; }
+	const saveOutreach = async (method: string, outcome: string, notes: string) => {
 		try {
-			const r = await api.fetch(`/api/recalls/${recallId}/outreach`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, outcome: 'contacted' }) });
+			const body: Record<string, string> = { method, outcome };
+			if (notes.trim()) { body.notes = notes.trim(); }
+			const r = await api.fetch(`/api/recalls/${recallId}/outreach`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 			if (!r.ok) { const err = await r.json().catch(() => null) as Record<string, unknown> | null; await dlg.error(String(err?.['message'] || `Failed to log outreach (${r.status})`)); return; }
+			outreachFormOpen = false;
 			reload();
 			await load();
 		} catch (e) { await dlg.error(`Failed to log outreach: ${e instanceof Error ? e.message : String(e)}`); }
@@ -2573,11 +2579,69 @@ async function showRecallDetailPanel(opts: { recallId: string | number; api: ICi
 		const histTitle = DOM.append(histHead, DOM.$('div'));
 		histTitle.textContent = 'Outreach History';
 		histTitle.style.cssText = 'font-size:13px;font-weight:600;';
-		const logBtn = DOM.append(histHead, DOM.$('button'));
-		// allow-any-unicode-next-line
-		logBtn.textContent = '📞 Log Outreach';
-		logBtn.style.cssText = 'padding:4px 10px;border-radius:4px;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background,#2563eb);font-size:11px;font-weight:600;cursor:pointer;';
-		logBtn.addEventListener('click', () => { void logOutreach(recall.preferredContact || ''); });
+		// Log Outreach toggles the inline form below (hidden once the recall is in a
+		// terminal state — nothing left to contact).
+		if (!terminal) {
+			const logBtn = DOM.append(histHead, DOM.$('button'));
+			// allow-any-unicode-next-line
+			logBtn.textContent = outreachFormOpen ? 'Close' : '📞 Log Outreach';
+			logBtn.style.cssText = 'padding:4px 10px;border-radius:4px;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background,#2563eb);font-size:11px;font-weight:600;cursor:pointer;';
+			logBtn.addEventListener('click', () => { outreachFormOpen = !outreachFormOpen; render(recall); });
+		}
+
+		// Inline Log Outreach form (Method + Outcome dropdowns + Notes), matching the
+		// web RecallBoard. Posts to /api/recalls/{id}/outreach.
+		if (!terminal && outreachFormOpen) {
+			const fcard = DOM.append(panel, DOM.$('div'));
+			fcard.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:12px;margin-bottom:12px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background,#252526));';
+
+			const selStyle = 'width:100%;padding:7px 9px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+			const lblStyle = 'display:block;font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const makeSelect = (options: string[], selected: string): HTMLSelectElement => {
+				const sel = DOM.$('select') as HTMLSelectElement;
+				sel.style.cssText = selStyle;
+				for (const opt of options) {
+					const o = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+					o.value = opt;
+					o.textContent = opt.replace(/_/g, ' ');
+					if (opt === selected) { o.selected = true; }
+				}
+				return sel;
+			};
+
+			const fieldRow = DOM.append(fcard, DOM.$('div'));
+			fieldRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;';
+			const methodWrap = DOM.append(fieldRow, DOM.$('div'));
+			DOM.append(methodWrap, DOM.$('label')).textContent = 'Method'; (methodWrap.firstChild as HTMLElement).style.cssText = lblStyle;
+			const methodSel = makeSelect(METHOD_OPTIONS, (recall.preferredContact || 'PHONE').toUpperCase());
+			methodWrap.appendChild(methodSel);
+			const outcomeWrap = DOM.append(fieldRow, DOM.$('div'));
+			DOM.append(outcomeWrap, DOM.$('label')).textContent = 'Outcome'; (outcomeWrap.firstChild as HTMLElement).style.cssText = lblStyle;
+			const outcomeSel = makeSelect(OUTCOME_OPTIONS, 'REACHED');
+			outcomeWrap.appendChild(outcomeSel);
+
+			const notesWrap = DOM.append(fcard, DOM.$('div'));
+			notesWrap.style.cssText = 'margin-bottom:10px;';
+			const notesLbl = DOM.append(notesWrap, DOM.$('label'));
+			notesLbl.textContent = 'Notes'; notesLbl.style.cssText = lblStyle;
+			const notesIn = DOM.append(notesWrap, DOM.$('textarea')) as HTMLTextAreaElement;
+			notesIn.placeholder = 'Notes...';
+			notesIn.style.cssText = selStyle + 'min-height:54px;resize:vertical;font-family:inherit;';
+
+			const formBtns = DOM.append(fcard, DOM.$('div'));
+			formBtns.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+			const cancelBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
+			cancelBtn.textContent = 'Cancel';
+			cancelBtn.style.cssText = 'padding:6px 14px;border-radius:4px;border:1px solid var(--vscode-editorWidget-border);background:transparent;color:var(--vscode-foreground);font-size:12px;cursor:pointer;';
+			cancelBtn.addEventListener('click', () => { outreachFormOpen = false; render(recall); });
+			const saveBtn = DOM.append(formBtns, DOM.$('button')) as HTMLButtonElement;
+			saveBtn.textContent = 'Save';
+			saveBtn.style.cssText = 'padding:6px 16px;border-radius:4px;border:none;background:var(--vscode-button-background,#2563eb);color:var(--vscode-button-foreground,#fff);font-size:12px;font-weight:600;cursor:pointer;';
+			saveBtn.addEventListener('click', () => {
+				saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
+				void saveOutreach(methodSel.value, outcomeSel.value, notesIn.value);
+			});
+		}
 
 		// History list (newest first)
 		const logs = (recall.outreachLogs || []).slice().sort((a, b) => (b.attemptNumber || 0) - (a.attemptNumber || 0));
@@ -2602,6 +2666,11 @@ async function showRecallDetailPanel(opts: { recallId: string | number; api: ICi
 				const method = DOM.append(card, DOM.$('div'));
 				method.textContent = logItem.method || '—';
 				method.style.cssText = 'font-size:13px;font-weight:500;margin-top:4px;';
+				if (logItem.notes) {
+					const note = DOM.append(card, DOM.$('div'));
+					note.textContent = logItem.notes;
+					note.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-top:2px;word-break:break-word;';
+				}
 			}
 		}
 	};
