@@ -1467,9 +1467,13 @@ export class CalendarEditor extends EditorPane {
 		// Notes
 		const notesEl = field('Reason / Notes', 'notes', 'textarea', '', false) as HTMLTextAreaElement;
 
-		// Buttons
+		// Buttons — pinned to the bottom of the scrollable form so Cancel /
+		// Schedule Appointment stay visible and reachable no matter how far the
+		// form is scrolled (issue #6: the buttons used to scroll out of view).
+		// `position:sticky;bottom:0` keeps them docked while the fields scroll
+		// underneath; the opaque background prevents content bleeding through.
 		const btnRow = DOM.append(form, DOM.$('.btn-row'));
-		btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
+		btnRow.style.cssText = 'position:sticky;bottom:0;display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding:14px 0 6px;border-top:1px solid var(--vscode-editorWidget-border);background:var(--vscode-editorWidget-background,#252526);z-index:3;';
 
 		const cancelBtn = DOM.append(btnRow, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = 'Cancel';

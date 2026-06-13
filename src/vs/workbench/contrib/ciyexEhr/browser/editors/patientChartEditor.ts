@@ -4127,11 +4127,46 @@ export class PatientChartEditor extends EditorPane {
 			for (const r of rows) {
 				renderRow(r.label, (rec) => { const v = get(rec, r.keys); return v === undefined ? '' : `${v}${r.unit ?? ''}`; });
 			}
-			// Signed row
-			renderRow('Signed', (rec) => {
-				const signed = get(rec, ['signed', 'signedAt', 'isSigned']);
-				return signed ? (typeof signed === 'string' && signed.length > 4 ? '✓ Signed' : '✓') : '—';
-			});
+			// Signed row — interactive Sign / Signed toggle button per recording
+			// column, mirroring the ciyex-ehr-ui VitalsFlowsheet: an unsigned
+			// recording shows a "Sign" button; clicking it PUTs `signed: "final"`
+			// and the cell flips to "Signed ✓" (click again to unsign).
+			const signedTr = DOM.append(tbody, DOM.$('tr'));
+			const signedTd0 = DOM.append(signedTr, DOM.$('td'));
+			signedTd0.textContent = 'Signed';
+			signedTd0.style.cssText = firstColCss;
+			const isSigned = (rec: Record<string, unknown>): boolean => {
+				const s = get(rec, ['signed', 'signedAt', 'isSigned']);
+				return s === true || s === 'true' || s === 'final' || (typeof s === 'string' && s.length > 4);
+			};
+			for (const rec of recs) {
+				const td = DOM.append(signedTr, DOM.$('td'));
+				td.style.cssText = cellCss;
+				const btn = DOM.append(td, DOM.$('button')) as HTMLButtonElement;
+				const paint = () => {
+					const signed = isSigned(rec);
+					btn.textContent = signed ? '✓ Signed' : 'Sign';
+					btn.title = signed ? 'Click to unsign' : 'Click to sign';
+					btn.style.cssText = `font-size:11px;padding:2px 12px;border-radius:4px;border:1px solid transparent;cursor:pointer;font-weight:500;${signed ? 'background:rgba(34,197,94,0.15);color:#22c55e;' : 'background:rgba(127,127,127,0.18);color:var(--vscode-descriptionForeground);'}`;
+				};
+				paint();
+				btn.addEventListener('click', async () => {
+					const id = (rec['id'] ?? rec['fhirId']) as string | undefined;
+					if (!id) { return; }
+					const currentlySigned = isSigned(rec);
+					btn.disabled = true;
+					btn.textContent = '…';
+					try {
+						const res = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}/${id}`, {
+							method: 'PUT',
+							body: JSON.stringify({ ...rec, signed: currentlySigned ? false : 'final' }),
+						});
+						if (res.ok) { rec['signed'] = currentlySigned ? false : 'final'; }
+					} catch { /* network/save error — leave the prior state */ }
+					btn.disabled = false;
+					paint();
+				});
+			}
 		};
 
 		sortBtn.addEventListener('click', () => {
@@ -5536,15 +5571,25 @@ export class PatientChartEditor extends EditorPane {
 					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded' || (f.type === 'search' && f.apiPath)) {
 					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
-				} else if (f.type === 'file') {
-					// File picker — reads the selected file as base64 data URL and
-					// stores it on the hidden input so the save payload picks it up.
-					// Lets users attach a document directly from disk on the
-					// Documents add/edit form.
+				} else if (f.type === 'file' || f.type === 'image' || /photo|avatar|picture/i.test(f.key) || /^image(url)?$/i.test(f.key)) {
+					// File / photo upload — reads the selected file as a base64 data
+					// URL and stores it on the hidden input so the save payload picks
+					// it up. Issue #7: the Demographics "Photo" field used to render as
+					// a plain "Photo URL" text box; photo/image fields now get an
+					// image-only file picker with a live thumbnail preview, matching
+					// the ciyex-ehr-ui upload control.
+					const isImage = f.type === 'image' || /photo|avatar|picture/i.test(f.key) || /^image(url)?$/i.test(f.key);
 					const wrap = DOM.append(cell, DOM.$('div'));
 					wrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+					let preview: HTMLImageElement | undefined;
+					if (isImage) {
+						preview = DOM.append(wrap, DOM.$('img')) as HTMLImageElement;
+						preview.style.cssText = 'width:40px;height:40px;border-radius:6px;object-fit:cover;border:1px solid var(--vscode-input-border,#3c3c3c);background:rgba(127,127,127,0.08);flex-shrink:0;';
+						if (val) { preview.src = String(val); } else { preview.style.display = 'none'; }
+					}
 					const fileInp = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 					fileInp.type = 'file';
+					if (isImage) { fileInp.accept = 'image/*'; }
 					fileInp.style.cssText = inputStyle + 'flex:1;height:auto;padding:4px 8px;cursor:pointer;';
 					const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 					hidden.type = 'hidden';
@@ -5552,21 +5597,30 @@ export class PatientChartEditor extends EditorPane {
 					this._formInputs.set(f.key, hidden);
 					const status = DOM.append(wrap, DOM.$('span'));
 					status.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-					if (hidden.value) { status.textContent = 'attached'; }
+					if (hidden.value && !isImage) { status.textContent = 'attached'; }
 					fileInp.addEventListener('change', () => {
 						const file = fileInp.files && fileInp.files[0];
-						if (!file) { hidden.value = ''; status.textContent = ''; return; }
+						if (!file) {
+							hidden.value = ''; status.textContent = '';
+							if (preview) { preview.style.display = 'none'; preview.removeAttribute('src'); }
+							return;
+						}
 						const reader = new FileReader();
 						reader.onload = () => {
 							hidden.value = String(reader.result || '');
 							status.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+							if (preview) { preview.src = hidden.value; preview.style.display = ''; }
 						};
 						reader.readAsDataURL(file);
 					});
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
-					inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
+					inp.value = String(val);
+					// Issue #8: every phone/fax field shows a number-format placeholder
+					// (e.g. "(555) 123-4567") instead of the generic "Enter <label>…",
+					// so the expected input is unambiguous and consistent app-wide.
+					inp.placeholder = f.placeholder || (f.type === 'phone' ? '(555) 123-4567' : `Enter ${f.label.toLowerCase()}...`);
 					inp.style.cssText = inputStyle;
 					if (f.type === 'phone') {
 						// Issue #7b: enforce a 10-digit US phone (matches ciyex-ehr-ui

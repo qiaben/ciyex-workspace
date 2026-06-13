@@ -6,7 +6,6 @@
 import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -988,20 +987,12 @@ export class LabsEditor extends ClinicalListEditorBase {
 		const closeBtn = mkBtn('Close', false);
 		closeBtn.addEventListener('click', () => overlay.remove());
 		const printBtn = mkBtn('Print', false);
-		printBtn.addEventListener('click', () => {
-			const w = mainWindow;
-			const lines = [
-				`Order: ${val('orderNumber')}`, `Order Name: ${val('orderName')}`,
-				`Test Code: ${testCodeLine}`, `Priority: ${val('priority')}`, `Status: ${val('status')}`,
-				`Date: ${val('orderDate')}`, `Lab: ${val('labName')}`,
-				`Specimen ID: ${val('specimenId')}`,
-				`Provider: ${String(item.physicianName ?? item.orderingProvider ?? '—')}`,
-				`Diagnosis: ${val('diagnosisCode')}`, `Procedure: ${val('procedureCode')}`,
-				`Notes: ${val('notes')}`,
-			];
-			const html = `<html><head><title>Lab Order ${val('orderNumber')}</title></head><body style="font-family:sans-serif;padding:24px;"><h2>Lab Order ${val('orderNumber')}</h2><pre style="font-size:13px;">${lines.join('\n')}</pre></body></html>`;
-			if (w) { const pw = w.open('', '_blank'); if (pw) { pw.document.write(html); pw.document.close(); pw.focus(); pw.print(); } }
-		});
+		// Issue #9: the old handler opened a blank window.open() popup (which renders
+		// black inside the Electron workbench) with a bare <pre> dump. Render a proper
+		// on-screen "LAB ORDER FORM" preview (matching ciyex-ehr-ui) and drive the OS
+		// print dialog from it via the proven hidden-print-style approach used by the
+		// Appointments print preview.
+		printBtn.addEventListener('click', () => this._printLabOrder(item));
 		const editBtn = mkBtn('Edit', true);
 		editBtn.addEventListener('click', () => { overlay.remove(); void this._openForm(item); });
 		const deleteBtn = mkBtn('Delete', false, true);
@@ -1015,6 +1006,117 @@ export class LabsEditor extends ClinicalListEditorBase {
 		});
 
 		overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { overlay.remove(); } });
+	}
+
+	/**
+	 * Issue #9: render a printable "LAB ORDER FORM" preview (mirroring the
+	 * ciyex-ehr-ui template) into a visible modal, then print it via a transient
+	 * `@media print` stylesheet — the same approach the Appointments print
+	 * preview uses. The previous `window.open()` popup rendered blank inside the
+	 * Electron workbench, so nothing reached the page.
+	 */
+	private _printLabOrder(item: Record<string, unknown>): void {
+		const val = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? 'N/A' : String(v); };
+		const doc = DOM.getActiveWindow().document;
+
+		const patientName = (() => {
+			const full = `${String(item.patientFirstName || '').trim()} ${String(item.patientLastName || '').trim()}`.trim();
+			return full || String(item.patientName || item.patientFullName || item.patient || (item.patientId ? `Patient #${item.patientId}` : 'N/A'));
+		})();
+		const orderDate = String(item.orderDate || '') || new Date().toISOString().slice(0, 10);
+		const visitTime = item.orderTime ? String(item.orderTime) : '';
+
+		const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-print-backdrop'));
+		backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9998;display:flex;align-items:center;justify-content:center;';
+		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-print-sheet'));
+		sheet.style.cssText = 'background:#fff;color:#000;width:min(820px,92vw);max-height:88vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;font-family:Arial,sans-serif;';
+
+		const toolbar = DOM.append(sheet, DOM.$('div.ciyex-print-toolbar'));
+		toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e5e5e5;background:#f7f7f7;flex-shrink:0;';
+		const tt = DOM.append(toolbar, DOM.$('span')); tt.textContent = `Lab Order — ${val('orderNumber')}`; tt.style.cssText = 'font-size:13px;font-weight:600;color:#222;flex:1;';
+		const doPrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		doPrintBtn.textContent = 'Print / Save as PDF';
+		doPrintBtn.style.cssText = 'padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+		const closePrintBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		closePrintBtn.textContent = 'Close';
+		closePrintBtn.style.cssText = 'padding:6px 14px;background:#e5e5e5;color:#222;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:12px;';
+
+		const preview = DOM.append(sheet, DOM.$('div.ciyex-print-preview'));
+		preview.style.cssText = 'overflow:auto;padding:28px 32px;flex:1;background:#fff;color:#000;font-size:12px;line-height:1.4;';
+
+		const formTitle = DOM.append(preview, DOM.$('div'));
+		formTitle.textContent = 'LAB ORDER FORM';
+		formTitle.style.cssText = 'text-align:center;font-size:16px;font-weight:bold;margin-bottom:20px;';
+
+		const cellBorder = 'border:1px solid #333;padding:10px;vertical-align:top;';
+		const ptable = DOM.append(preview, DOM.$('table'));
+		ptable.style.cssText = 'width:100%;border-collapse:collapse;border:1px solid #333;margin-bottom:20px;';
+		const addPatRow = (cells: Array<[string, string]>): void => {
+			const tr = DOM.append(ptable, DOM.$('tr'));
+			for (const [k, v] of cells) {
+				const td = DOM.append(tr, DOM.$('td'));
+				td.style.cssText = cellBorder + 'width:33.3%;';
+				const b = DOM.append(td, DOM.$('span')); b.textContent = `${k}: `; b.style.cssText = 'font-weight:bold;';
+				const s = DOM.append(td, DOM.$('span')); s.textContent = v;
+			}
+		};
+		addPatRow([['Patient', patientName], ['DOB', String(item.patientDob || item.patientBirthDate || 'N/A')], ['Sex', String(item.patientSex || item.patientGender || 'N/A')]]);
+		addPatRow([['Provider', String(item.orderingProvider ?? item.physicianName ?? 'N/A')], ['Visit', `${orderDate}${visitTime ? ` ${visitTime}` : ''}`], ['Order Number', val('orderNumber')]]);
+
+		const buildDetails = (heading: string, rows: Array<[string, string, string, string]>): HTMLTableElement => {
+			const hr = DOM.append(preview, DOM.$('hr')); hr.style.cssText = 'border:none;border-top:2px solid #333;margin:20px 0;';
+			const h = DOM.append(preview, DOM.$('div')); h.textContent = heading; h.style.cssText = 'font-size:15px;font-weight:bold;margin:0 0 12px;';
+			const t = DOM.append(preview, DOM.$('table')) as HTMLTableElement; t.style.cssText = 'width:100%;border-collapse:collapse;border:1px solid #333;';
+			for (const [k1, v1, k2, v2] of rows) {
+				const tr = DOM.append(t, DOM.$('tr'));
+				const c1h = DOM.append(tr, DOM.$('td')); c1h.textContent = k1; c1h.style.cssText = cellBorder + 'width:25%;font-weight:bold;background:#f5f5f5;';
+				const c1v = DOM.append(tr, DOM.$('td')); c1v.textContent = v1; c1v.style.cssText = cellBorder + 'width:25%;';
+				const c2h = DOM.append(tr, DOM.$('td')); c2h.textContent = k2; c2h.style.cssText = cellBorder + 'width:25%;font-weight:bold;background:#f5f5f5;';
+				const c2v = DOM.append(tr, DOM.$('td')); c2v.textContent = v2; c2v.style.cssText = cellBorder + 'width:25%;';
+			}
+			return t;
+		};
+		const orderTbl = buildDetails('Order Details', [
+			['Lab Name', val('labName'), 'Order Name', val('orderName')],
+			['Test Code', val('testCode'), 'Test Display', String(item.testDisplay || 'N/A')],
+			['Status', val('status'), 'Priority', val('priority')],
+			['Ordering Provider', String(item.orderingProvider ?? 'N/A'), 'Physician Name', String(item.physicianName ?? 'N/A')],
+			['Specimen ID', val('specimenId'), 'Result Status', String(item.result ?? 'Pending')],
+		]);
+		if (item.notes) {
+			const tr = DOM.append(orderTbl, DOM.$('tr'));
+			const nh = DOM.append(tr, DOM.$('td')) as HTMLTableCellElement;
+			nh.textContent = 'Notes'; nh.colSpan = 2; nh.style.cssText = cellBorder + 'font-weight:bold;background:#f5f5f5;';
+			const nv = DOM.append(tr, DOM.$('td')) as HTMLTableCellElement;
+			nv.textContent = String(item.notes); nv.colSpan = 2; nv.style.cssText = cellBorder;
+		}
+		buildDetails('Procedure Details', [
+			['Procedure Code', String(item.procedureCode || item.testCode || 'N/A'), 'Diagnosis Code', val('diagnosisCode')],
+		]);
+
+		const footer = DOM.append(preview, DOM.$('div'));
+		footer.textContent = `Generated on ${new Date().toLocaleString()}`;
+		footer.style.cssText = 'margin-top:36px;text-align:center;color:#666;font-size:11px;';
+
+		const dismiss = (): void => { try { doc.body.removeChild(backdrop); } catch { /* ignore */ } };
+		closePrintBtn.addEventListener('click', dismiss);
+		backdrop.addEventListener('click', e => { if (e.target === backdrop) { dismiss(); } });
+		doPrintBtn.addEventListener('click', () => {
+			const printStyle = doc.createElement('style');
+			printStyle.textContent = [
+				'@media print{',
+				'  body>*:not(.ciyex-print-backdrop){display:none !important;}',
+				'  .ciyex-print-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+				'  .ciyex-print-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;max-height:none !important;}',
+				'  .ciyex-print-toolbar{display:none !important;}',
+				'  .ciyex-print-preview{overflow:visible !important;padding:0 !important;}',
+				'  @page{size:portrait;margin:14mm;}',
+				'}',
+			].join('');
+			doc.head.appendChild(printStyle);
+			try { DOM.getActiveWindow().print(); }
+			finally { try { doc.head.removeChild(printStyle); } catch { /* ignore */ } }
+		});
 	}
 }
 

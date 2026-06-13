@@ -16,6 +16,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import { findWorkbenchRoot } from '../customDropdown.js';
 import * as DOM from '../../../../../base/browser/dom.js';
+import { IDisposable } from '../../../../../base/common/lifecycle.js';
 
 // allow-any-unicode-next-line
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -280,6 +281,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	 *  allowed to enter fullscreen). */
 	private _cssFullscreen = false;
 	private _savedRootCss = '';
+	/** Escape-key listener active only while CSS-fullscreen, so the board can
+	 *  always be exited even if the header close button is overlapped. */
+	private _fsKeyListener: IDisposable | undefined;
 	/** Where `this.root` lived before we lifted it to <body> for fullscreen, so
 	 *  we can put it back exactly where the editor pane expects it. */
 	private _fsRestoreParent: HTMLElement | null = null;
@@ -322,6 +326,18 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			this.root.style.width = '100vw';
 			this.root.style.height = '100vh';
 			this.root.style.zIndex = '2147483646';
+			// The OS / Electron window controls (minimize / maximize / close) sit
+			// at the very top-right above everything; without extra right padding
+			// they overlap the header's Close & Fullscreen buttons, which is why QA
+			// reported "no close button" on the full-screen board. Reserve space so
+			// the header actions clear the window controls.
+			this.headerEl.style.paddingRight = '148px';
+			// Escape always exits fullscreen — a guaranteed way out even if the
+			// header buttons are obscured.
+			this._fsKeyListener?.dispose();
+			this._fsKeyListener = DOM.addDisposableListener(doc, 'keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Escape') { e.preventDefault(); this._setCssFullscreen(false); }
+			}, true);
 			this._cssFullscreen = true;
 		} else {
 			// Restore the original inline styles + DOM position.
@@ -331,6 +347,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			}
 			this._fsRestoreParent = null;
 			this._fsRestoreNextSibling = null;
+			this.headerEl.style.paddingRight = '24px';
+			this._fsKeyListener?.dispose();
+			this._fsKeyListener = undefined;
 			this._cssFullscreen = false;
 		}
 	}

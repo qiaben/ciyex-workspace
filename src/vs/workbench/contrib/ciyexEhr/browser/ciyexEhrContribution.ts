@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { Event } from '../../../../base/common/event.js';
@@ -102,19 +102,34 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	 */
 	private _installTimePickerAutoClose(): void {
 		const attach = (targetWindow: Window) => {
-			return DOM.addDisposableListener(targetWindow.document, 'change', e => {
-				const target = e.target;
-				if (!DOM.isHTMLInputElement(target)) { return; }
-				const type = target.type;
-				if (type !== 'time' && type !== 'datetime-local') { return; }
-				// Only collapse once a complete value is present — `change` on a
-				// native time/datetime input only fires for a full value, but the
-				// guard keeps an empty clear from stealing focus. Defer the blur a
-				// microtask so any sibling change handlers (duration mirroring,
-				// end-time defaulting) run against the new value before focus leaves.
-				if (!target.value) { return; }
-				targetWindow.setTimeout(() => target.blur(), 0);
-			}, true);
+			const store = new DisposableStore();
+			const isNativePicker = (t: EventTarget | null): t is HTMLInputElement =>
+				DOM.isHTMLInputElement(t) && (t.type === 'time' || t.type === 'datetime-local');
+			// Blurring the input is what collapses Chromium's native spinner/popup.
+			const closePicker = (input: HTMLInputElement) => {
+				if (targetWindow.document.activeElement === input) { input.blur(); }
+			};
+			let pendingTimer: ReturnType<Window['setTimeout']> | undefined;
+			const scheduleClose = (input: HTMLInputElement, delay: number) => {
+				if (pendingTimer !== undefined) { targetWindow.clearTimeout(pendingTimer); }
+				pendingTimer = targetWindow.setTimeout(() => { pendingTimer = undefined; closePicker(input); }, delay);
+			};
+			// `change` fires once a complete value commits — close immediately
+			// (deferred a microtask so sibling handlers — duration mirroring,
+			// end-time defaulting — see the new value before focus leaves).
+			store.add(DOM.addDisposableListener(targetWindow.document, 'change', e => {
+				if (isNativePicker(e.target) && e.target.value) { scheduleClose(e.target, 0); }
+			}, true));
+			// `input` fires on every spinner tick. On native time / datetime-local
+			// pickers `change` frequently only fires when the popup is *manually*
+			// dismissed (QA: "the time option is not closed when we select the time
+			// … applicable for entire application"). Debounce a close so the popup
+			// collapses a short moment after the user stops adjusting — long enough
+			// to scroll hour→minute→AM/PM, short enough to feel automatic.
+			store.add(DOM.addDisposableListener(targetWindow.document, 'input', e => {
+				if (isNativePicker(e.target) && e.target.value) { scheduleClose(e.target, 800); }
+			}, true));
+			return store;
 		};
 		this._register(Event.runAndSubscribe(DOM.onDidRegisterWindow, ({ window, disposables }) => {
 			disposables.add(attach(window));
