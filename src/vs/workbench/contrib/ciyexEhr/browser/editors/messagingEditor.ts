@@ -791,11 +791,11 @@ export class MessagingEditor extends EditorPane {
 		// EHR-UI's three-option attachment popover).
 		const attachWrap = DOM.append(inputRow, DOM.$('div'));
 		attachWrap.style.cssText = 'position:relative;flex-shrink:0;';
-		const attachBtn = DOM.append(attachWrap, DOM.$('button'));
-		// allow-any-unicode-next-line
-		attachBtn.textContent = '📎';
+		// Use the themed VS Code paperclip codicon instead of a coloured emoji so the
+		// attach icon matches the rest of the workbench UI and follows the theme.
+		const attachBtn = DOM.append(attachWrap, DOM.$('button.codicon.codicon-attach'));
 		attachBtn.title = 'Attach';
-		attachBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;padding:4px;';
+		attachBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:16px;padding:4px;color:var(--vscode-foreground);display:flex;align-items:center;';
 		const attachMenu = DOM.append(attachWrap, DOM.$('div'));
 		attachMenu.style.cssText = 'position:absolute;bottom:100%;left:0;margin-bottom:6px;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.25);min-width:140px;display:none;z-index:1500;padding:4px 0;';
 		const mkAttachOpt = (icon: string, label: string, onClick: () => void) => {

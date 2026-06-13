@@ -377,12 +377,12 @@ export class FaxEditor extends ClinicalListEditorBase {
 		],
 		formFields: [
 			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
-			// Fax number must contain exactly 12 digits (QA: the field previously
-			// accepted any 7-20 char value, so > 12 digits slipped through and the
-			// negative test failed). The pattern allows an optional leading "+" and
-			// the usual spaces / parens / dashes / dots as separators, but counts
-			// exactly 12 digits — anything above or below is rejected on submit.
-			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: '12 digits, e.g. +1 555 123 4567', maxDigits: 12, validationPattern: '^\\+?(?:[\\s().-]*\\d){12}[\\s().-]*$', validationMessage: 'Fax number must be exactly 12 digits' },
+			// Fax number must be a 10-digit US number, with an optional leading "1"/"+1"
+			// country code (so 10 or 11 digits total). The pattern allows the usual
+			// spaces / parens / dashes / dots as separators. (Previously required
+			// exactly 12 digits, which rejected the standard 10/11-digit format — even
+			// its own "+1 555 123 4567" example, which is 11 digits.)
+			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: 'e.g. (555) 123-4567 or +1 555 123 4567', maxDigits: 11, validationPattern: '^\\+?1?[\\s().-]*(?:[\\s().-]*\\d){10}[\\s().-]*$', validationMessage: 'Fax number must be a 10-digit US number (optionally with a +1 country code)' },
 			{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
 			{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
 			{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
