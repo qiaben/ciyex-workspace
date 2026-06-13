@@ -588,3 +588,23 @@
 	mask-repeat: no-repeat;
 	mask-position: center;
 }
+
+/* ============================================================================
+ * Ciyex EHR — Dim the title bar while an add/edit form is open
+ * ----------------------------------------------------------------------------
+ * The add/edit drawers & modals (`.ciyex-edit-dialog-overlay`) deliberately
+ * start *below* the title bar so the top toolbar (Patient / Appointment /
+ * Donate) stays aligned, and their scrim only darkens the workbench beneath.
+ * That left the window min / maximize / close controls (and the rest of the
+ * title bar) looking bright while everything else dimmed.
+ *
+ * When any such overlay is present anywhere in the workbench, dim the whole
+ * title bar so it matches the scrim. `filter: brightness()` darkens every
+ * child uniformly — including the window controls — without intercepting
+ * pointer events, so the buttons stay fully clickable (no z-index/scrim
+ * stacking games needed). Applies globally to every Ciyex add/edit form.
+ * ============================================================================ */
+.monaco-workbench:has(.ciyex-edit-dialog-overlay) .part.titlebar {
+	filter: brightness(0.75);
+	transition: filter 0.15s ease-out;
+}

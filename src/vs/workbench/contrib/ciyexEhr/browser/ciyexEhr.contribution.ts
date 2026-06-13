@@ -14,6 +14,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } from '../../../common/contributions.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { CiyexEhrContribution } from './ciyexEhrContribution.js';
+import { CiyexWindowControlsDimmer } from './ciyexWindowControlsDimmer.js';
 
 // Friendly-scroll + pagination styles applied to every Ciyex editor pane
 import './media/ciyexCommon.css';
@@ -58,3 +59,8 @@ registerSingleton(ICiyexPaymentService, CiyexPaymentService, InstantiationType.E
 // Register the EHR workbench contribution (loads permissions, sets up menus)
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
 	.registerWorkbenchContribution(CiyexEhrContribution, LifecyclePhase.Restored);
+
+// Dim the native window controls (min/max/close) while a Ciyex add/edit form
+// overlay is open, to match the dimmed workbench + title bar.
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
+	.registerWorkbenchContribution(CiyexWindowControlsDimmer, LifecyclePhase.Restored);

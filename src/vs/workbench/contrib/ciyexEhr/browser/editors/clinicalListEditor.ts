@@ -1165,6 +1165,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		} else {
 			this.formOverlay.className = 'monaco-workbench';
 		}
+		// Tag the drawer with the shared overlay class so the global title-bar dim
+		// (CSS in ciyexCommon.css) and native window-control dimmer
+		// (CiyexWindowControlsDimmer) treat it like every other Ciyex add/edit form.
+		this.formOverlay.classList.add('ciyex-edit-dialog-overlay');
 		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;background:transparent;';
 
 		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));

@@ -1939,11 +1939,16 @@ export class EducationEditor extends ClinicalListEditorBase {
 		// Source column removed; an Actions column (Assign to Patient / Edit / Delete)
 		// is rendered automatically from `actions` + `editable` below (issue #13).
 		columns: [
-			{ key: 'title', label: 'Title', width: '1.5fr' },
-			{ key: 'category', label: 'Category', width: '120px' },
-			{ key: 'contentType', label: 'Type', width: '90px' },
-			{ key: 'isActive', label: 'Active', width: '60px' },
-			{ key: 'viewCount', label: 'Views', width: '60px' },
+			// All columns are flexible so the leftover pane width is shared across
+			// the whole row instead of being dumped into a single track. A plain
+			// `1.5fr` title (the only flexible column among fixed-px ones) absorbed
+			// ALL the slack and left a huge empty gap before Category; proportional
+			// `fr` weights keep the columns evenly spread with no awkward gap.
+			{ key: 'title', label: 'Title', width: 'minmax(0,2fr)' },
+			{ key: 'category', label: 'Category', width: 'minmax(0,1.3fr)' },
+			{ key: 'contentType', label: 'Type', width: 'minmax(0,0.9fr)' },
+			{ key: 'isActive', label: 'Active', width: 'minmax(0,0.6fr)' },
+			{ key: 'viewCount', label: 'Views', width: 'minmax(0,0.6fr)' },
 		],
 		additionalFilters: [
 			{
