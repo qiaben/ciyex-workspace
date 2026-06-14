@@ -841,7 +841,17 @@ export class ScheduleSidebarPane extends ViewPane {
 			const cell = DOM.append(grid, DOM.$('span'));
 			cell.textContent = String(d.getDate());
 			const baseColor = inMonth ? 'var(--vscode-editor-foreground)' : 'var(--vscode-disabledForeground,var(--vscode-descriptionForeground))';
-			cell.style.cssText = `text-align:center;font-size:12px;padding:3px 0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:1px auto;${isToday ? 'background:#0078d4;color:#fff;font-weight:700;' : isSelected && !isToday ? `background:var(--vscode-toolbar-hoverBackground);color:${baseColor};` : `color:${baseColor};`}${inMonth ? '' : 'opacity:0.55;'}`;
+			// The *selected* day owns the solid blue highlight so it's obvious
+			// which date the timeline is showing — even when it isn't today.
+			// Today, when it isn't the selected day, keeps a subtle tinted
+			// marker (faint background + blue text) so it stays identifiable
+			// without competing with the selection.
+			const highlight = isSelected
+				? 'background:#0078d4;color:#fff;font-weight:700;'
+				: isToday
+					? 'background:var(--vscode-toolbar-hoverBackground);color:#0078d4;font-weight:700;'
+					: `color:${baseColor};`;
+			cell.style.cssText = `text-align:center;font-size:12px;padding:3px 0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:1px auto;${highlight}${inMonth ? '' : 'opacity:0.55;'}`;
 			cell.addEventListener('click', () => {
 				// Select the clicked day, switch the timeline to that day, keep the
 				// grid anchored on the day's month, and reload appointments for the
@@ -852,8 +862,8 @@ export class ScheduleSidebarPane extends ViewPane {
 				this._publishCalendarState();
 				void this._loadAndRender();
 			});
-			cell.addEventListener('mouseenter', () => { if (!isToday) { cell.style.background = 'var(--vscode-toolbar-hoverBackground)'; } });
-			cell.addEventListener('mouseleave', () => { if (!isToday) { cell.style.background = isSelected && !isToday ? 'var(--vscode-toolbar-hoverBackground)' : ''; } });
+			cell.addEventListener('mouseenter', () => { if (!isSelected) { cell.style.background = 'var(--vscode-toolbar-hoverBackground)'; } });
+			cell.addEventListener('mouseleave', () => { if (!isSelected) { cell.style.background = isToday ? 'var(--vscode-toolbar-hoverBackground)' : ''; } });
 		}
 
 		// Chevron at bottom toggles the calendar closed (and back open).
@@ -974,22 +984,6 @@ export class ScheduleSidebarPane extends ViewPane {
 		subLabel.textContent = getAppointmentType(apt) || (apt.providerName || apt.practitionerName || '');
 		subLabel.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
-		// Telehealth: always-visible Video Call shortcut so the visit can be
-		// joined directly from the schedule row (also in the overflow menu).
-		const visitTypeStr = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
-		const isTelehealth = visitTypeStr.includes('telehealth') || visitTypeStr.includes('virtual') || visitTypeStr.includes('video');
-		// Show the video-call icon for every telehealth appointment (the
-		// telehealth-install gate was hiding it whenever the org hadn't formally
-		// installed the ciyex-telehealth app — the test team wants it always
-		// visible on telehealth rows).
-		if (isTelehealth) {
-			const videoBtn = createActionIconButton(sub, 'device-camera-video', 'Video Call', () => {
-				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
-			});
-			videoBtn.style.opacity = '1';
-			videoBtn.style.color = 'var(--vscode-charts-green, #22c55e)';
-		}
-
 		// Status badge
 		const statusBadge = DOM.append(content, DOM.$('span'));
 		statusBadge.textContent = (apt.status || 'Scheduled').replace(/-/g, ' ');
@@ -1004,6 +998,23 @@ export class ScheduleSidebarPane extends ViewPane {
 			const provLabel = DOM.append(avatarRow, DOM.$('span'));
 			provLabel.textContent = provName;
 			provLabel.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+		}
+
+		// Telehealth: always-visible Video Call shortcut, placed in the row's
+		// top-right action cluster immediately BEFORE the three-dot overflow
+		// menu (also available inside that menu). The telehealth-install gate is
+		// intentionally not applied — the icon shows on every telehealth row.
+		const visitTypeStr = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
+		const isTelehealth = visitTypeStr.includes('telehealth') || visitTypeStr.includes('virtual') || visitTypeStr.includes('video');
+		if (isTelehealth) {
+			const videoBtn = createActionIconButton(row, 'device-camera-video', 'Video Call', () => {
+				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
+			});
+			videoBtn.style.opacity = '1';
+			videoBtn.style.color = 'var(--vscode-charts-green, #22c55e)';
+			videoBtn.style.flexShrink = '0';
+			videoBtn.style.alignSelf = 'flex-start';
+			videoBtn.style.marginTop = '2px';
 		}
 
 		// Actions container — hidden until row hover
