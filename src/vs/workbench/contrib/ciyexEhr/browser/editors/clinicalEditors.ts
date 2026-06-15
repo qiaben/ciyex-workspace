@@ -4235,7 +4235,7 @@ interface CreditCardRecord {
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
-	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' = 'transactions';
+	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'transactions';
 	// Methods + Plans + Ledger are patient-scoped on the backend (no global list
 	// route), so those views require a selected patient (matches ciyex-ehr-ui).
 	private _payPatientId = '';
@@ -4248,6 +4248,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _cardsLoading = false;
 	private _cardFormOverlay: HTMLElement | null = null;
 	private _cardFormBackdrop: HTMLElement | null = null;
+	// allow-any-unicode-next-line
+	// ── Invoice state (ciyex-patient-pay service) ──────────────────────────
+	private _invoices: Array<Record<string, unknown>> = [];
+	private _invoicesLoading = false;
+	private _invoiceFormOverlay: HTMLElement | null = null;
+	private _invoiceFormBackdrop: HTMLElement | null = null;
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
@@ -5030,10 +5036,19 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
 	};
 
+	// Thin stub used when payView === 'invoices' — invoices live on the
+	// ciyex-patient-pay service (a different host), so rendering is custom and
+	// done by _loadAndRenderInvoices() rather than the generic list base.
+	private readonly _invoicesConfig: ClinicalEditorConfig = {
+		title: 'Invoices', apiPath: '/api/patient-pay/invoices',
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+	};
+
 	// @ts-ignore — override abstract readonly with getter
 	protected get config(): ClinicalEditorConfig {
 		switch (this.payView) {
 			case 'methods': return this._methodsConfig;
+			case 'invoices': return this._invoicesConfig;
 			case 'plans': return this._plansConfig;
 			case 'ledger': return this._ledgerConfig;
 			default: return this._transactionsConfig;
@@ -5043,6 +5058,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	protected override _resetAndReload(): void {
 		if (this.payView === 'methods') {
 			this._loadAndRenderCards();
+		} else if (this.payView === 'invoices') {
+			this._loadAndRenderInvoices();
 		} else {
 			super._resetAndReload();
 		}
@@ -5059,8 +5076,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
-		const payTabs: Array<{ view: 'transactions' | 'methods' | 'plans' | 'ledger'; label: string }> = [
+		const payTabs: Array<{ view: 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
 			{ view: 'transactions', label: 'Transactions' },
+			{ view: 'invoices', label: 'Invoices' },
 			{ view: 'methods', label: 'Payment Methods' },
 			{ view: 'plans', label: 'Payment Plans' },
 			{ view: 'ledger', label: 'Ledger' },
@@ -5166,6 +5184,242 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._payPatientBar.style.display =
 				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
 		}
+	}
+
+	// allow-any-unicode-next-line
+	// ── Invoices (ciyex-patient-pay) ───────────────────────────────────────
+	// Invoices are owned by the separate ciyex-patient-pay service, not the EHR
+	// API, so these helpers resolve that base + auth headers directly (the same
+	// way ciyexCommands' patient-pay flow does).
+
+	private _patientPayBase(): string {
+		let override = '';
+		try { override = localStorage.getItem('ciyex_patient_pay_api_url') || ''; } catch { /* ignore */ }
+		if (override) { return override.replace(/\/$/, ''); }
+		try {
+			const u = new URL(this.apiService.apiUrl);
+			u.hostname = u.hostname.replace(/(^|\.)api(-|\.)/, '$1patient-pay-api$2');
+			u.pathname = ''; u.search = ''; u.hash = '';
+			return u.toString().replace(/\/$/, '');
+		} catch { return 'https://patient-pay-api.apps-dev.us-east.in.hinisoft.com'; }
+	}
+
+	private _patientPayHeaders(): Record<string, string> {
+		const h: Record<string, string> = { 'Content-Type': 'application/json' };
+		try {
+			const t = localStorage.getItem('ciyex_token');
+			const o = localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant');
+			if (t) { h['Authorization'] = `Bearer ${t}`; }
+			if (o) { h['X-Org-Alias'] = o; }
+		} catch { /* ignore */ }
+		return h;
+	}
+
+	private async _loadAndRenderInvoices(): Promise<void> {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Invoices';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const addBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Create Invoice';
+		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		addBtn.addEventListener('click', () => this._openInvoiceForm(() => this._loadAndRenderInvoices()));
+
+		const listEl = DOM.append(this.contentEl, DOM.$('div'));
+		const render = () => {
+			DOM.clearNode(listEl);
+			if (this._invoicesLoading) {
+				const l = DOM.append(listEl, DOM.$('div'));
+				l.textContent = 'Loading…';
+				l.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+				return;
+			}
+			if (!this._invoices.length) {
+				const e = DOM.append(listEl, DOM.$('div'));
+				e.textContent = 'No invoices yet. Click "Create Invoice" to add one.';
+				e.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
+				return;
+			}
+			const table = DOM.append(listEl, DOM.$('table'));
+			table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
+			const hr = DOM.append(DOM.append(table, DOM.$('thead')), DOM.$('tr'));
+			for (const h of ['Invoice #', 'Patient', 'Total', 'Balance', 'Status', 'Issued', 'Due']) {
+				const th = DOM.append(hr, DOM.$('th'));
+				th.textContent = h;
+				th.style.cssText = 'text-align:left;padding:8px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);color:var(--vscode-descriptionForeground);font-weight:600;';
+			}
+			const tbody = DOM.append(table, DOM.$('tbody'));
+			const money = (v: unknown): string => { const n = Number(v); return Number.isFinite(n) ? `$${n.toFixed(2)}` : ''; };
+			const date = (v: unknown): string => { if (!v) { return ''; } try { return new Date(String(v)).toLocaleDateString(); } catch { return String(v); } };
+			for (const inv of this._invoices) {
+				const tr = DOM.append(tbody, DOM.$('tr'));
+				const cell = (txt: string) => {
+					const td = DOM.append(tr, DOM.$('td'));
+					td.textContent = txt;
+					td.style.cssText = 'padding:8px 10px;border-bottom:1px solid rgba(128,128,128,0.12);color:var(--vscode-foreground);';
+				};
+				cell(String(inv['invoiceNumber'] ?? ''));
+				cell(String(inv['patientName'] || (inv['patientId'] ? `Patient #${inv['patientId']}` : '')));
+				cell(money(inv['totalAmount']));
+				cell(money(inv['balanceDue']));
+				cell(String(inv['status'] ?? ''));
+				cell(date(inv['issueDate']));
+				cell(date(inv['dueDate']));
+			}
+		};
+
+		this._invoicesLoading = true;
+		render();
+		try {
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices?page=0&size=100`, { headers: this._patientPayHeaders() });
+			if (res.ok) {
+				const data = await res.json();
+				const w = data?.data ?? data;
+				this._invoices = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			} else {
+				this._invoices = [];
+			}
+		} catch { this._invoices = []; }
+		this._invoicesLoading = false;
+		render();
+	}
+
+	private _openInvoiceForm(onSaved: () => void): void {
+		this._invoiceFormOverlay?.remove();
+		this._invoiceFormBackdrop?.remove();
+
+		const doc = (this.root && this.root.ownerDocument) || DOM.getActiveWindow().document;
+		const mount = findWorkbenchRoot(this.root, doc);
+		const themeType = this.themeService.getColorTheme().type;
+		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
+
+		const backdrop = doc.createElement('div');
+		backdrop.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+		backdrop.style.cssText = 'position:fixed;inset:0;z-index:9999;background:transparent;';
+		mount.appendChild(backdrop);
+		this._invoiceFormBackdrop = backdrop;
+
+		const overlay = doc.createElement('div');
+		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+		overlay.style.cssText = `position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;color-scheme:${colorScheme};background:transparent;`;
+		mount.appendChild(overlay);
+		this._invoiceFormOverlay = overlay;
+
+		const panel = DOM.append(overlay, DOM.$('div'));
+		panel.style.cssText = 'width:480px;max-width:95vw;height:100%;background:var(--vscode-editorWidget-background,#252526);border-left:1px solid var(--vscode-editorWidget-border,#454545);box-shadow:-8px 0 24px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;color:var(--vscode-foreground);';
+
+		const close = () => { overlay.remove(); backdrop.remove(); this._invoiceFormOverlay = null; this._invoiceFormBackdrop = null; };
+		backdrop.addEventListener('click', close);
+
+		const hdr = DOM.append(panel, DOM.$('div'));
+		hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const titleEl = DOM.append(hdr, DOM.$('h3'));
+		titleEl.textContent = 'Create Invoice';
+		titleEl.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--vscode-foreground);';
+		const closeBtn = DOM.append(hdr, DOM.$('button')) as HTMLButtonElement;
+		closeBtn.textContent = '×';
+		closeBtn.style.cssText = 'background:none;border:none;font-size:22px;cursor:pointer;color:var(--vscode-descriptionForeground);line-height:1;padding:0 4px;';
+		closeBtn.addEventListener('click', close);
+
+		const body = DOM.append(panel, DOM.$('div'));
+		body.style.cssText = 'flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;scrollbar-width:none;';
+
+		// Patient search
+		let selPatientId = '';
+		let selPatientName = '';
+		const pg = DOM.append(body, DOM.$('div'));
+		pg.style.cssText = 'position:relative;';
+		const pl = DOM.append(pg, DOM.$('label'));
+		pl.textContent = 'Patient *';
+		pl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const pInput = DOM.append(pg, DOM.$('input')) as HTMLInputElement;
+		pInput.placeholder = 'Search patient by name...';
+		pInput.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+		const pDrop = DOM.append(pg, DOM.$('div'));
+		pDrop.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:50;display:none;margin-top:2px;';
+		let deb: ReturnType<typeof setTimeout> | undefined;
+		pInput.addEventListener('input', () => {
+			selPatientId = '';
+			const q = pInput.value.trim();
+			if (deb) { clearTimeout(deb); }
+			if (q.length < 2) { pDrop.style.display = 'none'; return; }
+			deb = setTimeout(async () => {
+				let list: Array<Record<string, unknown>> = [];
+				try {
+					const r = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+					if (r.ok) { const d = await r.json(); const w = d?.data ?? d; list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>; }
+				} catch { /* ignore */ }
+				DOM.clearNode(pDrop);
+				if (!list.length) { pDrop.style.display = 'none'; return; }
+				for (const p of list.slice(0, 10)) {
+					const name = `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim() || String(p.name || p.id);
+					const pid = String(p.id ?? p.patientId ?? '');
+					const row = DOM.append(pDrop, DOM.$('div'));
+					row.textContent = pid ? `${name} (MRN ${pid})` : name;
+					row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+					row.addEventListener('mouseleave', () => { row.style.background = ''; });
+					row.addEventListener('mousedown', (e) => { e.preventDefault(); selPatientId = pid; selPatientName = name; pInput.value = name; pDrop.style.display = 'none'; });
+				}
+				pDrop.style.display = 'block';
+			}, 250);
+		});
+		pInput.addEventListener('blur', () => { setTimeout(() => { pDrop.style.display = 'none'; }, 200); });
+
+		const mkField = (label: string, opts: Partial<HTMLInputElement>): HTMLInputElement => {
+			const g = DOM.append(body, DOM.$('div'));
+			const l = DOM.append(g, DOM.$('label'));
+			l.textContent = label;
+			l.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			const el = DOM.append(g, DOM.$('input')) as HTMLInputElement;
+			el.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;';
+			Object.assign(el, opts);
+			return el;
+		};
+		const amountEl = mkField('Amount ($) *', { type: 'number', placeholder: '0.00' });
+		const dueEl = mkField('Due Date', { type: 'date' });
+		const notesG = DOM.append(body, DOM.$('div'));
+		const notesL = DOM.append(notesG, DOM.$('label'));
+		notesL.textContent = 'Notes';
+		notesL.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+		const notesEl = DOM.append(notesG, DOM.$('textarea')) as HTMLTextAreaElement;
+		notesEl.placeholder = 'Office visit, lab, etc.';
+		notesEl.rows = 3;
+		notesEl.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;resize:vertical;';
+
+		const errEl = DOM.append(body, DOM.$('div'));
+		errEl.style.cssText = 'color:#f48771;font-size:12px;padding:6px 10px;background:rgba(244,135,113,0.1);border:1px solid rgba(244,135,113,0.3);border-radius:4px;display:none;';
+
+		const footer = DOM.append(panel, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border,#454545);flex-shrink:0;';
+		const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:4px;cursor:pointer;font-size:13px;';
+		cancelBtn.addEventListener('click', close);
+		const saveBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = 'Create Invoice';
+		saveBtn.style.cssText = 'padding:7px 18px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
+		saveBtn.addEventListener('click', async () => {
+			errEl.style.display = 'none';
+			const amt = Number(amountEl.value);
+			if (!selPatientId) { errEl.textContent = 'Select a patient.'; errEl.style.display = ''; return; }
+			if (!amt || amt <= 0) { errEl.textContent = 'Enter a valid amount.'; errEl.style.display = ''; return; }
+			// The patient-pay invoice requires both totalAmount and balanceDue.
+			const payload: Record<string, unknown> = { patientId: selPatientId, patientName: selPatientName, totalAmount: amt, balanceDue: amt, status: 'SENT' };
+			if (dueEl.value) { payload['dueDate'] = dueEl.value; }
+			if (notesEl.value.trim()) { payload['notes'] = notesEl.value.trim(); }
+			saveBtn.disabled = true; saveBtn.textContent = 'Creating…';
+			try {
+				const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
+				if (res.ok) { close(); onSaved(); }
+				else { const e = await res.json().catch(() => ({})) as Record<string, string>; errEl.textContent = e['message'] || `Error ${res.status}`; errEl.style.display = ''; }
+			} catch { errEl.textContent = 'Failed to reach the billing service.'; errEl.style.display = ''; }
+			saveBtn.disabled = false; saveBtn.textContent = 'Create Invoice';
+		});
 	}
 
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
