@@ -1373,6 +1373,9 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				relatedField: 'referringProviderId',
 				relatedDisplayFields: ['firstName', 'lastName'],
 				aliases: ['referringPrescriber', 'referringProviderName'],
+				// Only a provider chosen from the search results is accepted — typed
+				// text is wiped on blur and the field locks once a provider is picked.
+				strictSelect: true,
 				validationMessage: 'Please select a referring provider from the search results',
 			},
 			{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
@@ -2234,6 +2237,9 @@ export class EducationEditor extends ClinicalListEditorBase {
 				placeholder: 'Search patient (must be selected from results)...',
 				apiPath: '/api/patients', relatedField: 'patientId',
 				relatedDisplayFields: ['firstName', 'lastName'],
+				// Only a patient chosen from the results is accepted — free text is
+				// wiped on blur and the field locks once a patient is picked.
+				strictSelect: true,
 				validationMessage: 'Please select a patient from the search results',
 			},
 			// type:'number' ensures the ID is sent as a JSON number (not string) so
@@ -2246,6 +2252,9 @@ export class EducationEditor extends ClinicalListEditorBase {
 				relatedField: 'materialId',
 				searchDisplayField: 'title',
 				relatedFieldsMap: { category: 'category' },
+				// Only a material chosen from the results is accepted — free text is
+				// wiped on blur and the field locks once a material is picked.
+				strictSelect: true,
 				validationMessage: 'Please select an education material from the search results',
 			},
 			{ key: 'materialId', label: 'Material ID', type: 'number', required: true, hidden: true, placeholder: 'Auto-filled', validationMessage: 'Please select a material from the search results — not just typed text' },
@@ -2268,7 +2277,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 				], defaultValue: 'assigned'
 			},
 			{ key: 'dueDate', label: 'Due Date', type: 'date' },
-			{ key: 'assignedBy', label: 'Assigned By', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+			{ key: 'assignedBy', label: 'Assigned By', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'], strictSelect: true },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Instructions for the patient...' },
 		],
 		actions: [

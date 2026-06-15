@@ -82,6 +82,14 @@ export interface FormFieldDef {
 	searchParam?: string;
 	/** For 'search' type: regex pattern of acceptable input values (e.g. for negative-case validation). */
 	pattern?: string;
+	/**
+	 * For 'search' type: only accept a value chosen from the results dropdown.
+	 * Free-typed text that isn't selected is cleared on blur (so it can't be
+	 * saved), and once a result is picked the input becomes read-only until the
+	 * user clears it with the clear button. Use for fields that must reference a real
+	 * record (e.g. a provider), not arbitrary text.
+	 */
+	strictSelect?: boolean;
 	/** Validation pattern for non-search inputs (regex source). When set, save fails if value doesn't match. */
 	validationPattern?: string;
 	/** Error message for validationPattern mismatch. */
@@ -1238,6 +1246,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// picker so we can seed them when editing — `inputs` only carries the hidden
 		// ISO field so save logic stays type-uniform.
 		const dateRefs = new Map<string, { visible: HTMLInputElement; picker: HTMLInputElement }>();
+		// For strictSelect search fields: lock helpers keyed by field.key so the
+		// edit-prefill step can mark an already-saved value as a locked selection.
+		const strictLockRefs = new Map<string, (locked: boolean) => void>();
 
 		for (const field of fields) {
 			const group = DOM.append(body, DOM.$('div'));
@@ -1316,6 +1327,31 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.type = 'text';
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
+
+				// `strictSelect`: the value must come from the results dropdown. We
+				// lock the input after a pick (no free typing) and expose a clear
+				// button to re-search. Unselected free text is wiped on blur so it can
+				// never be saved as if it were a real record.
+				const strictInput = inputEl as HTMLInputElement;
+				let lockSelection: ((locked: boolean) => void) | undefined;
+				if (field.strictSelect) {
+					const clearBtn = DOM.append(searchWrapper, DOM.$('span'));
+					clearBtn.textContent = '\u2715';
+					clearBtn.title = 'Clear selection';
+					clearBtn.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:12px;color:var(--vscode-descriptionForeground);display:none;line-height:1;';
+					lockSelection = (locked: boolean): void => {
+						strictInput.readOnly = locked;
+						strictInput.dataset.selected = locked ? '1' : '';
+						clearBtn.style.display = locked ? 'block' : 'none';
+					};
+					clearBtn.addEventListener('click', () => {
+						lockSelection!(false);
+						strictInput.value = '';
+						if (field.relatedField) { const ri = inputs.get(field.relatedField); if (ri) { ri.value = ''; } }
+						strictInput.focus();
+					});
+					strictLockRefs.set(field.key, lockSelection);
+				}
 
 				const ownerDoc = group.ownerDocument || document;
 				// Mount the autocomplete dropdown on the form OVERLAY rather than
@@ -1458,6 +1494,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 											}
 										}
 									}
+									// strictSelect: lock the field after a valid pick so the user
+									// can't append free text to a selected provider.
+									lockSelection?.(true);
 								});
 							}
 							showDropdown();
@@ -1467,7 +1506,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 				// Hide dropdown on blur (with delay for click)
 				inputEl.addEventListener('blur', () => {
-					setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+					setTimeout(() => {
+						dropdown.style.display = 'none';
+						// strictSelect: if the user typed without picking a result, wipe the
+						// stray text (and its related id) so only a real selection survives.
+						if (field.strictSelect && strictInput.dataset.selected !== '1' && strictInput.value) {
+							strictInput.value = '';
+							if (field.relatedField) { const ri = inputs.get(field.relatedField); if (ri) { ri.value = ''; } }
+						}
+					}, 200);
 				});
 				inputEl.addEventListener('focus', () => {
 					if (dropdown.childElementCount > 0) { showDropdown(); }
@@ -1613,6 +1660,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				val = typeof dv === 'function' ? String((dv as () => string | number)()) : String(dv ?? '');
 			}
 			inputEl.value = val;
+			// strictSelect search field opened for edit with a saved value — treat
+			// it as an existing selection: lock it (read-only + clear button to change) so the
+			// blur-clear doesn't wipe the already-saved provider.
+			if (field.type === 'search' && field.strictSelect && val) {
+				strictLockRefs.get(field.key)?.(true);
+			}
 			// For date fields the registered input is the hidden ISO field — also seed
 			// the visible mm/dd/yyyy text and the picker so the user sees the current
 			// value when editing.
@@ -1671,6 +1724,19 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			};
 			// Validate required fields + patterns + ranges
 			for (const field of fields) {
+				// strictSelect: the value must come from the results dropdown. If text
+				// is present but no result was picked (dataset flag not set), reject —
+				// this also covers the case where Save is clicked before the blur-clear
+				// timer fires, so free-typed names can never be saved.
+				if (field.type === 'search' && field.strictSelect) {
+					const input = inputs.get(field.key);
+					if (input && input.value.trim() && input.dataset.selected !== '1') {
+						input.value = '';
+						if (field.relatedField) { const ri = inputs.get(field.relatedField); if (ri) { ri.value = ''; } }
+						failValidation(input, field.validationMessage || `Please select ${field.label} from the search results`, field);
+						return;
+					}
+				}
 				if (field.required) {
 					const input = inputs.get(field.key);
 					if (!input || !input.value.trim()) {
