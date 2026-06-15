@@ -321,13 +321,17 @@ export class ExtensionsViewletViewsContribution extends Disposable implements IW
 		const viewDescriptors: IViewDescriptor[] = [];
 
 		/*
-		 * View used for searching Marketplace
+		 * View used for searching Marketplace.
+		 * When a gallery is configured this searches the Marketplace. When no gallery is
+		 * available (e.g. this build ships only built-in extensions) it still renders so that
+		 * a free-text search falls back to matching local/built-in extensions by name,
+		 * display name or description.
 		 */
 		viewDescriptors.push({
 			id: 'workbench.views.extensions.marketplace',
-			name: localize2('marketPlace', "Marketplace"),
+			name: CONTEXT_HAS_GALLERY.getValue(this.contextKeyService) ? localize2('marketPlace', "Marketplace") : localize2('extensions', "Extensions"),
 			ctorDescriptor: new SyncDescriptor(SearchMarketplaceExtensionsView, [{}]),
-			when: ContextKeyExpr.and(ContextKeyExpr.has('searchMarketplaceExtensions'), CONTEXT_HAS_GALLERY)
+			when: ContextKeyExpr.has('searchMarketplaceExtensions')
 		});
 
 		/*
