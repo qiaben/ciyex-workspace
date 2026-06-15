@@ -2168,6 +2168,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 		};
 		finBtn('credit-card', 'Collect Payment', 'primary', () => this._openCreateModal('payment'));
+		// "Pay Now (Card)" is the ONLY UI path that exercises the real payment
+		// gateway: it hands the patient balance to the active gateway extension
+		// (ciyex-payment-stripe / ciyex-payment-paypal) via
+		// `ciyex.patientPay.collectPayment`, which mints an intent and opens the
+		// gateway's CSP-locked checkout webview. "Collect Payment" above only
+		// records a manual transaction. If no gateway extension is installed the
+		// command notifies the user to install one from the Extensions view.
+		const payInvoiceId = String(stmt?.invoiceId ?? stmt?.id ?? '');
+		finBtn('zap', 'Pay Now (Card)', 'default', () => {
+			void this.commandService.executeCommand('ciyex.patientPay.collectPayment', payInvoiceId ? { invoiceId: payInvoiceId } : undefined);
+		});
 		finBtn('add', 'Add Credit Card', 'default', () => this._openAddCardForm());
 		finBtn('history', 'Payment History', 'default', () => this._openManager('payment', 'list'));
 

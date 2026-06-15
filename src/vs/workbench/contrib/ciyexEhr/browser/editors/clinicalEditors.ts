@@ -4236,8 +4236,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
 	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' = 'transactions';
-	// Plans + Ledger are patient-scoped on the backend (no global list route),
-	// so those two views require a selected patient (matches ciyex-ehr-ui).
+	// Methods + Plans + Ledger are patient-scoped on the backend (no global list
+	// route), so those views require a selected patient (matches ciyex-ehr-ui).
 	private _payPatientId = '';
 	private _payPatientName = '';
 	private _payPatientBar: HTMLElement | null = null;
@@ -4493,6 +4493,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const addBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+ Add Card';
 		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		// Cards are patient-scoped — adding one requires a selected patient.
+		if (!this._payPatientId) {
+			addBtn.disabled = true;
+			addBtn.style.opacity = '0.5';
+			addBtn.style.cursor = 'not-allowed';
+			addBtn.title = 'Select a patient first';
+		}
 
 		// Card grid container
 		const grid = DOM.append(this.contentEl, DOM.$('div'));
@@ -4511,20 +4518,33 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			if (filtered.length === 0) {
 				const empty = DOM.append(grid, DOM.$('div'));
 				empty.style.cssText = 'grid-column:1/-1;text-align:center;padding:48px;color:var(--vscode-descriptionForeground);font-size:13px;';
-				empty.textContent = this._cardsLoading ? 'Loading…' : 'No payment methods found.';
+				empty.textContent = !this._payPatientId
+					? 'Select a patient to view their payment methods.'
+					: this._cardsLoading ? 'Loading…' : 'No payment methods found.';
 				return;
 			}
 			for (const card of filtered) { this._renderCardItem(grid, card, renderGrid); }
 		};
 
 		searchEl.addEventListener('input', () => { this._cardsSearch = searchEl.value; renderGrid(); });
-		addBtn.addEventListener('click', () => this._openCardForm(null, renderGrid));
+		// Reload from the backend after save so the newly added card shows up
+		// immediately (re-rendering the stale in-memory list alone would not).
+		addBtn.addEventListener('click', () => this._openCardForm(null, async () => { await this._reloadCards(); renderGrid(); }));
 
-		// Load data
+		// Load data — cards are patient-scoped on the backend. A bare
+		// GET /api/credit-cards is a 500 ("Request method 'GET' is not supported");
+		// the only list route is /api/credit-cards/patient/{id}, matching the
+		// Plans / Ledger views. Without a selected patient there is nothing to load.
+		if (!this._payPatientId) {
+			this._cards = [];
+			this._cardsLoading = false;
+			renderGrid();
+			return;
+		}
 		this._cardsLoading = true;
 		renderGrid();
 		try {
-			const res = await this.apiService.fetch('/api/credit-cards?page=0&size=200');
+			const res = await this.apiService.fetch(`/api/credit-cards/patient/${this._payPatientId}`);
 			if (res.ok) {
 				const data = await res.json();
 				this._cards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as CreditCardRecord[];
@@ -4674,8 +4694,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	private async _reloadCards(): Promise<void> {
+		if (!this._payPatientId) { this._cards = []; return; }
 		try {
-			const res = await this.apiService.fetch('/api/credit-cards?page=0&size=200');
+			const res = await this.apiService.fetch(`/api/credit-cards/patient/${this._payPatientId}`);
 			if (res.ok) {
 				const data = await res.json();
 				this._cards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as CreditCardRecord[];
@@ -4862,8 +4883,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			if (!holder) { errEl.textContent = 'Card holder name is required.'; errEl.style.display = ''; return; }
 			if (!card && !num) { errEl.textContent = 'Card number is required.'; errEl.style.display = ''; return; }
 			if (!card && !cvv) { errEl.textContent = 'CVV is required.'; errEl.style.display = ''; return; }
+			// The backend requires a patientId on every card (POST without it is a
+			// 400 "patientId is required"). On create we scope to the selected
+			// patient; on edit we keep the card's existing owner.
+			const patientId = card ? card.patientId : this._payPatientId;
+			if (!card && !patientId) { errEl.textContent = 'Select a patient before adding a card.'; errEl.style.display = ''; return; }
 
 			const payload: Record<string, unknown> = {
+				...(patientId ? { patientId } : {}),
 				cardHolderName: holder,
 				cardType: typeEl.value,
 				expiryMonth: Number(monthEl.value),
@@ -4962,8 +4989,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		emptyListMessage: 'Select a patient to view their ledger.',
 		clientSideFilter: ['patientName', 'entryType', 'description', 'id'],
 		editable: false,
+		// Column keys map to the ledger payload fields (createdAt / amount /
+		// runningBalance / patientId). Debit & credit are derived from the signed
+		// `amount` (a payment posts as a negative amount → credit; a charge posts
+		// positive → debit), so they have no own field and are computed in the
+		// renderer from `item`. Previously the columns used non-existent keys
+		// (entryDate/debit/credit/balance) so every value rendered blank.
 		columns: [
-			{ key: 'entryDate', label: 'Date', width: '110px' },
+			{ key: 'createdAt', label: 'Date', width: '110px' },
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'entryType', label: 'Type', width: '100px' },
 			{ key: 'description', label: 'Description' },
@@ -4971,12 +5004,16 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'credit', label: 'Credit', width: '90px' },
 			{ key: 'balance', label: 'Balance', width: '90px' },
 		],
-		cellRenderer: (key, value) => {
-			if ((key === 'debit' || key === 'credit' || key === 'balance') && typeof value === 'number') {
-				return `$${value.toFixed(2)}`;
-			}
-			if (key === 'entryDate' && typeof value === 'string') {
+		cellRenderer: (key, value, item) => {
+			const amount = Number(item?.['amount']);
+			if (key === 'debit') { return Number.isFinite(amount) && amount > 0 ? `$${amount.toFixed(2)}` : ''; }
+			if (key === 'credit') { return Number.isFinite(amount) && amount < 0 ? `$${Math.abs(amount).toFixed(2)}` : ''; }
+			if (key === 'balance') { const b = Number(item?.['runningBalance']); return Number.isFinite(b) ? `$${b.toFixed(2)}` : ''; }
+			if (key === 'createdAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
+			}
+			if (key === 'patientName' && !value) {
+				return item?.['patientId'] ? `Patient #${item['patientId']}` : '';
 			}
 			if (key === 'entryType' && typeof value === 'string') {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -5051,9 +5088,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/**
-	 * Patient picker shown only for the patient-scoped Plans / Ledger views.
+	 * Patient picker shown for the patient-scoped Methods / Plans / Ledger views.
 	 * Typing 2+ chars searches /api/patients; picking a result scopes the list
-	 * to that patient (the only way the backend serves plans/ledger data).
+	 * to that patient (the only way the backend serves cards/plans/ledger data).
 	 */
 	private _buildPayPatientBar(parent: HTMLElement): void {
 		const doc = parent.ownerDocument;
@@ -5124,7 +5161,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private _syncPayPatientBar(): void {
 		if (this._payPatientBar) {
-			this._payPatientBar.style.display = (this.payView === 'plans' || this.payView === 'ledger') ? 'flex' : 'none';
+			// Methods is patient-scoped too (cards list/create live under
+			// /api/credit-cards/patient/{id}), so it shares the patient picker.
+			this._payPatientBar.style.display =
+				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
 		}
 	}
 
@@ -5262,7 +5302,7 @@ export class ClaimsEditor extends ClinicalListEditorBase {
 						primaryButton: 'Send',
 					});
 					if (!res.confirmed) { return; }
-					const r = await api.fetch(`/api/all-claims/${item.claimId || item.id}/sends`, { method: 'POST' });
+					const r = await api.fetch(`/api/all-claims/${item.claimId || item.id}/send`, { method: 'POST' });
 					if (!r.ok) {
 						const err = await r.json().catch(() => null) as Record<string, unknown> | null;
 						await dlg.error(String(err?.['message'] || `Failed to send claim (HTTP ${r.status}). Check that the claim has a payer, provider, diagnosis and policy number.`));
