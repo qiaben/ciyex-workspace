@@ -38,6 +38,7 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	reports: registerIcon('ciyex-reports', Codicon.graph, localize('cReports', 'Reports')),
 	system: registerIcon('ciyex-system', Codicon.tools, localize('cSystem', 'System')),
 	developer: registerIcon('ciyex-developer', Codicon.code, localize('cDeveloper', 'Developer Portal')),
+	settings: registerIcon('ciyex-settings', Codicon.settingsGear, localize('cSettings', 'Settings')),
 };
 
 // allow-any-unicode-next-line
@@ -83,11 +84,13 @@ export const OPERATIONS_CONTAINER = reg('ciyex.operations', localize2('ciyex.ope
 export const REPORTS_CONTAINER = reg('ciyex.reports', localize2('ciyex.reports', "Reports"), icons.reports, 10);
 export const SYSTEM_CONTAINER = reg('ciyex.system', localize2('ciyex.system', "System"), icons.system, 11);
 
-// Settings — removed separate sidebar, items are in VS Code Settings (Cmd+,) and System menu
-// The SettingsListPane items (User Mgmt, Roles, Portal, etc.) are accessible via top menu System → Settings
-
 // Developer
 export const DEVELOPER_CONTAINER = reg('ciyex.developer', localize2('ciyex.developer', "Developer Portal"), icons.developer, 12);
+
+// Settings — the overall settings menu (User Mgmt, Roles, Portal, Practice
+// Settings, …) sits in the activity bar directly next to Developer Portal as its
+// own menu list, in addition to being reachable from the System menu / Cmd+,.
+export const SETTINGS_CONTAINER = reg('ciyex.settings', localize2('ciyex.settings', "Settings"), icons.settings, 13);
 
 // allow-any-unicode-next-line
 // ─── GenericListPane Configs ─────────────────────────────────────────
@@ -278,4 +281,8 @@ viewsRegistry.registerViews([
 // Developer Portal — menu pane with all developer sections
 import { DeveloperMenuPane } from './portal/developerMenuPane.js';
 viewsRegistry.registerViews([{ id: DeveloperMenuPane.ID, name: localize2('devPortal', "Developer Portal"), ctorDescriptor: new SyncDescriptor(DeveloperMenuPane) }], DEVELOPER_CONTAINER);
+
+// Settings — overall settings menu list, sits next to Developer Portal
+import { SettingsListPane } from './portal/settingsListPane.js';
+viewsRegistry.registerViews([{ id: SettingsListPane.ID, name: localize2('settingsMenu', "Settings"), ctorDescriptor: new SyncDescriptor(SettingsListPane) }], SETTINGS_CONTAINER);
 

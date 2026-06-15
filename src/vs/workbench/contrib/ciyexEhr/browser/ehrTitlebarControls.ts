@@ -6,6 +6,7 @@
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
@@ -66,8 +67,23 @@ export class EhrTitlebarControls extends Disposable {
 		private readonly apiService: ICiyexApiService,
 		private readonly commandService: ICommandService,
 		private readonly notificationService: INotificationService,
+		private readonly authService: ICiyexAuthService,
 	) {
 		super();
+
+		// Drop the cached provider/location lists whenever the signed-in identity
+		// changes (e.g. after creating a new practice via signup, which switches
+		// the tenant). Without this the appointment form keeps showing the
+		// previous practice's providers because _loadProvidersAndLocations only
+		// fetches when the cache is empty.
+		this._register(this.authService.onDidChangeAuthState(state => {
+			if (state === CiyexAuthState.Authenticated || state === CiyexAuthState.NotAuthenticated) {
+				this.providers = [];
+				this.locations = [];
+				this._providerOptions.length = 0;
+				this._locationOptions.length = 0;
+			}
+		}));
 
 		this.searchElement = DOM.$('.ehr-titlebar-search-wrapper');
 		this.element = DOM.$('.ehr-titlebar-controls');

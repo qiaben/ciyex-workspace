@@ -806,10 +806,15 @@ export class LabsEditor extends ClinicalListEditorBase {
 		wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;width:100%;';
 
 		const sidebar = DOM.append(wrapper, DOM.$('.labs-sidebar'));
-		sidebar.style.cssText = 'width:220px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;display:flex;flex-direction:column;';
+		// Collapsible-on-hover: while the user is reading/editing the table or a
+		// form the sidebar stays narrow (icons only) to maximise content width;
+		// moving the pointer onto it expands it to show the labels again.
+		const SIDEBAR_W_EXPANDED = '220px';
+		const SIDEBAR_W_COLLAPSED = '52px';
+		sidebar.style.cssText = `width:${SIDEBAR_W_COLLAPSED};flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow:hidden;display:flex;flex-direction:column;transition:width 0.15s ease;`;
 
 		const sbHeader = DOM.append(sidebar, DOM.$('div'));
-		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;';
+		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;white-space:nowrap;';
 		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
 		// allow-any-unicode-next-line
 		sbTitle.textContent = '🧪 Labs';
@@ -824,14 +829,17 @@ export class LabsEditor extends ClinicalListEditorBase {
 			// allow-any-unicode-next-line
 			{ key: 'results', label: 'Lab Results', icon: '📊' },
 		];
+		const navEls: HTMLElement[] = [];
+		const labelEls: HTMLElement[] = [];
 		for (const it of items) {
 			const navEl = DOM.append(sidebar, DOM.$('div'));
-			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;';
+			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;white-space:nowrap;overflow:hidden;';
 			const iconEl = DOM.append(navEl, DOM.$('span'));
 			iconEl.textContent = it.icon;
-			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;';
+			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;flex-shrink:0;';
 			const lbl = DOM.append(navEl, DOM.$('span'));
 			lbl.textContent = it.label;
+			navEl.title = it.label; // tooltip so the icon is identifiable while collapsed
 			navEl.addEventListener('mouseenter', () => { if (this._activeView !== it.key) { navEl.style.background = 'var(--vscode-list-hoverBackground)'; } });
 			navEl.addEventListener('mouseleave', () => { if (this._activeView !== it.key) { navEl.style.background = ''; } });
 			navEl.addEventListener('click', () => {
@@ -840,8 +848,26 @@ export class LabsEditor extends ClinicalListEditorBase {
 				this._updateSidebarActive();
 				this._resetAndReload();
 			});
+			navEls.push(navEl);
+			labelEls.push(lbl);
 			this._sidebarItems.set(it.key, navEl);
 		}
+
+		const setSidebarCollapsed = (collapsed: boolean): void => {
+			sidebar.style.width = collapsed ? SIDEBAR_W_COLLAPSED : SIDEBAR_W_EXPANDED;
+			sbHeader.style.display = collapsed ? 'none' : '';
+			for (const l of labelEls) { l.style.display = collapsed ? 'none' : ''; }
+			for (const n of navEls) {
+				n.style.justifyContent = collapsed ? 'center' : '';
+				n.style.padding = collapsed ? '8px 0' : '8px 12px';
+			}
+		};
+		// Expand when the pointer is over the sidebar; collapse once it leaves
+		// (i.e. when the user moves into the table/form area).
+		sidebar.addEventListener('mouseenter', () => setSidebarCollapsed(false));
+		sidebar.addEventListener('mouseleave', () => setSidebarCollapsed(true));
+		setSidebarCollapsed(true);
+
 		this._updateSidebarActive();
 
 		const main = DOM.append(wrapper, DOM.$('.labs-main'));
@@ -2046,7 +2072,9 @@ export class EducationEditor extends ClinicalListEditorBase {
 			// `1.5fr` title (the only flexible column among fixed-px ones) absorbed
 			// ALL the slack and left a huge empty gap before Category; proportional
 			// `fr` weights keep the columns evenly spread with no awkward gap.
-			{ key: 'title', label: 'Title', width: 'minmax(0,2fr)' },
+			// Title is kept close to Category by giving it a smaller flex weight so
+			// its track doesn't grow much wider than the title text itself.
+			{ key: 'title', label: 'Title', width: 'minmax(0,1.4fr)' },
 			{ key: 'category', label: 'Category', width: 'minmax(0,1.3fr)' },
 			{ key: 'contentType', label: 'Type', width: 'minmax(0,0.9fr)' },
 			{ key: 'isActive', label: 'Active', width: 'minmax(0,0.6fr)' },
@@ -2268,10 +2296,14 @@ export class EducationEditor extends ClinicalListEditorBase {
 		// allow-any-unicode-next-line
 		// ── Sidebar ──────────────────────────────────────────────────────────
 		const sidebar = DOM.append(wrapper, DOM.$('.education-sidebar'));
-		sidebar.style.cssText = 'width:230px;flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow-y:auto;display:flex;flex-direction:column;';
+		// Collapsible-on-hover: stays narrow (icons only) while the user works in
+		// the library table or a form, expands to show labels on pointer-over.
+		const SIDEBAR_W_EXPANDED = '230px';
+		const SIDEBAR_W_COLLAPSED = '52px';
+		sidebar.style.cssText = `width:${SIDEBAR_W_COLLAPSED};flex-shrink:0;border-right:1px solid var(--vscode-editorWidget-border);background:var(--vscode-sideBar-background);padding:16px 0;overflow:hidden;display:flex;flex-direction:column;transition:width 0.15s ease;`;
 
 		const sbHeader = DOM.append(sidebar, DOM.$('div'));
-		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;';
+		sbHeader.style.cssText = 'padding:0 16px 12px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);margin-bottom:8px;white-space:nowrap;';
 		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
 		// allow-any-unicode-next-line
 		sbTitle.textContent = '📚 Patient Education';
@@ -2286,14 +2318,17 @@ export class EducationEditor extends ClinicalListEditorBase {
 			// allow-any-unicode-next-line
 			{ key: 'assignments', label: 'Patient Assignments', icon: '📝' },
 		];
+		const navEls: HTMLElement[] = [];
+		const labelEls: HTMLElement[] = [];
 		for (const it of items) {
 			const navEl = DOM.append(sidebar, DOM.$('div'));
-			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;';
+			navEl.style.cssText = 'display:flex;align-items:center;gap:10px;margin:2px 8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--vscode-descriptionForeground);transition:background 0.1s;white-space:nowrap;overflow:hidden;';
 			const iconEl = DOM.append(navEl, DOM.$('span'));
 			iconEl.textContent = it.icon;
-			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;';
+			iconEl.style.cssText = 'font-size:15px;width:18px;text-align:center;flex-shrink:0;';
 			const lbl = DOM.append(navEl, DOM.$('span'));
 			lbl.textContent = it.label;
+			navEl.title = it.label; // tooltip so the icon is identifiable while collapsed
 			navEl.addEventListener('mouseenter', () => { if (this.eduView !== it.key) { navEl.style.background = 'var(--vscode-list-hoverBackground)'; } });
 			navEl.addEventListener('mouseleave', () => { if (this.eduView !== it.key) { navEl.style.background = ''; } });
 			navEl.addEventListener('click', () => {
@@ -2310,8 +2345,26 @@ export class EducationEditor extends ClinicalListEditorBase {
 					this._resetAndReload();
 				}
 			});
+			navEls.push(navEl);
+			labelEls.push(lbl);
 			this._eduSidebarItems.set(it.key, navEl);
 		}
+
+		const setSidebarCollapsed = (collapsed: boolean): void => {
+			sidebar.style.width = collapsed ? SIDEBAR_W_COLLAPSED : SIDEBAR_W_EXPANDED;
+			sbHeader.style.display = collapsed ? 'none' : '';
+			for (const l of labelEls) { l.style.display = collapsed ? 'none' : ''; }
+			for (const n of navEls) {
+				n.style.justifyContent = collapsed ? 'center' : '';
+				n.style.padding = collapsed ? '8px 0' : '8px 12px';
+			}
+		};
+		// Expand when the pointer is over the sidebar; collapse once it leaves
+		// (i.e. when the user moves into the table/form area).
+		sidebar.addEventListener('mouseenter', () => setSidebarCollapsed(false));
+		sidebar.addEventListener('mouseleave', () => setSidebarCollapsed(true));
+		setSidebarCollapsed(true);
+
 		this._updateEduSidebarActive();
 
 		// allow-any-unicode-next-line

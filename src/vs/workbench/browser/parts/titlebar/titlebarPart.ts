@@ -61,6 +61,7 @@ import { EhrTitlebarControls } from '../../../contrib/ciyexEhr/browser/ehrTitleb
 import '../../../contrib/ciyexEhr/browser/media/ehrTitlebar.css';
 // eslint-disable-next-line local/code-import-patterns
 import { ICiyexApiService } from '../../../contrib/ciyexEhr/browser/ciyexApiService.js';
+import { ICiyexAuthService } from '../../../contrib/ciyexAuth/browser/ciyexAuthService.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 
 export interface ITitleVariable {
@@ -492,7 +493,8 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		let ehrActionElement: HTMLElement | undefined;
 		try {
 			const apiService = this.instantiationService.invokeFunction(accessor => accessor.get(ICiyexApiService));
-			const ehrControls = this._register(new EhrTitlebarControls(apiService, this.commandService, this.notificationService));
+			const authService = this.instantiationService.invokeFunction(accessor => accessor.get(ICiyexAuthService));
+			const ehrControls = this._register(new EhrTitlebarControls(apiService, this.commandService, this.notificationService, authService));
 			ehrActionElement = ehrControls.element;
 			// Place the EHR search bar in the title centre, replacing the command centre
 			this._ehrSearchElement = ehrControls.searchElement;

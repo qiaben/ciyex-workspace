@@ -685,7 +685,19 @@ export class CalendarEditor extends EditorPane {
 		mkTvItem('\uD83D\uDDA5', 'Staff TV Board', () => { tvMenu.style.display = 'none'; this._openTvDisplay('staff'); });
 		// allow-any-unicode-next-line
 		mkTvItem('\uD83D\uDCFA', 'Waiting Room', () => { tvMenu.style.display = 'none'; this._openTvDisplay('waiting'); });
-		tvBtn.addEventListener('click', (e) => { e.stopPropagation(); tvMenu.style.display = tvMenu.style.display === 'none' ? 'block' : 'none'; });
+		// Treat the TV menu as one of the toolbar dropdowns so opening any other
+		// filter (All Providers / All Locations) auto-closes it, and vice versa —
+		// only one dropdown is ever open at a time instead of overlapping.
+		this._filterPanels.push(tvMenu);
+		this._filterWraps.push(tvWrap);
+		tvBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const isOpen = tvMenu.style.display !== 'none';
+			for (const otherPanel of this._filterPanels) {
+				if (otherPanel !== tvMenu) { otherPanel.style.display = 'none'; }
+			}
+			tvMenu.style.display = isOpen ? 'none' : 'block';
+		});
 		this._register(DOM.addDisposableListener(DOM.getActiveWindow().document, 'click', () => { tvMenu.style.display = 'none'; }));
 
 		const listBtn = DOM.append(actionsGroup, DOM.$('button')) as HTMLButtonElement;

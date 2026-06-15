@@ -813,16 +813,14 @@ export class MessagingEditor extends EditorPane {
 				onClick();
 			});
 		};
-		// Three distinct pickers so each option does something different (QA: all
-		// three previously opened an image/file picker that behaved identically on
-		// desktop). Image = pictures only; Document = office/PDF/text files;
-		// File = any file type.
+		// Three distinct pickers matching the EHR-UI attachment popover. Image =
+		// pictures only; File = any file type; Camera = capture a photo directly.
 		// allow-any-unicode-next-line
 		mkAttachOpt('🖼', 'Image', () => this._attachFile('image/*'));
 		// allow-any-unicode-next-line
-		mkAttachOpt('📄', 'Document', () => this._attachFile('.pdf,.doc,.docx,.txt,.rtf,.xls,.xlsx,.ppt,.pptx,.csv,application/pdf'));
-		// allow-any-unicode-next-line
 		mkAttachOpt('📎', 'File', () => this._attachFile('*/*'));
+		// allow-any-unicode-next-line
+		mkAttachOpt('📷', 'Camera', () => this._capturePhoto());
 		attachBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			attachMenu.style.display = attachMenu.style.display === 'none' ? 'block' : 'none';
@@ -990,38 +988,113 @@ export class MessagingEditor extends EditorPane {
 		fileInput.addEventListener('change', async () => {
 			const files = fileInput.files;
 			if (!files || files.length === 0) { return; }
-			const input = this._getInput();
-			if (!input) { return; }
-
-			// Send a message first, then attach files
-			const content = this._getInputText() || `Attached ${files.length} file(s)`;
-			this._clearInput();
-
-			try {
-				const msgRes = await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ content }),
-				});
-				if (!msgRes.ok) { return; }
-				const msgData = await msgRes.json();
-				const messageId = msgData?.data?.id || msgData?.id;
-
-				// Upload each file as attachment
-				for (let i = 0; i < files.length; i++) {
-					const formData = new FormData();
-					formData.append('file', files[i]);
-					await this.apiService.fetch(`/api/messages/${messageId}/attachments`, {
-						method: 'POST',
-						body: formData,
-						headers: {}, // Let browser set Content-Type with boundary
-					});
-				}
-
-				await this._loadMessages(input.channelId, input.threadParentId);
-			} catch { /* upload failed */ }
+			await this._uploadAttachments(Array.from(files));
 		});
 		fileInput.click();
+	}
+
+	// Shared upload pipeline: posts a placeholder message then uploads each file
+	// as an attachment to it. Used by both the file picker and the camera.
+	private async _uploadAttachments(files: File[]): Promise<void> {
+		if (files.length === 0) { return; }
+		const input = this._getInput();
+		if (!input) { return; }
+
+		// Send a message first, then attach files
+		const content = this._getInputText() || `Attached ${files.length} file(s)`;
+		this._clearInput();
+
+		try {
+			const msgRes = await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content }),
+			});
+			if (!msgRes.ok) { return; }
+			const msgData = await msgRes.json();
+			const messageId = msgData?.data?.id || msgData?.id;
+
+			// Upload each file as attachment
+			for (const file of files) {
+				const formData = new FormData();
+				formData.append('file', file);
+				await this.apiService.fetch(`/api/messages/${messageId}/attachments`, {
+					method: 'POST',
+					body: formData,
+					headers: {}, // Let browser set Content-Type with boundary
+				});
+			}
+
+			await this._loadMessages(input.channelId, input.threadParentId);
+		} catch { /* upload failed */ }
+	}
+
+	// Open the device camera in a modal, capture a still frame and attach it as a
+	// JPEG. Uses getUserMedia because the file-input `capture` attribute is
+	// ignored on desktop Electron (there it just reopens the OS file picker).
+	private _capturePhoto(): void {
+		const nav = mainWindow.navigator;
+		if (!nav?.mediaDevices?.getUserMedia) {
+			// No camera API available — fall back to the file picker.
+			this._attachFile('image/*', true);
+			return;
+		}
+
+		const overlay = document.createElement('div');
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;';
+
+		const video = document.createElement('video');
+		video.autoplay = true;
+		video.muted = true;
+		video.playsInline = true;
+		video.style.cssText = 'max-width:80vw;max-height:65vh;border-radius:8px;background:#000;';
+		overlay.appendChild(video);
+
+		const btnRow = document.createElement('div');
+		btnRow.style.cssText = 'display:flex;gap:12px;';
+		overlay.appendChild(btnRow);
+		const mkBtn = (label: string, bg: string): HTMLButtonElement => {
+			const b = document.createElement('button');
+			b.textContent = label;
+			b.style.cssText = `padding:8px 22px;border:none;border-radius:6px;font-size:13px;cursor:pointer;color:#fff;background:${bg};`;
+			btnRow.appendChild(b);
+			return b;
+		};
+		const captureBtn = mkBtn('Capture', 'var(--vscode-button-background,#0e639c)');
+		const cancelBtn = mkBtn('Cancel', 'rgba(255,255,255,0.2)');
+
+		let stream: MediaStream | undefined;
+		const cleanup = () => {
+			if (stream) { stream.getTracks().forEach(t => t.stop()); }
+			overlay.remove();
+		};
+
+		cancelBtn.addEventListener('click', cleanup);
+		captureBtn.addEventListener('click', () => {
+			const w = video.videoWidth;
+			const h = video.videoHeight;
+			if (!w || !h) { cleanup(); return; }
+			const canvas = document.createElement('canvas');
+			canvas.width = w;
+			canvas.height = h;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) { cleanup(); return; }
+			ctx.drawImage(video, 0, 0, w, h);
+			canvas.toBlob(async (blob) => {
+				cleanup();
+				if (!blob) { return; }
+				const file = new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
+				await this._uploadAttachments([file]);
+			}, 'image/jpeg', 0.92);
+		});
+
+		mainWindow.document.body.appendChild(overlay);
+
+		// `facingMode: 'user'` is a soft hint — picks the front camera on phones and
+		// simply uses the built-in/USB webcam on laptops & desktops (the only one).
+		nav.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+			.then(s => { stream = s; video.srcObject = s; })
+			.catch(() => { cleanup(); /* permission denied / no camera */ });
 	}
 
 	private _editLastMessage(): void {

@@ -203,6 +203,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			'ciyex.operations': 'ciyex.operations.menu',
 			'ciyex.system': 'ciyex.system.menu',
 			'ciyex.developer': 'ciyex.developer.menu',
+			'ciyex.settings': 'ciyex.settings.list',
 		};
 
 		let _blockUntil = 0; // Timestamp-based debounce (200ms to prevent loops)

@@ -1498,12 +1498,14 @@ export class ReportsEditor extends EditorPane {
 	}
 
 	/**
-	 * Patient records from `/api/patients` do not carry insurance. Join the coverage list
-	 * (`/api/coverages`) by patient id so the Insurance column and "All Insurance" filter populate.
+	 * Patient records from `/api/patients` do not carry insurance. Join the Coverage list
+	 * (`/api/fhir-resource/insurance-coverage`) by patient id so the Insurance column and
+	 * "All Insurance" filter populate. NOTE: `/api/coverages` returns insurance *companies*
+	 * (Organization resources, no patientId) — it is the wrong endpoint for this join.
 	 */
 	private async _enrichInsurance(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/coverages?page=0&size=2000');
+			const res = await this.apiService.fetch('/api/fhir-resource/insurance-coverage?page=0&size=2000');
 			if (!res.ok) { return; }
 			const json = await res.json();
 			const raw = json?.data?.content || json?.data || json?.content || json || [];
@@ -1517,8 +1519,10 @@ export class ReportsEditor extends EditorPane {
 				return typeof r === 'string' ? (r.includes('/') ? r.substring(r.lastIndexOf('/') + 1) : r) : '';
 			};
 			const payerName = (c: Record<string, unknown>): string => {
-				const direct = c.payerName || c.insurerName || c.insuranceName || c.planName || c.companyName
-					|| c.insuranceType || c.coverageName;
+				// `payerName` is the company name on a Coverage record; the others are
+				// fallbacks for older/alternate shapes.
+				const direct = c.payerName || c.provider || c.insurerName || c.insuranceName || c.companyName
+					|| c.planName || c.coverageName;
 				if (typeof direct === 'string' && direct) { return direct; }
 				if (Array.isArray(c.payor) && c.payor.length > 0) {
 					const p = c.payor[0] as Record<string, unknown>;
@@ -1526,12 +1530,20 @@ export class ReportsEditor extends EditorPane {
 				}
 				return '';
 			};
+			// Coverage records use `insuranceType` ("primary"/"secondary"); fall back
+			// to `coverageType`/`type` for alternate shapes.
+			const isPrimary = (c: Record<string, unknown>): boolean =>
+				String(c.insuranceType || c.coverageType || c.type || '').toUpperCase() === 'PRIMARY';
+			const primaryPatients = new Set<string>();
 			for (const cov of coverages) {
 				const c = cov as Record<string, unknown>;
 				const pid = String(c.patientId || c.beneficiaryId || refId(c.beneficiary) || refId(c.subscriber) || '');
 				if (!pid) { continue; }
 				const name = payerName(c);
-				if (name && !byPatient[pid]) { byPatient[pid] = name; }
+				if (!name) { continue; }
+				// Prefer the PRIMARY coverage; otherwise keep the first one we encounter.
+				if (isPrimary(c)) { byPatient[pid] = name; primaryPatients.add(pid); }
+				else if (!byPatient[pid] && !primaryPatients.has(pid)) { byPatient[pid] = name; }
 			}
 			if (Object.keys(byPatient).length === 0) { return; }
 			for (const item of this.items) {
@@ -1624,6 +1636,10 @@ export class ReportsEditor extends EditorPane {
 			out['diagnosis'] = pickFirst(
 				out['reasonCode'], out['reasonCodeDisplay'], out['diagnosisCode'], out['diagnosis.condition.display'],
 				out['reasonDisplay'], out['diagnosisDescription'], out['code'],
+				// The /api/encounters/report/encounterAll endpoint carries no coded
+				// diagnosis — fall back to the chief complaint (cc_text) and then the
+				// reason-for-visit so the Diagnosis column isn't blank.
+				out['cc_text'], out['chiefComplaint'], out['reasonForVisit'], out['reason'],
 			);
 		}
 		if (!out['type']) { out['type'] = pickFirst(out['typeDisplay'], out['encounterType'], out['visitCategory'], out['serviceType'], out['appointmentType']); }
