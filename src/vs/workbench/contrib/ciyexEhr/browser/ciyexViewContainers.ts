@@ -72,7 +72,7 @@ export const CALENDAR_CONTAINER = reg('ciyex.calendar', localize2('ciyex.schedul
 // per-appointment actions. Leaving the registration commented out keeps the
 // icon off the activity bar without touching downstream call sites.
 // export const APPOINTMENTS_CONTAINER = reg('ciyex.appointments', localize2('ciyex.appointments', "Appointments"), icons.appointments, 2);
-export const PATIENTS_CONTAINER = reg('ciyex.patients', localize2('ciyex.patients', "Patients"), icons.patients, 3);
+export const PATIENTS_CONTAINER = reg('ciyex.patients', localize2('ciyex.patients', "Patients"), icons.patients, 2);
 export const ENCOUNTERS_CONTAINER = reg('ciyex.encounters', localize2('ciyex.encounters', "Encounters"), icons.encounters, 4);
 export const TASKS_CONTAINER = reg('ciyex.tasks', localize2('ciyex.tasks', "Tasks"), icons.tasks, 5);
 export const MESSAGING_CONTAINER = reg('ciyex.messaging', localize2('ciyex.messaging', "Messaging"), icons.messaging, 6);
