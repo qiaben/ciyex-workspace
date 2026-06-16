@@ -17,6 +17,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { SettingsHubEditorInput } from './ciyexEditorInput.js';
+import { showThemedModal } from './clinicalListEditor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
@@ -964,7 +965,16 @@ export class SettingsHubEditor extends EditorPane {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Record has no ID \u2014 cannot delete.' });
 			return;
 		}
-		const { confirmed } = await this.dialogService.confirm({ message: 'Delete this record? This cannot be undone.' });
+		// Use the in-app themed modal rather than the native VS Code confirm dialog
+		// so the delete confirmation matches the rest of the EHR UI.
+		const confirmed = await showThemedModal({
+			title: 'Delete Record',
+			subtitle: 'Delete this record? This cannot be undone.',
+			fields: [],
+			confirmLabel: 'Delete',
+			confirmColor: 'var(--vscode-errorForeground, #e51400)',
+			anchor: this.root,
+		});
 		if (!confirmed) { return; }
 		try {
 			const res = await this.apiService.fetch(`/api/fhir-resource/${encodeURIComponent(this.activeKey)}/${encodeURIComponent(id)}`, { method: 'DELETE' });

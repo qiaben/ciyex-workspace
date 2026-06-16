@@ -103,6 +103,16 @@ export class MessagingEditor extends EditorPane {
 	// can drive `document.execCommand` for true WYSIWYG rich-text — matches the
 	// EHR-UI ComposeBar (textareas show only markdown markers, not actual formatting).
 	private inputEl!: HTMLDivElement;
+	// Pending-attachment preview tray: files chosen via the attach menu / camera
+	// are staged here (with thumbnails + a remove button) and only uploaded when
+	// the user actually hits Send, so they can review or drop them beforehand.
+	private attachmentsPreviewEl!: HTMLElement;
+	private pendingAttachments: File[] = [];
+	private pendingPreviewUrls: string[] = [];
+	// Object URLs created for rendered (received) attachments — their bytes are
+	// fetched through the authenticated proxy, so we hold the blob URLs here and
+	// revoke them on the next render / dispose to avoid leaks.
+	private attachmentObjectUrls: string[] = [];
 	private messages: Message[] = [];
 	private channelInfo: ChannelInfo | null = null;
 	private currentUserId = '';
@@ -286,6 +296,10 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	private _renderMessages(): void {
+		// Revoke object URLs from the previous render — the cards are about to be
+		// rebuilt and will fetch fresh blobs.
+		for (const url of this.attachmentObjectUrls) { URL.revokeObjectURL(url); }
+		this.attachmentObjectUrls = [];
 		DOM.clearNode(this.messageListEl);
 
 		if (this.messages.length === 0) {
@@ -594,12 +608,18 @@ export class MessagingEditor extends EditorPane {
 			edited.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 		}
 
-		// Content
-		const content = DOM.append(col, DOM.$('div'));
-		content.style.cssText = 'margin-top:2px;line-height:1.5;word-break:break-word;white-space:pre-wrap;';
-		this._renderRichContent(content, msg.content);
+		// Content — skip the element entirely for attachment-only messages so they
+		// don't leave an empty gap above the attachment cards.
+		if (msg.content) {
+			const content = DOM.append(col, DOM.$('div'));
+			content.style.cssText = 'margin-top:2px;line-height:1.5;word-break:break-word;white-space:pre-wrap;';
+			this._renderRichContent(content, msg.content);
+		}
 
-		// Attachments
+		// Attachments. `fileUrl` is a relative, auth-protected proxy path, so we
+		// can't point <img>/<a> straight at it (wrong origin + no Bearer header).
+		// Each attachment's bytes are fetched through the API service and turned
+		// into a short-lived object URL for inline display / download.
 		if (msg.attachments && msg.attachments.length > 0) {
 			const attRow = DOM.append(col, DOM.$('div'));
 			attRow.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;';
@@ -611,14 +631,21 @@ export class MessagingEditor extends EditorPane {
 				card.addEventListener('mouseleave', () => { card.style.borderColor = 'var(--vscode-editorWidget-border)'; });
 
 				if (isImage && att.fileUrl) {
-					// Inline thumbnail preview for images
+					// Inline thumbnail — load the bytes through the authenticated
+					// proxy then swap in the object URL once it resolves.
 					const img = DOM.append(card, DOM.$('img')) as HTMLImageElement;
-					img.src = att.fileUrl;
 					img.alt = att.fileName;
-					img.style.cssText = 'width:100%;max-height:160px;object-fit:cover;display:block;';
+					img.style.cssText = 'width:100%;max-height:160px;object-fit:cover;display:block;background:var(--vscode-editorWidget-background);min-height:60px;';
 					img.addEventListener('error', () => { img.style.display = 'none'; });
-					// Click → open full-size in a lightbox overlay
-					card.addEventListener('click', () => this._showImagePreview(att.fileUrl, att.fileName));
+					this._loadAttachmentObjectUrl(att.fileUrl).then(objUrl => {
+						if (objUrl) {
+							img.src = objUrl;
+							// Click → open full-size in a lightbox overlay.
+							card.addEventListener('click', () => this._showImagePreview(objUrl, att.fileName));
+						} else {
+							img.style.display = 'none';
+						}
+					});
 				}
 
 				const meta = DOM.append(card, DOM.$('div'));
@@ -635,12 +662,15 @@ export class MessagingEditor extends EditorPane {
 				fsize.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
 
 				if (!isImage && att.fileUrl) {
-					card.addEventListener('click', () => {
-						// Open non-image files in a new tab / external
+					card.addEventListener('click', async () => {
+						// Download through the authenticated proxy, then save via a
+						// transient object URL (the proxy path needs a Bearer header
+						// a plain anchor cannot send).
+						const objUrl = await this._loadAttachmentObjectUrl(att.fileUrl);
+						if (!objUrl) { return; }
 						const a = document.createElement('a');
-						a.href = att.fileUrl;
-						a.target = '_blank';
-						a.rel = 'noopener noreferrer';
+						a.href = objUrl;
+						a.download = att.fileName;
 						a.click();
 					});
 				}
@@ -781,6 +811,12 @@ export class MessagingEditor extends EditorPane {
 		// Spacer pushes attach to the right (kept inline with toolbar for compactness)
 		const spacer = DOM.append(toolbar, DOM.$('span'));
 		spacer.style.flex = '1';
+
+		// Pending-attachment preview tray — sits between the toolbar and the input
+		// row. Hidden until at least one file is staged; shows image thumbnails /
+		// file chips each with a remove button.
+		this.attachmentsPreviewEl = DOM.append(this.composeEl, DOM.$('.messaging-attachments-preview'));
+		this.attachmentsPreviewEl.style.cssText = 'display:none;flex-wrap:wrap;gap:8px;padding:4px 0;';
 
 		// Input row: attach + textarea + send
 		const inputRow = DOM.append(this.composeEl, DOM.$('.messaging-input-row'));
@@ -929,11 +965,20 @@ export class MessagingEditor extends EditorPane {
 
 	private async _sendMessage(): Promise<void> {
 		const input = this._getInput();
+		if (!input) { return; }
 		const text = this._getInputText();
-		if (!input || !text) { return; }
+		const attachments = this.pendingAttachments;
+		const hasAttachments = attachments.length > 0;
+		// Allow sending when there is text OR at least one staged attachment.
+		if (!text && !hasAttachments) { return; }
 
+		// For attachment-only messages send an empty body — the rendered file
+		// cards/thumbnails are the message, so we no longer post a "Attached N
+		// file(s)" placeholder that hid the actual images/documents.
 		const content = text;
+		this.pendingAttachments = [];
 		this._clearInput();
+		this._renderAttachmentPreviews();
 
 		try {
 			const body: Record<string, string> = { content };
@@ -941,11 +986,36 @@ export class MessagingEditor extends EditorPane {
 				body.parentId = input.threadParentId;
 			}
 
-			await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
+			const msgRes = await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body),
 			});
+
+			// Upload each staged attachment against the freshly-created message.
+			if (hasAttachments && msgRes.ok) {
+				const msgData = await msgRes.json();
+				const messageId = msgData?.data?.id || msgData?.id;
+				if (messageId) {
+					// Raw fetch: ICiyexApiService.fetch forces application/json which
+					// breaks multipart (the browser can't add the boundary), so post
+					// the FormData directly with the auth headers.
+					const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_token') : '') || '';
+					const tenant = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') : '') || '';
+					for (const file of attachments) {
+						const formData = new FormData();
+						formData.append('file', file);
+						await fetch(`${this.apiService.apiUrl}/api/messages/${messageId}/attachments`, {
+							method: 'POST',
+							headers: {
+								'Authorization': `Bearer ${token}`,
+								...(tenant ? { 'X-Tenant-Name': tenant } : {}),
+							},
+							body: formData,
+						});
+					}
+				}
+			}
 
 			// Refresh immediately
 			await this._loadMessages(input.channelId, input.threadParentId);
@@ -985,48 +1055,80 @@ export class MessagingEditor extends EditorPane {
 		fileInput.accept = accept;
 		if (capture) { fileInput.setAttribute('capture', 'environment'); }
 		fileInput.multiple = !capture;
-		fileInput.addEventListener('change', async () => {
+		fileInput.addEventListener('change', () => {
 			const files = fileInput.files;
 			if (!files || files.length === 0) { return; }
-			await this._uploadAttachments(Array.from(files));
+			this._addPendingAttachments(Array.from(files));
 		});
 		fileInput.click();
 	}
 
-	// Shared upload pipeline: posts a placeholder message then uploads each file
-	// as an attachment to it. Used by both the file picker and the camera.
-	private async _uploadAttachments(files: File[]): Promise<void> {
+	// Stage picked/captured files in the preview tray instead of uploading them
+	// straight away. They are sent (and uploaded) only when the user hits Send,
+	// giving them a chance to preview and remove attachments first.
+	private _addPendingAttachments(files: File[]): void {
 		if (files.length === 0) { return; }
-		const input = this._getInput();
-		if (!input) { return; }
+		this.pendingAttachments.push(...files);
+		this._renderAttachmentPreviews();
+		this.inputEl?.focus();
+	}
 
-		// Send a message first, then attach files
-		const content = this._getInputText() || `Attached ${files.length} file(s)`;
-		this._clearInput();
+	// (Re)build the preview tray from `pendingAttachments`. Images get a clickable
+	// thumbnail (opens the full-screen lightbox); other files get a paperclip chip.
+	private _renderAttachmentPreviews(): void {
+		if (!this.attachmentsPreviewEl) { return; }
+		// Revoke any object URLs from the previous render to avoid leaks.
+		for (const url of this.pendingPreviewUrls) { URL.revokeObjectURL(url); }
+		this.pendingPreviewUrls = [];
+		DOM.clearNode(this.attachmentsPreviewEl);
 
-		try {
-			const msgRes = await this.apiService.fetch(`/api/channels/${input.channelId}/messages`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content }),
-			});
-			if (!msgRes.ok) { return; }
-			const msgData = await msgRes.json();
-			const messageId = msgData?.data?.id || msgData?.id;
+		if (this.pendingAttachments.length === 0) {
+			this.attachmentsPreviewEl.style.display = 'none';
+			return;
+		}
+		this.attachmentsPreviewEl.style.display = 'flex';
 
-			// Upload each file as attachment
-			for (const file of files) {
-				const formData = new FormData();
-				formData.append('file', file);
-				await this.apiService.fetch(`/api/messages/${messageId}/attachments`, {
-					method: 'POST',
-					body: formData,
-					headers: {}, // Let browser set Content-Type with boundary
-				});
+		this.pendingAttachments.forEach((file, index) => {
+			const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.name);
+			const chip = DOM.append(this.attachmentsPreviewEl, DOM.$('.messaging-pending-attachment'));
+			chip.style.cssText = 'position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;width:96px;';
+
+			if (isImage) {
+				const url = URL.createObjectURL(file);
+				this.pendingPreviewUrls.push(url);
+				const img = DOM.append(chip, DOM.$('img')) as HTMLImageElement;
+				img.src = url;
+				img.alt = file.name;
+				img.title = 'Click to preview';
+				img.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:4px;cursor:zoom-in;';
+				img.addEventListener('click', () => this._showImagePreview(url, file.name));
+			} else {
+				const icon = DOM.append(chip, DOM.$('span'));
+				// allow-any-unicode-next-line
+				icon.textContent = '\u{1F4CE}';
+				icon.style.cssText = 'font-size:34px;line-height:80px;';
 			}
 
-			await this._loadMessages(input.channelId, input.threadParentId);
-		} catch { /* upload failed */ }
+			const name = DOM.append(chip, DOM.$('span'));
+			name.textContent = file.name;
+			name.title = file.name;
+			name.style.cssText = 'font-size:11px;max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vscode-foreground);';
+
+			const size = DOM.append(chip, DOM.$('span'));
+			size.textContent = this._formatSize(file.size);
+			size.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+
+			// Remove button — drops this file from the staged list before sending.
+			const remove = DOM.append(chip, DOM.$('button'));
+			// allow-any-unicode-next-line
+			remove.textContent = '✕';
+			remove.title = 'Remove';
+			remove.style.cssText = 'position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:var(--vscode-badge-background,#555);color:var(--vscode-badge-foreground,#fff);font-size:11px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;';
+			remove.addEventListener('click', () => {
+				this.pendingAttachments.splice(index, 1);
+				this._renderAttachmentPreviews();
+			});
+		});
 	}
 
 	// Open the device camera in a modal, capture a still frame and attach it as a
@@ -1080,11 +1182,11 @@ export class MessagingEditor extends EditorPane {
 			const ctx = canvas.getContext('2d');
 			if (!ctx) { cleanup(); return; }
 			ctx.drawImage(video, 0, 0, w, h);
-			canvas.toBlob(async (blob) => {
+			canvas.toBlob((blob) => {
 				cleanup();
 				if (!blob) { return; }
 				const file = new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
-				await this._uploadAttachments([file]);
+				this._addPendingAttachments([file]);
 			}, 'image/jpeg', 0.92);
 		});
 
@@ -1211,6 +1313,22 @@ export class MessagingEditor extends EditorPane {
 		overlay.appendChild(img);
 
 		mainWindow.document.body.appendChild(overlay);
+	}
+
+	// Fetch an attachment's bytes through the authenticated API proxy and wrap
+	// them in an object URL. The raw `fileUrl` is a relative, Bearer-protected
+	// path that an <img>/<a> cannot load directly. Returns undefined on failure.
+	private async _loadAttachmentObjectUrl(fileUrl: string): Promise<string | undefined> {
+		try {
+			const res = await this.apiService.fetch(fileUrl);
+			if (!res.ok) { return undefined; }
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			this.attachmentObjectUrls.push(url);
+			return url;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private _formatSize(bytes: number): string {
@@ -1611,6 +1729,10 @@ export class MessagingEditor extends EditorPane {
 
 	override dispose(): void {
 		this._stopPolling();
+		for (const url of this.pendingPreviewUrls) { URL.revokeObjectURL(url); }
+		this.pendingPreviewUrls = [];
+		for (const url of this.attachmentObjectUrls) { URL.revokeObjectURL(url); }
+		this.attachmentObjectUrls = [];
 		super.dispose();
 	}
 }

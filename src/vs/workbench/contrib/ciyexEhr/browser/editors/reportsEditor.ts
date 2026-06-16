@@ -84,6 +84,25 @@ interface ReportDef {
 	enrichInsurance?: boolean;
 }
 
+// FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
+// endpoint returns these raw codes (AMB/VR/EMER/…) in the `type` field, which
+// rendered as cryptic codes in the Encounter Summary "Visit Type" column. Map
+// them to the human-readable labels the rest of the app uses.
+const ENCOUNTER_CLASS_LABELS: Record<string, string> = {
+	AMB: 'Ambulatory',
+	VR: 'Virtual',
+	VIRTUAL: 'Virtual',
+	EMER: 'Emergency',
+	IMP: 'Inpatient',
+	ACUTE: 'Inpatient Acute',
+	NONAC: 'Inpatient Non-acute',
+	OBSENC: 'Observation',
+	PRENC: 'Pre-admission',
+	SS: 'Short Stay',
+	HH: 'Home Health',
+	FLD: 'Field',
+};
+
 const DATE_FROM: FilterDef = { type: 'date-from', key: 'dateFrom', label: 'From' };
 const DATE_TO: FilterDef = { type: 'date-to', key: 'dateTo', label: 'To' };
 const PROVIDER_FILTER: FilterDef = { type: 'select', key: 'provider', label: 'Provider', searchable: true, dynamic: true };
@@ -441,41 +460,49 @@ function getReportDef(key: string): ReportDef {
 		// ─── FINANCIAL ───
 		case 'revenue-overview':
 			return {
+				// The workspace only exposes payment transactions (no charge/AR ledger
+				// endpoint exists — /api/invoices, /api/billing/charges all 404/500).
+				// The ehr-ui Charges/Payments/Adjustments/Balance and Provider/Payer
+				// columns have no backing data here and rendered blank, so the table
+				// reflects collected payments using the fields this endpoint returns.
 				apiPath: '/api/payments/transactions?page=0&size=1000',
-				// Columns match ciyex-ehr-ui: Date, Patient, Provider, Payer, Charges, Payments, Adjustments, Balance
 				columns: [
 					{ key: 'collectedAt', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
-					{ key: 'providerName', label: 'Provider' },
-					{ key: 'payerDisplay', label: 'Payer' },
-					{ key: 'amount', label: 'Charges' },
-					{ key: 'paidAmount', label: 'Payments' },
-					{ key: 'adjustmentAmount', label: 'Adjustments' },
-					{ key: 'balanceAmount', label: 'Balance' },
+					{ key: 'description', label: 'Description' },
+					{ key: 'paymentMethodLabel', label: 'Method' },
+					{ key: 'transactionType', label: 'Type' },
+					{ key: 'amount', label: 'Amount' },
+					{ key: 'status', label: 'Status' },
 				],
-				filters: [DATE_FROM, DATE_TO, PROVIDER_FILTER, PAYER_FILTER, PATIENT_FILTER],
+				filters: [
+					DATE_FROM, DATE_TO, PATIENT_FILTER,
+					{ type: 'select', key: 'paymentMethodType', label: 'Method', searchable: true, dynamic: true },
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'completed', label: 'Completed' },
+						{ value: 'pending', label: 'Pending' },
+						{ value: 'voided', label: 'Voided' },
+						{ value: 'refunded', label: 'Refunded' },
+						{ value: 'failed', label: 'Failed' },
+					]),
+				],
 				kpis: [
-					{ label: 'Gross Charges', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.totalAmount || i.amount || 0), 0)), color: COLORS[0] },
-					{ label: 'Net Collections', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.paidAmount || 0), 0)), color: COLORS[1] },
+					{ label: 'Total Collected', calc: items => fmtMoney(items.filter(i => /complet/i.test(i.status || '')).reduce((s, i) => s + Number(i.amount || 0), 0)), color: COLORS[0] },
+					{ label: 'Transactions', calc: items => String(items.length), color: COLORS[1] },
+					{ label: 'Refunded', calc: items => fmtMoney(items.reduce((s, i) => s + Number(i.refundAmount || 0), 0)), color: COLORS[2] },
 					{
-						label: 'Collection Rate', calc: items => {
-							const charges = items.reduce((s, i) => s + Number(i.totalAmount || i.amount || 0), 0);
-							const paid = items.reduce((s, i) => s + Number(i.paidAmount || 0), 0);
-							return charges ? fmtPct(100 * paid / charges) : '0%';
-						}, color: COLORS[2]
-					},
-					{
-						label: 'Avg / Visit', calc: items => {
-							const visits = new Set(items.map(i => i.encounterId || i.id).filter(Boolean)).size || items.length;
-							const charges = items.reduce((s, i) => s + Number(i.totalAmount || i.amount || 0), 0);
-							return visits ? fmtMoney(charges / visits) : '$0';
+						label: 'Avg Payment', calc: items => {
+							const paid = items.filter(i => /complet/i.test(i.status || ''));
+							const sum = paid.reduce((s, i) => s + Number(i.amount || 0), 0);
+							return paid.length ? fmtMoney(sum / paid.length) : '$0';
 						}, color: COLORS[3]
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'providerName', label: 'Revenue by Provider' },
-					{ type: 'pie', groupKey: 'patientName', label: 'By Patient' },
-					{ type: 'area', groupKey: '', label: 'Monthly Revenue', aggregate: 'month', dateField: 'serviceDate' },
+					{ type: 'pie', groupKey: 'paymentMethodType', label: 'By Payment Method' },
+					{ type: 'pie', groupKey: 'status', label: 'By Status' },
+					{ type: 'area', groupKey: '', label: 'Monthly Collections', aggregate: 'month', dateField: 'collectedAt' },
 				],
 			};
 
@@ -1612,11 +1639,19 @@ export class ReportsEditor extends EditorPane {
 		}
 		if (!out['patientDisplay']) { out['patientDisplay'] = pickFirst(out['patientName'], out['patientRefDisplay'], out['subjectDisplay']); }
 		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = pickFirst(out['patientDisplay'], out['patientName'], out['subjectDisplay']); }
+		// Some encounter rows carry the patient's name directly in `patientRef`
+		// rather than a "Patient/<id>" reference — fall back to it so the Patient
+		// column isn't blank.
+		if (!out['patientRefDisplay'] && out['patientRef'] && !out['patientRef'].includes('/')) {
+			out['patientRefDisplay'] = out['patientRef'];
+			if (!out['patientName']) { out['patientName'] = out['patientRef']; }
+			if (!out['patientDisplay']) { out['patientDisplay'] = out['patientRef']; }
+		}
 
-		if (!out['providerName']) { out['providerName'] = pickFirst(out['encounterProvider'], out['providerDisplay'], out['practitionerName'], out['orderingProvider'], out['prescriberName'], out['referringProvider'], out['provider']); }
+		if (!out['providerName']) { out['providerName'] = pickFirst(out['encounterProvider'], out['providerDisplay'], out['practitionerName'], out['orderingProvider'], out['physicianName'], out['prescriberName'], out['referringProvider'], out['provider']); }
 		if (!out['providerDisplay']) { out['providerDisplay'] = pickFirst(out['encounterProvider'], out['providerName'], out['practitionerName'], out['prescriberName']); }
 		if (!out['prescriberName']) { out['prescriberName'] = pickFirst(out['providerName'], out['providerDisplay']); }
-		if (!out['orderingProvider']) { out['orderingProvider'] = pickFirst(out['providerName'], out['providerDisplay']); }
+		if (!out['orderingProvider']) { out['orderingProvider'] = pickFirst(out['physicianName'], out['providerName'], out['providerDisplay']); }
 
 		if (!out['payerDisplay']) { out['payerDisplay'] = pickFirst(out['insurerName'], out['insuranceName'], out['organizationDisplay'], out['payerName'], out['payor.display'], out['insurance'], out['primaryInsurance'], out['insuranceProvider'], out['payer']); }
 		if (!out['insurance']) { out['insurance'] = pickFirst(out['payerDisplay'], out['insurerName'], out['insuranceName'], out['primaryInsurance'], out['insuranceProvider']); }
@@ -1642,11 +1677,23 @@ export class ReportsEditor extends EditorPane {
 				out['cc_text'], out['chiefComplaint'], out['reasonForVisit'], out['reason'],
 			);
 		}
-		if (!out['type']) { out['type'] = pickFirst(out['typeDisplay'], out['encounterType'], out['visitCategory'], out['serviceType'], out['appointmentType']); }
+		// Prefer a readable display/category, then the raw `type`, and translate any
+		// FHIR class code (AMB/VR/EMER/…) to a friendly label so the Visit Type
+		// column shows e.g. "Ambulatory" instead of "AMB".
+		const chosenType = pickFirst(out['typeDisplay'], out['encounterType'], out['visitCategory'], out['type'], out['serviceType'], out['appointmentType']);
+		out['type'] = ENCOUNTER_CLASS_LABELS[chosenType.toUpperCase()] || chosenType;
 		if (!out['appointmentType']) { out['appointmentType'] = pickFirst(out['type'], out['serviceType'], out['encounterType']); }
 		if (!out['clinicalStatus']) { out['clinicalStatus'] = pickFirst(out['conditionStatus'], out['status']); }
 
 		if (!out['totalAmount']) { out['totalAmount'] = pickFirst(out['amount'], out['totalGross'], out['totalNet'], out['total'], out['charges']); }
+
+		// Payment-method label for the Revenue report: "Visa ••4242" for cards,
+		// otherwise the plain method type (cash/check/…).
+		if (!out['paymentMethodLabel']) {
+			const brand = pickFirst(out['cardBrand']);
+			const last4 = pickFirst(out['lastFour']);
+			out['paymentMethodLabel'] = brand && last4 ? `${brand} ••${last4}` : pickFirst(out['paymentMethodType'], brand);
+		}
 
 		if (!out['createdAt']) { out['createdAt'] = pickFirst(out['audit.createdDate'], out['createdDate'], out['registrationDate'], out['_lastUpdated'], out['timestamp']); }
 		if (!out['startDate']) { out['startDate'] = pickFirst(out['start'], out['period.start'], out['effectiveDate']); }
@@ -1829,7 +1876,7 @@ export class ReportsEditor extends EditorPane {
 			for (const c of cols) {
 				const cell = DOM.append(r, DOM.$('span'));
 				let val = String(item[c.key] || '');
-				if ((c.key.endsWith('Date') || c.key === 'createdAt' || c.key === 'recordedDate') && val && !isNaN(Date.parse(val))) {
+				if ((c.key.endsWith('Date') || c.key.endsWith('At') || c.key === 'recordedDate') && val && !isNaN(Date.parse(val))) {
 					try { val = new Date(val).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { /* ignore */ }
 				}
 				cell.textContent = val;
@@ -2283,7 +2330,7 @@ export class ReportsEditor extends EditorPane {
 			for (const c of columns) {
 				const cell = DOM.append(r, DOM.$('span'));
 				let val = String(item[c.key] ?? '');
-				if ((c.key === 'createdAt' || c.key.endsWith('Date')) && val && !isNaN(Date.parse(val))) {
+				if ((c.key.endsWith('At') || c.key.endsWith('Date')) && val && !isNaN(Date.parse(val))) {
 					try { val = new Date(val).toLocaleString('en-US'); } catch { /* */ }
 				}
 				cell.textContent = val;

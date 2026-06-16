@@ -3957,11 +3957,20 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			fetchList('/api/inventory/list'),
 		]);
 
-		const overlay = DOM.append(this.root, DOM.$('div'));
-		overlay.style.cssText = 'position:absolute;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;';
-		const backdrop = DOM.append(overlay, DOM.$('div'));
-		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.45);';
-		backdrop.addEventListener('click', () => overlay.remove());
+		// Mount the modal on the workbench root (not this.root) as a fixed,
+		// full-window overlay so the whole app behind it — the sidebar and tab
+		// strip included — is dimmed and blurred. The previous absolute overlay
+		// was scoped to the editor pane, so it left the sidebar sharp and the
+		// backdrop carried no blur at all.
+		const doc = (this.root && this.root.ownerDocument) || DOM.getActiveWindow().document;
+		const mount = findWorkbenchRoot(this.root, doc);
+		// eslint-disable-next-line no-restricted-syntax
+		const titlebarEl = doc.querySelector('.part.titlebar');
+		const titlebarHeight = titlebarEl ? Math.round((titlebarEl as HTMLElement).getBoundingClientRect().height) : 35;
+		const overlay = DOM.append(mount, DOM.$('div'));
+		overlay.style.cssText = `position:fixed;top:${titlebarHeight}px;left:0;right:0;bottom:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(2px);`;
+		// Click outside the panel closes the dialog.
+		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 		const panel = DOM.append(overlay, DOM.$('div'));
 		panel.style.cssText = 'position:relative;width:620px;max-width:94vw;max-height:88%;display:flex;flex-direction:column;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
 
