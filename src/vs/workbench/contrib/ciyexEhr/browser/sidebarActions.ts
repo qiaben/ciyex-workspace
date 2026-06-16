@@ -553,6 +553,14 @@ export interface IEditFieldDef {
 	required?: boolean;
 	placeholder?: string;
 	hint?: string;
+	/** Render the input as read-only (non-editable) — used for derived /
+	 *  auto-calculated fields such as BMI. Pairs naturally with {@link compute}. */
+	readonly?: boolean;
+	/** Derived-value callback. When present the field's value is (re)computed
+	 *  from the other field values whenever ANY input in the form changes (and
+	 *  once on open). Returns the new string value. Use for fields like BMI that
+	 *  the chart editor auto-calculates from height & weight. */
+	compute?: (values: Record<string, string>) => string;
 	/** Width hint as a percentage of the row (defaults to 100 for full row). */
 	widthPct?: number;
 	/** Search-typeahead callback used when {@link kind} is `'search'`. Called
@@ -1242,7 +1250,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// attribute before the user types the first character.
 			// 'time' is handled earlier via the custom dropdown; here only 'date'
 			// needs the native picker exempted from the readonly autofill trick.
-			if (field.kind !== 'date') {
+			if (field.readonly) {
+				// Genuinely read-only (derived) field — keep it non-editable.
+				// Do NOT attach the autofill-release handlers below (styling is
+				// applied after the cssText assignment further down).
+				input.setAttribute('readonly', 'readonly');
+			} else if (field.kind !== 'date') {
 				input.setAttribute('readonly', 'readonly');
 				const releaseReadonly = () => { input.removeAttribute('readonly'); };
 				input.addEventListener('focus', releaseReadonly, { once: true });
@@ -1250,6 +1263,13 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			}
 		}
 		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
+		if (field.readonly) {
+			// Dim derived/auto-calculated fields (e.g. BMI) so they read as
+			// non-editable — matches the chart editor's BMI styling.
+			input.style.background = 'rgba(128,128,128,0.06)';
+			input.style.opacity = '0.85';
+			input.style.cursor = 'default';
+		}
 		if (field.placeholder && (DOM.isHTMLInputElement(input) || DOM.isHTMLTextAreaElement(input))) {
 			input.placeholder = field.placeholder;
 		}
@@ -1383,6 +1403,24 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 		form.appendChild(wrap);
 	}
+
+	// Derived fields: recompute every `compute` field from the current values
+	// whenever any input changes (and once now, so editing an existing record
+	// refreshes a stale value). Mirrors the chart editor's BMI auto-calc.
+	const computeFields = opts.fields.filter(f => typeof f.compute === 'function');
+	if (computeFields.length > 0) {
+		const recomputeDerived = () => {
+			const current: Record<string, string> = {};
+			inputs.forEach((el, k) => { current[k] = el.value; });
+			for (const f of computeFields) {
+				const target = inputs.get(f.key);
+				if (target) { target.value = f.compute!(current); }
+			}
+		};
+		form.addEventListener('input', recomputeDerived);
+		recomputeDerived();
+	}
+
 	dialog.appendChild(form);
 
 	const footer = doc.createElement('div');
@@ -2005,6 +2043,14 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		inp.placeholder = field.placeholder || '';
 		inp.setAttribute('autocomplete', 'off');
 		inp.style.cssText = baseInput;
+		if (field.readonly) {
+			// Derived / auto-calculated field (e.g. BMI) — read-only + dimmed so
+			// it reads as non-editable, matching the chart editor.
+			inp.setAttribute('readonly', 'readonly');
+			inp.style.background = 'rgba(128,128,128,0.06)';
+			inp.style.opacity = '0.85';
+			inp.style.cursor = 'default';
+		}
 		inp.addEventListener('focus', () => focusRing(inp, true));
 		inp.addEventListener('blur', () => focusRing(inp, false));
 		host.appendChild(inp);
@@ -2150,6 +2196,23 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				grid.appendChild(wrap);
 			}
 			formScroll.appendChild(section);
+		}
+
+		// Derived fields: recompute every `compute` field from the current
+		// values whenever any input changes (and once now). Mirrors the chart
+		// editor's BMI auto-calc so the snapshot popup shows the same live value.
+		const computeFields = opts.fields.filter(f => typeof f.compute === 'function');
+		if (computeFields.length > 0) {
+			const recomputeDerived = (): void => {
+				const current: Record<string, string> = {};
+				inputs.forEach((el, k) => { current[k] = el.value; });
+				for (const f of computeFields) {
+					const target = inputs.get(f.key);
+					if (target) { target.value = f.compute!(current); }
+				}
+			};
+			formScroll.addEventListener('input', recomputeDerived);
+			recomputeDerived();
 		}
 
 		const footer = doc.createElement('div');

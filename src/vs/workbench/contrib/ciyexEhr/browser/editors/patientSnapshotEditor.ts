@@ -250,7 +250,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const out: IEditFieldDef[] = [];
 		for (const section of cfg.sections) {
 			for (const f of section.fields) {
-				if (f.localOnly) { continue; }
+				// Include `localOnly` fields too (e.g. vitals BMI) so the popup
+				// form renders exactly the same fields the full chart editor
+				// does. `_toPopupField` marks them read-only / auto-computed so
+				// they behave like the chart editor's derived inputs.
 				out.push(this._toPopupField(f, section.columns));
 			}
 		}
@@ -294,7 +297,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				kind = 'text';
 		}
 
-		return {
+		const out: IEditFieldDef = {
 			key: f.key,
 			label: f.label,
 			kind,
@@ -303,6 +306,19 @@ export class PatientSnapshotEditor extends EditorPane {
 			placeholder: f.placeholder,
 			widthPct,
 		};
+
+		// Derived / display-only fields (chart editor marks these `localOnly`)
+		// render read-only so the user can't hand-edit a computed value.
+		if (f.localOnly) { out.readonly = true; }
+
+		// BMI is auto-calculated from height (cm) & weight (kg) — exactly as the
+		// chart editor does — so the snapshot popup shows the same live value.
+		if (f.key === 'bmi') {
+			out.readonly = true;
+			out.compute = (vals) => PatientSnapshotEditor._computeBmi(vals['heightCm'], vals['weightKg']);
+		}
+
+		return out;
 	}
 
 	private _entityFields(entity: string): IEditFieldDef[] {
@@ -1197,8 +1213,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			this._renderIconBtn(actions, a);
 		}
 
+		// NOTE: "Record Vitals" is deliberately omitted here — vitals are captured
+		// through the inline entry form on the Today's Vitals card and the
+		// Quick Actions "Record Vitals" tile, so a third duplicate menu entry
+		// only adds confusion (per QA feedback).
 		const overflowItems: QuickAction[] = [
-			{ icon: 'pulse', title: 'Record Vitals', onClick: () => this._openCreateModal('vitals') },
 			{ icon: 'warning', title: 'Add Problem', onClick: () => this._openCreateModal('problems') },
 			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openCreateModal('medications') },
 			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openCreateModal('insurance') },
@@ -1310,6 +1329,22 @@ export class PatientSnapshotEditor extends EditorPane {
 		return fallback;
 	}
 
+	/** Appointment status options — backend list with a sensible fallback. Shared
+	 *  by the edit dialog and the inline Status dropdown on the appointment card. */
+	private async _fetchStatusOptions(): Promise<string[]> {
+		const fallback = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
+		try {
+			const res = await this.apiService.fetch('/api/appointments/status-options');
+			if (res.ok) {
+				const data = await res.json();
+				const opts = ((data?.data || data || []) as Array<{ label?: string; value?: string } | string>)
+					.map(o => (typeof o === 'string' ? o : o.label || o.value || '')).filter(Boolean);
+				if (opts.length > 0) { return opts; }
+			}
+		} catch { /* keep fallback */ }
+		return fallback;
+	}
+
 	/** Resolve a human visit-type label from the raw appointment, tolerating the
 	 *  FHIR CodeableConcept blob the appointments API sometimes returns. */
 	private _apptTypeStr(apt: Record<string, unknown>): string {
@@ -1351,6 +1386,138 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (!id) { return; }
 		await this._updateAppointmentStatus(id, status);
 		this._rerender();
+	}
+
+	/** True when an appointment status string denotes a finished visit. */
+	private static _isCompletedStatus(status: unknown): boolean {
+		const s = String(status || '').toLowerCase().replace(/[_-]/g, ' ').trim();
+		return s === 'completed' || s === 'complete' || s === 'fulfilled' || s === 'finished';
+	}
+
+	/** True when the appointment already has a linked encounter (either on the
+	 *  appointment itself or as a same-day encounter in the chart). */
+	private _appointmentHasEncounter(apt: Record<string, unknown>, encs?: Record<string, unknown>[]): boolean {
+		if (apt.encounterId) { return true; }
+		if (encs && encs.some(e => this._isToday(e.encounterDate || e.startDate || e.start || e.date || e.periodStart))) { return true; }
+		return false;
+	}
+
+	/** Mark the appointment Completed and, when no encounter exists yet,
+	 *  automatically spin one up from the appointment and open it. This is the
+	 *  "select Completed → encounter feature" integration: completing a visit
+	 *  always leaves a documented encounter behind. */
+	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>, encs?: Record<string, unknown>[]): Promise<void> {
+		const id = String(apt.id || apt.appointmentId || '');
+		if (!id) { return; }
+		await this._updateAppointmentStatus(id, 'Completed');
+		if (this._appointmentHasEncounter(apt, encs)) {
+			this._rerender();
+			return;
+		}
+		// _createEncounterFromAppointment creates the FHIR encounter, links it to
+		// the patient, opens the encounter editor and rerenders the dashboard.
+		await this._createEncounterFromAppointment(apt);
+	}
+
+	/** Apply a status chosen from the inline Status dropdown. Selecting a
+	 *  completed status routes through the auto-encounter flow; everything else
+	 *  is a plain status change. */
+	private async _applyStatusSelection(apt: Record<string, unknown>, appointmentId: string, status: string): Promise<void> {
+		if (!appointmentId || !status) { return; }
+		if (PatientSnapshotEditor._isCompletedStatus(status)) {
+			await this._completeAppointmentWithEncounter({ ...apt, status });
+			return;
+		}
+		await this._changeApptStatus(appointmentId, status);
+	}
+
+	/** Resolve a color for a status string (green=completed, red=cancel/no-show,
+	 *  blue=in-flight, muted=unknown). */
+	private static _statusColor(status: string): string {
+		const s = status.toLowerCase();
+		if (s.includes('complet') || s.includes('fulfil') || s.includes('finish')) { return '#22c55e'; }
+		if (s.includes('cancel') || s.includes('no show') || s.includes('noshow')) { return '#ef4444'; }
+		if (s === '—' || s === '') { return 'var(--vscode-descriptionForeground)'; }
+		return '#3b9edd';
+	}
+
+	/** Render the appointment Status as a clickable pill that opens a dropdown of
+	 *  status options. Selecting one applies it inline (no modal) — mirrors the
+	 *  page's other inline editors (e.g. vitals entry). */
+	private _renderStatusDropdown(cell: HTMLElement, apt: Record<string, unknown>, appointmentId: string, currentStatus: string): void {
+		const wrap = DOM.append(cell, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;display:inline-block;margin-top:1px;';
+		const color = PatientSnapshotEditor._statusColor(currentStatus);
+
+		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
+		trigger.title = 'Change appointment status';
+		trigger.disabled = !appointmentId;
+		trigger.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:12px;border:1px solid ${color}66;background:${color}1f;color:${color};font-size:12px;font-weight:700;cursor:${appointmentId ? 'pointer' : 'default'};max-width:100%;`;
+		const txt = DOM.append(trigger, DOM.$('span'));
+		txt.textContent = currentStatus;
+		txt.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		if (appointmentId) {
+			const caret = DOM.append(trigger, DOM.$('span.codicon.codicon-chevron-down'));
+			(caret as HTMLElement).style.cssText = 'font-size:11px;flex-shrink:0;';
+		}
+
+		const menu = DOM.append(wrap, DOM.$('div'));
+		menu.style.cssText = 'position:absolute;top:28px;left:0;min-width:180px;max-height:280px;overflow-y:auto;background:var(--vscode-menu-background,var(--vscode-editor-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-menu-border,var(--vscode-editorWidget-border));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.28);padding:4px;z-index:1000;display:none;';
+
+		const closeMenu = (): void => { menu.style.display = 'none'; };
+		const docClick = (e: Event): void => {
+			if (!wrap.contains(e.target as Node)) {
+				closeMenu();
+				DOM.getActiveWindow().document.removeEventListener('click', docClick);
+			}
+		};
+
+		let populated = false;
+		const populate = async (): Promise<void> => {
+			if (populated) { return; }
+			populated = true;
+			const opts = await this._fetchStatusOptions();
+			if (currentStatus && currentStatus !== '—' && !opts.find(o => o.toLowerCase() === currentStatus.toLowerCase())) {
+				opts.unshift(currentStatus);
+			}
+			for (const opt of opts) {
+				const isCur = opt.toLowerCase() === currentStatus.toLowerCase();
+				const oColor = PatientSnapshotEditor._statusColor(opt);
+				const row = DOM.append(menu, DOM.$('div'));
+				row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:12.5px;color:var(--vscode-menu-foreground,var(--vscode-foreground));${isCur ? 'background:var(--vscode-list-hoverBackground,rgba(128,128,128,0.12));font-weight:700;' : ''}`;
+				const dot = DOM.append(row, DOM.$('span'));
+				dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${oColor};flex-shrink:0;`;
+				const lbl = DOM.append(row, DOM.$('span'));
+				lbl.textContent = opt;
+				lbl.style.cssText = 'flex:1;';
+				if (isCur) {
+					const chk = DOM.append(row, DOM.$('span.codicon.codicon-check'));
+					(chk as HTMLElement).style.cssText = 'font-size:13px;color:var(--vscode-descriptionForeground);';
+				}
+				row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-menu-selectionBackground,var(--vscode-list-hoverBackground,rgba(128,128,128,0.18)))'; });
+				row.addEventListener('mouseleave', () => { row.style.background = isCur ? 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.12))' : ''; });
+				row.addEventListener('click', (e) => {
+					e.stopPropagation();
+					closeMenu();
+					DOM.getActiveWindow().document.removeEventListener('click', docClick);
+					if (!isCur) { void this._applyStatusSelection(apt, appointmentId, opt); }
+				});
+			}
+		};
+
+		trigger.addEventListener('click', async (e) => {
+			e.stopPropagation();
+			if (!appointmentId) { return; }
+			const open = menu.style.display === 'block';
+			if (open) {
+				closeMenu();
+				DOM.getActiveWindow().document.removeEventListener('click', docClick);
+			} else {
+				await populate();
+				menu.style.display = 'block';
+				DOM.getActiveWindow().document.addEventListener('click', docClick);
+			}
+		});
 	}
 
 	/** Create a FHIR encounter from the appointment, open it, then refresh. */
@@ -1417,17 +1584,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const initialDate = m ? m[1] : '';
 		const initialTime = m ? m[2] : '';
 
-		const [rooms, providers] = await Promise.all([this._fetchRoomOptions(), this._fetchProviderOptions()]);
-		let statusOpts = ['Scheduled', 'Confirmed', 'Arrived', 'Checked-in', 'In Room', 'With Provider', 'Completed', 'Re-Scheduled', 'No Show', 'Cancelled'];
-		try {
-			const res = await this.apiService.fetch('/api/appointments/status-options');
-			if (res.ok) {
-				const data = await res.json();
-				const opts = ((data?.data || data || []) as Array<{ label?: string; value?: string } | string>)
-					.map(o => (typeof o === 'string' ? o : o.label || o.value || '')).filter(Boolean);
-				if (opts.length > 0) { statusOpts = opts; }
-			}
-		} catch { /* keep defaults */ }
+		const [rooms, providers, statusOpts] = await Promise.all([this._fetchRoomOptions(), this._fetchProviderOptions(), this._fetchStatusOptions()]);
 
 		const visitTypes = ['Consultation', 'Follow-Up', 'New Patient', 'Urgent', 'Routine', 'Annual Physical', 'Telehealth', 'Lab Work', 'Procedure', 'Referral'];
 		const currentType = this._apptTypeStr(apt);
@@ -1484,6 +1641,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				};
 				const res = await this.apiService.fetch(`/api/appointments/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				// Selecting "Completed" in the status dropdown auto-spins up an
+				// encounter (and opens it) when the visit doesn't have one yet —
+				// the same integration the Quick Actions "Complete" tile performs.
+				const wasCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status || apt.appointmentStatus);
+				if (PatientSnapshotEditor._isCompletedStatus(next.status) && !wasCompleted && !this._appointmentHasEncounter(apt)) {
+					await this._createEncounterFromAppointment({ ...apt, status: next.status });
+					return;
+				}
 				this._rerender();
 			},
 		});
@@ -1540,6 +1705,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		const room = String(apt.room || apt.roomName || '').trim();
 		const provider = String(apt.providerName || apt.practitionerName || '').trim();
 		const hasEncounter = !!(apt.encounterId);
+		const statusRaw = String(apt.status || apt.appointmentStatus || '').trim();
+		const statusStr = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : '—';
 
 		const fields: Array<[string, string]> = [
 			['Date', dateStr],
@@ -1547,6 +1714,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			['Time', endStr ? `${timeStr} – ${endStr}` : timeStr],
 			['Visit Type', this._apptTypeStr(apt)],
 			['Provider', provider || '—'],
+			['Status', statusStr],
 			['Duration', durVal > 0 ? `${durVal} min` : '—'],
 			['Location', location || '—'],
 			['Room', room || '— Unassigned —'],
@@ -1564,6 +1732,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			const l = DOM.append(cell, DOM.$('div'));
 			l.textContent = label;
 			l.style.cssText = 'font-size:9.5px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+			// Status is an inline editable dropdown — click to pick a new status.
+			if (label === 'Status') {
+				this._renderStatusDropdown(cell, apt, appointmentId, statusStr);
+				continue;
+			}
 			const v = DOM.append(cell, DOM.$('div'));
 			v.textContent = value;
 			v.style.cssText = `font-size:12.5px;font-weight:600;color:var(--vscode-editor-foreground);${isWide ? '' : 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'}`;
@@ -1751,7 +1924,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (encounterId) { void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName); }
 			else { void this._createEncounterFromAppointment(apt); }
 		});
-		tile('pass', '5 · Complete', 'Provider', stateFor('complete', done('encounter')), () => void this._changeApptStatus(appointmentId, 'Completed'));
+		tile('pass', '5 · Complete', 'Provider', stateFor('complete', done('encounter')), () => void this._completeAppointmentWithEncounter(apt, encs));
 	}
 
 	/** One-field room picker — clearer than a buried dropdown for busy front
@@ -1937,6 +2110,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		{ key: 'bpSystolic', label: 'BP Systolic', unit: 'mmHg' },
 		{ key: 'bpDiastolic', label: 'BP Diastolic', unit: 'mmHg' },
 		{ key: 'pulse', label: 'Pulse', unit: '/min' },
+		{ key: 'respiration', label: 'Respiration', unit: '/min' },
 		// allow-any-unicode-next-line
 		{ key: 'temperatureC', label: 'Temperature', unit: '°C', step: '0.1' },
 		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
@@ -1993,6 +2167,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			['BMI', bmiVal, bmiVal ? 'kg/m²' : ''],
 			['BP', bpVal, 'mmHg'],
 			['Pulse', latest.pulse, '/min'],
+			['Respiration', latest.respiration, '/min'],
 			// allow-any-unicode-next-line
 			['Temperature', latest.temperatureC, '°C'],
 			['SpO2', latest.oxygenSaturation, '%'],
@@ -2194,6 +2369,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		finBtn('add', 'Add Credit Card', 'default', () => this._openAddCardForm());
 		finBtn('history', 'Payment History', 'default', () => this._openManager('payment', 'list'));
 
+		// Cards on file — after a card is added it shows here card-wise (mirrors
+		// the chart editor's payment page). Loaded async into its own holder so
+		// the rest of the financials card paints immediately.
+		const cardsHolder = DOM.append(body, DOM.$('div'));
+		void this._renderCardsOnFile(cardsHolder);
+
 		if (payments.length > 0) {
 			const histLabel = DOM.append(body, DOM.$('div'));
 			histLabel.textContent = 'RECENT PAYMENTS';
@@ -2320,8 +2501,138 @@ export class PatientSnapshotEditor extends EditorPane {
 					throw new Error(msg);
 				}
 				this.notificationService.notify({ severity: Severity.Info, message: 'Card on file saved.' });
+				// Refresh so the new card shows up in the "Cards on File" list
+				// immediately (mirrors the chart editor's payment page).
+				this._rerender();
 			},
 		});
+	}
+
+	/** Short card-type badge (VISA / MC / AMEX / DISC) — mirrors the chart
+	 *  editor's `_cardTypeBadge`. */
+	private _cardTypeBadge(type: string): string {
+		const t = (type || '').toUpperCase();
+		if (t.includes('VISA')) { return 'VISA'; }
+		if (t.includes('MASTER')) { return 'MC'; }
+		if (t.includes('AMEX') || t.includes('AMERICAN')) { return 'AMEX'; }
+		if (t.includes('DISCOVER')) { return 'DISC'; }
+		return t.slice(0, 4) || '????';
+	}
+
+	/** True when a card-on-file is past its expiry (matches the chart editor). */
+	private _isCardExpired(card: Record<string, unknown>): boolean {
+		if (card['isExpired']) { return true; }
+		const now = new Date();
+		const m = Number(card['expiryMonth'] ?? 0);
+		const y = Number(card['expiryYear'] ?? 0);
+		return y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth() + 1);
+	}
+
+	/**
+	 * Render the patient's saved cards card-wise under the Financials actions.
+	 * Loads from the SAME endpoint the chart editor's payment page uses
+	 * (`/api/credit-cards/patient/{id}`) and supports Set Default / Delete so a
+	 * just-added card is immediately visible and manageable — the gap QA hit
+	 * where "added card is not visible like the chart editor's payment page".
+	 */
+	private async _renderCardsOnFile(holder: HTMLElement): Promise<void> {
+		const pid = this._currentPatientId;
+		if (!pid) { return; }
+		let cards: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch(`/api/credit-cards/patient/${pid}?page=0&size=200`);
+			if (res.ok) {
+				const data = await res.json();
+				cards = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
+			}
+		} catch { /* no cards / endpoint unavailable */ }
+		if (this._currentPatientId !== pid) { return; }
+		DOM.clearNode(holder);
+		if (!Array.isArray(cards) || cards.length === 0) { return; }
+
+		const label = DOM.append(holder, DOM.$('div'));
+		label.textContent = `CARDS ON FILE (${cards.length})`;
+		label.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:2px;margin-bottom:6px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
+
+		const grid = DOM.append(holder, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:10px;';
+
+		for (const card of cards) {
+			const expired = this._isCardExpired(card);
+			const inactive = card['isActive'] === false;
+			const isDefault = !!card['isDefault'];
+			let border: string; let bg: string; let opacity = '1';
+			if (expired) { border = '#fca5a5'; bg = 'rgba(254,202,202,0.10)'; }
+			else if (inactive) { border = 'var(--vscode-editorWidget-border)'; bg = 'rgba(128,128,128,0.06)'; opacity = '0.6'; }
+			else if (isDefault) { border = '#3b82f6'; bg = 'rgba(59,130,246,0.08)'; }
+			else { border = 'var(--vscode-editorWidget-border)'; bg = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.05))'; }
+
+			const cardEl = DOM.append(grid, DOM.$('div'));
+			cardEl.style.cssText = `border:1.5px solid ${border};border-radius:9px;padding:10px 12px;background:${bg};opacity:${opacity};display:flex;flex-direction:column;gap:5px;`;
+
+			const hdr = DOM.append(cardEl, DOM.$('div'));
+			hdr.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+			// allow-any-unicode-next-line
+			const icon = DOM.append(hdr, DOM.$('span')); icon.textContent = '💳'; icon.style.cssText = 'font-size:15px;line-height:1;';
+			const typeBadge = DOM.append(hdr, DOM.$('span'));
+			typeBadge.textContent = this._cardTypeBadge(String(card['cardType'] || ''));
+			typeBadge.style.cssText = 'font-size:9px;font-weight:700;letter-spacing:0.5px;padding:2px 5px;border-radius:4px;background:var(--vscode-badge-background,#4d4d4d);color:var(--vscode-badge-foreground,#fff);';
+			if (isDefault) {
+				const db = DOM.append(hdr, DOM.$('span'));
+				db.textContent = 'Default';
+				db.style.cssText = 'font-size:9px;font-weight:600;padding:2px 5px;border-radius:4px;background:rgba(59,130,246,0.15);color:#3b82f6;margin-left:auto;';
+			} else if (inactive) {
+				const ib = DOM.append(hdr, DOM.$('span'));
+				ib.textContent = 'Inactive';
+				ib.style.cssText = 'font-size:9px;padding:2px 5px;border-radius:4px;background:rgba(128,128,128,0.15);color:var(--vscode-descriptionForeground);margin-left:auto;';
+			}
+
+			const numEl = DOM.append(cardEl, DOM.$('div'));
+			numEl.textContent = String(card['maskedCardNumber'] || '•••• •••• •••• ****');
+			numEl.style.cssText = 'font-size:12px;font-weight:600;letter-spacing:1.5px;color:var(--vscode-foreground);font-family:monospace;';
+
+			const holderEl = DOM.append(cardEl, DOM.$('div'));
+			holderEl.textContent = String(card['cardHolderName'] || '');
+			holderEl.style.cssText = 'font-size:11px;color:var(--vscode-foreground);';
+
+			const mm = String(card['expiryMonth'] || 1).padStart(2, '0');
+			const yy = String(card['expiryYear'] || new Date().getFullYear());
+			const expRow = DOM.append(cardEl, DOM.$('div'));
+			expRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:var(--vscode-descriptionForeground);';
+			expRow.textContent = `Expires ${mm}/${yy}`;
+			if (expired) {
+				const et = DOM.append(expRow, DOM.$('span'));
+				et.textContent = 'EXPIRED';
+				et.style.cssText = 'font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(239,68,68,0.15);color:#ef4444;letter-spacing:0.5px;';
+			}
+
+			const acts = DOM.append(cardEl, DOM.$('div'));
+			acts.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:2px;flex-wrap:wrap;';
+			if (!isDefault && !inactive) {
+				const defBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+				defBtn.textContent = 'Set Default';
+				defBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:10px;color:#3b82f6;padding:0;font-weight:500;';
+				defBtn.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					try {
+						await this.apiService.fetch(`/api/credit-cards/${card['id']}/patient/${pid}/set-default`, { method: 'PUT' });
+						this._rerender();
+					} catch { /* ignore */ }
+				});
+			}
+			const delBtn = DOM.append(acts, DOM.$('button')) as HTMLButtonElement;
+			delBtn.textContent = 'Delete';
+			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:10px;color:#ef4444;padding:0;margin-left:auto;';
+			delBtn.addEventListener('click', async (e) => {
+				e.stopPropagation();
+				const confirm = await this.dialogService.confirm({ message: 'Delete this payment method?', type: 'warning', primaryButton: 'Delete' });
+				if (!confirm.confirmed) { return; }
+				try {
+					await this.apiService.fetch(`/api/credit-cards/${card['id']}`, { method: 'DELETE' });
+					this._rerender();
+				} catch { /* ignore */ }
+			});
+		}
 	}
 
 	/** Pending Items — unfinished clinical work the provider must action. The
