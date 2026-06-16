@@ -1196,10 +1196,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const titlebarEl = overlayDoc.querySelector('.part.titlebar');
 		const titlebarHeight = titlebarEl ? (titlebarEl as HTMLElement).getBoundingClientRect().height : 35;
 
-		const GAP = 12;
+		// Full-height right-side drawer: flush to the top (just below the title
+		// bar so the window controls stay clickable) and to the bottom edge, with
+		// no rounded corners — previously a 12px gap + radius all around made the
+		// panel float as a card with dead space above and below (QA-flagged).
 		const dialog = DOM.append(this.formOverlay, DOM.$('div'));
 		dialog.className = 'cle-form-dialog';
-		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:calc(100% - ${titlebarHeight + GAP * 2}px);margin-top:${titlebarHeight + GAP}px;margin-bottom:${GAP}px;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);border-radius:8px 0 0 8px;display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
+		dialog.style.cssText = `position:relative;width:560px;max-width:95vw;height:calc(100% - ${titlebarHeight}px);margin-top:${titlebarHeight}px;background:var(--vscode-sideBar-background,var(--vscode-editor-background,#252526));border-left:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 24px rgba(0,0,0,0.3);z-index:1;color:var(--vscode-foreground);color-scheme:${colorScheme};`;
 		// Force native <option> backgrounds to use the VS Code dropdown vars so
 		// the dropdown popup matches the rest of the dialog rather than rendering
 		// white on dark themes.
