@@ -1453,13 +1453,23 @@ export class AppointmentsEditor extends EditorPane {
 				return b;
 			};
 
-			// Telehealth visits only get the join + start-session controls so the
-			// user is funnelled into the video session instead of paper-chart flows.
+			// The chart actions (Open Chart, Record Vitals, Visit Summary) all
+			// operate on the appointment's encounter, which only exists once the
+			// visit is marked "Completed" — the status that triggers encounter
+			// creation (see `_updateStatus`). Before then there is nothing to
+			// chart, so these icons stay hidden until the appointment is completed.
+			const isCompleted = (row.status || '').toLowerCase() === 'completed';
+
+			// Telehealth visits always keep their join control so the user can
+			// enter the live video session; the chart actions still wait for the
+			// completed encounter just like in-person visits.
 			if ((row.visitType || '').toLowerCase() === 'telehealth') {
 				iconBtn('device-camera-video', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
-				// allow-any-unicode-next-line
-				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
-			} else {
+				if (isCompleted) {
+					// allow-any-unicode-next-line
+					iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
+				}
+			} else if (isCompleted) {
 				// allow-any-unicode-next-line
 				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
 				// allow-any-unicode-next-line
