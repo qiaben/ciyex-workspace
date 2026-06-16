@@ -87,10 +87,11 @@ export const SYSTEM_CONTAINER = reg('ciyex.system', localize2('ciyex.system', "S
 // Developer
 export const DEVELOPER_CONTAINER = reg('ciyex.developer', localize2('ciyex.developer', "Developer Portal"), icons.developer, 12);
 
-// Settings — the overall settings menu (User Mgmt, Roles, Portal, Practice
-// Settings, …) sits in the activity bar directly next to Developer Portal as its
-// own menu list, in addition to being reachable from the System menu / Cmd+,.
-export const SETTINGS_CONTAINER = reg('ciyex.settings', localize2('ciyex.settings', "Settings"), icons.settings, 13);
+// Settings activity-bar entry hidden — the settings menu (User Mgmt, Roles,
+// Portal, Practice Settings, …) is reachable from the System menu / Cmd+, and
+// VS Code Settings. Leaving the registration commented out keeps the gear icon
+// off the activity bar without touching downstream call sites.
+// export const SETTINGS_CONTAINER = reg('ciyex.settings', localize2('ciyex.settings', "Settings"), icons.settings, 13);
 
 // allow-any-unicode-next-line
 // ─── GenericListPane Configs ─────────────────────────────────────────
@@ -282,7 +283,9 @@ viewsRegistry.registerViews([
 import { DeveloperMenuPane } from './portal/developerMenuPane.js';
 viewsRegistry.registerViews([{ id: DeveloperMenuPane.ID, name: localize2('devPortal', "Developer Portal"), ctorDescriptor: new SyncDescriptor(DeveloperMenuPane) }], DEVELOPER_CONTAINER);
 
-// Settings — overall settings menu list, sits next to Developer Portal
-import { SettingsListPane } from './portal/settingsListPane.js';
-viewsRegistry.registerViews([{ id: SettingsListPane.ID, name: localize2('settingsMenu', "Settings"), ctorDescriptor: new SyncDescriptor(SettingsListPane) }], SETTINGS_CONTAINER);
+// Settings view registration disabled — SETTINGS_CONTAINER activity-bar entry
+// is hidden (see above). Kept commented to preserve the SettingsListPane wiring
+// in case the entry is re-enabled.
+// import { SettingsListPane } from './portal/settingsListPane.js';
+// viewsRegistry.registerViews([{ id: SettingsListPane.ID, name: localize2('settingsMenu', "Settings"), ctorDescriptor: new SyncDescriptor(SettingsListPane) }], SETTINGS_CONTAINER);
 
