@@ -4682,7 +4682,12 @@ export class PatientChartEditor extends EditorPane {
 				const msg = DOM.append(empty, DOM.$('div'));
 				msg.textContent = data.length === 0 ? `No ${tab.label.toLowerCase()} records` : 'No records match your filters';
 				msg.style.cssText = 'margin-bottom:8px;';
-				if (data.length === 0) {
+				// Offer the inline "Create your first record" shortcut only on tabs that
+				// allow in-chart creation. Encounters are excluded — they are
+				// auto-created from the Appointments page ("Completed" status), never
+				// added here — matching the "+ Add" button gate above. Read-only tabs
+				// (ledgers, system reports) are excluded for the same reason.
+				if (data.length === 0 && !tab.readOnly && tab.key !== 'encounters') {
 					const link = DOM.append(empty, DOM.$('a'));
 					link.textContent = 'Create your first record';
 					link.style.cssText = 'color:var(--vscode-textLink-foreground);cursor:pointer;text-decoration:none;font-size:12px;';

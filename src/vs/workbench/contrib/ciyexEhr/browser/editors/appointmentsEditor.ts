@@ -1344,7 +1344,12 @@ export class AppointmentsEditor extends EditorPane {
 			const tdStatus = DOM.append(tr, DOM.$('td'));
 			tdStatus.style.cssText = cellStyle;
 			const so = this.statusOptions.find(s => s.value === row.status);
-			if (this.editingStatusId === row.id) {
+			// Once an appointment is "Completed" its encounter has been auto-created
+			// and the visit is finalized — the status is locked and can no longer be
+			// changed. The badge stays a static label (no dropdown, no click) instead
+			// of switching into the editable <select>.
+			const isStatusLocked = (row.status || '').toLowerCase() === 'completed';
+			if (this.editingStatusId === row.id && !isStatusLocked) {
 				const sel = DOM.append(tdStatus, DOM.$('select')) as HTMLSelectElement;
 				sel.style.cssText = 'padding:4px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-focusBorder);border-radius:4px;color:var(--vscode-input-foreground);';
 				for (const s of this.statusOptions) {
@@ -1358,11 +1363,16 @@ export class AppointmentsEditor extends EditorPane {
 			} else {
 				const badge = DOM.append(tdStatus, DOM.$('span'));
 				badge.textContent = so?.label || row.status;
-				badge.style.cssText = `padding:3px 8px;border-radius:10px;font-size:11px;font-weight:500;cursor:pointer;color:#fff;background:${so?.color || '#6b7280'};`;
-				badge.addEventListener('click', () => {
-					this.editingStatusId = row.id;
-					this._renderTableBody(this._getFilteredRows());
-				});
+				if (isStatusLocked) {
+					badge.style.cssText = `padding:3px 8px;border-radius:10px;font-size:11px;font-weight:500;cursor:default;color:#fff;background:${so?.color || '#6b7280'};`;
+					badge.title = 'Completed appointments are finalized and their status cannot be changed';
+				} else {
+					badge.style.cssText = `padding:3px 8px;border-radius:10px;font-size:11px;font-weight:500;cursor:pointer;color:#fff;background:${so?.color || '#6b7280'};`;
+					badge.addEventListener('click', () => {
+						this.editingStatusId = row.id;
+						this._renderTableBody(this._getFilteredRows());
+					});
+				}
 			}
 
 			// ROOM
@@ -1520,6 +1530,12 @@ export class AppointmentsEditor extends EditorPane {
 			if (!encId) { return null; }
 			const encPatient = data['encounterPatientId'] ?? data['patientId'];
 			const patientId = (encPatient !== undefined && encPatient !== null && encPatient !== '') ? String(encPatient) : this._resolveActionPatientId(row);
+			// The /api/appointments/{id}/encounter endpoint creates the Encounter
+			// WITHOUT a patient/subject reference, so it never surfaces in the
+			// patient chart's Encounters tab (which searches by patient). Link the
+			// encounter to its patient via `patientRef` (the field mapped to FHIR
+			// Encounter.subject) so the just-completed visit shows up in the chart.
+			if (create && patientId) { await this._linkEncounterToPatient(String(encId), patientId); }
 			// Cache the resolved encounter back onto the row so every action on this
 			// appointment (Open Chart, Record Vitals, Visit Summary) reuses the SAME
 			// encounter. Without this, Open Chart's POST (create) and Visit Summary's
@@ -1529,6 +1545,24 @@ export class AppointmentsEditor extends EditorPane {
 			row.encounterId = String(encId);
 			return { encounterId: String(encId), patientId };
 		} catch { return null; }
+	}
+
+	/** Link a freshly-created appointment encounter to its patient. The
+	 *  `/api/appointments/{id}/encounter` endpoint creates the Encounter with no
+	 *  subject reference, so it is invisible to the patient-scoped Encounter
+	 *  search the chart uses. PUT the `patientRef` (the field mapped to FHIR
+	 *  Encounter.subject) so the encounter becomes patient-searchable and shows
+	 *  up on the patient chart's Encounters tab. Best-effort — failures are
+	 *  swallowed so they never block opening the encounter. */
+	private async _linkEncounterToPatient(encounterId: string, patientId: string): Promise<void> {
+		if (!encounterId || !patientId) { return; }
+		try {
+			await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: encounterId, patientId, patientRef: `Patient/${patientId}` }),
+			});
+		} catch { /* best-effort link */ }
 	}
 
 	/** "Open Chart" — opens the encounter form in a right-side slide-over drawer

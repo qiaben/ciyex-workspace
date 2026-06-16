@@ -1063,6 +1063,18 @@ export class ScheduleSidebarPane extends ViewPane {
 									const data = await res.json();
 									const payload = (data?.data ?? data) as Record<string, unknown>;
 									newEncounterId = (payload?.id || payload?.encounterId) as string | undefined;
+									// The endpoint creates the Encounter with no patient subject,
+									// so it never appears on the patient chart's Encounters tab.
+									// Link it via `patientRef` (FHIR Encounter.subject) so the new
+									// encounter becomes patient-searchable.
+									const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? apt.patientId) || '');
+									if (newEncounterId && encPatient) {
+										await this.apiService.fetch(`/api/fhir-resource/encounters/${newEncounterId}`, {
+											method: 'PUT',
+											headers: { 'Content-Type': 'application/json' },
+											body: JSON.stringify({ id: newEncounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` }),
+										}).catch(() => { /* best-effort link */ });
+									}
 								} catch { /* response may be empty — fall through to reload */ }
 							}
 							await this._loadAndRender();

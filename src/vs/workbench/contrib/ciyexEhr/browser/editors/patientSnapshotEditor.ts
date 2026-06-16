@@ -1365,6 +1365,18 @@ export class PatientSnapshotEditor extends EditorPane {
 					const data = await res.json();
 					const payload = (data?.data ?? data) as Record<string, unknown>;
 					encounterId = (payload?.id || payload?.encounterId) as string | undefined;
+					// The endpoint creates the Encounter with no patient subject, so it
+					// never appears on the patient chart's Encounters tab. Link it via
+					// `patientRef` (FHIR Encounter.subject) so the new encounter is
+					// patient-searchable and shows up in the chart.
+					const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? this._currentPatientId) || '');
+					if (encounterId && encPatient) {
+						await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+							method: 'PUT',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ id: encounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` }),
+						}).catch(() => { /* best-effort link */ });
+					}
 				} catch { /* empty body — fall through to refresh */ }
 			}
 			if (encounterId) {

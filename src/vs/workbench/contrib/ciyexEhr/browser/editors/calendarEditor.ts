@@ -1603,15 +1603,18 @@ export class CalendarEditor extends EditorPane {
 	}
 
 	private async _editAppointment(apt: Appointment): Promise<void> {
+		// A "Completed" appointment is finalized (its encounter has been created)
+		// — the status-mutating actions (Change Status, Cancel, Mark No-Show) are
+		// withheld so the visit can no longer move out of the Completed state.
+		const isCompleted = (apt.status || '').toLowerCase() === 'completed';
 		const items = [
-			{ label: 'Change Status', description: `Current: ${apt.status}` },
+			...(isCompleted ? [] : [{ label: 'Change Status', description: `Current: ${apt.status}` }]),
 			{ label: 'Send Reminder', description: 'Email/SMS reminder to patient' },
 			{ label: 'Reschedule', description: 'Move to a different time' },
 			{ label: 'Create Series', description: 'Recurring appointments (e.g., 6 weekly PT)' },
 			{ label: 'Add to Waitlist', description: 'Add patient to cancellation waitlist' },
 			{ label: 'Edit Details' },
-			{ label: 'Cancel Appointment' },
-			{ label: 'Mark No-Show' },
+			...(isCompleted ? [] : [{ label: 'Cancel Appointment' }, { label: 'Mark No-Show' }]),
 		];
 		const pick = await this.quickInputService.pick(items, { placeHolder: `${apt.patientName} — ${apt.appointmentType}` });
 		if (!pick) { return; }
