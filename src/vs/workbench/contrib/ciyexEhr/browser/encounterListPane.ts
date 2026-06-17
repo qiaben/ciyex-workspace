@@ -341,9 +341,12 @@ export class EncounterListPane extends ViewPane {
 			const actions = createRowActionsContainer(row);
 			actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
 
+			// A signed encounter is permanently locked: omit the edit action so its
+			// fields (and status) can no longer be changed from the list either.
+			const isSigned = status === 'SIGNED';
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
 				{ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
-				{ symbol: '\u{270F}', label: 'Edit Encounter', onClick: () => this._openEditDialog(item, encId, patName) },
+				...(isSigned ? [] : [{ symbol: '\u{270F}', label: 'Edit Encounter', onClick: () => this._openEditDialog(item, encId, patName) }]),
 				{ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
 				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => showVisitSummaryPanel({ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService }, patientId, encId, patName) },
 			]);

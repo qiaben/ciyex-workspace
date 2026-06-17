@@ -574,6 +574,26 @@ export class TasksEditor extends EditorPane {
 		// input (QA-reported "Michael John overlapping Priority" bug).
 		const assignedToInput = fields.get('assignedTo') as HTMLInputElement;
 		if (assignedToInput && assignedToInput.parentElement) {
+			// Lock to a real provider chosen from the dropdown. After a pick the
+			// field becomes read-only with a clear to clear and re-search, so a selected
+			// provider name can't be edited into one that isn't in the directory.
+			const provHolder = DOM.$('span');
+			provHolder.style.cssText = 'position:relative;display:block;';
+			assignedToInput.parentElement.insertBefore(provHolder, assignedToInput);
+			provHolder.appendChild(assignedToInput);
+			assignedToInput.style.paddingRight = '24px';
+			const provClear = DOM.append(provHolder, DOM.$('span'));
+			provClear.textContent = '\u2715';
+			provClear.title = 'Clear selection';
+			provClear.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:12px;color:var(--vscode-descriptionForeground);display:none;line-height:1;';
+			const lockProv = (locked: boolean): void => {
+				assignedToInput.readOnly = locked;
+				assignedToInput.dataset.selected = locked ? '1' : '';
+				provClear.style.display = locked ? 'block' : 'none';
+			};
+			provClear.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); lockProv(false); assignedToInput.value = ''; assignedToInput.focus(); });
+			// An existing task's saved provider counts as an already-confirmed pick.
+			if (task && assignedToInput.value.trim()) { lockProv(true); }
 			const provOwnerDoc = assignedToInput.ownerDocument || document;
 			const provDropdown = provOwnerDoc.createElement('div');
 			// Mirror the workbench class onto the panel so its
@@ -608,6 +628,7 @@ export class TasksEditor extends EditorPane {
 			let provTimer: ReturnType<typeof setTimeout> | undefined;
 			assignedToInput.addEventListener('input', () => {
 				if (provTimer) { clearTimeout(provTimer); }
+				assignedToInput.dataset.selected = '';
 				const q = assignedToInput.value.trim();
 				if (q.length < 2) { provDropdown.style.display = 'none'; return; }
 				provTimer = setTimeout(async () => {
@@ -640,6 +661,7 @@ export class TasksEditor extends EditorPane {
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
 							item.addEventListener('click', () => {
 								assignedToInput.value = displayName;
+								lockProv(true);
 								provDropdown.style.display = 'none';
 							});
 						}
@@ -647,7 +669,13 @@ export class TasksEditor extends EditorPane {
 					} catch { /* ignore */ }
 				}, 250);
 			});
-			assignedToInput.addEventListener('blur', () => { setTimeout(() => { provDropdown.style.display = 'none'; }, 150); });
+			assignedToInput.addEventListener('blur', () => {
+				setTimeout(() => {
+					provDropdown.style.display = 'none';
+					// Wipe free-typed text that was never confirmed against the provider list.
+					if (assignedToInput.dataset.selected !== '1' && assignedToInput.value) { assignedToInput.value = ''; }
+				}, 150);
+			});
 		}
 
 		// Patient search autocomplete. Body-mounted with position:fixed so
@@ -655,6 +683,25 @@ export class TasksEditor extends EditorPane {
 		const patNameInput = fields.get('patientName') as HTMLInputElement;
 		const patIdInput = fields.get('patientId') as HTMLInputElement;
 		if (patNameInput && patIdInput) {
+			// After a pick the patient name becomes read-only with a clear to clear and
+			// re-search, so a selected patient can't be edited into a stray name.
+			const patHolder = DOM.$('span');
+			patHolder.style.cssText = 'position:relative;display:block;';
+			patNameInput.parentElement?.insertBefore(patHolder, patNameInput);
+			patHolder.appendChild(patNameInput);
+			patNameInput.style.paddingRight = '24px';
+			const patClear = DOM.append(patHolder, DOM.$('span'));
+			patClear.textContent = '\u2715';
+			patClear.title = 'Clear selection';
+			patClear.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:12px;color:var(--vscode-descriptionForeground);display:none;line-height:1;';
+			const lockPat = (locked: boolean): void => {
+				patNameInput.readOnly = locked;
+				patNameInput.dataset.selected = locked ? '1' : '';
+				patClear.style.display = locked ? 'block' : 'none';
+			};
+			patClear.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); lockPat(false); patNameInput.value = ''; patIdInput.value = ''; patNameInput.focus(); });
+			// A saved patient on an existing task counts as a confirmed selection.
+			if (task && patNameInput.value.trim()) { lockPat(true); }
 			const patOwnerDoc = patNameInput.ownerDocument || document;
 			const dropdown = patOwnerDoc.createElement('div');
 			const patWorkbenchRoot = findWorkbenchRoot(patNameInput, patOwnerDoc);
@@ -685,6 +732,10 @@ export class TasksEditor extends EditorPane {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			patNameInput.addEventListener('input', () => {
 				if (timer) { clearTimeout(timer); }
+				// Typing invalidates a prior pick and clears the auto-filled id so a
+				// stray name can't be saved against the wrong patient.
+				patNameInput.dataset.selected = '';
+				patIdInput.value = '';
 				const q = patNameInput.value;
 				if (q.length < 2) { dropdown.style.display = 'none'; return; }
 				timer = setTimeout(async () => {
@@ -703,6 +754,7 @@ export class TasksEditor extends EditorPane {
 								item.addEventListener('click', () => {
 									patNameInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
 									patIdInput.value = p.id || '';
+									lockPat(true);
 									dropdown.style.display = 'none';
 								});
 							}
@@ -710,6 +762,17 @@ export class TasksEditor extends EditorPane {
 						}
 					} catch { /* */ }
 				}, 250);
+			});
+			patNameInput.addEventListener('blur', () => {
+				setTimeout(() => {
+					dropdown.style.display = 'none';
+					// Drop a typed-but-unconfirmed patient name (and its id) so only a
+					// real selection survives — mirrors the provider field above.
+					if (patNameInput.dataset.selected !== '1' && patNameInput.value) {
+						patNameInput.value = '';
+						patIdInput.value = '';
+					}
+				}, 150);
 			});
 		}
 
@@ -807,6 +870,22 @@ export class TasksEditor extends EditorPane {
 				showFieldError('title', titleInput, 'Title must be at least 3 characters');
 				this.notificationService.notify({ severity: Severity.Warning, message: 'Title must be at least 3 characters' });
 				return;
+			}
+			// Enforce the fields marked mandatory in the form (Assigned To and
+			// Patient Name). These were displayed with a "*" but never validated,
+			// so a task could be saved without a patient.
+			const requiredFields: Array<{ key: string; label: string }> = [
+				{ key: 'assignedTo', label: 'Assigned To' },
+				{ key: 'patientName', label: 'Patient Name' },
+			];
+			for (const { key, label } of requiredFields) {
+				const input = fields.get(key) as HTMLInputElement | undefined;
+				const v = input?.value?.trim() || '';
+				if (!v) {
+					if (input) { showFieldError(key, input, `${label} is required`); }
+					this.notificationService.notify({ severity: Severity.Warning, message: `${label} is required` });
+					return;
+				}
 			}
 			// Validate text fields reject special characters and surface the
 			// offending field with a red border (matches base-class behaviour

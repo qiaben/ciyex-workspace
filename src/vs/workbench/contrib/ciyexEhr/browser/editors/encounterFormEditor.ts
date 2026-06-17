@@ -418,12 +418,15 @@ export class EncounterFormEditor extends EditorPane {
 		if (this._isSigned) { (saveBtn as HTMLButtonElement).disabled = true; saveBtn.style.opacity = '0.5'; saveBtn.style.cursor = 'not-allowed'; }
 		saveBtn.addEventListener('click', () => this._saveEncounter(saveBtn));
 
-		// Sign & Lock / Unsign button
+		// Sign & Lock button. Once an encounter is signed it is permanently
+		// locked — there is no unsign path, so we render a static, disabled
+		// "Signed & Locked" indicator instead of an actionable button.
 		const signBtn = DOM.append(this.headerBar, DOM.$('button'));
 		if (this._isSigned) {
-			signBtn.textContent = 'Unsign';
-			signBtn.style.cssText = 'padding:5px 16px;background:#f59e0b;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
-			signBtn.addEventListener('click', () => this._unsignEncounter());
+			signBtn.textContent = '\u{1F512} Signed & Locked';
+			signBtn.style.cssText = 'padding:5px 16px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:not-allowed;font-size:12px;font-weight:600;opacity:0.85;';
+			(signBtn as HTMLButtonElement).disabled = true;
+			signBtn.title = 'This encounter is signed and permanently locked.';
 		} else {
 			signBtn.textContent = 'Sign & Lock';
 			signBtn.style.cssText = 'padding:5px 16px;background:#22c55e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
@@ -551,6 +554,10 @@ export class EncounterFormEditor extends EditorPane {
 				// Re-render to show locked state
 				this._renderHeader();
 				this._renderForm();
+				// Refresh the Encounters sidebar list so its status badge flips to
+				// SIGNED immediately — without this the list keeps showing the stale
+				// UNSIGNED badge until a manual reload (matches the save flow above).
+				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.error(`Failed to sign: ${err}`);
@@ -561,27 +568,6 @@ export class EncounterFormEditor extends EditorPane {
 			this.notificationService.error(`Sign error: ${e}`);
 			signBtn.textContent = 'Sign & Lock';
 			(signBtn as HTMLButtonElement).disabled = false;
-		}
-	}
-
-	private async _unsignEncounter(): Promise<void> {
-		if (!this.patientId || !this.encounterId) { return; }
-
-		try {
-			const res = await this.apiService.fetch(`/api/${this.patientId}/encounters/${this.encounterId}/unsign`, {
-				method: 'POST',
-			});
-
-			if (res.ok) {
-				this._encounterStatus = 'UNSIGNED';
-				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter unlocked.' });
-				this._renderHeader();
-				this._renderForm();
-			} else {
-				this.notificationService.error('Failed to unsign encounter.');
-			}
-		} catch {
-			this.notificationService.error('Failed to unsign encounter.');
 		}
 	}
 
