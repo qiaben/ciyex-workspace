@@ -16,6 +16,8 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICiyexAuthService } from '../../../ciyexAuth/browser/ciyexAuthService.js';
+import { localize } from '../../../../../nls.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
@@ -25,7 +27,7 @@ type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 type RowActionKind =
 	| { kind: 'edit' }
 	| { kind: 'delete'; path: (r: DataRow) => string; confirm?: string }
-	| { kind: 'method'; method: 'PUT' | 'POST' | 'GET'; path: (r: DataRow) => string; body?: Record<string, unknown>; confirm?: string };
+	| { kind: 'method'; method: 'PUT' | 'POST' | 'GET'; path: (r: DataRow) => string; body?: Record<string, unknown>; includeActor?: boolean; confirm?: string };
 
 interface RowAction { symbol: string; label: string; color: string; action: RowActionKind }
 
@@ -225,7 +227,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F464}', label: 'Assign to Patient', color: '#3b82f6', action: { kind: 'edit' } },
 			// allow-any-unicode-next-line
-			{ symbol: '\u{2705}', label: 'Mark Processed', color: '#22c55e', action: { kind: 'method', method: 'POST', path: r => `/api/fax/${r.id}/processed` } },
+			{ symbol: '\u{2705}', label: 'Mark Processed', color: '#22c55e', action: { kind: 'method', method: 'POST', path: r => `/api/fax/${r.id}/process`, includeActor: true } },
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F5D1}', label: 'Delete', color: '#ef4444', action: { kind: 'delete', path: r => `/api/fax/${r.id}`, confirm: 'Delete this fax?' } },
 		],
@@ -314,6 +316,7 @@ export class SystemMenuPane extends ViewPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
 		super(options, k, cm, c, ck, v, i, o, t, h);
 	}
@@ -574,13 +577,23 @@ export class SystemMenuPane extends ViewPane {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'question' });
 				if (!r.confirmed) { return; }
 			}
+			// Some endpoints (e.g. fax /process) require the acting user in the
+			// body. Merge it in when the action opts in via includeActor.
+			const payload = k.includeActor
+				? { ...(k.body ?? {}), processedBy: this.authService.userEmail || 'unknown' }
+				: k.body;
 			try {
-				await this.apiService.fetch(k.path(row), {
+				const res = await this.apiService.fetch(k.path(row), {
 					method: k.method,
-					headers: k.body ? { 'Content-Type': 'application/json' } : undefined,
-					body: k.body ? JSON.stringify(k.body) : undefined,
+					headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+					body: payload ? JSON.stringify(payload) : undefined,
 				});
-			} catch { /* */ }
+				if (!res.ok) {
+					await this.dialogService.error(localize('actionFailed', "Action failed ({0}).", res.status));
+				}
+			} catch (e) {
+				await this.dialogService.error(localize('actionFailed', "Action failed ({0}).", e instanceof Error ? e.message : String(e)));
+			}
 			await this._loadItemData(item);
 		}
 	}
