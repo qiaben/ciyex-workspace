@@ -1409,6 +1409,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  status pill and available actions all reflect the new state. */
 	private async _changeApptStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<void> {
 		if (!id) { return; }
+		// Status is locked once the appointment is Completed — block any change at
+		// the source (covers the workflow "Done" tiles too) so a status flip can't
+		// re-run the auto-encounter flow and create a duplicate encounter.
+		if (apt && PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus)) { return; }
 		await this._updateAppointmentStatus(id, status, apt);
 		this._rerender();
 	}
@@ -1473,6 +1477,19 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(cell, DOM.$('div'));
 		wrap.style.cssText = 'position:relative;display:inline-block;margin-top:1px;';
 		const color = PatientSnapshotEditor._statusColor(currentStatus);
+
+		// Once an appointment is "Completed" its encounter has been auto-created and
+		// the visit is finalized — the status is LOCKED and can no longer be changed
+		// (mirrors appointmentsEditor.ts). Re-opening the dropdown and re-selecting a
+		// status would spin up a duplicate encounter, so the pill renders as a static
+		// badge with no dropdown and no click.
+		if (PatientSnapshotEditor._isCompletedStatus(currentStatus)) {
+			const badge = DOM.append(wrap, DOM.$('span'));
+			badge.textContent = currentStatus;
+			badge.title = 'Completed appointments are finalized and their status cannot be changed';
+			badge.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:12px;border:1px solid ${color}66;background:${color}1f;color:${color};font-size:12px;font-weight:700;cursor:default;max-width:100%;`;
+			return;
+		}
 
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
 		trigger.title = 'Change appointment status';
@@ -1779,6 +1796,12 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  Room → Vitals → Encounter → Complete) lives in the Quick Actions card,
 	 *  so this bar is intentionally short: Edit, Video, No Show, Cancel. */
 	private _renderAppointmentActions(card: HTMLElement, apt: Record<string, unknown>, appointmentId: string): void {
+		// A Completed appointment is finalized — hide the status-changing actions
+		// (No Show / Cancel) so the status can't be altered after completion (which
+		// would otherwise re-trigger encounter creation).
+		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'canceled', 'noshow', 'no-show', 'no show']);
+		const isTerminal = terminal.has(status);
 		const vt = this._apptTypeStr(apt).toLowerCase();
 		const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
 
@@ -1818,11 +1841,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
 
-		// Destructive / correction actions. Shown even for terminal appointments
-		// so a Completed visit can still be corrected to No Show / Cancelled — the
-		// status is never a dead end (pairs with the resilient status update).
-		mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show', apt), 'danger');
-		mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled', apt), 'danger');
+		// Destructive / correction actions — hidden once the appointment is
+		// terminal (Completed / Cancelled / No Show) so the status is locked.
+		if (!isTerminal) {
+			mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show', apt), 'danger');
+			mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled', apt), 'danger');
+		}
 	}
 
 	private _renderGrid(
