@@ -268,7 +268,7 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'visitCategory', label: 'Visit Type', aliases: ['visitCategory', 'type', 'encounterType', 'serviceType', 'class', 'visitType'] },
 					{ key: 'encounterProvider', label: 'Provider', aliases: ['encounterProvider', 'providerDisplay', 'providerName', 'practitionerName', 'performerDisplay'] },
 					{ key: 'encounterDate', label: 'Date', aliases: ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'created', 'createdAt', '_lastUpdated'] },
-					{ key: 'endDate', label: 'End Date', aliases: ['endDate', 'end', 'periodEnd'] },
+					{ key: 'endDate', label: 'End Date', aliases: ['endDate', 'end', 'periodEnd', 'endDateTime', 'periodEndDate', 'encounterEnd', 'effectiveEnd'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -286,11 +286,14 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{
 				key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'],
 				columns: [
-					{ key: 'type', label: 'Note Type' },
-					{ key: 'date', label: 'Visit Date' },
-					{ key: 'authorName', label: 'Author' },
-					{ key: 'subject', label: 'Subject' },
-					{ key: 'status', label: 'Status' },
+					// Aliases so the table populates regardless of the exact field
+					// names the DocumentReference list returns (QA issue 12: Visit
+					// Notes table rendered blank rows).
+					{ key: 'type', label: 'Note Type', aliases: ['type', 'noteType', 'documentType', 'category', 'typeDisplay', 'noteTypeDisplay', 'docType'] },
+					{ key: 'date', label: 'Visit Date', aliases: ['date', 'visitDate', 'authoredOn', 'created', 'createdAt', 'effectiveDate', 'recordedDate', '_lastUpdated'] },
+					{ key: 'authorName', label: 'Author', aliases: ['authorName', 'author', 'authorDisplay', 'practitionerName', 'providerName', 'performerDisplay'] },
+					{ key: 'subject', label: 'Subject', aliases: ['subject', 'title', 'description', 'subjectTitle'] },
+					{ key: 'status', label: 'Status', aliases: ['status', 'docStatus'] },
 				],
 			},
 			// Referrals visible per the 02.05.26 *workspace* test report
@@ -671,7 +674,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// allow-any-unicode-next-line
 					{ key: 'temperatureC', label: 'Temperature (°C)', type: 'number', required: true, placeholder: '0.0' },
 					{ key: 'oxygenSaturation', label: 'O\u{2082} Saturation (%)', type: 'number', required: true, placeholder: '0' },
-					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes', colSpan: 3 },
+					// `localOnly` so the merge always appends Notes even when the
+					// backend vitals config ships it only under the dropped
+					// "Recording Info" / vitals-meta section (QA issue 2: Notes
+					// field missing from the create form though the flowsheet has a
+					// Notes row).
+					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional notes', colSpan: 3, localOnly: true },
 				],
 			},
 		],
@@ -4730,7 +4738,15 @@ export class PatientChartEditor extends EditorPane {
 			const path = isDemographics
 				? `/api/patients/${this.patientId}`
 				: `${(ep || '').split('?')[0]}/patient/${this.patientId}`;
-			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(payload) });
+			// Demographics PUT replaces the patient record — the backend rejects a
+			// partial body ("Failed to update patient", QA issue 1) because required
+			// fields (gender, dateOfBirth, …) the user didn't touch would be nulled.
+			// Merge the edits over the full loaded patient so every field round-trips,
+			// mirroring the working patientListPane edit (`{ ...patient, ...next }`).
+			const body = isDemographics
+				? { ...(this.patientData || {}), ...payload }
+				: payload;
+			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(body) });
 			if (res.ok) {
 				this.notificationService.info(`${tab.label} saved`);
 				this._tabDataCache.delete(tab.key);

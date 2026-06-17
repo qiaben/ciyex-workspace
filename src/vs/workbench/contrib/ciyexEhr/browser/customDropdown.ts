@@ -641,21 +641,32 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 	hidden.type = 'hidden';
 	parent.appendChild(hidden);
 
+	// Render the date and time controls INSIDE a single bordered field so the
+	// time reads as part of the same field rather than a separate picker
+	// alongside it (QA: "keep the time inside the same date field"). The wrap
+	// carries the input chrome (border / background); the inner date input and
+	// time trigger are borderless and transparent.
 	const wrap = doc.createElement('div');
-	wrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
+	wrap.style.cssText = (opts.inputStyle || '') + 'display:flex;align-items:center;gap:0;padding:0;overflow:hidden;';
 	parent.appendChild(wrap);
 
 	const raw = (opts.initialValue || '').slice(0, 16);
 	const [initialDate, initialTime] = raw.includes('T') ? raw.split('T') : [raw, ''];
 
+	const innerStyle = 'border:none;background:transparent;color:inherit;font:inherit;outline:none;box-shadow:none;';
+
 	const dateInp = doc.createElement('input') as HTMLInputElement;
 	dateInp.type = 'date';
 	dateInp.value = initialDate || '';
-	dateInp.style.cssText = (opts.inputStyle || '') + 'flex:1;min-width:0;';
+	dateInp.style.cssText = innerStyle + 'flex:1 1 56%;min-width:0;padding:7px 4px 7px 9px;';
 	wrap.appendChild(dateInp);
 
+	const divider = doc.createElement('div');
+	divider.style.cssText = 'width:1px;align-self:stretch;margin:5px 0;background:var(--vscode-input-border,var(--vscode-editorWidget-border,#3c3c3c));flex-shrink:0;';
+	wrap.appendChild(divider);
+
 	const timeHost = doc.createElement('div');
-	timeHost.style.cssText = 'flex:1;min-width:0;';
+	timeHost.style.cssText = 'flex:1 1 44%;min-width:0;';
 	wrap.appendChild(timeHost);
 
 	const proto = Object.getPrototypeOf(hidden);
@@ -675,7 +686,8 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 		parent: timeHost,
 		initialValue: initialTime,
 		placeholder: 'Select time...',
-		triggerStyle: opts.inputStyle,
+		// Borderless so it sits flush inside the shared bordered field.
+		triggerStyle: innerStyle + 'width:100%;padding:7px 9px 7px 4px;',
 		onChange: () => sync(),
 	});
 	dateInp.addEventListener('change', sync);

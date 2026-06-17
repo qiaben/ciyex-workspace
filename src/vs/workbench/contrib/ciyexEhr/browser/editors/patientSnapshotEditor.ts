@@ -52,6 +52,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	private root!: HTMLElement;
 	private _currentPatientId = '';
 	private _currentPatientName = '';
+	// id → display name for Locations, so appointment / encounter rows can show
+	// the location NAME instead of the raw "Location/{id}" reference (QA 4 & 5).
+	private readonly _locationNames = new Map<string, string>();
 	private readonly _pageState = new Map<string, number>();
 	/** IDs of records the user just deleted on this patient. Filtered out of
 	 *  every list render until a fresh fetch confirms the server has removed
@@ -1029,6 +1032,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		]);
 
 		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
+		await this._ensureLocationNames();
 
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -1701,7 +1705,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const durVal = this._apptDurationMin(apt);
 		const reason = String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || '').trim();
 		const notes = String(apt.notes || apt.note || apt.comment || '').trim();
-		const location = String(apt.locationName || apt.location || apt.facility || '').trim();
+		const location = this._resolveLocationName(apt.locationName || apt.location || apt.facility || '');
 		const room = String(apt.room || apt.roomName || '').trim();
 		const provider = String(apt.providerName || apt.practitionerName || '').trim();
 		const hasEncounter = !!(apt.encounterId);
@@ -1829,7 +1833,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderFinancialsCard(grid, payments, statements);
 
 		// Visit History (2) + Encounter History (2)
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('encounters'));
+		// Visit History "+" creates a Visit Note (clinical note for the visit);
+		// Encounter History "+" creates an Encounter. Previously both opened the
+		// New Encounter dialog (QA issue 6).
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('visit-notes'));
 		this._renderEncounterRows(visitCard, encs);
 
 		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openCreateModal('encounters'));
@@ -2003,7 +2010,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			sb.textContent = String(status);
 			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
 
-			this._renderGridRowActions(table, 'visit-notes', enc);
+			// Encounter History rows are Encounters — edit/delete must target the
+			// encounters entity (not visit-notes), so the pencil opens the
+			// Encounter edit form (QA issue 7).
+			this._renderGridRowActions(table, 'encounters', enc);
 		}
 		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}
@@ -2192,19 +2202,23 @@ export class PatientSnapshotEditor extends EditorPane {
 		const addToggle = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
 		addToggle.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:10px;padding:6px 0;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3b9edd);font-size:12px;font-weight:600;cursor:pointer;';
 		DOM.append(addToggle, DOM.$('span.codicon.codicon-edit'));
-		const atl = DOM.append(addToggle, DOM.$('span')); atl.textContent = 'Edit / new reading';
+		const atl = DOM.append(addToggle, DOM.$('span')); atl.textContent = 'Edit';
 		const formHolder = DOM.append(body, DOM.$('div'));
 		formHolder.style.display = 'none';
+		const hideForm = (): void => { formHolder.style.display = 'none'; };
 		let formFirstInput: HTMLInputElement | null = null;
 		const revealForm = (): void => {
 			formHolder.style.display = '';
-			if (!formHolder.hasChildNodes()) { formFirstInput = this._renderInlineVitalsForm(formHolder, latest); }
+			// Pass a cancel handler so the revealed editor gets a Close button —
+			// previously the form could only be dismissed by re-clicking the
+			// toggle, which QA flagged as "no close button" (issue 8).
+			if (!formHolder.hasChildNodes()) { formFirstInput = this._renderInlineVitalsForm(formHolder, latest, hideForm); }
 			formFirstInput?.focus();
 		};
 		addToggle.addEventListener('click', (e) => {
 			e.stopPropagation();
 			if (formHolder.style.display === 'none') { revealForm(); }
-			else { formHolder.style.display = 'none'; }
+			else { hideForm(); }
 		});
 		this._revealVitalsEntry = revealForm;
 
@@ -2214,7 +2228,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Inline number inputs for the core vital signs + a Save button that POSTs
 	 *  a new vitals reading directly — no modal, no leaving the page. Returns
 	 *  the first input so callers can focus it. */
-	private _renderInlineVitalsForm(container: HTMLElement, initial?: Record<string, unknown>): HTMLInputElement | null {
+	private _renderInlineVitalsForm(container: HTMLElement, initial?: Record<string, unknown>, onCancel?: () => void): HTMLInputElement | null {
 		const inputs = new Map<string, HTMLInputElement>();
 		let firstInput: HTMLInputElement | null = null;
 		const formGrid = DOM.append(container, DOM.$('div'));
@@ -2261,6 +2275,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		saveBtn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 16px;font-size:12.5px;font-weight:700;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:7px;cursor:pointer;';
 		DOM.append(saveBtn, DOM.$('span.codicon.codicon-check'));
 		const sl = DOM.append(saveBtn, DOM.$('span')); sl.textContent = 'Save Vitals';
+		// Close button for the revealed editor (QA issue 8) — only shown when the
+		// form is opened as a dismissible editor (the standalone "no vitals yet"
+		// entry form passes no onCancel and stays open).
+		if (onCancel) {
+			const cancelBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+			cancelBtn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 16px;font-size:12.5px;font-weight:600;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:7px;cursor:pointer;';
+			DOM.append(cancelBtn, DOM.$('span.codicon.codicon-close'));
+			const cl = DOM.append(cancelBtn, DOM.$('span')); cl.textContent = 'Close';
+			cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); onCancel(); });
+		}
 		const note = DOM.append(footer, DOM.$('span'));
 		note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
@@ -2716,7 +2740,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 			const type = enc.visitCategory || enc.encounterType || enc.type || enc.serviceType || enc.class || '—';
 			const prov = enc.encounterProvider || enc.providerDisplay || enc.providerName || enc.practitionerName || '';
-			const loc = enc.locationName || enc.location || enc.facility || '—';
+			const loc = this._resolveLocationName(enc.locationName || enc.location || enc.facility || '') || '—';
 			const status = enc.status || 'Unknown';
 			const notes = enc.notes || enc.chiefComplaint || enc.reason || '';
 			const statusLower = String(status).toLowerCase();
@@ -2854,6 +2878,43 @@ export class PatientSnapshotEditor extends EditorPane {
 		} catch {
 			return null;
 		}
+	}
+
+	/** Populate {@link _locationNames} from `/api/locations` once per editor so
+	 *  location references can be resolved to names. Best-effort: a failed fetch
+	 *  leaves the map empty and the raw reference is shown as a fallback. */
+	private async _ensureLocationNames(): Promise<void> {
+		if (this._locationNames.size > 0) { return; }
+		const res = await this._fetch('/api/locations');
+		if (!res) { return; }
+		const inner = (res.data ?? res) as Record<string, unknown>;
+		const list = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : Array.isArray(res) ? res : [])) as Array<Record<string, unknown>>;
+		if (!Array.isArray(list)) { return; }
+		for (const l of list) {
+			const id = String(l.id ?? l.locationId ?? l.fhirId ?? '');
+			const name = String(l.name ?? l.locationName ?? l.label ?? l.displayName ?? '');
+			if (id && name) { this._locationNames.set(id, name); }
+		}
+	}
+
+	/** Resolve a raw location value (e.g. "Location/13890", "13890", or an
+	 *  already-resolved name) to a display name. Returns '' when nothing usable
+	 *  is available so callers can fall back to their own placeholder. */
+	private _resolveLocationName(raw: unknown): string {
+		const s = String(raw ?? '').trim();
+		if (!s) { return ''; }
+		// FHIR reference shape "Location/{id}" or bare id → look up the name.
+		const refMatch = s.match(/^(?:Location\/)?([0-9a-fA-F-]+)$/);
+		if (refMatch) {
+			const id = refMatch[1];
+			const name = this._locationNames.get(id);
+			if (name) { return name; }
+			// Pure "Location/{id}" with no match → strip the prefix so we at
+			// least show the bare id rather than the FHIR reference noise.
+			return s.startsWith('Location/') ? id : s;
+		}
+		// Anything else is already a human-readable name.
+		return s;
 	}
 
 	private _list(result: PromiseSettledResult<Record<string, unknown> | null>): Record<string, unknown>[] {

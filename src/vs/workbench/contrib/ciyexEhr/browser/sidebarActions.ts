@@ -639,6 +639,25 @@ export function withTypeaheadSearch(
 			return [];
 		} catch { return []; }
 	};
+	// Facility / location search — claims "Facility" picker. Locations live on
+	// `/api/locations` (full list, no server filter), so we match client-side.
+	const fetchFacilities = async (q: string) => {
+		try {
+			const res = await api.fetch(`/api/locations`);
+			if (!res.ok) { return []; }
+			const data = await res.json();
+			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+			const lq = q.toLowerCase();
+			return list
+				.filter(l => !lq || String(l.name || l.locationName || l.label || '').toLowerCase().includes(lq))
+				.slice(0, 10)
+				.map(l => {
+					const name = String(l.name || l.locationName || l.label || '');
+					const id = String(l.id ?? l.locationId ?? '');
+					return { value: name, label: name, description: id || undefined, details: { id, name } };
+				});
+		} catch { return []; }
+	};
 	// Medical-code searches resolve through the ciyex-codes service via the app
 	// proxy: GET /api/app-proxy/ciyex-codes/api/codes/{SYSTEM}/search?q=… which
 	// returns a Spring Page<MedicalCode> ({ content: [...] }). `{SYSTEM}` is a
@@ -696,7 +715,7 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
-		if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname', 'provider', 'orderingprovider'].includes(k)) {
+		if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname', 'provider', 'orderingprovider', 'providerid', 'billingprovider', 'billingproviderid'].includes(k)) {
 			return {
 				...f,
 				kind: 'search' as const,
@@ -720,9 +739,24 @@ export function withTypeaheadSearch(
 		if (k === 'procedurecode' || k === 'cptcode') {
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CPT', q) };
 		}
-		// ICD-10 diagnosis code search.
-		if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode') {
+		// ICD-10 diagnosis code search (incl. the claim form's primary/secondary/
+		// tertiary/quaternary diagnosis pickers — QA issue 10).
+		if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode'
+			|| k === 'primarydiagnosis' || k === 'secondarydiagnosis' || k === 'tertiarydiagnosis' || k === 'quaternarydiagnosis'
+			|| /diagnosis$/.test(k)) {
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('ICD10_CM', q) };
+		}
+		// Facility / location search (claims "Facility").
+		if (k === 'facilityid' || k === 'facility' || k === 'locationid' || k === 'location') {
+			return {
+				...f,
+				kind: 'search' as const,
+				onSearch: fetchFacilities,
+				onSelectSearchResult: (item, all) => {
+					const id = item.details?.id || '';
+					if (id) { for (const key of ['facilityId', 'locationId']) { const i = all.get(key); if (i) { i.value = id; } } }
+				},
+			};
 		}
 		// LOINC lab test code search.
 		if (k === 'testcode' || k === 'loinc') {
@@ -748,8 +782,9 @@ export function withTypeaheadSearch(
 		if (k === 'code') {
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchGlobalCodes(q) };
 		}
-		// Insurance search.
-		if (k === 'insurancename') {
+		// Insurance / payer search (incl. the claim form's "Payer / Insurer"
+		// picker keyed `payerId` — QA issue 10).
+		if (k === 'insurancename' || k === 'payerid' || k === 'payer' || k === 'insurerid' || k === 'insurer' || k === 'payorid') {
 			return {
 				...f,
 				kind: 'search' as const,
@@ -767,8 +802,12 @@ export function withTypeaheadSearch(
 						return list
 							.filter(p => !lq || String(p.name || p.label || '').toLowerCase().includes(lq))
 							.slice(0, 10)
-							.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || '') }));
+							.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || ''), details: { id: String(p.id ?? p.payerId ?? '') } }));
 					} catch { return []; }
+				},
+				onSelectSearchResult: (item, all) => {
+					const id = item.details?.id || '';
+					if (id) { for (const key of ['payerId', 'insurerId']) { const i = all.get(key); if (i) { i.value = id; } } }
 				},
 			};
 		}
@@ -2119,7 +2158,14 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		body.replaceChildren();
 
 		const formScroll = doc.createElement('div');
-		formScroll.style.cssText = 'flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:18px;';
+		formScroll.className = 'ciyex-list-form-scroll';
+		// Hide the scrollbar gutter (content still scrolls) so the New Payment /
+		// New Claim form doesn't show a vertical scrollbar (QA issue 9). Mirrors
+		// the openRecordEditDialog form-body treatment.
+		formScroll.style.cssText = 'flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:18px;scrollbar-width:none;-ms-overflow-style:none;';
+		const formScrollStyle = doc.createElement('style');
+		formScrollStyle.textContent = '.ciyex-list-form-scroll::-webkit-scrollbar{display:none;width:0;height:0;}';
+		formScroll.appendChild(formScrollStyle);
 		body.appendChild(formScroll);
 
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
