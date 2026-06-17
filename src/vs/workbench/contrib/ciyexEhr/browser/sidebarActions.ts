@@ -571,6 +571,11 @@ export interface IEditFieldDef {
 	 *  caller fill related fields (e.g. selecting a patient autofills
 	 *  patientId). */
 	onSelectSearchResult?: (item: { value: string; label: string; details?: Record<string, string> }, allInputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
+	/** Search ('search' kind) fields lock to a value chosen from the results
+	 *  dropdown by default: free-typed text that isn't picked (e.g. a provider not
+	 *  in the directory) is wiped on blur and rejected on save. Set this to
+	 *  `false` for the rare typeahead that should also accept arbitrary text. */
+	strictSelect?: boolean;
 }
 
 export interface IEditDialogOptions {
@@ -1294,7 +1299,10 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				// Do NOT attach the autofill-release handlers below (styling is
 				// applied after the cssText assignment further down).
 				input.setAttribute('readonly', 'readonly');
-			} else if (field.kind !== 'date') {
+			} else if (field.kind !== 'date' && field.kind !== 'search') {
+				// Search fields manage their own readonly state (locked after a
+				// dropdown pick), so they must not get the autofill-release trick —
+				// otherwise focusing a locked selection would silently unlock it.
 				input.setAttribute('readonly', 'readonly');
 				const releaseReadonly = () => { input.removeAttribute('readonly'); };
 				input.addEventListener('focus', releaseReadonly, { once: true });
@@ -1352,6 +1360,39 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			const onSearch = field.onSearch;
 			const onSelect = field.onSelectSearchResult;
 			const inputEl = input as HTMLInputElement;
+			// Lock to a value picked from the results by default — free-typed text
+			// that isn't selected (e.g. a provider not in the list) is wiped on
+			// blur and rejected on save (opt out per-field with strictSelect:false).
+			const strict = field.strictSelect !== false;
+			// After a pick the field becomes read-only (non-editable) with a clear to
+			// clear and search again — so a selected name can't be edited into
+			// something that no longer matches the chosen record.
+			let setLocked: ((locked: boolean) => void) | undefined;
+			if (strict) {
+				const holder = doc.createElement('span');
+				holder.style.cssText = 'position:relative;display:block;';
+				inputEl.parentElement?.insertBefore(holder, inputEl);
+				holder.appendChild(inputEl);
+				inputEl.style.paddingRight = '24px';
+				const clearBtn = doc.createElement('span');
+				clearBtn.textContent = '\u2715';
+				clearBtn.title = 'Clear selection';
+				clearBtn.style.cssText = `position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:12px;color:${colors.foreground};opacity:0.6;display:none;line-height:1;`;
+				holder.appendChild(clearBtn);
+				setLocked = (locked: boolean): void => {
+					inputEl.readOnly = locked;
+					inputEl.dataset.selected = locked ? '1' : '';
+					clearBtn.style.display = locked ? 'block' : 'none';
+				};
+				clearBtn.addEventListener('mousedown', (e) => {
+					e.preventDefault(); e.stopPropagation();
+					setLocked!(false);
+					inputEl.value = '';
+					inputEl.focus();
+				});
+				// An existing record's saved value counts as an already-confirmed pick.
+				if (inputEl.value.trim()) { setLocked(true); }
+			}
 			let debounceHandle: ReturnType<typeof setTimeout> | undefined;
 			// Position the panel directly under the input every time it
 			// reopens. Using `position:fixed` against viewport coordinates
@@ -1389,6 +1430,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 						e.preventDefault();
 						e.stopPropagation();
 						inputEl.value = r.label;
+						if (setLocked) { setLocked(true); } else { inputEl.dataset.selected = '1'; }
 						if (onSelect) { onSelect(r, inputs); }
 						panel.style.display = 'none';
 						// Hiding this body-mounted panel during mousedown makes the
@@ -1414,6 +1456,8 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			doc.defaultView?.addEventListener('scroll', reposition, true);
 			doc.defaultView?.addEventListener('resize', reposition);
 			inputEl.addEventListener('input', () => {
+				// Typing invalidates a prior selection until a new result is picked.
+				if (strict) { inputEl.dataset.selected = ''; }
 				const q = inputEl.value.trim();
 				if (debounceHandle) { clearTimeout(debounceHandle); }
 				if (q.length < 2) { panel.style.display = 'none'; return; }
@@ -1426,7 +1470,11 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			});
 			inputEl.addEventListener('blur', () => {
 				// Hide after a tick so click on a result still fires
-				setTimeout(() => { panel.style.display = 'none'; }, 150);
+				setTimeout(() => {
+					panel.style.display = 'none';
+					// Drop text that was never confirmed against the list.
+					if (strict && inputEl.dataset.selected !== '1' && inputEl.value) { inputEl.value = ''; }
+				}, 150);
 			});
 			// Track the panel for cleanup when the dialog closes — see the
 			// `close()` helper below.
@@ -1486,7 +1534,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		errorMsg.textContent = '';
 		const result: Record<string, string> = {};
 		for (const f of opts.fields) {
-			const v = inputs.get(f.key)?.value ?? '';
+			const inputEl = inputs.get(f.key);
+			const v = inputEl?.value ?? '';
+			// strictSelect: a search value typed but not picked from the results
+			// (e.g. Save clicked before the blur-clear fires) must not be saved.
+			if (f.kind === 'search' && f.strictSelect !== false && v.trim() && inputEl?.dataset.selected !== '1') {
+				if (inputEl) { inputEl.value = ''; }
+				errorMsg.textContent = `Please select ${f.label} from the search results`;
+				return;
+			}
 			if (f.required && !v.trim()) {
 				errorMsg.textContent = `${f.label} is required`;
 				return;
@@ -2099,6 +2155,37 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		if (field.kind === 'search' && field.onSearch) {
 			const onSearch = field.onSearch;
 			const onSelect = field.onSelectSearchResult;
+			// Lock to a value picked from the results by default — a name typed but
+			// never selected from the list can't be saved (opt out: strictSelect:false).
+			const strict = field.strictSelect !== false;
+			// After a pick the field becomes read-only with a clear to clear and search
+			// again, so a selected name can't be edited away from the chosen record.
+			let setLocked: ((locked: boolean) => void) | undefined;
+			if (strict) {
+				const holder = doc.createElement('span');
+				holder.style.cssText = 'position:relative;display:block;';
+				inp.parentElement?.insertBefore(holder, inp);
+				holder.appendChild(inp);
+				inp.style.paddingRight = '24px';
+				const clearBtn = doc.createElement('span');
+				clearBtn.textContent = '\u2715';
+				clearBtn.title = 'Clear selection';
+				clearBtn.style.cssText = `position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:12px;color:${c.fg};opacity:0.6;display:none;line-height:1;`;
+				holder.appendChild(clearBtn);
+				setLocked = (locked: boolean): void => {
+					inp.readOnly = locked;
+					inp.dataset.selected = locked ? '1' : '';
+					clearBtn.style.display = locked ? 'block' : 'none';
+				};
+				clearBtn.addEventListener('mousedown', (e) => {
+					e.preventDefault(); e.stopPropagation();
+					setLocked!(false);
+					inp.value = '';
+					inp.focus();
+				});
+				// An existing record's saved value counts as an already-confirmed pick.
+				if (inp.value.trim()) { setLocked(true); }
+			}
 			const panel = doc.createElement('div');
 			panel.style.cssText = `position:fixed;background:${c.popoverBg};color:${c.fg};border:1px solid ${c.border};border-radius:9px;box-shadow:0 10px 28px ${c.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;`;
 			workbenchRoot.appendChild(panel);
@@ -2127,6 +2214,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 						e.preventDefault();
 						e.stopPropagation();
 						inp.value = res.label;
+						if (setLocked) { setLocked(true); } else { inp.dataset.selected = '1'; }
 						if (onSelect) { onSelect(res, inputs); }
 						panel.style.display = 'none';
 					});
@@ -2136,6 +2224,8 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				panel.style.display = 'block';
 			};
 			inp.addEventListener('input', () => {
+				// Typing invalidates a prior selection until a new result is picked.
+				if (strict) { inp.dataset.selected = ''; }
 				const q = inp.value.trim();
 				if (handle) { clearTimeout(handle); }
 				if (q.length < 2) { panel.style.display = 'none'; return; }
@@ -2143,7 +2233,13 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					try { render((await onSearch(q)).slice(0, 8)); } catch { panel.style.display = 'none'; }
 				}, 250);
 			});
-			inp.addEventListener('blur', () => { setTimeout(() => { panel.style.display = 'none'; }, 150); });
+			inp.addEventListener('blur', () => {
+				setTimeout(() => {
+					panel.style.display = 'none';
+					// Drop text that was never confirmed against the list.
+					if (strict && inp.dataset.selected !== '1' && inp.value) { inp.value = ''; }
+				}, 150);
+			});
 		}
 	};
 
@@ -2297,7 +2393,15 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 			setError('');
 			const result: Record<string, string> = {};
 			for (const f of opts.fields) {
-				const v = inputs.get(f.key)?.value ?? '';
+				const input = inputs.get(f.key);
+				const v = input?.value ?? '';
+				// strictSelect: a search value typed but not picked from the results
+				// (e.g. Save clicked before the blur-clear fires) must not be saved.
+				if (f.kind === 'search' && f.strictSelect !== false && v.trim() && input?.dataset.selected !== '1') {
+					if (input) { input.value = ''; }
+					setError(`Please select ${f.label} from the search results`);
+					return;
+				}
 				if (f.required && !v.trim()) {
 					setError(`${f.label} is required`);
 					return;

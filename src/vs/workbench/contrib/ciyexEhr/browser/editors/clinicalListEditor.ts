@@ -1254,6 +1254,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const strictLockRefs = new Map<string, (locked: boolean) => void>();
 
 		for (const field of fields) {
+			// Every typeahead/search field locks to a value chosen from its results
+			// dropdown by default: a name typed but not picked from the list (e.g. a
+			// provider that doesn't exist) is wiped on blur and rejected on save, so
+			// only real records are stored. Opt a field out with `strictSelect:false`
+			// for the rare case where free text is genuinely allowed.
+			if (field.type === 'search' && field.strictSelect === undefined) {
+				field.strictSelect = true;
+			}
 			const group = DOM.append(body, DOM.$('div'));
 			group.style.cssText = field.width ? `grid-column:${field.width};` : '';
 			if (field.hidden) {
