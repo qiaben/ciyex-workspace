@@ -1298,14 +1298,35 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
-	private async _updateAppointmentStatus(id: string, status: string): Promise<void> {
+	private async _updateAppointmentStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<boolean> {
+		if (!id) { return false; }
+		// Primary path: the dedicated status sub-resource.
 		try {
-			await this.apiService.fetch(`/api/appointments/${id}/status`, {
+			const res = await this.apiService.fetch(`/api/appointments/${id}/status`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),
 			});
-		} catch { /* */ }
+			if (res.ok) { return true; }
+		} catch { /* fall through to the full-update fallback */ }
+		// Fallback: re-issue as a full appointment PUT (the same call the Edit
+		// dialog uses). The `/status` sub-resource can reject a transition once the
+		// appointment is terminal (Completed / Cancelled), and the previous silent
+		// `catch` left the pill reverting to the old status with no feedback — the
+		// "can't update a completed appointment's status" report. The full PUT has
+		// no such guard, so the status can always be corrected.
+		if (apt) {
+			try {
+				const res = await this.apiService.fetch(`/api/appointments/${id}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ ...apt, status }),
+				});
+				if (res.ok) { return true; }
+			} catch { /* surfaced below */ }
+		}
+		this.notificationService.notify({ severity: Severity.Error, message: 'Could not update the appointment status. Please try again.' });
+		return false;
 	}
 
 	private async _updateAppointmentRoom(id: string, room: string): Promise<void> {
@@ -1386,9 +1407,9 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	/** PUT a new appointment status, then refresh the dashboard so the card,
 	 *  status pill and available actions all reflect the new state. */
-	private async _changeApptStatus(id: string, status: string): Promise<void> {
+	private async _changeApptStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<void> {
 		if (!id) { return; }
-		await this._updateAppointmentStatus(id, status);
+		await this._updateAppointmentStatus(id, status, apt);
 		this._rerender();
 	}
 
@@ -1413,7 +1434,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>, encs?: Record<string, unknown>[]): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
-		await this._updateAppointmentStatus(id, 'Completed');
+		await this._updateAppointmentStatus(id, 'Completed', apt);
 		if (this._appointmentHasEncounter(apt, encs)) {
 			this._rerender();
 			return;
@@ -1432,7 +1453,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			await this._completeAppointmentWithEncounter({ ...apt, status });
 			return;
 		}
-		await this._changeApptStatus(appointmentId, status);
+		await this._changeApptStatus(appointmentId, status, apt);
 	}
 
 	/** Resolve a color for a status string (green=completed, red=cancel/no-show,
@@ -1758,9 +1779,6 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  Room → Vitals → Encounter → Complete) lives in the Quick Actions card,
 	 *  so this bar is intentionally short: Edit, Video, No Show, Cancel. */
 	private _renderAppointmentActions(card: HTMLElement, apt: Record<string, unknown>, appointmentId: string): void {
-		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
-		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'canceled', 'noshow', 'no-show', 'no show']);
-		const isTerminal = terminal.has(status);
 		const vt = this._apptTypeStr(apt).toLowerCase();
 		const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
 
@@ -1800,11 +1818,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
 
-		// Destructive / correction actions
-		if (!isTerminal) {
-			mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show'), 'danger');
-			mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled'), 'danger');
-		}
+		// Destructive / correction actions. Shown even for terminal appointments
+		// so a Completed visit can still be corrected to No Show / Cancelled — the
+		// status is never a dead end (pairs with the resilient status update).
+		mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show', apt), 'danger');
+		mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled', apt), 'danger');
 	}
 
 	private _renderGrid(
@@ -1926,7 +1944,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			return reachable ? 'todo' : 'disabled';
 		};
 
-		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in'));
+		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in', apt));
 		tile('home', '2 · Assign Room', 'Front desk', stateFor('room', done('checkin')), () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
 		tile('pulse', '3 · Record Vitals', 'Medical staff', stateFor('vitals', done('checkin')), () => this._focusVitalsEntry());
 		tile('note', '4 · Open Encounter', 'Provider', stateFor('encounter', done('checkin')), () => {
