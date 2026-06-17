@@ -1832,14 +1832,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderTodayVitalsCard(grid, vit);
 		this._renderFinancialsCard(grid, payments, statements);
 
-		// Visit History (2) + Encounter History (2)
-		// Visit History "+" creates a Visit Note (clinical note for the visit);
-		// Encounter History "+" creates an Encounter. Previously both opened the
-		// New Encounter dialog (QA issue 6).
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, () => this._openCreateModal('visit-notes'));
-		this._renderEncounterRows(visitCard, encs);
+		// Visit History (2) + Encounter History (2). No "+" add button on either —
+		// records are created from their own workflows (appointment → encounter,
+		// chart → visit note), so the inline create option is hidden (QA request).
+		// Visit-history rows fall back to the appointment's location when the
+		// encounter row itself carries no location (encounters don't embed one).
+		const apptLocation = apt ? this._resolveLocationName(apt.locationName || apt.location || apt.facility || '') : '';
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, undefined);
+		this._renderEncounterRows(visitCard, encs, apptLocation);
 
-		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, () => this._openCreateModal('encounters'));
+		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, undefined);
 		this._renderEncounterClinicalRows(encCard, encs);
 
 		// Active Problems (2) + Medications (2)
@@ -2718,7 +2720,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		return card;
 	}
 
-	private _renderEncounterRows(card: HTMLElement, encs: Record<string, unknown>[]): void {
+	private _renderEncounterRows(card: HTMLElement, encs: Record<string, unknown>[], fallbackLocation?: string): void {
 		if (encs.length === 0) {
 			const empty = DOM.append(card, DOM.$('div'));
 			empty.textContent = 'No encounters found';
@@ -2740,7 +2742,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 			const type = enc.visitCategory || enc.encounterType || enc.type || enc.serviceType || enc.class || '—';
 			const prov = enc.encounterProvider || enc.providerDisplay || enc.providerName || enc.practitionerName || '';
-			const loc = this._resolveLocationName(enc.locationName || enc.location || enc.facility || '') || '—';
+			const loc = this._resolveLocationName(enc.locationName || enc.location || enc.facility || '') || fallbackLocation || '—';
 			const status = enc.status || 'Unknown';
 			const notes = enc.notes || enc.chiefComplaint || enc.reason || '';
 			const statusLower = String(status).toLowerCase();

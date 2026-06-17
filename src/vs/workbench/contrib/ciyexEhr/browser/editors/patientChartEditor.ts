@@ -2042,7 +2042,14 @@ export class PatientChartEditor extends EditorPane {
 	private async _loadPatient(): Promise<void> {
 		try {
 			const res = await this.apiService.fetch(`/api/patients/${this.patientId}`);
-			if (res.ok) { this.patientData = (await res.json())?.data || {}; }
+			if (res.ok) {
+				const j = await res.json();
+				// Accept both ApiResponse-wrapped ({ data: {...} }) and unwrapped
+				// patient bodies so `this.patientData` is reliably the full record
+				// the demographics save merges over.
+				const cand = (j?.data ?? j) as Record<string, unknown> | null;
+				this.patientData = (cand && typeof cand === 'object' && !Array.isArray(cand)) ? cand : {};
+			}
 		} catch { /* */ }
 	}
 
@@ -4739,13 +4746,30 @@ export class PatientChartEditor extends EditorPane {
 				? `/api/patients/${this.patientId}`
 				: `${(ep || '').split('?')[0]}/patient/${this.patientId}`;
 			// Demographics PUT replaces the patient record — the backend rejects a
-			// partial body ("Failed to update patient", QA issue 1) because required
-			// fields (gender, dateOfBirth, …) the user didn't touch would be nulled.
-			// Merge the edits over the full loaded patient so every field round-trips,
-			// mirroring the working patientListPane edit (`{ ...patient, ...next }`).
-			const body = isDemographics
-				? { ...(this.patientData || {}), ...payload }
-				: payload;
+			// partial body ("Email is required" / "Failed to update patient", QA
+			// issue 1) because required fields (email, gender, dateOfBirth, …) the
+			// form didn't surface or the user didn't touch arrive null. Merge the
+			// edits over the FULL patient so every field round-trips, mirroring the
+			// working patientListPane edit (`{ ...patient, ...next }`). We re-fetch
+			// the patient fresh here rather than trusting the cached
+			// `this.patientData` — the initial `_loadPatient` can leave it empty
+			// (token lapse / wrapping mismatch), which silently produced a partial
+			// body and the rejected save.
+			let body: Record<string, unknown> = payload;
+			if (isDemographics) {
+				let full: Record<string, unknown> = (this.patientData && Object.keys(this.patientData).length > 0) ? this.patientData : {};
+				try {
+					const cur = await this.apiService.fetch(`/api/patients/${this.patientId}`);
+					if (cur.ok) {
+						const j = await cur.json();
+						// GET is ApiResponse-wrapped ({ data: {...} }); fall back to the
+						// top-level object if a future endpoint returns it unwrapped.
+						const cand = (j?.data ?? j) as Record<string, unknown> | null;
+						if (cand && typeof cand === 'object' && !Array.isArray(cand) && Object.keys(cand).length > 0) { full = cand; }
+					}
+				} catch { /* fall back to cached patientData */ }
+				body = { ...full, ...payload };
+			}
 			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(body) });
 			if (res.ok) {
 				this.notificationService.info(`${tab.label} saved`);
@@ -6528,10 +6552,26 @@ export class PatientChartEditor extends EditorPane {
 			usedKeys = fromConfig.keys;
 			cols = fromConfig.labels;
 			// Pull aliases from any matching SECTIONS_CONFIG entry so value resolution
-			// stays resilient across FHIR field-name variants.
+			// stays resilient across FHIR field-name variants. Match by key AND by
+			// label: the backend tab_field_config often names a column the same
+			// (label "End Date") but with a key the data doesn't carry (e.g. the
+			// field key is `endDateTime`/`period` while the list row has `endDate`).
+			// Without the label fallback the End Date cell renders blank even though
+			// the encounter HAS an end date (QA: encounter end date not showing).
 			const aliasMap = new Map<string, string[]>();
-			for (const c of (tab.columns || [])) { aliasMap.set(c.key, [c.key, ...(c.aliases || [])]); }
-			usedAliases = usedKeys.map(k => aliasMap.get(k) || [k]);
+			const aliasByLabel = new Map<string, string[]>();
+			for (const c of (tab.columns || [])) {
+				const chain = [c.key, ...(c.aliases || [])];
+				aliasMap.set(c.key, chain);
+				if (c.label) { aliasByLabel.set(c.label.toLowerCase().trim(), chain); }
+			}
+			usedAliases = usedKeys.map((k, i) => {
+				const byKey = aliasMap.get(k);
+				if (byKey) { return byKey; }
+				const byLabel = aliasByLabel.get((cols[i] || '').toLowerCase().trim());
+				// Try the backend key first, then the label-matched alias chain.
+				return byLabel ? [k, ...byLabel] : [k];
+			});
 		} else if (tab.columns && tab.columns.length > 0) {
 			usedKeys = tab.columns.map(c => c.key);
 			cols = tab.columns.map(c => c.label);
