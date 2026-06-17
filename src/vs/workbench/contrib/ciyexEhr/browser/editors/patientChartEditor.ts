@@ -12,6 +12,7 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -1899,6 +1900,7 @@ export class PatientChartEditor extends EditorPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
@@ -2803,9 +2805,27 @@ export class PatientChartEditor extends EditorPane {
 		// are auto-created when an appointment is marked "Completed" on the
 		// Appointments page. The "+ New Encounter" button was removed so the only
 		// path to an encounter is the appointment workflow.
+		const btnStyle = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);white-space:nowrap;flex-shrink:0;';
+
+		// Send the patient an intake form straight from their chart — opens the
+		// shared intake form prefilled with this patient (no need to go to Portal
+		// Management and search for someone whose chart is already open).
+		const intakeBtn = DOM.append(this.headerBar, DOM.$('button'));
+		intakeBtn.textContent = '\u{1F4E4} Send Intake';
+		intakeBtn.style.cssText = btnStyle + 'margin-right:8px;';
+		intakeBtn.addEventListener('click', () => {
+			const pd = (this.patientData || {}) as Record<string, unknown>;
+			this.commandService.executeCommand('ciyex.sendIntakeForm', {
+				patientId: this.patientId,
+				patientName: this.patientName,
+				phone: String(pd.phoneNumber || pd.phone || '') || undefined,
+				email: String(pd.email || '') || undefined,
+			}).catch(() => { });
+		});
+
 		const schedBtn = DOM.append(this.headerBar, DOM.$('button'));
 		schedBtn.textContent = '\u{1F4C5} Schedule Appointment';
-		schedBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);white-space:nowrap;flex-shrink:0;';
+		schedBtn.style.cssText = btnStyle;
 		schedBtn.addEventListener('click', () => this._navigate('appointments'));
 	}
 
@@ -3195,8 +3215,18 @@ export class PatientChartEditor extends EditorPane {
 		body.style.cssText = 'font-size:12px;color:var(--vscode-foreground);min-height:40px;';
 
 		const dob = this._formatDate(pd.dateOfBirth) || String(pd.dateOfBirth || '');
-		const address = [pd.addressLine1 || pd.address || pd.street, pd.city, pd.state, pd.postalCode || pd.zip || pd.zipcode]
-			.map(v => String(v || '').trim()).filter(Boolean).join(', ');
+		// `address` may arrive as a nested object ({ line1, line2, city, state,
+		// postalCode }), a plain string, or flattened top-level fields — handle
+		// all three so the card never renders a bare "[object Object]".
+		const addr = (pd.address && typeof pd.address === 'object') ? pd.address as Record<string, unknown> : {};
+		const addrString = typeof pd.address === 'string' ? pd.address : '';
+		const address = [
+			pd.addressLine1 || addr.line1 || addr.line || addrString || pd.street,
+			addr.line2,
+			pd.city || addr.city,
+			pd.state || addr.state,
+			pd.postalCode || pd.zip || pd.zipcode || addr.postalCode || addr.zip,
+		].map(v => String(v || '').trim()).filter(Boolean).join(', ');
 		const rows: Array<[string, string]> = [
 			['MRN', String(pd.mrn || pd.medicalRecordNumber || pd.id || this.patientId)],
 			['DOB', dob],

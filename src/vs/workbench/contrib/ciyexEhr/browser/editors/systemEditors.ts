@@ -89,9 +89,11 @@ export class FormSubmissionEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexFormSubmission';
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Form Reviews',
-		// Mirror the EHR UI: it fetches /pending. Collection-root listing isn't
-		// guaranteed in older deployed backends.
-		apiPath: '/api/portal/form-submissions/pending',
+		// Load ALL submissions (the collection root) so the Pending / Accepted /
+		// Rejected status tabs — which filter client-side — actually have data to
+		// show. Using /pending here meant accepted submissions never appeared
+		// under the Accepted tab.
+		apiPath: '/api/portal/form-submissions',
 		searchPlaceholder: 'Search by patient, form title...',
 		clientSideFilter: ['patientName', 'formTitle', 'formKey', 'status', 'id'],
 		editable: false,
