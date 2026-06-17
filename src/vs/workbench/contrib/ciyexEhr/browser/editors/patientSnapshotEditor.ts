@@ -1409,10 +1409,6 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  status pill and available actions all reflect the new state. */
 	private async _changeApptStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<void> {
 		if (!id) { return; }
-		// Status is locked once the appointment is Completed — block any change at
-		// the source (covers the workflow "Done" tiles too) so a status flip can't
-		// re-run the auto-encounter flow and create a duplicate encounter.
-		if (apt && PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus)) { return; }
 		await this._updateAppointmentStatus(id, status, apt);
 		this._rerender();
 	}
@@ -1454,6 +1450,16 @@ export class PatientSnapshotEditor extends EditorPane {
 	private async _applyStatusSelection(apt: Record<string, unknown>, appointmentId: string, status: string): Promise<void> {
 		if (!appointmentId || !status) { return; }
 		if (PatientSnapshotEditor._isCompletedStatus(status)) {
+			// Only the FIRST transition into Completed spins up the encounter. If the
+			// appointment is ALREADY completed, re-selecting Completed must NOT create
+			// another one — the backend's POST /encounter has no dedupe, so re-running
+			// the flow is exactly what produced the duplicate encounters (QA report).
+			// Re-completing just re-saves the status (effectively a no-op).
+			const wasCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus);
+			if (wasCompleted) {
+				await this._changeApptStatus(appointmentId, status, apt);
+				return;
+			}
 			await this._completeAppointmentWithEncounter({ ...apt, status });
 			return;
 		}
@@ -1477,19 +1483,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(cell, DOM.$('div'));
 		wrap.style.cssText = 'position:relative;display:inline-block;margin-top:1px;';
 		const color = PatientSnapshotEditor._statusColor(currentStatus);
-
-		// Once an appointment is "Completed" its encounter has been auto-created and
-		// the visit is finalized — the status is LOCKED and can no longer be changed
-		// (mirrors appointmentsEditor.ts). Re-opening the dropdown and re-selecting a
-		// status would spin up a duplicate encounter, so the pill renders as a static
-		// badge with no dropdown and no click.
-		if (PatientSnapshotEditor._isCompletedStatus(currentStatus)) {
-			const badge = DOM.append(wrap, DOM.$('span'));
-			badge.textContent = currentStatus;
-			badge.title = 'Completed appointments are finalized and their status cannot be changed';
-			badge.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:12px;border:1px solid ${color}66;background:${color}1f;color:${color};font-size:12px;font-weight:700;cursor:default;max-width:100%;`;
-			return;
-		}
 
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
 		trigger.title = 'Change appointment status';
@@ -1562,11 +1555,36 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 	}
 
-	/** Create a FHIR encounter from the appointment, open it, then refresh. */
+	/** Create a FHIR encounter from the appointment (or reuse the existing one),
+	 *  open it, then refresh. Idempotent: the backend's POST
+	 *  `/api/appointments/{id}/encounter` creates a NEW encounter on every call
+	 *  (no dedupe), so completing an appointment more than once would otherwise
+	 *  leave a trail of duplicate encounters. We first check the appointment's own
+	 *  `encounterId`, then a read-only GET on the same endpoint ("Encounter
+	 *  found"), and only POST to create when neither resolves one. */
 	private async _createEncounterFromAppointment(apt: Record<string, unknown>): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
 		try {
+			// 1) Reuse an encounter already linked to this appointment.
+			let existingId = String(apt.encounterId || '');
+			// 2) Otherwise ask the backend (read-only) whether one exists.
+			if (!existingId) {
+				try {
+					const lookup = await this.apiService.fetch(`/api/appointments/${id}/encounter`);
+					if (lookup.ok) {
+						const lj = await lookup.json();
+						const lp = (lj?.data ?? lj) as Record<string, unknown>;
+						existingId = String(lp?.encounterId || lp?.id || '');
+					}
+				} catch { /* fall through to create */ }
+			}
+			if (existingId) {
+				void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, existingId, this._currentPatientName);
+				this._rerender();
+				return;
+			}
+			// 3) None exists yet — create one.
 			const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
 			let encounterId: string | undefined;
 			if (res.ok) {
