@@ -18,6 +18,48 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
+import { FormFieldDef } from '../editors/clinicalListEditor.js';
+import {
+	PRESCRIPTIONS_FORM_FIELDS, LAB_ORDER_FORM_FIELDS, IMMUNIZATIONS_FORM_FIELDS,
+	REFERRALS_FORM_FIELDS, CARE_PLANS_FORM_FIELDS, AUTHORIZATIONS_FORM_FIELDS, EDUCATION_FORM_FIELDS,
+} from '../editors/clinicalEditors.js';
+
+/**
+ * Adapt an editor's {@link FormFieldDef} list (the canonical "New X" form schema
+ * in clinicalEditors.ts) into the sidebar drawer's {@link IEditFieldDef} shape,
+ * so the `+` quick-create drawer always shows the SAME fields as the full
+ * editor's create form — one source of truth, no drift.
+ *
+ * `search` fields map to plain text here; {@link withTypeaheadSearch} (applied
+ * when the drawer opens) upgrades the well-known keys (patient, provider, code
+ * systems, insurance, …) back into real typeaheads by key, exactly as the
+ * sidebar already did. Validation patterns are intentionally dropped — the
+ * drawer doesn't enforce them — but every field, label, option, default and
+ * hidden flag carries over.
+ */
+function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDef[] {
+	return formFields.map((f): IEditFieldDef => {
+		const def = typeof f.defaultValue === 'function' ? f.defaultValue() : f.defaultValue;
+		return {
+			key: f.key,
+			label: f.label,
+			// 'search' degrades to text; withTypeaheadSearch re-upgrades known keys.
+			kind: f.type === 'search' ? 'text' : f.type,
+			required: f.required,
+			placeholder: f.placeholder,
+			options: f.options?.map(o => ({ value: o.value, label: o.label })),
+			optionsApiPath: f.optionsApiPath,
+			optionLabelKey: f.optionsLabelField,
+			optionValueKey: f.optionsValueField,
+			maxDigits: f.maxDigits,
+			hidden: f.hidden,
+			defaultValue: def,
+			// The editor leaves per-field width to its own grid; give the drawer a
+			// clean two-column layout (full-width only for multi-line notes).
+			widthPct: f.type === 'textarea' ? 100 : 50,
+		};
+	});
+}
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string; patientId?: string };
 
@@ -60,59 +102,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/prescriptions?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['medicationName', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled from patient search', widthPct: 50 },
-			{ key: 'prescriberName', label: 'Prescriber', placeholder: 'Search prescriber...', widthPct: 50 },
-			{ key: 'prescriberNpi', label: 'Prescriber NPI', required: true, placeholder: '10-digit NPI', widthPct: 50 },
-			{ key: 'medicationName', label: 'Medication Name', required: true, placeholder: 'e.g. Amoxicillin 500mg', widthPct: 100 },
-			{ key: 'medicationCode', label: 'Medication Code', placeholder: 'e.g. NDC or RxNorm code', widthPct: 50 },
-			{
-				key: 'medicationSystem', label: 'Code System', kind: 'select', widthPct: 50, options: [
-					{ value: '', label: 'Select...' },
-					{ value: 'NDC', label: 'NDC' },
-					{ value: 'RxNorm', label: 'RxNorm' },
-				]
-			},
-			{ key: 'strength', label: 'Strength / Dosage', placeholder: '500mg', widthPct: 50 },
-			{
-				key: 'dosageForm', label: 'Dosage Form', kind: 'select', widthPct: 50, options: [
-					{ value: '', label: 'Select...' },
-					{ value: 'tablet', label: 'Tablet' }, { value: 'capsule', label: 'Capsule' },
-					{ value: 'solution', label: 'Solution' }, { value: 'injection', label: 'Injection' },
-					{ value: 'inhaler', label: 'Inhaler' }, { value: 'cream', label: 'Cream' },
-					{ value: 'ointment', label: 'Ointment' }, { value: 'patch', label: 'Patch' },
-				]
-			},
-			{ key: 'sig', label: 'SIG (Directions)', required: true, placeholder: 'Take 1 tablet by mouth twice daily', widthPct: 100 },
-			{ key: 'quantity', label: 'Quantity', kind: 'number', placeholder: '30', widthPct: 50 },
-			{ key: 'daysSupply', label: 'Days Supply', kind: 'number', placeholder: '30', widthPct: 50 },
-			{ key: 'refills', label: 'Total Refills', kind: 'number', placeholder: '3', widthPct: 50 },
-			{
-				key: 'deaSchedule', label: 'DEA Schedule', kind: 'select', widthPct: 50, options: [
-					{ value: '', label: 'Select...' },
-					{ value: 'II', label: 'Schedule II' }, { value: 'III', label: 'Schedule III' },
-					{ value: 'IV', label: 'Schedule IV' }, { value: 'V', label: 'Schedule V' },
-				]
-			},
-			{ key: 'pharmacyName', label: 'Pharmacy', required: true, placeholder: 'Pharmacy name', widthPct: 50 },
-			{ key: 'pharmacyPhone', label: 'Pharmacy Phone', kind: 'tel', required: true, placeholder: '(555) 123-4567', widthPct: 50 },
-			{ key: 'pharmacyAddress', label: 'Pharmacy Address', placeholder: 'Pharmacy street address', widthPct: 100 },
-			{
-				key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
-					{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }, { value: 'stat', label: 'STAT' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'active', label: 'Active' }, { value: 'completed', label: 'Completed' },
-					{ value: 'stopped', label: 'Stopped' }, { value: 'cancelled', label: 'Cancelled' },
-					{ value: 'on-hold', label: 'On Hold' },
-				]
-			},
-			{ key: 'startDate', label: 'Start Date', kind: 'date', widthPct: 50 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(PRESCRIPTIONS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -134,42 +124,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/lab-order/search?page=0&size=10',
 		titleField: ['patientFirstName', 'patientName'],
 		subtitleField: ['orderName', 'status'],
-		editFields: [
-			{ key: 'patientFirstName', label: 'Patient First Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientLastName', label: 'Patient Last Name', placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', kind: 'number', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'labName', label: 'Lab Name', placeholder: 'Quest, LabCorp, etc.', widthPct: 50 },
-			{ key: 'orderNumber', label: 'Order Number', required: true, placeholder: 'Auto-generated', widthPct: 50 },
-			{ key: 'orderName', label: 'Order Name', placeholder: 'Order name', widthPct: 50 },
-			{ key: 'testDisplay', label: 'Test Name', required: true, placeholder: 'Search LOINC test...', widthPct: 50 },
-			{ key: 'testCode', label: 'Test Code (LOINC)', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' },
-					{ value: 'pending', label: 'Pending' }, { value: 'completed', label: 'Completed' },
-					{ value: 'cancelled', label: 'Cancelled' }, { value: 'revoked', label: 'Revoked' },
-				]
-			},
-			{
-				key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
-					{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }, { value: 'stat', label: 'STAT' },
-				]
-			},
-			{ key: 'orderDate', label: 'Order Date', kind: 'date', widthPct: 50 },
-			{ key: 'orderTime', label: 'Order Time', placeholder: 'HH:MM (24h)', widthPct: 50 },
-			{ key: 'physicianName', label: 'Ordering Provider', required: true, placeholder: 'Search provider...', widthPct: 50 },
-			{ key: 'specimenId', label: 'Specimen ID', placeholder: 'S-0001', widthPct: 50 },
-			{
-				key: 'result', label: 'Result Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'Pending', label: 'Pending' }, { value: 'Preliminary', label: 'Preliminary' },
-					{ value: 'Partial', label: 'Partial' }, { value: 'Final', label: 'Final' },
-					{ value: 'Corrected', label: 'Corrected' }, { value: 'Amended', label: 'Amended' },
-				]
-			},
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', placeholder: 'Search ICD-10 codes', widthPct: 50 },
-			{ key: 'procedureCode', label: 'Procedure Code (CPT)', placeholder: 'Search CPT codes', widthPct: 50 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(LAB_ORDER_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -195,41 +150,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/immunizations?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['vaccineName', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient by name...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'vaccineName', label: 'Vaccine Name', placeholder: 'Influenza, inactivated', widthPct: 50 },
-			{ key: 'cvxCode', label: 'CVX Code', required: true, placeholder: 'Search CVX vaccine code...', widthPct: 50 },
-			{ key: 'manufacturer', label: 'Manufacturer', placeholder: 'Pfizer', widthPct: 50 },
-			{ key: 'lotNumber', label: 'Lot Number', placeholder: 'ABC123', widthPct: 50 },
-			{ key: 'expirationDate', label: 'Expiration Date', kind: 'date', widthPct: 50 },
-			{ key: 'administrationDate', label: 'Admin Date', kind: 'date', required: true, widthPct: 50 },
-			{
-				key: 'site', label: 'Site', kind: 'select', widthPct: 50, options: [
-					{ value: '', label: 'Select site...' },
-					{ value: 'left_arm', label: 'Left Arm' }, { value: 'right_arm', label: 'Right Arm' },
-					{ value: 'left_thigh', label: 'Left Thigh' }, { value: 'right_thigh', label: 'Right Thigh' },
-					{ value: 'left_deltoid', label: 'Left Deltoid' }, { value: 'right_deltoid', label: 'Right Deltoid' },
-					{ value: 'left_gluteal', label: 'Left Gluteal' }, { value: 'right_gluteal', label: 'Right Gluteal' },
-				]
-			},
-			{
-				key: 'route', label: 'Route', kind: 'select', widthPct: 50, options: [
-					{ value: 'IM', label: 'Intramuscular (IM)' }, { value: 'SC', label: 'Subcutaneous (SC)' },
-					{ value: 'PO', label: 'Oral' }, { value: 'IN', label: 'Intranasal' }, { value: 'ID', label: 'Intradermal' },
-				]
-			},
-			{ key: 'doseNumber', label: 'Dose Number', placeholder: 'e.g. 0.5 mL or 1', widthPct: 50 },
-			{ key: 'administeredBy', label: 'Administered By', placeholder: 'Search provider...', widthPct: 50 },
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'completed', label: 'Completed' },
-					{ value: 'not_done', label: 'Not Done' },
-					{ value: 'entered_in_error', label: 'Entered in Error' },
-				]
-			},
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(IMMUNIZATIONS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -249,55 +170,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/referrals?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['specialistName', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'referringProvider', label: 'Referring Provider', required: true, placeholder: 'Search provider...', widthPct: 50 },
-			{ key: 'referralDate', label: 'Referral Date', kind: 'date', required: true, widthPct: 50 },
-			{ key: 'specialistName', label: 'Specialist Name', required: true, widthPct: 50 },
-			{ key: 'specialistNpi', label: 'Specialist NPI', placeholder: '10-digit NPI', widthPct: 50 },
-			{
-				key: 'specialty', label: 'Specialty', kind: 'select', widthPct: 50, options: [
-					{ value: 'Allergy/Immunology', label: 'Allergy/Immunology' },
-					{ value: 'Cardiology', label: 'Cardiology' }, { value: 'Dermatology', label: 'Dermatology' },
-					{ value: 'Endocrinology', label: 'Endocrinology' }, { value: 'ENT', label: 'ENT' },
-					{ value: 'Gastroenterology', label: 'Gastroenterology' },
-					{ value: 'Geriatrics', label: 'Geriatrics' }, { value: 'Hematology', label: 'Hematology' },
-					{ value: 'Infectious Disease', label: 'Infectious Disease' },
-					{ value: 'Nephrology', label: 'Nephrology' }, { value: 'Neurology', label: 'Neurology' },
-					{ value: 'Obstetrics/Gynecology', label: 'Obstetrics/Gynecology' },
-					{ value: 'Oncology', label: 'Oncology' }, { value: 'Ophthalmology', label: 'Ophthalmology' },
-					{ value: 'Orthopedics', label: 'Orthopedics' }, { value: 'Pain Management', label: 'Pain Management' },
-					{ value: 'Palliative Care', label: 'Palliative Care' }, { value: 'Pathology', label: 'Pathology' },
-					{ value: 'Pediatrics', label: 'Pediatrics' }, { value: 'Physical Medicine', label: 'Physical Medicine' },
-					{ value: 'Plastic Surgery', label: 'Plastic Surgery' }, { value: 'Podiatry', label: 'Podiatry' },
-					{ value: 'Psychiatry', label: 'Psychiatry' }, { value: 'Pulmonology', label: 'Pulmonology' },
-					{ value: 'Radiology', label: 'Radiology' }, { value: 'Rheumatology', label: 'Rheumatology' },
-					{ value: 'Sports Medicine', label: 'Sports Medicine' }, { value: 'Surgery', label: 'Surgery' },
-					{ value: 'Urology', label: 'Urology' }, { value: 'Vascular Surgery', label: 'Vascular Surgery' },
-					{ value: 'Other', label: 'Other' },
-				]
-			},
-			{ key: 'facilityName', label: 'Facility Name', required: true, widthPct: 50 },
-			{ key: 'facilityAddress', label: 'Facility Address', placeholder: 'Street address', widthPct: 100 },
-			{ key: 'facilityPhone', label: 'Facility Phone', kind: 'tel', widthPct: 50 },
-			{ key: 'facilityFax', label: 'Facility Fax', kind: 'tel', widthPct: 50 },
-			{
-				key: 'urgency', label: 'Urgency', kind: 'select', widthPct: 50, options: [
-					{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }, { value: 'stat', label: 'STAT' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'draft', label: 'Draft' }, { value: 'pending', label: 'Pending' },
-					{ value: 'sent', label: 'Sent' }, { value: 'acknowledged', label: 'Acknowledged' },
-					{ value: 'scheduled', label: 'Scheduled' }, { value: 'completed', label: 'Completed' },
-					{ value: 'cancelled', label: 'Cancelled' },
-				]
-			},
-			{ key: 'reason', label: 'Reason for Referral', kind: 'textarea', required: true, widthPct: 100 },
-			{ key: 'clinicalNotes', label: 'Clinical Notes', kind: 'textarea', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(REFERRALS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -327,41 +200,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/prior-auth?page=0&size=10',
 		titleField: ['patientName', 'authNumber'],
 		subtitleField: ['procedure', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'providerName', label: 'Provider', placeholder: 'Search provider...', widthPct: 50 },
-			{ key: 'insuranceName', label: 'Insurance Name', required: true, placeholder: 'Search insurance...', widthPct: 50 },
-			{ key: 'memberId', label: 'Member ID', widthPct: 50 },
-			{ key: 'authorizationNumber', label: 'Authorization Number', placeholder: 'Auth reference number', widthPct: 50 },
-			{ key: 'procedureDescription', label: 'Procedure', required: true, placeholder: 'Search CPT procedure...', widthPct: 50 },
-			{ key: 'procedureCode', label: 'CPT Code', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'diagnosisDescription', label: 'Diagnosis', placeholder: 'Search ICD-10 diagnosis...', widthPct: 50 },
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'reviewDate', label: 'Review Date', kind: 'date', widthPct: 50 },
-			{ key: 'approvedDate', label: 'Approved Date', kind: 'date', widthPct: 50 },
-			{ key: 'deniedDate', label: 'Denied Date', kind: 'date', widthPct: 50 },
-			{ key: 'expiryDate', label: 'Expiry Date', kind: 'date', widthPct: 50 },
-			{ key: 'approvedUnits', label: 'Approved Units', kind: 'number', widthPct: 50 },
-			{ key: 'usedUnits', label: 'Used Units', kind: 'number', widthPct: 50 },
-			{ key: 'remainingUnits', label: 'Remaining Units', kind: 'number', widthPct: 50 },
-			{
-				key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
-					{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' }, { value: 'stat', label: 'STAT' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'pending', label: 'Pending' }, { value: 'submitted', label: 'Submitted' },
-					{ value: 'approved', label: 'Approved' }, { value: 'denied', label: 'Denied' },
-					{ value: 'appealed', label: 'Appealed' }, { value: 'expired', label: 'Expired' },
-					{ value: 'cancelled', label: 'Cancelled' },
-				]
-			},
-			{ key: 'appealDeadline', label: 'Appeal Deadline', kind: 'date', widthPct: 50 },
-			{ key: 'denialReason', label: 'Denial Reason', kind: 'textarea', placeholder: 'Reason for denial if applicable', widthPct: 100 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(AUTHORIZATIONS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -385,30 +224,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/care-plans?page=0&size=10',
 		titleField: ['title', 'patientName'],
 		subtitleField: ['patientName', 'status'],
-		editFields: [
-			{ key: 'title', label: 'Plan Title', required: true, placeholder: 'e.g. Diabetes Management Plan', widthPct: 100 },
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{
-				key: 'category', label: 'Category', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'chronic_disease', label: 'Chronic Disease' }, { value: 'preventive', label: 'Preventive' },
-					{ value: 'post_surgical', label: 'Post-Surgical' }, { value: 'behavioral', label: 'Behavioral' },
-					{ value: 'rehabilitation', label: 'Rehabilitation' }, { value: 'palliative', label: 'Palliative' },
-					{ value: 'other', label: 'Other' },
-				]
-			},
-			{ key: 'authorName', label: 'Author', placeholder: 'Search provider...', widthPct: 50 },
-			{ key: 'startDate', label: 'Start Date', kind: 'date', widthPct: 50 },
-			{ key: 'endDate', label: 'End Date', kind: 'date', widthPct: 50 },
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' },
-					{ value: 'on_hold', label: 'On Hold' }, { value: 'completed', label: 'Completed' },
-				]
-			},
-			{ key: 'description', label: 'Description', kind: 'textarea', placeholder: 'Plan description...', widthPct: 100 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(CARE_PLANS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -428,33 +244,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		apiPath: '/api/education/materials?page=0&size=10',
 		titleField: ['title'],
 		subtitleField: ['category'],
-		editFields: [
-			{ key: 'title', label: 'Title', required: true, placeholder: 'Material title', widthPct: 100 },
-			{
-				key: 'category', label: 'Category', kind: 'select', widthPct: 50, options: [
-					{ value: 'disease_management', label: 'Disease Management' }, { value: 'medication', label: 'Medication' },
-					{ value: 'procedure', label: 'Procedure' }, { value: 'lifestyle', label: 'Lifestyle' },
-					{ value: 'preventive', label: 'Preventive' }, { value: 'mental_health', label: 'Mental Health' },
-					{ value: 'nutrition', label: 'Nutrition' }, { value: 'other', label: 'Other' },
-				]
-			},
-			{
-				key: 'contentType', label: 'Content Type', kind: 'select', widthPct: 50, options: [
-					{ value: 'article', label: 'Article' }, { value: 'video', label: 'Video' },
-					{ value: 'pdf', label: 'PDF' }, { value: 'link', label: 'Link' },
-					{ value: 'handout', label: 'Handout' }, { value: 'infographic', label: 'Infographic' },
-				]
-			},
-			{ key: 'source', label: 'Source', placeholder: 'Source / author', widthPct: 50 },
-			{ key: 'url', label: 'URL / Path', placeholder: 'https://... or /files/...', widthPct: 50 },
-			{
-				key: 'isActive', label: 'Active', kind: 'select', widthPct: 50, options: [
-					{ value: 'true', label: 'Active' }, { value: 'false', label: 'Inactive' },
-				]
-			},
-			{ key: 'tags', label: 'Tags', placeholder: 'Comma-separated tags', widthPct: 100 },
-			{ key: 'description', label: 'Description', kind: 'textarea', placeholder: 'Brief description...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(EDUCATION_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -792,7 +582,7 @@ export class ClinicalMenuPane extends ViewPane {
 			return;
 		}
 		const initialValues: Record<string, unknown> = {};
-		for (const f of item.editFields) { initialValues[f.key] = ''; }
+		for (const f of item.editFields) { initialValues[f.key] = f.defaultValue ?? ''; }
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,

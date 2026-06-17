@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -365,6 +365,61 @@ function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const PRESCRIPTIONS_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{
+		key: 'prescriberName', label: 'Prescriber', type: 'search', placeholder: 'Search prescriber...',
+		apiPath: '/api/providers', relatedDisplayFields: ['identification.firstName', 'identification.lastName'],
+		relatedFieldsMap: { prescriberNpi: 'npi' },
+		aliases: ['providerName', 'prescribingDoctor', 'prescriber', 'renderingProvider'],
+	},
+	{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', required: true, placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'], validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
+	{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg', validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,128}$', validationMessage: 'Medication Name must be 2-128 characters and contain only letters, numbers, and common punctuation' },
+	{ key: 'medicationCode', label: 'Medication Code', type: 'text', placeholder: 'e.g. NDC or RxNorm code', aliases: ['code', 'ndcCode', 'rxNormCode', 'medCode'] },
+	{
+		key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system', 'code_system'], options: [
+			{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
+		]
+	},
+	{ key: 'strength', label: 'Strength / Dosage', type: 'text', placeholder: '500mg', aliases: ['dosage'], validationPattern: '^[0-9]+(\\.[0-9]+)?\\s?(mg|mcg|g|ml|mL|IU|units?|%)?$', validationMessage: 'Dosage must be a number with optional unit (e.g. 500mg, 5ml, 10 units)' },
+	{
+		key: 'dosageForm', label: 'Dosage Form', type: 'select', options: [
+			{ label: 'Tablet', value: 'tablet' }, { label: 'Capsule', value: 'capsule' },
+			{ label: 'Solution', value: 'solution' }, { label: 'Injection', value: 'injection' },
+			{ label: 'Inhaler', value: 'inhaler' }, { label: 'Cream', value: 'cream' },
+			{ label: 'Ointment', value: 'ointment' }, { label: 'Patch', value: 'patch' },
+		]
+	},
+	{ key: 'sig', label: 'SIG (Directions)', type: 'text', required: true, placeholder: 'Take 1 tablet by mouth twice daily', validationPattern: '^[A-Za-z0-9 ,.\\-/()+:;\'&]{2,256}$', validationMessage: 'SIG must be 2-256 characters using only letters, numbers, and standard punctuation' },
+	{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30' },
+	{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30' },
+	{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0 },
+	{
+		key: 'deaSchedule', label: 'DEA Schedule', type: 'select', options: [
+			{ label: 'Schedule II', value: 'II' }, { label: 'Schedule III', value: 'III' },
+			{ label: 'Schedule IV', value: 'IV' }, { label: 'Schedule V', value: 'V' },
+		]
+	},
+	{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', required: true, placeholder: 'Pharmacy name', validationPattern: '^[A-Za-z0-9 ,.\\-/()&\']{2,128}$', validationMessage: 'Pharmacy Name must be 2-128 valid characters' },
+	{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be in (US) format: (555) 123-4567 or 555-123-4567' },
+	{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
+	{
+		key: 'priority', label: 'Priority', type: 'select', options: [
+			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
+		], defaultValue: 'routine'
+	},
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
+			{ label: 'Stopped', value: 'stopped' }, { label: 'Cancelled', value: 'cancelled' },
+			{ label: 'On Hold', value: 'on-hold' },
+		], defaultValue: 'active'
+	},
+	{ key: 'startDate', label: 'Start Date', type: 'date' },
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+];
+
 export class PrescriptionsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPrescriptions';
 	protected readonly config: ClinicalEditorConfig = {
@@ -391,60 +446,7 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		],
 		// No additionalFilters — prescriber is in clientSideFilter so the main search bar
 		// (placeholder includes "prescriber") already filters by prescriber name.
-		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{
-				key: 'prescriberName', label: 'Prescriber', type: 'search', placeholder: 'Search prescriber...',
-				apiPath: '/api/providers', relatedDisplayFields: ['identification.firstName', 'identification.lastName'],
-				relatedFieldsMap: { prescriberNpi: 'npi' },
-				aliases: ['providerName', 'prescribingDoctor', 'prescriber', 'renderingProvider'],
-			},
-			{ key: 'prescriberNpi', label: 'Prescriber NPI', type: 'text', required: true, placeholder: '10-digit NPI', aliases: ['providerNpi', 'npi'], validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
-			{ key: 'medicationName', label: 'Medication Name', type: 'text', required: true, placeholder: 'e.g. Amoxicillin 500mg', validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,128}$', validationMessage: 'Medication Name must be 2-128 characters and contain only letters, numbers, and common punctuation' },
-			{ key: 'medicationCode', label: 'Medication Code', type: 'text', placeholder: 'e.g. NDC or RxNorm code', aliases: ['code', 'ndcCode', 'rxNormCode', 'medCode'] },
-			{
-				key: 'medicationSystem', label: 'Code System', type: 'select', aliases: ['codeSystem', 'system', 'code_system'], options: [
-					{ label: 'NDC', value: 'NDC' }, { label: 'RxNorm', value: 'RxNorm' },
-				]
-			},
-			{ key: 'strength', label: 'Strength / Dosage', type: 'text', placeholder: '500mg', aliases: ['dosage'], validationPattern: '^[0-9]+(\\.[0-9]+)?\\s?(mg|mcg|g|ml|mL|IU|units?|%)?$', validationMessage: 'Dosage must be a number with optional unit (e.g. 500mg, 5ml, 10 units)' },
-			{
-				key: 'dosageForm', label: 'Dosage Form', type: 'select', options: [
-					{ label: 'Tablet', value: 'tablet' }, { label: 'Capsule', value: 'capsule' },
-					{ label: 'Solution', value: 'solution' }, { label: 'Injection', value: 'injection' },
-					{ label: 'Inhaler', value: 'inhaler' }, { label: 'Cream', value: 'cream' },
-					{ label: 'Ointment', value: 'ointment' }, { label: 'Patch', value: 'patch' },
-				]
-			},
-			{ key: 'sig', label: 'SIG (Directions)', type: 'text', required: true, placeholder: 'Take 1 tablet by mouth twice daily', validationPattern: '^[A-Za-z0-9 ,.\\-/()+:;\'&]{2,256}$', validationMessage: 'SIG must be 2-256 characters using only letters, numbers, and standard punctuation' },
-			{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30' },
-			{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30' },
-			{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0 },
-			{
-				key: 'deaSchedule', label: 'DEA Schedule', type: 'select', options: [
-					{ label: 'Schedule II', value: 'II' }, { label: 'Schedule III', value: 'III' },
-					{ label: 'Schedule IV', value: 'IV' }, { label: 'Schedule V', value: 'V' },
-				]
-			},
-			{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', required: true, placeholder: 'Pharmacy name', validationPattern: '^[A-Za-z0-9 ,.\\-/()&\']{2,128}$', validationMessage: 'Pharmacy Name must be 2-128 valid characters' },
-			{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be in (US) format: (555) 123-4567 or 555-123-4567' },
-			{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
-			{
-				key: 'priority', label: 'Priority', type: 'select', options: [
-					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
-				], defaultValue: 'routine'
-			},
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
-					{ label: 'Stopped', value: 'stopped' }, { label: 'Cancelled', value: 'cancelled' },
-					{ label: 'On Hold', value: 'on-hold' },
-				], defaultValue: 'active'
-			},
-			{ key: 'startDate', label: 'Start Date', type: 'date' },
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-		],
+		formFields: PRESCRIPTIONS_FORM_FIELDS,
 		actions: [
 			{
 				// allow-any-unicode-next-line
@@ -494,6 +496,75 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PrescriptionsEditor.ID, group, t, th, s, a, d); }
 }
+
+export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
+	{
+		key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
+		placeholder: 'Search patient by name, MRN or ID...',
+		apiPath: '/api/patients', relatedField: 'patientId',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
+		aliases: ['firstName', 'patientFirst', 'patient.firstName'],
+	},
+	{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
+	{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
+	{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
+	{
+		key: 'orderNumber', label: 'Order Number', type: 'text', required: true,
+		placeholder: 'Auto-generated',
+		defaultValue: () => {
+			const d = new Date();
+			const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+			const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+			return `LAB-${ymd}-${rand}`;
+		},
+	},
+	{ key: 'orderName', label: 'Order Name', type: 'text', placeholder: 'Order name' },
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+	{
+		key: 'testDisplay', label: 'Test Name', type: 'search', required: true,
+		placeholder: 'Search LOINC test (e.g. CBC, glucose)...',
+		apiPath: '/api/app-proxy/ciyex-codes/api/codes/LOINC/search',
+		searchParam: 'q',
+		searchDisplayField: 'shortDescription',
+		searchValueField: 'code',
+		relatedField: 'testCode',
+		relatedDisplayFields: ['code', 'shortDescription'],
+		validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
+		validationMessage: 'Test Name must be at least 2 characters',
+	},
+	{ key: 'testCode', label: 'Test Code (LOINC)', type: 'text', required: true, placeholder: 'Auto-filled from test search', validationPattern: '^[0-9A-Za-z\\-]{1,16}$', validationMessage: 'Invalid LOINC code format' },
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
+			{ label: 'Pending', value: 'pending' }, { label: 'Completed', value: 'completed' },
+			{ label: 'Cancelled', value: 'cancelled' }, { label: 'Revoked', value: 'revoked' },
+		], defaultValue: 'active'
+	},
+	{
+		key: 'priority', label: 'Priority', type: 'select', options: [
+			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
+		], defaultValue: 'routine'
+	},
+	{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+	{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)', defaultValue: () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } },
+	{
+		key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true,
+		placeholder: 'Search provider...', apiPath: '/api/providers',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		aliases: ['orderingProvider', 'providerName', 'renderingProvider', 'prescribingDoctor'],
+	},
+	{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
+	{
+		key: 'result', label: 'Result Status', type: 'select', aliases: ['resultStatus'], options: [
+			{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
+			{ label: 'Partial', value: 'Partial' }, { label: 'Final', value: 'Final' },
+			{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
+		], defaultValue: 'Pending'
+	},
+	{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+	{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+];
 
 export class LabsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexLabs';
@@ -558,74 +629,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{
-				key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
-				placeholder: 'Search patient by name, MRN or ID...',
-				apiPath: '/api/patients', relatedField: 'patientId',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
-				aliases: ['firstName', 'patientFirst', 'patient.firstName'],
-			},
-			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
-			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
-			{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
-			{
-				key: 'orderNumber', label: 'Order Number', type: 'text', required: true,
-				placeholder: 'Auto-generated',
-				defaultValue: () => {
-					const d = new Date();
-					const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-					const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-					return `LAB-${ymd}-${rand}`;
-				},
-			},
-			{ key: 'orderName', label: 'Order Name', type: 'text', placeholder: 'Order name' },
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-			{
-				key: 'testDisplay', label: 'Test Name', type: 'search', required: true,
-				placeholder: 'Search LOINC test (e.g. CBC, glucose)...',
-				apiPath: '/api/app-proxy/ciyex-codes/api/codes/LOINC/search',
-				searchParam: 'q',
-				searchDisplayField: 'shortDescription',
-				searchValueField: 'code',
-				relatedField: 'testCode',
-				relatedDisplayFields: ['code', 'shortDescription'],
-				validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
-				validationMessage: 'Test Name must be at least 2 characters',
-			},
-			{ key: 'testCode', label: 'Test Code (LOINC)', type: 'text', required: true, placeholder: 'Auto-filled from test search', validationPattern: '^[0-9A-Za-z\\-]{1,16}$', validationMessage: 'Invalid LOINC code format' },
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
-					{ label: 'Pending', value: 'pending' }, { label: 'Completed', value: 'completed' },
-					{ label: 'Cancelled', value: 'cancelled' }, { label: 'Revoked', value: 'revoked' },
-				], defaultValue: 'active'
-			},
-			{
-				key: 'priority', label: 'Priority', type: 'select', options: [
-					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
-				], defaultValue: 'routine'
-			},
-			{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
-			{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)', defaultValue: () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } },
-			{
-				key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true,
-				placeholder: 'Search provider...', apiPath: '/api/providers',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				aliases: ['orderingProvider', 'providerName', 'renderingProvider', 'prescribingDoctor'],
-			},
-			{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
-			{
-				key: 'result', label: 'Result Status', type: 'select', aliases: ['resultStatus'], options: [
-					{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
-					{ label: 'Partial', value: 'Partial' }, { label: 'Final', value: 'Final' },
-					{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
-				], defaultValue: 'Pending'
-			},
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
-			{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
-		],
+		formFields: LAB_ORDER_FORM_FIELDS,
 		// Action column mirrors the EHR-UI Lab Orders page: View, Mark Complete,
 		// View Results, Edit (auto, from editable:true) and Delete (issue #7).
 		actions: [
@@ -1146,6 +1150,123 @@ export class LabsEditor extends ClinicalListEditorBase {
 	}
 }
 
+export const IMMUNIZATIONS_FORM_FIELDS: FormFieldDef[] = [
+	// Patient Information
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient by name...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	// Vaccine Information
+	{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Influenza, inactivated' },
+	{
+		key: 'cvxCode', label: 'CVX Code', type: 'search', required: true,
+		placeholder: 'Search CVX vaccine code...',
+		apiPath: '/api/app-proxy/ciyex-codes/api/codes/CVX/search',
+		searchParam: 'q',
+		searchDisplayField: 'shortDescription',
+		searchValueField: 'code',
+		// relatedField points back to the same field so the numeric code (not the
+		// display description) is stored in cvxCode after the user selects a result.
+		relatedField: 'cvxCode',
+		aliases: ['cvx', 'vaccineCode'],
+		// relatedDisplayFields intentionally omitted so the dropdown item text comes
+		// from searchDisplayField ('shortDescription') and the input is then
+		// overwritten with result['code'] via relatedField above. This ensures the
+		// form payload contains the numeric CVX code (e.g. "88") and satisfies the
+		// validationPattern rather than the human-readable description.
+		relatedFieldsMap: { vaccineName: 'shortDescription' },
+		validationPattern: '^[0-9]{1,4}$',
+		validationMessage: 'CVX code must be 1-4 digits',
+		// Fallback when ciyex-codes has no CVX dataset loaded — same list the
+		// web app uses (DynamicFormRenderer.FALLBACK_CVX_CODES). The previous
+		// HEAD version used a hardcoded select; the user's complaint was that
+		// the *search* option wasn't working, so we keep the search field but
+		// fall back to client-side filtering of these options when the API
+		// returns empty.
+		fallbackOptions: [
+			{ code: '03', shortDescription: 'MMR (Measles, Mumps, Rubella)' },
+			{ code: '08', shortDescription: 'Hepatitis B, adolescent or pediatric' },
+			{ code: '10', shortDescription: 'IPV (Poliovirus, inactivated)' },
+			{ code: '17', shortDescription: 'HIB (Haemophilus influenzae type b)' },
+			{ code: '20', shortDescription: 'DTaP' },
+			{ code: '21', shortDescription: 'Varicella (Chickenpox)' },
+			{ code: '33', shortDescription: 'Pneumococcal polysaccharide (PPV23)' },
+			{ code: '43', shortDescription: 'Hepatitis B, adult' },
+			{ code: '45', shortDescription: 'Hepatitis B, pediatric' },
+			{ code: '48', shortDescription: 'Hib (PRP-T)' },
+			{ code: '49', shortDescription: 'Hib (PRP-OMP)' },
+			{ code: '52', shortDescription: 'Hepatitis A, adult' },
+			{ code: '62', shortDescription: 'HPV, bivalent' },
+			{ code: '83', shortDescription: 'Hepatitis A, pediatric/adolescent' },
+			{ code: '85', shortDescription: 'Hepatitis A-Hepatitis B' },
+			{ code: '88', shortDescription: 'Flu, unspecified' },
+			{ code: '94', shortDescription: 'MMR-Varicella (MMRV)' },
+			{ code: '100', shortDescription: 'Pneumococcal conjugate (PCV7)' },
+			{ code: '103', shortDescription: 'Meningococcal' },
+			{ code: '110', shortDescription: 'DTaP-Hepatitis B-IPV' },
+			{ code: '113', shortDescription: 'Td, adult' },
+			{ code: '114', shortDescription: 'Meningococcal MCV4P' },
+			{ code: '115', shortDescription: 'Tdap' },
+			{ code: '116', shortDescription: 'Rotavirus, pentavalent' },
+			{ code: '121', shortDescription: 'Zoster (shingles), live' },
+			{ code: '133', shortDescription: 'PCV13 (Pneumococcal conjugate)' },
+			{ code: '135', shortDescription: 'Influenza, high dose' },
+			{ code: '140', shortDescription: 'Influenza, seasonal, injectable' },
+			{ code: '150', shortDescription: 'Influenza, injectable, quadrivalent' },
+			{ code: '158', shortDescription: 'Influenza, injectable, quadrivalent, preservative free' },
+			{ code: '162', shortDescription: 'Meningococcal B, recombinant' },
+			{ code: '165', shortDescription: 'HPV9 (Human Papillomavirus 9-valent)' },
+			{ code: '166', shortDescription: 'PCV15' },
+			{ code: '167', shortDescription: 'PCV20' },
+			{ code: '174', shortDescription: 'COVID-19 (Moderna)' },
+			{ code: '176', shortDescription: 'COVID-19 Pfizer-BioNTech' },
+			{ code: '207', shortDescription: 'COVID-19 Moderna' },
+			{ code: '210', shortDescription: 'COVID-19 Janssen (Johnson & Johnson)' },
+			{ code: '212', shortDescription: 'COVID-19 Novavax' },
+			{ code: '228', shortDescription: 'Zoster (shingles), recombinant (Shingrix)' },
+		],
+	},
+	{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
+	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'] },
+	{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
+	// Administration Details
+	{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
+	{
+		key: 'site', label: 'Site', type: 'select', options: [
+			{ label: 'Select site...', value: '' },
+			{ label: 'Left Arm', value: 'left_arm' }, { label: 'Right Arm', value: 'right_arm' },
+			{ label: 'Left Thigh', value: 'left_thigh' }, { label: 'Right Thigh', value: 'right_thigh' },
+			{ label: 'Left Deltoid', value: 'left_deltoid' }, { label: 'Right Deltoid', value: 'right_deltoid' },
+			{ label: 'Left Gluteal', value: 'left_gluteal' }, { label: 'Right Gluteal', value: 'right_gluteal' },
+		]
+	},
+	{
+		key: 'route', label: 'Route', type: 'select', options: [
+			{ label: 'Intramuscular (IM)', value: 'IM' }, { label: 'Subcutaneous (SC)', value: 'SC' },
+			{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
+		]
+	},
+	// Free-text dose so units (mL, gtt, liter, lit, units) can be entered.
+	// The backend `doseNumber` column is an Integer (dose-in-series), so
+	// `beforeSave` below splits "0.5 mL" into the integer part (doseNumber)
+	// and keeps the full text — units included — in `doseSeries`. Previously
+	// posting "1 ml" straight to the Integer column threw a JSON parse error.
+	{ key: 'doseNumber', label: 'Dose', type: 'text', placeholder: 'e.g. 0.5 mL, 1 gtt, 2 units', aliases: ['doseSeries'] },
+	// Provider Information
+	{
+		key: 'administeredBy', label: 'Administered By', type: 'search',
+		placeholder: 'Search provider...', apiPath: '/api/providers',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		aliases: ['provider', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
+	},
+	// Status & Notes
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' },
+			{ label: 'Entered in Error', value: 'entered_in_error' },
+		], defaultValue: 'completed'
+	},
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+];
+
 export class ImmunizationsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexImmunizations';
 	protected readonly config: ClinicalEditorConfig = {
@@ -1177,122 +1298,7 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 			{ key: 'status', label: 'Status', width: '80px' },
 		],
 		statusTabs: [{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' }, { label: 'Entered in Error', value: 'entered_in_error' }],
-		formFields: [
-			// Patient Information
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient by name...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			// Vaccine Information
-			{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Influenza, inactivated' },
-			{
-				key: 'cvxCode', label: 'CVX Code', type: 'search', required: true,
-				placeholder: 'Search CVX vaccine code...',
-				apiPath: '/api/app-proxy/ciyex-codes/api/codes/CVX/search',
-				searchParam: 'q',
-				searchDisplayField: 'shortDescription',
-				searchValueField: 'code',
-				// relatedField points back to the same field so the numeric code (not the
-				// display description) is stored in cvxCode after the user selects a result.
-				relatedField: 'cvxCode',
-				aliases: ['cvx', 'vaccineCode'],
-				// relatedDisplayFields intentionally omitted so the dropdown item text comes
-				// from searchDisplayField ('shortDescription') and the input is then
-				// overwritten with result['code'] via relatedField above. This ensures the
-				// form payload contains the numeric CVX code (e.g. "88") and satisfies the
-				// validationPattern rather than the human-readable description.
-				relatedFieldsMap: { vaccineName: 'shortDescription' },
-				validationPattern: '^[0-9]{1,4}$',
-				validationMessage: 'CVX code must be 1-4 digits',
-				// Fallback when ciyex-codes has no CVX dataset loaded — same list the
-				// web app uses (DynamicFormRenderer.FALLBACK_CVX_CODES). The previous
-				// HEAD version used a hardcoded select; the user's complaint was that
-				// the *search* option wasn't working, so we keep the search field but
-				// fall back to client-side filtering of these options when the API
-				// returns empty.
-				fallbackOptions: [
-					{ code: '03', shortDescription: 'MMR (Measles, Mumps, Rubella)' },
-					{ code: '08', shortDescription: 'Hepatitis B, adolescent or pediatric' },
-					{ code: '10', shortDescription: 'IPV (Poliovirus, inactivated)' },
-					{ code: '17', shortDescription: 'HIB (Haemophilus influenzae type b)' },
-					{ code: '20', shortDescription: 'DTaP' },
-					{ code: '21', shortDescription: 'Varicella (Chickenpox)' },
-					{ code: '33', shortDescription: 'Pneumococcal polysaccharide (PPV23)' },
-					{ code: '43', shortDescription: 'Hepatitis B, adult' },
-					{ code: '45', shortDescription: 'Hepatitis B, pediatric' },
-					{ code: '48', shortDescription: 'Hib (PRP-T)' },
-					{ code: '49', shortDescription: 'Hib (PRP-OMP)' },
-					{ code: '52', shortDescription: 'Hepatitis A, adult' },
-					{ code: '62', shortDescription: 'HPV, bivalent' },
-					{ code: '83', shortDescription: 'Hepatitis A, pediatric/adolescent' },
-					{ code: '85', shortDescription: 'Hepatitis A-Hepatitis B' },
-					{ code: '88', shortDescription: 'Flu, unspecified' },
-					{ code: '94', shortDescription: 'MMR-Varicella (MMRV)' },
-					{ code: '100', shortDescription: 'Pneumococcal conjugate (PCV7)' },
-					{ code: '103', shortDescription: 'Meningococcal' },
-					{ code: '110', shortDescription: 'DTaP-Hepatitis B-IPV' },
-					{ code: '113', shortDescription: 'Td, adult' },
-					{ code: '114', shortDescription: 'Meningococcal MCV4P' },
-					{ code: '115', shortDescription: 'Tdap' },
-					{ code: '116', shortDescription: 'Rotavirus, pentavalent' },
-					{ code: '121', shortDescription: 'Zoster (shingles), live' },
-					{ code: '133', shortDescription: 'PCV13 (Pneumococcal conjugate)' },
-					{ code: '135', shortDescription: 'Influenza, high dose' },
-					{ code: '140', shortDescription: 'Influenza, seasonal, injectable' },
-					{ code: '150', shortDescription: 'Influenza, injectable, quadrivalent' },
-					{ code: '158', shortDescription: 'Influenza, injectable, quadrivalent, preservative free' },
-					{ code: '162', shortDescription: 'Meningococcal B, recombinant' },
-					{ code: '165', shortDescription: 'HPV9 (Human Papillomavirus 9-valent)' },
-					{ code: '166', shortDescription: 'PCV15' },
-					{ code: '167', shortDescription: 'PCV20' },
-					{ code: '174', shortDescription: 'COVID-19 (Moderna)' },
-					{ code: '176', shortDescription: 'COVID-19 Pfizer-BioNTech' },
-					{ code: '207', shortDescription: 'COVID-19 Moderna' },
-					{ code: '210', shortDescription: 'COVID-19 Janssen (Johnson & Johnson)' },
-					{ code: '212', shortDescription: 'COVID-19 Novavax' },
-					{ code: '228', shortDescription: 'Zoster (shingles), recombinant (Shingrix)' },
-				],
-			},
-			{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-			{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'] },
-			{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
-			// Administration Details
-			{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
-			{
-				key: 'site', label: 'Site', type: 'select', options: [
-					{ label: 'Select site...', value: '' },
-					{ label: 'Left Arm', value: 'left_arm' }, { label: 'Right Arm', value: 'right_arm' },
-					{ label: 'Left Thigh', value: 'left_thigh' }, { label: 'Right Thigh', value: 'right_thigh' },
-					{ label: 'Left Deltoid', value: 'left_deltoid' }, { label: 'Right Deltoid', value: 'right_deltoid' },
-					{ label: 'Left Gluteal', value: 'left_gluteal' }, { label: 'Right Gluteal', value: 'right_gluteal' },
-				]
-			},
-			{
-				key: 'route', label: 'Route', type: 'select', options: [
-					{ label: 'Intramuscular (IM)', value: 'IM' }, { label: 'Subcutaneous (SC)', value: 'SC' },
-					{ label: 'Oral', value: 'PO' }, { label: 'Intranasal', value: 'IN' }, { label: 'Intradermal', value: 'ID' },
-				]
-			},
-			// Free-text dose so units (mL, gtt, liter, lit, units) can be entered.
-			// The backend `doseNumber` column is an Integer (dose-in-series), so
-			// `beforeSave` below splits "0.5 mL" into the integer part (doseNumber)
-			// and keeps the full text — units included — in `doseSeries`. Previously
-			// posting "1 ml" straight to the Integer column threw a JSON parse error.
-			{ key: 'doseNumber', label: 'Dose', type: 'text', placeholder: 'e.g. 0.5 mL, 1 gtt, 2 units', aliases: ['doseSeries'] },
-			// Provider Information
-			{
-				key: 'administeredBy', label: 'Administered By', type: 'search',
-				placeholder: 'Search provider...', apiPath: '/api/providers',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				aliases: ['provider', 'administeredByName', 'performer', 'practitionerName', 'providerName'],
-			},
-			// Status & Notes
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Completed', value: 'completed' }, { label: 'Not Done', value: 'not_done' },
-					{ label: 'Entered in Error', value: 'entered_in_error' },
-				], defaultValue: 'completed'
-			},
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-		],
+		formFields: IMMUNIZATIONS_FORM_FIELDS,
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this immunization?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/immunizations/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -1300,6 +1306,81 @@ export class ImmunizationsEditor extends ClinicalListEditorBase {
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ImmunizationsEditor.ID, group, t, th, s, a, d); }
 }
+
+export const REFERRALS_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{
+		key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true,
+		placeholder: 'Search provider (must be selected from results)...',
+		apiPath: '/api/providers',
+		relatedField: 'referringProviderId',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		aliases: ['referringPrescriber', 'referringProviderName'],
+		// Only a provider chosen from the search results is accepted — typed
+		// text is wiped on blur and the field locks once a provider is picked.
+		strictSelect: true,
+		validationMessage: 'Please select a referring provider from the search results',
+	},
+	{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+	{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, placeholder: 'e.g. Dr. Jane Smith', validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
+	{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
+	{
+		key: 'specialty', label: 'Specialty', type: 'select', options: [
+			{ label: 'Allergy/Immunology', value: 'Allergy/Immunology' },
+			{ label: 'Cardiology', value: 'Cardiology' }, { label: 'Dermatology', value: 'Dermatology' },
+			{ label: 'Endocrinology', value: 'Endocrinology' }, { label: 'ENT', value: 'ENT' },
+			{ label: 'Gastroenterology', value: 'Gastroenterology' },
+			{ label: 'Geriatrics', value: 'Geriatrics' },
+			{ label: 'Hematology', value: 'Hematology' },
+			{ label: 'Infectious Disease', value: 'Infectious Disease' },
+			{ label: 'Nephrology', value: 'Nephrology' }, { label: 'Neurology', value: 'Neurology' },
+			{ label: 'Obstetrics/Gynecology', value: 'Obstetrics/Gynecology' },
+			{ label: 'Oncology', value: 'Oncology' }, { label: 'Ophthalmology', value: 'Ophthalmology' },
+			{ label: 'Orthopedics', value: 'Orthopedics' },
+			{ label: 'Pain Management', value: 'Pain Management' },
+			{ label: 'Palliative Care', value: 'Palliative Care' },
+			{ label: 'Pathology', value: 'Pathology' }, { label: 'Pediatrics', value: 'Pediatrics' },
+			{ label: 'Physical Medicine', value: 'Physical Medicine' },
+			{ label: 'Plastic Surgery', value: 'Plastic Surgery' },
+			{ label: 'Podiatry', value: 'Podiatry' }, { label: 'Psychiatry', value: 'Psychiatry' },
+			{ label: 'Pulmonology', value: 'Pulmonology' }, { label: 'Radiology', value: 'Radiology' },
+			{ label: 'Rheumatology', value: 'Rheumatology' },
+			{ label: 'Sports Medicine', value: 'Sports Medicine' },
+			{ label: 'Surgery', value: 'Surgery' }, { label: 'Urology', value: 'Urology' },
+			{ label: 'Vascular Surgery', value: 'Vascular Surgery' },
+			{ label: 'Other', value: 'Other' },
+		]
+	},
+	{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g. City Medical Center', validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
+	{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: '123 Main St, City, ST 12345' },
+	{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
+	{ key: 'facilityFax', label: 'Facility Fax', type: 'text', placeholder: '(555) 123-4568', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
+	{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true, placeholder: 'Reason for referral...' },
+	{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea', placeholder: 'Relevant clinical information...' },
+	{
+		key: 'urgency', label: 'Urgency', type: 'select', options: [
+			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
+		], defaultValue: 'routine'
+	},
+	{
+		// Status field was missing from the New/Edit Referral form (issue #10).
+		// Mirrors the EHR-UI Clinical Details "Status" dropdown.
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Draft', value: 'draft' }, { label: 'Sent', value: 'sent' },
+			{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
+			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+			{ label: 'Denied', value: 'denied' },
+		], defaultValue: 'draft'
+	},
+	{ key: 'insuranceName', label: 'Insurance Name', type: 'text', placeholder: 'e.g. Blue Cross' },
+	{ key: 'insuranceId', label: 'Insurance ID', type: 'text', placeholder: 'Member/policy ID' },
+	{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'AUTH-001' },
+	{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
+	{ key: 'appointmentDate', label: 'Appointment Date', type: 'date' },
+	{ key: 'appointmentNotes', label: 'Appointment Notes', type: 'textarea', placeholder: 'Scheduling notes...' },
+	{ key: 'followUpNotes', label: 'Follow-Up Notes', type: 'textarea', placeholder: 'Follow-up instructions...' },
+];
 
 export class ReferralsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexReferrals';
@@ -1363,80 +1444,7 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{
-				key: 'referringProvider', label: 'Referring Provider', type: 'search', required: true,
-				placeholder: 'Search provider (must be selected from results)...',
-				apiPath: '/api/providers',
-				relatedField: 'referringProviderId',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				aliases: ['referringPrescriber', 'referringProviderName'],
-				// Only a provider chosen from the search results is accepted — typed
-				// text is wiped on blur and the field locks once a provider is picked.
-				strictSelect: true,
-				validationMessage: 'Please select a referring provider from the search results',
-			},
-			{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-			{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, placeholder: 'e.g. Dr. Jane Smith', validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
-			{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
-			{
-				key: 'specialty', label: 'Specialty', type: 'select', options: [
-					{ label: 'Allergy/Immunology', value: 'Allergy/Immunology' },
-					{ label: 'Cardiology', value: 'Cardiology' }, { label: 'Dermatology', value: 'Dermatology' },
-					{ label: 'Endocrinology', value: 'Endocrinology' }, { label: 'ENT', value: 'ENT' },
-					{ label: 'Gastroenterology', value: 'Gastroenterology' },
-					{ label: 'Geriatrics', value: 'Geriatrics' },
-					{ label: 'Hematology', value: 'Hematology' },
-					{ label: 'Infectious Disease', value: 'Infectious Disease' },
-					{ label: 'Nephrology', value: 'Nephrology' }, { label: 'Neurology', value: 'Neurology' },
-					{ label: 'Obstetrics/Gynecology', value: 'Obstetrics/Gynecology' },
-					{ label: 'Oncology', value: 'Oncology' }, { label: 'Ophthalmology', value: 'Ophthalmology' },
-					{ label: 'Orthopedics', value: 'Orthopedics' },
-					{ label: 'Pain Management', value: 'Pain Management' },
-					{ label: 'Palliative Care', value: 'Palliative Care' },
-					{ label: 'Pathology', value: 'Pathology' }, { label: 'Pediatrics', value: 'Pediatrics' },
-					{ label: 'Physical Medicine', value: 'Physical Medicine' },
-					{ label: 'Plastic Surgery', value: 'Plastic Surgery' },
-					{ label: 'Podiatry', value: 'Podiatry' }, { label: 'Psychiatry', value: 'Psychiatry' },
-					{ label: 'Pulmonology', value: 'Pulmonology' }, { label: 'Radiology', value: 'Radiology' },
-					{ label: 'Rheumatology', value: 'Rheumatology' },
-					{ label: 'Sports Medicine', value: 'Sports Medicine' },
-					{ label: 'Surgery', value: 'Surgery' }, { label: 'Urology', value: 'Urology' },
-					{ label: 'Vascular Surgery', value: 'Vascular Surgery' },
-					{ label: 'Other', value: 'Other' },
-				]
-			},
-			{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g. City Medical Center', validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
-			{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: '123 Main St, City, ST 12345' },
-			{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
-			{ key: 'facilityFax', label: 'Facility Fax', type: 'text', placeholder: '(555) 123-4568', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
-			{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true, placeholder: 'Reason for referral...' },
-			{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea', placeholder: 'Relevant clinical information...' },
-			{
-				key: 'urgency', label: 'Urgency', type: 'select', options: [
-					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
-				], defaultValue: 'routine'
-			},
-			{
-				// Status field was missing from the New/Edit Referral form (issue #10).
-				// Mirrors the EHR-UI Clinical Details "Status" dropdown.
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Draft', value: 'draft' }, { label: 'Sent', value: 'sent' },
-					{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
-					{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
-					{ label: 'Denied', value: 'denied' },
-				], defaultValue: 'draft'
-			},
-			{ key: 'insuranceName', label: 'Insurance Name', type: 'text', placeholder: 'e.g. Blue Cross' },
-			{ key: 'insuranceId', label: 'Insurance ID', type: 'text', placeholder: 'Member/policy ID' },
-			{ key: 'authorizationNumber', label: 'Authorization Number', type: 'text', placeholder: 'AUTH-001' },
-			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
-			{ key: 'appointmentDate', label: 'Appointment Date', type: 'date' },
-			{ key: 'appointmentNotes', label: 'Appointment Notes', type: 'textarea', placeholder: 'Scheduling notes...' },
-			{ key: 'followUpNotes', label: 'Follow-Up Notes', type: 'textarea', placeholder: 'Follow-up instructions...' },
-		],
+		formFields: REFERRALS_FORM_FIELDS,
 		actions: [
 			{
 				// Only the next valid status transition is shown per row (matches
@@ -1516,6 +1524,37 @@ export class ReferralsEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(ReferralsEditor.ID, group, t, th, s, a, d); }
 }
 
+export const CARE_PLANS_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'title', label: 'Plan Title', type: 'text', required: true, placeholder: 'e.g. Diabetes Management Plan' },
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{
+		key: 'category', label: 'Category', type: 'select', required: true, options: [
+			{ label: 'Chronic Disease', value: 'chronic_disease' }, { label: 'Preventive', value: 'preventive' },
+			{ label: 'Post-Surgical', value: 'post_surgical' }, { label: 'Behavioral', value: 'behavioral' },
+			{ label: 'Rehabilitation', value: 'rehabilitation' }, { label: 'Palliative', value: 'palliative' },
+			{ label: 'Other', value: 'other' },
+		]
+	},
+	// Provider DTOs nest the name under `identification` (unlike patients,
+	// which are flat), so the display fields use dot-paths — otherwise the
+	// dropdown falls back to showing the bare provider id.
+	{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'authorId', relatedDisplayFields: ['identification.firstName', 'identification.lastName'] },
+	{ key: 'startDate', label: 'Start Date', type: 'date' },
+	{ key: 'endDate', label: 'End Date', type: 'date' },
+	{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...', width: 'span 2' },
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
+			{ label: 'On Hold', value: 'on_hold' }, { label: 'Completed', value: 'completed' },
+		], defaultValue: 'draft'
+	},
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
+	// Dynamic Goals + Interventions are rendered via `formExtras` (issue #23)
+	// so the user can add an arbitrary number of items instead of the old
+	// hardcoded Goal 1 / Goal 2 / Intervention 1-3 rows.
+];
+
 export class CarePlansEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexCarePlans';
 	protected readonly config: ClinicalEditorConfig = {
@@ -1537,36 +1576,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 			{ label: 'Completed', value: 'completed' }, { label: 'On Hold', value: 'on_hold' },
 			{ label: 'Revoked', value: 'revoked' },
 		],
-		formFields: [
-			{ key: 'title', label: 'Plan Title', type: 'text', required: true, placeholder: 'e.g. Diabetes Management Plan' },
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{
-				key: 'category', label: 'Category', type: 'select', required: true, options: [
-					{ label: 'Chronic Disease', value: 'chronic_disease' }, { label: 'Preventive', value: 'preventive' },
-					{ label: 'Post-Surgical', value: 'post_surgical' }, { label: 'Behavioral', value: 'behavioral' },
-					{ label: 'Rehabilitation', value: 'rehabilitation' }, { label: 'Palliative', value: 'palliative' },
-					{ label: 'Other', value: 'other' },
-				]
-			},
-			// Provider DTOs nest the name under `identification` (unlike patients,
-			// which are flat), so the display fields use dot-paths — otherwise the
-			// dropdown falls back to showing the bare provider id.
-			{ key: 'authorName', label: 'Author', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'authorId', relatedDisplayFields: ['identification.firstName', 'identification.lastName'] },
-			{ key: 'startDate', label: 'Start Date', type: 'date' },
-			{ key: 'endDate', label: 'End Date', type: 'date' },
-			{ key: 'description', label: 'Description', type: 'textarea', placeholder: 'Plan description...', width: 'span 2' },
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
-					{ label: 'On Hold', value: 'on_hold' }, { label: 'Completed', value: 'completed' },
-				], defaultValue: 'draft'
-			},
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
-			// Dynamic Goals + Interventions are rendered via `formExtras` (issue #23)
-			// so the user can add an arbitrary number of items instead of the old
-			// hardcoded Goal 1 / Goal 2 / Intervention 1-3 rows.
-		],
+		formFields: CARE_PLANS_FORM_FIELDS,
 		formExtras: (host, editing) => renderCarePlanExtras(host, editing, this.apiService),
 		additionalFilters: [
 			{
@@ -1796,6 +1806,71 @@ export class CdsEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CdsEditor.ID, group, t, th, s, a, d); }
 }
 
+export const AUTHORIZATIONS_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
+	{ key: 'memberId', label: 'Member ID', type: 'text' },
+	{ key: 'authNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
+	{
+		key: 'procedureDescription', label: 'Procedure', type: 'search', required: true,
+		placeholder: 'Search CPT procedure (e.g. office visit)...',
+		apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search',
+		searchParam: 'q',
+		searchDisplayField: 'shortDescription',
+		searchValueField: 'code',
+		relatedField: 'procedureCode',
+		relatedDisplayFields: ['code', 'shortDescription'],
+		// Issue #7: dropdown shows "code description", but only the
+		// description lands in the Procedure box while the code fills the
+		// separate "CPT Code" box (relatedField above).
+		selectDisplayField: 'shortDescription',
+		validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
+		validationMessage: 'Procedure must be at least 2 characters and contain only letters/numbers/punctuation',
+	},
+	{ key: 'procedureCode', label: 'Procedure Code', type: 'text', required: true, placeholder: 'Auto-filled', validationPattern: '^[0-9A-Z]{4,7}$', validationMessage: 'Procedure code must be 4-7 alphanumerics (e.g. 99213, J0696)' },
+	{
+		key: 'diagnosisDescription', label: 'Diagnosis', type: 'search',
+		placeholder: 'Search ICD-10 diagnosis...',
+		apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search',
+		searchParam: 'q',
+		searchDisplayField: 'shortDescription',
+		searchValueField: 'code',
+		relatedField: 'diagnosisCode',
+		relatedDisplayFields: ['code', 'shortDescription'],
+		// Issue #7: ICD-10 code fills the "Diagnosis Code (ICD-10)" box;
+		// only the description lands in this "Diagnosis" box.
+		selectDisplayField: 'shortDescription',
+	},
+	{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'Auto-filled', validationPattern: '^[A-Z][0-9][0-9A-Z](\\.[0-9A-Z]{1,4})?$', validationMessage: 'ICD-10 format: e.g. E11.9, J18.9' },
+	{ key: 'reviewDate', label: 'Review Date', type: 'date' },
+	{ key: 'approvedDate', label: 'Approved Date', type: 'date' },
+	{ key: 'deniedDate', label: 'Denied Date', type: 'date' },
+	{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
+	{ key: 'approvedUnits', label: 'Approved Units', type: 'number', placeholder: 'Number of approved units' },
+	{ key: 'usedUnits', label: 'Used Units', type: 'number', placeholder: 'Units already used' },
+	{ key: 'remainingUnits', label: 'Remaining Units', type: 'number', placeholder: 'Units remaining' },
+	{
+		key: 'priority', label: 'Priority', type: 'select', options: [
+			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
+		], defaultValue: 'routine'
+	},
+	{
+		// Status field was missing from the New/Edit Prior Authorization form
+		// (issue #11). Mirrors the EHR-UI Authorization Details "Status" dropdown.
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Pending', value: 'pending' }, { label: 'Submitted', value: 'submitted' },
+			{ label: 'Approved', value: 'approved' }, { label: 'Denied', value: 'denied' },
+			{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
+			{ label: 'Cancelled', value: 'cancelled' },
+		], defaultValue: 'pending'
+	},
+	{ key: 'denialReason', label: 'Denial Reason', type: 'textarea', placeholder: 'Reason for denial if applicable' },
+	{ key: 'appealDeadline', label: 'Appeal Deadline', type: 'date' },
+	{ key: 'notes', label: 'Notes', type: 'textarea' },
+];
+
 export class AuthorizationsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexAuthorizations';
 	protected readonly config: ClinicalEditorConfig = {
@@ -1860,70 +1935,7 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 			{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
 			{ label: 'Cancelled', value: 'cancelled' },
 		],
-		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
-			{ key: 'memberId', label: 'Member ID', type: 'text' },
-			{ key: 'authNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
-			{
-				key: 'procedureDescription', label: 'Procedure', type: 'search', required: true,
-				placeholder: 'Search CPT procedure (e.g. office visit)...',
-				apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search',
-				searchParam: 'q',
-				searchDisplayField: 'shortDescription',
-				searchValueField: 'code',
-				relatedField: 'procedureCode',
-				relatedDisplayFields: ['code', 'shortDescription'],
-				// Issue #7: dropdown shows "code description", but only the
-				// description lands in the Procedure box while the code fills the
-				// separate "CPT Code" box (relatedField above).
-				selectDisplayField: 'shortDescription',
-				validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
-				validationMessage: 'Procedure must be at least 2 characters and contain only letters/numbers/punctuation',
-			},
-			{ key: 'procedureCode', label: 'Procedure Code', type: 'text', required: true, placeholder: 'Auto-filled', validationPattern: '^[0-9A-Z]{4,7}$', validationMessage: 'Procedure code must be 4-7 alphanumerics (e.g. 99213, J0696)' },
-			{
-				key: 'diagnosisDescription', label: 'Diagnosis', type: 'search',
-				placeholder: 'Search ICD-10 diagnosis...',
-				apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search',
-				searchParam: 'q',
-				searchDisplayField: 'shortDescription',
-				searchValueField: 'code',
-				relatedField: 'diagnosisCode',
-				relatedDisplayFields: ['code', 'shortDescription'],
-				// Issue #7: ICD-10 code fills the "Diagnosis Code (ICD-10)" box;
-				// only the description lands in this "Diagnosis" box.
-				selectDisplayField: 'shortDescription',
-			},
-			{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'Auto-filled', validationPattern: '^[A-Z][0-9][0-9A-Z](\\.[0-9A-Z]{1,4})?$', validationMessage: 'ICD-10 format: e.g. E11.9, J18.9' },
-			{ key: 'reviewDate', label: 'Review Date', type: 'date' },
-			{ key: 'approvedDate', label: 'Approved Date', type: 'date' },
-			{ key: 'deniedDate', label: 'Denied Date', type: 'date' },
-			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
-			{ key: 'approvedUnits', label: 'Approved Units', type: 'number', placeholder: 'Number of approved units' },
-			{ key: 'usedUnits', label: 'Used Units', type: 'number', placeholder: 'Units already used' },
-			{ key: 'remainingUnits', label: 'Remaining Units', type: 'number', placeholder: 'Units remaining' },
-			{
-				key: 'priority', label: 'Priority', type: 'select', options: [
-					{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
-				], defaultValue: 'routine'
-			},
-			{
-				// Status field was missing from the New/Edit Prior Authorization form
-				// (issue #11). Mirrors the EHR-UI Authorization Details "Status" dropdown.
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Pending', value: 'pending' }, { label: 'Submitted', value: 'submitted' },
-					{ label: 'Approved', value: 'approved' }, { label: 'Denied', value: 'denied' },
-					{ label: 'Appeal', value: 'appeal' }, { label: 'Expired', value: 'expired' },
-					{ label: 'Cancelled', value: 'cancelled' },
-				], defaultValue: 'pending'
-			},
-			{ key: 'denialReason', label: 'Denial Reason', type: 'textarea', placeholder: 'Reason for denial if applicable' },
-			{ key: 'appealDeadline', label: 'Appeal Deadline', type: 'date' },
-			{ key: 'notes', label: 'Notes', type: 'textarea' },
-		],
+		formFields: AUTHORIZATIONS_FORM_FIELDS,
 		actions: [
 			{
 				color: '#22c55e',
@@ -2030,6 +2042,52 @@ export class AuthorizationsEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(AuthorizationsEditor.ID, group, t, th, s, a, d); }
 }
 
+export const EDUCATION_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'title', label: 'Title', type: 'text', required: true, placeholder: 'Material title', width: 'span 2' },
+	{
+		key: 'category', label: 'Category', type: 'select', options: [
+			{ label: 'Disease Management', value: 'disease_management' }, { label: 'Medication', value: 'medication' },
+			{ label: 'Procedure', value: 'procedure' }, { label: 'Lifestyle', value: 'lifestyle' },
+			{ label: 'Preventive', value: 'preventive' }, { label: 'Mental Health', value: 'mental_health' },
+			{ label: 'Nutrition', value: 'nutrition' }, { label: 'Other', value: 'other' },
+		]
+	},
+	{
+		key: 'contentType', label: 'Content Type', type: 'select', options: [
+			{ label: 'Article', value: 'article' }, { label: 'Video', value: 'video' },
+			{ label: 'PDF', value: 'pdf' }, { label: 'Link', value: 'link' },
+			{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
+		], defaultValue: 'article'
+	},
+	// Content is mandatory; Source removed to match the ciyex-ehr-ui
+	// New Education Library form (issue #8).
+	{ key: 'content', label: 'Content', type: 'textarea', required: true, placeholder: 'Education material content...', width: 'span 2' },
+	{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
+	{
+		key: 'language', label: 'Language', type: 'select', options: [
+			{ label: 'English', value: 'english' }, { label: 'Spanish', value: 'spanish' },
+			{ label: 'French', value: 'french' }, { label: 'German', value: 'german' },
+			{ label: 'Portuguese', value: 'portuguese' }, { label: 'Chinese', value: 'chinese' },
+			{ label: 'Arabic', value: 'arabic' }, { label: 'Hindi', value: 'hindi' },
+			{ label: 'Vietnamese', value: 'vietnamese' }, { label: 'Other', value: 'other' },
+		], defaultValue: 'english'
+	},
+	{
+		key: 'audience', label: 'Audience', type: 'select', options: [
+			{ label: 'Patient', value: 'patient' }, { label: 'Caregiver', value: 'caregiver' },
+			{ label: 'Both', value: 'both' },
+		], defaultValue: 'patient'
+	},
+	{ key: 'author', label: 'Author', type: 'search', placeholder: 'Search provider or type name...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
+	{
+		key: 'isActive', label: 'Active', type: 'select', options: [
+			{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
+		], defaultValue: 'true'
+	},
+	{ key: 'tags', label: 'Tags', type: 'text', placeholder: 'Comma-separated tags', width: 'span 2' },
+	// Description removed to match the ciyex-ehr-ui form (issue #8).
+];
+
 export class EducationEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexEducation';
 
@@ -2113,51 +2171,7 @@ export class EducationEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
-		formFields: [
-			{ key: 'title', label: 'Title', type: 'text', required: true, placeholder: 'Material title', width: 'span 2' },
-			{
-				key: 'category', label: 'Category', type: 'select', options: [
-					{ label: 'Disease Management', value: 'disease_management' }, { label: 'Medication', value: 'medication' },
-					{ label: 'Procedure', value: 'procedure' }, { label: 'Lifestyle', value: 'lifestyle' },
-					{ label: 'Preventive', value: 'preventive' }, { label: 'Mental Health', value: 'mental_health' },
-					{ label: 'Nutrition', value: 'nutrition' }, { label: 'Other', value: 'other' },
-				]
-			},
-			{
-				key: 'contentType', label: 'Content Type', type: 'select', options: [
-					{ label: 'Article', value: 'article' }, { label: 'Video', value: 'video' },
-					{ label: 'PDF', value: 'pdf' }, { label: 'Link', value: 'link' },
-					{ label: 'Handout', value: 'handout' }, { label: 'Infographic', value: 'infographic' },
-				], defaultValue: 'article'
-			},
-			// Content is mandatory; Source removed to match the ciyex-ehr-ui
-			// New Education Library form (issue #8).
-			{ key: 'content', label: 'Content', type: 'textarea', required: true, placeholder: 'Education material content...', width: 'span 2' },
-			{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
-			{
-				key: 'language', label: 'Language', type: 'select', options: [
-					{ label: 'English', value: 'english' }, { label: 'Spanish', value: 'spanish' },
-					{ label: 'French', value: 'french' }, { label: 'German', value: 'german' },
-					{ label: 'Portuguese', value: 'portuguese' }, { label: 'Chinese', value: 'chinese' },
-					{ label: 'Arabic', value: 'arabic' }, { label: 'Hindi', value: 'hindi' },
-					{ label: 'Vietnamese', value: 'vietnamese' }, { label: 'Other', value: 'other' },
-				], defaultValue: 'english'
-			},
-			{
-				key: 'audience', label: 'Audience', type: 'select', options: [
-					{ label: 'Patient', value: 'patient' }, { label: 'Caregiver', value: 'caregiver' },
-					{ label: 'Both', value: 'both' },
-				], defaultValue: 'patient'
-			},
-			{ key: 'author', label: 'Author', type: 'search', placeholder: 'Search provider or type name...', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'] },
-			{
-				key: 'isActive', label: 'Active', type: 'select', options: [
-					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
-				], defaultValue: 'true'
-			},
-			{ key: 'tags', label: 'Tags', type: 'text', placeholder: 'Comma-separated tags', width: 'span 2' },
-			// Description removed to match the ciyex-ehr-ui form (issue #8).
-		],
+		formFields: EDUCATION_FORM_FIELDS,
 		actions: [
 			{
 				// Issue #13: "Assign to Patient" opens the Patient Assignments view and

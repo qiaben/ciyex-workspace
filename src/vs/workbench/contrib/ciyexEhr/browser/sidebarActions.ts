@@ -576,6 +576,14 @@ export interface IEditFieldDef {
 	 *  in the directory) is wiped on blur and rejected on save. Set this to
 	 *  `false` for the rare typeahead that should also accept arbitrary text. */
 	strictSelect?: boolean;
+	/** Render the field's row hidden (display:none). Used for fields that only
+	 *  carry an auto-filled value from a related `search` field (e.g. patientId)
+	 *  so they are submitted but not shown — mirrors the editor's `hidden`. */
+	hidden?: boolean;
+	/** Initial value for a freshly-opened create form. Lets the sidebar drawer
+	 *  pre-select the same defaults as the editor's "New" form (e.g. status =
+	 *  Active, priority = Routine, refills = 0). */
+	defaultValue?: string | number;
 }
 
 export interface IEditDialogOptions {
@@ -1063,7 +1071,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		// layout where Notes / single text fields fill the whole row.
 		const widthPct = field.widthPct ?? 100;
 		const spanFull = widthPct >= 75 || field.kind === 'textarea';
-		wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:flex;flex-direction:column;gap:4px;min-width:0;`;
+		wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:${field.hidden ? 'none' : 'flex'};flex-direction:column;gap:4px;min-width:0;`;
 
 		const lbl = doc.createElement('label');
 		lbl.textContent = field.label + (field.required ? ' *' : '');
