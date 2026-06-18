@@ -724,18 +724,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationPattern: '^\\d+(\\.\\d+)?\\s*(mg|mcg|g|mL|ml|L|IU|units?|tablets?|tabs?|capsules?|caps?|drops?|gtt|puffs?|sprays?|patches?|%)(\\s*/\\s*\\d+(\\.\\d+)?\\s*(mL|ml|L)?)?$',
 						validationMessage: 'Dosage must be a number followed by a unit (e.g. "500 mg", "10 mL", "2 tablets")',
 					},
-					{
-						key: 'route', label: 'Route', type: 'text', placeholder: 'e.g., Oral',
-						validationPattern: '^[A-Za-z ,.\\-/()]{2,40}$',
-						validationMessage: 'Route should be a short text (e.g. "Oral", "IV")',
-					},
-					{
-						key: 'frequency', label: 'Frequency', type: 'text', placeholder: 'e.g., Twice daily',
-						validationPattern: '^[A-Za-z0-9 ,.\\-/()]{2,60}$',
-						validationMessage: 'Frequency should be a short text (e.g. "Twice daily", "Q4H PRN")',
-					},
-					{ key: 'startDate', label: 'Start Date', type: 'date' },
-					{ key: 'endDate', label: 'End Date', type: 'date' },
+					// "Date Issued" maps to the medication's start/authored date — `startDate`
+					// is the key the medications list column reads, so the new record shows its
+					// date immediately in the chart list and snapshot.
+					{ key: 'startDate', label: 'Date Issued', type: 'date' },
 					// Prescriber: store the practitioner id under `prescribingDoctor`
 					// (the key the backend medications tab_field_config maps to the
 					// FHIR MedicationRequest.requester reference) so the prescriber is
@@ -777,8 +769,6 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Cancelled', value: 'cancelled' },
 						]
 					},
-					{ key: 'result', label: 'Result', type: 'text', placeholder: 'Result value' },
-					{ key: 'units', label: 'Units', type: 'text', placeholder: 'e.g., mg/dL' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},

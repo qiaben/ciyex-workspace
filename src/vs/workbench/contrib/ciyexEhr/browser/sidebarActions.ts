@@ -563,6 +563,11 @@ export interface IEditFieldDef {
 	compute?: (values: Record<string, string>) => string;
 	/** Width hint as a percentage of the row (defaults to 100 for full row). */
 	widthPct?: number;
+	/** Conditional visibility: only show this field when another field's current
+	 *  value matches (`equals`) or differs from (`notEquals`) the given value.
+	 *  Mirrors the chart editor's `showWhen` (e.g. hide the subscriber fields on
+	 *  an insurance form when "Relationship to Patient" is "Self"). */
+	showWhen?: { field: string; equals?: string; notEquals?: string };
 	/** Search-typeahead callback used when {@link kind} is `'search'`. Called
 	 *  while the user types — returns a list of matches to show in a dropdown
 	 *  beneath the input. */
@@ -728,7 +733,7 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
-		if (['prescribername', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'authorname', 'provider', 'orderingprovider', 'providerid', 'billingprovider', 'billingproviderid'].includes(k)) {
+		if (['prescribername', 'prescribingdoctor', 'providername', 'referringprovider', 'physicianname', 'administeredby', 'author', 'authorname', 'provider', 'orderingprovider', 'providerid', 'billingprovider', 'billingproviderid'].includes(k)) {
 			return {
 				...f,
 				kind: 'search' as const,
@@ -797,7 +802,7 @@ export function withTypeaheadSearch(
 		}
 		// Insurance / payer search (incl. the claim form's "Payer / Insurer"
 		// picker keyed `payerId` — QA issue 10).
-		if (k === 'insurancename' || k === 'payerid' || k === 'payer' || k === 'insurerid' || k === 'insurer' || k === 'payorid') {
+		if (k === 'insurancename' || k === 'payername' || k === 'payerid' || k === 'payer' || k === 'insurerid' || k === 'insurer' || k === 'payorid') {
 			return {
 				...f,
 				kind: 'search' as const,
@@ -2107,6 +2112,9 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 						hidden.value = opt.value;
 						refresh();
 						closePanel();
+						// Notify dependents (e.g. showWhen conditional fields) that the
+						// value changed — the hidden input never fires a native change.
+						hidden.dispatchEvent(new Event('change', { bubbles: true }));
 					});
 					panel.appendChild(r);
 				}
@@ -2273,6 +2281,10 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		body.appendChild(formScroll);
 
 		const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+		// Fields with a `showWhen` rule, paired with their row wrapper, so we can
+		// hide/show them as the controlling field changes (e.g. insurance
+		// subscriber fields collapse when "Relationship to Patient" is "Self").
+		const conditionalFields: Array<{ field: IEditFieldDef; wrap: HTMLElement }> = [];
 
 		// Partition fields into contiguous sections by key-prefix so clinical
 		// forms read as a chart note. Fields with no matching section collapse
@@ -2343,9 +2355,39 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					hint.style.cssText = `font-size:11px;color:${c.muted};`;
 					wrap.appendChild(hint);
 				}
+				if (field.showWhen) { conditionalFields.push({ field, wrap }); }
 				grid.appendChild(wrap);
 			}
 			formScroll.appendChild(section);
+		}
+
+		// Conditional visibility (showWhen): hide/show dependent fields based on
+		// a controlling field's value and keep them in sync as it changes. The
+		// custom select dispatches a 'change' on its hidden input on selection.
+		if (conditionalFields.length > 0) {
+			const applyVisibility = (): void => {
+				for (const { field, wrap } of conditionalFields) {
+					const when = field.showWhen!;
+					const ctrl = inputs.get(when.field);
+					const ctrlVal = ctrl?.value ?? '';
+					let show = true;
+					if (when.equals !== undefined) { show = ctrlVal === when.equals; }
+					if (when.notEquals !== undefined) { show = ctrlVal !== when.notEquals; }
+					wrap.style.display = show ? '' : 'none';
+				}
+			};
+			const wired = new Set<string>();
+			for (const { field } of conditionalFields) {
+				const ctrlKey = field.showWhen!.field;
+				if (wired.has(ctrlKey)) { continue; }
+				wired.add(ctrlKey);
+				const ctrl = inputs.get(ctrlKey);
+				if (ctrl) {
+					ctrl.addEventListener('change', applyVisibility);
+					ctrl.addEventListener('input', applyVisibility);
+				}
+			}
+			applyVisibility();
 		}
 
 		// Derived fields: recompute every `compute` field from the current

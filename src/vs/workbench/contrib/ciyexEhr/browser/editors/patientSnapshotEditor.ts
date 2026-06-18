@@ -310,6 +310,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			widthPct,
 		};
 
+		// Carry conditional visibility (e.g. insurance subscriber fields that the
+		// chart editor hides when "Relationship to Patient" is "Self") so the
+		// snapshot popup form behaves the same as the full chart editor form.
+		if (f.showWhen) { out.showWhen = f.showWhen; }
+
 		// Derived / display-only fields (chart editor marks these `localOnly`)
 		// render read-only so the user can't hand-edit a computed value.
 		if (f.localOnly) { out.readonly = true; }
@@ -777,19 +782,27 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._openManager(entity, 'create');
 	}
 
-	private _openEditModal(entity: string, item: Record<string, unknown>): void {
+	private async _openEditModal(entity: string, item: Record<string, unknown>): Promise<void> {
 		if (!this._currentPatientId) { return; }
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
 		if (!reg) { return; }
 		const fields = this._entityFields(entity);
 		if (fields.length === 0) { return; }
+		// Encounters: the dashboard list record only carries the bare FHIR
+		// Encounter columns (date, status, reason). The rich clinical fields the
+		// edit form shows — start/end date, provider, vitals and the HPI/ROS/PE/
+		// assessment/plan composition — live on the encounter-form Composition and
+		// the full Encounter resource, so load and merge them before opening the
+		// form (QA issue 2: encounter edit opened with start/end date, provider
+		// and vitals all blank).
+		const initialItem = entity === 'encounters' ? await this._loadEncounterForEdit(item) : item;
 		openListAndFormDialog({
 			title: reg.title,
 			themeAnchor: this.root,
 			fields,
 			listColumns: reg.columns,
 			initialMode: 'edit',
-			initialItem: item,
+			initialItem,
 			loadList: () => this._loadEntityList(entity),
 			saveRecord: async (next, existingId) => {
 				if (entity === 'encounters') {
@@ -847,6 +860,61 @@ export class PatientSnapshotEditor extends EditorPane {
 			},
 			onChanged: () => this._rerender(),
 		});
+	}
+
+	/**
+	 * Build the initial values for the encounter edit form. The snapshot list
+	 * record only has the bare Encounter columns, so we fetch the full Encounter
+	 * resource and its encounter-form Composition (mirrors EncounterFormEditor's
+	 * `_loadEncounterData`) and normalise everything onto the form field keys
+	 * (`startDate`, `endDate`, `provider`, `type`, `status`, `vitals_*`, the
+	 * HPI/ROS/PE/assessment/plan composition, …). Best-effort: a failed fetch
+	 * falls back to whatever the list record already carried.
+	 */
+	private async _loadEncounterForEdit(item: Record<string, unknown>): Promise<Record<string, unknown>> {
+		const pid = this._currentPatientId;
+		const encId = String(item.id ?? item.fhirId ?? '');
+		const merged: Record<string, unknown> = { ...item };
+		if (!pid || !encId) { return merged; }
+
+		const [detail, form] = await Promise.all([
+			this._fetch(`/api/fhir-resource/encounters/${encId}`),
+			this._fetch(`/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encId}`),
+		]);
+		const detailData = (detail?.data ?? detail ?? {}) as Record<string, unknown>;
+		const formData = (form?.data ?? form ?? {}) as Record<string, unknown>;
+		// Composition wins over the bare Encounter, which wins over the list row.
+		Object.assign(merged, detailData, formData);
+		// The encounter-form Composition carries its OWN id — never let it clobber
+		// the Encounter id, which the save path uses to PUT the composition back.
+		merged.id = encId;
+		if (item.fhirId) { merged.fhirId = item.fhirId; }
+
+		const pick = (...keys: string[]): string => {
+			for (const k of keys) {
+				const v = merged[k];
+				if (v !== undefined && v !== null && String(v) !== '') { return String(v); }
+			}
+			return '';
+		};
+		// HTML date inputs need a bare YYYY-MM-DD value.
+		const dateOnly = (v: string): string => {
+			if (!v) { return ''; }
+			const dt = new Date(v);
+			return isNaN(dt.getTime()) ? v.slice(0, 10) : dt.toISOString().slice(0, 10);
+		};
+
+		merged.startDate = dateOnly(pick('startDate', 'start', 'periodStart', 'encounterDate', 'date', 'createdAt'));
+		const end = pick('endDate', 'end', 'periodEnd');
+		if (end) { merged.endDate = dateOnly(end); }
+		merged.type = pick('type', 'visitCategory', 'encounterType', 'class') || merged.type;
+		merged.status = pick('status') || merged.status;
+		// Provider: prefer a human-readable display over the raw "Practitioner/{id}"
+		// reference so the search field shows a name (QA issue 2: provider blank/raw).
+		merged.provider = pick('providerDisplay', 'providerName', 'practitionerName', 'encounterProvider', 'provider');
+		merged.chiefComplaint = pick('chiefComplaint', 'reason', 'reasonForVisit', 'reasonCode');
+
+		return merged;
 	}
 
 	private async _deleteItem(entity: string, item: Record<string, unknown>): Promise<void> {
@@ -2154,7 +2222,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			return b;
 		};
 
-		mkBtn('edit', 'Edit', () => this._openEditModal(entity, item));
+		mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 
 		rowEl.style.cursor = 'pointer';
@@ -2168,7 +2236,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 		rowEl.addEventListener('click', (e) => {
 			if ((e.target as HTMLElement).closest('button')) { return; }
-			this._openEditModal(entity, item);
+			void this._openEditModal(entity, item);
 		});
 	}
 
@@ -2826,7 +2894,10 @@ export class PatientSnapshotEditor extends EditorPane {
 					if (isNotes) { cell.style.color = 'var(--vscode-descriptionForeground)'; cell.style.fontSize = '11px'; }
 				}
 			}
-			this._renderGridRowActions(table, 'visit-notes', enc);
+			// Visit History rows are Encounters (same source as Encounter History) —
+			// the pencil must open the Encounter edit form, not the Visit Note form
+			// (QA issue 1: editing a visit-history row opened the visit note page).
+			this._renderGridRowActions(table, 'encounters', enc);
 		}
 		this._renderPagerFooter(card, 'encounters', pageIdx, pageCount, total);
 	}
@@ -2853,7 +2924,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			return b;
 		};
 
-		mkBtn('edit', 'Edit', () => this._openEditModal(entity, item));
+		mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 	}
 
