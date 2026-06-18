@@ -33,9 +33,14 @@ interface FeeItem {
 	auth: boolean;
 }
 
-/** Searchable code systems offered in the "Search for Additional Codes" row. */
+/**
+ * Searchable code systems offered in the "Search for Additional Codes" row.
+ * `searchPath` is the ciyex-codes CodeSystem enum value used in
+ * /api/codes/{system}/search — note CPT is "CPT" (not "CPT4") and ICD-10 is
+ * "ICD10_CM"; anything else returns HTTP 500 from the codes service.
+ */
 const CODE_TYPES: Array<{ key: string; label: string; searchPath: string }> = [
-	{ key: 'CPT4', label: 'CPT Procedure/Service', searchPath: 'CPT4' },
+	{ key: 'CPT', label: 'CPT Procedure/Service', searchPath: 'CPT' },
 	{ key: 'HCPCS', label: 'HCPCS Procedure/Service', searchPath: 'HCPCS' },
 	{ key: 'ICD10', label: 'ICD-10 Diagnosis', searchPath: 'ICD10_CM' },
 ];
@@ -313,7 +318,9 @@ export class FeeSheetEditor extends EditorPane {
 			for (const c of list) {
 				const code = String(c.code || c.codeValue || '');
 				const desc = String(c.shortDescription || c.description || c.longDescription || '');
-				const price = Number(c.price ?? c.fee ?? 0) || 0;
+				// ciyex-codes exposes the schedule amount as `medicareFee`; fall back
+				// to any explicit price/fee field. Defaults to 0 (user can edit).
+				const price = Number(c.price ?? c.fee ?? c.medicareFee ?? 0) || 0;
 				const item = DOM.append(results, DOM.$('div'));
 				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);display:flex;align-items:center;gap:10px;';
 				const codeEl = DOM.append(item, DOM.$('span'));
