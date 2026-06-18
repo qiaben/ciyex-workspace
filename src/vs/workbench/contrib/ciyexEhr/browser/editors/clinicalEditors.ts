@@ -40,7 +40,7 @@ interface CarePlanIntervention {
 	assignedTo: string;
 }
 
-function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown> | null, api: ICiyexApiService): FormExtrasHandle {
+export function renderCarePlanExtras(host: HTMLElement, editing: Record<string, unknown> | null, api: ICiyexApiService): FormExtrasHandle {
 	const sectionStyle = 'grid-column:span 2;display:flex;flex-direction:column;gap:8px;margin-top:12px;';
 	const headerRowStyle = 'display:flex;align-items:center;justify-content:space-between;';
 	const titleStyle = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);margin:0;';
@@ -2873,6 +2873,62 @@ async function showRecallDetailPanel(opts: { recallId: string | number; api: ICi
 	await load();
 }
 
+export const RECALL_FORM_FIELDS: FormFieldDef[] = [
+	{
+		key: 'patientName', label: 'Patient Name', type: 'search', required: true,
+		placeholder: 'Type 2+ letters, then pick the patient from the dropdown',
+		apiPath: '/api/patients',
+		relatedField: 'patientId',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		relatedFieldsMap: { patientPhone: 'phoneNumber||phone||mobile||cellPhone||homePhone', patientEmail: 'email||emailAddress' },
+		validationMessage: 'Pick a patient from the dropdown — typing a name alone is not enough',
+	},
+	// patientId is filled by the patientName search; hidden + not required
+	// so an empty value doesn't trigger a confusing "Patient ID required"
+	// error against a field the user can't see (QA report 2026-05-11).
+	{ key: 'patientId', label: 'Patient ID', type: 'text', hidden: true, placeholder: 'Auto-filled' },
+	{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
+	{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
+	{
+		key: 'recallTypeName', label: 'Recall Type', type: 'select', required: true,
+		aliases: ['recallType', 'type'],
+		options: [
+			{ label: 'Annual Physical', value: 'Annual Physical' },
+			{ label: 'Preventive Care', value: 'Preventive Care' },
+			{ label: 'Follow-Up', value: 'Follow-Up' },
+			{ label: 'Chronic Disease Management', value: 'Chronic Disease Management' },
+			{ label: 'Immunization', value: 'Immunization' },
+			{ label: 'Lab Review', value: 'Lab Review' },
+			{ label: 'Specialist Follow-Up', value: 'Specialist Follow-Up' },
+			{ label: 'Other', value: 'Other' },
+		],
+	},
+	{
+		key: 'providerName', label: 'Provider', type: 'search',
+		placeholder: 'Search provider...', apiPath: '/api/providers',
+		relatedDisplayFields: ['firstName', 'lastName'],
+	},
+	{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
+	{
+		key: 'priority', label: 'Priority', type: 'select', options: [
+			{ label: 'Normal', value: 'NORMAL' }, { label: 'High', value: 'HIGH' }, { label: 'Urgent', value: 'URGENT' },
+		], defaultValue: 'NORMAL'
+	},
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
+			{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
+			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
+		], defaultValue: 'PENDING'
+	},
+	{
+		key: 'preferredContact', label: 'Preferred Contact', type: 'select', options: [
+			{ label: 'Phone', value: 'PHONE' }, { label: 'Email', value: 'EMAIL' }, { label: 'SMS', value: 'SMS' },
+		]
+	},
+	{ key: 'notes', label: 'Notes', type: 'textarea' },
+];
+
 export class RecallEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexRecall';
 	protected readonly config: ClinicalEditorConfig = {
@@ -2967,61 +3023,7 @@ export class RecallEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{
-				key: 'patientName', label: 'Patient Name', type: 'search', required: true,
-				placeholder: 'Type 2+ letters, then pick the patient from the dropdown',
-				apiPath: '/api/patients',
-				relatedField: 'patientId',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				relatedFieldsMap: { patientPhone: 'phoneNumber||phone||mobile||cellPhone||homePhone', patientEmail: 'email||emailAddress' },
-				validationMessage: 'Pick a patient from the dropdown — typing a name alone is not enough',
-			},
-			// patientId is filled by the patientName search; hidden + not required
-			// so an empty value doesn't trigger a confusing "Patient ID required"
-			// error against a field the user can't see (QA report 2026-05-11).
-			{ key: 'patientId', label: 'Patient ID', type: 'text', hidden: true, placeholder: 'Auto-filled' },
-			{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
-			{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
-			{
-				key: 'recallTypeName', label: 'Recall Type', type: 'select', required: true,
-				aliases: ['recallType', 'type'],
-				options: [
-					{ label: 'Annual Physical', value: 'Annual Physical' },
-					{ label: 'Preventive Care', value: 'Preventive Care' },
-					{ label: 'Follow-Up', value: 'Follow-Up' },
-					{ label: 'Chronic Disease Management', value: 'Chronic Disease Management' },
-					{ label: 'Immunization', value: 'Immunization' },
-					{ label: 'Lab Review', value: 'Lab Review' },
-					{ label: 'Specialist Follow-Up', value: 'Specialist Follow-Up' },
-					{ label: 'Other', value: 'Other' },
-				],
-			},
-			{
-				key: 'providerName', label: 'Provider', type: 'search',
-				placeholder: 'Search provider...', apiPath: '/api/providers',
-				relatedDisplayFields: ['firstName', 'lastName'],
-			},
-			{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
-			{
-				key: 'priority', label: 'Priority', type: 'select', options: [
-					{ label: 'Normal', value: 'NORMAL' }, { label: 'High', value: 'HIGH' }, { label: 'Urgent', value: 'URGENT' },
-				], defaultValue: 'NORMAL'
-			},
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
-					{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
-					{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
-				], defaultValue: 'PENDING'
-			},
-			{
-				key: 'preferredContact', label: 'Preferred Contact', type: 'select', options: [
-					{ label: 'Phone', value: 'PHONE' }, { label: 'Email', value: 'EMAIL' }, { label: 'SMS', value: 'SMS' },
-				]
-			},
-			{ key: 'notes', label: 'Notes', type: 'textarea' },
-		],
+		formFields: RECALL_FORM_FIELDS,
 		actions: [
 			{
 				// The call action opens the recall detail drawer (status header with
@@ -3041,6 +3043,43 @@ export class RecallEditor extends ClinicalListEditorBase {
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(RecallEditor.ID, group, t, th, s, a, d); }
 }
+
+export const MEDICAL_CODES_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'code', label: 'Code', type: 'text', required: true, placeholder: 'e.g. 99213' },
+	{
+		key: 'codeType', label: 'Code Type', type: 'select', required: true, options: [
+			{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
+			{ label: 'HCPCS', value: 'HCPCS' }, { label: 'CDT', value: 'CDT' },
+			{ label: 'SNOMED', value: 'SNOMED' }, { label: 'LOINC', value: 'LOINC' },
+			{ label: 'NDC', value: 'NDC' }, { label: 'CVX', value: 'CVX' },
+			{ label: 'Custom', value: 'CUSTOM' },
+		]
+	},
+	{ key: 'modifier', label: 'Modifier', type: 'text', placeholder: 'e.g. 25, 59, GT' },
+	{ key: 'category', label: 'Category', type: 'text' },
+	{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
+	{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
+	{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
+	{ key: 'relateTo', label: 'Related To', type: 'text', placeholder: 'Related code or category', aliases: ['relatedTo'] },
+	{
+		key: 'active', label: 'Status', type: 'select', options: [
+			{ label: 'Active', value: 'true' },
+			{ label: 'Inactive', value: 'false' },
+		], defaultValue: 'true'
+	},
+	{
+		key: 'diagnosisReporting', label: 'Diagnosis Reporting', type: 'select', options: [
+			{ label: 'Yes', value: 'true' },
+			{ label: 'No', value: 'false' },
+		], defaultValue: 'false'
+	},
+	{
+		key: 'serviceReporting', label: 'Service Reporting', type: 'select', options: [
+			{ label: 'Yes', value: 'true' },
+			{ label: 'No', value: 'false' },
+		], defaultValue: 'false'
+	},
+];
 
 export class CodesEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexCodes';
@@ -3083,42 +3122,7 @@ export class CodesEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{ key: 'code', label: 'Code', type: 'text', required: true, placeholder: 'e.g. 99213' },
-			{
-				key: 'codeType', label: 'Code Type', type: 'select', required: true, options: [
-					{ label: 'ICD-10', value: 'ICD10' }, { label: 'CPT', value: 'CPT4' },
-					{ label: 'HCPCS', value: 'HCPCS' }, { label: 'CDT', value: 'CDT' },
-					{ label: 'SNOMED', value: 'SNOMED' }, { label: 'LOINC', value: 'LOINC' },
-					{ label: 'NDC', value: 'NDC' }, { label: 'CVX', value: 'CVX' },
-					{ label: 'Custom', value: 'CUSTOM' },
-				]
-			},
-			{ key: 'modifier', label: 'Modifier', type: 'text', placeholder: 'e.g. 25, 59, GT' },
-			{ key: 'category', label: 'Category', type: 'text' },
-			{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
-			{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
-			{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
-			{ key: 'relateTo', label: 'Related To', type: 'text', placeholder: 'Related code or category', aliases: ['relatedTo'] },
-			{
-				key: 'active', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'true' },
-					{ label: 'Inactive', value: 'false' },
-				], defaultValue: 'true'
-			},
-			{
-				key: 'diagnosisReporting', label: 'Diagnosis Reporting', type: 'select', options: [
-					{ label: 'Yes', value: 'true' },
-					{ label: 'No', value: 'false' },
-				], defaultValue: 'false'
-			},
-			{
-				key: 'serviceReporting', label: 'Service Reporting', type: 'select', options: [
-					{ label: 'Yes', value: 'true' },
-					{ label: 'No', value: 'false' },
-				], defaultValue: 'false'
-			},
-		],
+		formFields: MEDICAL_CODES_FORM_FIELDS,
 		cellRenderer: (key, value) => {
 			if (key === 'active') {
 				return value === true || value === 'true' ? 'Active' : 'Inactive';
@@ -4317,6 +4321,55 @@ interface CreditCardRecord {
 	isExpired?: boolean;
 }
 
+export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
+	{
+		key: 'patientName', label: 'Patient', type: 'search', required: true,
+		placeholder: 'Search patient...', apiPath: '/api/patients',
+		relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+	},
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
+	{
+		// Issue #12: Type options match the CollectPaymentModal.tsx dropdown.
+		key: 'transactionType', label: 'Type', type: 'select', options: [
+			{ label: 'Payment', value: 'payment' },
+			{ label: 'Encounter', value: 'encounter' },
+			{ label: 'Claim', value: 'claim' },
+			{ label: 'Invoice', value: 'invoice' },
+			{ label: 'Copay', value: 'copay' },
+			{ label: 'Deductible', value: 'deductible' },
+			{ label: 'Coinsurance', value: 'coinsurance' },
+			{ label: 'Self Pay', value: 'self_pay' },
+			{ label: 'Other', value: 'other' },
+		], defaultValue: 'payment'
+	},
+	{
+		key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
+			{ label: 'Credit Card', value: 'credit_card' },
+			{ label: 'Debit Card', value: 'debit_card' },
+			{ label: 'Bank Account', value: 'bank_account' },
+			{ label: 'FSA', value: 'fsa' },
+			{ label: 'HSA', value: 'hsa' },
+			{ label: 'Cash', value: 'cash' },
+			{ label: 'Check', value: 'check' },
+			{ label: 'ACH', value: 'ach' },
+			{ label: 'Other', value: 'other' },
+		]
+	},
+	{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
+	// Issue #12: keep a Receipt Email field (matches CollectPaymentModal.tsx).
+	{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com', validationPattern: '^$|^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$', validationMessage: 'Please enter a valid email address' },
+	{ key: 'invoiceId', label: 'Invoice ID', type: 'text', placeholder: 'Optional — link to invoice' },
+	{ key: 'notes', label: 'Notes / Stripe Charge ID', type: 'text', placeholder: 'Stripe charge id (ch_...), check #, ...' },
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Pending', value: 'pending' },
+			{ label: 'Processing', value: 'processing' },
+			{ label: 'Completed', value: 'completed' },
+		], defaultValue: 'completed'
+	},
+];
+
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
@@ -4398,54 +4451,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{
-				key: 'patientName', label: 'Patient', type: 'search', required: true,
-				placeholder: 'Search patient...', apiPath: '/api/patients',
-				relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
-			},
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
-			{
-				// Issue #12: Type options match the CollectPaymentModal.tsx dropdown.
-				key: 'transactionType', label: 'Type', type: 'select', options: [
-					{ label: 'Payment', value: 'payment' },
-					{ label: 'Encounter', value: 'encounter' },
-					{ label: 'Claim', value: 'claim' },
-					{ label: 'Invoice', value: 'invoice' },
-					{ label: 'Copay', value: 'copay' },
-					{ label: 'Deductible', value: 'deductible' },
-					{ label: 'Coinsurance', value: 'coinsurance' },
-					{ label: 'Self Pay', value: 'self_pay' },
-					{ label: 'Other', value: 'other' },
-				], defaultValue: 'payment'
-			},
-			{
-				key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
-					{ label: 'Credit Card', value: 'credit_card' },
-					{ label: 'Debit Card', value: 'debit_card' },
-					{ label: 'Bank Account', value: 'bank_account' },
-					{ label: 'FSA', value: 'fsa' },
-					{ label: 'HSA', value: 'hsa' },
-					{ label: 'Cash', value: 'cash' },
-					{ label: 'Check', value: 'check' },
-					{ label: 'ACH', value: 'ach' },
-					{ label: 'Other', value: 'other' },
-				]
-			},
-			{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
-			// Issue #12: keep a Receipt Email field (matches CollectPaymentModal.tsx).
-			{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com', validationPattern: '^$|^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$', validationMessage: 'Please enter a valid email address' },
-			{ key: 'invoiceId', label: 'Invoice ID', type: 'text', placeholder: 'Optional — link to invoice' },
-			{ key: 'notes', label: 'Notes / Stripe Charge ID', type: 'text', placeholder: 'Stripe charge id (ch_...), check #, ...' },
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Pending', value: 'pending' },
-					{ label: 'Processing', value: 'processing' },
-					{ label: 'Completed', value: 'completed' },
-				], defaultValue: 'completed'
-			},
-		],
+		formFields: PAYMENTS_FORM_FIELDS,
 		cellRenderer: (key: string, value: unknown, item: Record<string, unknown>): string => {
 			if (key === 'amount' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
 			if (key === 'collectedAt' && typeof value === 'string') {

@@ -460,7 +460,10 @@ export class EncounterListPane extends ViewPane {
 				status: String(item.status || 'UNSIGNED'),
 				reason: String(item.reason || item.reasonForVisit || item.reasonCode || ''),
 			},
-			onSave: async (next) => {
+			onSave: async (nextRaw) => {
+				// This form has only plain string fields (no composite formExtras),
+				// so the values are all strings.
+				const next = nextRaw as Record<string, string>;
 				// Prefer the patient-scoped endpoint (matches ciyex-ehr-ui) — it
 				// accepts a flat encounter with a display-name provider and the
 				// UNSIGNED/SIGNED status values directly, so we avoid the FHIR

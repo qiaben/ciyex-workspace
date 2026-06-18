@@ -6,6 +6,7 @@
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { createTimeDropdown } from './customDropdown.js';
+import { FormFieldDef } from './editors/clinicalListEditor.js';
 
 /**
  * Shared sidebar UI primitives used across every Ciyex side-pane:
@@ -591,13 +592,57 @@ export interface IEditFieldDef {
 	defaultValue?: string | number;
 }
 
+/**
+ * Adapt an editor's {@link FormFieldDef} list (the canonical "New X" form schema
+ * in the editors) into the sidebar drawer's {@link IEditFieldDef} shape, so the
+ * `+` quick-create drawer always shows the SAME fields as the full editor's
+ * create form — one source of truth, no drift. Shared by the clinical /
+ * operations / system menu panes.
+ *
+ * `search` fields map to plain text here; {@link withTypeaheadSearch} (applied
+ * when the drawer opens) upgrades the well-known keys (patient, provider, code
+ * systems, insurance, …) back into real typeaheads by key. Validation patterns
+ * are intentionally dropped — the drawer doesn't enforce them — but every field,
+ * label, option, default and hidden flag carries over.
+ */
+export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDef[] {
+	return formFields.map((f): IEditFieldDef => {
+		const def = typeof f.defaultValue === 'function' ? f.defaultValue() : f.defaultValue;
+		return {
+			key: f.key,
+			label: f.label,
+			// 'search' degrades to text; withTypeaheadSearch re-upgrades known keys.
+			kind: f.type === 'search' ? 'text' : f.type,
+			required: f.required,
+			placeholder: f.placeholder,
+			options: f.options?.map(o => ({ value: o.value, label: o.label })),
+			optionsApiPath: f.optionsApiPath,
+			optionLabelKey: f.optionsLabelField,
+			optionValueKey: f.optionsValueField,
+			maxDigits: f.maxDigits,
+			hidden: f.hidden,
+			defaultValue: def,
+			// The editor leaves per-field width to its own grid; give the drawer a
+			// clean two-column layout (full-width only for multi-line notes).
+			widthPct: f.type === 'textarea' ? 100 : 50,
+		};
+	});
+}
+
 export interface IEditDialogOptions {
 	title: string;
 	fields: IEditFieldDef[];
 	values: Record<string, unknown>;
-	onSave: (next: Record<string, string>) => Promise<void> | void;
+	onSave: (next: Record<string, unknown>) => Promise<void> | void;
 	primaryLabel?: string;
 	themeAnchor?: HTMLElement;
+	/**
+	 * Optional composite sections rendered below the plain fields, mirroring the
+	 * full editor's `formExtras` hook (e.g. Care Plans Goals / Interventions).
+	 * The returned `collect()` is merged into the save payload, so the `+`
+	 * quick-create drawer produces the SAME record shape as the editor form.
+	 */
+	formExtras?: (container: HTMLElement, values: Record<string, unknown>) => { collect: () => Record<string, unknown> };
 	/** Surface style:
 	 *  - `'drawer'` (default): right-side slide-out, full viewport height.
 	 *    Matches the EHR-UI Patient Recall edit flow.
@@ -1521,6 +1566,17 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		recomputeDerived();
 	}
 
+	// Composite sections (e.g. Care Plans Goals / Interventions) mirror the full
+	// editor's formExtras hook, so the drawer collects the same nested payload.
+	// Rendered inside the form grid so it scrolls with the fields above it.
+	let extrasHandle: { collect: () => Record<string, unknown> } | null = null;
+	if (opts.formExtras) {
+		const extrasHost = doc.createElement('div');
+		extrasHost.style.cssText = 'grid-column:1 / -1;';
+		form.appendChild(extrasHost);
+		extrasHandle = opts.formExtras(extrasHost, opts.values);
+	}
+
 	dialog.appendChild(form);
 
 	const footer = doc.createElement('div');
@@ -1576,11 +1632,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			}
 			result[f.key] = v;
 		}
+		// Merge composite-section data (Goals / Interventions, …) so the saved
+		// payload matches the full editor form exactly.
+		const payload: Record<string, unknown> = { ...result };
+		if (extrasHandle) { Object.assign(payload, extrasHandle.collect()); }
 		saveBtn.disabled = true;
 		const original = saveBtn.textContent;
 		saveBtn.textContent = 'Saving...';
 		try {
-			await opts.onSave(result);
+			await opts.onSave(payload);
 			close();
 		} catch (err) {
 			errorMsg.textContent = err instanceof Error ? err.message : String(err);

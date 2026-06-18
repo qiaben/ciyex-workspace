@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, showThemedModal } from './clinicalListEditor.js';
+import { localize } from '../../../../../nls.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, showThemedModal } from './clinicalListEditor.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -329,6 +330,42 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 /**
  * Fax Editor — Inbound/outbound fax queue management.
  */
+export const FAX_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
+	// Fax number must be a 10-digit US number, with an optional leading "1"/"+1"
+	// country code (so 10 or 11 digits total). The pattern allows the usual
+	// spaces / parens / dashes / dots as separators. (Previously required
+	// exactly 12 digits, which rejected the standard 10/11-digit format — even
+	// its own "+1 555 123 4567" example, which is 11 digits.)
+	{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: 'e.g. (555) 123-4567 or +1 555 123 4567', maxDigits: 11, validationPattern: '^\\+?1?[\\s().-]*(?:[\\s().-]*\\d){10}[\\s().-]*$', validationMessage: 'Fax number must be a 10-digit US number (optionally with a +1 country code)' },
+	{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
+	{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
+	{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', placeholder: 'Auto-filled from patient search' },
+	{
+		key: 'category', label: 'Category', type: 'select', options: [
+			{ label: 'Referral', value: 'referral' },
+			{ label: 'Lab Result', value: 'lab_result' },
+			{ label: 'Prior Auth', value: 'prior_auth' },
+			{ label: 'Medical Records', value: 'medical_records' },
+			{ label: 'Other', value: 'other' },
+		]
+	},
+	// Status select — mirrors ehr-ui FaxFormPanel.tsx outbound statuses
+	// (Pending/Sending/Sent/Delivered/Failed) for new (outbound) faxes.
+	{
+		key: 'status', label: 'Status', type: 'select', defaultValue: 'pending', options: [
+			{ label: 'Pending', value: 'pending' },
+			{ label: 'Sending', value: 'sending' },
+			{ label: 'Sent', value: 'sent' },
+			{ label: 'Delivered', value: 'delivered' },
+			{ label: 'Failed', value: 'failed' },
+			{ label: 'Received', value: 'received' },
+		]
+	},
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+];
+
 export class FaxEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexFax';
 	protected readonly config: ClinicalEditorConfig = {
@@ -377,41 +414,7 @@ export class FaxEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		formFields: [
-			{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
-			// Fax number must be a 10-digit US number, with an optional leading "1"/"+1"
-			// country code (so 10 or 11 digits total). The pattern allows the usual
-			// spaces / parens / dashes / dots as separators. (Previously required
-			// exactly 12 digits, which rejected the standard 10/11-digit format — even
-			// its own "+1 555 123 4567" example, which is 11 digits.)
-			{ key: 'faxNumber', label: 'Fax Number', type: 'text', required: true, placeholder: 'e.g. (555) 123-4567 or +1 555 123 4567', maxDigits: 11, validationPattern: '^\\+?1?[\\s().-]*(?:[\\s().-]*\\d){10}[\\s().-]*$', validationMessage: 'Fax number must be a 10-digit US number (optionally with a +1 country code)' },
-			{ key: 'subject', label: 'Subject', type: 'text', required: true, placeholder: 'Fax subject' },
-			{ key: 'pageCount', label: 'Page Count', type: 'number', placeholder: '1' },
-			{ key: 'patientName', label: 'Patient Name', type: 'search', placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', placeholder: 'Auto-filled from patient search' },
-			{
-				key: 'category', label: 'Category', type: 'select', options: [
-					{ label: 'Referral', value: 'referral' },
-					{ label: 'Lab Result', value: 'lab_result' },
-					{ label: 'Prior Auth', value: 'prior_auth' },
-					{ label: 'Medical Records', value: 'medical_records' },
-					{ label: 'Other', value: 'other' },
-				]
-			},
-			// Status select — mirrors ehr-ui FaxFormPanel.tsx outbound statuses
-			// (Pending/Sending/Sent/Delivered/Failed) for new (outbound) faxes.
-			{
-				key: 'status', label: 'Status', type: 'select', defaultValue: 'pending', options: [
-					{ label: 'Pending', value: 'pending' },
-					{ label: 'Sending', value: 'sending' },
-					{ label: 'Sent', value: 'sent' },
-					{ label: 'Delivered', value: 'delivered' },
-					{ label: 'Failed', value: 'failed' },
-					{ label: 'Received', value: 'received' },
-				]
-			},
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-		],
+		formFields: FAX_FORM_FIELDS,
 		cellRenderer: (key, value, item) => {
 			// Derived columns: From/To shows senderName for inbound faxes and
 			// recipientName for outbound (matching FaxTable.tsx). Date pulls
@@ -464,8 +467,18 @@ export class FaxEditor extends ClinicalListEditorBase {
 			},
 			{
 				// allow-any-unicode-next-line
-				label: 'Mark Processed', icon: '✅', handler: async (item, api, reload) => {
-					await api.fetch(`/api/fax/${item.id}/process`, { method: 'POST' });
+				label: 'Mark Processed', icon: '✅', handler: async (item, api, reload, dlg) => {
+					// Backend requires the acting user in the body (processedBy is
+					// mandatory — a bodyless POST is rejected with HTTP 400).
+					const processedBy = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_email') : '') || 'unknown';
+					const res = await api.fetch(`/api/fax/${item.id}/process`, {
+						method: 'POST',
+						body: JSON.stringify({ processedBy }),
+					});
+					if (!res.ok) {
+						await dlg.error(localize('faxProcessFailed', "Failed to mark fax as processed ({0}).", res.status));
+						return;
+					}
 					reload();
 				}
 			},

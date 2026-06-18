@@ -17,49 +17,12 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
-import { FormFieldDef } from '../editors/clinicalListEditor.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import {
 	PRESCRIPTIONS_FORM_FIELDS, LAB_ORDER_FORM_FIELDS, IMMUNIZATIONS_FORM_FIELDS,
 	REFERRALS_FORM_FIELDS, CARE_PLANS_FORM_FIELDS, AUTHORIZATIONS_FORM_FIELDS, EDUCATION_FORM_FIELDS,
+	renderCarePlanExtras,
 } from '../editors/clinicalEditors.js';
-
-/**
- * Adapt an editor's {@link FormFieldDef} list (the canonical "New X" form schema
- * in clinicalEditors.ts) into the sidebar drawer's {@link IEditFieldDef} shape,
- * so the `+` quick-create drawer always shows the SAME fields as the full
- * editor's create form — one source of truth, no drift.
- *
- * `search` fields map to plain text here; {@link withTypeaheadSearch} (applied
- * when the drawer opens) upgrades the well-known keys (patient, provider, code
- * systems, insurance, …) back into real typeaheads by key, exactly as the
- * sidebar already did. Validation patterns are intentionally dropped — the
- * drawer doesn't enforce them — but every field, label, option, default and
- * hidden flag carries over.
- */
-function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDef[] {
-	return formFields.map((f): IEditFieldDef => {
-		const def = typeof f.defaultValue === 'function' ? f.defaultValue() : f.defaultValue;
-		return {
-			key: f.key,
-			label: f.label,
-			// 'search' degrades to text; withTypeaheadSearch re-upgrades known keys.
-			kind: f.type === 'search' ? 'text' : f.type,
-			required: f.required,
-			placeholder: f.placeholder,
-			options: f.options?.map(o => ({ value: o.value, label: o.label })),
-			optionsApiPath: f.optionsApiPath,
-			optionLabelKey: f.optionsLabelField,
-			optionValueKey: f.optionsValueField,
-			maxDigits: f.maxDigits,
-			hidden: f.hidden,
-			defaultValue: def,
-			// The editor leaves per-field width to its own grid; give the drawer a
-			// clean two-column layout (full-width only for multi-line notes).
-			widthPct: f.type === 'textarea' ? 100 : 50,
-		};
-	});
-}
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string; patientId?: string };
 
@@ -83,6 +46,13 @@ interface ClinicalItem {
 	actions: RowAction[];
 	/** Explicit edit-drawer schema mirroring the full editor formFields. */
 	editFields?: IEditFieldDef[];
+	/**
+	 * Composite sections (e.g. Care Plans Goals / Interventions) rendered in the
+	 * `+` create drawer below {@link editFields}, mirroring the full editor's
+	 * `formExtras` hook so the quick-create form matches the editor form. Takes
+	 * the pane's apiService so the sections can do their own lookups.
+	 */
+	formExtras?: (host: HTMLElement, editing: Record<string, unknown> | null, api: ICiyexApiService) => { collect: () => Record<string, unknown> };
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -225,6 +195,8 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		titleField: ['title', 'patientName'],
 		subtitleField: ['patientName', 'status'],
 		editFields: formFieldsToEditFields(CARE_PLANS_FORM_FIELDS),
+		// Goals + Interventions mirror the editor's "New Care Plan" form (issue #23).
+		formExtras: renderCarePlanExtras,
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -590,6 +562,7 @@ export class ClinicalMenuPane extends ViewPane {
 			fields: withTypeaheadSearch(item.editFields, this.apiService),
 			values: initialValues,
 			primaryLabel: 'Create',
+			formExtras: item.formExtras ? (host, values) => item.formExtras!(host, values, this.apiService) : undefined,
 			onSave: async (next) => {
 				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }

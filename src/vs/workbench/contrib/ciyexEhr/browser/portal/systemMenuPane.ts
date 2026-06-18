@@ -20,7 +20,8 @@ import { ICiyexAuthService } from '../../../ciyexAuth/browser/ciyexAuthService.j
 import { localize } from '../../../../../nls.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
+import { FAX_FORM_FIELDS } from '../editors/systemEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -205,22 +206,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/fax?page=0&size=10',
 		titleField: ['to', 'from', 'subject'],
 		subtitleField: ['status', 'createdAt'],
-		editFields: [
-			{ key: 'recipientName', label: 'Recipient Name', required: true, placeholder: 'Search recipient...', widthPct: 50 },
-			{ key: 'faxNumber', label: 'Fax Number', kind: 'tel', required: true, placeholder: '12 digits, e.g. +1 555 123 4567', minDigits: 12, maxDigits: 12, hint: 'Must be exactly 12 digits', widthPct: 50 },
-			{ key: 'subject', label: 'Subject', required: true, placeholder: 'Fax subject', widthPct: 100 },
-			{ key: 'pageCount', label: 'Page Count', kind: 'number', placeholder: '1', widthPct: 50 },
-			{ key: 'patientName', label: 'Patient Name', placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', placeholder: 'Auto-filled', widthPct: 50 },
-			{
-				key: 'category', label: 'Category', kind: 'select', widthPct: 50, options: [
-					{ value: 'referral', label: 'Referral' }, { value: 'lab_result', label: 'Lab Result' },
-					{ value: 'prior_auth', label: 'Prior Auth' }, { value: 'medical_records', label: 'Medical Records' },
-					{ value: 'other', label: 'Other' },
-				]
-			},
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(FAX_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },

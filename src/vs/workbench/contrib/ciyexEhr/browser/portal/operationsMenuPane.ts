@@ -18,7 +18,8 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields } from '../sidebarActions.js';
+import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -74,52 +75,7 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/recalls?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['recallTypeName', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, widthPct: 50 },
-			{ key: 'phone', label: 'Phone', kind: 'tel', widthPct: 50 },
-			{ key: 'email', label: 'Email', kind: 'email', widthPct: 50 },
-			{
-				key: 'recallTypeName', label: 'Recall Type', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'Annual Physical', label: 'Annual Physical' },
-					{ value: 'Medicare Wellness', label: 'Medicare Wellness' },
-					{ value: 'Well-Child Visit', label: 'Well-Child Visit' },
-					{ value: 'Follow-up', label: 'Follow-up' },
-					{ value: 'Lab Recheck', label: 'Lab Recheck' },
-					{ value: 'Imaging', label: 'Imaging' },
-					{ value: 'Vaccination', label: 'Vaccination' },
-					{ value: 'Other', label: 'Other' },
-				]
-			},
-			{ key: 'providerName', label: 'Provider', widthPct: 50 },
-			{ key: 'dueDate', label: 'Due Date', kind: 'date', required: true, widthPct: 50 },
-			{
-				key: 'priority', label: 'Priority', kind: 'select', widthPct: 50, options: [
-					{ value: 'Low', label: 'Low' },
-					{ value: 'Normal', label: 'Normal' },
-					{ value: 'High', label: 'High' },
-					{ value: 'Urgent', label: 'Urgent' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'Pending', label: 'Pending' },
-					{ value: 'Contacted', label: 'Contacted' },
-					{ value: 'Scheduled', label: 'Scheduled' },
-					{ value: 'Completed', label: 'Completed' },
-					{ value: 'Declined', label: 'Declined' },
-					{ value: 'Cancelled', label: 'Cancelled' },
-				]
-			},
-			{
-				key: 'preferredContact', label: 'Preferred Contact', kind: 'select', widthPct: 50, options: [
-					{ value: 'SMS', label: 'SMS' },
-					{ value: 'Phone', label: 'Phone' },
-					{ value: 'Email', label: 'Email' },
-					{ value: 'Mail', label: 'Mail' },
-				]
-			},
-			{ key: 'notes', label: 'Notes', kind: 'textarea', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(RECALL_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -141,22 +97,7 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/global_codes?page=0&size=10',
 		titleField: ['code'],
 		subtitleField: ['description', 'codeType'],
-		editFields: [
-			{ key: 'code', label: 'Code', required: true, placeholder: 'e.g. 99213', widthPct: 50 },
-			{
-				key: 'codeType', label: 'Code Type', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'ICD10', label: 'ICD-10' }, { value: 'CPT4', label: 'CPT' },
-					{ value: 'HCPCS', label: 'HCPCS' }, { value: 'CDT', label: 'CDT' },
-					{ value: 'SNOMED', label: 'SNOMED' }, { value: 'LOINC', label: 'LOINC' },
-					{ value: 'NDC', label: 'NDC' }, { value: 'CVX', label: 'CVX' },
-					{ value: 'CUSTOM', label: 'Custom' },
-				]
-			},
-			{ key: 'modifier', label: 'Modifier', placeholder: 'e.g. 25, 59, GT', widthPct: 50 },
-			{ key: 'category', label: 'Category', widthPct: 50 },
-			{ key: 'shortDescription', label: 'Short Description', required: true, widthPct: 100 },
-			{ key: 'description', label: 'Full Description', kind: 'textarea', placeholder: 'Detailed description of this code...', widthPct: 100 },
-		],
+		editFields: formFieldsToEditFields(MEDICAL_CODES_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -235,34 +176,7 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/payments/transactions?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['amount', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'amount', label: 'Amount ($)', kind: 'number', required: true, placeholder: '0.00', widthPct: 50 },
-			{
-				key: 'transactionType', label: 'Type', kind: 'select', widthPct: 50, options: [
-					{ value: 'payment', label: 'Payment' }, { value: 'copay', label: 'Copay' },
-					{ value: 'deductible', label: 'Deductible' }, { value: 'coinsurance', label: 'Coinsurance' },
-					{ value: 'self_pay', label: 'Self-Pay' },
-				]
-			},
-			{
-				key: 'paymentMethodType', label: 'Method', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'credit_card', label: 'Credit Card' }, { value: 'debit_card', label: 'Debit Card' },
-					{ value: 'cash', label: 'Cash' }, { value: 'check', label: 'Check' },
-					{ value: 'ach', label: 'ACH' }, { value: 'other', label: 'Other' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'pending', label: 'Pending' }, { value: 'processing', label: 'Processing' },
-					{ value: 'completed', label: 'Completed' },
-				]
-			},
-			{ key: 'description', label: 'Description', placeholder: 'Visit copay, lab, etc.', widthPct: 100 },
-			{ key: 'invoiceId', label: 'Invoice ID', placeholder: 'Optional - link to invoice', widthPct: 50 },
-			{ key: 'transactionId', label: 'External Transaction ID', placeholder: 'Stripe charge id, check #, ...', widthPct: 50 },
-		],
+		editFields: formFieldsToEditFields(PAYMENTS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },

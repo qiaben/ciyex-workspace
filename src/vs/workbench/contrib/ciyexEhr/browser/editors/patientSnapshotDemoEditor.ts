@@ -1757,7 +1757,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			values: { room: currentRoom },
 			onSave: async (next) => {
 				if (!next.room) { return; }
-				await this._updateAppointmentRoom(appointmentId, next.room);
+				await this._updateAppointmentRoom(appointmentId, String(next.room));
 				this._rerender();
 			},
 		});
