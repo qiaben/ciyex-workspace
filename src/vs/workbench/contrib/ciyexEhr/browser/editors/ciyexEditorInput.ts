@@ -161,6 +161,33 @@ export class EncounterFormEditorInput extends EditorInput {
 	}
 }
 
+/**
+ * Fee Sheet editor input. A fee sheet is anchored to a signed encounter: it
+ * carries the encounter id + patient so charges (CPT/HCPCS/ICD codes, units,
+ * fees, price level) can be captured and then pushed to billing/payment. When
+ * opened without an encounter it acts as a blank, manually-entered fee sheet.
+ */
+export class FeeSheetEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexFeeSheet';
+	override get typeId(): string { return FeeSheetEditorInput.ID; }
+
+	constructor(
+		readonly encounterId: string,
+		readonly patientId: string,
+		readonly patientName: string,
+		readonly encounterLabel?: string,
+	) { super(); }
+
+	override getName(): string { return this.patientName ? `Fee Sheet — ${this.patientName}` : 'Fee Sheet'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('output'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-fee-sheet', path: `/${this.patientId || '_'}/${this.encounterId || '_'}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof FeeSheetEditorInput && this.encounterId === other.encounterId && this.patientId === other.patientId;
+	}
+}
+
 export class PatientSnapshotEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexPatientSnapshot';
 	override get typeId(): string { return PatientSnapshotEditorInput.ID; }

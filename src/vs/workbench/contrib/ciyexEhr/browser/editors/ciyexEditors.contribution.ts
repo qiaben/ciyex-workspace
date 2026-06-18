@@ -34,6 +34,8 @@ import {
 	// Patient Snapshot
 	PatientSnapshotEditorInput,
 	PatientSnapshotDemoEditorInput,
+	// Fee Sheet (encounter billing capture)
+	FeeSheetEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -73,6 +75,7 @@ import { AppointmentsEditor } from './appointmentsEditor.js';
 import { StaffTvBoardEditor, WaitingRoomEditor } from './tvDisplayEditor.js';
 import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
 import { PatientSnapshotDemoEditor } from './patientSnapshotDemoEditor.js';
+import { FeeSheetEditor } from './feeSheetEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -114,6 +117,7 @@ reg.registerEditorPane(EditorPaneDescriptor.create(CodesEditor, CodesEditor.ID, 
 reg.registerEditorPane(EditorPaneDescriptor.create(InventoryEditor, InventoryEditor.ID, localize('inventory', "Inventory")), [new SyncDescriptor(InventoryEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(PaymentsEditor, PaymentsEditor.ID, localize('payments', "Payments")), [new SyncDescriptor(PaymentsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(ClaimsEditor, ClaimsEditor.ID, localize('claims', "Claims")), [new SyncDescriptor(ClaimsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(FeeSheetEditor, FeeSheetEditor.ID, localize('feeSheet', "Fee Sheet")), [new SyncDescriptor(FeeSheetEditorInput)]);
 
 // Reports
 reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.ID, localize('report', "Report")), [new SyncDescriptor(ReportsEditorInput)]);

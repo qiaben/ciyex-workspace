@@ -12,6 +12,11 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { IEditorOpenContext } from '../../../../common/editor.js';
+import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
+import { EditorInput } from '../../../../common/editor/editorInput.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4373,7 +4378,7 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
-	private payView: 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'transactions';
+	private payView: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'encounter-billing';
 	// Methods + Plans + Ledger are patient-scoped on the backend (no global list
 	// route), so those views require a selected patient (matches ciyex-ehr-ui).
 	private _payPatientId = '';
@@ -5135,9 +5140,34 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
 	};
 
+	// Thin stub used when payView === 'encounter-billing' — the encounter-billing
+	// grid is custom (one row per signed-encounter fee sheet) and rendered by
+	// _loadAndRenderEncounterBilling() rather than the generic list base.
+	private readonly _encounterBillingConfig: ClinicalEditorConfig = {
+		title: 'Encounter Billing', apiPath: '/api/fee-sheets',
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+		// Returning null short-circuits the generic base loader (no fetch / no
+		// error UI) — the custom grid is rendered by _loadAndRenderEncounterBilling().
+		listUrlBuilder: () => null,
+	};
+
+	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		await super.setInput(input, options, context, token);
+		// The base setInput kicks off the generic loader; custom views (which the
+		// generic list base can't render) take over here on first open.
+		if (this.payView === 'encounter-billing') {
+			this._loadAndRenderEncounterBilling();
+		} else if (this.payView === 'invoices') {
+			this._loadAndRenderInvoices();
+		} else if (this.payView === 'methods') {
+			this._loadAndRenderCards();
+		}
+	}
+
 	// @ts-ignore — override abstract readonly with getter
 	protected get config(): ClinicalEditorConfig {
 		switch (this.payView) {
+			case 'encounter-billing': return this._encounterBillingConfig;
 			case 'methods': return this._methodsConfig;
 			case 'invoices': return this._invoicesConfig;
 			case 'plans': return this._plansConfig;
@@ -5147,7 +5177,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	protected override _resetAndReload(): void {
-		if (this.payView === 'methods') {
+		if (this.payView === 'encounter-billing') {
+			this._loadAndRenderEncounterBilling();
+		} else if (this.payView === 'methods') {
 			this._loadAndRenderCards();
 		} else if (this.payView === 'invoices') {
 			this._loadAndRenderInvoices();
@@ -5167,7 +5199,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
-		const payTabs: Array<{ view: 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
+		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
+			{ view: 'encounter-billing', label: 'Encounter Billing' },
 			{ view: 'transactions', label: 'Transactions' },
 			{ view: 'invoices', label: 'Invoices' },
 			{ view: 'methods', label: 'Payment Methods' },
@@ -5275,6 +5308,255 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._payPatientBar.style.display =
 				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
 		}
+	}
+
+	// allow-any-unicode-next-line
+	// ── Encounter Billing ──────────────────────────────────────────────────
+	// One row per signed-encounter fee sheet (created via the Fee Sheet editor's
+	// "Send to Billing"). Mirrors the OpenEMR Payment Dashboard: charges with
+	// Pay Amount, Total Fee/Paid/Balance, billing + payment status, and per-row
+	// Edit / Complete (collect) / Invoice / Ledger actions. Collecting a payment
+	// that clears the balance auto-generates the patient invoice.
+
+	private _billingRows: Array<Record<string, unknown>> = [];
+	private _billingLoading = false;
+
+	private _normalizeBillingRow(d: Record<string, unknown>): Record<string, unknown> {
+		const items = (d.items as Array<Record<string, unknown>>) || [];
+		const codes = items.length
+			? items.map(it => String(it.code ?? '')).filter(Boolean).join(', ')
+			: String(d.codes ?? '');
+		const totalFee = Number(d.total ?? d.totalFee ?? items.reduce((s, it) => s + (Number(it.price ?? 0) * Number(it.qty ?? 1)), 0)) || 0;
+		const totalPaid = Number(d.totalPaid ?? d.paidAmount ?? 0) || 0;
+		return {
+			id: d.id !== undefined && d.id !== null ? String(d.id) : '',
+			encounterId: String(d.encounterId ?? ''),
+			patientId: String(d.patientId ?? ''),
+			patientName: String(d.patientName ?? d.patient ?? ''),
+			clinician: String(d.renderingProviderName ?? d.clinician ?? d.renderingProvider ?? ''),
+			encounterDate: String(d.encounterDate ?? d.serviceDate ?? d.createdAt ?? '').slice(0, 10),
+			codes,
+			totalFee,
+			totalPaid,
+			balance: Math.max(0, totalFee - totalPaid),
+			billingStatus: String(d.billingStatus ?? 'Unbilled'),
+			billedMode: String(d.billedMode ?? 'cash'),
+			paymentStatus: String(d.paymentStatus ?? (totalPaid <= 0 ? 'None' : totalPaid >= totalFee ? 'Paid' : 'Partial')),
+			comments: String(d.comments ?? ''),
+		};
+	}
+
+	private async _loadAndRenderEncounterBilling(): Promise<void> {
+		if (!this.contentEl) { return; }
+		this._billingLoading = true;
+		try {
+			const res = await this.apiService.fetch('/api/fee-sheets');
+			if (res.ok) {
+				const data = await res.json();
+				const w = data?.data ?? data;
+				const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+				this._billingRows = list.map(d => this._normalizeBillingRow(d));
+			} else {
+				this._billingRows = [];
+			}
+		} catch {
+			this._billingRows = [];
+		}
+		this._billingLoading = false;
+		this._renderEncounterBilling();
+	}
+
+	private _renderEncounterBilling(): void {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Encounter Billing';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const refreshBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.textContent = '\u21BB Refresh';
+		refreshBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:6px;cursor:pointer;font-size:12px;';
+		refreshBtn.addEventListener('click', () => this._loadAndRenderEncounterBilling());
+
+		// Summary cards.
+		const totalCharges = this._billingRows.reduce((s, r) => s + Number(r.totalFee || 0), 0);
+		const totalPaid = this._billingRows.reduce((s, r) => s + Number(r.totalPaid || 0), 0);
+		const cards = DOM.append(this.contentEl, DOM.$('div'));
+		cards.style.cssText = 'display:flex;gap:16px;margin-bottom:16px;';
+		const card = (label: string, value: string, color: string): void => {
+			const c = DOM.append(cards, DOM.$('div'));
+			c.style.cssText = 'flex:0 0 200px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px 18px;text-align:center;';
+			const v = DOM.append(c, DOM.$('div'));
+			v.textContent = value; v.style.cssText = `font-size:22px;font-weight:700;color:${color};`;
+			const l = DOM.append(c, DOM.$('div'));
+			l.textContent = label; l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+		};
+		card('Total Charges', `$${totalCharges.toFixed(2)}`, 'var(--vscode-foreground)');
+		card('Total Paid', `$${totalPaid.toFixed(2)}`, '#22c55e');
+
+		const scroll = DOM.append(this.contentEl, DOM.$('div'));
+		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+
+		const COLS = 'minmax(120px,1.2fr) minmax(110px,1fr) 110px 90px 110px 90px 90px 90px 120px 100px 110px minmax(120px,1fr) 150px';
+		const header = DOM.append(scroll, DOM.$('div'));
+		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
+		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Codes', 'Pay Amount', 'Total Fee', 'Total Paid', 'Balance', 'Billing Status', 'Billed Mode', 'Pay Status', 'Comments', 'Action']) {
+			DOM.append(header, DOM.$('span')).textContent = h;
+		}
+
+		if (this._billingLoading) {
+			const l = DOM.append(scroll, DOM.$('div'));
+			l.textContent = 'Loading…'; l.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;';
+			return;
+		}
+		if (this._billingRows.length === 0) {
+			const e = DOM.append(scroll, DOM.$('div'));
+			e.textContent = 'No encounter charges yet. Use the Fee Sheet "Send to Billing" action to create one.';
+			e.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+			return;
+		}
+
+		const inputStyle = 'width:100%;box-sizing:border-box;padding:4px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+
+		for (const row of this._billingRows) {
+			const r = DOM.append(scroll, DOM.$('div'));
+			r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;align-items:center;padding:7px 12px;border-top:1px solid rgba(128,128,128,0.08);font-size:12px;`;
+
+			const nameEl = DOM.append(r, DOM.$('span')); nameEl.textContent = String(row.patientName || `Patient #${row.patientId}`); nameEl.style.fontWeight = '500';
+			DOM.append(r, DOM.$('span')).textContent = String(row.clinician || '—');
+			DOM.append(r, DOM.$('span')).textContent = String(row.encounterDate || '—');
+			const codesEl = DOM.append(r, DOM.$('span')); codesEl.textContent = String(row.codes || '—'); codesEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; codesEl.title = String(row.codes || '');
+
+			const payInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+			payInp.type = 'number'; payInp.step = '0.01'; payInp.value = Number(row.balance || 0).toFixed(2); payInp.style.cssText = inputStyle;
+
+			DOM.append(r, DOM.$('span')).textContent = `$${Number(row.totalFee || 0).toFixed(2)}`;
+			const paidEl = DOM.append(r, DOM.$('span')); paidEl.textContent = `$${Number(row.totalPaid || 0).toFixed(2)}`; paidEl.style.color = '#22c55e';
+			const balEl = DOM.append(r, DOM.$('span')); balEl.textContent = `$${Number(row.balance || 0).toFixed(2)}`; balEl.style.color = Number(row.balance || 0) > 0 ? '#ef4444' : 'var(--vscode-descriptionForeground)';
+
+			const billSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
+			billSel.style.cssText = inputStyle;
+			for (const opt of ['Unbilled', 'Billed', 'Paid']) {
+				const o = DOM.append(billSel, DOM.$('option')) as HTMLOptionElement; o.value = opt; o.textContent = opt;
+			}
+			billSel.value = String(row.billingStatus || 'Unbilled');
+			billSel.addEventListener('change', () => { row.billingStatus = billSel.value; });
+
+			const modeSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
+			modeSel.style.cssText = inputStyle;
+			for (const opt of [['cash', 'Cash'], ['check', 'Check'], ['credit_card', 'Card'], ['ach', 'ACH']]) {
+				const o = DOM.append(modeSel, DOM.$('option')) as HTMLOptionElement; o.value = opt[0]; o.textContent = opt[1];
+			}
+			modeSel.value = String(row.billedMode || 'cash');
+			modeSel.addEventListener('change', () => { row.billedMode = modeSel.value; });
+
+			const paySel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
+			paySel.style.cssText = inputStyle;
+			for (const opt of ['None', 'Partial', 'Paid']) {
+				const o = DOM.append(paySel, DOM.$('option')) as HTMLOptionElement; o.value = opt; o.textContent = opt;
+			}
+			paySel.value = String(row.paymentStatus || 'None');
+			paySel.addEventListener('change', () => { row.paymentStatus = paySel.value; });
+
+			const commentInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+			commentInp.value = String(row.comments || ''); commentInp.style.cssText = inputStyle;
+			commentInp.addEventListener('input', () => { row.comments = commentInp.value; });
+
+			// Actions
+			const act = DOM.append(r, DOM.$('div'));
+			act.style.cssText = 'display:flex;gap:6px;align-items:center;';
+			const actBtn = (icon: string, title: string, color: string, handler: () => void): void => {
+				const b = DOM.append(act, DOM.$('button')) as HTMLButtonElement;
+				b.textContent = icon; b.title = title;
+				b.style.cssText = `background:transparent;border:none;cursor:pointer;font-size:14px;color:${color};padding:2px;`;
+				b.addEventListener('click', handler);
+			};
+			actBtn('\u270F\uFE0F', 'Edit fee sheet', 'var(--vscode-textLink-foreground)', () => this._editBillingRow(row));
+			actBtn('\u2705', 'Collect payment', '#22c55e', () => this._completeBillingRow(row, Number(payInp.value) || 0, modeSel.value));
+			actBtn('\u{1F9FE}', 'Generate invoice', 'var(--vscode-textLink-foreground)', () => this._invoiceBillingRow(row));
+			actBtn('\u{1F4D2}', 'Open ledger', 'var(--vscode-descriptionForeground)', () => this._openLedgerForRow(row));
+		}
+	}
+
+	private _editBillingRow(row: Record<string, unknown>): void {
+		// Re-open the fee sheet editor for this encounter to adjust charges.
+		this.commandService.executeCommand('ciyex.openFeeSheet', String(row.encounterId || ''), String(row.patientId || ''), String(row.patientName || ''), `Encounter ${row.encounterId}`)
+			.then(undefined, () => { /* command may be unavailable */ });
+	}
+
+	private async _completeBillingRow(row: Record<string, unknown>, payAmount: number, method: string): Promise<void> {
+		if (!payAmount || payAmount <= 0) {
+			await this.dialogService.info('Enter a Pay Amount greater than 0 before collecting.');
+			return;
+		}
+		const payload = {
+			patientId: row.patientId,
+			patientName: row.patientName,
+			amount: payAmount,
+			transactionType: 'encounter',
+			paymentMethodType: method,
+			description: `Encounter ${row.encounterId} — ${row.codes}`,
+			status: 'completed',
+			feeSheetId: row.id,
+			encounterId: row.encounterId,
+		};
+		try {
+			const res = await this.apiService.fetch('/api/payments/collect', { method: 'POST', body: JSON.stringify(payload) });
+			if (!res.ok) {
+				await this.dialogService.error(`Payment failed (${res.status}).`);
+				return;
+			}
+			const newPaid = Number(row.totalPaid || 0) + payAmount;
+			const newBalance = Math.max(0, Number(row.totalFee || 0) - newPaid);
+			row.totalPaid = newPaid;
+			row.balance = newBalance;
+			row.paymentStatus = newBalance <= 0 ? 'Paid' : 'Partial';
+			row.billingStatus = newBalance <= 0 ? 'Paid' : 'Billed';
+
+			// Auto-generate the invoice once the encounter balance is cleared — the
+			// patient receives the invoice without anyone creating it manually.
+			if (newBalance <= 0) {
+				await this._invoiceBillingRow(row, true);
+			}
+			this._renderEncounterBilling();
+		} catch (e) {
+			await this.dialogService.error(`Payment failed: ${e}`);
+		}
+	}
+
+	private async _invoiceBillingRow(row: Record<string, unknown>, silent = false): Promise<void> {
+		const total = Number(row.totalFee || 0);
+		const paid = Number(row.totalPaid || 0);
+		const payload: Record<string, unknown> = {
+			patientId: row.patientId,
+			patientName: row.patientName,
+			totalAmount: total,
+			balanceDue: Math.max(0, total - paid),
+			status: 'SENT',
+			encounterId: row.encounterId,
+			feeSheetId: row.id,
+			notes: `Encounter ${row.encounterId} — ${row.codes}`,
+		};
+		try {
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
+			if (res.ok) {
+				if (!silent) { await this.dialogService.info('Invoice generated and sent to the patient.'); }
+			} else if (!silent) {
+				await this.dialogService.error(`Invoice generation failed (${res.status}).`);
+			}
+		} catch (e) {
+			if (!silent) { await this.dialogService.error(`Invoice generation failed: ${e}`); }
+		}
+	}
+
+	private _openLedgerForRow(row: Record<string, unknown>): void {
+		this._payPatientId = String(row.patientId || '');
+		this._payPatientName = String(row.patientName || '');
+		this.payView = 'ledger';
+		this._syncPayPatientBar();
+		this._resetAndReload();
 	}
 
 	// allow-any-unicode-next-line
@@ -5513,7 +5795,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		});
 	}
 
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {

@@ -161,6 +161,7 @@ const ADMIN_ITEMS: SidebarItem[] = [
 const BUILTIN_ITEMS: SidebarItem[] = [
 	// System
 	{ key: '__form-options__', label: 'Form Options', icon: '\u{2699}', kind: 'builtin', group: 'system' },
+	{ key: '__price-levels__', label: 'Price Level', icon: '\u{1F4B2}', kind: 'builtin', group: 'system' },
 	{ key: '__display__', label: 'Display', icon: '\u{1F5A5}', kind: 'builtin', group: 'system' },
 	{ key: '__calendar-colors__', label: 'Calendar Colors', icon: '\u{1F3A8}', kind: 'builtin', group: 'system' },
 	{ key: '__layout-hub__', label: 'Layout Configuration', icon: '\u{1F4D0}', kind: 'command', commandId: 'ciyex.openLayoutHub', group: 'system' },
@@ -189,6 +190,7 @@ const TAB_DESCRIPTIONS: Record<string, string> = {
 	'__users__': 'Manage user accounts, roles, and portal access',
 	'__roles__': 'Roles, permissions, and access policies',
 	'__form-options__': 'Default options for chart and intake forms',
+	'__price-levels__': 'Price levels used to set fee-sheet charges per encounter',
 	'__display__': 'Theme, density, and display preferences',
 	'__calendar-colors__': 'Color scheme for calendar appointments and providers',
 };
@@ -481,6 +483,7 @@ export class SettingsHubEditor extends EditorPane {
 		if (key === '__users__') { this._renderUsers(); return; }
 		if (key === '__roles__') { this._renderRolesPermissions(); return; }
 		if (key === '__form-options__') { this._renderFormOptions(); return; }
+		if (key === '__price-levels__') { this._renderPriceLevels(); return; }
 		if (key === '__display__') { this._renderDisplay(); return; }
 		if (key === '__template-documents__') { this._renderTemplateDocuments(); return; }
 		if (key === '__encounter-settings__') { this._renderEncounterSettings(); return; }
@@ -3768,6 +3771,209 @@ export class SettingsHubEditor extends EditorPane {
 		} catch {
 			loading.textContent = 'Waiting for login\u2026';
 		}
+	}
+
+	/**
+	 * Price Level settings \u2014 an editable, OpenEMR-style "Manage Lists" grid for
+	 * the price levels used to set fee-sheet charges per encounter. Each row maps
+	 * to a price-level option (ID, Title, Order, Default, Active, Notes, Code(s)).
+	 * The "+ Add Price Level" button appends a blank editable row and Save
+	 * persists creates (POST), updates (PUT) and deletes (DELETE) against
+	 * /api/price-levels.
+	 */
+	private async _renderPriceLevels(): Promise<void> {
+		interface PriceLevel {
+			id?: string;
+			optionId: string;
+			title: string;
+			seq: number;
+			isDefault: boolean;
+			active: boolean;
+			notes: string;
+			codes: string;
+			/** New, unsaved rows have no server id yet. */
+			isNew?: boolean;
+		}
+
+		const COLS = 'minmax(120px,1fr) minmax(160px,1.4fr) 70px 70px 70px minmax(160px,1.4fr) minmax(140px,1fr) 40px';
+
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;overflow-y:auto;height:100%;box-sizing:border-box;';
+
+		const head = DOM.append(root, DOM.$('div'));
+		head.style.cssText = 'margin-bottom:16px;';
+		const title = DOM.append(head, DOM.$('h1'));
+		title.textContent = 'Price Level';
+		title.style.cssText = 'margin:0 0 4px;font-size:20px;font-weight:600;';
+		const sub = DOM.append(head, DOM.$('p'));
+		sub.style.cssText = 'margin:0;font-size:12px;color:var(--vscode-descriptionForeground);';
+		sub.textContent = TAB_DESCRIPTIONS['__price-levels__'] || '';
+
+		const tableWrap = DOM.append(root, DOM.$('div'));
+		tableWrap.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+
+		const headerRow = DOM.append(tableWrap, DOM.$('div'));
+		headerRow.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;padding:10px 12px;background:rgba(0,122,204,0.05);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--vscode-descriptionForeground);`;
+		for (const h of ['ID', 'Title', 'Order', 'Default', 'Active', 'Notes', 'Code(s)', '']) {
+			const c = DOM.append(headerRow, DOM.$('span'));
+			c.textContent = h;
+		}
+
+		const rows: PriceLevel[] = [];
+		const deletedIds: string[] = [];
+
+		const inputStyle = 'width:100%;box-sizing:border-box;padding:5px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+
+		const renderRows = (): void => {
+			while (tableWrap.children.length > 1) { tableWrap.removeChild(tableWrap.lastChild!); }
+			if (rows.length === 0) {
+				const empty = DOM.append(tableWrap, DOM.$('div'));
+				empty.textContent = 'No price levels yet. Click "+ Add Price Level" to create one.';
+				empty.style.cssText = 'padding:18px 12px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;border-top:1px solid rgba(128,128,128,0.08);';
+				return;
+			}
+			rows.forEach((row, i) => {
+				const r = DOM.append(tableWrap, DOM.$('div'));
+				r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;align-items:center;padding:8px 12px;border-top:1px solid rgba(128,128,128,0.08);`;
+
+				const idInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+				idInp.value = row.optionId;
+				idInp.placeholder = 'e.g. standard';
+				idInp.style.cssText = inputStyle;
+				// Existing rows keep their server id immutable to avoid orphaning records.
+				idInp.disabled = !row.isNew;
+				if (idInp.disabled) { idInp.style.opacity = '0.7'; }
+				idInp.addEventListener('input', () => { row.optionId = idInp.value; });
+
+				const titleInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+				titleInp.value = row.title;
+				titleInp.style.cssText = inputStyle;
+				titleInp.addEventListener('input', () => { row.title = titleInp.value; });
+
+				const seqInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+				seqInp.type = 'number';
+				seqInp.value = String(row.seq);
+				seqInp.style.cssText = inputStyle;
+				seqInp.addEventListener('input', () => { row.seq = parseInt(seqInp.value, 10) || 0; });
+
+				const defWrap = DOM.append(r, DOM.$('div'));
+				defWrap.style.cssText = 'display:flex;justify-content:center;';
+				const defInp = DOM.append(defWrap, DOM.$('input')) as HTMLInputElement;
+				defInp.type = 'checkbox';
+				defInp.checked = row.isDefault;
+				defInp.style.cssText = 'cursor:pointer;';
+				defInp.addEventListener('change', () => {
+					// Only one price level may be the default.
+					if (defInp.checked) { rows.forEach(o => { if (o !== row) { o.isDefault = false; } }); }
+					row.isDefault = defInp.checked;
+					renderRows();
+				});
+
+				const actWrap = DOM.append(r, DOM.$('div'));
+				actWrap.style.cssText = 'display:flex;justify-content:center;';
+				const actInp = DOM.append(actWrap, DOM.$('input')) as HTMLInputElement;
+				actInp.type = 'checkbox';
+				actInp.checked = row.active;
+				actInp.style.cssText = 'cursor:pointer;';
+				actInp.addEventListener('change', () => { row.active = actInp.checked; });
+
+				const notesInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+				notesInp.value = row.notes;
+				notesInp.style.cssText = inputStyle;
+				notesInp.addEventListener('input', () => { row.notes = notesInp.value; });
+
+				const codesInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
+				codesInp.value = row.codes;
+				codesInp.style.cssText = inputStyle;
+				codesInp.addEventListener('input', () => { row.codes = codesInp.value; });
+
+				const rm = DOM.append(r, DOM.$('button')) as HTMLButtonElement;
+				rm.textContent = '\u{1F5D1}';
+				rm.title = 'Remove price level';
+				rm.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:13px;';
+				rm.addEventListener('click', () => {
+					if (row.id && !row.isNew) { deletedIds.push(row.id); }
+					rows.splice(i, 1);
+					renderRows();
+				});
+			});
+		};
+
+		const addBtn = DOM.append(root, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add Price Level';
+		addBtn.style.cssText = 'margin-top:10px;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3794ff);cursor:pointer;font-size:13px;font-weight:500;padding:6px 0;';
+		addBtn.addEventListener('click', () => {
+			const nextSeq = rows.reduce((m, o) => Math.max(m, o.seq), 0) + 1;
+			rows.push({ optionId: '', title: '', seq: nextSeq, isDefault: false, active: true, notes: '', codes: '', isNew: true });
+			renderRows();
+		});
+
+		const actions = DOM.append(root, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;margin-top:18px;';
+		const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+		saveBtn.textContent = '\u{1F4BE} Save';
+		saveBtn.style.cssText = 'padding:7px 16px;background:#2563eb;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+		saveBtn.addEventListener('click', async () => {
+			// Validate: every row needs an ID + Title.
+			for (const row of rows) {
+				if (!row.optionId.trim() || !row.title.trim()) {
+					this.notificationService.notify({ severity: Severity.Error, message: 'Each price level needs an ID and a Title.' });
+					return;
+				}
+			}
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Saving\u2026';
+			try {
+				for (const id of deletedIds) {
+					await this.apiService.fetch(`/api/price-levels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+				}
+				deletedIds.length = 0;
+				for (const row of rows) {
+					const payload = {
+						optionId: row.optionId.trim(),
+						title: row.title.trim(),
+						seq: row.seq,
+						isDefault: row.isDefault,
+						active: row.active,
+						notes: row.notes,
+						codes: row.codes,
+					};
+					const isNew = row.isNew || !row.id;
+					const method = isNew ? 'POST' : 'PUT';
+					const url = isNew ? '/api/price-levels' : `/api/price-levels/${encodeURIComponent(row.id!)}`;
+					await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				}
+				this.notificationService.notify({ severity: Severity.Info, message: 'Price levels saved.' });
+				this._renderContent();
+			} catch (e) {
+				this.notificationService.notify({ severity: Severity.Error, message: `Save failed: ${e}` });
+				saveBtn.disabled = false;
+				saveBtn.textContent = '\u{1F4BE} Save';
+			}
+		});
+
+		// Load existing price levels.
+		try {
+			const res = await this.apiService.fetch('/api/price-levels');
+			if (res.ok) {
+				const data = await res.json() as Array<Record<string, unknown>>;
+				for (const d of (Array.isArray(data) ? data : [])) {
+					rows.push({
+						id: d.id !== undefined && d.id !== null ? String(d.id) : undefined,
+						optionId: String(d.optionId ?? d.option_id ?? d.id ?? ''),
+						title: String(d.title ?? ''),
+						seq: Number(d.seq ?? d.order ?? 0) || 0,
+						isDefault: d.isDefault === true || d.is_default === true || d.isDefault === 'true',
+						active: d.active !== false && d.activity !== 0 && d.active !== 'false',
+						notes: String(d.notes ?? ''),
+						codes: String(d.codes ?? ''),
+					});
+				}
+			}
+		} catch {
+			// Offline / not authenticated \u2014 start with an empty editable grid.
+		}
+		renderRows();
 	}
 
 	// Legacy /api/list-options modal kept for callers that still target the

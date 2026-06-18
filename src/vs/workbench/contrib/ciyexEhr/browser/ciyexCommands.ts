@@ -17,7 +17,7 @@ import { IQuickInputService } from '../../../../platform/quickinput/common/quick
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput, PatientSnapshotDemoEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput, PatientSnapshotDemoEditorInput, FeeSheetEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -865,6 +865,12 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openClaims', title: localize2('openClaims', "Open Claims"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new ClaimsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openFeeSheet', title: localize2('openFeeSheet', "Open Fee Sheet"), f1: true }); }
+	async run(accessor: ServicesAccessor, encounterId?: string, patientId?: string, patientName?: string, encounterLabel?: string): Promise<void> {
+		await accessor.get(IEditorService).openEditor(new FeeSheetEditorInput(encounterId || '', patientId || '', patientName || '', encounterLabel), { pinned: true });
+	}
 });
 
 // System editors

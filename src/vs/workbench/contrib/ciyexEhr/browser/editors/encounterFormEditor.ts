@@ -411,6 +411,14 @@ export class EncounterFormEditor extends EditorPane {
 
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
 
+		// Fee Sheet button — opens the encounter's fee sheet so charges can be
+		// captured and pushed to billing. Available once a real encounter exists.
+		const feeBtn = DOM.append(this.headerBar, DOM.$('button'));
+		feeBtn.textContent = '\u{1F4B2} Fee Sheet';
+		feeBtn.style.cssText = 'padding:5px 14px;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;';
+		feeBtn.title = 'Open the fee sheet for this encounter';
+		feeBtn.addEventListener('click', () => this._openFeeSheet());
+
 		// Save button
 		const saveBtn = DOM.append(this.headerBar, DOM.$('button'));
 		saveBtn.textContent = 'Save';
@@ -550,7 +558,7 @@ export class EncounterFormEditor extends EditorPane {
 
 			if (res.ok) {
 				this._encounterStatus = 'SIGNED';
-				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked.' });
+				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked. Opening fee sheet…' });
 				// Re-render to show locked state
 				this._renderHeader();
 				this._renderForm();
@@ -558,6 +566,10 @@ export class EncounterFormEditor extends EditorPane {
 				// SIGNED immediately — without this the list keeps showing the stale
 				// UNSIGNED badge until a manual reload (matches the save flow above).
 				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
+				// A signed encounter is ready for billing — open its fee sheet so
+				// the user can capture charges (codes are pre-fetched from the
+				// signed encounter, or entered manually).
+				this._openFeeSheet();
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.error(`Failed to sign: ${err}`);
@@ -569,6 +581,16 @@ export class EncounterFormEditor extends EditorPane {
 			signBtn.textContent = 'Sign & Lock';
 			(signBtn as HTMLButtonElement).disabled = false;
 		}
+	}
+
+	/** Open the Fee Sheet editor for this encounter, passing patient + encounter context. */
+	private _openFeeSheet(): void {
+		if (!this.encounterId || this.encounterId === 'new') {
+			this.notificationService.warn('Save the encounter before opening its fee sheet.');
+			return;
+		}
+		this.commandService.executeCommand('ciyex.openFeeSheet', this.encounterId, this.patientId, this.patientName, `Encounter ${this.encounterId}`)
+			.catch((e: unknown) => this.notificationService.error(`Could not open fee sheet: ${e}`));
 	}
 
 	private _collectFormData(): Record<string, unknown> {

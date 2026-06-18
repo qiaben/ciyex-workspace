@@ -58,6 +58,7 @@ const ITEM_KEY_TO_COMMAND: Record<string, string> = {
 	'inventory-management': 'ciyex.openInventory',
 	'payments': 'ciyex.openPayments',
 	'claim-management': 'ciyex.openClaims',
+	'fee-sheet': 'ciyex.openFeeSheet',
 	'calendar': 'ciyex.openCalendar',
 	'tasks': 'ciyex.openTasks',
 	'messaging': 'ciyex.openMessaging',
