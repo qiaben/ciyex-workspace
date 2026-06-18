@@ -35,6 +35,7 @@ const icons: Record<string, ReturnType<typeof registerIcon>> = {
 	portalMgmt: registerIcon('ciyex-portal-mgmt', Codicon.shield, localize('cPortalMgmt', 'Portal Management')),
 	clinical: registerIcon('ciyex-clinical', Codicon.beaker, localize('cClinical', 'Clinical')),
 	operations: registerIcon('ciyex-operations', Codicon.briefcase, localize('cOperations', 'Operations')),
+	feeSheet: registerIcon('ciyex-fee-sheet', Codicon.creditCard, localize('cFeeSheet', 'Fee Sheet')),
 	reports: registerIcon('ciyex-reports', Codicon.graph, localize('cReports', 'Reports')),
 	system: registerIcon('ciyex-system', Codicon.tools, localize('cSystem', 'System')),
 	developer: registerIcon('ciyex-developer', Codicon.code, localize('cDeveloper', 'Developer Portal')),
@@ -81,6 +82,8 @@ export const MESSAGING_CONTAINER = reg('ciyex.messaging', localize2('ciyex.messa
 export const PORTAL_MGMT_CONTAINER = reg('ciyex.portal-management', localize2('ciyex.portal-management', "Portal Management"), icons.portalMgmt, 7);
 export const CLINICAL_CONTAINER = reg('ciyex.clinical', localize2('ciyex.clinical', "Clinical"), icons.clinical, 8);
 export const OPERATIONS_CONTAINER = reg('ciyex.operations', localize2('ciyex.operations', "Operations"), icons.operations, 9);
+// Fee Sheet — dedicated activity-bar icon opening the encounter fee-sheet pane.
+export const FEE_SHEET_CONTAINER = reg('ciyex.fee-sheet', localize2('ciyex.fee-sheet', "Fee Sheet"), icons.feeSheet, 9.5);
 export const REPORTS_CONTAINER = reg('ciyex.reports', localize2('ciyex.reports', "Reports"), icons.reports, 10);
 export const SYSTEM_CONTAINER = reg('ciyex.system', localize2('ciyex.system', "System"), icons.system, 11);
 
@@ -268,6 +271,12 @@ import { OperationsMenuPane } from './portal/operationsMenuPane.js';
 viewsRegistry.registerViews([
 	{ id: OperationsMenuPane.ID, name: localize2('operationsMenu', "Operations"), ctorDescriptor: new SyncDescriptor(OperationsMenuPane) },
 ], OPERATIONS_CONTAINER);
+
+// Fee Sheet — dedicated pane: "New Fee Sheet" + saved fee sheets list
+import { FeeSheetSidebarPane } from './feeSheetSidebarPane.js';
+viewsRegistry.registerViews([
+	{ id: FeeSheetSidebarPane.ID, name: localize2('feeSheetMenu', "Fee Sheet"), ctorDescriptor: new SyncDescriptor(FeeSheetSidebarPane) },
+], FEE_SHEET_CONTAINER);
 
 // Reports — clickable report list with categories
 import { ReportsPane } from './portal/reportsPane.js';
