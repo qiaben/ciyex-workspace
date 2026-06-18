@@ -58,6 +58,13 @@ interface OperationsItem {
 	 * editor config.
 	 */
 	creatable?: boolean;
+	/**
+	 * Command-only entries open their editor on click but have no backing list
+	 * resource (e.g. Fee Sheet, which is created per-encounter). They skip the
+	 * data fetch, count badge, create/reload/collapse controls and data rows —
+	 * the row is just a labeled nav button.
+	 */
+	commandOnly?: boolean;
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -163,6 +170,22 @@ const ITEMS: OperationsItem[] = [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F5D1}', label: 'Delete', color: '#ef4444', action: { kind: 'delete', path: r => `/api/inventory/${r.id}`, confirm: 'Delete this inventory item?' } },
 		],
+	},
+	{
+		// Fee Sheet: command-only — opens a blank/manual fee sheet. Per-encounter
+		// fee sheets are created from the encounter chart, so there is no list.
+		id: 'fee-sheet',
+		// allow-any-unicode-next-line
+		icon: '\u{1F4B2}',
+		label: 'Fee Sheet',
+		description: 'Encounter charges & billing',
+		command: 'ciyex.openFeeSheet',
+		color: '#10b981',
+		apiPath: '',
+		titleField: [],
+		actions: [],
+		commandOnly: true,
+		creatable: false,
 	},
 	{
 		// Payments (Transactions): \u{270F} Edit + \u{21A9} Refund + \u{2298} Void (clinicalEditors.ts:2690)
@@ -290,7 +313,7 @@ export class OperationsMenuPane extends ViewPane {
 	}
 
 	private async _loadAllData(): Promise<void> {
-		for (const item of ITEMS) { await this._loadItemData(item); }
+		for (const item of ITEMS) { if (item.commandOnly) { continue; } await this._loadItemData(item); }
 	}
 
 	private async _loadItemData(item: OperationsItem): Promise<void> {
@@ -414,6 +437,10 @@ export class OperationsMenuPane extends ViewPane {
 		const desc = DOM.append(col, DOM.$('div'));
 		desc.textContent = item.description;
 		desc.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);';
+
+		// Command-only entries (e.g. Fee Sheet) are pure nav buttons — no create /
+		// reload / collapse controls and no data rows.
+		if (item.commandOnly) { return; }
 
 		const actionsEl = createRowActionsContainer(row);
 		// Match the clinical pane: open the inline create drawer when an
