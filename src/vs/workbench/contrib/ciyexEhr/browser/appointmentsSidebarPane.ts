@@ -249,14 +249,11 @@ export class AppointmentsSidebarPane extends ViewPane {
 
 	private async _loadAll(): Promise<void> {
 		await Promise.all([this._loadAppointments(), this._loadStatusOptions()]);
-		// Seed Provider dropdown from observed appointments + kick off the
-		// provider directory load in the background.
-		const seen = new Set<string>(this._providerOptions);
-		for (const a of this.appointments) {
-			const n = providerNameOf(a);
-			if (n && n !== 'Unknown') { seen.add(n); }
-		}
-		this._providerOptions = Array.from(seen).sort();
+		// Populate the Provider dropdown only from the practice-scoped roster
+		// (_loadProviders). We intentionally do NOT seed it from observed
+		// appointments — an appointment can reference a provider from a
+		// different/previous practice, which would let a newly created practice
+		// show providers that don't belong to it.
 		void this._loadProviders();
 		this._render();
 		// Fetch names for any appointments still showing Unknown (FHIR responses

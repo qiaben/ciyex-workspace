@@ -413,15 +413,11 @@ export class ScheduleSidebarPane extends ViewPane {
 			this.logService.warn('[Schedule] Load error:', err);
 		}
 
-		// Seed provider dropdown from observed appointments so the Edit dialog's
-		// Provider select has something to show even before /api/providers
-		// responds.
-		const seenProviders = new Set<string>(this._providerOptions);
-		for (const apt of this.appointments) {
-			const name = apt.providerName || apt.practitionerName;
-			if (name) { seenProviders.add(name); }
-		}
-		this._providerOptions = Array.from(seenProviders).sort();
+		// The Edit dialog's Provider select is populated only from the
+		// practice-scoped roster (_loadProviders below). We intentionally do
+		// NOT seed it from observed appointments — an appointment can reference
+		// a provider from a different/previous practice, which would let a newly
+		// created practice show providers that don't belong to it.
 
 		this._render();
 

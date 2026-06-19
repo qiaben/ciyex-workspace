@@ -15,7 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
@@ -76,6 +76,18 @@ export class PatientListPane extends ViewPane {
 					void this._loadPatients();
 				}
 			}
+		}));
+
+		// Allow other components (e.g. the titlebar "Add Patient" overlay) to
+		// force a re-fetch after creating a patient so the new row appears
+		// without a manual reload. Without this the roster stayed on its cached
+		// (often empty, for a brand-new practice) result until sign-out.
+		this._register(CommandsRegistry.registerCommand('ciyex.refreshPatients', () => {
+			this._loaded = false;
+			if (this._listEl) {
+				return this._loadPatients();
+			}
+			return undefined;
 		}));
 	}
 

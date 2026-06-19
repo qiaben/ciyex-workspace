@@ -563,6 +563,10 @@ export class EhrTitlebarControls extends Disposable {
 					this.notificationService.notify({ severity: Severity.Info, message: `Patient ${fName} ${lName} created successfully.` });
 					this._closePatientOverlay();
 					this._resetForm(this.patientOverlay);
+					// Refresh the Patients list pane so the new patient appears without
+					// a manual reload (the pane caches its roster and, for a brand-new
+					// practice, would otherwise stay on its empty result).
+					this.commandService.executeCommand('ciyex.refreshPatients').catch(() => { /* list may not be open */ });
 					if (patientId) {
 						this.commandService.executeCommand('ciyex.openPatientChart', patientId, `${fName} ${lName}`);
 					}

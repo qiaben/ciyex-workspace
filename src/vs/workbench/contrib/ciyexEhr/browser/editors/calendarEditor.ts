@@ -328,15 +328,16 @@ export class CalendarEditor extends EditorPane {
 
 			const loadProviders = async () => {
 				if (this.providers.length > 0) { return; }
-				// Authoritative provider roster — mirror the ciyex-ehr-ui calendar:
-				// merge /api/providers (facade, enriched) and /api/fhir-resource/providers
-				// by ID so we get exactly the practice's real, active providers. We must
-				// NOT derive the list from appointments — an appointment can reference a
-				// provider who has since been removed from the practice (e.g. a stale
-				// "steven mendosa" still attached to an old visit), which made a phantom
-				// third provider appear in the day-view columns even though Settings →
-				// Providers lists only two. Deriving from appointments is now only a
-				// last-resort fallback when both real endpoints return nothing.
+				// Authoritative provider roster — scoped to the CURRENT practice.
+				// Lead with /api/providers/organization (org-scoped, the same primary
+				// endpoint the Schedule sidebar and Patient Snapshot use) so a freshly
+				// created practice only ever shows providers that actually belong to it,
+				// never the previous sign-in's roster. The FHIR list is merged by ID for
+				// enrichment. We must NOT derive the list from appointments — an
+				// appointment can reference a provider who belongs to a different (or
+				// previous) practice, which made a phantom provider such as
+				// "steven mendosa" appear even though Settings → Providers lists none of
+				// them. For a brand-new practice with no providers the list stays empty.
 				const isActive = (p: Record<string, string>): boolean => {
 					const raw = (p['systemAccess.status'] as string | undefined) ?? (p as { systemAccess?: { status?: string } }).systemAccess?.status;
 					if (raw === null || raw === undefined || raw === '') { return true; }
@@ -352,7 +353,7 @@ export class CalendarEditor extends EditorPane {
 					};
 				};
 				const seen = new Map<string, { id: string; name: string }>();
-				const providerUrls = ['/api/providers', '/api/fhir-resource/providers?size=200'];
+				const providerUrls = ['/api/providers/organization?page=0&size=200', '/api/providers', '/api/fhir-resource/providers?size=200'];
 				for (const url of providerUrls) {
 					try {
 						const res = await this.apiService.fetch(url);
@@ -368,30 +369,10 @@ export class CalendarEditor extends EditorPane {
 						}
 					} catch { /* try next endpoint */ }
 				}
-				if (seen.size > 0) {
-					this.providers = Array.from(seen.values());
-					return;
-				}
-				// Last-resort fallback: derive from appointments only when neither real
-				// provider endpoint returned anything (e.g. a backend without the
-				// provider roster API). This can surface stale providers, so it runs
-				// only when we'd otherwise have an empty list.
-				try {
-					const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=500');
-					if (res.ok) {
-						const data = await res.json();
-						const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
-						const provMap = new Map<string, string>();
-						for (const a of list as Record<string, unknown>[]) {
-							const pName = String(a.providerName || a.providerDisplay || a.practitionerName || '').trim();
-							const pId = String(a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : '') || '').trim();
-							if (pName) { provMap.set(pId || pName, pName); }
-						}
-						if (provMap.size > 0) {
-							this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
-						}
-					}
-				} catch { /* leave providers empty; retry timer will re-run */ }
+				// Only the authoritative roster populates the list. If the practice has
+				// no providers yet, leave it empty rather than back-filling from
+				// appointments (which could belong to a different/previous practice).
+				this.providers = Array.from(seen.values());
 			};
 
 			const loadLocations = async () => {
@@ -414,15 +395,10 @@ export class CalendarEditor extends EditorPane {
 
 			await Promise.all([loadAppts(), loadProviders(), loadLocations()]);
 
-			// Extract providers from appointments as fallback
-			if (this.providers.length === 0 && this.appointments.length > 0) {
-				const provMap = new Map<string, string>();
-				for (const a of this.appointments) {
-					const pName = a.providerName || a.practitionerName || '';
-					if (pName) { provMap.set(a.providerId || pName, pName); }
-				}
-				this.providers = Array.from(provMap.entries()).map(([id, name]) => ({ id, name }));
-			}
+			// NOTE: intentionally no appointment-derived provider fallback here.
+			// Providers must come only from the practice-scoped roster so a newly
+			// created practice never inherits the previous sign-in's providers via
+			// stale appointment references.
 
 			// Load provider schedule blocks (availability) — only when filtered
 			if (this.providerFilter.size === 1) {

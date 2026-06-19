@@ -55,6 +55,26 @@ export class CiyexApiService extends Disposable implements ICiyexApiService {
 		if (!this._token && !path.includes('/auth/')) {
 			throw new Error('Not authenticated');
 		}
+		const response = await this._fetchOnce(path, options);
+
+		// Transparently recover from a stale access token. The most common case
+		// is right after signing up a brand-new practice: the token returned by
+		// /api/auth/signup predates the user's organization membership, so the
+		// first data write (e.g. creating a patient) comes back 401 until the
+		// token is re-minted. Previously the user had to hard-refresh the app to
+		// pick up a fresh token; instead we refresh once in place and retry so
+		// the call succeeds on the first attempt. Auth endpoints are excluded so
+		// a failed login/refresh doesn't loop.
+		if (response.status === 401 && !path.includes('/auth/')) {
+			const refreshed = await this._authService.refreshToken();
+			if (refreshed) {
+				return this._fetchOnce(path, options);
+			}
+		}
+		return response;
+	}
+
+	private async _fetchOnce(path: string, options?: RequestInit): Promise<Response> {
 		const url = path.startsWith('http') ? path : `${this.apiUrl}${path}`;
 		return globalThis.fetch(url, {
 			...options,
