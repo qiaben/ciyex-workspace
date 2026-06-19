@@ -621,12 +621,16 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * collect endpoint's transaction shape.
 	 */
 	private async _savePayment(values: Record<string, string>): Promise<Response> {
-		// Collect only accepts a fixed method enum; fold the chart form's richer
-		// list down to it so the backend doesn't reject the transaction.
+		// This form RECORDS an already-applied payment (no live Stripe charge), so
+		// there is never a saved card on hand. /api/payments/collect rejects
+		// `credit_card`/`debit_card` unless a paymentMethodId is supplied ("A saved
+		// payment method is required for card payments" → 400). Downgrade those two
+		// to `other` so a recorded card payment posts; every other method (cash,
+		// check, ach, fsa, hsa, bank_account, insurance, …) is accepted as-is.
 		const METHOD_MAP: Record<string, string> = {
-			credit_card: 'credit_card', debit_card: 'debit_card', cash: 'cash',
+			credit_card: 'other', debit_card: 'other', cash: 'cash',
 			check: 'check', eft: 'ach', ach: 'ach', bank_account: 'bank_account',
-			fsa: 'fsa', hsa: 'hsa', insurance: 'other', insurance_payment: 'other',
+			fsa: 'fsa', hsa: 'hsa',
 		};
 		const rawMethod = String(values['paymentMethod'] || '').trim();
 		// The RCM-style New Payment form has no plain "amount" field — it captures
