@@ -1865,7 +1865,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const durVal = this._apptDurationMin(apt);
 		const reason = String(apt.reason || apt.chiefComplaint || apt.reasonForVisit || apt.description || '').trim();
 		const notes = String(apt.notes || apt.note || apt.comment || '').trim();
-		const location = this._resolveLocationName(apt.locationName || apt.location || apt.facility || '');
+		const location = this._apptLocationName(apt);
 		const room = String(apt.room || apt.roomName || '').trim();
 		const provider = String(apt.providerName || apt.practitionerName || '').trim();
 		const hasEncounter = !!(apt.encounterId);
@@ -2001,7 +2001,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// chart → visit note), so the inline create option is hidden (QA request).
 		// Visit-history rows fall back to the appointment's location when the
 		// encounter row itself carries no location (encounters don't embed one).
-		const apptLocation = apt ? this._resolveLocationName(apt.locationName || apt.location || apt.facility || '') : '';
+		const apptLocation = apt ? this._apptLocationName(apt) : '';
 		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, undefined);
 		this._renderEncounterRows(visitCard, encs, apptLocation);
 
@@ -3064,6 +3064,32 @@ export class PatientSnapshotEditor extends EditorPane {
 			const name = String(l.name ?? l.locationName ?? l.label ?? l.displayName ?? '');
 			if (id && name) { this._locationNames.set(id, name); }
 		}
+	}
+
+	/** Extract a display location from an appointment, tolerating every shape the
+	 *  appointments API returns: a flat locationName/locationDisplay, a numeric
+	 *  locationId, a FHIR "Location/{id}" reference (location / locationReference),
+	 *  or the location embedded as a participant actor. A freshly-created
+	 *  appointment comes back with locationId/locationReference (not `location`),
+	 *  which the card previously ignored — so the Location field showed "—". */
+	private _apptLocationName(apt: Record<string, unknown>): string {
+		// An already-resolved display name wins (|| so empty strings fall through).
+		const direct = apt.locationName || apt.locationDisplay;
+		if (direct) { return this._resolveLocationName(direct); }
+		// Otherwise resolve whichever id / reference shape is present.
+		const ref = apt.location || apt.locationReference || apt.locationId || apt.facility;
+		const resolved = this._resolveLocationName(ref);
+		if (resolved) { return resolved; }
+		// FHIR appointments embed the location as a participant actor.
+		const participants = Array.isArray(apt.participant) ? apt.participant as Array<Record<string, unknown>> : [];
+		for (const p of participants) {
+			const actor = p?.actor;
+			const actorRef = typeof actor === 'string' ? actor : (actor as Record<string, unknown> | undefined)?.reference;
+			if (typeof actorRef === 'string' && actorRef.startsWith('Location/')) {
+				return this._resolveLocationName(actorRef);
+			}
+		}
+		return '';
 	}
 
 	/** Resolve a raw location value (e.g. "Location/13890", "13890", or an

@@ -873,24 +873,47 @@ export class CalendarEditor extends EditorPane {
 		if (this.providerFilter.size > 0) {
 			activeProviders = activeProviders.filter(p => this.providerFilter.has(p.id) || this.providerFilter.has(p.name));
 		}
-		if (activeProviders.length === 0) {
-			const empty = DOM.append(this.gridContainer, DOM.$('div'));
-			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
-			empty.textContent = this.providerFilter.size > 0 ? 'No matching provider found.' : 'No providers loaded. Click Refresh to load provider data.';
-			return;
-		}
 
-		// PRE-INDEX appointments by provider+slot for O(1) lookup (instead of O(N) filter per cell)
-		// Filter to only the selected day
+		// Day's appointments — computed up-front so appointments that don't map to
+		// a loaded provider column can be surfaced under a synthetic "Unassigned"
+		// column. Without this, an appointment created with no provider (or before
+		// providers finish loading, or in a practice that has no providers at all)
+		// is silently dropped and the day grid looks empty even though the header
+		// still counts it.
 		const viewAppointments = this._getViewFilteredAppointments().filter(a => {
 			const d = this._parseAptDate(a);
 			if (!d) { return false; }
 			return localDateStr(d) === dateStr;
 		});
+
+		// Re-key any appointment whose provider doesn't match a visible column to
+		// the "Unassigned" bucket (empty key) so it always lands somewhere.
+		const knownKeys = new Set<string>();
+		for (const p of activeProviders) { knownKeys.add(String(p.id)); knownKeys.add(String(p.name)); }
+		const provKeyOf = (a: Appointment): string => {
+			const k = String(a.providerId || a.providerName || a.practitionerName || '');
+			return knownKeys.has(k) ? k : '';
+		};
+		// Add the Unassigned column only when there are orphan appointments and the
+		// user hasn't narrowed the view with an explicit provider filter.
+		if (this.providerFilter.size === 0 && viewAppointments.some(a => provKeyOf(a) === '')) {
+			activeProviders = [...activeProviders, { id: '', name: 'Unassigned' }];
+		}
+
+		if (activeProviders.length === 0) {
+			const empty = DOM.append(this.gridContainer, DOM.$('div'));
+			empty.style.cssText = 'padding:40px;text-align:center;color:var(--vscode-descriptionForeground);';
+			empty.textContent = this.providerFilter.size > 0
+				? 'No matching provider found.'
+				: (viewAppointments.length === 0 ? 'No appointments scheduled for this day.' : 'No providers loaded. Click Refresh to load provider data.');
+			return;
+		}
+
+		// PRE-INDEX appointments by provider+slot for O(1) lookup (instead of O(N) filter per cell)
 		const apptIndex = new Map<string, Appointment[]>();
 		const provCounts = new Map<string, number>();
 		for (const a of viewAppointments) {
-			const provKey = a.providerId || a.providerName || a.practitionerName || '';
+			const provKey = provKeyOf(a);
 			provCounts.set(provKey, (provCounts.get(provKey) || 0) + 1);
 			const d = this._parseAptDate(a);
 			if (!d) { continue; }

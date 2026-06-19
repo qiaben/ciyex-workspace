@@ -45,6 +45,12 @@ interface SystemItem {
 	actions: RowAction[];
 	/** Explicit edit-drawer schema mirroring the full editor formFields. */
 	editFields?: IEditFieldDef[];
+	/**
+	 * When false, the row's "+" create button is hidden. Use for read-only /
+	 * system-generated lists where manually creating a record makes no sense
+	 * (e.g. received notifications, audit entries, kiosk check-ins).
+	 */
+	canCreate?: boolean;
 }
 
 // Action sets per resource mirror the editor's Actions column exactly
@@ -185,6 +191,9 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/portal/notifications/my?page=0&size=10',
 		titleField: ['title', 'message'],
 		subtitleField: ['type', 'createdAt'],
+		// Notifications are system/portal-generated and received read-only — there
+		// is no "create a notification" flow, so the "+" button is hidden.
+		canCreate: false,
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -251,6 +260,8 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/kiosk/check-ins?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['status', 'checkedInAt'],
+		// Check-ins are created by patients at the kiosk, not from this pane.
+		canCreate: false,
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -268,6 +279,8 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/admin/audit-log?page=0&size=10',
 		titleField: ['user', 'username', 'action'],
 		subtitleField: ['action', 'timestamp'],
+		// Audit entries are system-generated and immutable — no manual create.
+		canCreate: false,
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F4E5}', label: 'Export CSV', color: '#6b7280', action: { kind: 'method', method: 'GET', path: () => `/api/admin/audit-log/export` } },
@@ -461,7 +474,10 @@ export class SystemMenuPane extends ViewPane {
 		// The previous version always called `executeCommand` which only
 		// opened the editor tab — the test team reported these "+ buttons"
 		// as not working for Consents / CDS / Notifications / Fax / etc.
-		createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
+		// Read-only / system-generated lists opt out via `canCreate: false`.
+		if (item.canCreate !== false) {
+			createActionIconButton(actionsEl, '+', `New ${item.label}`, () => this._openCreateDialog(item));
+		}
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
