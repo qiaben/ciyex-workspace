@@ -2147,6 +2147,11 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 			const panel = doc.createElement('div');
 			panel.setAttribute('role', 'listbox');
+			// Mounted on workbenchRoot (outside `.ciyex-editor-root`), so without this
+			// class the panel falls back to the browser's default chunky scrollbar — the
+			// "vertical scroll bar" QA flagged on the New Payment > Payment Method select.
+			// The class applies the app's thin themed scrollbar (ciyexCommon.css).
+			panel.className = 'ciyex-select-panel';
 			panel.style.cssText = `position:fixed;background:${c.popoverBg};color:${c.fg};border:1px solid ${c.border};border-radius:9px;box-shadow:0 10px 28px ${c.shadow};z-index:10000;max-height:260px;overflow-y:auto;display:none;padding:4px;`;
 			workbenchRoot.appendChild(panel);
 

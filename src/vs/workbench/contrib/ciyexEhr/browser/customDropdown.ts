@@ -186,7 +186,29 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	const positionPanel = () => {
 		const rect = trigger.getBoundingClientRect();
 		panel.style.left = `${rect.left}px`;
-		panel.style.top = `${rect.bottom + 2}px`;
+		// Clamp the panel to the available viewport space and flip it above the
+		// trigger when there isn't enough room below. Without this, a trigger that
+		// sits low in the viewport (e.g. Category/Location/Supplier — the last
+		// fields in the New Inventory form) pushes the up-to-320px panel off the
+		// bottom of the screen, hiding the lower options with no way to scroll to
+		// them. With overflow-y:auto already on the panel, clamping max-height keeps
+		// every option reachable.
+		const view = doc.defaultView;
+		const vh = (view?.innerHeight) || doc.documentElement.clientHeight;
+		const gap = 2;
+		const margin = 8;
+		const desired = 320;
+		const spaceBelow = vh - rect.bottom - margin;
+		const spaceAbove = rect.top - margin;
+		if (spaceBelow >= Math.min(desired, 160) || spaceBelow >= spaceAbove) {
+			panel.style.top = `${rect.bottom + gap}px`;
+			panel.style.bottom = 'auto';
+			panel.style.maxHeight = `${Math.max(120, Math.min(desired, spaceBelow))}px`;
+		} else {
+			panel.style.top = 'auto';
+			panel.style.bottom = `${vh - rect.top + gap}px`;
+			panel.style.maxHeight = `${Math.max(120, Math.min(desired, spaceAbove))}px`;
+		}
 		// Match the panel to the trigger width so the popover lines up with the
 		// field instead of sprawling across the form. Long option labels are
 		// truncated with an ellipsis (rows use white-space:nowrap + text-overflow)
@@ -539,7 +561,19 @@ export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputE
 	const positionPanel = () => {
 		const rect = trigger.getBoundingClientRect();
 		panel.style.left = `${rect.left}px`;
-		panel.style.top = `${rect.bottom + 2}px`;
+		// Flip above the trigger when there isn't enough room below so the panel
+		// is never clipped off the bottom of the viewport.
+		const view = doc.defaultView;
+		const vh = (view?.innerHeight) || doc.documentElement.clientHeight;
+		const spaceBelow = vh - rect.bottom - 8;
+		const spaceAbove = rect.top - 8;
+		if (spaceBelow >= 200 || spaceBelow >= spaceAbove) {
+			panel.style.top = `${rect.bottom + 2}px`;
+			panel.style.bottom = 'auto';
+		} else {
+			panel.style.top = 'auto';
+			panel.style.bottom = `${vh - rect.top + 2}px`;
+		}
 		panel.style.minWidth = `${Math.max(rect.width, 140)}px`;
 	};
 	const openPanel = () => {

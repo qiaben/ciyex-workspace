@@ -2067,7 +2067,10 @@ export const EDUCATION_FORM_FIELDS: FormFieldDef[] = [
 	// Content is mandatory; Source removed to match the ciyex-ehr-ui
 	// New Education Library form (issue #8).
 	{ key: 'content', label: 'Content', type: 'textarea', required: true, placeholder: 'Education material content...', width: 'span 2' },
-	{ key: 'url', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
+	// Key must be `externalUrl` to match EducationMaterialDto. The backend's custom
+	// ObjectMapper keeps FAIL_ON_UNKNOWN_PROPERTIES enabled, so an unknown `url`
+	// field made every create/update fail with 400 (and edit never prefilled it).
+	{ key: 'externalUrl', label: 'URL / Path', type: 'text', placeholder: 'https://... or /files/...' },
 	{
 		key: 'language', label: 'Language', type: 'select', options: [
 			{ label: 'English', value: 'english' }, { label: 'Spanish', value: 'spanish' },
@@ -2124,6 +2127,16 @@ export class EducationEditor extends ClinicalListEditorBase {
 					arr = raw.split(',').map(t => t.trim()).filter(Boolean);
 				}
 				payload.tags = arr.length ? JSON.stringify(arr) : null;
+			}
+			// `isActive` is captured as the string 'true'/'false' by the select;
+			// coerce it to a real boolean so the Boolean DTO field deserialises.
+			if (Object.prototype.hasOwnProperty.call(payload, 'isActive')) {
+				payload.isActive = payload.isActive === true || payload.isActive === 'true';
+			}
+			// Drop blank optional fields so empty-string values never trip backend
+			// validation (mirrors the working CdsEditor config).
+			for (const k of Object.keys(payload)) {
+				if (payload[k] === '' || payload[k] === undefined) { delete payload[k]; }
 			}
 			return payload;
 		},
@@ -3269,29 +3282,6 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers/list', aliases: ['supplier.id'] },
 		],
 		actions: [
-			{
-				// allow-any-unicode-next-line
-				label: 'Adjust Stock', icon: '📦', handler: async (item, api, reload, dlg) => {
-					const res = await dlg.input({
-						type: 'question', message: 'Adjust stock',
-						detail: 'Positive to add, negative to remove. Reason is optional.',
-						inputs: [
-							{ placeholder: 'Quantity', value: '0' },
-							{ placeholder: 'Reason (optional)' },
-						],
-					});
-					if (!res.confirmed) { return; }
-					const qty = res.values?.[0]?.trim();
-					const reason = res.values?.[1]?.trim() || 'Manual adjustment';
-					if (qty) {
-						await api.fetch(`/api/inventory/${item.id}/adjust`, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ quantity: Number(qty), reason, adjustmentType: Number(qty) >= 0 ? 'ADD' : 'REMOVE' }),
-						});
-						reload();
-					}
-				}
-			},
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this inventory item?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
@@ -3371,10 +3361,28 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			return String(value ?? '');
 		},
 		formFields: [
-			{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Medline Industries' },
-			{ key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'e.g. John Smith' },
-			{ key: 'phone', label: 'Phone', type: 'text', placeholder: 'e.g. (555) 123-4567' },
-			{ key: 'email', label: 'Email', type: 'text', placeholder: 'e.g. contact@supplier.com' },
+			{
+				key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Medline Industries',
+				validationPattern: '^[A-Za-z][A-Za-z0-9 ,.&\\-\'()/]{1,127}$',
+				validationMessage: 'Name must start with a letter and be 2-128 characters'
+			},
+			{
+				key: 'contactName', label: 'Contact Name', type: 'text', placeholder: 'e.g. John Smith',
+				typingPattern: '^[A-Za-z .\\-\']*$',
+				validationPattern: '^$|^[A-Za-z][A-Za-z .\\-\']{1,79}$',
+				validationMessage: 'Contact name must contain letters only (no numbers)'
+			},
+			{
+				key: 'phone', label: 'Phone', type: 'text', placeholder: 'e.g. 5551234567',
+				typingPattern: '^[0-9]*$', maxDigits: 10,
+				validationPattern: '^$|^[0-9]{10}$',
+				validationMessage: 'Phone must be exactly 10 digits'
+			},
+			{
+				key: 'email', label: 'Email', type: 'text', placeholder: 'e.g. contact@supplier.com',
+				validationPattern: '^$|^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
+				validationMessage: 'Please enter a valid email address'
+			},
 			// Address is part of the ciyex-ehr-ui Add Supplier form (and the backend
 			// InvSupplierDto supports it) — Name | Contact | Phone | Email | Address |
 			// Notes | Status.
@@ -4349,17 +4357,19 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 		], defaultValue: 'payment'
 	},
 	{
+		// Manual transaction records use non-charging methods. Credit/debit card
+		// collection goes through the dedicated "collect payment" flow because the
+		// backend requires a saved payment method to actually charge a card
+		// (card methods without a saved paymentMethodId return a 400).
 		key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
-			{ label: 'Credit Card', value: 'credit_card' },
-			{ label: 'Debit Card', value: 'debit_card' },
-			{ label: 'Bank Account', value: 'bank_account' },
-			{ label: 'FSA', value: 'fsa' },
-			{ label: 'HSA', value: 'hsa' },
 			{ label: 'Cash', value: 'cash' },
 			{ label: 'Check', value: 'check' },
 			{ label: 'ACH', value: 'ach' },
+			{ label: 'Bank Account', value: 'bank_account' },
+			{ label: 'FSA', value: 'fsa' },
+			{ label: 'HSA', value: 'hsa' },
 			{ label: 'Other', value: 'other' },
-		]
+		], defaultValue: 'cash'
 	},
 	{ key: 'description', label: 'Description', type: 'text', placeholder: 'Visit copay, lab, etc.' },
 	// Issue #12: keep a Receipt Email field (matches CollectPaymentModal.tsx).
@@ -5076,6 +5086,20 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'nextDueDate', label: 'Next Due Date', type: 'date' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Plan notes...' },
 		],
+		// The backend `payment_plan.installment_amount` column is NOT NULL but the
+		// form never collects it. Derive it from total / installments before POST.
+		beforeSave: (payload) => {
+			const total = Number(payload['totalAmount']) || 0;
+			const count = Number(payload['installments']) || 0;
+			if (total > 0 && count > 0) {
+				payload['installmentAmount'] = Math.round((total / count) * 100) / 100;
+			}
+			// nextDueDate is NOT NULL on some deployments; default it to the start date.
+			if (!payload['nextDueDate'] && payload['startDate']) {
+				payload['nextDueDate'] = payload['startDate'];
+			}
+			return payload;
+		},
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Cancel this payment plan?', type: 'warning', primaryButton: 'Cancel Plan' }); if (r.confirmed) { await api.fetch(`/api/payments/plans/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -5202,7 +5226,6 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
 			{ view: 'encounter-billing', label: 'Encounter Billing' },
 			{ view: 'transactions', label: 'Transactions' },
-			{ view: 'invoices', label: 'Invoices' },
 			{ view: 'methods', label: 'Payment Methods' },
 			{ view: 'plans', label: 'Payment Plans' },
 			{ view: 'ledger', label: 'Ledger' },

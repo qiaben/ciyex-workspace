@@ -625,18 +625,36 @@ export class PatientSnapshotEditor extends EditorPane {
 		// list down to it so the backend doesn't reject the transaction.
 		const METHOD_MAP: Record<string, string> = {
 			credit_card: 'credit_card', debit_card: 'debit_card', cash: 'cash',
-			check: 'check', eft: 'ach', bank_account: 'ach',
+			check: 'check', eft: 'ach', ach: 'ach', bank_account: 'bank_account',
+			fsa: 'fsa', hsa: 'hsa', insurance: 'other', insurance_payment: 'other',
 		};
 		const rawMethod = String(values['paymentMethod'] || '').trim();
+		// The RCM-style New Payment form has no plain "amount" field — it captures
+		// Paid / Allowed amounts. Fall back through them so the backend doesn't
+		// receive amount:0 (which fails with "A valid payment amount is required").
+		const amount = Number(
+			values['amount'] || values['paidAmount'] || values['allowedAmount'] || 0
+		);
+		if (!(amount > 0)) {
+			// Surface a client-side validation error instead of POSTing a 400.
+			return new Response(
+				JSON.stringify({ message: 'Enter a payment amount greater than 0.' }),
+				{ status: 400, headers: { 'Content-Type': 'application/json' } }
+			);
+		}
+		// Only send fields PaymentTransactionDto recognises. `invoiceNumber` (not
+		// `invoiceId`) and `referenceType` are the real DTO keys.
 		const payload: Record<string, unknown> = {
 			patientId: this._currentPatientId,
-			amount: Number(values['amount'] || 0),
+			amount,
 			transactionType: 'payment',
-			paymentMethodType: METHOD_MAP[rawMethod] || 'other',
+			paymentMethodType: METHOD_MAP[rawMethod] || (rawMethod || 'other'),
+			referenceType: String(values['referenceType'] || '').trim() || undefined,
 			description: String(values['description'] || values['payerName'] || '').trim() || undefined,
-			invoiceId: String(values['invoiceNumber'] || '').trim() || undefined,
-			notes: String(values['reference'] || '').trim() || undefined,
-			status: 'completed',
+			invoiceNumber: String(values['invoiceNumber'] || '').trim() || undefined,
+			receiptEmail: String(values['receiptEmail'] || '').trim() || undefined,
+			notes: String(values['notes'] || values['reference'] || '').trim() || undefined,
+			status: String(values['status'] || '').trim() || 'completed',
 		};
 		return this.apiService.fetch('/api/payments/collect', {
 			method: 'POST',
@@ -877,14 +895,28 @@ export class PatientSnapshotEditor extends EditorPane {
 		const merged: Record<string, unknown> = { ...item };
 		if (!pid || !encId) { return merged; }
 
-		const [detail, form] = await Promise.all([
+		const [detail, ehr, form] = await Promise.all([
 			this._fetch(`/api/fhir-resource/encounters/${encId}`),
+			// The EHR endpoint runs enrichEncounterFields() on the server, returning
+			// mapped flat keys the form needs (startDate/encounterDate, visitCategory,
+			// encounterProvider/providerDisplay, mapped status) — the raw generic
+			// FHIR resource above does not. Without this the Edit Encounter modal's
+			// start/end date, provider and status came up blank (QA issue 6).
+			this._fetch(`/api/${pid}/encounters/${encId}`),
 			this._fetch(`/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encId}`),
 		]);
 		const detailData = (detail?.data ?? detail ?? {}) as Record<string, unknown>;
+		const ehrData = (ehr?.data ?? ehr ?? {}) as Record<string, unknown>;
 		const formData = (form?.data ?? form ?? {}) as Record<string, unknown>;
-		// Composition wins over the bare Encounter, which wins over the list row.
-		Object.assign(merged, detailData, formData);
+		// Composition wins over the enriched EHR encounter, which wins over the bare
+		// FHIR resource, which wins over the list row.
+		Object.assign(merged, detailData, ehrData, formData);
+		// Flatten a nested FHIR period ({start,end}) onto the keys `pick` looks for.
+		const period = (detailData['period'] ?? ehrData['period']) as Record<string, unknown> | undefined;
+		if (period && typeof period === 'object') {
+			if (period['start'] && !merged['periodStart']) { merged['periodStart'] = period['start']; }
+			if (period['end'] && !merged['periodEnd']) { merged['periodEnd'] = period['end']; }
+		}
 		// The encounter-form Composition carries its OWN id — never let it clobber
 		// the Encounter id, which the save path uses to PUT the composition back.
 		merged.id = encId;

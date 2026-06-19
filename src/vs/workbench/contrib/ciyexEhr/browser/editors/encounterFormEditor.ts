@@ -346,10 +346,57 @@ export class EncounterFormEditor extends EditorPane {
 					return {};
 				}).catch(() => ({}))
 				: Promise.resolve({}),
+			// Pre-fill the Vitals section from the patient's most recent recorded
+			// vitals Observation (the same source the patient chart reads). Without
+			// this the Vitals fields opened blank on a fresh encounter even though
+			// the patient had vitals on file (QA issue 9). Mapped to the form's
+			// `vitals_*` keys and merged as the lowest-priority layer so an explicit
+			// value already saved on THIS encounter's composition still wins.
+			this.patientId
+				? this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`)
+					.then(async r => (r.ok ? this._mapLatestVitals(await r.json()) : {}))
+					.catch(() => ({}))
+				: Promise.resolve({}),
 		];
-		const [fhir, ehr, form] = await Promise.all(loads);
+		const [fhir, ehr, form, vitals] = await Promise.all(loads);
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
-		this.encounterData = { ...fhir, ...ehr, ...form };
+		this.encounterData = { ...vitals, ...fhir, ...ehr, ...form };
+	}
+
+	/**
+	 * Map the most recent vitals Observation (response shape from
+	 * `/api/fhir-resource/vitals/patient/{id}`) onto the encounter form's
+	 * `vitals_*` field keys. Returns an empty object when no record exists.
+	 */
+	private _mapLatestVitals(json: unknown): Record<string, unknown> {
+		const d = json as Record<string, unknown> | null;
+		const data = (d?.['data'] ?? d) as Record<string, unknown> | undefined;
+		const content = (data?.['content'] ?? data) as unknown;
+		const latest = (Array.isArray(content) ? content[0] : (Array.isArray(data) ? (data as unknown[])[0] : data)) as Record<string, unknown> | undefined;
+		if (!latest || typeof latest !== 'object') { return {}; }
+		const num = (...keys: string[]): unknown => {
+			for (const k of keys) {
+				const v = latest[k];
+				if (v !== undefined && v !== null && String(v) !== '') { return v; }
+			}
+			return undefined;
+		};
+		const out: Record<string, unknown> = {
+			vitals_bp_systolic: num('bpSystolic', 'systolicBP', 'systolic'),
+			vitals_bp_diastolic: num('bpDiastolic', 'diastolicBP', 'diastolic'),
+			vitals_heart_rate: num('pulse', 'heartRate', 'hr'),
+			vitals_temperature: num('temperatureC', 'temperature', 'temp'),
+			vitals_spo2: num('oxygenSaturation', 'spo2', 'o2sat'),
+			vitals_respiratory_rate: num('respiration', 'respiratoryRate', 'rr'),
+			vitals_weight: num('weightKg', 'weight', 'bodyWeight'),
+			vitals_height: num('heightCm', 'height', 'bodyHeight'),
+			vitals_bmi: num('bmi', 'bodyMassIndex'),
+		};
+		// Drop undefined keys so they don't shadow other sources with `undefined`.
+		for (const k of Object.keys(out)) {
+			if (out[k] === undefined) { delete out[k]; }
+		}
+		return out;
 	}
 
 	// Section icons for TOC
