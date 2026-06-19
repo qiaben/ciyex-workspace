@@ -222,6 +222,14 @@ export class FeeSheetEditor extends EditorPane {
 	private _renderBody(): void {
 		DOM.clearNode(this.scrollArea);
 
+		// 0) Patient (manual mode only) — Approach 2: a fee sheet created from
+		// scratch needs a patient. When opened from a signed encounter the
+		// patient is already known and this picker is hidden.
+		if (!this.patientId || this.patientId === '_') {
+			this._sectionTitle(this.scrollArea, 'Patient');
+			this._renderPatientPicker(this.scrollArea);
+		}
+
 		// 1) Set Price Level
 		this._sectionTitle(this.scrollArea, 'Set Price Level');
 		const plWrap = DOM.append(this.scrollArea, DOM.$('div'));
@@ -265,6 +273,62 @@ export class FeeSheetEditor extends EditorPane {
 		};
 		renderProvField('Rendering', this.renderingProvider, v => { this.renderingProvider = v; });
 		renderProvField('Supervising', this.supervisingProvider, v => { this.supervisingProvider = v; });
+	}
+
+	/**
+	 * Patient search + select for a manually-created fee sheet. Searches
+	 * /api/patients; picking a result sets the patient and re-renders so the
+	 * header shows the name and Save can attach the charge to that patient.
+	 */
+	private _renderPatientPicker(parent: HTMLElement): void {
+		const wrap = DOM.append(parent, DOM.$('div'));
+		wrap.style.cssText = 'position:relative;max-width:420px;';
+		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+		input.type = 'text';
+		input.placeholder = 'Search patient by name or MRN…';
+		input.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;outline:none;';
+		const results = DOM.append(wrap, DOM.$('div'));
+		results.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background,var(--vscode-editor-background)));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:4px;margin-top:2px;max-height:260px;overflow-y:auto;display:none;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
+
+		let seq = 0;
+		const runSearch = async (q: string): Promise<void> => {
+			const mine = ++seq;
+			if (q.trim().length < 2) { results.style.display = 'none'; return; }
+			try {
+				const res = await this.apiService.fetch(`/api/patients?page=0&size=10&search=${encodeURIComponent(q.trim())}`);
+				if (!res.ok || mine !== seq) { return; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				DOM.clearNode(results);
+				if (!list.length) { results.style.display = 'none'; return; }
+				for (const p of list) {
+					const id = String(p.id ?? '');
+					const name = `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || `Patient #${id}`;
+					const mrn = p.mrn ? ` · MRN ${p.mrn}` : '';
+					const row = DOM.append(results, DOM.$('div'));
+					row.textContent = `${name}${mrn}`;
+					row.style.cssText = 'padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
+					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.16))'; });
+					row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+					row.addEventListener('mousedown', () => {
+						this.patientId = id;
+						this.patientName = name;
+						results.style.display = 'none';
+						this._renderHeader();
+						this._renderBody();
+					});
+				}
+				results.style.display = 'block';
+			} catch {
+				results.style.display = 'none';
+			}
+		};
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		input.addEventListener('input', () => {
+			if (timer) { clearTimeout(timer); }
+			timer = setTimeout(() => runSearch(input.value), 250);
+		});
+		setTimeout(() => input.focus(), 0);
 	}
 
 	private _renderCodeSearch(parent: HTMLElement): void {
@@ -345,6 +409,17 @@ export class FeeSheetEditor extends EditorPane {
 	}
 
 	private _addItem(item: FeeItem): void {
+		// Business rule: a fee sheet carries exactly ONE CPT/procedure code but
+		// any number of ICD-10 diagnosis codes. Reject a second, different
+		// procedure code.
+		const isProcedure = item.type === 'CPT' || item.type === 'HCPCS';
+		if (isProcedure) {
+			const existingProc = this.items.find(i => i.type === 'CPT' || i.type === 'HCPCS');
+			if (existingProc && existingProc.code !== item.code) {
+				this.notificationService.notify({ severity: Severity.Warning, message: `Only one CPT/procedure code is allowed per fee sheet. Remove ${existingProc.code} before adding ${item.code}.` });
+				return;
+			}
+		}
 		// Avoid duplicate code lines — bump qty instead.
 		const existing = this.items.find(i => i.type === item.type && i.code === item.code);
 		if (existing) { existing.qty += 1; } else { this.items.push(item); }
@@ -466,6 +541,7 @@ export class FeeSheetEditor extends EditorPane {
 			id: this.feeSheetId,
 			encounterId: this.encounterId && this.encounterId !== '_' ? this.encounterId : null,
 			patientId: this.patientId && this.patientId !== '_' ? this.patientId : null,
+			patientName: this.patientName || null,
 			priceLevel: this.selectedPriceLevel,
 			renderingProvider: this.renderingProvider || null,
 			supervisingProvider: this.supervisingProvider || null,
@@ -476,6 +552,10 @@ export class FeeSheetEditor extends EditorPane {
 
 	/** Persist the fee sheet. Returns true on success. */
 	private async _save(): Promise<boolean> {
+		if ((!this.patientId || this.patientId === '_') && (!this.encounterId || this.encounterId === '_')) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Choose a patient before saving the fee sheet.' });
+			return false;
+		}
 		if (this.items.length === 0) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Add at least one code before saving.' });
 			return false;

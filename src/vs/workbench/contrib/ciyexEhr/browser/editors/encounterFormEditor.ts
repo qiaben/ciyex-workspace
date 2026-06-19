@@ -411,13 +411,9 @@ export class EncounterFormEditor extends EditorPane {
 
 		DOM.append(this.headerBar, DOM.$('span')).style.flex = '1';
 
-		// Fee Sheet button — opens the encounter's fee sheet so charges can be
-		// captured and pushed to billing. Available once a real encounter exists.
-		const feeBtn = DOM.append(this.headerBar, DOM.$('button'));
-		feeBtn.textContent = '\u{1F4B2} Fee Sheet';
-		feeBtn.style.cssText = 'padding:5px 14px;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;cursor:pointer;font-size:12px;';
-		feeBtn.title = 'Open the fee sheet for this encounter';
-		feeBtn.addEventListener('click', () => this._openFeeSheet());
+		// No manual "Fee Sheet" button: the fee sheet is generated automatically
+		// when the encounter is signed, from the CPT/ICD codes already captured
+		// on the encounter (see _autoCreateFeeSheetFromEncounter).
 
 		// Save button
 		const saveBtn = DOM.append(this.headerBar, DOM.$('button'));
@@ -558,7 +554,7 @@ export class EncounterFormEditor extends EditorPane {
 
 			if (res.ok) {
 				this._encounterStatus = 'SIGNED';
-				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked. Opening fee sheet…' });
+				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked. Creating fee sheet…' });
 				// Re-render to show locked state
 				this._renderHeader();
 				this._renderForm();
@@ -566,10 +562,10 @@ export class EncounterFormEditor extends EditorPane {
 				// SIGNED immediately — without this the list keeps showing the stale
 				// UNSIGNED badge until a manual reload (matches the save flow above).
 				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
-				// A signed encounter is ready for billing — open its fee sheet so
-				// the user can capture charges (codes are pre-fetched from the
-				// signed encounter, or entered manually).
-				this._openFeeSheet();
+				// A signed encounter is ready for billing — generate its fee sheet
+				// automatically from the CPT/ICD codes already captured on the
+				// encounter (one CPT procedure + the diagnosis pointers).
+				await this._autoCreateFeeSheetFromEncounter();
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.error(`Failed to sign: ${err}`);
@@ -583,14 +579,90 @@ export class EncounterFormEditor extends EditorPane {
 		}
 	}
 
-	/** Open the Fee Sheet editor for this encounter, passing patient + encounter context. */
-	private _openFeeSheet(): void {
-		if (!this.encounterId || this.encounterId === 'new') {
-			this.notificationService.warn('Save the encounter before opening its fee sheet.');
+	/**
+	 * Approach 1 (automatic): when an encounter is signed, build one fee sheet
+	 * directly from the codes already captured on the encounter. Business rule:
+	 * a fee sheet carries exactly ONE CPT/procedure code (the first one) plus
+	 * any number of ICD-10 diagnosis codes, which become the diagnosis pointers
+	 * that justify the procedure. No manual step is required.
+	 */
+	private async _autoCreateFeeSheetFromEncounter(): Promise<void> {
+		if (!this.encounterId || this.encounterId === 'new' || !this.patientId) { return; }
+
+		const procedures = this._encounterCodeList('procedure');
+		const diagnoses = this._encounterCodeList('diagnosis');
+
+		if (procedures.length === 0) {
+			this.notificationService.warn('Encounter signed. No CPT/procedure code was captured, so no fee sheet was created.');
 			return;
 		}
-		this.commandService.executeCommand('ciyex.openFeeSheet', this.encounterId, this.patientId, this.patientName, `Encounter ${this.encounterId}`)
-			.catch((e: unknown) => this.notificationService.error(`Could not open fee sheet: ${e}`));
+		if (procedures.length > 1) {
+			this.notificationService.warn(`Multiple procedure codes found — billing only the first (${procedures[0].code}); a fee sheet allows a single CPT code.`);
+		}
+
+		const cpt = procedures[0];
+		const justify = diagnoses.map(d => d.code).join(', ');
+		const items: Array<Record<string, unknown>> = [
+			{ type: 'CPT', code: cpt.code, description: cpt.description || '', modifiers: '', price: 0, qty: cpt.units || 1, justify, note: '', auth: false },
+			...diagnoses.map(d => ({ type: 'ICD10', code: d.code, description: d.description || '', modifiers: '', price: 0, qty: 1, justify: '', note: '', auth: false })),
+		];
+
+		try {
+			// Don't create a duplicate if a fee sheet already exists for this encounter.
+			const existingRes = await this.apiService.fetch(`/api/fee-sheets/encounter/${encodeURIComponent(this.encounterId)}`)
+				.then(async r => r.ok ? await r.json() : null).catch(() => null);
+			const existing = (existingRes?.data ?? existingRes) as Record<string, unknown> | null;
+			if (existing && existing.id) {
+				this.notificationService.info(`Encounter signed. A fee sheet (#${existing.id}) already exists for this encounter.`);
+				return;
+			}
+
+			const payload = {
+				encounterId: this.encounterId,
+				patientId: this.patientId,
+				patientName: this.patientName,
+				priceLevel: '',
+				renderingProvider: null,
+				supervisingProvider: null,
+				total: 0,
+				items,
+			};
+			const res = await this.apiService.fetch('/api/fee-sheets', { method: 'POST', body: JSON.stringify(payload) });
+			if (res.ok) {
+				const data = await res.json().catch(() => ({}));
+				const fs = (data?.data ?? data) as Record<string, unknown>;
+				this.notificationService.info(`Fee sheet #${fs?.id ?? ''} created from 1 CPT + ${diagnoses.length} ICD code(s).`);
+			} else {
+				this.notificationService.error(`Encounter signed, but fee sheet creation failed (${res.status}).`);
+			}
+		} catch (e) {
+			this.notificationService.error(`Encounter signed, but fee sheet creation failed: ${e}`);
+		}
+	}
+
+	/**
+	 * Pull the captured procedure (CPT/HCPCS) or diagnosis (ICD-10) codes off
+	 * the in-memory encounter form. Prefers the well-known default keys but
+	 * falls back to shape detection so tab_field_config overrides still work
+	 * (procedure rows carry a `units` field; diagnosis rows don't).
+	 */
+	private _encounterCodeList(kind: 'procedure' | 'diagnosis'): Array<{ code: string; description: string; units?: number }> {
+		const knownKey = kind === 'procedure' ? 'procedures_data' : 'assessment_diagnoses';
+		const known = this._complexFields.get(knownKey) ?? this.encounterData[knownKey];
+		const isCodeArray = (v: unknown): v is Array<Record<string, unknown>> =>
+			Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' && v[0] !== null && (v[0] as Record<string, unknown>).code !== undefined;
+		const looksLikeProcedure = (arr: Array<Record<string, unknown>>): boolean => arr[0].units !== undefined;
+
+		let source: Array<Record<string, unknown>> | undefined = isCodeArray(known) ? known : undefined;
+		if (!source) {
+			for (const value of this._complexFields.values()) {
+				if (isCodeArray(value) && looksLikeProcedure(value) === (kind === 'procedure')) { source = value; break; }
+			}
+		}
+		if (!source) { return []; }
+		return source
+			.map(d => ({ code: String(d.code ?? ''), description: String(d.description ?? ''), units: typeof d.units === 'number' ? d.units : undefined }))
+			.filter(d => d.code);
 	}
 
 	private _collectFormData(): Record<string, unknown> {
