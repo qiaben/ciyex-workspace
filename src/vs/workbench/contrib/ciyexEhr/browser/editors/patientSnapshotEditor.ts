@@ -342,6 +342,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		const cfg = DEFAULT_FIELD_CONFIGS[reg.configKey];
 		if (!cfg) { return []; }
 		const fields = this._flattenChartConfig(cfg);
+		// Snapshot-only: adding a medication here requires naming a prescriber.
+		// `_flattenChartConfig` returns fresh field copies, so marking it required
+		// here keeps the change scoped to this form (the shared chart-editor config
+		// is untouched).
+		if (entity === 'medications') {
+			const prescriber = fields.find(f => f.key === 'prescribingDoctor');
+			if (prescriber) { prescriber.required = true; }
+		}
 		return withTypeaheadSearch(fields, this.apiService);
 	}
 
@@ -717,6 +725,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			fields,
 			listColumns: reg.columns,
 			initialMode: entity === 'demographics' ? 'create' : initialMode,
+			// Adding a record via a card's "+" opens this dialog straight in create
+			// mode — close it after a successful save instead of dropping the user
+			// into the records list (same close-on-save behaviour as the edit-pencil
+			// flow). List-mode entries (Payment History, Pending items) keep their
+			// list view so users can keep managing the collection.
+			closeOnSave: initialMode === 'create',
 			loadList: () => this._loadEntityList(entity),
 			saveRecord: async (next, existingId) => {
 				// Encounters need a two-step save (mirrors EncounterFormEditor):

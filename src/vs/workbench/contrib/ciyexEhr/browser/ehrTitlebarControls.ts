@@ -125,9 +125,6 @@ export class EhrTitlebarControls extends Disposable {
 		this.searchInput.placeholder = 'Search by name or DOB (MM/DD/YYYY)...';
 		this.searchInput.setAttribute('aria-label', 'Search patients');
 
-		const kbdHint = DOM.append(searchContainer, DOM.$('span.ehr-kbd-hint'));
-		kbdHint.textContent = '\u2318K';
-
 		// Appended to body (not inside searchContainer) so it escapes the
 		// titlebar-container's overflow:hidden. Position is set via _positionSearchDropdown().
 		this.searchDropdown = DOM.$('.ehr-search-dropdown');
@@ -144,6 +141,12 @@ export class EhrTitlebarControls extends Disposable {
 				this.searchDropdown.style.display = 'none';
 			}
 		}));
+		// Dismiss the results panel when focus leaves the search box so it does
+		// not linger under the bar. The short delay lets a click on a result
+		// item register before the dropdown hides.
+		this._register(DOM.addDisposableListener(this.searchInput, 'blur', () => {
+			setTimeout(() => { this.searchDropdown.style.display = 'none'; }, 150);
+		}));
 	}
 
 	private _positionSearchDropdown(): void {
@@ -159,10 +162,19 @@ export class EhrTitlebarControls extends Disposable {
 
 		const value = this.searchInput.value.trim();
 
+		// Empty query: show only the search bar. Leaving the results panel open
+		// here rendered a stray "No matches" box stuck under the bar (it looked
+		// like a second, mismatched layout). Hide it until the user types.
+		if (!value) {
+			DOM.clearNode(this.searchDropdown);
+			this.searchDropdown.style.display = 'none';
+			return;
+		}
+
 		this._ensureInWorkbench(this.searchDropdown);
 		DOM.clearNode(this.searchDropdown);
 		const loading = DOM.append(this.searchDropdown, DOM.$('.ehr-search-empty'));
-		loading.textContent = value ? `Searching for "${value}"…` : 'Type to search patients or providers';
+		loading.textContent = `Searching for "${value}"…`;
 		this._positionSearchDropdown();
 		this.searchDropdown.style.display = '';
 

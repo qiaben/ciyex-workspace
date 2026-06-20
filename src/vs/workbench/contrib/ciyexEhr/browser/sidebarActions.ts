@@ -2495,11 +2495,15 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 		const backBtn = doc.createElement('button');
 		backBtn.type = 'button';
-		backBtn.textContent = isEdit ? 'Cancel' : 'Back to list';
+		// In the snapshot's focused flows (closeOnSave) there is no list to manage —
+		// the form was opened directly from a card's "+" or edit-pencil. Closing the
+		// whole dialog returns the user to the snapshot, instead of dropping them into
+		// the records list view (which they did not ask for).
+		backBtn.textContent = (isEdit || opts.closeOnSave) ? 'Cancel' : 'Back to list';
 		backBtn.style.cssText = `padding:8px 16px;border:1px solid ${c.border};border-radius:8px;background:transparent;color:${c.fg};font-size:12px;font-weight:600;cursor:pointer;transition:background 0.12s;`;
 		backBtn.addEventListener('mouseenter', () => { backBtn.style.background = c.hover; });
 		backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'transparent'; });
-		backBtn.addEventListener('click', () => { void renderList(); });
+		backBtn.addEventListener('click', () => { if (opts.closeOnSave) { close(); } else { void renderList(); } });
 		footer.appendChild(backBtn);
 
 		const saveBtn = doc.createElement('button');

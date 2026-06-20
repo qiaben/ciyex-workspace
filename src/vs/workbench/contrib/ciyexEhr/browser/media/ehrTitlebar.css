@@ -68,18 +68,17 @@
 	font-family: inherit;
 }
 
-.ehr-search-input::placeholder {
-	color: var(--vscode-input-placeholderForeground, #888);
+/* The container already shows focus via its border (:focus-within). The workbench's
+global `input:focus` rule otherwise paints a second outline INSIDE the rounded bar — a
+nested rectangular box the user does not want. Suppress it for a single rounded bar. */
+.ehr-search-input:focus,
+.ehr-search-input:focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
 }
 
-.ehr-kbd-hint {
+.ehr-search-input::placeholder {
 	color: var(--vscode-input-placeholderForeground, #888);
-	font-size: 12px;
-	padding: 2px 6px;
-	border: 1px solid var(--vscode-input-border, #555);
-	border-radius: 4px;
-	flex-shrink: 0;
-	margin-left: 8px;
 }
 
 /* --- Search Dropdown ---
