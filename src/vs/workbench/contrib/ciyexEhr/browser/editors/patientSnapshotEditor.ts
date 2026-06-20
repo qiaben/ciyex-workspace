@@ -603,14 +603,24 @@ export class PatientSnapshotEditor extends EditorPane {
 			encounterId = String(created?.data?.id || created?.id || '');
 			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
 		}
-		const url = existingId
-			? `/api/fhir-resource/encounter-form/patient/${pid}/${encounterId}`
-			: `/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`;
-		return this.apiService.fetch(url, {
-			method: existingId ? 'PUT' : 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ...values, patientId: pid, id: encounterId }),
-		});
+		const headers = { 'Content-Type': 'application/json' };
+		const body = JSON.stringify({ ...values, patientId: pid, id: encounterId });
+		const createUrl = `/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`;
+		if (!existingId) {
+			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
+		}
+		// Updating an existing encounter. Encounters minted via the simple
+		// POST /api/{pid}/encounters (e.g. "Manual encounter" rows, or any
+		// appointment whose chart was never opened) have NO encounter-form
+		// Composition yet, so PUT-ing to the composition path returns 404
+		// ("Resource not found") and the edit silently fails. Treat the update
+		// as an upsert: if the PUT 404s, fall back to POST-create so the first
+		// edit of such an encounter still persists.
+		const updateRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${pid}/${encounterId}`, { method: 'PUT', headers, body });
+		if (updateRes.status === 404) {
+			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
+		}
+		return updateRes;
 	}
 
 	/**
@@ -825,6 +835,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			listColumns: reg.columns,
 			initialMode: 'edit',
 			initialItem,
+			// Focused edit from the snapshot's edit-pencil: close after saving
+			// instead of dropping the user into the full records list.
+			closeOnSave: true,
 			loadList: () => this._loadEntityList(entity),
 			saveRecord: async (next, existingId) => {
 				if (entity === 'encounters') {

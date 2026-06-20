@@ -21,7 +21,7 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { editorBackground, editorForeground, editorWidgetBackground, editorWidgetBorder } from '../../../../../platform/theme/common/colors/editorColors.js';
 import { descriptionForeground, errorForeground, textLinkForeground } from '../../../../../platform/theme/common/colors/baseColors.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createCustomDropdown } from '../customDropdown.js';
+import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { showVisitSummaryPanel } from './visitSummaryPanel.js';
 
 // allow-any-unicode-next-line
@@ -1623,7 +1623,16 @@ export class AppointmentsEditor extends EditorPane {
 		const doc = DOM.getActiveWindow().document;
 		const col = this._summaryColors();
 
-		const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-encounter-backdrop'));
+		// Mount on the workbench root (not document.body) and carry the
+		// `monaco-workbench` class so the workbench theme CSS variables resolve
+		// inside the drawer. A body-mounted overlay sits OUTSIDE .monaco-workbench
+		// where every --vscode-* var collapses to empty — which is why the hosted
+		// encounter pane's CPT/diagnosis search dropdowns (background:var(--vscode-
+		// dropdown-background,…)) rendered transparent and let the rows behind bleed
+		// through. Same fix as the clinical editors' card/payment drawers.
+		const mount = findWorkbenchRoot(this.root, doc);
+		const backdrop = DOM.append(mount, DOM.$('div.ciyex-encounter-backdrop'));
+		backdrop.className = (mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench') + ' ciyex-encounter-backdrop';
 		backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;display:flex;justify-content:flex-end;';
 
 		const sheet = DOM.append(backdrop, DOM.$('div.ciyex-encounter-sheet'));
@@ -1668,7 +1677,7 @@ export class AppointmentsEditor extends EditorPane {
 			try { editor.clearInput(); } catch { /* ignore */ }
 			try { editor.dispose(); } catch { /* ignore */ }
 			try { input.dispose(); } catch { /* ignore */ }
-			try { doc.body.removeChild(backdrop); } catch { /* ignore */ }
+			try { backdrop.remove(); } catch { /* ignore */ }
 		};
 		closeBtn.addEventListener('click', dismiss);
 		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });

@@ -17,6 +17,7 @@ import { TasksEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { showThemedModal } from './clinicalListEditor.js';
 
 interface Task {
 	id: string;
@@ -412,6 +413,15 @@ export class TasksEditor extends EditorPane {
 			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:12px;padding:2px;';
 			delBtn.addEventListener('click', async (e) => {
 				e.stopPropagation();
+				const confirmed = await showThemedModal({
+					title: 'Delete Task',
+					subtitle: `Are you sure you want to delete "${task.title}"? This action cannot be undone.`,
+					fields: [],
+					confirmLabel: 'Delete',
+					confirmColor: '#ef4444',
+					anchor: this.root,
+				});
+				if (!confirmed) { return; }
 				await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
 				this.notificationService.notify({ severity: Severity.Info, message: `Task "${task.title}" deleted` });
 				await this._loadAll();
@@ -804,6 +814,15 @@ export class TasksEditor extends EditorPane {
 			deleteBtn.addEventListener('mouseleave', () => { deleteBtn.style.background = 'transparent'; });
 			deleteBtn.addEventListener('click', async () => {
 				if (!task.id) { return; }
+				const confirmed = await showThemedModal({
+					title: 'Delete Task',
+					subtitle: `Are you sure you want to delete "${task.title}"? This action cannot be undone.`,
+					fields: [],
+					confirmLabel: 'Delete',
+					confirmColor: '#ef4444',
+					anchor: this.root,
+				});
+				if (!confirmed) { return; }
 				deleteBtn.disabled = true;
 				deleteBtn.textContent = 'Deleting...';
 				try {

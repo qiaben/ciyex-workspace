@@ -1722,6 +1722,10 @@ export interface IListAndFormDialogOptions {
 	initialItem?: Record<string, unknown>;
 	primaryLabel?: string;
 	onChanged?: () => void;
+	/** Close the dialog after a successful save instead of returning to the list
+	 *  view. Used for focused single-record edits (e.g. the snapshot's edit-pencil)
+	 *  where bouncing back to the full list after saving is unwanted. */
+	closeOnSave?: boolean;
 }
 
 /** Field-group sections for the unified list/form popup. Clinical forms (the
@@ -2533,6 +2537,10 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				await opts.saveRecord(result, existingId);
 				listLoaded = false;
 				opts.onChanged?.();
+				// Focused single-record edits close on save rather than bouncing
+				// back to the list view (which users found jarring after editing a
+				// single encounter from the snapshot).
+				if (opts.closeOnSave) { close(); return; }
 				await renderList();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));
