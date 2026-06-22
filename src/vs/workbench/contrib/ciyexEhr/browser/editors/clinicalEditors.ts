@@ -5320,6 +5320,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		};
 		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
 			{ view: 'encounter-billing', label: 'Encounter Billing' },
+			{ view: 'invoices', label: 'Invoices' },
 			{ view: 'transactions', label: 'Transactions' },
 			{ view: 'methods', label: 'Payment Methods' },
 			{ view: 'plans', label: 'Payment Plans' },
@@ -5657,6 +5658,22 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			feeSheetId: row.id,
 			notes: `Encounter ${row.encounterId} — ${row.codes}`,
 		};
+		// The patient email is needed so patient-pay can email the statement. Pull
+		// it from the patient record (the billing row doesn't carry it).
+		const rowEmail = String(row.patientEmail || '');
+		if (rowEmail) {
+			payload['patientEmail'] = rowEmail;
+		} else if (row.patientId) {
+			try {
+				const pr = await this.apiService.fetch(`/api/patients/${encodeURIComponent(String(row.patientId))}`);
+				if (pr.ok) {
+					const pd = await pr.json();
+					const patient = (pd?.data ?? pd) as Record<string, unknown>;
+					const email = String(patient?.email ?? patient?.patientEmail ?? patient?.emailAddress ?? '');
+					if (email) { payload['patientEmail'] = email; }
+				}
+			} catch { /* email lookup is best-effort */ }
+		}
 		try {
 			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
 			if (res.ok) {
@@ -5884,6 +5901,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// Patient search
 		let selPatientId = '';
 		let selPatientName = '';
+		let selPatientEmail = '';
 		const pg = DOM.append(body, DOM.$('div'));
 		pg.style.cssText = 'position:relative;';
 		const pl = DOM.append(pg, DOM.$('label'));
@@ -5916,7 +5934,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
 					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
 					row.addEventListener('mouseleave', () => { row.style.background = ''; });
-					row.addEventListener('mousedown', (e) => { e.preventDefault(); selPatientId = pid; selPatientName = name; pInput.value = name; pDrop.style.display = 'none'; });
+					row.addEventListener('mousedown', (e) => { e.preventDefault(); selPatientId = pid; selPatientName = name; selPatientEmail = String(p.email ?? p.patientEmail ?? p.emailAddress ?? ''); if (selPatientEmail && !emailEl.value) { emailEl.value = selPatientEmail; } pInput.value = name; pDrop.style.display = 'none'; });
 				}
 				pDrop.style.display = 'block';
 			}, 250);
@@ -5933,6 +5951,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			Object.assign(el, opts);
 			return el;
 		};
+		const emailEl = mkField('Patient Email (for the invoice)', { type: 'email', placeholder: 'patient@example.com' });
 		const amountEl = mkField('Amount ($) *', { type: 'number', placeholder: '0.00' });
 		const dueEl = mkField('Due Date', { type: 'date' });
 		const notesG = DOM.append(body, DOM.$('div'));
@@ -5963,12 +5982,24 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			if (!amt || amt <= 0) { errEl.textContent = 'Enter a valid amount.'; errEl.style.display = ''; return; }
 			// The patient-pay invoice requires both totalAmount and balanceDue.
 			const payload: Record<string, unknown> = { patientId: selPatientId, patientName: selPatientName, totalAmount: amt, balanceDue: amt, status: 'SENT' };
+			if (selPatientEmail) { payload['patientEmail'] = selPatientEmail; }
+			if (emailEl.value.trim()) { payload['patientEmail'] = emailEl.value.trim(); }
 			if (dueEl.value) { payload['dueDate'] = dueEl.value; }
 			if (notesEl.value.trim()) { payload['notes'] = notesEl.value.trim(); }
 			saveBtn.disabled = true; saveBtn.textContent = 'Creating…';
 			try {
 				const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
-				if (res.ok) { close(); onSaved(); }
+				if (res.ok) {
+					// Email the patient the invoice (with the statement PDF attached
+					// by ciyex-patient-pay).
+					const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+					const createdData = (created['data'] ?? created) as Record<string, unknown>;
+					const invId = String(createdData['id'] ?? '');
+					if (invId) {
+						try { await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invId)}/send`, { method: 'POST', headers: this._patientPayHeaders() }); } catch { /* best effort */ }
+					}
+					close(); onSaved();
+				}
 				else { const e = await res.json().catch(() => ({})) as Record<string, string>; errEl.textContent = e['message'] || `Error ${res.status}`; errEl.style.display = ''; }
 			} catch { errEl.textContent = 'Failed to reach the billing service.'; errEl.style.display = ''; }
 			saveBtn.disabled = false; saveBtn.textContent = 'Create Invoice';
