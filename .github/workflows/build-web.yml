@@ -22,7 +22,12 @@ jobs:
   build:
     name: Build Web & Push Docker
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 45
+    # The full web build (npm ci on cache miss + core-ci + reh-web-min-ci +
+    # docker build/push) routinely exceeds 45m on the self-hosted runner, so the
+    # job was timing out during "Compile core" before ever pushing the image —
+    # every Build & Deploy Web run since mid-June was cancelled, leaving dev
+    # stale. Give the build enough headroom to reach the Docker push.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout

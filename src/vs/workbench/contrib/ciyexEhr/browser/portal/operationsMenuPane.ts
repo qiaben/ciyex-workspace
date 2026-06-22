@@ -45,6 +45,14 @@ interface OperationsItem {
 	command: string;
 	color: string;
 	apiPath: string;
+	/**
+	 * Endpoint the "+" create drawer POSTs to, when it differs from the list
+	 * {@link apiPath}. Mirrors the matching editor config's `buildCreateUrl`
+	 * override — e.g. Payments lists at `/api/payments/transactions` (GET only)
+	 * but creates via `/api/payments/collect` (the list path has no POST handler,
+	 * so posting there 500s). Defaults to the list path's base when unset.
+	 */
+	createApiPath?: string;
 	titleField: string[];
 	subtitleField?: string[];
 	actions: RowAction[];
@@ -163,6 +171,9 @@ const ITEMS: OperationsItem[] = [
 		command: 'ciyex.openPayments',
 		color: '#22c55e',
 		apiPath: '/api/payments/transactions?page=0&size=10',
+		// Create POSTs to /collect (the transactions list path has no POST handler);
+		// mirrors PaymentsEditor `_transactionsConfig.buildCreateUrl`.
+		createApiPath: '/api/payments/collect',
 		titleField: ['patientName'],
 		subtitleField: ['amount', 'status'],
 		editFields: formFieldsToEditFields(PAYMENTS_FORM_FIELDS),
@@ -551,8 +562,16 @@ export class OperationsMenuPane extends ViewPane {
 			return;
 		}
 		const initialValues: Record<string, unknown> = {};
-		for (const f of item.editFields) { initialValues[f.key] = ''; }
+		// Seed each field with its editor-defined default (e.g. payment Method=Cash,
+		// Type=Payment, Status=Completed). The editor's create form applies these on
+		// open; without them required selects (e.g. Method) start empty and the
+		// create POST is rejected.
+		for (const f of item.editFields) { initialValues[f.key] = f.defaultValue ?? ''; }
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		// Some resources create through a different endpoint than their list path
+		// (e.g. Payments: list GET /transactions, create POST /collect). Posting to
+		// the list path when it has no POST handler returns 500.
+		const createPath = item.createApiPath ?? basePath;
 		const fields = withTypeaheadSearch(await loadFieldOptions(item.editFields, this.apiService), this.apiService);
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,
@@ -561,7 +580,7 @@ export class OperationsMenuPane extends ViewPane {
 			values: initialValues,
 			primaryLabel: 'Create',
 			onSave: async (next) => {
-				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
+				const res = await this.apiService.fetch(createPath, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
 				await this._loadItemData(item);
 			},
