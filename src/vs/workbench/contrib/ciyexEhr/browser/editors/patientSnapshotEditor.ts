@@ -28,6 +28,17 @@ interface QuickAction {
 	onClick: () => void;
 }
 
+/** State backing the "Visit Pipeline" card — the revenue-cycle stages for the
+ *  on-screen visit (appointment → encounter → sign → fee sheet → billing →
+ *  payment). All fields are best-effort: any may be null when that stage hasn't
+ *  been reached yet. */
+interface VisitPipelineState {
+	encounter: Record<string, unknown> | null;
+	feeSheet: Record<string, unknown> | null;
+	statement: Record<string, unknown> | null;
+	payments: Record<string, unknown>[];
+}
+
 interface EntitySpec {
 	title: string;
 	/** Key into `DEFAULT_FIELD_CONFIGS` (chart editor schemas). */
@@ -1221,7 +1232,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
 		this._lastRenderArgs = { patientId, patientName, appointmentId };
-		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage] = await Promise.allSettled([
+		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage, appointments] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
 			this._fetch(`/api/fhir-resource/medications/patient/${patientId}?page=0&size=50`),
@@ -1231,6 +1242,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			this._fetch(`/api/payments/transactions/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
 			this._fetch(`/api/fhir-resource/insurance-coverage/patient/${patientId}?page=0&size=1`),
+			// Full appointment history for this patient — powers the Visit History
+			// card (which lists VISITS, distinct from the clinical Encounter History).
+			this._fetch(`/api/appointments?patientId=${patientId}&page=0&size=50`),
 		]);
 
 		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
@@ -1257,16 +1271,45 @@ export class PatientSnapshotEditor extends EditorPane {
 		const conds = this._mergePending('problems', this._filterDeleted('problems', this._list(conditions)));
 		const meds = this._mergePending('medications', this._filterDeleted('medications', this._list(medications)));
 		const vit = this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals)));
-		const encs = this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters)));
+		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
 		const labList = this._mergePending('labs', this._filterDeleted('labs', this._list(labs)));
 		const payList = this._mergePending('payment', this._filterDeleted('payment', this._list(payments)));
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
+		const apptList = this._list(appointments);
+
+		// Resolve the encounter tied to TODAY's visit (by appointment link, else a
+		// same-day encounter) and load its fee sheet so the Visit Pipeline card can
+		// show how far along the revenue cycle this visit is.
+		const todayEnc = this._todayEncounter(apt, encs);
+		const todayEncId = todayEnc ? String(todayEnc.id ?? todayEnc.fhirId ?? '') : String(apt?.encounterId ?? '');
+		let feeSheet: Record<string, unknown> | null = null;
+		if (todayEncId) {
+			try {
+				const fsRaw = await this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`);
+				const fsInner = (fsRaw?.data ?? fsRaw) as unknown;
+				const fs = (Array.isArray(fsInner) ? fsInner[0] : fsInner) as Record<string, unknown> | null | undefined;
+				// Treat a non-empty object carrying an id (or line items) as a real fee sheet.
+				if (fs && (fs.id !== undefined || Array.isArray(fs.items) || Array.isArray(fs.lines))) { feeSheet = fs; }
+			} catch { /* no fee sheet yet */ }
+		}
+		if (this._currentPatientId !== patientId) { return; }
 
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt);
+		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, { encounter: todayEnc, feeSheet, statement: stmtList[0] ?? null, payments: payList });
+	}
+
+	/** The encounter that belongs to today's visit: the appointment's linked
+	 *  encounter if present, otherwise a same-day encounter from the chart. */
+	private _todayEncounter(apt: Record<string, unknown> | null, encs: Record<string, unknown>[]): Record<string, unknown> | null {
+		const linkedId = String(apt?.encounterId ?? '');
+		if (linkedId) {
+			const byId = encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedId);
+			if (byId) { return byId; }
+		}
+		return encs.find(e => this._isToday(e.encounterDate || e.startDate || e.start || e.date || e.periodStart)) ?? null;
 	}
 
 	// --- Workflow model (demo) --------------------------------------------
@@ -1289,6 +1332,36 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  hides older imported readings from the "Today's Vitals" card. */
 	private _todaysVitals(vit: Record<string, unknown>[]): Record<string, unknown>[] {
 		return vit.filter(v => this._isToday(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date));
+	}
+
+	/** Extract the patient id an encounter is linked to, tolerant of the many
+	 *  shapes the FHIR backend returns (`patientId`, `patientRef`, FHIR
+	 *  `subject.reference`, etc.). The leading `Patient/` reference prefix is
+	 *  stripped so it can be compared to the raw patient id. Returns '' when the
+	 *  encounter carries no patient reference at all. */
+	private _encounterPatientId(enc: Record<string, unknown>): string {
+		const strip = (v: unknown): string => String(v ?? '').replace(/^Patient\//, '').trim();
+		const direct = enc.patientId ?? enc.patient ?? enc.subjectId ?? enc.patientRef ?? enc.subjectReference;
+		if (direct) { return strip(direct); }
+		const subj = enc.subject as Record<string, unknown> | string | undefined;
+		if (typeof subj === 'string') { return strip(subj); }
+		if (subj && typeof subj === 'object') { return strip(subj.reference ?? subj.id); }
+		return '';
+	}
+
+	/** Keep only the encounters that belong to the patient on screen. The
+	 *  `/encounters/patient/{id}` endpoint can return cross-patient rows (the
+	 *  "history shows everyone's visits" report), so the snapshot filters them
+	 *  client-side. Safety valve: if some rows carry a patient reference but NONE
+	 *  match this patient, the id formats differ (FHIR id vs internal) — leave the
+	 *  list untouched rather than blanking the entire history. */
+	private _filterToPatient(encs: Record<string, unknown>[], patientId: string): Record<string, unknown>[] {
+		const pid = String(patientId);
+		const refs = encs.map(e => this._encounterPatientId(e));
+		const anyRef = refs.some(r => r);
+		const anyMatch = refs.some(r => r === pid);
+		if (anyRef && !anyMatch) { return encs; }
+		return encs.filter((_e, i) => !refs[i] || refs[i] === pid);
 	}
 
 	private _workflowSteps(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): Array<{ key: string; label: string; icon: string; done: boolean }> {
@@ -1703,17 +1776,31 @@ export class PatientSnapshotEditor extends EditorPane {
 		wrap.style.cssText = 'position:relative;display:inline-block;margin-top:1px;';
 		const color = PatientSnapshotEditor._statusColor(currentStatus);
 
+		// Once a visit is Completed the status is LOCKED — completing the
+		// appointment is what creates/finalizes its encounter, so re-opening the
+		// status (and re-running that flow) would risk duplicate encounters and
+		// breaks the "complete means complete" rule. Render a static, non-clickable
+		// chip with a lock glyph instead of the editable pill.
+		const locked = PatientSnapshotEditor._isCompletedStatus(currentStatus);
+		const interactive = !!appointmentId && !locked;
+
 		const trigger = DOM.append(wrap, DOM.$('button')) as HTMLButtonElement;
-		trigger.title = 'Change appointment status';
-		trigger.disabled = !appointmentId;
-		trigger.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:12px;border:1px solid ${color}66;background:${color}1f;color:${color};font-size:12px;font-weight:700;cursor:${appointmentId ? 'pointer' : 'default'};max-width:100%;`;
+		trigger.title = locked ? 'Status locked — this visit is Completed' : 'Change appointment status';
+		trigger.disabled = !interactive;
+		trigger.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:12px;border:1px solid ${color}66;background:${color}1f;color:${color};font-size:12px;font-weight:700;cursor:${interactive ? 'pointer' : 'default'};max-width:100%;`;
+		if (locked) {
+			const lockIco = DOM.append(trigger, DOM.$('span.codicon.codicon-lock'));
+			(lockIco as HTMLElement).style.cssText = 'font-size:11px;flex-shrink:0;';
+		}
 		const txt = DOM.append(trigger, DOM.$('span'));
 		txt.textContent = currentStatus;
 		txt.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-		if (appointmentId) {
+		if (interactive) {
 			const caret = DOM.append(trigger, DOM.$('span.codicon.codicon-chevron-down'));
 			(caret as HTMLElement).style.cssText = 'font-size:11px;flex-shrink:0;';
 		}
+		// Locked → no menu wiring at all; the chip is purely informational.
+		if (!interactive) { return; }
 
 		// `position:fixed` (not absolute) so the menu escapes the appointment
 		// card's `overflow:hidden` — otherwise the card clips the lower options
@@ -1830,34 +1917,61 @@ export class PatientSnapshotEditor extends EditorPane {
 					}
 				} catch { /* fall through to create */ }
 			}
-			if (existingId) {
-				void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, existingId, this._currentPatientName);
-				this._rerender();
-				return;
+			let encounterId = existingId || undefined;
+			let created = false;
+			if (!encounterId) {
+				// 3) None exists yet — create one.
+				const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
+				if (res.ok) {
+					try {
+						const data = await res.json();
+						const payload = (data?.data ?? data) as Record<string, unknown>;
+						encounterId = (payload?.id || payload?.encounterId) as string | undefined;
+						created = !!encounterId;
+						// The endpoint creates the Encounter with no patient subject, so it
+						// never appears on the patient chart's Encounters tab. Link it via
+						// `patientRef` (FHIR Encounter.subject) so the new encounter is
+						// patient-searchable and shows up in the chart. We also stamp the
+						// appointment time so the encounter is dated to the visit (not "now").
+						const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? this._currentPatientId) || '');
+						if (encounterId && encPatient) {
+							const apptStart = String(apt.start || apt.startTime || apt.scheduledStart || '').trim();
+							const link: Record<string, unknown> = { id: encounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` };
+							// A fresh encounter is in-progress (the provider still has to
+							// document and Sign & Lock it); the appointment itself is what
+							// gets marked Completed below.
+							const full: Record<string, unknown> = { ...link, status: 'in-progress' };
+							if (apptStart) {
+								full.encounterDate = apptStart;
+								full.startDate = apptStart;
+								full.period = { start: apptStart };
+							}
+							const put = (body: Record<string, unknown>) => this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+								method: 'PUT',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify(body),
+							});
+							const res2 = await put(full).catch(() => null);
+							// If the enriched PUT was rejected (e.g. backend status enum
+							// validation), still ensure the patient link lands.
+							if (!res2 || !res2.ok) { await put(link).catch(() => { /* best-effort link */ }); }
+						}
+					} catch { /* empty body — fall through to refresh */ }
+				}
 			}
-			// 3) None exists yet — create one.
-			const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
-			let encounterId: string | undefined;
-			if (res.ok) {
-				try {
-					const data = await res.json();
-					const payload = (data?.data ?? data) as Record<string, unknown>;
-					encounterId = (payload?.id || payload?.encounterId) as string | undefined;
-					// The endpoint creates the Encounter with no patient subject, so it
-					// never appears on the patient chart's Encounters tab. Link it via
-					// `patientRef` (FHIR Encounter.subject) so the new encounter is
-					// patient-searchable and shows up in the chart.
-					const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? this._currentPatientId) || '');
-					if (encounterId && encPatient) {
-						await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
-							method: 'PUT',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ id: encounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` }),
-						}).catch(() => { /* best-effort link */ });
-					}
-				} catch { /* empty body — fall through to refresh */ }
+			// Single-action rule: creating the encounter finalizes the front-desk
+			// visit — the appointment is automatically marked Completed (and its
+			// status field then locks, see _renderStatusDropdown). This is the only
+			// place that creates an encounter from the snapshot, so the appointment
+			// can never be "completed without an encounter" or vice-versa.
+			const alreadyCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus);
+			if (encounterId && !alreadyCompleted) {
+				await this._updateAppointmentStatus(id, 'Completed', apt);
 			}
 			if (encounterId) {
+				if (created) {
+					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter created for this appointment. The appointment is now Completed.' });
+				}
 				void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, String(encounterId), this._currentPatientName);
 			}
 			this._rerender();
@@ -2153,29 +2267,33 @@ export class PatientSnapshotEditor extends EditorPane {
 		payments: Record<string, unknown>[],
 		statements: Record<string, unknown>[],
 		apt?: Record<string, unknown> | null,
+		appts: Record<string, unknown>[] = [],
+		pipeline?: VisitPipelineState,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
 
 		if (apt) {
 			this._renderAppointmentCard(grid, apt);
-			// Large workflow buttons for medical staff — Siva: "MA should
-			// immediately know the next step".
-			this._renderQuickActions(grid, apt, vit, encs);
+			// ONE unified workflow strip — the former "Quick Actions" (Check In →
+			// Assign Room → Record Vitals → …) and "Visit Pipeline" (… → Encounter →
+			// Sign → Fee Sheet → Billing → Payment) were two overlapping step rows;
+			// they are now a single end-to-end flow so staff follow one line from
+			// arrival to payment.
+			this._renderVisitWorkflow(grid, apt, vit, encs, pipeline ?? { encounter: this._todayEncounter(apt, encs), feeSheet: null, statement: statements[0] ?? null, payments });
 		}
 
 		// Today's Vitals + Financials pair (recommended layout row 1)
 		this._renderTodayVitalsCard(grid, vit);
 		this._renderFinancialsCard(grid, payments, statements);
 
-		// Visit History (2) + Encounter History (2). No "+" add button on either —
-		// records are created from their own workflows (appointment → encounter,
-		// chart → visit note), so the inline create option is hidden (QA request).
-		// Visit-history rows fall back to the appointment's location when the
-		// encounter row itself carries no location (encounters don't embed one).
-		const apptLocation = apt ? this._apptLocationName(apt) : '';
-		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, encs.length, undefined);
-		this._renderEncounterRows(visitCard, encs, apptLocation);
+		// Visit History (2) lists the patient's APPOINTMENTS (the visits), while
+		// Encounter History (2) lists the clinical encounters — the two were
+		// previously the same encounter list, which read as a duplicate. Falls
+		// back to today's appointment when the history endpoint returns nothing.
+		const visitList = appts.length > 0 ? appts : (apt ? [apt] : []);
+		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, visitList.length, undefined);
+		this._renderAppointmentHistoryRows(visitCard, visitList);
 
 		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, undefined);
 		this._renderEncounterClinicalRows(encCard, encs);
@@ -2207,69 +2325,88 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderLabRows(labCard, labs);
 	}
 
-	/** Large workflow buttons for the Front Desk → Medical Staff hand-off. Each
-	 *  button is enabled only when its prerequisite step is complete, so users
-	 *  are guided through the sequence without training. */
-	private _renderQuickActions(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
+	/** The single, unified visit workflow — one continuous strip from arrival to
+	 *  payment. It merges the old "Quick Actions" (Check In → Assign Room → Record
+	 *  Vitals) with the revenue-cycle "Visit Pipeline" (Encounter → Sign & Lock →
+	 *  Fee Sheet → Billing → Payment) so the front desk and clinical/billing steps
+	 *  are one line, not two overlapping rows. Each stage shows done / next / todo /
+	 *  locked state and carries a one-click action. */
+	private _renderVisitWorkflow(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): void {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
-		const steps = this._workflowSteps(apt, vit, encs);
-		const done = (k: string) => steps.find(s => s.key === k)?.done ?? false;
-		const next = steps.find(s => !s.done);
-		const encounterId = String(apt.encounterId || '');
+		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+		const enc = st.encounter ?? this._todayEncounter(apt, encs);
+		const encId = enc ? String(enc.id ?? enc.fhirId ?? '') : String(apt.encounterId ?? '');
+		const encStatus = String(enc?.status ?? '').toLowerCase();
+		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
+
+		const checkedIn = ['checked-in', 'checked in', 'in-room', 'with-provider', 'completed', 'fulfilled', 'finished'].includes(apptStatus);
+		const roomAssigned = !!String(apt.room || apt.roomName || '').trim();
+		const vitalsDone = this._todaysVitals(vit).length > 0;
+		const hasEncounter = !!encId;
+		const signed = ['signed', 'finished', 'complete', 'completed'].includes(encStatus);
+		const hasFeeSheet = !!st.feeSheet;
+		// Billing/payment only count once THIS visit has a fee sheet — a stray
+		// patient-level statement must not light up the last stages before any
+		// charges were captured for the encounter.
+		const billed = hasFeeSheet && (!!st.feeSheet?.billed || String(st.feeSheet?.status ?? '').toLowerCase().includes('bill') || !!st.statement);
+		const balance = Number(st.statement?.balance ?? st.statement?.outstandingBalance ?? st.statement?.amountDue ?? NaN);
+		const paid = billed && ((!Number.isNaN(balance) && balance <= 0) || st.payments.some(p => this._isToday(p.date || p.paidAt || p.createdAt || p.transactionDate)));
+
+		type Stage = { label: string; role: string; icon: string; done: boolean; sub: string; reachable: boolean; action?: () => void };
+		const stages: Stage[] = [
+			{ label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn, sub: 'Front desk', reachable: true, action: () => void this._changeApptStatus(appointmentId, 'Checked-in', apt) },
+			{ label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned, sub: 'Front desk', reachable: checkedIn, action: () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')) },
+			{ label: 'Record Vitals', role: 'Medical staff', icon: 'pulse', done: vitalsDone, sub: 'Medical staff', reachable: checkedIn, action: () => this._focusVitalsEntry() },
+			// Single encounter entry point: reuse-or-create the encounter, mark the
+			// appointment Completed + locked, open the encounter.
+			{ label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter, sub: hasEncounter ? 'Created' : 'Create', reachable: true, action: () => void this._createEncounterFromAppointment(apt) },
+			{ label: 'Sign & Lock', role: 'Provider', icon: 'check', done: signed, sub: signed ? 'Signed' : 'Document', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encId, this._currentPatientName, encName, 'signoff') : undefined },
+			{ label: 'Fee Sheet', role: 'Billing', icon: 'list-flat', done: hasFeeSheet, sub: hasFeeSheet ? 'Charges set' : 'Add charges', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
+			{ label: 'Billing', role: 'Billing', icon: 'file-symlink-file', done: billed, sub: billed ? 'Billed' : 'Send to billing', reachable: hasFeeSheet, action: hasFeeSheet ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
+			{ label: 'Payment', role: 'Front desk', icon: 'credit-card', done: paid, sub: paid ? 'Paid' : 'Collect', reachable: billed, action: () => this._openCreateModal('payment') },
+		];
+		// "Next" = the first not-yet-done stage that is actually reachable.
+		const nextIdx = stages.findIndex(s => !s.done && s.reachable);
 
 		const card = DOM.append(grid, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
-		this._cardHeader(card, 'rocket', 'Quick Actions', 0, undefined);
+		this._cardHeader(card, 'rocket', 'Visit Workflow', 0, undefined);
 
 		const row = DOM.append(card, DOM.$('div'));
-		row.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:4px;';
-
-		const tile = (icon: string, label: string, sub: string, state: 'done' | 'next' | 'todo' | 'disabled', onClick: () => void): void => {
-			const t = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-			const disabled = state === 'disabled';
-			t.disabled = disabled;
-			t.style.cssText = [
-				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px 8px;border-radius:10px;cursor:' + (disabled ? 'default' : 'pointer') + ';text-align:center;transition:background 0.12s,border-color 0.12s;min-height:92px;',
+		row.style.cssText = `display:grid;grid-template-columns:repeat(${stages.length},1fr);gap:7px;margin-top:4px;`;
+		stages.forEach((s, i) => {
+			const isNext = i === nextIdx;
+			const state: 'done' | 'next' | 'todo' | 'disabled' = s.done ? 'done' : isNext ? 'next' : s.reachable && !!s.action ? 'todo' : 'disabled';
+			const disabled = !s.action || state === 'disabled';
+			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
+			tile.disabled = disabled;
+			tile.style.cssText = [
+				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (disabled ? 'default' : 'pointer') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
 					? 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.45);color:#22c55e;'
 					: state === 'next'
 						? 'background:var(--vscode-button-background,#0e639c);border:1px solid transparent;color:var(--vscode-button-foreground,#fff);box-shadow:0 0 0 2px rgba(59,158,221,0.35);'
-						: disabled
+						: state === 'disabled'
 							? 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.05));border:1px dashed var(--vscode-editorWidget-border);color:var(--vscode-descriptionForeground);opacity:0.55;'
 							: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);color:var(--vscode-foreground);',
 			].join('');
-			const ico = DOM.append(t, DOM.$('span.codicon.codicon-' + (state === 'done' ? 'check' : icon)));
-			(ico as HTMLElement).style.cssText = 'font-size:24px;';
-			const lbl = DOM.append(t, DOM.$('div'));
-			lbl.textContent = label;
-			lbl.style.cssText = 'font-size:13px;font-weight:700;';
-			const subEl = DOM.append(t, DOM.$('div'));
-			subEl.textContent = state === 'done' ? 'Done' : sub;
-			subEl.style.cssText = 'font-size:10px;font-weight:600;opacity:0.85;';
+			const ico = DOM.append(tile, DOM.$('span.codicon.codicon-' + (s.done ? 'pass-filled' : s.icon)));
+			(ico as HTMLElement).style.cssText = 'font-size:22px;';
+			const lbl = DOM.append(tile, DOM.$('div'));
+			lbl.textContent = `${i + 1} · ${s.label}`;
+			lbl.style.cssText = 'font-size:12px;font-weight:700;';
+			const subEl = DOM.append(tile, DOM.$('div'));
+			subEl.textContent = s.done ? 'Done' : s.sub;
+			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
 			if (!disabled) {
-				t.addEventListener('mouseenter', () => { if (state !== 'next') { t.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; } });
-				t.addEventListener('mouseleave', () => {
-					if (state === 'done') { t.style.background = 'rgba(34,197,94,0.10)'; }
-					else if (state !== 'next') { t.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; }
+				tile.addEventListener('mouseenter', () => { if (state !== 'next') { tile.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; } });
+				tile.addEventListener('mouseleave', () => {
+					if (state === 'done') { tile.style.background = 'rgba(34,197,94,0.10)'; }
+					else if (state !== 'next') { tile.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; }
 				});
-				t.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
 			}
-		};
-
-		const stateFor = (k: string, reachable: boolean): 'done' | 'next' | 'todo' | 'disabled' => {
-			if (done(k)) { return 'done'; }
-			if (next && next.key === k) { return 'next'; }
-			return reachable ? 'todo' : 'disabled';
-		};
-
-		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in', apt));
-		tile('home', '2 · Assign Room', 'Front desk', stateFor('room', done('checkin')), () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
-		tile('pulse', '3 · Record Vitals', 'Medical staff', stateFor('vitals', done('checkin')), () => this._focusVitalsEntry());
-		tile('note', '4 · Open Encounter', 'Provider', stateFor('encounter', done('checkin')), () => {
-			if (encounterId) { void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encounterId, this._currentPatientName); }
-			else { void this._createEncounterFromAppointment(apt); }
 		});
-		tile('pass', '5 · Complete', 'Provider', stateFor('complete', done('encounter')), () => void this._completeAppointmentWithEncounter(apt, encs));
 	}
 
 	/** One-field room picker — clearer than a buried dropdown for busy front
@@ -3056,58 +3193,84 @@ export class PatientSnapshotEditor extends EditorPane {
 		return card;
 	}
 
-	private _renderEncounterRows(card: HTMLElement, encs: Record<string, unknown>[], fallbackLocation?: string): void {
-		if (encs.length === 0) {
+	/** Visit History rows — the patient's APPOINTMENTS (not encounters). Each row
+	 *  shows the visit date, type/provider, location and appointment status, plus
+	 *  whether an encounter is linked. The action opens that visit's encounter when
+	 *  one exists, otherwise re-opens the snapshot focused on that appointment. */
+	private _renderAppointmentHistoryRows(card: HTMLElement, appts: Record<string, unknown>[]): void {
+		if (appts.length === 0) {
 			const empty = DOM.append(card, DOM.$('div'));
-			empty.textContent = 'No encounters found';
+			empty.textContent = 'No visits found';
 			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
 			return;
 		}
+		// Most-recent visit first.
+		const sorted = [...appts].sort((a, b) => {
+			const da = new Date(String(a.start || a.startTime || a.appointmentStartDate || 0)).getTime();
+			const db = new Date(String(b.start || b.startTime || b.appointmentStartDate || 0)).getTime();
+			return db - da;
+		});
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 140px 80px 80px 56px;gap:0;';
-		for (const lbl of ['Date', 'Type / Provider', 'Location', 'Status', 'Notes', '']) {
+		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 140px 90px 78px 56px;gap:0;';
+		for (const lbl of ['Date', 'Type / Provider', 'Location', 'Status', 'Encounter', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
 		}
-		const { page, pageIdx, pageCount, total } = this._paginate('encounters', encs);
-		for (const enc of page) {
-			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
+		const { page, pageIdx, pageCount, total } = this._paginate('appointments', sorted);
+		for (const a of page) {
+			const dateRaw = a.start || a.startTime || a.appointmentStartDate || a.date || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			const type = enc.visitCategory || enc.encounterType || enc.type || enc.serviceType || enc.class || '—';
-			const prov = enc.encounterProvider || enc.providerDisplay || enc.providerName || enc.practitionerName || '';
-			const loc = this._resolveLocationName(enc.locationName || enc.location || enc.facility || '') || fallbackLocation || '—';
-			const status = enc.status || 'Unknown';
-			const notes = enc.notes || enc.chiefComplaint || enc.reason || '';
-			const statusLower = String(status).toLowerCase();
-			const sColor = statusLower.includes('finish') || statusLower.includes('complet') ? '#22c55e' : statusLower.includes('cancel') ? '#ef4444' : '#3b9edd';
-			const rowCells: Array<{ txt: string; isStatus?: boolean; isNotes?: boolean }> = [
+			const type = this._apptTypeStr(a);
+			const prov = String(a.providerName || a.practitionerName || a.providerDisplay || '').trim();
+			const loc = this._apptLocationName(a) || '—';
+			const statusRaw = String(a.status || a.appointmentStatus || '').trim();
+			const status = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : 'Unknown';
+			const sColor = PatientSnapshotEditor._statusColor(status);
+			const encId = String(a.encounterId || '');
+			const cells: Array<{ txt: string; kind?: 'status' | 'enc' }> = [
 				{ txt: dateStr },
-				{ txt: prov ? `${type} · ${prov}` : String(type) },
+				{ txt: prov ? `${type} · ${prov}` : type },
 				{ txt: String(loc) },
-				{ txt: String(status), isStatus: true },
-				{ txt: String(notes).slice(0, 40) || '—', isNotes: true },
+				{ txt: status, kind: 'status' },
+				{ txt: encId ? 'Linked' : '—', kind: 'enc' },
 			];
-			for (const { txt, isStatus, isNotes } of rowCells) {
+			for (const { txt, kind } of cells) {
 				const cell = DOM.append(table, DOM.$('div'));
-				cell.style.cssText = `padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;${isNotes ? '' : 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'}padding-right:8px;`;
-				if (isStatus) {
+				cell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;';
+				if (kind === 'status') {
 					const b = DOM.append(cell, DOM.$('span'));
 					b.textContent = txt;
 					b.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
+				} else if (kind === 'enc') {
+					cell.textContent = txt;
+					cell.style.color = encId ? '#22c55e' : 'var(--vscode-descriptionForeground)';
 				} else {
 					cell.textContent = txt;
-					if (isNotes) { cell.style.color = 'var(--vscode-descriptionForeground)'; cell.style.fontSize = '11px'; }
 				}
 			}
-			// Visit History rows are Encounters (same source as Encounter History) —
-			// the pencil must open the Encounter edit form, not the Visit Note form
-			// (QA issue 1: editing a visit-history row opened the visit note page).
-			this._renderGridRowActions(table, 'encounters', enc);
+			// Trailing action: open the linked encounter, else open this visit.
+			const actCell = DOM.append(table, DOM.$('div'));
+			actCell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;';
+			const btn = DOM.append(actCell, DOM.$('button')) as HTMLButtonElement;
+			btn.title = encId ? 'Open encounter' : 'Open visit';
+			btn.style.cssText = 'width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);padding:0;';
+			const ico = DOM.append(btn, DOM.$('span.codicon.codicon-' + (encId ? 'go-to-file' : 'eye')));
+			(ico as HTMLElement).style.cssText = 'font-size:12px;';
+			btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; btn.style.borderColor = 'var(--vscode-editorWidget-border)'; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; btn.style.borderColor = 'transparent'; });
+			btn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				if (encId) {
+					void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encId, this._currentPatientName);
+				} else {
+					void this.commandService.executeCommand('ciyex.openPatientSnapshot', this._currentPatientId, this._currentPatientName, String(a.id || a.appointmentId || ''));
+				}
+			});
 		}
-		this._renderPagerFooter(card, 'encounters', pageIdx, pageCount, total);
+		this._renderPagerFooter(card, 'appointments', pageIdx, pageCount, total);
 	}
 
 	/**
