@@ -19,7 +19,7 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields } from '../sidebarActions.js';
-import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS } from '../editors/clinicalEditors.js';
+import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -124,44 +124,10 @@ const ITEMS: OperationsItem[] = [
 		apiPath: '/api/inventory?page=0&size=10',
 		titleField: ['name', 'item'],
 		subtitleField: ['quantity', 'status'],
-		editFields: [
-			{ key: 'name', label: 'Name', required: true, placeholder: 'e.g. Latex Gloves Medium', widthPct: 50 },
-			{ key: 'sku', label: 'SKU', required: true, placeholder: 'e.g. GLV-M-001', widthPct: 50 },
-			{ key: 'description', label: 'Description', widthPct: 100 },
-			{ key: 'unit', label: 'Unit', required: true, placeholder: 'pcs / box / vial', widthPct: 50 },
-			{ key: 'costPerUnit', label: 'Cost Per Unit ($)', kind: 'number', widthPct: 50 },
-			{ key: 'stockOnHand', label: 'Stock On Hand', kind: 'number', required: true, widthPct: 50 },
-			{ key: 'minStock', label: 'Min Stock', kind: 'number', required: true, widthPct: 50 },
-			{ key: 'maxStock', label: 'Max Stock', kind: 'number', widthPct: 50 },
-			{ key: 'reorderPoint', label: 'Reorder Point', kind: 'number', widthPct: 50 },
-			{ key: 'reorderQty', label: 'Reorder Qty', kind: 'number', widthPct: 50 },
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' },
-				]
-			},
-			{
-				key: 'itemType', label: 'Item Type', kind: 'select', widthPct: 50, options: [
-					{ value: 'consumable', label: 'Consumable' }, { value: 'durable', label: 'Durable' },
-					{ value: 'medication', label: 'Medication' }, { value: 'equipment', label: 'Equipment' },
-				]
-			},
-			{ key: 'barcode', label: 'Barcode', widthPct: 50 },
-			{ key: 'manufacturer', label: 'Manufacturer', widthPct: 50 },
-			{
-				key: 'costMethod', label: 'Cost Method', kind: 'select', widthPct: 50, options: [
-					{ value: 'fifo', label: 'FIFO' }, { value: 'lifo', label: 'LIFO' },
-					{ value: 'avg', label: 'Average' },
-				]
-			},
-			// Category / Location / Supplier are dropdowns loaded from the same
-			// endpoints the full Inventory editor uses (resolved by
-			// loadFieldOptions before the dialog opens) — previously these were
-			// bare numeric "ID" inputs, which QA flagged as the wrong control.
-			{ key: 'categoryId', label: 'Category', kind: 'select', optionsApiPath: '/api/inventory/categories', placeholder: 'Select category...', widthPct: 50 },
-			{ key: 'locationId', label: 'Location', kind: 'select', optionsApiPath: '/api/inventory/locations', placeholder: 'Select location...', widthPct: 50 },
-			{ key: 'supplierId', label: 'Supplier', kind: 'select', optionsApiPath: '/api/suppliers/list', placeholder: 'Select supplier...', widthPct: 50 },
-		],
+		// Single source: derive the `+` drawer fields from the editor's
+		// INVENTORY_FORM_FIELDS so the quick-create drawer is identical to the
+		// "New Inventory" editor form (same fields, options, defaults, layout).
+		editFields: formFieldsToEditFields(INVENTORY_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },

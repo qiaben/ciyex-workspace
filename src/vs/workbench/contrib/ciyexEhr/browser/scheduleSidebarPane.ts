@@ -1048,38 +1048,6 @@ export class ScheduleSidebarPane extends ViewPane {
 			if (apt.encounterId) {
 				items.push({ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId) });
 				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals') });
-			} else if (!isTerminal) {
-				items.push({
-					symbol: '\u{1F4C3}', label: 'Create Encounter', onClick: async () => {
-						try {
-							const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-							let newEncounterId: string | undefined;
-							if (res.ok) {
-								try {
-									const data = await res.json();
-									const payload = (data?.data ?? data) as Record<string, unknown>;
-									newEncounterId = (payload?.id || payload?.encounterId) as string | undefined;
-									// The endpoint creates the Encounter with no patient subject,
-									// so it never appears on the patient chart's Encounters tab.
-									// Link it via `patientRef` (FHIR Encounter.subject) so the new
-									// encounter becomes patient-searchable.
-									const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? apt.patientId) || '');
-									if (newEncounterId && encPatient) {
-										await this.apiService.fetch(`/api/fhir-resource/encounters/${newEncounterId}`, {
-											method: 'PUT',
-											headers: { 'Content-Type': 'application/json' },
-											body: JSON.stringify({ id: newEncounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` }),
-										}).catch(() => { /* best-effort link */ });
-									}
-								} catch { /* response may be empty — fall through to reload */ }
-							}
-							await this._loadAndRender();
-							if (newEncounterId && apt.patientId) {
-								void this.commandService.executeCommand('ciyex.openEncounter', apt.patientId, String(newEncounterId), apt.patientName);
-							}
-						} catch { /* */ }
-					}
-				});
 			}
 
 			// Telehealth

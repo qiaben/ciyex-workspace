@@ -3163,6 +3163,56 @@ export class CodesEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CodesEditor.ID, group, t, th, s, a, d); }
 }
 
+/**
+ * Single source of truth for the Inventory create/edit form. Used by both the
+ * full editor ({@link InventoryEditor}) and the sidebar `+` quick-create drawer
+ * (operationsMenuPane → formFieldsToEditFields) so the two forms always carry
+ * the same fields, options and defaults. Edit fields HERE only.
+ */
+export const INVENTORY_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Latex Gloves Medium' },
+	{ key: 'sku', label: 'SKU', type: 'text', required: true, placeholder: 'e.g. GLV-M-001' },
+	{ key: 'description', label: 'Description', type: 'text' },
+	{ key: 'unit', label: 'Unit', type: 'text', required: true, placeholder: 'pcs / box / vial' },
+	{ key: 'costPerUnit', label: 'Cost Per Unit ($)', type: 'number' },
+	{ key: 'stockOnHand', label: 'Stock On Hand', type: 'number', required: true, defaultValue: 0 },
+	{ key: 'minStock', label: 'Min Stock', type: 'number', required: true, defaultValue: 0 },
+	{ key: 'maxStock', label: 'Max Stock', type: 'number' },
+	{ key: 'reorderPoint', label: 'Reorder Point', type: 'number' },
+	{ key: 'reorderQty', label: 'Reorder Qty', type: 'number' },
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Active', value: 'active' },
+			{ label: 'Inactive', value: 'inactive' },
+		], defaultValue: 'active'
+	},
+	{
+		// Issue #11: Item Type options match ciyex-ehr-ui Inventory.tsx exactly.
+		key: 'itemType', label: 'Item Type', type: 'select', options: [
+			{ label: 'Consumable', value: 'consumable' },
+			{ label: 'Device', value: 'device' },
+			{ label: 'Medication', value: 'medication' },
+			{ label: 'Other', value: 'other' },
+		], defaultValue: 'consumable'
+	},
+	{ key: 'barcode', label: 'Barcode', type: 'text' },
+	{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
+	{
+		// Issue #11: Cost Method "Average" uses value `average` to match ehr-ui.
+		key: 'costMethod', label: 'Cost Method', type: 'select', options: [
+			{ label: 'FIFO', value: 'fifo' },
+			{ label: 'LIFO', value: 'lifo' },
+			{ label: 'Average', value: 'average' },
+		], defaultValue: 'fifo'
+	},
+	// Issue #13/#11: Category / Location / Supplier are dropdowns loaded from
+	// the backend (matching ciyex-ehr-ui) instead of free-text ID inputs.
+	// Suppliers use /api/suppliers/list (the list endpoint ehr-ui calls).
+	{ key: 'categoryId', label: 'Category', type: 'select', optionsApiPath: '/api/inventory/categories', aliases: ['category.id'] },
+	{ key: 'locationId', label: 'Location', type: 'select', optionsApiPath: '/api/inventory/locations', aliases: ['location.id'] },
+	{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers/list', aliases: ['supplier.id'] },
+];
+
 export class InventoryEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexInventory';
 
@@ -3238,49 +3288,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
-		formFields: [
-			{ key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Latex Gloves Medium' },
-			{ key: 'sku', label: 'SKU', type: 'text', required: true, placeholder: 'e.g. GLV-M-001' },
-			{ key: 'description', label: 'Description', type: 'text' },
-			{ key: 'unit', label: 'Unit', type: 'text', required: true, placeholder: 'pcs / box / vial' },
-			{ key: 'costPerUnit', label: 'Cost Per Unit ($)', type: 'number' },
-			{ key: 'stockOnHand', label: 'Stock On Hand', type: 'number', required: true, defaultValue: 0 },
-			{ key: 'minStock', label: 'Min Stock', type: 'number', required: true, defaultValue: 0 },
-			{ key: 'maxStock', label: 'Max Stock', type: 'number' },
-			{ key: 'reorderPoint', label: 'Reorder Point', type: 'number' },
-			{ key: 'reorderQty', label: 'Reorder Qty', type: 'number' },
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'active' },
-					{ label: 'Inactive', value: 'inactive' },
-				], defaultValue: 'active'
-			},
-			{
-				// Issue #11: Item Type options match ciyex-ehr-ui Inventory.tsx exactly.
-				key: 'itemType', label: 'Item Type', type: 'select', options: [
-					{ label: 'Consumable', value: 'consumable' },
-					{ label: 'Device', value: 'device' },
-					{ label: 'Medication', value: 'medication' },
-					{ label: 'Other', value: 'other' },
-				], defaultValue: 'consumable'
-			},
-			{ key: 'barcode', label: 'Barcode', type: 'text' },
-			{ key: 'manufacturer', label: 'Manufacturer', type: 'text' },
-			{
-				// Issue #11: Cost Method "Average" uses value `average` to match ehr-ui.
-				key: 'costMethod', label: 'Cost Method', type: 'select', options: [
-					{ label: 'FIFO', value: 'fifo' },
-					{ label: 'LIFO', value: 'lifo' },
-					{ label: 'Average', value: 'average' },
-				], defaultValue: 'fifo'
-			},
-			// Issue #13/#11: Category / Location / Supplier are dropdowns loaded from
-			// the backend (matching ciyex-ehr-ui) instead of free-text ID inputs.
-			// Suppliers use /api/suppliers/list (the list endpoint ehr-ui calls).
-			{ key: 'categoryId', label: 'Category', type: 'select', optionsApiPath: '/api/inventory/categories', aliases: ['category.id'] },
-			{ key: 'locationId', label: 'Location', type: 'select', optionsApiPath: '/api/inventory/locations', aliases: ['location.id'] },
-			{ key: 'supplierId', label: 'Supplier', type: 'select', optionsApiPath: '/api/suppliers/list', aliases: ['supplier.id'] },
-		],
+		formFields: INVENTORY_FORM_FIELDS,
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this inventory item?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/inventory/${item.id}`, { method: 'DELETE' }); reload(); } } },

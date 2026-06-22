@@ -622,9 +622,14 @@ export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDe
 			maxDigits: f.maxDigits,
 			hidden: f.hidden,
 			defaultValue: def,
-			// The editor leaves per-field width to its own grid; give the drawer a
-			// clean two-column layout (full-width only for multi-line notes).
-			widthPct: f.type === 'textarea' ? 100 : 50,
+			// Mirror the editor form's per-field layout exactly: the editor renders
+			// every field in one column of a two-column grid unless the field opts
+			// into `width: 'span 2'` (full row). So a textarea WITHOUT an explicit
+			// span (e.g. Patient Recall "Notes") stays half-width here too, instead
+			// of forcing every textarea to span the full row — that was the only
+			// thing making the `+` quick-create drawer diverge from the editor's
+			// "New Patient Recall" form.
+			widthPct: /\bspan\s*2\b/.test(f.width ?? '') ? 100 : 50,
 		};
 	});
 }
@@ -1052,8 +1057,10 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		'opacity:0',
 		'transition:transform 0.18s ease-out, opacity 0.18s ease-out',
 	] : [
-		'width:520px',
-		'max-width:90vw',
+		// 560px matches the editor form drawer (clinicalListEditor `_renderForm`)
+		// so the `+` quick-create drawer is the same width as the "New …" form.
+		'width:560px',
+		'max-width:95vw',
 		`height:calc(100vh - ${titlebarHeight}px)`,
 		'display:flex',
 		'flex-direction:column',
@@ -1069,7 +1076,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	]).join(';');
 
 	const header = doc.createElement('div');
-	header.style.cssText = `padding:18px 22px;border-bottom:1px solid ${colors.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+	// Header padding matches the editor form (`18px 20px 14px`) so the title sits
+	// at the same offset in both the `+` drawer and the "New …" editor form.
+	header.style.cssText = `padding:18px 20px 14px;border-bottom:1px solid ${colors.separator};font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;`;
 	const titleEl = doc.createElement('span');
 	titleEl.textContent = opts.title;
 	titleEl.style.flex = '1';
@@ -1092,7 +1101,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	// drawer — content still scrolls when overflowing, just without the
 	// visible scrollbar gutter the QA team flagged.
 	form.className = 'ciyex-edit-dialog-body';
-	form.style.cssText = 'padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;column-gap:16px;row-gap:14px;overflow-y:auto;flex:1;align-content:start;scrollbar-width:none;-ms-overflow-style:none;';
+	// `padding:20px` + `gap:12px` matches the editor form body (clinicalListEditor
+	// `_renderForm`) so the field grid has identical spacing in both forms.
+	form.style.cssText = 'padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;overflow-y:auto;flex:1;align-content:start;scrollbar-width:none;-ms-overflow-style:none;';
 	const scrollbarStyle = doc.createElement('style');
 	scrollbarStyle.textContent = 'form.ciyex-edit-dialog-body::-webkit-scrollbar{display:none;width:0;height:0;}';
 	dialog.appendChild(scrollbarStyle);
@@ -1117,10 +1128,13 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 	for (const field of opts.fields) {
 		const wrap = doc.createElement('div');
-		// widthPct >= 75% spans both grid columns - mirrors the EHR-UI drawer
-		// layout where Notes / single text fields fill the whole row.
+		// widthPct >= 75% spans both grid columns - mirrors the editor form,
+		// where a field fills the whole row only when it opts into `width:'span 2'`.
+		// We deliberately do NOT force every textarea full-width: the editor keeps
+		// a span-less textarea (e.g. Patient Recall "Notes") in a single column, so
+		// the `+` drawer must too for the two forms to match exactly.
 		const widthPct = field.widthPct ?? 100;
-		const spanFull = widthPct >= 75 || field.kind === 'textarea';
+		const spanFull = widthPct >= 75;
 		wrap.style.cssText = `${spanFull ? 'grid-column:1 / -1;' : ''}display:${field.hidden ? 'none' : 'flex'};flex-direction:column;gap:4px;min-width:0;`;
 
 		const lbl = doc.createElement('label');
@@ -1133,7 +1147,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 		let searchPanel: HTMLDivElement | null = null;
 		if (field.kind === 'textarea') {
 			const ta = doc.createElement('textarea');
-			ta.rows = 3;
+			// Height is driven by the min-height/max-height set below (mirrors the
+			// editor form), so leave rows at the 2-line default rather than forcing 3.
+			ta.rows = 2;
 			ta.value = initial;
 			input = ta;
 		} else if (field.kind === 'select') {
@@ -1367,7 +1383,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				input.addEventListener('pointerdown', releaseReadonly, { once: true });
 			}
 		}
-		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;`;
+		input.style.cssText = `padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;width:100%;`;
+		if (DOM.isHTMLTextAreaElement(input)) {
+			// Match the editor form's textarea sizing (clinicalListEditor
+			// `_renderForm`): two visible lines, drag-resizable, capped height — so
+			// the `+` drawer's Notes box is the same as the "New …" form's.
+			input.style.minHeight = '40px';
+			input.style.maxHeight = '120px';
+			input.style.resize = 'vertical';
+		}
 		if (field.readonly) {
 			// Dim derived/auto-calculated fields (e.g. BMI) so they read as
 			// non-editable — matches the chart editor's BMI styling.
