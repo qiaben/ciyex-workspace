@@ -610,8 +610,8 @@ export class EncounterFormEditor extends EditorPane {
 				// UNSIGNED badge until a manual reload (matches the save flow above).
 				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
 				// A signed encounter is ready for billing — generate its fee sheet
-				// automatically from the CPT/ICD codes already captured on the
-				// encounter (one CPT procedure + the diagnosis pointers).
+				// automatically from all the CPT/ICD codes already captured on the
+				// encounter (every procedure + the diagnosis pointers).
 				await this._autoCreateFeeSheetFromEncounter();
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
@@ -628,10 +628,10 @@ export class EncounterFormEditor extends EditorPane {
 
 	/**
 	 * Approach 1 (automatic): when an encounter is signed, build one fee sheet
-	 * directly from the codes already captured on the encounter. Business rule:
-	 * a fee sheet carries exactly ONE CPT/procedure code (the first one) plus
-	 * any number of ICD-10 diagnosis codes, which become the diagnosis pointers
-	 * that justify the procedure. No manual step is required.
+	 * directly from the codes already captured on the encounter. A single fee
+	 * sheet carries ALL of the encounter's procedure (CPT/HCPCS) codes plus all
+	 * ICD-10 diagnosis codes, which become the diagnosis pointers that justify
+	 * the procedures. No manual step is required.
 	 */
 	private async _autoCreateFeeSheetFromEncounter(): Promise<void> {
 		if (!this.encounterId || this.encounterId === 'new' || !this.patientId) { return; }
@@ -643,14 +643,13 @@ export class EncounterFormEditor extends EditorPane {
 			this.notificationService.warn('Encounter signed. No CPT/procedure code was captured, so no fee sheet was created.');
 			return;
 		}
-		if (procedures.length > 1) {
-			this.notificationService.warn(`Multiple procedure codes found — billing only the first (${procedures[0].code}); a fee sheet allows a single CPT code.`);
-		}
 
-		const cpt = procedures[0];
+		// A single fee sheet captures ALL of the encounter's codes: every
+		// CPT/HCPCS procedure plus every ICD-10 diagnosis. Each procedure line is
+		// justified by the full diagnosis pointer list.
 		const justify = diagnoses.map(d => d.code).join(', ');
 		const items: Array<Record<string, unknown>> = [
-			{ type: 'CPT', code: cpt.code, description: cpt.description || '', modifiers: '', price: 0, qty: cpt.units || 1, justify, note: '', auth: false },
+			...procedures.map(p => ({ type: 'CPT', code: p.code, description: p.description || '', modifiers: '', price: 0, qty: p.units || 1, justify, note: '', auth: false })),
 			...diagnoses.map(d => ({ type: 'ICD10', code: d.code, description: d.description || '', modifiers: '', price: 0, qty: 1, justify: '', note: '', auth: false })),
 		];
 
@@ -678,7 +677,7 @@ export class EncounterFormEditor extends EditorPane {
 			if (res.ok) {
 				const data = await res.json().catch(() => ({}));
 				const fs = (data?.data ?? data) as Record<string, unknown>;
-				this.notificationService.info(`Fee sheet #${fs?.id ?? ''} created from 1 CPT + ${diagnoses.length} ICD code(s).`);
+				this.notificationService.info(`Fee sheet #${fs?.id ?? ''} created from ${procedures.length} procedure + ${diagnoses.length} ICD code(s).`);
 			} else {
 				this.notificationService.error(`Encounter signed, but fee sheet creation failed (${res.status}).`);
 			}

@@ -409,18 +409,9 @@ export class FeeSheetEditor extends EditorPane {
 	}
 
 	private _addItem(item: FeeItem): void {
-		// Business rule: a fee sheet carries exactly ONE CPT/procedure code but
-		// any number of ICD-10 diagnosis codes. Reject a second, different
-		// procedure code.
-		const isProcedure = item.type === 'CPT' || item.type === 'HCPCS';
-		if (isProcedure) {
-			const existingProc = this.items.find(i => i.type === 'CPT' || i.type === 'HCPCS');
-			if (existingProc && existingProc.code !== item.code) {
-				this.notificationService.notify({ severity: Severity.Warning, message: `Only one CPT/procedure code is allowed per fee sheet. Remove ${existingProc.code} before adding ${item.code}.` });
-				return;
-			}
-		}
-		// Avoid duplicate code lines — bump qty instead.
+		// A fee sheet captures all of the encounter's codes — any number of
+		// procedure (CPT/HCPCS) and diagnosis (ICD-10) lines. Adding a code that
+		// is already on the sheet bumps its quantity instead of duplicating it.
 		const existing = this.items.find(i => i.type === item.type && i.code === item.code);
 		if (existing) { existing.qty += 1; } else { this.items.push(item); }
 		this._renderItemsTable();
