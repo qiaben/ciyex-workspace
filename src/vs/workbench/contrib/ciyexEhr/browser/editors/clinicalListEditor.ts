@@ -432,6 +432,91 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 	});
 }
 
+/** A single label/value row in {@link showThemedDetails}. */
+export interface IThemedDetailRow {
+	label: string;
+	value: string;
+	/** Optional accent colour — renders the value as a coloured pill (e.g. status). */
+	accent?: string;
+	/** Render the value larger/bolder (e.g. an amount). */
+	emphasis?: boolean;
+	/** Span the full width on its own row (e.g. a long description). */
+	wide?: boolean;
+}
+
+interface IThemedDetailsOptions {
+	title: string;
+	subtitle?: string;
+	rows: IThemedDetailRow[];
+	/** Footer button label. Defaults to 'Close'. */
+	closeLabel?: string;
+	anchor?: HTMLElement;
+}
+
+/**
+ * Read-only counterpart to {@link showThemedModal}: a themed centre-screen card
+ * that lays out label/value rows in a two-column grid with a single Close
+ * button. Used for "View" row actions (e.g. a payment transaction) so they get
+ * a proper themed detail card instead of the bare native info dialog.
+ */
+export function showThemedDetails(opts: IThemedDetailsOptions): Promise<void> {
+	return new Promise<void>(resolve => {
+		const doc = mainWindow.document;
+		const mount = findWorkbenchRoot(opts.anchor || doc.body || doc.documentElement, doc);
+		const overlay = DOM.append(mount, DOM.$('div'));
+		overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+		overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);background:transparent;';
+
+		const backdrop = DOM.append(overlay, DOM.$('div'));
+		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.12);';
+
+		const modal = DOM.append(overlay, DOM.$('div'));
+		modal.style.cssText = 'position:relative;width:460px;max-width:92vw;max-height:90vh;overflow-y:auto;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);box-sizing:border-box;';
+
+		const header = DOM.append(modal, DOM.$('div'));
+		header.style.cssText = 'padding:18px 20px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		const titleEl = DOM.append(header, DOM.$('h3'));
+		titleEl.textContent = opts.title;
+		titleEl.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
+		if (opts.subtitle) {
+			const sub = DOM.append(header, DOM.$('p'));
+			sub.textContent = opts.subtitle;
+			sub.style.cssText = 'margin:4px 0 0;font-size:12px;color:var(--vscode-descriptionForeground);';
+		}
+
+		const grid = DOM.append(modal, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;padding:18px 20px;';
+		for (const row of opts.rows) {
+			const cell = DOM.append(grid, DOM.$('div'));
+			cell.style.cssText = `min-width:0;${row.wide ? 'grid-column:1 / -1;' : ''}`;
+			const l = DOM.append(cell, DOM.$('div'));
+			l.textContent = row.label;
+			l.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+			if (row.accent) {
+				const pill = DOM.append(cell, DOM.$('span'));
+				pill.textContent = row.value;
+				pill.style.cssText = `display:inline-flex;align-items:center;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;background:${row.accent}1f;color:${row.accent};border:1px solid ${row.accent}66;`;
+			} else {
+				const v = DOM.append(cell, DOM.$('div'));
+				v.textContent = row.value;
+				v.style.cssText = `color:var(--vscode-editor-foreground);${row.emphasis ? 'font-size:16px;font-weight:700;' : 'font-size:13px;font-weight:600;'}${row.wide ? 'white-space:pre-wrap;word-break:break-word;' : 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'}`;
+			}
+		}
+
+		const footer = DOM.append(modal, DOM.$('div'));
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:0 20px 18px;';
+		let settled = false;
+		const close = (): void => { if (settled) { return; } settled = true; overlay.remove(); resolve(); };
+		const closeBtn = DOM.append(footer, DOM.$('button'));
+		closeBtn.textContent = opts.closeLabel || 'Close';
+		closeBtn.style.cssText = 'padding:6px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;';
+		closeBtn.addEventListener('click', close);
+		backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) { close(); } });
+		overlay.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); } });
+		closeBtn.focus();
+	});
+}
+
 /**
  * Base class for all clinical list editors.
  * Subclasses set `config` and the base renders everything:

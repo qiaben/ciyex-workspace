@@ -685,6 +685,38 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 	}
 
+	/**
+	 * Map a stored payment transaction record onto the chart-editor payment form
+	 * keys so the Edit form pre-fills. The backend `PaymentTransactionDto` renames
+	 * a couple of fields: the form uses `paymentDate` / `paymentMethod`, the DTO
+	 * stores `collectedAt` / `paymentMethodType`. Without this remap the Edit
+	 * Payment form opened with Payment Date and Method blank (Payment Date is
+	 * required, so the form could not even be saved).
+	 */
+	private _normalizePaymentForEdit(item: Record<string, unknown>): Record<string, unknown> {
+		const dateOnly = (v: unknown): string => { const s = String(v ?? '').trim(); return s ? s.slice(0, 10) : ''; };
+		const out: Record<string, unknown> = { ...item };
+		out.paymentDate = dateOnly(item.paymentDate ?? item.collectedAt ?? item.transactionDate ?? item.date ?? item.createdAt);
+		if (item.dateOfService) { out.dateOfService = dateOnly(item.dateOfService); }
+		if (!out.paymentMethod) { out.paymentMethod = String(item.paymentMethod ?? item.paymentMethodType ?? item.method ?? ''); }
+		if (out.amount === undefined || out.amount === null || out.amount === '') { out.amount = item.amount ?? item.totalAmount ?? ''; }
+		return out;
+	}
+
+	/**
+	 * Map the payment Edit form values back onto the transaction DTO keys so an
+	 * edited Payment Date / Method actually persists on PUT
+	 * /api/payments/transactions/{id} (inverse of {@link _normalizePaymentForEdit}).
+	 */
+	private _applyPaymentEditKeys(payload: Record<string, unknown>): Record<string, unknown> {
+		const out = { ...payload };
+		if (out.paymentDate) { out.collectedAt = out.paymentDate; }
+		const method = out.paymentMethod ?? out.paymentMethodType;
+		if (method) { out.paymentMethodType = method; }
+		if (out.amount !== undefined && out.amount !== '') { out.amount = Number(out.amount); }
+		return out;
+	}
+
 	/** Build the create / update URL the same way the full chart editor does. */
 	private _saveUrl(entity: string, existingId: string | undefined): { url: string; method: 'POST' | 'PUT' } {
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
@@ -771,7 +803,11 @@ export class PatientSnapshotEditor extends EditorPane {
 					return;
 				}
 				const { url, method } = this._saveUrl(entity, existingId);
-				const payload: Record<string, unknown> = { ...next };
+				let payload: Record<string, unknown> = { ...next };
+				// Payment edit (PUT): map form keys back to the transaction DTO keys
+				// so an edited Payment Date / Method persists (create goes through
+				// _savePayment above; this branch only runs for edits).
+				if (entity === 'payment') { payload = this._applyPaymentEditKeys(payload); }
 				// Backend `vitals` POST without recordedAt is rejected by the
 				// FhirPathMapper validation — chart editor injects this exact
 				// fallback, so mirror it here.
@@ -841,7 +877,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		// the full Encounter resource, so load and merge them before opening the
 		// form (QA issue 2: encounter edit opened with start/end date, provider
 		// and vitals all blank).
-		const initialItem = entity === 'encounters' ? await this._loadEncounterForEdit(item) : item;
+		const initialItem = entity === 'encounters' ? await this._loadEncounterForEdit(item)
+			: entity === 'payment' ? this._normalizePaymentForEdit(item)
+				: item;
 		openListAndFormDialog({
 			title: reg.title,
 			themeAnchor: this.root,
@@ -869,7 +907,11 @@ export class PatientSnapshotEditor extends EditorPane {
 					return;
 				}
 				const { url, method } = this._saveUrl(entity, existingId);
-				const payload: Record<string, unknown> = { ...item, ...next };
+				let payload: Record<string, unknown> = { ...item, ...next };
+				// Payment edit: map the form keys (paymentDate/paymentMethod) back to
+				// the transaction DTO keys (collectedAt/paymentMethodType) so changes
+				// persist (mirrors _normalizePaymentForEdit on the way in).
+				if (entity === 'payment') { payload = this._applyPaymentEditKeys(payload); }
 				if (!reg.nonFhir && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
 				}
@@ -1627,12 +1669,38 @@ export class PatientSnapshotEditor extends EditorPane {
 			(caret as HTMLElement).style.cssText = 'font-size:11px;flex-shrink:0;';
 		}
 
+		// `position:fixed` (not absolute) so the menu escapes the appointment
+		// card's `overflow:hidden` — otherwise the card clips the lower options
+		// and the list can't be scrolled to (QA: status dropdown not scrollable).
+		// Positioned from the trigger's rect each time it opens / the page scrolls.
 		const menu = DOM.append(wrap, DOM.$('div'));
-		menu.style.cssText = 'position:absolute;top:28px;left:0;min-width:180px;max-height:280px;overflow-y:auto;background:var(--vscode-menu-background,var(--vscode-editor-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-menu-border,var(--vscode-editorWidget-border));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.28);padding:4px;z-index:1000;display:none;';
+		menu.style.cssText = 'position:fixed;min-width:180px;max-height:280px;overflow-y:auto;background:var(--vscode-menu-background,var(--vscode-editor-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-menu-border,var(--vscode-editorWidget-border));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.28);padding:4px;z-index:1000;display:none;';
 
-		const closeMenu = (): void => { menu.style.display = 'none'; };
+		// Place the menu under (or above, if there's no room below) the trigger,
+		// capping its height to the available viewport space so it stays fully
+		// visible and internally scrollable.
+		const positionMenu = (): void => {
+			const r = trigger.getBoundingClientRect();
+			const win = DOM.getActiveWindow();
+			const vh = win.innerHeight;
+			const spaceBelow = vh - r.bottom - 8;
+			const spaceAbove = r.top - 8;
+			const useAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+			menu.style.maxHeight = `${Math.max(120, Math.min(280, useAbove ? spaceAbove : spaceBelow))}px`;
+			menu.style.left = `${r.left}px`;
+			if (useAbove) { menu.style.top = 'auto'; menu.style.bottom = `${vh - r.top + 4}px`; }
+			else { menu.style.bottom = 'auto'; menu.style.top = `${r.bottom + 4}px`; }
+		};
+
+		const onReposition = (): void => { if (menu.style.display === 'block') { positionMenu(); } };
+		const closeMenu = (): void => {
+			menu.style.display = 'none';
+			const win = DOM.getActiveWindow();
+			win.removeEventListener('scroll', onReposition, true);
+			win.removeEventListener('resize', onReposition);
+		};
 		const docClick = (e: Event): void => {
-			if (!wrap.contains(e.target as Node)) {
+			if (!wrap.contains(e.target as Node) && !menu.contains(e.target as Node)) {
 				closeMenu();
 				DOM.getActiveWindow().document.removeEventListener('click', docClick);
 			}
@@ -1681,7 +1749,13 @@ export class PatientSnapshotEditor extends EditorPane {
 			} else {
 				await populate();
 				menu.style.display = 'block';
-				DOM.getActiveWindow().document.addEventListener('click', docClick);
+				positionMenu();
+				const win = DOM.getActiveWindow();
+				win.document.addEventListener('click', docClick);
+				// Reposition while open so the fixed menu tracks the trigger when the
+				// snapshot page scrolls (capture phase catches the inner scroll container).
+				win.addEventListener('scroll', onReposition, true);
+				win.addEventListener('resize', onReposition);
 			}
 		});
 	}

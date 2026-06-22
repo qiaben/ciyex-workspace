@@ -826,6 +826,27 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
+		// LOINC lab test NAME search (the Lab Order form's "Test Name" picker,
+		// keyed `testDisplay`). The field stores the human-readable test name, so
+		// the dropdown surfaces the description as the primary label (code as the
+		// secondary line) and selecting one back-fills the companion `testCode`
+		// input — mirroring the full Lab editor's search/relatedField wiring.
+		if (k === 'testdisplay' || k === 'testname') {
+			return {
+				...f,
+				kind: 'search' as const,
+				onSearch: async (q) => (await fetchCodeSystem('LOINC', q)).map(r => ({
+					value: r.details?.description || r.description || r.value,
+					label: r.details?.description || r.description || r.value,
+					description: r.value,
+					details: r.details,
+				})),
+				onSelectSearchResult: (item, all) => {
+					const code = item.details?.code || '';
+					if (code) { const i = all.get('testCode'); if (i) { i.value = code; } }
+				},
+			};
+		}
 		// LOINC lab test code search.
 		if (k === 'testcode' || k === 'loinc') {
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q) };

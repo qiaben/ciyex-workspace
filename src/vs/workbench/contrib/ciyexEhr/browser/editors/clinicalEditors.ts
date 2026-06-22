@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -4497,19 +4497,38 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		actions: [
 			{
 				// allow-any-unicode-next-line
-				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, dlg) => {
+				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, _dlg) => {
 					const fmt = (k: string): string => { const v = item[k]; return (v === undefined || v === null || v === '') ? '—' : String(v); };
 					const amt = typeof item.amount === 'number' ? `$${(item.amount as number).toFixed(2)}` : fmt('amount');
-					await dlg.info(
-						`Transaction ${fmt('transactionId')}\n` +
-						`Patient: ${item.patientName || (item.patientId ? `Patient #${item.patientId}` : '—')}\n` +
-						`Amount: ${amt}\n` +
-						`Type: ${fmt('transactionType')}\n` +
-						`Method: ${fmt('paymentMethodType')}\n` +
-						`Status: ${fmt('status')}\n` +
-						`Description: ${fmt('description')}\n` +
-						`Date: ${fmt('collectedAt')}`
-					);
+					const titleCase = (s: string): string => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+					const dateStr = ((): string => {
+						const raw = String(item.collectedAt ?? '').trim();
+						if (!raw) { return '—'; }
+						const d = new Date(raw);
+						return isNaN(d.getTime()) ? raw : d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+					})();
+					const statusStr = titleCase(fmt('status'));
+					const statusColor = ((): string | undefined => {
+						const s = statusStr.toLowerCase();
+						if (s.includes('complet') || s.includes('fulfil') || s.includes('post')) { return '#22c55e'; }
+						if (s.includes('pend') || s.includes('process')) { return '#f59e0b'; }
+						if (s.includes('fail') || s.includes('void') || s.includes('cancel') || s.includes('refund')) { return '#ef4444'; }
+						return s === '—' ? undefined : '#3b9edd';
+					})();
+					await showThemedDetails({
+						title: `Transaction ${item.transactionId ? `#${item.transactionId}` : ''}`.trim(),
+						subtitle: String(item.patientName || (item.patientId ? `Patient #${item.patientId}` : '')),
+						anchor: this.root,
+						rows: [
+							{ label: 'Patient', value: String(item.patientName || (item.patientId ? `Patient #${item.patientId}` : '—')) },
+							{ label: 'Amount', value: amt, emphasis: true },
+							{ label: 'Type', value: titleCase(fmt('transactionType')) },
+							{ label: 'Method', value: titleCase(fmt('paymentMethodType')) },
+							{ label: 'Status', value: statusStr, accent: statusColor },
+							{ label: 'Date', value: dateStr },
+							{ label: 'Description', value: fmt('description'), wide: true },
+						],
+					});
 				}
 			},
 			{

@@ -41,6 +41,19 @@ interface ClinicalItem {
 	command: string;
 	color: string;
 	apiPath: string;
+	/**
+	 * Endpoint the "+" create drawer POSTs to, derived from the submitted form
+	 * values, when it differs from the list {@link apiPath}. Mirrors the editor
+	 * config's `buildCreateUrl` — e.g. Lab Orders list at `/api/lab-order/search`
+	 * but create at `/api/lab-order/{patientId}` (POSTing to the search path 500s).
+	 */
+	buildCreateUrl?: (payload: Record<string, unknown>) => string;
+	/**
+	 * Endpoint the Edit drawer PUTs to for a given row, when it differs from
+	 * `{apiPath}/{id}`. Mirrors the editor config's `buildItemUrl` — e.g. Lab
+	 * Orders edit at `/api/lab-order/{patientId}/{id}`.
+	 */
+	buildItemUrl?: (row: Record<string, unknown>) => string;
 	titleField: string[];
 	subtitleField?: string[];
 	actions: RowAction[];
@@ -92,6 +105,11 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		command: 'ciyex.openLabs',
 		color: '#3b82f6',
 		apiPath: '/api/lab-order/search?page=0&size=10',
+		// Lab orders are patient-scoped on create/edit (mirrors LabsEditor):
+		// POST /api/lab-order/{patientId}, PUT /api/lab-order/{patientId}/{id}.
+		// The list/search path has no POST handler, so the `+` drawer was 500ing.
+		buildCreateUrl: (p) => `/api/lab-order/${p.patientId}`,
+		buildItemUrl: (r) => `/api/lab-order/${r.patientId}/${r.id}`,
 		titleField: ['patientFirstName', 'patientName'],
 		subtitleField: ['orderName', 'status'],
 		editFields: formFieldsToEditFields(LAB_ORDER_FORM_FIELDS),
@@ -564,7 +582,11 @@ export class ClinicalMenuPane extends ViewPane {
 			primaryLabel: 'Create',
 			formExtras: item.formExtras ? (host, values) => item.formExtras!(host, values, this.apiService) : undefined,
 			onSave: async (next) => {
-				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
+				// Some resources create through a payload-derived endpoint (e.g. Lab
+				// Orders: POST /api/lab-order/{patientId}); POSTing to the list/search
+				// path 500s.
+				const url = item.buildCreateUrl ? item.buildCreateUrl(next) : basePath;
+				const res = await this.apiService.fetch(url, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
 				await this._loadItemData(item);
 			},
@@ -601,7 +623,8 @@ export class ClinicalMenuPane extends ViewPane {
 			values: initialValues,
 			onSave: async (next) => {
 				const payload = { ...row, ...next };
-				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+				const url = item.buildItemUrl ? item.buildItemUrl(payload) : `${basePath}/${id}`;
+				const res = await this.apiService.fetch(url, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				await this._loadItemData(item);
 			},
