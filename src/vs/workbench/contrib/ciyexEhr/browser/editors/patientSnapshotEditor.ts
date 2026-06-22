@@ -64,6 +64,16 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  have surfaced yet. Merged into every list render until a subsequent
 	 *  fetch returns the same id, mirroring the chart editor's _pendingCreates. */
 	private readonly _pendingCreates = new Map<string, Array<Record<string, unknown>>>();
+	/** Appointment edits applied this session, keyed by appointment id. The
+	 *  status sub-resource lags (or a completed appointment's status only takes
+	 *  via the full PUT), and the search index can return stale provider/room/etc.,
+	 *  so the refetched appointment may still show pre-edit values. Overlay the
+	 *  changed fields so the card reflects them immediately and a Completed
+	 *  appointment can still be moved to any status. */
+	private readonly _apptStatusOverride = new Map<string, Record<string, unknown>>();
+	/** Provider display name -> id, so an appointment provider CHANGE persists
+	 *  (the API keys off the id/reference, not the display name). */
+	private readonly _providerIdByName = new Map<string, string>();
 	private static readonly PAGE_SIZE = 5;
 
 	constructor(
@@ -565,17 +575,25 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _mergePending(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
 		const pending = this._pendingCreates.get(entity);
 		if (!pending || pending.length === 0) { return items; }
-		const seen = new Set(items.map(r => String(r.id ?? r.fhirId ?? '')).filter(Boolean));
-		const stillPending: typeof items = [];
 		const out = [...items];
+		const indexById = new Map<string, number>();
+		out.forEach((r, i) => { const id = String(r.id ?? r.fhirId ?? ''); if (id) { indexById.set(id, i); } });
 		for (const p of pending) {
 			const pid = String(p.id ?? p.fhirId ?? '');
-			if (pid && seen.has(pid)) { continue; } // server caught up
-			stillPending.push(p);
-			out.unshift(p);
+			if (pid && indexById.has(pid)) {
+				// The server already returns this row — but for an EDIT its search
+				// index may still hold the stale values (e.g. the old date). Overlay
+				// our locally-saved copy so the user's change is reflected instead of
+				// being discarded as "server caught up" (QA: edited date not showing).
+				const i = indexById.get(pid)!;
+				out[i] = { ...out[i], ...p };
+			} else {
+				// A create the server hasn't indexed yet — surface it at the top.
+				out.unshift(p);
+			}
 		}
-		if (stillPending.length) { this._pendingCreates.set(entity, stillPending); }
-		else { this._pendingCreates.delete(entity); }
+		// Keep the overlay for the session: it's small, replaces by id, and clears
+		// when the editor is reopened. This avoids a stale-vs-fresh flip-flop.
 		return out;
 	}
 
@@ -901,7 +919,18 @@ export class PatientSnapshotEditor extends EditorPane {
 						const cand = (j?.data ?? j) as Record<string, unknown> | null;
 						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
 					} catch { /* */ }
-					this._trackCreated(entity, { ...item, ...next, ...(saved || {}) });
+					// The dashboard reads the encounter date from any of these keys; map
+					// the edited start date onto all of them so the overlay shows the
+					// new date immediately even though `saved` (the form Composition)
+					// and the stale search index still carry the old one.
+					const overlay: Record<string, unknown> = { ...item, ...next, ...(saved || {}) };
+					const newStart = (next['startDate'] ?? next['date']) as string | undefined;
+					if (newStart) {
+						for (const k of ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'dateOfService']) {
+							overlay[k] = newStart;
+						}
+					}
+					this._trackCreated(entity, overlay);
 					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter updated.' });
 					this._rerender();
 					return;
@@ -1205,6 +1234,17 @@ export class PatientSnapshotEditor extends EditorPane {
 		]);
 
 		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
+		// Reflect any status change made this session, since the refetched
+		// appointment may still carry the pre-change status (index lag / a
+		// Completed status that only the full PUT accepted).
+		if (apt) {
+			const aptId = String(apt.id ?? apt.appointmentId ?? '');
+			const override = aptId ? this._apptStatusOverride.get(aptId) : undefined;
+			if (override) {
+				Object.assign(apt, override);
+				if (override.status !== undefined) { apt.appointmentStatus = override.status; }
+			}
+		}
 		await this._ensureLocationNames();
 
 		if (this._currentPatientId !== patientId) { return; }
@@ -1471,6 +1511,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
+	/** Merge changed appointment fields into the session overlay (keyed by id). */
+	private _setApptOverride(id: string, patch: Record<string, unknown>): void {
+		if (!id) { return; }
+		this._apptStatusOverride.set(id, { ...(this._apptStatusOverride.get(id) || {}), ...patch });
+	}
+
 	private async _updateAppointmentStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<boolean> {
 		if (!id) { return false; }
 		// Primary path: the dedicated status sub-resource.
@@ -1480,7 +1526,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),
 			});
-			if (res.ok) { return true; }
+			if (res.ok) { this._setApptOverride(id, { status }); return true; }
 		} catch { /* fall through to the full-update fallback */ }
 		// Fallback: re-issue as a full appointment PUT (the same call the Edit
 		// dialog uses). The `/status` sub-resource can reject a transition once the
@@ -1495,7 +1541,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ ...apt, status }),
 				});
-				if (res.ok) { return true; }
+				if (res.ok) { this._setApptOverride(id, { status }); return true; }
 			} catch { /* surfaced below */ }
 		}
 		this.notificationService.notify({ severity: Severity.Error, message: 'Could not update the appointment status. Please try again.' });
@@ -1831,7 +1877,11 @@ export class PatientSnapshotEditor extends EditorPane {
 				const list = (data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
 				for (const p of list) {
 					const nm = (p.name || p.providerName || p.fullName || `${p.firstName || ''} ${p.lastName || ''}`).toString().trim();
-					if (nm) { names.add(nm); }
+					if (nm) {
+						names.add(nm);
+						const pid = (p.id || p.providerId || p.practitionerId || p.fhirId || '') as string;
+						if (pid) { this._providerIdByName.set(nm, String(pid)); }
+					}
 				}
 				if (names.size > 0) { break; }
 			} catch { /* try next */ }
@@ -1891,7 +1941,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			},
 			onSave: async (next) => {
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
-				const payload = {
+				// The API persists the provider by id/reference, not by display name —
+				// resolve the id so a provider CHANGE actually sticks (QA: changed
+				// provider not showing).
+				const provName = String(next.providerName || '');
+				const provId = provName ? (this._providerIdByName.get(provName) || '') : '';
+				const payload: Record<string, unknown> = {
 					...apt,
 					start: startTime,
 					startTime,
@@ -1899,13 +1954,29 @@ export class PatientSnapshotEditor extends EditorPane {
 					status: next.status,
 					appointmentType: next.appointmentType,
 					visitType: next.appointmentType,
-					providerName: next.providerName,
+					providerName: provName,
 					room: next.room,
 					reason: next.reason,
 					notes: next.notes,
 				};
+				if (provId) {
+					payload.providerId = provId;
+					payload.provider = `Practitioner/${provId}`;
+					payload.practitionerName = provName;
+				} else if (!provName) {
+					payload.providerId = '';
+					payload.provider = '';
+				}
 				const res = await this.apiService.fetch(`/api/appointments/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				// Overlay the edit so it shows on the rerender even if the search index
+				// still serves stale values.
+				this._setApptOverride(id, {
+					start: startTime, startTime, status: next.status,
+					appointmentType: next.appointmentType, visitType: next.appointmentType,
+					providerName: provName, practitionerName: provName, providerId: provId,
+					room: next.room, reason: next.reason, notes: next.notes,
+				});
 				// Selecting "Completed" in the status dropdown auto-spins up an
 				// encounter (and opens it) when the visit doesn't have one yet —
 				// the same integration the Quick Actions "Complete" tile performs.

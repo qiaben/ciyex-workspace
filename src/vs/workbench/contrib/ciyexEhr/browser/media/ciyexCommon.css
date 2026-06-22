@@ -608,3 +608,17 @@
 	filter: brightness(0.75);
 	transition: filter 0.15s ease-out;
 }
+
+/* ============================================================================
+ * Ciyex EHR — Visit Summary slide-over: hide the scrollbar
+ * ----------------------------------------------------------------------------
+ * The summary body stays scrollable for long encounters, but the WebKit
+ * scrollbar is hidden so the panel reads as a clean, chrome-less sheet
+ * (Firefox/Edge use scrollbar-width/-ms-overflow-style set inline).
+ * ============================================================================ */
+.ciyex-summary-body::-webkit-scrollbar,
+.ciyex-summary-print-preview::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+	display: none;
+}

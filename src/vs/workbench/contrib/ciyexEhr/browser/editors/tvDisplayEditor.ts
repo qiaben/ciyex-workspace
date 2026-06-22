@@ -194,44 +194,51 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerEl);
 
-		// Practice name (left)
+		// Practice name (left) — allowed to shrink/ellipsize so the action
+		// buttons on the right are never pushed out of view.
 		this.practiceLabelEl = DOM.append(this.headerEl, DOM.$('div'));
-		this.practiceLabelEl.style.cssText = 'font-size:20px;font-weight:700;';
+		this.practiceLabelEl.style.cssText = 'font-size:20px;font-weight:700;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		this.practiceLabelEl.textContent = this.practiceName;
 
-		// Live clock (center)
+		// Live clock (center) — takes the flexible middle space.
 		const clockWrap = DOM.append(this.headerEl, DOM.$('div'));
-		clockWrap.style.cssText = 'text-align:center;';
+		clockWrap.style.cssText = 'text-align:center;flex:1 1 auto;min-width:0;';
 		this.clockDateEl = DOM.append(clockWrap, DOM.$('div'));
 		this.clockDateEl.style.cssText = 'font-size:14px;font-weight:500;opacity:0.8;';
 		this.clockTimeEl = DOM.append(clockWrap, DOM.$('div'));
 		this.clockTimeEl.style.cssText = 'font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;';
 		this._updateClock();
 
-		// Action buttons (right)
+		// Action buttons (right) — labelled pills that never shrink/hide, and wrap
+		// below the clock on very narrow windows instead of being clipped.
 		const actions = DOM.append(this.headerEl, DOM.$('div'));
-		actions.style.cssText = 'display:flex;align-items:center;gap:8px;';
+		actions.style.cssText = 'display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;';
 
 		// Refresh-now
-		const refreshBtn = this._makeIconButton(actions, 'Refresh', 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5');
+		const refreshBtn = this._makeIconButton(actions, 'Refresh', 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5', 'Refresh');
 		refreshBtn.addEventListener('click', () => { void this._loadAppointments(); });
 
-		// Fullscreen toggle
-		const fsBtn = this._makeIconButton(actions, 'Toggle Fullscreen', 'M3 7V3h4 M21 7V3h-4 M3 17v4h4 M21 17v4h-4');
-		fsBtn.addEventListener('click', () => this._toggleFullscreen());
+		// Fullscreen toggle — label reflects the current state.
+		const fsLabel = this._cssFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+		const fsPath = this._cssFullscreen ? 'M8 3v3a2 2 0 0 1-2 2H3 M21 8h-3a2 2 0 0 1-2-2V3 M3 16h3a2 2 0 0 1 2 2v3 M16 21v-3a2 2 0 0 1 2-2h3' : 'M3 7V3h4 M21 7V3h-4 M3 17v4h4 M21 17v4h-4';
+		const fsBtn = this._makeIconButton(actions, 'Toggle Fullscreen', fsPath, fsLabel);
+		fsBtn.addEventListener('click', () => { this._toggleFullscreen(); this._renderHeader(); });
 
-		// Close
-		const closeBtn = this._makeIconButton(actions, 'Close', 'M18 6 6 18 M6 6l12 12');
+		// Close / Cancel
+		const closeBtn = this._makeIconButton(actions, 'Close', 'M18 6 6 18 M6 6l12 12', 'Close');
 		closeBtn.addEventListener('click', () => { void this.group.closeEditor(this.input!); });
 	}
 
-	private _makeIconButton(parent: HTMLElement, title: string, pathData: string): HTMLButtonElement {
+	private _makeIconButton(parent: HTMLElement, title: string, pathData: string, label?: string): HTMLButtonElement {
 		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 		btn.title = title;
-		btn.setAttribute('aria-label', title);
+		btn.setAttribute('aria-label', label || title);
 		const btnBg = 'var(--vscode-button-secondaryBackground, rgba(127,127,127,0.12))';
 		const btnHover = 'var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.22))';
-		btn.style.cssText = `display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:${btnBg};border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.25));border-radius:8px;color:var(--vscode-foreground);cursor:pointer;padding:0;`;
+		// Labelled pill (icon + text) so the controls are obvious and never collapse
+		// to invisibility; icon-only square is kept as a fallback when no label.
+		const sizing = label ? 'height:36px;padding:0 14px;gap:7px;' : 'width:36px;height:36px;padding:0;';
+		btn.style.cssText = `display:inline-flex;align-items:center;justify-content:center;${sizing}background:${btnBg};border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.25));border-radius:8px;color:var(--vscode-foreground);cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0;`;
 		btn.addEventListener('mouseenter', () => { btn.style.background = btnHover; });
 		btn.addEventListener('mouseleave', () => { btn.style.background = btnBg; });
 		const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -240,6 +247,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
 		svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
 		svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+		svg.style.flexShrink = '0';
 		// Split combined "M ... M ..." path on each `M` so multi-stroke icons render
 		// as separate paths (single-path with multiple "M"s also works, but each
 		// path keeps the strokes cleanly separable).
@@ -250,6 +258,10 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			svg.appendChild(p);
 		}
 		btn.appendChild(svg);
+		if (label) {
+			const txt = DOM.append(btn, DOM.$('span'));
+			txt.textContent = label;
+		}
 		return btn;
 	}
 

@@ -41,6 +41,7 @@ interface Appointment {
 	duration?: number;
 	providerName?: string;
 	practitionerName?: string;
+	providerId?: string;
 	patientId?: string;
 	encounterId?: string;
 	room?: string;
@@ -145,6 +146,12 @@ export class ScheduleSidebarPane extends ViewPane {
 
 	private container!: HTMLElement;
 	private appointments: Appointment[] = [];
+	/** Edits applied this session, keyed by appointment id. Overlaid onto the
+	 *  reloaded appointments so a change (status, provider, room, type, time)
+	 *  shows immediately even while the FHIR search index still serves the old
+	 *  values — covers "edited a completed appointment / changed provider, but it
+	 *  doesn't show". Cleared when the sidebar is recreated. */
+	private readonly _apptEditOverride = new Map<string, Partial<Appointment>>();
 	private refreshTimer: number | undefined;
 
 	constructor(
@@ -331,6 +338,13 @@ export class ScheduleSidebarPane extends ViewPane {
 						patientPhotoUrl: resolvePhotoUrl(a, 'patient'),
 						providerPhotoUrl: resolvePhotoUrl(a, 'provider'),
 					}));
+					// Overlay this-session edits so a saved change (status, provider,
+					// room, type, time) shows even while the server's search index
+					// still returns the pre-edit values.
+					for (const a of page as Appointment[]) {
+						const ov = this._apptEditOverride.get(String(a.id ?? ''));
+						if (ov) { Object.assign(a, ov); }
+					}
 					// Client-side filter: keep appointments whose start date
 					// falls inside [startDate, endDate]. Use local-date strings
 					// so DST / TZ shifts don't drop edge rows the way an ISO
@@ -1130,22 +1144,56 @@ export class ScheduleSidebarPane extends ViewPane {
 				providerName: initialProvider,
 			},
 			onSave: async (next) => {
-				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
+				const apptDate = String(next.appointmentDate || '');
+				const apptTime = String(next.appointmentTime || '');
+				const startTime = apptTime ? `${apptDate}T${apptTime}:00` : startIso;
+				const status = String(next.status || '');
+				const visitType = String(next.appointmentType || '');
+				const room = String(next.room || '');
+				// Resolve the chosen provider's id — the API persists the provider by
+				// reference/id, so sending only `providerName` left the provider
+				// unchanged (QA: "changed the provider, not showing"). Send the id and
+				// FHIR reference alongside the display name.
+				const provName = String(next.providerName || '');
+				const provId = provName ? (this._providerIdByName.get(provName) || '') : '';
 				// Update both `start` and `startTime`; the FHIR-normalized appointments
 				// API may read either, and leaving one stale caused the time field to
 				// "revert" on subsequent loads.
-				const payload = {
+				const payload: Record<string, unknown> = {
 					...apt,
 					start: startTime,
 					startTime,
-					status: next.status,
-					appointmentType: next.appointmentType,
-					visitType: next.appointmentType,
-					room: next.room,
-					providerName: next.providerName,
+					status,
+					appointmentType: visitType,
+					visitType,
+					room,
+					providerName: provName,
 				};
+				if (provId) {
+					payload.providerId = provId;
+					payload.provider = `Practitioner/${provId}`;
+					payload.practitionerName = provName;
+				} else if (!provName) {
+					// Explicitly unassigned.
+					payload.providerId = '';
+					payload.provider = '';
+				}
 				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
+				// Remember the edit so it survives the reload even if the search index
+				// still serves the old values (also lets a Completed appointment's
+				// status change show right away).
+				this._apptEditOverride.set(String(apt.id ?? ''), {
+					start: startTime,
+					startTime,
+					status,
+					appointmentType: visitType,
+					visitType,
+					room,
+					providerName: provName,
+					practitionerName: provName,
+					providerId: provId,
+				});
 				await this._loadAndRender();
 			},
 		});
@@ -1154,6 +1202,10 @@ export class ScheduleSidebarPane extends ViewPane {
 	/** Cached provider name list — populated from /api/providers and
 	 *  augmented with provider names observed on the loaded appointments. */
 	private _providerOptions: string[] = [];
+	/** provider display name -> provider/practitioner id, so the Edit dialog can
+	 *  persist a provider CHANGE (the API keys off the id/reference, not the
+	 *  display name — sending only the name left the provider unchanged). */
+	private readonly _providerIdByName = new Map<string, string>();
 	private async _loadProviders(): Promise<void> {
 		try {
 			const urls = ['/api/providers/organization?page=0&size=100', '/api/fhir-resource/providers?page=0&size=100', '/api/providers?page=0&size=100'];
@@ -1167,7 +1219,11 @@ export class ScheduleSidebarPane extends ViewPane {
 					for (const p of list) {
 						const r = p as Record<string, unknown>;
 						const name = (r.name || r.fullName || r.displayName || `${r.firstName || ''} ${r.lastName || ''}`.trim() || '') as string;
-						if (name) { names.add(name); }
+						if (name) {
+							names.add(name);
+							const id = (r.id || r.providerId || r.practitionerId || r.fhirId || '') as string;
+							if (id) { this._providerIdByName.set(name, String(id)); }
+						}
 					}
 					if (names.size > 0) {
 						this._providerOptions = Array.from(names).sort();

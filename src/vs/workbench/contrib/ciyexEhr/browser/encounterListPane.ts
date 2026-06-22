@@ -15,7 +15,6 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
@@ -58,7 +57,6 @@ export class EncounterListPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ICommandService private readonly commandService: ICommandService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@INotificationService private readonly notificationService: INotificationService,
@@ -110,16 +108,9 @@ export class EncounterListPane extends ViewPane {
 		}
 		filter.addEventListener('change', () => { this.filterValue = filter.value; this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search.value); });
 
-		const addBtn = DOM.append(toolbar, DOM.$('button'));
-		addBtn.textContent = '+';
-		addBtn.title = 'New Encounter';
-		addBtn.style.cssText = 'padding:2px 6px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:3px;cursor:pointer;font-size:12px;height:24px;width:24px;';
-		// Without a patient context, calling `ciyex.openEncounter` would fall
-		// back to "first non-errored encounter" and load some arbitrary
-		// patient's chart (the test team saw "James Lee" appear no matter who
-		// clicked +). Prompt for a patient first so the new-encounter flow
-		// always lands on the right chart.
-		addBtn.addEventListener('click', () => void this._pickPatientAndOpenEncounter());
+		// No "+" create-encounter button here (QA request): encounters are created
+		// from their own workflow (appointment → encounter / patient chart), not
+		// from a context-less sidebar button.
 
 		// Toolbar row 2: date range
 		const dateRow = DOM.append(this.container, DOM.$('div'));
@@ -375,35 +366,6 @@ export class EncounterListPane extends ViewPane {
 			(next) => { this.visibleCount = next; this._renderList(search); },
 			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search); },
 		);
-	}
-
-	private async _pickPatientAndOpenEncounter(): Promise<void> {
-		const pick = this.quickInputService.createQuickPick<IQuickPickItem & { patientId: string }>();
-		pick.placeholder = 'Search patient to create an encounter for…';
-		pick.matchOnDescription = true;
-		pick.matchOnDetail = true;
-		pick.busy = true;
-		pick.show();
-		try {
-			const res = await this.apiService.fetch('/api/patients?page=0&size=50');
-			if (res.ok) {
-				const data = await res.json();
-				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-				pick.items = list.map(p => {
-					const pid = String(p.id ?? p.patientId ?? '');
-					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || pid);
-					const dob = p.dateOfBirth ? ` · DOB ${p.dateOfBirth}` : '';
-					return { label: name, description: pid ? `MRN ${pid}${dob}` : dob, patientId: pid };
-				});
-			}
-		} catch { /* */ }
-		pick.busy = false;
-		pick.onDidAccept(() => {
-			const sel = pick.selectedItems[0];
-			pick.hide();
-			if (!sel || !sel.patientId) { return; }
-			this.commandService.executeCommand('ciyex.openPatientChart', sel.patientId, sel.label, 'encounters');
-		});
 	}
 
 	private _openEditDialog(item: Record<string, unknown>, encId: string, patName: string): void {

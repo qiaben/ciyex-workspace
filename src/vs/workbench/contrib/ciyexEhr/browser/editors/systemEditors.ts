@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from '../../../../../nls.js';
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, showThemedModal } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, showThemedModal, showThemedDetails, IThemedDetailRow } from './clinicalListEditor.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -446,23 +446,42 @@ export class FaxEditor extends ClinicalListEditorBase {
 				// Read-only fax detail summary; the "Assign to Patient" action was
 				// removed (issue #17c) but the View option is kept.
 				// allow-any-unicode-next-line
-				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, dlg) => {
+				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, _dlg) => {
+					const dash = '\u2014';
 					const dir = String(item['direction'] || '').toLowerCase();
 					const contact = dir === 'inbound'
-						? (item['senderName'] || item['recipientName'] || '\u2014')
-						: (item['recipientName'] || item['senderName'] || '\u2014');
-					const lines = [
-						`Direction: ${dir ? dir.charAt(0).toUpperCase() + dir.slice(1) : '\u2014'}`,
-						`${dir === 'inbound' ? 'From' : 'To'}: ${String(contact)}`,
-						`Fax Number: ${String(item['faxNumber'] || '\u2014')}`,
-						`Subject: ${String(item['subject'] || '\u2014')}`,
-						`Pages: ${String(item['pageCount'] ?? '\u2014')}`,
-						`Category: ${String(item['category'] || '\u2014')}`,
-						`Patient: ${String(item['patientName'] || '\u2014')}`,
-						`Status: ${String(item['status'] || '\u2014')}`,
-						`Notes: ${String(item['notes'] || '\u2014')}`,
+						? (item['senderName'] || item['recipientName'] || dash)
+						: (item['recipientName'] || item['senderName'] || dash);
+					const cap = (s: string): string => s ? s.charAt(0).toUpperCase() + s.slice(1) : dash;
+					const fmtDate = (raw: unknown): string => {
+						if (!raw) { return dash; }
+						try { return new Date(String(raw)).toLocaleString(); } catch { return String(raw); }
+					};
+					const statusColors: Record<string, string> = {
+						pending: '#f59e0b', sending: '#3b82f6', sent: '#3b82f6',
+						delivered: '#22c55e', received: '#22c55e', failed: '#ef4444',
+						processed: '#22c55e', attached: '#22c55e', cancelled: '#9ca3af',
+					};
+					const status = String(item['status'] || '').toLowerCase();
+					const category = String(item['category'] || '');
+					const rows: IThemedDetailRow[] = [
+						{ label: 'Direction', value: cap(dir) },
+						{ label: 'Status', value: status ? cap(status) : dash, accent: statusColors[status] },
+						{ label: dir === 'inbound' ? 'From' : 'To', value: String(contact) },
+						{ label: 'Fax Number', value: String(item['faxNumber'] || dash) },
+						{ label: 'Subject', value: String(item['subject'] || dash) },
+						{ label: 'Pages', value: String(item['pageCount'] ?? dash) },
+						{ label: 'Category', value: category ? category.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : dash },
+						{ label: 'Patient', value: String(item['patientName'] || dash) },
+						{ label: 'Processed By', value: String(item['processedBy'] || dash) },
+						{ label: 'Processed At', value: fmtDate(item['processedAt']) },
+						{ label: 'Received', value: fmtDate(item['receivedAt']) },
+						{ label: 'Sent', value: fmtDate(item['sentAt']) },
 					];
-					await dlg.info('Fax Details', lines.join('\n'));
+					if (item['notes']) {
+						rows.push({ label: 'Notes', value: String(item['notes']), wide: true });
+					}
+					await showThemedDetails({ title: 'Fax Details', subtitle: String(item['subject'] || ''), rows });
 				}
 			},
 			{

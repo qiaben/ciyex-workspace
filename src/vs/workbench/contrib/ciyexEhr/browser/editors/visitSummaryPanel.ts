@@ -235,7 +235,9 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 
 	// Scrollable body where the summary content is rendered.
 	const body = DOM.append(sheet, DOM.$('div.ciyex-summary-body'));
-	body.style.cssText = `overflow:auto;padding:20px 22px;flex:1;background:${col.bg};`;
+	// Keep the body scrollable (content can be long) but hide the visible
+	// scrollbar — matches the rest of the app's chrome-less look.
+	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
 	const loading = DOM.append(body, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
@@ -448,6 +450,25 @@ const FORM_SECTION_GROUPS: Array<{ prefix: string; title: string }> = [
 	{ prefix: 'procedures', title: 'Procedures & Coding' },
 ];
 
+/** Default "normal" Physical Exam text per system, mirroring
+ *  EncounterFormEditor.PE_SYSTEMS. The exam grid pre-fills every system with
+ *  these defaults, so an untouched Physical Exam saves the full normal template.
+ *  The Visit Summary uses this map to hide untouched systems and show only the
+ *  findings the provider actually entered. Keyed by the sanitized system key
+ *  (`system.toLowerCase().replace(/[^a-z]/g,'_')`). */
+const PE_DEFAULT_NORMALS: Record<string, string> = {
+	general_appearance: 'Well-appearing, in no acute distress',
+	heent: 'Normocephalic, PERRL, TMs clear, oropharynx normal',
+	neck: 'Supple, no lymphadenopathy, no thyromegaly',
+	chest_lungs: 'Clear to auscultation bilaterally, no wheezes/rhonchi/rales',
+	cardiovascular: 'RRR, no murmurs/gallops/rubs, pulses intact',
+	abdomen: 'Soft, non-tender, non-distended, BS active',
+	extremities: 'No edema, no cyanosis, full ROM',
+	neurological: 'Alert, oriented x4, CN II-XII intact, sensation normal',
+	skin: 'Warm, dry, intact, no rashes or lesions',
+	psychiatric: 'Appropriate mood and affect, cooperative',
+};
+
 /** Humanize a Composition field key into a readable label, stripping the
  *  section prefix and upper-casing common clinical abbreviations. */
 function humanizeFieldKey(key: string, prefix: string): string {
@@ -533,6 +554,17 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 		const keys = allKeys.filter(k => k === grp.prefix || k.startsWith(grp.prefix + '_'));
 		const rows: Array<[string, string]> = [];
 		for (const k of keys) {
+			// Physical Exam: show ONLY what the provider actually entered. The exam
+			// grid defaults every system to its normal template, so untouched
+			// encounters otherwise dump the whole normal exam. Skip the per-system
+			// "Normal" checkbox scaffolding and any system left at its default text.
+			if (grp.prefix === 'pe') {
+				if (/_normal$/.test(k)) { usedKeys.add(k); continue; }
+				const sys = k.startsWith('pe_') ? k.slice(3) : k;
+				const def = PE_DEFAULT_NORMALS[sys];
+				const raw = comp[k];
+				if (def && typeof raw === 'string' && raw.trim().toLowerCase() === def.toLowerCase()) { usedKeys.add(k); continue; }
+			}
 			const v = fmtValue(k, comp[k]);
 			if (v) { rows.push([humanizeFieldKey(k, grp.prefix), v]); usedKeys.add(k); }
 		}

@@ -702,7 +702,10 @@ export class SettingsHubEditor extends EditorPane {
 					}
 				}
 			} catch { /* fall through */ }
-			await this._fetchFhirRecords(tabKey);
+			const fetchOk = await this._fetchFhirRecords(tabKey);
+			if (tabKey === 'practice') {
+				await this._seedPracticeIfEmpty(fetchOk);
+			}
 		}
 
 		DOM.clearNode(this.contentEl);
@@ -760,7 +763,7 @@ export class SettingsHubEditor extends EditorPane {
 		}
 	}
 
-	private async _fetchFhirRecords(tabKey: string): Promise<void> {
+	private async _fetchFhirRecords(tabKey: string): Promise<boolean> {
 		try {
 			const res = await this.apiService.fetch(`/api/fhir-resource/${encodeURIComponent(tabKey)}?page=${this.page}&size=${this.pageSize}`);
 			if (res.ok) {
@@ -776,6 +779,44 @@ export class SettingsHubEditor extends EditorPane {
 					this.records = [];
 					this.totalElements = 0;
 				}
+				return true;
+			}
+		} catch { /* ignore */ }
+		return false;
+	}
+
+	/** Local tenant/org alias, used to seed a starter practice for new accounts. */
+	private _getTenant(): string {
+		try {
+			return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || '';
+		} catch {
+			return '';
+		}
+	}
+
+	/**
+	 * New practice accounts have no FHIR practice/Organization resource yet, so
+	 * the General > Practice page came up empty ("No records yet"). When the
+	 * list is genuinely empty (fetch succeeded), self-heal by seeding a starter
+	 * practice from the org alias so the account's practice is available. Guarded
+	 * per-tenant so we never create duplicates.
+	 */
+	private async _seedPracticeIfEmpty(fetchOk: boolean): Promise<void> {
+		if (!fetchOk || this.records.length > 0) { return; }
+		const tenant = this._getTenant();
+		if (!tenant) { return; }
+		const flagKey = `ciyex_practice_seeded_${tenant}`;
+		try { if (sessionStorage.getItem(flagKey)) { return; } } catch { /* ignore */ }
+		const name = tenant.split(/[-_\s]+/).filter(Boolean)
+			.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || tenant;
+		try { sessionStorage.setItem(flagKey, '1'); } catch { /* ignore */ }
+		try {
+			const res = await this.apiService.fetch('/api/fhir-resource/practice', {
+				method: 'POST',
+				body: JSON.stringify({ name })
+			});
+			if (res.ok) {
+				await this._fetchFhirRecords('practice');
 			}
 		} catch { /* ignore */ }
 	}
@@ -1438,6 +1479,41 @@ export class SettingsHubEditor extends EditorPane {
 		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 	}
 
+	/**
+	 * Derive a default placeholder for common form fields (address, contact,
+	 * etc.) when the backend field config does not supply one. Keyed by the
+	 * field key first, then a few label heuristics.
+	 */
+	private static _defaultPlaceholder(field: FieldDef): string {
+		const byKey: Record<string, string> = {
+			addressLine1: 'Street address',
+			addressLine2: 'Suite, unit, building, floor, etc.',
+			address1: 'Street address',
+			address2: 'Suite, unit, building, floor, etc.',
+			street: 'Street address',
+			city: 'City',
+			state: 'State / Province',
+			zip: 'ZIP / Postal code',
+			zipCode: 'ZIP / Postal code',
+			postalCode: 'ZIP / Postal code',
+			country: 'Country',
+			phone: '(555) 123-4567',
+			fax: '(555) 123-4568',
+			email: 'name@example.com',
+			website: 'https://example.com',
+		};
+		const key = (field.key || '').trim();
+		if (byKey[key]) { return byKey[key]; }
+		// Loose label match so configs using human labels still get a hint.
+		const label = (field.label || '').toLowerCase();
+		if (label.includes('address line 1') || label === 'address') { return 'Street address'; }
+		if (label.includes('address line 2')) { return 'Suite, unit, building, floor, etc.'; }
+		if (label === 'city') { return 'City'; }
+		if (label === 'state' || label.includes('province')) { return 'State / Province'; }
+		if (label.includes('zip') || label.includes('postal')) { return 'ZIP / Postal code'; }
+		return '';
+	}
+
 	private _renderField(parent: HTMLElement, field: FieldDef, isView: boolean): void {
 		const span = field.type === 'textarea' || field.type === 'address' ? 2 : 1;
 		const cell = DOM.append(parent, DOM.$('div'));
@@ -1459,6 +1535,9 @@ export class SettingsHubEditor extends EditorPane {
 		const inputStyle = `width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid ${error ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)'};border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;`;
 
 		const t = field.type || 'text';
+		// Fall back to a sensible placeholder when the backend field config
+		// omits one — clients were confused by blank address inputs.
+		const ph = field.placeholder || SettingsHubEditor._defaultPlaceholder(field);
 
 		// Special: active/isActive/enabled fields → toggle button
 		const isActiveKey = field.key === 'active' || field.key === 'isActive' || field.key === 'enabled';
@@ -1775,7 +1854,7 @@ export class SettingsHubEditor extends EditorPane {
 			const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 			ta.value = ((value === null || value === undefined) ? '' : String(value));
 			ta.rows = field.rows || 3;
-			ta.placeholder = field.placeholder || '';
+			ta.placeholder = ph;
 			ta.readOnly = isView || !!field.readOnly;
 			ta.style.cssText = inputStyle + 'font-family:inherit;resize:vertical;';
 			ta.addEventListener('input', () => { this.formData[field.key] = ta.value; });
@@ -1787,7 +1866,7 @@ export class SettingsHubEditor extends EditorPane {
 			sel.style.cssText = inputStyle.replace('var(--vscode-input-background)', 'var(--vscode-dropdown-background,var(--vscode-input-background))') + 'cursor:pointer;';
 			const placeholder = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 			placeholder.value = '';
-			placeholder.textContent = field.placeholder || '\u2014 Select \u2014';
+			placeholder.textContent = ph || '\u2014 Select \u2014';
 			for (const o of field.options || []) {
 				const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 				if (typeof o === 'string') { opt.value = o; opt.textContent = o; }
@@ -1810,7 +1889,7 @@ export class SettingsHubEditor extends EditorPane {
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 			inp.type = 'number';
 			inp.value = (value === null || value === undefined) ? '' : String(value);
-			inp.placeholder = field.placeholder || '';
+			inp.placeholder = ph;
 			inp.readOnly = isView || !!field.readOnly;
 			inp.style.cssText = inputStyle;
 			inp.addEventListener('input', () => { this.formData[field.key] = inp.value === '' ? null : parseFloat(inp.value); });
@@ -1826,7 +1905,7 @@ export class SettingsHubEditor extends EditorPane {
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 			inp.type = t === 'email' ? 'email' : t === 'phone' || t === 'tel' ? 'tel' : t === 'url' ? 'url' : 'text';
 			inp.value = (value === null || value === undefined) ? '' : String(value);
-			inp.placeholder = field.placeholder || '';
+			inp.placeholder = ph;
 			inp.readOnly = isView || !!field.readOnly;
 			inp.style.cssText = inputStyle;
 			inp.addEventListener('input', () => { this.formData[field.key] = inp.value; });

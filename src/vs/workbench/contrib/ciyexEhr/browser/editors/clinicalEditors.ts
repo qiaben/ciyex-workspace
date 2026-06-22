@@ -3927,31 +3927,23 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		const addBtn = DOM.append(addRow, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = `Add ${singular}`;
 		addBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;';
-		addBtn.addEventListener('click', async () => {
-			const name = input.value.trim();
-			if (!name) { return; }
-			addBtn.disabled = true;
-			try {
-				const payload: Record<string, unknown> = { name };
-				if (typeHidden) { payload.type = typeHidden.value; }
-				await this.apiService.fetch(apiPath, { method: 'POST', body: JSON.stringify(payload) });
-				input.value = '';
-				void this._renderSettings();
-			} catch { addBtn.disabled = false; }
-		});
 
 		const listEl = DOM.append(card, DOM.$('div'));
 		listEl.textContent = 'Loading…';
 		listEl.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
-		try {
-			const res = await this.apiService.fetch(`${apiPath}?page=0&size=200`);
-			const json = res.ok ? await res.json() : null;
-			const wrapper = json?.data ?? json;
-			const items = (wrapper?.content || (Array.isArray(wrapper) ? wrapper : [])) as Array<Record<string, unknown>>;
+
+		// All loaded records; the name input doubles as a live search/filter.
+		let allItems: Array<Record<string, unknown>> = [];
+		const renderList = (): void => {
 			DOM.clearNode(listEl);
 			listEl.style.color = 'var(--vscode-foreground)';
-			if (items.length === 0) { listEl.textContent = `No ${singular.toLowerCase()} records yet.`; return; }
-			for (const item of items) {
+			const q = input.value.trim().toLowerCase();
+			const filtered = q
+				? allItems.filter(it => String(it.name ?? it.id ?? '').toLowerCase().includes(q))
+				: allItems;
+			if (allItems.length === 0) { listEl.textContent = `No ${singular.toLowerCase()} records yet.`; return; }
+			if (filtered.length === 0) { listEl.textContent = `No ${singular.toLowerCase()} matches "${input.value.trim()}".`; return; }
+			for (const item of filtered) {
 				const row = DOM.append(listEl, DOM.$('div'));
 				row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.12);font-size:13px;';
 				const name = DOM.append(row, DOM.$('span'));
@@ -3963,10 +3955,51 @@ export class InventoryEditor extends ClinicalListEditorBase {
 					tag.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 				}
 			}
-		} catch {
-			DOM.clearNode(listEl);
-			listEl.textContent = `Could not load ${singular.toLowerCase()} list.`;
-		}
+		};
+
+		const loadItems = async (): Promise<void> => {
+			try {
+				const res = await this.apiService.fetch(`${apiPath}?page=0&size=200`);
+				const json = res.ok ? await res.json() : null;
+				const wrapper = json?.data ?? json;
+				allItems = (wrapper?.content || (Array.isArray(wrapper) ? wrapper : [])) as Array<Record<string, unknown>>;
+				renderList();
+			} catch {
+				DOM.clearNode(listEl);
+				listEl.textContent = `Could not load ${singular.toLowerCase()} list.`;
+			}
+		};
+
+		// Live filter the existing list as the user types.
+		input.addEventListener('input', () => renderList());
+
+		const doAdd = async (): Promise<void> => {
+			const name = input.value.trim();
+			if (!name) { return; }
+			addBtn.disabled = true;
+			try {
+				const payload: Record<string, unknown> = { name };
+				if (typeHidden) { payload.type = typeHidden.value; }
+				const res = await this.apiService.fetch(apiPath, { method: 'POST', body: JSON.stringify(payload) });
+				if (!res.ok) {
+					let msg = `Could not add ${singular.toLowerCase()} (HTTP ${res.status}).`;
+					try { const e = await res.json(); if (e?.message) { msg = String(e.message); } } catch { /* ignore */ }
+					await this.dialogService.error(msg);
+					addBtn.disabled = false;
+					return;
+				}
+				input.value = '';
+				await loadItems();
+			} catch {
+				await this.dialogService.error(`Could not add ${singular.toLowerCase()}. Please try again.`);
+			} finally {
+				addBtn.disabled = false;
+			}
+		};
+		addBtn.addEventListener('click', () => { void doAdd(); });
+		input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void doAdd(); } });
+
+		await loadItems();
 	}
 
 	// --- Orders: New Purchase Order modal (supplier + line items + grand total),
@@ -4413,6 +4446,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	// ── Invoice state (ciyex-patient-pay service) ──────────────────────────
 	private _invoices: Array<Record<string, unknown>> = [];
 	private _invoicesLoading = false;
+	/** Cache of patientId -> display name for the Transactions Patient column. */
+	private readonly _patientNameCache = new Map<string, string>();
 	private _invoiceFormOverlay: HTMLElement | null = null;
 	private _invoiceFormBackdrop: HTMLElement | null = null;
 
@@ -4481,8 +4516,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				try { return new Date(value).toLocaleString(); } catch { return String(value); }
 			}
 			if (key === 'patientName' && !value) {
-				// Fall back to patientId if name not set
-				return item['patientId'] ? `Patient #${item['patientId']}` : '';
+				// Use a resolved name from the cache if enrichment fetched it;
+				// otherwise fall back to the patient id.
+				const pid = item['patientId'];
+				if (pid !== undefined && pid !== null && pid !== '') {
+					const cached = this._patientNameCache.get(String(pid));
+					return cached || `Patient #${pid}`;
+				}
+				return '';
 			}
 			if (key === 'transactionType' && typeof value === 'string') {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -4491,6 +4532,33 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 			}
 			return String(value ?? '');
+		},
+		// The Patient column showed "Patient #<id>" when the backend omitted the
+		// patient name. Resolve missing names from /api/patients/{id} (cached) so
+		// the column shows the actual patient name.
+		enrichItems: async (items) => {
+			const missing = Array.from(new Set(items
+				.filter(it => !it['patientName'] && it['patientId'] !== undefined && it['patientId'] !== null && it['patientId'] !== '')
+				.map(it => String(it['patientId']))
+				.filter(pid => !this._patientNameCache.has(pid))));
+			await Promise.all(missing.map(async pid => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(pid)}`);
+					if (!res.ok) { return; }
+					const data = await res.json();
+					const p = data?.data || data;
+					const first = p?.firstName || p?.identification?.firstName || '';
+					const last = p?.lastName || p?.identification?.lastName || '';
+					const full = `${first} ${last}`.trim();
+					if (full) { this._patientNameCache.set(pid, full); }
+				} catch { /* leave fallback */ }
+			}));
+			for (const it of items) {
+				if (!it['patientName'] && it['patientId'] !== undefined && it['patientId'] !== null) {
+					const name = this._patientNameCache.get(String(it['patientId']));
+					if (name) { it['patientName'] = name; }
+				}
+			}
 		},
 		// Issue #12: full action set — View, Edit, Refund, Void, Delete — matching
 		// the TransactionsTab.tsx row actions.

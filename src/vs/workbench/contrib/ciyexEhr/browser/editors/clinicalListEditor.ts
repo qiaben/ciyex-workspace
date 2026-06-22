@@ -171,6 +171,12 @@ export interface ClinicalEditorConfig {
 	editable?: boolean;
 	/** Custom render for a cell value */
 	cellRenderer?: (key: string, value: unknown, item: Record<string, unknown>) => string;
+	/**
+	 * Optional async post-load hook to enrich loaded rows before they are
+	 * rendered (e.g. resolve a patientId to a patient name). Mutate the passed
+	 * items in place or return a replacement array. Failures are ignored.
+	 */
+	enrichItems?: (items: Record<string, unknown>[]) => Promise<Record<string, unknown>[] | void>;
 	/** Priority filter options */
 	priorityOptions?: Array<{ label: string; value: string }>;
 	/** Extra dropdown filters shown in the toolbar alongside Search. Client-side only. */
@@ -683,6 +689,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			} else {
 				this.items = [];
 				this.totalPages = 1;
+			}
+			if (this.config.enrichItems && this.items.length) {
+				try {
+					const enriched = await this.config.enrichItems(this.items);
+					if (Array.isArray(enriched)) { this.items = enriched; }
+				} catch { /* enrichment is best-effort */ }
 			}
 			this._render();
 		} catch {
