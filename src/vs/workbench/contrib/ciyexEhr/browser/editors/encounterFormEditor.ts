@@ -339,9 +339,19 @@ export class EncounterFormEditor extends EditorPane {
 				? this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${this.patientId}?encounterRef=${this.encounterId}`).then(async r => {
 					if (r.ok) {
 						const d = await r.json();
-						const comp = d?.data || {};
-						if (comp.id) { this._compositionId = String(comp.id); }
-						return comp;
+						const dd = (d?.data ?? {}) as Record<string, unknown>;
+						// The endpoint wraps the composition(s) in a paginated
+						// envelope ({ content, page, size, … }). Pick the most
+						// recently updated composition so saved data — including the
+						// assessment_diagnoses / procedures_data code arrays — is
+						// loaded back. Older responses returned the bare object, so
+						// fall back to `dd` when there is no content array.
+						const content = Array.isArray(dd.content) ? dd.content as Array<Record<string, unknown>> : null;
+						const comp = content && content.length
+							? [...content].sort((a, b) => String(b._lastUpdated ?? '').localeCompare(String(a._lastUpdated ?? '')))[0]
+							: dd;
+						if (comp && comp.id) { this._compositionId = String(comp.id); }
+						return comp ?? {};
 					}
 					return {};
 				}).catch(() => ({}))
@@ -1276,7 +1286,7 @@ export class EncounterFormEditor extends EditorPane {
 					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 					removeBtn.textContent = '\u2715';
 					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-					removeBtn.addEventListener('click', () => { diagnoses.splice(i, 1); renderList(); });
+					removeBtn.addEventListener('click', () => { diagnoses.splice(i, 1); this._isDirty = true; renderList(); });
 				}
 			}
 		};
@@ -1418,7 +1428,7 @@ export class EncounterFormEditor extends EditorPane {
 					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 					removeBtn.textContent = '\u2715';
 					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-					removeBtn.addEventListener('click', () => { procs.splice(i, 1); renderList(); });
+					removeBtn.addEventListener('click', () => { procs.splice(i, 1); this._isDirty = true; renderList(); });
 				}
 			}
 		};
