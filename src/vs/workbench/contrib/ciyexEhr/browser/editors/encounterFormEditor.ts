@@ -612,6 +612,11 @@ export class EncounterFormEditor extends EditorPane {
 			if (res.ok) {
 				this._encounterStatus = 'SIGNED';
 				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter signed and locked. Creating fee sheet…' });
+				// Capture the captured CPT/ICD codes BEFORE re-rendering: _renderForm()
+				// clears _complexFields and rebuilds it from encounterData, so reading
+				// the codes after the re-render can come back empty. Snapshot first.
+				const procedures = this._encounterCodeList('procedure');
+				const diagnoses = this._encounterCodeList('diagnosis');
 				// Re-render to show locked state
 				this._renderHeader();
 				this._renderForm();
@@ -622,7 +627,7 @@ export class EncounterFormEditor extends EditorPane {
 				// A signed encounter is ready for billing — generate its fee sheet
 				// automatically from all the CPT/ICD codes already captured on the
 				// encounter (every procedure + the diagnosis pointers).
-				await this._autoCreateFeeSheetFromEncounter();
+				await this._autoCreateFeeSheetFromEncounter(procedures, diagnoses);
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.error(`Failed to sign: ${err}`);
@@ -643,11 +648,15 @@ export class EncounterFormEditor extends EditorPane {
 	 * ICD-10 diagnosis codes, which become the diagnosis pointers that justify
 	 * the procedures. No manual step is required.
 	 */
-	private async _autoCreateFeeSheetFromEncounter(): Promise<void> {
+	private async _autoCreateFeeSheetFromEncounter(
+		procedures?: Array<{ code: string; description: string; units?: number }>,
+		diagnoses?: Array<{ code: string; description: string; units?: number }>,
+	): Promise<void> {
 		if (!this.encounterId || this.encounterId === 'new' || !this.patientId) { return; }
 
-		const procedures = this._encounterCodeList('procedure');
-		const diagnoses = this._encounterCodeList('diagnosis');
+		// Fall back to reading the live form when callers don't pass a snapshot.
+		procedures = procedures ?? this._encounterCodeList('procedure');
+		diagnoses = diagnoses ?? this._encounterCodeList('diagnosis');
 
 		if (procedures.length === 0) {
 			this.notificationService.warn('Encounter signed. No CPT/procedure code was captured, so no fee sheet was created.');
@@ -1336,6 +1345,9 @@ export class EncounterFormEditor extends EditorPane {
 									code: String(c.code || c.codeValue || ''),
 									description: String(c.shortDescription || c.description || c.longDescription || ''),
 								});
+								// Adding a diagnosis is an edit: mark dirty so it is saved
+								// (and so signing saves first instead of discarding it).
+								this._isDirty = true;
 								renderList();
 								searchInput.value = '';
 								results.style.display = 'none';
@@ -1524,6 +1536,9 @@ export class EncounterFormEditor extends EditorPane {
 							description: String(c.shortDescription || c.description || c.longDescription || ''),
 							units: 1,
 						});
+						// Adding a procedure is an edit: mark dirty so it is saved
+						// (and so signing saves first instead of discarding it).
+						this._isDirty = true;
 						renderList();
 						searchInput.value = '';
 						results.style.display = 'none';
