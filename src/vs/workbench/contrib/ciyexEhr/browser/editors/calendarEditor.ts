@@ -50,6 +50,31 @@ function getAppointmentType(apt: Appointment): string {
 	return apt.type || '';
 }
 
+/** Best-effort patient id for an existing appointment, across the assorted
+ *  shapes the backend returns (flat `patientId`, a FHIR `Patient/<id>`
+ *  reference on `patient`/`subject`, or a `participant[].actor.reference`).
+ *  Used to detect duplicate same-day bookings for a patient. */
+function resolveApptPatientId(apt: Appointment): string {
+	const a = apt as unknown as Record<string, unknown>;
+	if (a.patientId !== undefined && a.patientId !== null && a.patientId !== '') { return String(a.patientId); }
+	const refId = (val: unknown): string => {
+		const m = typeof val === 'string' ? val.match(/Patient\/(\S+)/) : null;
+		return m ? m[1] : '';
+	};
+	for (const candidate of [a.patient, (a.patient as { reference?: string })?.reference, (a.subject as { reference?: string })?.reference]) {
+		const id = refId(candidate);
+		if (id) { return id; }
+	}
+	const participants = a.participant as Array<{ actor?: { reference?: string } }> | undefined;
+	if (Array.isArray(participants)) {
+		for (const p of participants) {
+			const id = refId(p.actor?.reference);
+			if (id) { return id; }
+		}
+	}
+	return '';
+}
+
 /** True when the string looks like an identifier (UUID, numeric ID, or
  *  `Practitioner/<id>` reference) rather than a human-readable name —
  *  used so we can swap a bare ID for a real display name from the cache. */
@@ -79,6 +104,22 @@ const STATUS_COLORS: Record<string, string> = {
 	'fulfilled': '#6b7280', 'completed': '#6b7280',
 	'cancelled': '#ef4444', 'noshow': '#dc2626', 'no-show': '#dc2626',
 };
+
+/** Friendly status label shown on timeline blocks (matches the chips users expect:
+ *  Scheduled, Check In, Confirmed, Completed, No Show, Cancelled). */
+function statusLabel(status: string | undefined | null): string {
+	switch ((status || '').toLowerCase()) {
+		case 'scheduled': case 'booked': case 'pending': case 'proposed': return 'Scheduled';
+		case 'confirmed': return 'Confirmed';
+		case 'arrived': case 'checked-in': case 'checkedin': return 'Check In';
+		case 'in-room': return 'In Room';
+		case 'with-provider': return 'With Provider';
+		case 'fulfilled': case 'completed': return 'Completed';
+		case 'noshow': case 'no-show': return 'No Show';
+		case 'cancelled': case 'canceled': return 'Cancelled';
+		default: return status || '';
+	}
+}
 
 export class CalendarEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexCalendar';
@@ -727,7 +768,7 @@ export class CalendarEditor extends EditorPane {
 		const startHour = 0;
 		const endHour = 24;
 		const slotDuration = 30;
-		const slotHeight = 20; // px per slot
+		const slotHeight = 32; // px per slot — taller rows so the patient, visit type and status all read clearly
 		// hourHeight = (60 / slotDuration) * slotHeight — used for time indicator positioning
 
 		// Week view always shows 7 days (Day view handled by _renderProviderGrid)
@@ -831,8 +872,13 @@ export class CalendarEditor extends EditorPane {
 						const leftPct = ai * colW;
 						const rightPct = 100 - (ai + 1) * colW;
 
+						const visitType = getAppointmentType(apt) || '';
+						const provDisplay = this._resolveProviderName(apt);
+						const statusText = statusLabel(apt.status);
+
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:pointer;z-index:1;font-size:11px;line-height:1.35;`;
+						block.title = [apt.patientName, visitType, statusText, provDisplay].filter(Boolean).join(' \u00B7 ');
 						block.addEventListener('mouseenter', () => { block.style.background = `${typeColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${typeColor}20`; });
 						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
@@ -841,17 +887,17 @@ export class CalendarEditor extends EditorPane {
 						nameEl.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
 						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
+						// Visit type (clearly visible) + status chip right beside it
 						const detailLine = DOM.append(block, DOM.$('div'));
-						detailLine.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
-						const parts = [getAppointmentType(apt) || ''];
-						const provDisplay = this._resolveProviderName(apt);
-						if (provDisplay) { parts.push(provDisplay); }
-						detailLine.textContent = parts.filter(Boolean).join(' \u00B7 ');
-
-						// Status dot
-						const dot = DOM.append(block, DOM.$('span'));
-						dot.style.cssText = `position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:${statusColor};`;
-						dot.title = apt.status;
+						detailLine.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;';
+						const typeEl = DOM.append(detailLine, DOM.$('span'));
+						typeEl.textContent = visitType;
+						typeEl.style.cssText = `font-weight:500;color:${typeColor};overflow:hidden;text-overflow:ellipsis;`;
+						if (statusText) {
+							const pill = DOM.append(detailLine, DOM.$('span'));
+							pill.textContent = statusText;
+							pill.style.cssText = `flex:none;padding:0 5px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;background:${statusColor}30;color:${statusColor};`;
+						}
 					}
 				}
 			}
@@ -866,7 +912,7 @@ export class CalendarEditor extends EditorPane {
 		const startHour = 0;
 		const endHour = 24;
 		const slotDuration = 30;
-		const slotHeight = 20;
+		const slotHeight = 32; // taller rows so the patient, visit type and status all read clearly
 		const dateStr = localDateStr(this.currentDate);
 
 		let activeProviders = this.providers.length > 0 ? [...this.providers] : [];
@@ -997,8 +1043,12 @@ export class CalendarEditor extends EditorPane {
 						const leftPct = ai * colW;
 						const rightPct = 100 - (ai + 1) * colW;
 
+						const visitType = getAppointmentType(apt) || '';
+						const statusText = statusLabel(apt.status);
+
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:2px 4px;overflow:hidden;cursor:pointer;z-index:1;font-size:10px;line-height:1.3;`;
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:pointer;z-index:1;font-size:11px;line-height:1.35;`;
+						block.title = [apt.patientName, visitType, statusText].filter(Boolean).join(' · ');
 						block.addEventListener('mouseenter', () => { block.style.background = `${provColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${provColor}20`; });
 						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
@@ -1007,13 +1057,17 @@ export class CalendarEditor extends EditorPane {
 						nameEl.textContent = apt.patientName || '';
 						nameEl.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 
-						const typeEl = DOM.append(block, DOM.$('div'));
-						typeEl.textContent = getAppointmentType(apt) || '';
-						typeEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground);';
-
-						const dot = DOM.append(block, DOM.$('span'));
-						dot.style.cssText = `position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:${statusColor};`;
-						dot.title = apt.status;
+						// Visit type (clearly visible) + status chip right beside it
+						const detailLine = DOM.append(block, DOM.$('div'));
+						detailLine.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;';
+						const typeEl = DOM.append(detailLine, DOM.$('span'));
+						typeEl.textContent = visitType;
+						typeEl.style.cssText = `font-weight:500;color:${provColor};overflow:hidden;text-overflow:ellipsis;`;
+						if (statusText) {
+							const pill = DOM.append(detailLine, DOM.$('span'));
+							pill.textContent = statusText;
+							pill.style.cssText = `flex:none;padding:0 5px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;background:${statusColor}30;color:${statusColor};`;
+						}
 					}
 				}
 			}
@@ -1532,6 +1586,36 @@ export class CalendarEditor extends EditorPane {
 			if (requireField(!!endT, endTimeEl, 'End Time is required')) { return; }
 			if (requireField(!!provId, providerIdEl, 'Provider is required')) { return; }
 			if (requireField(!!locId, locationIdEl, 'Location is required')) { return; }
+
+			// Prevent double-booking: a patient may have at most one active
+			// appointment per calendar day. Check the server for the chosen day so
+			// the rule holds even when that date is outside the currently loaded
+			// range (cancelled appointments don't count, so a patient can be
+			// re-booked after a cancellation). A flat-shape match (patientId) is
+			// preferred; we fall back to name when no stable id is available.
+			const matchesPatient = (a: Appointment): boolean => {
+				const aPid = resolveApptPatientId(a);
+				if (patId && aPid) { return String(aPid) === String(patId); }
+				return !!patName && (a.patientName || '').trim().toLowerCase() === patName.trim().toLowerCase();
+			};
+			try {
+				const dupRes = await this.apiService.fetch(`/api/appointments?page=0&size=500&dateFrom=${startD}&dateTo=${startD}`);
+				if (dupRes.ok) {
+					const dupData = await dupRes.json();
+					const existing = (dupData?.data?.content || dupData?.content || (Array.isArray(dupData?.data) ? dupData.data : (Array.isArray(dupData) ? dupData : []))) as Appointment[];
+					const clash = existing.some(a => {
+						if ((a.status || '').toLowerCase() === 'cancelled') { return false; }
+						const aDate = this._parseAptDate(a);
+						return !!aDate && localDateStr(aDate) === startD && matchesPatient(a);
+					});
+					if (clash) {
+						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.` });
+						patInput.style.borderColor = '#ef4444';
+						patInput.focus();
+						return;
+					}
+				}
+			} catch { /* pre-check failed (offline/API error) — let the create proceed */ }
 
 			// Calculate duration in minutes
 			const startMins = parseInt(startT.split(':')[0]) * 60 + parseInt(startT.split(':')[1]);
