@@ -63,6 +63,14 @@ export class PatientSnapshotEditor extends EditorPane {
 	private root!: HTMLElement;
 	private _currentPatientId = '';
 	private _currentPatientName = '';
+	// The encounter Edit popup renders the composition's structured fields
+	// (diagnoses/procedures code arrays, plan-item lists, ROS/PE grids) as plain
+	// textareas. We keep the raw structured values loaded for the encounter under
+	// edit here so that, on save, fields the user did NOT touch are written back
+	// in their original structured shape instead of a lossy text round-trip
+	// (which previously rendered as "[object Object]" and broke the link with the
+	// dedicated Encounter form page).
+	private _encounterComplexOriginals: Record<string, unknown> = {};
 	// id → display name for Locations, so appointment / encounter rows can show
 	// the location NAME instead of the raw "Location/{id}" reference (QA 4 & 5).
 	private readonly _locationNames = new Map<string, string>();
@@ -525,6 +533,105 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/**
+	 * Encounter-form keys whose value the dedicated {@link EncounterFormEditor}
+	 * stores as a structured array/object (code lists, plan items, ROS/PE grids)
+	 * but which the flat list/form popup can only render as a textarea. These get
+	 * serialised to readable text on load and parsed back on save so the two
+	 * surfaces stay linked.
+	 */
+	private static readonly _ENCOUNTER_TEXT_FIELDS = ['assessment_diagnoses', 'procedures_data', 'plan_items', 'ros_data', 'pe_data'];
+
+	/**
+	 * Render a structured composition value as the multi-line text the popup
+	 * textareas display. Diagnoses/procedures become "CODE — Description" lines,
+	 * plan items one-per-line, and ROS/PE grids "System: finding" lines. Strings
+	 * pass through untouched; this is what kills the old "[object Object]" output.
+	 */
+	private static _encounterFieldToText(key: string, value: unknown): string {
+		if (value === undefined || value === null) { return ''; }
+		if (typeof value === 'string') { return value; }
+		const clean = (v: unknown): string => String(v ?? '').trim();
+		switch (key) {
+			case 'assessment_diagnoses': {
+				if (!Array.isArray(value)) { return ''; }
+				return value.map(d => {
+					const o = (d ?? {}) as Record<string, unknown>;
+					const code = clean(o.code ?? o.codeValue ?? o.icdCode);
+					const desc = clean(o.description ?? o.display ?? o.shortDescription ?? o.longDescription);
+					return code && desc ? `${code} — ${desc}` : (code || desc);
+				}).filter(Boolean).join('\n');
+			}
+			case 'procedures_data': {
+				if (!Array.isArray(value)) { return ''; }
+				return value.map(p => {
+					const o = (p ?? {}) as Record<string, unknown>;
+					const code = clean(o.code ?? o.codeValue ?? o.cptCode);
+					const desc = clean(o.description ?? o.display ?? o.shortDescription);
+					const units = Number(o.units ?? 1) || 1;
+					const base = code && desc ? `${code} — ${desc}` : (code || desc);
+					if (!base) { return ''; }
+					return units > 1 ? `${base} ×${units}` : base;
+				}).filter(Boolean).join('\n');
+			}
+			case 'plan_items': {
+				if (!Array.isArray(value)) { return ''; }
+				return value.map(i => typeof i === 'string' ? i.trim() : clean((i as Record<string, unknown>)?.text ?? (i as Record<string, unknown>)?.item)).filter(Boolean).join('\n');
+			}
+			case 'ros_data':
+			case 'pe_data': {
+				if (typeof value !== 'object' || Array.isArray(value)) { return ''; }
+				return Object.entries(value as Record<string, unknown>)
+					.filter(([, v]) => clean(v) !== '')
+					.map(([k, v]) => `${k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}: ${clean(v)}`)
+					.join('\n');
+			}
+		}
+		return '';
+	}
+
+	/**
+	 * Inverse of {@link _encounterFieldToText}: parse the popup textarea text back
+	 * into the structured shape the composition stores, so an edit made here lands
+	 * in the same place the dedicated Encounter form reads from.
+	 */
+	private static _textToEncounterField(key: string, text: string): unknown {
+		const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+		switch (key) {
+			case 'assessment_diagnoses':
+			case 'procedures_data': {
+				return lines.map(line => {
+					// Split "CODE — Description" on the first hyphen / en-dash / em-dash.
+					const m = /^(\S+)\s*[\u2014\u2013-]\s*(.*)$/.exec(line);
+					let code = '';
+					let desc = line;
+					if (m) { code = m[1].trim(); desc = m[2].trim(); }
+					if (key === 'procedures_data') {
+						let units = 1;
+						const um = /[×x]\s*(\d+)\s*$/i.exec(desc);
+						if (um) { units = Number(um[1]) || 1; desc = desc.replace(/\s*[×x]\s*\d+\s*$/i, '').trim(); }
+						return { code, description: desc, units };
+					}
+					return { code, description: desc };
+				});
+			}
+			case 'plan_items':
+				return lines;
+			case 'ros_data':
+			case 'pe_data': {
+				const obj: Record<string, string> = {};
+				for (const line of lines) {
+					const idx = line.indexOf(':');
+					if (idx < 0) { continue; }
+					const sysKey = line.slice(0, idx).trim().toLowerCase().replace(/[^a-z]/g, '_');
+					if (sysKey) { obj[sysKey] = line.slice(idx + 1).trim(); }
+				}
+				return obj;
+			}
+		}
+		return text;
+	}
+
+	/**
 	 * Pull the existing records for an entity. Demographics returns a
 	 * single-element array so the list view still shows something.
 	 * Filters out IDs we've just deleted so HAPI's eventual-consistency
@@ -641,7 +748,25 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
 		}
 		const headers = { 'Content-Type': 'application/json' };
-		const body = JSON.stringify({ ...values, patientId: pid, id: encounterId });
+		// Convert the structured-field textareas (diagnoses/procedures/plan/ROS/PE)
+		// back into the arrays/objects the composition stores. An edit field whose
+		// text is unchanged from what we loaded is written back in its original
+		// structured shape (no lossy re-parse); a changed field is parsed from text.
+		const payload: Record<string, unknown> = { ...values };
+		const isCreate = !existingId;
+		for (const key of PatientSnapshotEditor._ENCOUNTER_TEXT_FIELDS) {
+			const text = values[key];
+			if (text === undefined) { continue; }
+			if (!isCreate) {
+				const orig = this._encounterComplexOriginals[key];
+				if (orig !== undefined && text === PatientSnapshotEditor._encounterFieldToText(key, orig)) {
+					payload[key] = orig;
+					continue;
+				}
+			}
+			payload[key] = PatientSnapshotEditor._textToEncounterField(key, text);
+		}
+		const body = JSON.stringify({ ...payload, patientId: pid, id: encounterId });
 		const createUrl = `/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`;
 		if (!existingId) {
 			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
@@ -1058,6 +1183,18 @@ export class PatientSnapshotEditor extends EditorPane {
 		// reference so the search field shows a name (QA issue 2: provider blank/raw).
 		merged.provider = pick('providerDisplay', 'providerName', 'practitionerName', 'encounterProvider', 'provider');
 		merged.chiefComplaint = pick('chiefComplaint', 'reason', 'reasonForVisit', 'reasonCode');
+
+		// Stash the raw structured values and replace them with readable text so the
+		// popup textareas render the diagnoses/procedures/plan/ROS/PE instead of
+		// "[object Object]". The originals let the save path leave untouched fields
+		// in their structured shape (see `_saveEncounterComposition`).
+		this._encounterComplexOriginals = {};
+		for (const key of PatientSnapshotEditor._ENCOUNTER_TEXT_FIELDS) {
+			const raw = merged[key];
+			if (raw === undefined) { continue; }
+			this._encounterComplexOriginals[key] = raw;
+			merged[key] = PatientSnapshotEditor._encounterFieldToText(key, raw);
+		}
 
 		return merged;
 	}
