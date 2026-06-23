@@ -1522,6 +1522,25 @@ export class AppointmentsEditor extends EditorPane {
 		}
 		if (!row.id) { return null; }
 		try {
+			// Idempotency guard: the POST endpoint mints a NEW encounter on every
+			// call (no dedupe), so before creating one we do a read-only GET to reuse
+			// an encounter the appointment already has. This keeps the appointments
+			// grid and the patient snapshot pointing at the SAME encounter and stops
+			// duplicate encounters when a visit is completed from either screen.
+			if (create) {
+				const look = await this.apiService.fetch(`/api/appointments/${row.id}/encounter`).catch(() => null);
+				if (look?.ok) {
+					const lj = await look.json().catch(() => null) as Record<string, unknown> | null;
+					const ld = (lj && (lj['data'] as Record<string, unknown>)) || {};
+					const existing = ld['encounterId'];
+					if (existing) {
+						const lp = ld['encounterPatientId'] ?? ld['patientId'];
+						const lpid = (lp !== undefined && lp !== null && lp !== '') ? String(lp) : this._resolveActionPatientId(row);
+						row.encounterId = String(existing);
+						return { encounterId: String(existing), patientId: lpid };
+					}
+				}
+			}
 			const res = await this.apiService.fetch(`/api/appointments/${row.id}/encounter`, create ? { method: 'POST' } : undefined);
 			if (!res.ok) { return null; }
 			const json = await res.json().catch(() => null) as Record<string, unknown> | null;

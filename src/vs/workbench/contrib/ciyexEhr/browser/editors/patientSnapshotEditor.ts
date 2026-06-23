@@ -1297,7 +1297,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
-		this._renderWorkflowBanner(apt, vit, encs);
+		this._renderWorkflowBanner(apt, vit);
 		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, { encounter: todayEnc, feeSheet, statement: stmtList[0] ?? null, payments: payList });
 	}
 
@@ -1364,27 +1364,31 @@ export class PatientSnapshotEditor extends EditorPane {
 		return encs.filter((_e, i) => !refs[i] || refs[i] === pid);
 	}
 
-	private _workflowSteps(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): Array<{ key: string; label: string; icon: string; done: boolean }> {
+	private _workflowSteps(apt: Record<string, unknown> | null, vit: Record<string, unknown>[]): Array<{ key: string; label: string; icon: string; done: boolean }> {
 		const status = String(apt?.status || apt?.appointmentStatus || '').toLowerCase();
 		const checkedIn = ['checked-in', 'in-room', 'with-provider', 'completed', 'fulfilled'].includes(status);
 		const roomAssigned = !!String(apt?.room || apt?.roomName || '').trim();
 		const vitalsDone = this._todaysVitals(vit).length > 0;
-		const hasEncounter = !!(apt?.encounterId) || encs.some(e => this._isToday(e.encounterDate || e.startDate || e.start || e.date || e.periodStart));
+		// "Encounter created" is tied strictly to the appointment's linked encounter
+		// (apt.encounterId). The encounter is auto-created when the visit is marked
+		// Completed — never by a same-day encounter from elsewhere, which previously
+		// lit this step up as "done" while the appointment had no encounter.
+		const hasEncounter = !!String(apt?.encounterId ?? '').trim();
 		const completed = ['completed', 'fulfilled'].includes(status);
 		return [
 			{ key: 'checkin', label: 'Check In', icon: 'check', done: checkedIn },
 			{ key: 'room', label: 'Assign Room', icon: 'home', done: roomAssigned },
 			{ key: 'vitals', label: 'Record Vitals', icon: 'pulse', done: vitalsDone },
-			{ key: 'encounter', label: 'Open Encounter', icon: 'note', done: hasEncounter },
+			{ key: 'encounter', label: 'Encounter', icon: 'note', done: hasEncounter },
 			{ key: 'complete', label: 'Complete', icon: 'pass', done: completed },
 		];
 	}
 
 	/** Banner pinned above the grid that tells first-time users exactly what to
 	 *  do next — the single biggest concern in Siva's feedback. */
-	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
+	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[]): void {
 		if (!apt) { return; }
-		const steps = this._workflowSteps(apt, vit, encs);
+		const steps = this._workflowSteps(apt, vit);
 		const next = steps.find(s => !s.done);
 
 		const banner = DOM.append(this.root, DOM.$('.snap-workflow-banner'));
@@ -1723,16 +1727,19 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  automatically spin one up from the appointment and open it. This is the
 	 *  "select Completed → encounter feature" integration: completing a visit
 	 *  always leaves a documented encounter behind. */
-	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>, encs?: Record<string, unknown>[]): Promise<void> {
+	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
 		await this._updateAppointmentStatus(id, 'Completed', apt);
-		if (this._appointmentHasEncounter(apt, encs)) {
+		// Already linked → nothing to create, just refresh.
+		if (apt.encounterId) {
 			this._rerender();
 			return;
 		}
-		// _createEncounterFromAppointment creates the FHIR encounter, links it to
-		// the patient, opens the encounter editor and rerenders the dashboard.
+		// _createEncounterFromAppointment is idempotent (checks apt.encounterId then
+		// a read-only GET before creating) — it mints the FHIR encounter, links it to
+		// the appointment + patient, and rerenders the dashboard so the Encounter
+		// status reads "Created". This is the ONLY place the snapshot creates one.
 		await this._createEncounterFromAppointment(apt);
 	}
 
@@ -1968,11 +1975,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (encounterId && !alreadyCompleted) {
 				await this._updateAppointmentStatus(id, 'Completed', apt);
 			}
-			if (encounterId) {
-				if (created) {
-					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter created for this appointment. The appointment is now Completed.' });
-				}
-				void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, String(encounterId), this._currentPatientName);
+			// We do NOT navigate into the encounter editor here — completing the
+			// visit on the snapshot only creates + links the encounter and refreshes
+			// the dashboard so the Encounter status reads "Created". Opening/editing
+			// the encounter is done from the Sign & Lock step (or the chart).
+			if (encounterId && created) {
+				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter created for this appointment. The appointment is now Completed.' });
 			}
 			this._rerender();
 		} catch {
@@ -2124,7 +2132,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const epIco = DOM.append(encPill, DOM.$('span.codicon.codicon-' + (hasEnc0 ? 'link' : 'link-external')));
 		(epIco as HTMLElement).style.cssText = 'font-size:12px;';
 		const epTxt = DOM.append(encPill, DOM.$('span'));
-		epTxt.textContent = hasEnc0 ? 'Encounter Linked' : 'No Encounter Yet';
+		epTxt.textContent = hasEnc0 ? 'Encounter Created' : 'No Encounter Yet';
 
 		// Body wrapper (header is full-bleed; content keeps its padding).
 		const body0 = DOM.append(card, DOM.$('div'));
@@ -2168,7 +2176,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			['Duration', durVal > 0 ? `${durVal} min` : '—'],
 			['Location', location || '—'],
 			['Room', room || '— Unassigned —'],
-			['Encounter', hasEncounter ? 'Linked' : 'Not started'],
+			['Encounter', hasEncounter ? 'Created' : 'Not created'],
 		];
 		if (reason) { fields.push(['Reason', reason]); }
 		if (notes) { fields.push(['Notes', notes]); }
@@ -2318,7 +2326,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		}, () => this._openCreateModal('medications'), 'medications', 2);
 
 		// Pending Items — unfinished work the doctor must action (full width)
-		this._renderPendingItems(grid, labs, encs, apt ?? null);
+		this._renderPendingItems(grid, labs, encs);
 
 		// Bottom row: Lab Results (full width)
 		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openCreateModal('labs'));
@@ -2335,14 +2343,19 @@ export class PatientSnapshotEditor extends EditorPane {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const enc = st.encounter ?? this._todayEncounter(apt, encs);
-		const encId = enc ? String(enc.id ?? enc.fhirId ?? '') : String(apt.encounterId ?? '');
+		// The encounter "belongs" to this visit only once it is linked to the
+		// appointment (apt.encounterId) — which happens when the visit is marked
+		// Completed and the encounter is auto-created. Sign & Lock / Fee Sheet open
+		// that linked encounter; the same-day `enc` is only a fallback target.
+		const linkedEncId = String(apt.encounterId ?? '').trim();
+		const encId = linkedEncId || (enc ? String(enc.id ?? enc.fhirId ?? '') : '');
 		const encStatus = String(enc?.status ?? '').toLowerCase();
 		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
 
 		const checkedIn = ['checked-in', 'checked in', 'in-room', 'with-provider', 'completed', 'fulfilled', 'finished'].includes(apptStatus);
 		const roomAssigned = !!String(apt.room || apt.roomName || '').trim();
 		const vitalsDone = this._todaysVitals(vit).length > 0;
-		const hasEncounter = !!encId;
+		const hasEncounter = !!linkedEncId;
 		const signed = ['signed', 'finished', 'complete', 'completed'].includes(encStatus);
 		const hasFeeSheet = !!st.feeSheet;
 		// Billing/payment only count once THIS visit has a fee sheet — a stray
@@ -2357,9 +2370,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn, sub: 'Front desk', reachable: true, action: () => void this._changeApptStatus(appointmentId, 'Checked-in', apt) },
 			{ label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned, sub: 'Front desk', reachable: checkedIn, action: () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')) },
 			{ label: 'Record Vitals', role: 'Medical staff', icon: 'pulse', done: vitalsDone, sub: 'Medical staff', reachable: checkedIn, action: () => this._focusVitalsEntry() },
-			// Single encounter entry point: reuse-or-create the encounter, mark the
-			// appointment Completed + locked, open the encounter.
-			{ label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter, sub: hasEncounter ? 'Created' : 'Create', reachable: true, action: () => void this._createEncounterFromAppointment(apt) },
+			// Status-only indicator — the encounter is NOT created here. It is
+			// auto-created when the visit is marked Completed via the Status
+			// dropdown, so this tile just reports whether it exists yet.
+			{ label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter, sub: hasEncounter ? 'Created' : 'On complete', reachable: hasEncounter },
 			{ label: 'Sign & Lock', role: 'Provider', icon: 'check', done: signed, sub: signed ? 'Signed' : 'Document', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encId, this._currentPatientName, encName, 'signoff') : undefined },
 			{ label: 'Fee Sheet', role: 'Billing', icon: 'list-flat', done: hasFeeSheet, sub: hasFeeSheet ? 'Charges set' : 'Add charges', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
 			{ label: 'Billing', role: 'Billing', icon: 'file-symlink-file', done: billed, sub: billed ? 'Billed' : 'Send to billing', reachable: hasFeeSheet, action: hasFeeSheet ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
@@ -3137,7 +3151,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Pending Items — unfinished clinical work the provider must action. The
 	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
 	 *  unfinished work"). Each item is derived from real record state. */
-	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[], apt: Record<string, unknown> | null): void {
+	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
 		const pendingLabs = labs.filter(l => {
 			const s = String(l.status || '').toLowerCase();
 			return s === '' || s === 'ordered' || s === 'pending' || s === 'in-progress' || s === 'collected';
@@ -3146,7 +3160,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			const s = String(e.status || '').toLowerCase();
 			return s.includes('progress') || s.includes('unsign') || s === 'arrived' || s === 'planned';
 		});
-		const hasEncounter = !!(apt?.encounterId) || openEncounters.length > 0;
 
 		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
 		if (pendingLabs.length > 0) {
@@ -3155,9 +3168,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (openEncounters.length > 0) {
 			items.push({ icon: 'note', label: 'Encounter Unsigned', detail: `${openEncounters.length} open encounter${openEncounters.length > 1 ? 's' : ''} to finalize`, color: '#3b9edd', onClick: () => this._openManager('encounters', 'list') });
 		}
-		if (apt && !hasEncounter) {
-			items.push({ icon: 'add', label: 'Procedure / Encounter Pending', detail: 'No encounter started for today\'s visit', color: '#f59e0b', onClick: () => void this._createEncounterFromAppointment(apt) });
-		}
+		// NOTE: no "create encounter" pending tile — encounters are created
+		// automatically when the visit is marked Completed, never by a manual click.
 		// Treatment plan visibility — always offer a quick entry point.
 		items.push({ icon: 'checklist', label: 'Treatment Plan', detail: 'Review or update the care plan', color: '#a78bfa', onClick: () => this._openManager('visit-notes', 'list') });
 
