@@ -71,6 +71,15 @@ export class PatientSnapshotEditor extends EditorPane {
 	// (which previously rendered as "[object Object]" and broke the link with the
 	// dedicated Encounter form page).
 	private _encounterComplexOriginals: Record<string, unknown> = {};
+	// The encounter-form Composition id for the encounter currently under edit,
+	// scoped to the Encounter id it was loaded for. The endpoint wraps
+	// composition(s) in a paginated envelope, so we capture the id of the
+	// most-recent one on load and PUT back to it on save (mirrors
+	// EncounterFormEditor) — without it the save targeted the Encounter id, 404'd,
+	// and fell back to creating a DUPLICATE composition that lost prior codes. The
+	// `encId` guard stops a cached id from a previous edit leaking into a save for
+	// a different encounter (the records-list flow never reloads it).
+	private _encounterCompositionRef: { encId: string; compId: string | undefined } | undefined;
 	// id → display name for Locations, so appointment / encounter rows can show
 	// the location NAME instead of the raw "Location/{id}" reference (QA 4 & 5).
 	private readonly _locationNames = new Map<string, string>();
@@ -771,14 +780,30 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (!existingId) {
 			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
 		}
-		// Updating an existing encounter. Encounters minted via the simple
-		// POST /api/{pid}/encounters (e.g. "Manual encounter" rows, or any
-		// appointment whose chart was never opened) have NO encounter-form
-		// Composition yet, so PUT-ing to the composition path returns 404
-		// ("Resource not found") and the edit silently fails. Treat the update
-		// as an upsert: if the PUT 404s, fall back to POST-create so the first
-		// edit of such an encounter still persists.
-		const updateRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${pid}/${encounterId}`, { method: 'PUT', headers, body });
+		// Updating an existing encounter. PUT must target the encounter-form
+		// Composition's OWN id (captured on load in `_encounterCompositionRef`), not
+		// the Encounter id — they differ, so PUT-ing to the Encounter id 404'd, fell
+		// through to POST-create, and minted a DUPLICATE composition that lost the
+		// previously-saved codes (QA: edited encounter dropped diagnoses/procedures,
+		// signed encounters appeared un-editable). Mirrors EncounterFormEditor.
+		//
+		// Encounters minted via the simple POST /api/{pid}/encounters ("Manual
+		// encounter" rows, or any appointment whose chart was never opened) have NO
+		// composition yet, so there is no id to PUT to — go straight to POST-create.
+		// And if the PUT still 404s (composition deleted server-side), upsert via POST
+		// so the edit persists either way.
+		// Prefer the id captured on load (edit-pencil flow); fall back to a fresh
+		// lookup for the records-list edit flow, which never calls _loadEncounterForEdit
+		// and so has no cached composition id.
+		let compId = this._encounterCompositionRef?.encId === encounterId ? this._encounterCompositionRef.compId : undefined;
+		if (!compId) {
+			const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`);
+			compId = this._extractEncounterComposition(form).compId;
+		}
+		if (!compId) {
+			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
+		}
+		const updateRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${pid}/${compId}`, { method: 'PUT', headers, body });
 		if (updateRes.status === 404) {
 			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
 		}
@@ -1119,6 +1144,25 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/**
+	 * Unwrap the encounter-form endpoint response to the single most-recent
+	 * Composition. The endpoint returns a paginated envelope ({ content, page,
+	 * size, … }); older responses returned the bare object. Picks the most
+	 * recently updated composition along with its id, so the save path can PUT back
+	 * to the SAME composition rather than minting a duplicate. Pure (no instance
+	 * state) — callers store the id where they need it. Mirrors
+	 * EncounterFormEditor._loadEncounterData's composition pick.
+	 */
+	private _extractEncounterComposition(form: Record<string, unknown> | null): { comp: Record<string, unknown>; compId: string | undefined } {
+		const dd = (form?.data ?? form ?? {}) as Record<string, unknown>;
+		const content = Array.isArray(dd.content) ? dd.content as Array<Record<string, unknown>> : null;
+		const picked = content && content.length
+			? [...content].sort((a, b) => String(b._lastUpdated ?? '').localeCompare(String(a._lastUpdated ?? '')))[0]
+			: dd;
+		const comp = (picked && typeof picked === 'object' && !Array.isArray(picked)) ? picked : {};
+		return { comp, compId: comp.id ? String(comp.id) : undefined };
+	}
+
+	/**
 	 * Build the initial values for the encounter edit form. The snapshot list
 	 * record only has the bare Encounter columns, so we fetch the full Encounter
 	 * resource and its encounter-form Composition (mirrors EncounterFormEditor's
@@ -1145,7 +1189,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		]);
 		const detailData = (detail?.data ?? detail ?? {}) as Record<string, unknown>;
 		const ehrData = (ehr?.data ?? ehr ?? {}) as Record<string, unknown>;
-		const formData = (form?.data ?? form ?? {}) as Record<string, unknown>;
+		// The encounter-form endpoint wraps the composition(s) in a paginated
+		// envelope ({ content, page, size, … }). Pick the most recently updated
+		// composition so ALL saved data — including the full assessment_diagnoses /
+		// procedures_data code arrays — is loaded back. Reading `form.data` directly
+		// returned the envelope (no clinical fields), so the edit modal came up with
+		// only the encounter's primary diagnosis and dropped the rest (QA: 3 codes
+		// captured, only 2 shown). Mirrors EncounterFormEditor._loadEncounterData.
+		const { comp: formData, compId } = this._extractEncounterComposition(form);
+		this._encounterCompositionRef = { encId, compId };
 		// Composition wins over the enriched EHR encounter, which wins over the bare
 		// FHIR resource, which wins over the list row.
 		Object.assign(merged, detailData, ehrData, formData);
@@ -1429,6 +1481,23 @@ export class PatientSnapshotEditor extends EditorPane {
 				// Treat a non-empty object carrying an id (or line items) as a real fee sheet.
 				if (fs && (fs.id !== undefined || Array.isArray(fs.items) || Array.isArray(fs.lines))) { feeSheet = fs; }
 			} catch { /* no fee sheet yet */ }
+
+			// Vitals captured in the encounter form (the `vitals_*` keys on the
+			// encounter-form Composition) are NOT FHIR vitals Observations, so they
+			// never showed in Today's Vitals. When a visit is completed an encounter
+			// is auto-created and the provider records vitals there — surface those by
+			// mapping the composition's `vitals_*` onto a synthetic vitals record, but
+			// only when no FHIR vitals were recorded for today (the inline form writes
+			// real Observations, which take precedence).
+			if (this._todaysVitals(vit).length === 0) {
+				try {
+					const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(todayEncId)}`);
+					const { comp } = this._extractEncounterComposition(form);
+					const encDate = todayEnc?.encounterDate || todayEnc?.startDate || todayEnc?.start || todayEnc?.date || todayEnc?.periodStart;
+					const encVitals = this._compositionVitalsRecord(comp, encDate);
+					if (encVitals) { vit.unshift(encVitals); }
+				} catch { /* no encounter-form vitals */ }
+			}
 		}
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -1469,6 +1538,44 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  hides older imported readings from the "Today's Vitals" card. */
 	private _todaysVitals(vit: Record<string, unknown>[]): Record<string, unknown>[] {
 		return vit.filter(v => this._isToday(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date));
+	}
+
+	/**
+	 * Map an encounter-form Composition's `vitals_*` fields onto the FHIR-vitals
+	 * record shape the Today's Vitals card reads (heightCm/weightKg/bpSystolic/…).
+	 * This is the inverse of EncounterFormEditor._mapLatestVitals. Stamps the
+	 * record with the encounter date so `_todaysVitals` keeps it when it is today's.
+	 * Returns null when the composition carries no vitals at all.
+	 */
+	private _compositionVitalsRecord(comp: Record<string, unknown>, encDate: unknown): Record<string, unknown> | null {
+		const num = (key: string): number | undefined => {
+			const v = comp[key];
+			if (v === undefined || v === null || String(v).trim() === '') { return undefined; }
+			const n = Number(v);
+			return Number.isFinite(n) ? n : undefined;
+		};
+		const mapping: Array<[string, string]> = [
+			['bpSystolic', 'vitals_bp_systolic'],
+			['bpDiastolic', 'vitals_bp_diastolic'],
+			['pulse', 'vitals_heart_rate'],
+			['temperatureC', 'vitals_temperature'],
+			['oxygenSaturation', 'vitals_spo2'],
+			['respiration', 'vitals_respiratory_rate'],
+			['weightKg', 'vitals_weight'],
+			['heightCm', 'vitals_height'],
+			['bmi', 'vitals_bmi'],
+		];
+		const out: Record<string, unknown> = {};
+		for (const [target, src] of mapping) {
+			const n = num(src);
+			if (n !== undefined) { out[target] = n; }
+		}
+		if (Object.keys(out).length === 0) { return null; }
+		// Tag as today's reading so it surfaces in the Today's Vitals card, and mark
+		// the source so it is never treated as an editable FHIR Observation.
+		out.recordedAt = (encDate ? String(encDate) : new Date().toISOString());
+		out._source = 'encounter-form';
+		return out;
 	}
 
 	/** Extract the patient id an encounter is linked to, tolerant of the many
