@@ -33,6 +33,8 @@ interface AppointmentDTO {
 	status: string;
 	appointmentStartTime: string;
 	appointmentStartDate: string;
+	start?: string;
+	end?: string;
 }
 
 interface StatusOption {
@@ -52,6 +54,31 @@ const pad = (n: number) => n.toString().padStart(2, '0');
 function todayISO(): string {
 	const d = new Date();
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Normalize an appointment's date/time fields. The backend often returns the
+ * schedule only in a combined ISO `start` field (e.g. "2026-06-23T09:00:00")
+ * rather than the discrete `appointmentStartDate` / `appointmentStartTime`
+ * fields. Without this, the "today" filter below drops every appointment and
+ * the boards render empty. Mirrors `normalizeApptTimes` in appointmentsEditor.
+ */
+function normalizeApptTimes(appt: AppointmentDTO): AppointmentDTO {
+	let startDate = String(appt.appointmentStartDate || appt.start || '');
+	let startTime = String(appt.appointmentStartTime || '');
+
+	// A bare numeric value (e.g. an epoch or id) is not a usable date.
+	if (/^\d+$/.test(startDate)) { startDate = ''; }
+
+	if (startDate.includes('T')) {
+		const d = new Date(startDate);
+		if (!isNaN(d.getTime())) {
+			startTime = startTime || `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+			startDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+		}
+	}
+
+	return { ...appt, appointmentStartDate: startDate, appointmentStartTime: startTime };
 }
 
 function getInitials(name: string): string {
@@ -435,7 +462,10 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			const res = await this.apiService.fetch('/api/appointments?page=0&size=200');
 			if (!res.ok) { return; }
 			const data = await res.json();
-			const list = (data?.data?.content || data?.data || data?.content || data || []) as AppointmentDTO[];
+			const rawList = (data?.data?.content || data?.data || data?.content || data || []) as AppointmentDTO[];
+			// Backends return the schedule in assorted shapes; normalize the
+			// date/time fields so the today filter and time rendering work.
+			const list = rawList.map(normalizeApptTimes);
 
 			// Filter to today only
 			const todayStr = todayISO();
