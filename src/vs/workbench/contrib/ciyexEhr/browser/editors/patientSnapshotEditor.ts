@@ -39,6 +39,22 @@ interface VisitPipelineState {
 	payments: Record<string, unknown>[];
 }
 
+/**
+ * Resolve a single, human-readable payment-method label from a transaction
+ * record. Recent Payments and Payment History previously read different fields
+ * (`paymentType`/`paymentMethod` vs the raw `paymentMethodType` enum), so the
+ * SAME transaction showed e.g. "debit card" in one place and "other" in the
+ * other. Both now route through here: prefer the descriptive method field, fall
+ * back to the stored enum, and title-case it ("debit_card" → "Debit Card").
+ */
+function formatPaymentMethod(pay: Record<string, unknown>): string {
+	const raw = String(
+		pay.paymentMethod ?? pay.paymentType ?? pay.method ?? pay.paymentMethodType ?? ''
+	).trim();
+	if (!raw) { return '—'; }
+	return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 interface EntitySpec {
 	title: string;
 	/** Key into `DEFAULT_FIELD_CONFIGS` (chart editor schemas). */
@@ -249,9 +265,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			columns: [
 				{ key: 'collectedAt', label: 'Date', width: '120px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
 				{ key: 'amount', label: 'Amount', width: '100px', format: (v) => { const n = parseFloat(String(v)); return isNaN(n) ? '—' : `$${n.toFixed(2)}`; } },
-				{ key: 'transactionType', label: 'Type', width: '110px' },
-				{ key: 'paymentMethodType', label: 'Method', width: '130px' },
-				{ key: 'status', label: 'Status', width: '110px' },
+				{ key: 'transactionType', label: 'Type', width: '110px', format: (v) => { const s = String(v ?? '').trim(); return s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—'; } },
+				{ key: 'paymentMethodType', label: 'Method', width: '130px', format: (_v, r) => formatPaymentMethod(r) },
+				{ key: 'status', label: 'Status', width: '110px', format: (v) => { const s = String(v ?? '').trim(); return s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—'; } },
 			],
 			listPath: (pid) => `/api/payments/transactions/patient/${pid}?page=0&size=50`,
 		},
@@ -413,12 +429,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				]
 			},
 			{
+				// Encounters are tracked with just two states across the workspace —
+				// Signed (locked / finalized) and Unsigned (still open). The earlier
+				// FHIR-code list (planned/arrived/in-progress/finished/cancelled) could
+				// not represent the "SIGNED" value the encounter actually loads with, so
+				// the dropdown showed a current value missing from its own option list.
 				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'planned', label: 'Planned' },
-					{ value: 'arrived', label: 'Arrived' },
-					{ value: 'in-progress', label: 'In Progress' },
-					{ value: 'finished', label: 'Finished' },
-					{ value: 'cancelled', label: 'Cancelled' },
+					{ value: 'SIGNED', label: 'Signed' },
+					{ value: 'UNSIGNED', label: 'Unsigned' },
 				]
 			},
 			{ key: 'startDate', label: 'Start Date', kind: 'date', required: true, widthPct: 50 },
@@ -549,6 +567,47 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * surfaces stay linked.
 	 */
 	private static readonly _ENCOUNTER_TEXT_FIELDS = ['assessment_diagnoses', 'procedures_data', 'plan_items', 'ros_data', 'pe_data'];
+
+	/**
+	 * True when a lab row is an actual RESULT (has a value, or a terminal/result
+	 * status), false when it's still just an open ORDER awaiting results. Orders
+	 * carry statuses like ordered/pending/in-progress/collected and no value yet;
+	 * they belong in "Pending Items", not the Lab Results list. Without this an
+	 * unresolved order showed in Lab Results with value "—" and an IN-PROGRESS
+	 * flag, reading as a stale result the user never entered.
+	 */
+	private static _isLabResult(lab: Record<string, unknown>): boolean {
+		const v = lab.result ?? lab.value;
+		const valStr = String(v ?? '').trim();
+		const hasValue = valStr !== '' && valStr !== '—';
+		if (hasValue) { return true; }
+		return !PatientSnapshotEditor._isLabOrderPending(String(lab.status || ''));
+	}
+
+	/**
+	 * True when a lab status means "order placed, result not in yet" — these rows
+	 * belong in Pending Items, never the Lab Results list. Covers the FHIR
+	 * Observation/DiagnosticReport order states (registered/unknown) plus the
+	 * app's own order statuses (ordered/pending/in-progress/collected/active).
+	 */
+	private static _isLabOrderPending(status: string): boolean {
+		const s = status.toLowerCase();
+		return s === '' || s === 'registered' || s === 'unknown' || s === 'ordered'
+			|| s === 'pending' || s === 'in-progress' || s === 'collected' || s === 'active';
+	}
+
+	/**
+	 * Collapse any encounter status onto the two states the workspace tracks:
+	 * SIGNED (finalized / locked) and UNSIGNED (still open). Accepts FHIR codes
+	 * ('finished', 'completed', 'in-progress', 'planned', …) and the EHR values
+	 * ('SIGNED'/'UNSIGNED'/'INCOMPLETE'); anything not clearly signed is unsigned.
+	 */
+	private static _normalizeEncounterStatus(raw: unknown): string {
+		const s = String(raw ?? '').toLowerCase();
+		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || s.includes('complet')
+			? 'SIGNED'
+			: 'UNSIGNED';
+	}
 
 	/**
 	 * Render a structured composition value as the multi-line text the popup
@@ -738,6 +797,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	private async _saveEncounterComposition(values: Record<string, string>, existingId: string | undefined): Promise<Response> {
 		const pid = this._currentPatientId;
 		let encounterId = existingId || '';
+		// The Status dropdown is two-state (Signed/Unsigned); the patient-scoped
+		// encounter endpoint accepts those values directly (see encounterListPane).
+		const statusVal = PatientSnapshotEditor._normalizeEncounterStatus(values['status'] || 'UNSIGNED');
 		if (!encounterId) {
 			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
 			const startDate = values['startDate'] || new Date().toISOString();
@@ -747,7 +809,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				body: JSON.stringify({
 					visitCategory: values['type'] || 'AMB',
 					encounterDate: startDate,
-					status: 'UNSIGNED',
+					status: statusVal,
 					reasonForVisit: reason,
 				}),
 			});
@@ -755,6 +817,23 @@ export class PatientSnapshotEditor extends EditorPane {
 			const created = await createRes.json().catch(() => null);
 			encounterId = String(created?.data?.id || created?.id || '');
 			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
+		} else {
+			// Editing an existing encounter — persist the encounter-level status
+			// (Signed/Unsigned) through the patient-scoped endpoint, since the
+			// encounter-form composition save below only carries clinical content,
+			// not the Encounter's own status. Mirrors encounterListPane's PUT.
+			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
+			await this.apiService.fetch(`/api/${pid}/encounters/${encounterId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					visitCategory: values['type'] || undefined,
+					encounterDate: values['startDate'] || undefined,
+					encounterProvider: String(values['provider'] || '').trim() || undefined,
+					status: statusVal,
+					reasonForVisit: reason || undefined,
+				}),
+			}).catch(() => { /* non-fatal: the composition save below still runs */ });
 		}
 		const headers = { 'Content-Type': 'application/json' };
 		// Convert the structured-field textareas (diagnoses/procedures/plan/ROS/PE)
@@ -1230,7 +1309,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const end = pick('endDate', 'end', 'periodEnd');
 		if (end) { merged.endDate = dateOnly(end); }
 		merged.type = pick('type', 'visitCategory', 'encounterType', 'class') || merged.type;
-		merged.status = pick('status') || merged.status;
+		// Collapse whatever status the encounter loads with (FHIR codes like
+		// 'finished'/'in-progress', or the EHR 'SIGNED'/'UNSIGNED'/'INCOMPLETE')
+		// onto the two-state model the Status dropdown offers.
+		merged.status = PatientSnapshotEditor._normalizeEncounterStatus(pick('status') || merged.status);
 		// Provider: prefer a human-readable display over the raw "Practitioner/{id}"
 		// reference so the search field shows a name (QA issue 2: provider blank/raw).
 		merged.provider = pick('providerDisplay', 'providerName', 'practitionerName', 'encounterProvider', 'provider');
@@ -2572,9 +2654,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		// Pending Items — unfinished work the doctor must action (full width)
 		this._renderPendingItems(grid, labs, encs);
 
-		// Bottom row: Lab Results (full width)
-		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labs.length, () => this._openCreateModal('labs'));
-		this._renderLabRows(labCard, labs);
+		// Bottom row: Lab Results (full width). Show only actual results — open
+		// orders still awaiting results live in "Pending Items" above, so they must
+		// not also appear here as value-less "results".
+		const labResults = labs.filter(l => PatientSnapshotEditor._isLabResult(l));
+		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labResults.length, () => this._openCreateModal('labs'));
+		this._renderLabRows(labCard, labResults);
 	}
 
 	/** The single, unified visit workflow — one continuous strip from arrival to
@@ -3138,19 +3223,29 @@ export class PatientSnapshotEditor extends EditorPane {
 			histLabel.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-top:2px;margin-bottom:4px;border-top:1px solid var(--vscode-editorWidget-border);padding-top:8px;';
 			const { page, pageIdx, pageCount, total } = this._paginate('payments', payments);
 			for (const pay of page) {
-				const dateRaw = (pay.paymentDate || pay.date || pay.transactionDate || pay.created || '') as string;
+				const dateRaw = (pay.collectedAt || pay.paymentDate || pay.date || pay.transactionDate || pay.created || '') as string;
 				const dateStr = dateRaw ? new Date(dateRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 				const amt = pay.amount || pay.totalAmount || '';
-				const method = pay.paymentType || pay.paymentMethod || pay.method || '';
+				// Title-case helper so type/status read the same way as the Payment
+				// History modal columns (e.g. "payment" → "Payment").
+				const titleCase = (v: unknown): string => { const s = String(v ?? '').trim(); return s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : ''; };
+				// Method is resolved through the SAME helper as the Payment History
+				// modal so a single transaction never shows two different methods
+				// (was "debit card" here vs "other" there).
+				const method = formatPaymentMethod(pay);
+				const type = titleCase(pay.transactionType ?? pay.paymentType);
+				const status = titleCase(pay.status);
 				const r = DOM.append(body, DOM.$('div'));
 				r.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
 				const left = DOM.append(r, DOM.$('div'));
 				const dateEl = DOM.append(left, DOM.$('div'));
 				dateEl.textContent = dateStr;
 				dateEl.style.cssText = 'font-size:12px;color:var(--vscode-editor-foreground);font-weight:500;';
-				if (method) {
+				// Full details line: type · method · status (omitting blanks).
+				const detailParts = [type, method && method !== '—' ? method : '', status].filter(Boolean);
+				if (detailParts.length > 0) {
 					const methEl = DOM.append(left, DOM.$('div'));
-					methEl.textContent = String(method);
+					methEl.textContent = detailParts.join(' · ');
 					methEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
 				}
 				if (amt) {
@@ -3396,10 +3491,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
 	 *  unfinished work"). Each item is derived from real record state. */
 	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
-		const pendingLabs = labs.filter(l => {
-			const s = String(l.status || '').toLowerCase();
-			return s === '' || s === 'ordered' || s === 'pending' || s === 'in-progress' || s === 'collected';
-		});
+		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')));
 		const openEncounters = encs.filter(e => {
 			const s = String(e.status || '').toLowerCase();
 			return s.includes('progress') || s.includes('unsign') || s === 'arrived' || s === 'planned';

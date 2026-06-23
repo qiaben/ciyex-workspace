@@ -669,6 +669,56 @@ export interface IEditDialogOptions {
  * get the same patient + provider lookups without duplicating the fetch
  * wiring.
  */
+/**
+ * Common CVX immunization codes used as a client-side fallback when the
+ * ciyex-codes service has no CVX dataset loaded for the org (API returns
+ * empty). Kept in sync with IMMUNIZATIONS_FORM_FIELDS.cvxCode.fallbackOptions
+ * in clinicalEditors.ts so the `+` quick-create drawer surfaces the same
+ * suggestions as the full immunizations editor.
+ */
+const FALLBACK_CVX_CODES: Array<{ code: string; shortDescription: string }> = [
+	{ code: '03', shortDescription: 'MMR (Measles, Mumps, Rubella)' },
+	{ code: '08', shortDescription: 'Hepatitis B, adolescent or pediatric' },
+	{ code: '10', shortDescription: 'IPV (Poliovirus, inactivated)' },
+	{ code: '17', shortDescription: 'HIB (Haemophilus influenzae type b)' },
+	{ code: '20', shortDescription: 'DTaP' },
+	{ code: '21', shortDescription: 'Varicella (Chickenpox)' },
+	{ code: '33', shortDescription: 'Pneumococcal polysaccharide (PPV23)' },
+	{ code: '43', shortDescription: 'Hepatitis B, adult' },
+	{ code: '45', shortDescription: 'Hepatitis B, pediatric' },
+	{ code: '48', shortDescription: 'Hib (PRP-T)' },
+	{ code: '49', shortDescription: 'Hib (PRP-OMP)' },
+	{ code: '52', shortDescription: 'Hepatitis A, adult' },
+	{ code: '62', shortDescription: 'HPV, bivalent' },
+	{ code: '83', shortDescription: 'Hepatitis A, pediatric/adolescent' },
+	{ code: '85', shortDescription: 'Hepatitis A-Hepatitis B' },
+	{ code: '88', shortDescription: 'Flu, unspecified' },
+	{ code: '94', shortDescription: 'MMR-Varicella (MMRV)' },
+	{ code: '100', shortDescription: 'Pneumococcal conjugate (PCV7)' },
+	{ code: '103', shortDescription: 'Meningococcal' },
+	{ code: '110', shortDescription: 'DTaP-Hepatitis B-IPV' },
+	{ code: '113', shortDescription: 'Td, adult' },
+	{ code: '114', shortDescription: 'Meningococcal MCV4P' },
+	{ code: '115', shortDescription: 'Tdap' },
+	{ code: '116', shortDescription: 'Rotavirus, pentavalent' },
+	{ code: '121', shortDescription: 'Zoster (shingles), live' },
+	{ code: '133', shortDescription: 'PCV13 (Pneumococcal conjugate)' },
+	{ code: '135', shortDescription: 'Influenza, high dose' },
+	{ code: '140', shortDescription: 'Influenza, seasonal, injectable' },
+	{ code: '150', shortDescription: 'Influenza, injectable, quadrivalent' },
+	{ code: '158', shortDescription: 'Influenza, injectable, quadrivalent, preservative free' },
+	{ code: '162', shortDescription: 'Meningococcal B, recombinant' },
+	{ code: '165', shortDescription: 'HPV9 (Human Papillomavirus 9-valent)' },
+	{ code: '166', shortDescription: 'PCV15' },
+	{ code: '167', shortDescription: 'PCV20' },
+	{ code: '174', shortDescription: 'COVID-19 (Moderna)' },
+	{ code: '176', shortDescription: 'COVID-19 Pfizer-BioNTech' },
+	{ code: '207', shortDescription: 'COVID-19 Moderna' },
+	{ code: '210', shortDescription: 'COVID-19 Janssen (Johnson & Johnson)' },
+	{ code: '212', shortDescription: 'COVID-19 Novavax' },
+	{ code: '228', shortDescription: 'Zoster (shingles), recombinant (Shingrix)' },
+];
+
 export function withTypeaheadSearch(
 	fields: IEditFieldDef[],
 	api: { fetch(path: string, init?: RequestInit): Promise<Response> }
@@ -799,9 +849,23 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
-		// CVX vaccine code search.
+		// CVX vaccine code search. When ciyex-codes has no CVX dataset loaded for
+		// this org the API returns empty, so fall back to a client-side filter of
+		// the common CVX codes — mirrors the right-panel editor's `fallbackOptions`
+		// (IMMUNIZATIONS_FORM_FIELDS.cvxCode) so the `+` drawer shows the same
+		// suggestions instead of an empty dropdown.
 		if (k === 'cvxcode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CVX', q) };
+			return {
+				...f, kind: 'search' as const, onSearch: async (q) => {
+					const apiResults = await fetchCodeSystem('CVX', q);
+					if (apiResults.length > 0) { return apiResults; }
+					const lq = q.toLowerCase();
+					return FALLBACK_CVX_CODES
+						.filter(c => c.code.includes(q) || c.shortDescription.toLowerCase().includes(lq))
+						.slice(0, 10)
+						.map(c => ({ value: c.code, label: c.code, description: c.shortDescription, details: { code: c.code, description: c.shortDescription } }));
+				},
+			};
 		}
 		// CPT procedure code search.
 		if (k === 'procedurecode' || k === 'cptcode') {
@@ -2347,6 +2411,17 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 						if (setLocked) { setLocked(true); } else { inp.dataset.selected = '1'; }
 						if (onSelect) { onSelect(res, inputs); }
 						panel.style.display = 'none';
+						// Hiding this body-mounted panel during mousedown makes the
+						// trailing synthetic click resolve to the dialog's overlay
+						// scrim (which closes the form), losing the selection before
+						// save. Swallow that one click.
+						const swallowNextClick = (ev: Event) => {
+							ev.stopPropagation();
+							ev.preventDefault();
+							doc.removeEventListener('click', swallowNextClick, true);
+						};
+						doc.addEventListener('click', swallowNextClick, true);
+						doc.defaultView?.setTimeout(() => doc.removeEventListener('click', swallowNextClick, true), 100);
 					});
 					panel.appendChild(o);
 				}

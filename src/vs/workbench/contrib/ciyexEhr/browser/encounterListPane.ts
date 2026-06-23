@@ -101,7 +101,7 @@ export class EncounterListPane extends ViewPane {
 		// Status filter
 		const filter = DOM.append(toolbar, DOM.$('select')) as HTMLSelectElement;
 		filter.style.cssText = selectStyle;
-		for (const opt of ['All', 'SIGNED', 'UNSIGNED', 'INCOMPLETE']) {
+		for (const opt of ['All', 'SIGNED', 'UNSIGNED']) {
 			const o = DOM.append(filter, DOM.$('option')) as HTMLOptionElement;
 			o.value = opt === 'All' ? '' : opt;
 			o.textContent = opt;
@@ -192,14 +192,15 @@ export class EncounterListPane extends ViewPane {
 			const statusMap: Record<string, string> = {
 				'finished': 'SIGNED', 'completed': 'SIGNED',
 				'in-progress': 'UNSIGNED', 'arrived': 'UNSIGNED', 'planned': 'UNSIGNED',
-				'cancelled': 'INCOMPLETE', 'entered-in-error': 'INCOMPLETE', 'onleave': 'INCOMPLETE',
+				'cancelled': 'UNSIGNED', 'entered-in-error': 'UNSIGNED', 'onleave': 'UNSIGNED',
+				'INCOMPLETE': 'UNSIGNED',
 			};
 			for (const item of this.allItems) {
 				const t = String(item.type || '');
 				if (Object.prototype.hasOwnProperty.call(EncounterListPane.TYPE_MAP, t)) { item.type = EncounterListPane.TYPE_MAP[t]; }
 				const s = String(item.status || '');
 				if (Object.prototype.hasOwnProperty.call(statusMap, s)) { item.status = statusMap[s]; }
-				else if (!['SIGNED', 'UNSIGNED', 'INCOMPLETE'].includes(s)) { item.status = 'UNSIGNED'; }
+				else if (!['SIGNED', 'UNSIGNED'].includes(s)) { item.status = 'UNSIGNED'; }
 			}
 			// Sort by latest date first
 			this.allItems.sort((a, b) => {
@@ -410,7 +411,6 @@ export class EncounterListPane extends ViewPane {
 					key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
 						{ value: 'SIGNED', label: 'Signed' },
 						{ value: 'UNSIGNED', label: 'Unsigned' },
-						{ value: 'INCOMPLETE', label: 'Incomplete' },
 					]
 				},
 				{ key: 'reason', label: 'Reason / Chief Complaint', kind: 'textarea', widthPct: 100 },
