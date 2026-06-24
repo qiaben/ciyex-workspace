@@ -1627,6 +1627,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const todayEnc = this._todayEncounter(apt, encs);
 		const todayEncId = todayEnc ? String(todayEnc.id ?? todayEnc.fhirId ?? '') : String(apt?.encounterId ?? '');
 		let feeSheet: Record<string, unknown> | null = null;
+		// Vitals recorded in the viewed visit's encounter form (mapped to the card's
+		// shape) — shown when there are no today FHIR vitals so the encounter's vitals
+		// always surface in the snapshot.
+		let visitVitals: Record<string, unknown> | null = null;
 		if (todayEncId) {
 			try {
 				const fsRaw = await this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`);
@@ -1638,20 +1642,17 @@ export class PatientSnapshotEditor extends EditorPane {
 
 			// Vitals captured in the encounter form (the `vitals_*` keys on the
 			// encounter-form Composition) are NOT FHIR vitals Observations, so they
-			// never showed in Today's Vitals. When a visit is completed an encounter
-			// is auto-created and the provider records vitals there — surface those by
-			// mapping the composition's `vitals_*` onto a synthetic vitals record, but
-			// only when no FHIR vitals were recorded for today (the inline form writes
-			// real Observations, which take precedence).
-			if (this._todaysVitals(vit).length === 0) {
-				try {
-					const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(todayEncId)}`);
-					const { comp } = this._extractEncounterComposition(form);
-					const encDate = todayEnc?.encounterDate || todayEnc?.startDate || todayEnc?.start || todayEnc?.date || todayEnc?.periodStart;
-					const encVitals = this._compositionVitalsRecord(comp, encDate);
-					if (encVitals) { vit.unshift(encVitals); }
-				} catch { /* no encounter-form vitals */ }
-			}
+			// never showed in the Vitals card. The provider records vitals in the
+			// encounter, so surface that visit's encounter vitals here REGARDLESS of
+			// the encounter date — the snapshot can show any visit, and "encounter has
+			// vitals but the snapshot doesn't" was caused by filtering them to today.
+			// Real FHIR vitals recorded inline for today still take precedence.
+			try {
+				const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(todayEncId)}`);
+				const { comp } = this._extractEncounterComposition(form);
+				const encDate = todayEnc?.encounterDate || todayEnc?.startDate || todayEnc?.start || todayEnc?.date || todayEnc?.periodStart;
+				visitVitals = this._compositionVitalsRecord(comp, encDate);
+			} catch { /* no encounter-form vitals */ }
 		}
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -1659,7 +1660,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline);
+		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline, visitVitals);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -2730,6 +2731,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		apt?: Record<string, unknown> | null,
 		appts: Record<string, unknown>[] = [],
 		pipeline?: VisitPipelineState,
+		visitVitals?: Record<string, unknown> | null,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
@@ -2745,7 +2747,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 
 		// Today's Vitals + Financials pair (recommended layout row 1)
-		this._renderTodayVitalsCard(grid, vit);
+		this._renderTodayVitalsCard(grid, vit, visitVitals);
 		this._renderFinancialsCard(grid, payments, statements);
 
 		// Visit History (2) lists the patient's APPOINTMENTS (the visits), while
@@ -3181,20 +3183,25 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Today's Vitals only — older imported readings are hidden behind a link.
 	 *  When none are recorded for today, an INLINE entry form lets the MA type
 	 *  values straight in and save (no modal). */
-	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[]): void {
+	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[], visitVitals?: Record<string, unknown> | null): void {
 		const todays = this._todaysVitals(vit);
 		const card = DOM.append(parent, DOM.$('.snap-card.snap-vitals-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
-		this._cardHeader(card, 'pulse', 'Today\'s Vitals', todays.length, undefined);
 		this._vitalsCardEl = card;
 
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:320px;';
 
-		const latest = todays[0] as Record<string, unknown> | undefined;
+		// Today's inline FHIR vitals win; otherwise fall back to the viewed visit's
+		// encounter vitals (mapped from the encounter-form composition) so a visit's
+		// recorded vitals always show — not only when dated exactly today.
+		const latest = (todays[0] ?? (visitVitals ?? undefined)) as Record<string, unknown> | undefined;
+		// "Add Vitals" header button — always available so vitals can be recorded /
+		// updated straight from the snapshot (was missing entirely).
+		this._cardHeader(card, 'pulse', 'Vitals', latest ? 1 : 0, () => this._revealVitalsEntry?.());
 		if (!latest) {
 			const msg = DOM.append(body, DOM.$('div'));
-			msg.textContent = 'No vitals recorded for today\'s visit — enter below:';
+			msg.textContent = 'No vitals recorded for this visit — enter below:';
 			msg.style.cssText = 'font-size:12.5px;color:var(--vscode-descriptionForeground);font-weight:500;margin-bottom:8px;';
 			const firstInput = this._renderInlineVitalsForm(body);
 			this._revealVitalsEntry = () => firstInput?.focus();
