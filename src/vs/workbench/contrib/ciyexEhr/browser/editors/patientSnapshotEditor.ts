@@ -1524,12 +1524,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 
 		// No id (or id not found): fall back to today's appointment for this patient.
+		// The endpoint can return cross-patient rows (it ignores patientId in some
+		// orgs), so filter to this patient before taking the first — otherwise a new
+		// patient with no visit today would show a stranger's appointment.
 		for (const url of [
 			`/api/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
 			`/api/appointments?patientId=${patientId}&date=${today}&page=0&size=5`,
 			`/api/fhir-resource/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
 		]) {
-			const arr = await readList(url);
+			const arr = this._filterAppointmentsToPatient(await readList(url), patientId);
 			if (arr.length > 0) { return arr[0]; }
 		}
 		return null;
@@ -1591,7 +1594,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		const payList = this._mergePending('payment', this._filterDeleted('payment', this._list(payments)));
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
-		const apptList = this._list(appointments);
+		// Filter to THIS patient — the endpoint can return cross-patient rows, which
+		// made a new patient's Visit History show other patients' appointments.
+		const apptList = this._filterAppointmentsToPatient(this._list(appointments), patientId);
 
 		// Resolve the encounter tied to TODAY's visit (by appointment link, else a
 		// same-day encounter) and load its fee sheet so the Visit Pipeline card can
@@ -1733,6 +1738,26 @@ export class PatientSnapshotEditor extends EditorPane {
 		const anyMatch = refs.some(r => r === pid);
 		if (anyRef && !anyMatch) { return encs; }
 		return encs.filter((_e, i) => !refs[i] || refs[i] === pid);
+	}
+
+	/** Keep only the appointments that belong to the patient on screen. The
+	 *  `/api/appointments?patientId=` endpoint does NOT reliably filter by patient
+	 *  in every org (it returned every org appointment, so a brand-new patient's
+	 *  Visit History listed other patients' visits). Appointments carry a real
+	 *  `patientId`, so filter client-side. Unlike {@link _filterToPatient}, there is
+	 *  NO "keep all when nothing matches" valve: a patient with no matching
+	 *  appointments genuinely has no visit history (e.g. a new patient), and the
+	 *  appointment id format matches the snapshot's patientId (both flow from the
+	 *  same `apt.patientId`), so a non-match means "not this patient", not a format
+	 *  mismatch. Rows with no patient reference at all are kept (best-effort). */
+	private _filterAppointmentsToPatient(appts: Record<string, unknown>[], patientId: string): Record<string, unknown>[] {
+		const pid = String(patientId);
+		// `_encounterPatientId` is a generic patient-reference extractor (patientId /
+		// patient / subject / …) and works for appointment records too.
+		return appts.filter(a => {
+			const ref = this._encounterPatientId(a);
+			return !ref || ref === pid;
+		});
 	}
 
 	/** Slim "next action" banner pinned above the grid. It reads from the SAME
