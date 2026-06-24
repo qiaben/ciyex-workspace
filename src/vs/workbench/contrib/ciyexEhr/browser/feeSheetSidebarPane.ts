@@ -90,6 +90,17 @@ export class FeeSheetSidebarPane extends ViewPane {
 
 		this.listHost = DOM.append(this.container, DOM.$('div'));
 		void this._loadAndRender();
+
+		// Always re-read the (local) store when the pane becomes visible so newly
+		// created fee sheets show up immediately. Without this the list is fetched
+		// once and cached, so a sheet auto-created on encounter sign never appears
+		// until the app is reloaded.
+		this._register(this.onDidChangeBodyVisibility(visible => {
+			if (visible) {
+				this.loaded = false;
+				void this._loadAndRender();
+			}
+		}));
 	}
 
 	private async _loadAndRender(): Promise<void> {
