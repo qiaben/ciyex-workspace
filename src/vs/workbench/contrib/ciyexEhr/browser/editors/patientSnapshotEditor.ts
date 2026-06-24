@@ -628,6 +628,13 @@ export class PatientSnapshotEditor extends EditorPane {
 			: 'UNSIGNED';
 	}
 
+	/** True when an encounter status means signed / finalized / locked — such an
+	 *  encounter is read-only (the backend rejects edits), so the snapshot hides its
+	 *  edit option and shows a lock instead. */
+	private static _isEncounterSigned(status: unknown): boolean {
+		return PatientSnapshotEditor._normalizeEncounterStatus(status) === 'SIGNED';
+	}
+
 	/**
 	 * Render a structured composition value as the multi-line text the popup
 	 * textareas display. Diagnoses/procedures become "CODE — Description" lines,
@@ -1172,23 +1179,27 @@ export class PatientSnapshotEditor extends EditorPane {
 				if (entity === 'encounters') {
 					const res = await this._saveEncounterComposition(next, existingId);
 					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
-					let saved: Record<string, unknown> | null = null;
-					try {
-						const j = await res.json();
-						const cand = (j?.data ?? j) as Record<string, unknown> | null;
-						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
-					} catch { /* */ }
+					// The save response is the encounter-form COMPOSITION, whose id is the
+					// composition id — NOT the Encounter id. Tracking the overlay under the
+					// composition id meant `_mergePending` could not match it to the
+					// encounter row the server returns, so it unshifted a phantom SECOND row
+					// (the "edit + sign → two duplicate records" report). Build the overlay
+					// from the edited encounter row + the form values ONLY, and pin its id
+					// to the Encounter id so the overlay updates the existing row in place.
+					const encId = String(item.id ?? item.fhirId ?? existingId ?? '');
+					const overlay: Record<string, unknown> = { ...item, ...next };
+					if (encId) { overlay.id = encId; overlay.fhirId = encId; }
 					// The dashboard reads the encounter date from any of these keys; map
-					// the edited start date onto all of them so the overlay shows the
-					// new date immediately even though `saved` (the form Composition)
-					// and the stale search index still carry the old one.
-					const overlay: Record<string, unknown> = { ...item, ...next, ...(saved || {}) };
+					// the edited start date onto all of them so the overlay shows the new
+					// date immediately even though the stale search index still has the old.
 					const newStart = (next['startDate'] ?? next['date']) as string | undefined;
 					if (newStart) {
 						for (const k of ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'dateOfService']) {
 							overlay[k] = newStart;
 						}
 					}
+					// Reflect the chosen Signed/Unsigned status on the row right away.
+					if (next['status']) { overlay.status = next['status']; }
 					this._trackCreated(entity, overlay);
 					this.notificationService.notify({ severity: Severity.Info, message: 'Encounter updated.' });
 					this._rerender();
@@ -2986,8 +2997,11 @@ export class PatientSnapshotEditor extends EditorPane {
 
 			// Encounter History rows are Encounters — edit/delete must target the
 			// encounters entity (not visit-notes), so the pencil opens the
-			// Encounter edit form (QA issue 7).
-			this._renderGridRowActions(table, 'encounters', enc);
+			// Encounter edit form (QA issue 7). A SIGNED/finalized encounter is
+			// read-only (the backend rejects edits) — hide its edit pencil and show a
+			// lock instead, so the only way to change it is to re-open (amend) it.
+			const isSigned = PatientSnapshotEditor._isEncounterSigned(status);
+			this._renderGridRowActions(table, 'encounters', enc, isSigned ? { canEdit: false, lockReason: 'Signed — locked, read only' } : undefined);
 		}
 		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}
@@ -3782,7 +3796,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * encounter / lab tables on the snapshot dashboard so users can edit or
 	 * delete records inline without leaving the page.
 	 */
-	private _renderGridRowActions(table: HTMLElement, entity: string, item: Record<string, unknown>): void {
+	private _renderGridRowActions(table: HTMLElement, entity: string, item: Record<string, unknown>, opts?: { canEdit?: boolean; lockReason?: string }): void {
 		const cell = DOM.append(table, DOM.$('div'));
 		cell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:2px;';
 
@@ -3799,7 +3813,16 @@ export class PatientSnapshotEditor extends EditorPane {
 			return b;
 		};
 
-		mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
+		// Read-only rows (e.g. a signed/locked encounter) show a lock glyph in place
+		// of the edit pencil — the backend rejects edits, so offering one only leads
+		// to a failed save. Delete is still offered for correcting a mistaken row.
+		if (opts && opts.canEdit === false) {
+			const lock = DOM.append(cell, DOM.$('span.codicon.codicon-lock'));
+			(lock as HTMLElement).style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);width:22px;height:22px;display:flex;align-items:center;justify-content:center;';
+			(lock as HTMLElement).title = opts.lockReason || 'Locked — read only';
+		} else {
+			mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
+		}
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 	}
 
