@@ -2084,6 +2084,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		return 0;
 	}
 
+	/** Format a Date as a local "YYYY-MM-DDTHH:mm:ss" string (NO timezone shift),
+	 *  matching how appointment start times are stored/displayed. `toISOString()`
+	 *  would convert to UTC and move the clock time. */
+	private _localIso(d: Date): string {
+		const p = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+	}
+
 	/** PUT a new appointment status, then refresh the dashboard so the card,
 	 *  status pill and available actions all reflect the new state. */
 	private async _changeApptStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<void> {
@@ -2464,6 +2472,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			},
 			onSave: async (next) => {
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
+				// Resolve the new duration up front so it lands in BOTH the payload and
+				// the overlay below (it was missing from the overlay, so an edited time /
+				// duration showed the OLD duration — and a stale `end` made the card
+				// compute the wrong length — until the search index caught up).
+				const newDuration = next.duration ? Number(next.duration) : Number(apt.duration) || 0;
+				// Recompute the end so a stale `end`/`endTime` from the old appointment
+				// can't override the new start + duration when the card derives length.
+				const startMs = Date.parse(startTime);
+				const endTime = (newDuration > 0 && !Number.isNaN(startMs))
+					? this._localIso(new Date(startMs + newDuration * 60000))
+					: '';
 				// The API persists the provider by id/reference, not by display name —
 				// resolve the id so a provider CHANGE actually sticks (QA: changed
 				// provider not showing).
@@ -2473,7 +2492,9 @@ export class PatientSnapshotEditor extends EditorPane {
 					...apt,
 					start: startTime,
 					startTime,
-					duration: next.duration ? Number(next.duration) : apt.duration,
+					end: endTime || apt.end,
+					endTime: endTime || apt.endTime,
+					duration: newDuration || apt.duration,
 					status: next.status,
 					appointmentType: next.appointmentType,
 					visitType: next.appointmentType,
@@ -2493,9 +2514,10 @@ export class PatientSnapshotEditor extends EditorPane {
 				const res = await this.apiService.fetch(`/api/appointments/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				// Overlay the edit so it shows on the rerender even if the search index
-				// still serves stale values.
+				// still serves stale values. MUST include duration + end so the new
+				// time/length render immediately (the bug: only start was overlaid).
 				this._setApptOverride(id, {
-					start: startTime, startTime, status: next.status,
+					start: startTime, startTime, duration: newDuration, end: endTime, endTime, status: next.status,
 					appointmentType: next.appointmentType, visitType: next.appointmentType,
 					providerName: provName, practitionerName: provName, providerId: provId,
 					room: next.room, reason: next.reason, notes: next.notes,
