@@ -39,6 +39,25 @@ interface VisitPipelineState {
 	payments: Record<string, unknown>[];
 }
 
+/** One step of the single, strictly-ordered visit workflow. The pipeline runs
+ *  Scheduled → Completed → Encounter → Sign & Lock → Fee Sheet → Billing →
+ *  Payment; every step's `done` is derived from THIS appointment's own state so
+ *  the strip can never light a later step before an earlier one (the bug where a
+ *  scheduled visit showed Encounter / Sign / Fee Sheet as done). `action` opens
+ *  the module that owns the step, so the snapshot and each module stay linked. */
+interface VisitStage {
+	key: string;
+	label: string;
+	icon: string;
+	role: string;
+	/** Hint shown while the step is still to-do. */
+	sub: string;
+	/** Hint shown once the step is done. */
+	doneSub: string;
+	done: boolean;
+	action?: () => void;
+}
+
 /**
  * Resolve a single, human-readable payment-method label from a transaction
  * record. Recent Payments and Payment History previously read different fields
@@ -1475,28 +1494,43 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private async _fetchTodayAppointment(patientId: string, appointmentId?: string): Promise<Record<string, unknown> | null> {
 		// The backend has no GET /api/appointments/{id} (it 500s with "Request
-		// method 'GET' is not supported"), so resolve the appointment from the
-		// patient's day list instead and match by id when one was provided.
+		// method 'GET' is not supported"), so resolve the appointment from a list
+		// and match by id when one was provided.
 		const today = new Date().toISOString().split('T')[0];
-		const urls = [
+		const readList = async (url: string): Promise<Record<string, unknown>[]> => {
+			try {
+				const raw = await this._fetch(url);
+				if (!raw) { return []; }
+				const inner = (raw.data ?? raw) as Record<string, unknown>;
+				return (inner.content || inner.list || inner.items || inner.records ||
+					(Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Record<string, unknown>[];
+			} catch { return []; }
+		};
+
+		// When a specific appointment was requested (the user clicked THAT visit),
+		// it may not be today's — e.g. a future Scheduled appointment. Searching only
+		// today's window made those fall back to today's (often Completed) visit, so
+		// a freshly-scheduled appointment wrongly rendered as completed with an
+		// encounter. Search the patient's FULL appointment list first and return the
+		// exact match so the snapshot always reflects the appointment that was opened.
+		if (appointmentId) {
+			for (const url of [
+				`/api/appointments?patientId=${patientId}&page=0&size=100`,
+				`/api/fhir-resource/appointments?patientId=${patientId}&page=0&size=100`,
+			]) {
+				const match = (await readList(url)).find(a => String(a.id ?? a.appointmentId ?? '') === String(appointmentId));
+				if (match) { return match; }
+			}
+		}
+
+		// No id (or id not found): fall back to today's appointment for this patient.
+		for (const url of [
 			`/api/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
 			`/api/appointments?patientId=${patientId}&date=${today}&page=0&size=5`,
 			`/api/fhir-resource/appointments?patientId=${patientId}&dateFrom=${today}&dateTo=${today}&page=0&size=5`,
-		];
-		for (const url of urls) {
-			try {
-				const raw = await this._fetch(url);
-				if (!raw) { continue; }
-				const inner = (raw.data ?? raw) as Record<string, unknown>;
-				const arr: Record<string, unknown>[] = (inner.content || inner.list || inner.items || inner.records ||
-					(Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Record<string, unknown>[];
-				if (arr.length === 0) { continue; }
-				if (appointmentId) {
-					const match = arr.find(a => String(a.id ?? a.appointmentId ?? '') === String(appointmentId));
-					if (match) { return match; }
-				}
-				return arr[0];
-			} catch { /* try next */ }
+		]) {
+			const arr = await readList(url);
+			if (arr.length > 0) { return arr[0]; }
 		}
 		return null;
 	}
@@ -1528,6 +1562,16 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (override) {
 				Object.assign(apt, override);
 				if (override.status !== undefined) { apt.appointmentStatus = override.status; }
+			}
+			// Authoritatively resolve the appointment ↔ encounter link. The
+			// appointment LIST record does not reliably carry `encounterId` (it lags
+			// the index, and visits completed elsewhere may never have it), so the
+			// whole workflow downstream of "Encounter" would stay locked. The
+			// dedicated GET /api/appointments/{id}/encounter endpoint is the source of
+			// truth for the link — backfill from it whenever the record has no id yet.
+			if (aptId && !String(apt.encounterId ?? '').trim()) {
+				const linkedId = await this._resolveAppointmentEncounterId(aptId);
+				if (linkedId) { apt.encounterId = linkedId; }
 			}
 		}
 		await this._ensureLocationNames();
@@ -1583,10 +1627,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		if (this._currentPatientId !== patientId) { return; }
 
+		const pipeline: VisitPipelineState = { encounter: todayEnc, feeSheet, statement: stmtList[0] ?? null, payments: payList };
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
-		this._renderWorkflowBanner(apt, vit);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, { encounter: todayEnc, feeSheet, statement: stmtList[0] ?? null, payments: payList });
+		this._renderWorkflowBanner(apt, vit, encs, pipeline);
+		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -1690,68 +1735,44 @@ export class PatientSnapshotEditor extends EditorPane {
 		return encs.filter((_e, i) => !refs[i] || refs[i] === pid);
 	}
 
-	private _workflowSteps(apt: Record<string, unknown> | null, vit: Record<string, unknown>[]): Array<{ key: string; label: string; icon: string; done: boolean }> {
-		const status = String(apt?.status || apt?.appointmentStatus || '').toLowerCase();
-		const checkedIn = ['checked-in', 'in-room', 'with-provider', 'completed', 'fulfilled'].includes(status);
-		const roomAssigned = !!String(apt?.room || apt?.roomName || '').trim();
-		const vitalsDone = this._todaysVitals(vit).length > 0;
-		// "Encounter created" is tied strictly to the appointment's linked encounter
-		// (apt.encounterId). The encounter is auto-created when the visit is marked
-		// Completed — never by a same-day encounter from elsewhere, which previously
-		// lit this step up as "done" while the appointment had no encounter.
-		const hasEncounter = !!String(apt?.encounterId ?? '').trim();
-		const completed = ['completed', 'fulfilled'].includes(status);
-		return [
-			{ key: 'checkin', label: 'Check In', icon: 'check', done: checkedIn },
-			{ key: 'room', label: 'Assign Room', icon: 'home', done: roomAssigned },
-			{ key: 'vitals', label: 'Record Vitals', icon: 'pulse', done: vitalsDone },
-			{ key: 'encounter', label: 'Encounter', icon: 'note', done: hasEncounter },
-			{ key: 'complete', label: 'Complete', icon: 'pass', done: completed },
-		];
-	}
-
-	/** Banner pinned above the grid that tells first-time users exactly what to
-	 *  do next — the single biggest concern in Siva's feedback. */
-	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[]): void {
+	/** Slim "next action" banner pinned above the grid. It reads from the SAME
+	 *  {@link _buildVisitStages} model as the Visit Workflow strip, so the two can
+	 *  never disagree (they previously had separate step lists — the banner said
+	 *  "Assign Room" while the strip showed Encounter/Sign as done). It names the
+	 *  one next step and offers a single button that performs it. */
+	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): void {
 		if (!apt) { return; }
-		const steps = this._workflowSteps(apt, vit);
-		const next = steps.find(s => !s.done);
+		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st);
+		const next = currentIdx < stages.length ? stages[currentIdx] : null;
 
 		const banner = DOM.append(this.root, DOM.$('.snap-workflow-banner'));
 		banner.style.cssText = 'margin:14px 24px 0;padding:12px 16px;border-radius:10px;border:1px solid var(--vscode-editorWidget-border);background:linear-gradient(90deg,rgba(14,99,156,0.16),rgba(14,99,156,0.04));display:flex;align-items:center;gap:16px;flex-wrap:wrap;';
 
 		const lead = DOM.append(banner, DOM.$('div'));
-		lead.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:200px;';
+		lead.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:200px;flex:1;';
 		const leadIco = DOM.append(lead, DOM.$('span.codicon.codicon-' + (next ? 'arrow-right' : 'check-all')));
 		(leadIco as HTMLElement).style.cssText = `font-size:20px;color:${next ? '#3b9edd' : '#22c55e'};`;
 		const leadText = DOM.append(lead, DOM.$('div'));
 		const leadLbl = DOM.append(leadText, DOM.$('div'));
-		leadLbl.textContent = next ? 'NEXT ACTION REQUIRED' : 'WORKFLOW COMPLETE';
+		leadLbl.textContent = next ? `NEXT ACTION · STEP ${currentIdx + 1} OF ${stages.length}` : 'WORKFLOW COMPLETE';
 		leadLbl.style.cssText = 'font-size:9.5px;font-weight:800;letter-spacing:0.08em;color:var(--vscode-descriptionForeground);';
 		const leadVal = DOM.append(leadText, DOM.$('div'));
-		leadVal.textContent = next ? next.label : 'All steps done';
+		leadVal.textContent = next ? `${next.label} — ${next.sub}` : 'All steps done — visit fully processed';
 		leadVal.style.cssText = `font-size:16px;font-weight:800;color:${next ? 'var(--vscode-editor-foreground)' : '#22c55e'};`;
 
-		// Inline progress trail
-		const trail = DOM.append(banner, DOM.$('div'));
-		trail.style.cssText = 'display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;';
-		steps.forEach((s, i) => {
-			const isNext = next && s.key === next.key;
-			const chip = DOM.append(trail, DOM.$('div'));
-			chip.style.cssText = `display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;font-size:11.5px;font-weight:700;white-space:nowrap;${s.done
-				? 'background:rgba(34,197,94,0.16);color:#22c55e;'
-				: isNext
-					? 'background:rgba(59,158,221,0.18);color:#3b9edd;border:1px solid rgba(59,158,221,0.5);'
-					: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));color:var(--vscode-descriptionForeground);'}`;
-			const ci = DOM.append(chip, DOM.$('span.codicon.codicon-' + (s.done ? 'check' : isNext ? 'circle-large-outline' : 'circle-outline')));
-			(ci as HTMLElement).style.cssText = 'font-size:13px;';
-			const cl = DOM.append(chip, DOM.$('span'));
-			cl.textContent = s.label;
-			if (i < steps.length - 1) {
-				const sep = DOM.append(trail, DOM.$('span.codicon.codicon-chevron-right'));
-				(sep as HTMLElement).style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);opacity:0.5;';
-			}
-		});
+		// Single action button for the one next step — keeps the banner a clear
+		// "do this next" prompt rather than a second copy of the workflow strip.
+		if (next?.action) {
+			const go = DOM.append(banner, DOM.$('button')) as HTMLButtonElement;
+			go.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 16px;font-size:12.5px;font-weight:700;border-radius:8px;border:1px solid transparent;cursor:pointer;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);';
+			const goIco = DOM.append(go, DOM.$('span.codicon.codicon-' + next.icon));
+			(goIco as HTMLElement).style.cssText = 'font-size:14px;';
+			const goLbl = DOM.append(go, DOM.$('span'));
+			goLbl.textContent = next.label;
+			go.addEventListener('mouseenter', () => { go.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
+			go.addEventListener('mouseleave', () => { go.style.background = 'var(--vscode-button-background,#0e639c)'; });
+			go.addEventListener('click', (e) => { e.stopPropagation(); next.action?.(); });
+		}
 	}
 
 	private _renderHeader(p: Record<string, unknown> | null, fallbackName: string, apt: Record<string, unknown> | null, cov: Record<string, unknown>[]): void {
@@ -2226,6 +2247,20 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 	}
 
+	/** Read-only resolve of the encounter already linked to an appointment, via the
+	 *  authoritative GET /api/appointments/{id}/encounter endpoint. Returns '' when
+	 *  none is linked. Used to backfill `apt.encounterId` so the workflow reflects an
+	 *  existing link the appointment LIST record didn't carry. */
+	private async _resolveAppointmentEncounterId(appointmentId: string): Promise<string> {
+		try {
+			const res = await this.apiService.fetch(`/api/appointments/${appointmentId}/encounter`);
+			if (!res.ok) { return ''; }
+			const j = await res.json();
+			const p = (j?.data ?? j) as Record<string, unknown>;
+			return String(p?.encounterId || p?.id || '').trim();
+		} catch { return ''; }
+	}
+
 	/** Create a FHIR encounter from the appointment (or reuse the existing one),
 	 *  open it, then refresh. Idempotent: the backend's POST
 	 *  `/api/appointments/{id}/encounter` creates a NEW encounter on every call
@@ -2301,6 +2336,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (encounterId && !alreadyCompleted) {
 				await this._updateAppointmentStatus(id, 'Completed', apt);
 			}
+			// Stamp the link locally so the very next render shows the Encounter step
+			// done (and unlocks Sign & Lock) even though the appointment LIST index
+			// still lags and won't echo `encounterId` for a moment.
+			if (encounterId) { this._setApptOverride(id, { encounterId }); }
 			// We do NOT navigate into the encounter editor here — completing the
 			// visit on the snapshot only creates + links the encounter and refreshes
 			// the dashboard so the Encounter status reads "Created". Opening/editing
@@ -2450,7 +2489,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		const tIco = DOM.append(titleBar, DOM.$('span.codicon.codicon-calendar'));
 		(tIco as HTMLElement).style.cssText = 'font-size:16px;';
 		const tLbl = DOM.append(titleBar, DOM.$('span'));
-		tLbl.textContent = 'TODAY\'S APPOINTMENT';
+		// The snapshot can be opened for any of the patient's appointments (not just
+		// today's), so only say "TODAY'S" when it really is today.
+		tLbl.textContent = this._isToday(apt.start || apt.startTime) ? 'TODAY\'S APPOINTMENT' : 'APPOINTMENT';
 		tLbl.style.cssText = 'font-size:13px;font-weight:800;letter-spacing:0.09em;';
 		const hasEnc0 = !!(apt.encounterId);
 		const encPill = DOM.append(titleBar, DOM.$('span'));
@@ -2583,6 +2624,20 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
 
+		// Front-desk / medical-staff side steps. These are NOT part of the strict
+		// arrival → payment workflow strip (Scheduled → Completed → … → Payment),
+		// but the visit still needs check-in, a room and vitals — so they live here
+		// as optional secondary actions, available right up until the visit is
+		// completed (after which the appointment is locked).
+		if (!isTerminal) {
+			const checkedIn = ['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status);
+			if (!checkedIn) {
+				mkBtn('sign-in', 'Check In', () => void this._changeApptStatus(appointmentId, 'Checked-in', apt));
+			}
+			mkBtn('home', 'Assign Room', () => void this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
+			mkBtn('pulse', 'Record Vitals', () => this._focusVitalsEntry());
+		}
+
 		// Destructive / correction actions — hidden once the appointment is
 		// terminal (Completed / Cancelled / No Show) so the status is locked.
 		if (!isTerminal) {
@@ -2669,79 +2724,51 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  are one line, not two overlapping rows. Each stage shows done / next / todo /
 	 *  locked state and carries a one-click action. */
 	private _renderVisitWorkflow(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): void {
-		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
-		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
-		const enc = st.encounter ?? this._todayEncounter(apt, encs);
-		// The encounter "belongs" to this visit only once it is linked to the
-		// appointment (apt.encounterId) — which happens when the visit is marked
-		// Completed and the encounter is auto-created. Sign & Lock / Fee Sheet open
-		// that linked encounter; the same-day `enc` is only a fallback target.
-		const linkedEncId = String(apt.encounterId ?? '').trim();
-		const encId = linkedEncId || (enc ? String(enc.id ?? enc.fhirId ?? '') : '');
-		const encStatus = String(enc?.status ?? '').toLowerCase();
-		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
-
-		const checkedIn = ['checked-in', 'checked in', 'in-room', 'with-provider', 'completed', 'fulfilled', 'finished'].includes(apptStatus);
-		const roomAssigned = !!String(apt.room || apt.roomName || '').trim();
-		const vitalsDone = this._todaysVitals(vit).length > 0;
-		const hasEncounter = !!linkedEncId;
-		const signed = ['signed', 'finished', 'complete', 'completed'].includes(encStatus);
-		const hasFeeSheet = !!st.feeSheet;
-		// Billing/payment only count once THIS visit has a fee sheet — a stray
-		// patient-level statement must not light up the last stages before any
-		// charges were captured for the encounter.
-		const billed = hasFeeSheet && (!!st.feeSheet?.billed || String(st.feeSheet?.status ?? '').toLowerCase().includes('bill') || !!st.statement);
-		const balance = Number(st.statement?.balance ?? st.statement?.outstandingBalance ?? st.statement?.amountDue ?? NaN);
-		const paid = billed && ((!Number.isNaN(balance) && balance <= 0) || st.payments.some(p => this._isToday(p.date || p.paidAt || p.createdAt || p.transactionDate)));
-
-		type Stage = { label: string; role: string; icon: string; done: boolean; sub: string; reachable: boolean; action?: () => void };
-		const stages: Stage[] = [
-			{ label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn, sub: 'Front desk', reachable: true, action: () => void this._changeApptStatus(appointmentId, 'Checked-in', apt) },
-			{ label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned, sub: 'Front desk', reachable: checkedIn, action: () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')) },
-			{ label: 'Record Vitals', role: 'Medical staff', icon: 'pulse', done: vitalsDone, sub: 'Medical staff', reachable: checkedIn, action: () => this._focusVitalsEntry() },
-			// Status-only indicator — the encounter is NOT created here. It is
-			// auto-created when the visit is marked Completed via the Status
-			// dropdown, so this tile just reports whether it exists yet.
-			{ label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter, sub: hasEncounter ? 'Created' : 'On complete', reachable: hasEncounter },
-			{ label: 'Sign & Lock', role: 'Provider', icon: 'check', done: signed, sub: signed ? 'Signed' : 'Document', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encId, this._currentPatientName, encName, 'signoff') : undefined },
-			{ label: 'Fee Sheet', role: 'Billing', icon: 'list-flat', done: hasFeeSheet, sub: hasFeeSheet ? 'Charges set' : 'Add charges', reachable: hasEncounter, action: hasEncounter ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
-			{ label: 'Billing', role: 'Billing', icon: 'file-symlink-file', done: billed, sub: billed ? 'Billed' : 'Send to billing', reachable: hasFeeSheet, action: hasFeeSheet ? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName) : undefined },
-			{ label: 'Payment', role: 'Front desk', icon: 'credit-card', done: paid, sub: paid ? 'Paid' : 'Collect', reachable: billed, action: () => this._openCreateModal('payment') },
-		];
-		// "Next" = the first not-yet-done stage that is actually reachable.
-		const nextIdx = stages.findIndex(s => !s.done && s.reachable);
+		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st);
 
 		const card = DOM.append(grid, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
 		this._cardHeader(card, 'rocket', 'Visit Workflow', 0, undefined);
 
+		// One-line legend so the colour coding reads at a glance for any role.
+		const legend = DOM.append(card, DOM.$('div'));
+		legend.textContent = currentIdx >= stages.length
+			? 'All steps complete — this visit is fully processed.'
+			: `Step ${currentIdx + 1} of ${stages.length}: ${stages[currentIdx].label}. Steps run in order — finish the highlighted one to unlock the next.`;
+		legend.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin:2px 0 10px;';
+
 		const row = DOM.append(card, DOM.$('div'));
 		row.style.cssText = `display:grid;grid-template-columns:repeat(${stages.length},1fr);gap:7px;margin-top:4px;`;
 		stages.forEach((s, i) => {
-			const isNext = i === nextIdx;
-			const state: 'done' | 'next' | 'todo' | 'disabled' = s.done ? 'done' : isNext ? 'next' : s.reachable && !!s.action ? 'todo' : 'disabled';
-			const disabled = !s.action || state === 'disabled';
+			// Strictly sequential: everything before the current step is done, the
+			// current step is "next" (actionable), everything after is locked. This
+			// is what guarantees a later step can never render done before an
+			// earlier one, no matter what stray same-day/patient-level data exists.
+			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
+			// Done steps stay clickable (revisit the module); the current step is
+			// clickable when it has an action; locked steps are inert.
+			const clickable = state !== 'locked' && !!s.action;
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-			tile.disabled = disabled;
+			tile.disabled = !clickable;
+			tile.title = state === 'locked' ? `Locked — finish "${stages[currentIdx]?.label ?? ''}" first` : s.action ? `Open ${s.label}` : s.label;
 			tile.style.cssText = [
-				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (disabled ? 'default' : 'pointer') + ';transition:background 0.12s,border-color 0.12s;',
+				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
 					? 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.45);color:#22c55e;'
 					: state === 'next'
 						? 'background:var(--vscode-button-background,#0e639c);border:1px solid transparent;color:var(--vscode-button-foreground,#fff);box-shadow:0 0 0 2px rgba(59,158,221,0.35);'
-						: state === 'disabled'
-							? 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.05));border:1px dashed var(--vscode-editorWidget-border);color:var(--vscode-descriptionForeground);opacity:0.55;'
-							: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08));border:1px solid var(--vscode-editorWidget-border);color:var(--vscode-foreground);',
+						: 'background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.05));border:1px dashed var(--vscode-editorWidget-border);color:var(--vscode-descriptionForeground);opacity:0.55;',
 			].join('');
-			const ico = DOM.append(tile, DOM.$('span.codicon.codicon-' + (s.done ? 'pass-filled' : s.icon)));
+			const glyph = state === 'done' ? 'pass-filled' : state === 'locked' ? 'lock' : s.icon;
+			const ico = DOM.append(tile, DOM.$('span.codicon.codicon-' + glyph));
 			(ico as HTMLElement).style.cssText = 'font-size:22px;';
 			const lbl = DOM.append(tile, DOM.$('div'));
 			lbl.textContent = `${i + 1} · ${s.label}`;
 			lbl.style.cssText = 'font-size:12px;font-weight:700;';
 			const subEl = DOM.append(tile, DOM.$('div'));
-			subEl.textContent = s.done ? 'Done' : s.sub;
+			subEl.textContent = state === 'done' ? s.doneSub : s.sub;
 			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
-			if (!disabled) {
+			if (clickable) {
 				tile.addEventListener('mouseenter', () => { if (state !== 'next') { tile.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; } });
 				tile.addEventListener('mouseleave', () => {
 					if (state === 'done') { tile.style.background = 'rgba(34,197,94,0.10)'; }
@@ -2750,6 +2777,97 @@ export class PatientSnapshotEditor extends EditorPane {
 				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
 			}
 		});
+	}
+
+	/** Build the single, strictly-ordered visit workflow — the ONE source of truth
+	 *  shared by the top "next action" banner and the Visit Workflow strip so they
+	 *  can never disagree. Every step's `done` is derived ONLY from this
+	 *  appointment's own state (its status, its linked encounter, that encounter's
+	 *  fee sheet / billing / payment) — never from a stray same-day encounter or a
+	 *  patient-level statement, which is what previously lit later steps early.
+	 *
+	 *  `currentIdx` is the first not-done step. Because the strip renders every
+	 *  step after `currentIdx` as locked, the workflow always reads top-to-bottom:
+	 *  Scheduled → Completed → Encounter → Sign & Lock → Fee Sheet → Billing →
+	 *  Payment, exactly the order the clinic works the visit. */
+	private _buildVisitStages(apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): { stages: VisitStage[]; currentIdx: number } {
+		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
+		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+
+		// The encounter belongs to this visit ONLY when it is linked to the
+		// appointment (apt.encounterId) — set when the visit is marked Completed
+		// and the encounter is auto-created. We never fall back to "any same-day
+		// encounter": that cross-contamination is exactly what showed Sign & Lock /
+		// Fee Sheet as done for a visit that had not reached them.
+		const linkedEncId = String(apt.encounterId ?? '').trim();
+		const enc = linkedEncId ? (encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedEncId) ?? st.encounter) : null;
+		const encId = linkedEncId;
+		const encStatus = String(enc?.status ?? '').toLowerCase();
+		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
+
+		const completed = PatientSnapshotEditor._isCompletedStatus(apptStatus);
+		const hasEncounter = !!linkedEncId;
+		const signed = ['signed', 'finished', 'complete', 'completed', 'locked'].includes(encStatus);
+		const vitalsDone = this._todaysVitals(vit).length > 0;
+		const hasFeeSheet = !!st.feeSheet;
+		// Billing/payment only count once THIS visit has a fee sheet — a stray
+		// patient-level statement must not light up the last steps before any
+		// charges were captured for the encounter.
+		const billed = hasFeeSheet && (!!st.feeSheet?.billed || String(st.feeSheet?.status ?? '').toLowerCase().includes('bill') || !!st.statement);
+		const balance = Number(st.statement?.balance ?? st.statement?.outstandingBalance ?? st.statement?.amountDue ?? NaN);
+		const paid = billed && ((!Number.isNaN(balance) && balance <= 0) || st.payments.some(p => this._isToday(p.date || p.paidAt || p.createdAt || p.transactionDate)));
+
+		const startRaw = String(apt.start || apt.startTime || '');
+		let whenStr = 'Booked';
+		if (startRaw) { try { whenStr = new Date(startRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { /* keep default */ } }
+
+		const openEncounter = (mode: 'edit' | 'signoff') => encId
+			? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encId, this._currentPatientName, encName, mode)
+			: undefined;
+		const openFeeSheet = encId
+			? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName)
+			: undefined;
+
+		const stages: VisitStage[] = [
+			{
+				key: 'scheduled', label: 'Scheduled', role: 'Front desk', icon: 'calendar', done: true,
+				sub: whenStr, doneSub: whenStr, action: () => void this._openApptEdit(apt),
+			},
+			{
+				key: 'completed', label: 'Completed', role: 'Front desk', icon: 'check', done: completed,
+				sub: 'Mark complete', doneSub: 'Visit complete',
+				// Marking Completed auto-creates + links the encounter (single-action
+				// rule). Already-completed re-selects are a no-op inside _applyStatusSelection.
+				action: completed ? undefined : () => void this._applyStatusSelection(apt, appointmentId, 'Completed'),
+			},
+			{
+				key: 'encounter', label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter,
+				sub: 'Auto on complete', doneSub: 'Created',
+				action: openEncounter('edit'),
+			},
+			{
+				key: 'sign', label: 'Sign & Lock', role: 'Provider', icon: 'pulse', done: signed,
+				// Vitals & codes are documented inside the encounter before signing —
+				// surface whether vitals are in yet so the provider knows what's left.
+				sub: vitalsDone ? 'Vitals in · sign' : 'Vitals, codes & sign', doneSub: 'Signed',
+				action: openEncounter('signoff'),
+			},
+			{
+				key: 'feesheet', label: 'Fee Sheet', role: 'Billing', icon: 'list-flat', done: hasFeeSheet,
+				sub: 'Add charges', doneSub: 'Charges set', action: openFeeSheet,
+			},
+			{
+				key: 'billing', label: 'Billing', role: 'Billing', icon: 'file-symlink-file', done: billed,
+				sub: 'Send to billing', doneSub: 'Billed', action: openFeeSheet,
+			},
+			{
+				key: 'payment', label: 'Payment', role: 'Front desk', icon: 'credit-card', done: paid,
+				sub: 'Collect', doneSub: 'Paid', action: () => this._openCreateModal('payment'),
+			},
+		];
+		const firstNotDone = stages.findIndex(s => !s.done);
+		const currentIdx = firstNotDone === -1 ? stages.length : firstNotDone;
+		return { stages, currentIdx };
 	}
 
 	/** One-field room picker — clearer than a buried dropdown for busy front

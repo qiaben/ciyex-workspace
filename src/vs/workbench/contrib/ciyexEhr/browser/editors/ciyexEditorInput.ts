@@ -200,11 +200,15 @@ export class PatientSnapshotEditorInput extends EditorInput {
 
 	override getName(): string { return `${this.patientName || 'Patient'} — Snapshot`; }
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('graph'); }
-	get resource(): URI { return URI.from({ scheme: 'ciyex-snapshot', path: `/${this.patientId}` }); }
+	// Identity is per (patient, appointment): the snapshot is appointment-driven, so
+	// opening a DIFFERENT appointment for the same patient must open/refresh to that
+	// visit rather than silently reuse the first one (which left a freshly-clicked
+	// Scheduled appointment showing the earlier Completed visit).
+	get resource(): URI { return URI.from({ scheme: 'ciyex-snapshot', path: `/${this.patientId}${this.appointmentId ? `/${this.appointmentId}` : ''}` }); }
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		if (super.matches(other)) { return true; }
-		return other instanceof PatientSnapshotEditorInput && this.patientId === other.patientId;
+		return other instanceof PatientSnapshotEditorInput && this.patientId === other.patientId && this.appointmentId === other.appointmentId;
 	}
 }
 
