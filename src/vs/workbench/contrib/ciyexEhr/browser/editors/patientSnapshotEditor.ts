@@ -623,7 +623,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	 */
 	private static _normalizeEncounterStatus(raw: unknown): string {
 		const s = String(raw ?? '').toLowerCase();
-		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || s.includes('complet')
+		// NOTE: exclude "unsigned" from the sign match and "incomplete" from the
+		// complete match — "incomplete" contains "complet" and was wrongly read as
+		// SIGNED, locking an open encounter out of editing.
+		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'))
 			? 'SIGNED'
 			: 'UNSIGNED';
 	}
@@ -826,6 +829,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		// The Status dropdown is two-state (Signed/Unsigned); the patient-scoped
 		// encounter endpoint accepts those values directly (see encounterListPane).
 		const statusVal = PatientSnapshotEditor._normalizeEncounterStatus(values['status'] || 'UNSIGNED');
+		// The encounter's END date is the date it was SIGNED: when finalizing an
+		// encounter (status → SIGNED) and the user left End Date blank, stamp it with
+		// today so a signed encounter always carries a sign/end date (it was blank
+		// because the save never sent one). A user-entered End Date is respected.
+		const endDate = String(values['endDate'] || '').trim()
+			|| (statusVal === 'SIGNED' ? this._localIso(new Date()).slice(0, 10) : '');
 		if (!encounterId) {
 			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
 			const startDate = values['startDate'] || new Date().toISOString();
@@ -835,6 +844,8 @@ export class PatientSnapshotEditor extends EditorPane {
 				body: JSON.stringify({
 					visitCategory: values['type'] || 'AMB',
 					encounterDate: startDate,
+					endDate: endDate || undefined,
+					encounterProvider: String(values['provider'] || '').trim() || undefined,
 					status: statusVal,
 					reasonForVisit: reason,
 				}),
@@ -845,9 +856,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
 		} else {
 			// Editing an existing encounter — persist the encounter-level status
-			// (Signed/Unsigned) through the patient-scoped endpoint, since the
-			// encounter-form composition save below only carries clinical content,
-			// not the Encounter's own status. Mirrors encounterListPane's PUT.
+			// (Signed/Unsigned), provider and start/end dates through the patient-scoped
+			// endpoint, since the encounter-form composition save below only carries
+			// clinical content, not the Encounter's own fields. Mirrors encounterListPane.
 			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
 			await this.apiService.fetch(`/api/${pid}/encounters/${encounterId}`, {
 				method: 'PUT',
@@ -855,6 +866,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				body: JSON.stringify({
 					visitCategory: values['type'] || undefined,
 					encounterDate: values['startDate'] || undefined,
+					endDate: endDate || undefined,
 					encounterProvider: String(values['provider'] || '').trim() || undefined,
 					status: statusVal,
 					reasonForVisit: reason || undefined,
@@ -2367,6 +2379,18 @@ export class PatientSnapshotEditor extends EditorPane {
 							// If the enriched PUT was rejected (e.g. backend status enum
 							// validation), still ensure the patient link lands.
 							if (!res2 || !res2.ok) { await put(link).catch(() => { /* best-effort link */ }); }
+							// Carry the appointment's provider onto the encounter — the
+							// create endpoint leaves it blank, so the chart and the encounter
+							// edit form showed a blank Provider. A provider-only PUT through
+							// the EHR endpoint does not disturb the status (verified).
+							const provName = String(apt.providerName || apt.practitionerName || '').trim();
+							if (provName) {
+								await this.apiService.fetch(`/api/${encPatient}/encounters/${encounterId}`, {
+									method: 'PUT',
+									headers: { 'Content-Type': 'application/json' },
+									body: JSON.stringify({ encounterProvider: provName }),
+								}).catch(() => { /* best-effort provider stamp */ });
+							}
 						}
 					} catch { /* empty body — fall through to refresh */ }
 				}
