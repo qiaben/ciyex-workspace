@@ -2624,19 +2624,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
 
-		// Front-desk / medical-staff side steps. These are NOT part of the strict
-		// arrival → payment workflow strip (Scheduled → Completed → … → Payment),
-		// but the visit still needs check-in, a room and vitals — so they live here
-		// as optional secondary actions, available right up until the visit is
-		// completed (after which the appointment is locked).
-		if (!isTerminal) {
-			const checkedIn = ['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status);
-			if (!checkedIn) {
-				mkBtn('sign-in', 'Check In', () => void this._changeApptStatus(appointmentId, 'Checked-in', apt));
-			}
-			mkBtn('home', 'Assign Room', () => void this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
-			mkBtn('pulse', 'Record Vitals', () => this._focusVitalsEntry());
-		}
+		// NOTE: Check In, Assign Room and Record Vitals are NOT duplicated here —
+		// they are the first front-desk steps of the Visit Workflow strip below, so
+		// staff drive them from the one workflow line.
 
 		// Destructive / correction actions — hidden once the appointment is
 		// terminal (Completed / Cancelled / No Show) so the status is locked.
@@ -2788,8 +2778,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *
 	 *  `currentIdx` is the first not-done step. Because the strip renders every
 	 *  step after `currentIdx` as locked, the workflow always reads top-to-bottom:
-	 *  Scheduled → Completed → Encounter → Sign & Lock → Fee Sheet → Billing →
-	 *  Payment, exactly the order the clinic works the visit. */
+	 *  Scheduled → Check In → Assign Room → Record Vitals → Completed → Encounter →
+	 *  Sign & Lock → Fee Sheet → Billing → Payment, exactly the order the clinic
+	 *  works the visit. */
 	private _buildVisitStages(apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): { stages: VisitStage[]; currentIdx: number } {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
@@ -2808,7 +2799,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		const completed = PatientSnapshotEditor._isCompletedStatus(apptStatus);
 		const hasEncounter = !!linkedEncId;
 		const signed = ['signed', 'finished', 'complete', 'completed', 'locked'].includes(encStatus);
-		const vitalsDone = this._todaysVitals(vit).length > 0;
+		// Front-desk prep steps. A completed visit is by definition past this phase,
+		// so each counts as done once the visit is Completed even if the field was
+		// never filled — that keeps the strip from showing "next: Assign Room" on a
+		// finished visit while still prompting the front desk before completion.
+		const checkedIn = ['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider', 'completed', 'fulfilled', 'finished'].includes(apptStatus) || completed;
+		const room = String(apt.room || apt.roomName || '').trim();
+		const roomAssigned = !!room || completed;
+		const vitalsRecorded = this._todaysVitals(vit).length > 0;
+		const vitalsDone = vitalsRecorded || completed;
 		const hasFeeSheet = !!st.feeSheet;
 		// Billing/payment only count once THIS visit has a fee sheet — a stray
 		// patient-level statement must not light up the last steps before any
@@ -2834,6 +2833,21 @@ export class PatientSnapshotEditor extends EditorPane {
 				sub: whenStr, doneSub: whenStr, action: () => void this._openApptEdit(apt),
 			},
 			{
+				key: 'checkin', label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn,
+				sub: 'Patient arrives', doneSub: 'Checked in',
+				action: checkedIn ? undefined : () => void this._changeApptStatus(appointmentId, 'Checked-in', apt),
+			},
+			{
+				key: 'room', label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned,
+				sub: 'Assign room', doneSub: room || 'Room set',
+				action: () => void this._openRoomPicker(appointmentId, room),
+			},
+			{
+				key: 'vitals', label: 'Record Vitals', role: 'Medical staff', icon: 'pulse', done: vitalsDone,
+				sub: 'Height, BP, …', doneSub: vitalsRecorded ? 'Vitals in' : 'Skipped',
+				action: () => this._focusVitalsEntry(),
+			},
+			{
 				key: 'completed', label: 'Completed', role: 'Front desk', icon: 'check', done: completed,
 				sub: 'Mark complete', doneSub: 'Visit complete',
 				// Marking Completed auto-creates + links the encounter (single-action
@@ -2846,10 +2860,9 @@ export class PatientSnapshotEditor extends EditorPane {
 				action: openEncounter('edit'),
 			},
 			{
-				key: 'sign', label: 'Sign & Lock', role: 'Provider', icon: 'pulse', done: signed,
-				// Vitals & codes are documented inside the encounter before signing —
-				// surface whether vitals are in yet so the provider knows what's left.
-				sub: vitalsDone ? 'Vitals in · sign' : 'Vitals, codes & sign', doneSub: 'Signed',
+				key: 'sign', label: 'Sign & Lock', role: 'Provider', icon: 'verified', done: signed,
+				// Codes are documented inside the encounter before signing.
+				sub: 'Codes & sign', doneSub: 'Signed',
 				action: openEncounter('signoff'),
 			},
 			{
