@@ -89,9 +89,26 @@ const STATUS_COLORS: Record<string, string> = {
 	'no-show': '#dc2626',
 };
 
+/** The backend sometimes serialises the visit-type CodeableConcept with Java's
+ *  Map.toString() (e.g. "{text=Consultation, coding=[{code=Consultation,
+ *  display=Consultation}]}") rather than as a JSON object. Pull the human label
+ *  out of that blob, preferring `text`, then `display`, then `code`. A plain
+ *  label string (e.g. "Consultation") is returned unchanged; an unparseable
+ *  blob yields '' so we never render raw JSON to the user. */
+function parseCodeableConceptLabel(raw: string): string {
+	const s = raw.trim();
+	const looksLikeBlob = s.startsWith('{') || /\b(?:text|display|code|coding)=/.test(s);
+	if (!looksLikeBlob) { return s; }
+	const pick = (key: string): string | undefined => {
+		const m = s.match(new RegExp(`\\b${key}=([^,}\\]]+)`));
+		return m ? m[1].trim() : undefined;
+	};
+	return pick('text') || pick('display') || pick('code') || '';
+}
+
 function getAppointmentType(apt: Appointment): string {
 	const t = apt.appointmentType;
-	if (typeof t === 'string') { return t; }
+	if (typeof t === 'string') { return parseCodeableConceptLabel(t) || apt.visitType || apt.type || ''; }
 	if (t && typeof t === 'object') { return t.text || t.coding?.[0]?.display || t.coding?.[0]?.code || ''; }
 	return apt.visitType || apt.type || '';
 }

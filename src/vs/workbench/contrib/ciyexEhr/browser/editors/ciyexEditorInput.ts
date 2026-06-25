@@ -138,20 +138,33 @@ export class EncounterFormEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexEncounterForm';
 	override get typeId(): string { return EncounterFormEditorInput.ID; }
 
+	private _encounterLabel: string;
+
 	constructor(
 		readonly patientId: string,
 		readonly encounterId: string,
 		readonly patientName: string,
-		readonly encounterLabel: string,
+		encounterLabel: string,
 		readonly initialSectionKey?: string,
 		/** Appointment this encounter is being created for. Used by the
 		 *  snapshot's "+ New Encounter" action to enforce one encounter per
 		 *  appointment — if the appointment already has an encounter the
 		 *  caller short-circuits and opens the existing one. */
 		readonly appointmentId?: string,
-	) { super(); }
+	) { super(); this._encounterLabel = encounterLabel; }
 
-	override getName(): string { return this.encounterLabel || 'Encounter'; }
+	get encounterLabel(): string { return this._encounterLabel; }
+
+	/** Update the tab label (e.g. to append the date of service once the
+	 *  encounter data has loaded) and notify the workbench so the tab re-renders. */
+	setEncounterLabel(label: string): void {
+		if (label && label !== this._encounterLabel) {
+			this._encounterLabel = label;
+			this._onDidChangeLabel.fire();
+		}
+	}
+
+	override getName(): string { return this._encounterLabel || 'Encounter'; }
 	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('notebook'); }
 	get resource(): URI { return URI.from({ scheme: 'ciyex-encounter', path: `/encounter/${this.patientId || '_'}/${this.encounterId}` }); }
 

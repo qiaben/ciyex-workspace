@@ -43,6 +43,7 @@ export class EncounterFormEditor extends EditorPane {
 	private _isDirty = false;
 	private _compositionId = '';
 	private _encounterStatus = '';
+	private _serviceDate = '';
 	private _statusBadge: HTMLElement | undefined;
 	private _autoSaveIndicator: HTMLElement | undefined;
 
@@ -92,6 +93,12 @@ export class EncounterFormEditor extends EditorPane {
 
 		await Promise.all([this._loadFormSchema(), this._loadEncounterData()]);
 		if (token.isCancellationRequested) { return; }
+
+		// Show the date of service alongside the encounter number in the tab.
+		// Strip any previously-appended date (the " · …" suffix) so re-opens
+		// don't accumulate duplicates.
+		const baseLabel = input.encounterLabel.replace(/\s·\s.*$/, '');
+		input.setEncounterLabel(this._serviceDate ? `${baseLabel} · ${this._serviceDate}` : baseLabel);
 
 		this._renderHeader();
 		this._renderToc();
@@ -371,6 +378,20 @@ export class EncounterFormEditor extends EditorPane {
 		const [fhir, ehr, form, vitals] = await Promise.all(loads);
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
 		this.encounterData = { ...vitals, ...fhir, ...ehr, ...form };
+		this._serviceDate = this._extractServiceDate(this.encounterData);
+	}
+
+	/** Pull the encounter's date of service out of whichever field the backend
+	 *  populated (`encounterDate` / `startDate` / `start` / `date`, or the FHIR
+	 *  `period.start`) and format it as e.g. "Jun 25, 2026". Returns '' when no
+	 *  usable date is present. */
+	private _extractServiceDate(data: Record<string, unknown>): string {
+		const period = data['period'] as Record<string, unknown> | undefined;
+		const raw = data['encounterDate'] ?? data['startDate'] ?? data['start'] ?? data['date'] ?? (period ? period['start'] : undefined);
+		if (!raw) { return ''; }
+		const d = new Date(String(raw));
+		if (isNaN(d.getTime())) { return String(raw).substring(0, 10); }
+		return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 
 	/**
@@ -446,6 +467,14 @@ export class EncounterFormEditor extends EditorPane {
 			const patient = DOM.append(this.headerBar, DOM.$('span'));
 			patient.textContent = this.patientName;
 			patient.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		}
+
+		// Date of service, shown next to the status badge.
+		if (this._serviceDate) {
+			const dos = DOM.append(this.headerBar, DOM.$('span'));
+			dos.textContent = this._serviceDate;
+			dos.title = 'Date of service';
+			dos.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		}
 
 		// Status badge

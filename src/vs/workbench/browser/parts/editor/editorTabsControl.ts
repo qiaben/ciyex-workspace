@@ -261,8 +261,11 @@ export abstract class EditorTabsControl extends Themable implements IEditorTabsC
 		this.editorActionsDisposables.add(editorActions.onDidChange(() => this.updateEditorActionsToolbar()));
 
 		const editorActionsToolbar = assertReturnsDefined(this.editorActionsToolbar);
-		const { primary, secondary } = this.prepareEditorActions(editorActions.actions);
-		editorActionsToolbar.setActions(prepareActions(primary), prepareActions(secondary));
+		const { primary } = this.prepareEditorActions(editorActions.actions);
+		// Ciyex: drop the secondary (overflow) actions so the editor group "..."
+		// More Actions menu (Show Opened Editors, Close All, Lock Group, etc.) is
+		// not rendered — it has no use in the EHR workspace.
+		editorActionsToolbar.setActions(prepareActions(primary), []);
 	}
 
 	protected abstract prepareEditorActions(editorActions: IToolbarActions): IToolbarActions;
