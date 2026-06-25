@@ -637,7 +637,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// (V5 / V18 / V20 — `code.text` mapping). Sending `condition` saves no
 					// value to the FHIR Condition resource so the row can't be reloaded.
 					{ key: 'conditionName', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
-					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' } },
+					// Selecting / pasting an ICD-10 code fills the Condition name from the
+					// code's description (relatedField), mirroring the CPT→procedureName wiring.
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' }, relatedField: 'conditionName' },
 					{
 						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
@@ -1330,7 +1332,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'issue', title: 'Issue', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'conditionName', label: 'Issue', type: 'text', required: true, placeholder: 'Issue name' },
-					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' }, relatedField: 'conditionName' },
 					{
 						key: 'severity', label: 'Severity', type: 'select', options: [
 							{ label: 'Mild', value: 'mild' },
@@ -5783,8 +5785,20 @@ export class PatientChartEditor extends EditorPane {
 					durationInput.value = '';
 				}
 			};
-			startInput.addEventListener('input', recalcDuration);
-			startInput.addEventListener('change', recalcDuration);
+			// Appointments default to a fixed 15-minute slot: whenever the user picks
+			// a start time, snap the end to start + 15min so the End Date/Time and
+			// Duration (min) auto-fill to a 15-minute appointment.
+			const DEFAULT_SLOT_MIN = 15;
+			const syncEndFromStart = () => {
+				const s = startInput.value ? new Date(startInput.value).getTime() : NaN;
+				if (!isNaN(s)) {
+					const e = new Date(s + DEFAULT_SLOT_MIN * 60 * 1000);
+					endInput.value = e.toISOString().slice(0, 16);
+				}
+				recalcDuration();
+			};
+			startInput.addEventListener('input', syncEndFromStart);
+			startInput.addEventListener('change', syncEndFromStart);
 			endInput.addEventListener('input', recalcDuration);
 			endInput.addEventListener('change', recalcDuration);
 			recalcDuration();
@@ -5989,6 +6003,13 @@ export class PatientChartEditor extends EditorPane {
 	 * the form input). Used for ICD/CPT/LOINC/CVX codes and practitioner pickers.
 	 */
 	private _buildSearchInput(cell: HTMLElement, f: FieldDef, currentValue: string, inputStyle: string): void {
+		// Capture the inputs map ACTIVE AT RENDER TIME. The create/edit drawer
+		// renders into a temporary `_formInputs` map and then restores the original
+		// on `this` (see `_openRecordDialog`), so reading `this._formInputs` later
+		// from an event handler hits the WRONG map — which silently broke every
+		// `relatedField` companion fill in the drawer (e.g. picking an ICD-10 code
+		// not populating the Problems "Condition" name). Bind to this reference.
+		const formInputs = this._formInputs;
 		const wrap = DOM.append(cell, DOM.$('div'));
 		wrap.style.cssText = 'position:relative;';
 
@@ -6027,16 +6048,16 @@ export class PatientChartEditor extends EditorPane {
 		const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		hidden.type = 'hidden';
 		hidden.value = currentValue;
-		this._formInputs.set(f.key, hidden);
+		formInputs.set(f.key, hidden);
 		// Companion hidden input for `relatedField` (e.g. a prescriber-search's
 		// `prescriberName`). The dropdown selection handler writes the chosen
 		// display NAME here so the save payload carries a human-readable name
 		// alongside the id — the table then shows the name immediately instead
 		// of a bare id, even before the backend re-fetch supplies *Display.
-		if (f.relatedField && !this._formInputs.has(f.relatedField)) {
+		if (f.relatedField && !formInputs.has(f.relatedField)) {
 			const relHidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			relHidden.type = 'hidden';
-			this._formInputs.set(f.relatedField, relHidden);
+			formInputs.set(f.relatedField, relHidden);
 		}
 		// Locked display (e.g. the chart's patient on appointment / encounter
 		// forms): show the resolved name only — no typing, no search dropdown,
@@ -6113,7 +6134,14 @@ export class PatientChartEditor extends EditorPane {
 		// (outside the editor font scope); without it the result rows fell back to
 		// the browser default serif at an inconsistent size vs the input — the
 		// "big & uneven" typeahead the QA team flagged.
-		dropdown.style.cssText = 'position:fixed;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);';
+		// `right:auto;bottom:auto` neutralise the `inset:0` that the copied
+		// `monaco-workbench` class applies (style.css). Without them this
+		// position:fixed panel keeps `bottom:0`, so it stretches from its `top`
+		// down to the viewport bottom and `max-height:240px` then caps it — the
+		// panel always rendered a fixed ~240px tall box with empty space below
+		// the few result rows instead of shrinking to fit (provider typeahead).
+		// Same fix the shared customDropdown helper uses for its body-mounted panel.
+		dropdown.style.cssText = 'position:fixed;right:auto;bottom:auto;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-focusBorder,var(--vscode-editorWidget-border,#454545));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.45),0 2px 6px rgba(0,0,0,0.25);z-index:10010;max-height:240px;overflow-y:auto;display:none;padding:4px;font-family:var(--vscode-font-family, system-ui, sans-serif);';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
 			const viewportWidth = DOM.getActiveWindow().innerWidth;
@@ -6272,7 +6300,7 @@ export class PatientChartEditor extends EditorPane {
 								// label so list rendering and round-trip edits both
 								// keep the human-readable name visible.
 								if (f.relatedField) {
-									const related = this._formInputs.get(f.relatedField) as HTMLInputElement | undefined;
+									const related = formInputs.get(f.relatedField) as HTMLInputElement | undefined;
 									if (related) { related.value = it.label || it.code; }
 								}
 								dropdown.style.display = 'none';
@@ -6308,6 +6336,52 @@ export class PatientChartEditor extends EditorPane {
 				dropdown.style.display = 'none';
 			}
 		});
+		// Pasting a code (e.g. copied "E11.9" from another system) should resolve
+		// it to its description and auto-fill the code + the related name field —
+		// not just drop raw text that leaves the Condition name blank. The normal
+		// input→search still runs (showing the dropdown); this additionally
+		// auto-applies an EXACT code match so paste behaves like a pick.
+		if (isCodeSearch) {
+			input.addEventListener('paste', (e: ClipboardEvent) => {
+				const pasted = (e.clipboardData?.getData('text') || '').trim();
+				if (!pasted) { return; }
+				// Defer so the pasted value has landed in the input first.
+				DOM.getActiveWindow().setTimeout(() => { void this._resolvePastedCode(f, pasted, input, hidden, dropdown, formInputs); }, 0);
+			});
+		}
+	}
+
+	/**
+	 * Resolve a pasted code-search value to a concrete code + description and
+	 * apply it (fills the visible input, the hidden saved value, and any
+	 * `relatedField` such as the Problems form's Condition name). Only an EXACT
+	 * code match is auto-applied — anything else is left to the normal search
+	 * dropdown so a partial paste doesn't silently pick the wrong code.
+	 */
+	private async _resolvePastedCode(f: FieldDef, text: string, input: HTMLInputElement, hidden: HTMLInputElement, dropdown: HTMLElement, formInputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>): Promise<void> {
+		// Codes never contain whitespace; take the first token so a pasted
+		// "E11.9 - Type 2 diabetes" still resolves on the bare code.
+		const code = text.split(/\s+/)[0].trim();
+		if (!code) { return; }
+		let items: Array<{ code: string; label: string }> = [];
+		try {
+			const url = this._buildSearchUrl(f, code);
+			if (url) { const res = await this.apiService.fetch(url); if (res.ok) { items = this._extractSearchItems(f, await res.json()); } }
+		} catch { /* fall through to other tiers */ }
+		if (items.length === 0) {
+			const gUrl = this._buildGlobalCodesUrl(f, code);
+			if (gUrl) { try { const gRes = await this.apiService.fetch(gUrl); if (gRes.ok) { items = this._extractSearchItems(f, await gRes.json()); } } catch { /* */ } }
+		}
+		if (items.length === 0) { items = this._codeSearchFallback(f, code); }
+		const match = items.find(it => it.code.toUpperCase() === code.toUpperCase());
+		if (!match) { return; }
+		input.value = `${match.code} - ${match.label}`;
+		hidden.value = match.code;
+		if (f.relatedField) {
+			const related = formInputs.get(f.relatedField) as HTMLInputElement | undefined;
+			if (related) { related.value = match.label || match.code; }
+		}
+		dropdown.style.display = 'none';
 	}
 
 	private _buildSearchUrl(f: FieldDef, q: string): string | null {

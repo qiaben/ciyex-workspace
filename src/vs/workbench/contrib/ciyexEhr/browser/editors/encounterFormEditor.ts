@@ -94,11 +94,8 @@ export class EncounterFormEditor extends EditorPane {
 		await Promise.all([this._loadFormSchema(), this._loadEncounterData()]);
 		if (token.isCancellationRequested) { return; }
 
-		// Show the date of service alongside the encounter number in the tab.
-		// Strip any previously-appended date (the " · …" suffix) so re-opens
-		// don't accumulate duplicates.
-		const baseLabel = input.encounterLabel.replace(/\s·\s.*$/, '');
-		input.setEncounterLabel(this._serviceDate ? `${baseLabel} · ${this._serviceDate}` : baseLabel);
+		// Tab label format: "Encounter MM/DD/YYYY <id>".
+		input.setEncounterLabel(this._encounterTitle());
 
 		this._renderHeader();
 		this._renderToc();
@@ -391,7 +388,17 @@ export class EncounterFormEditor extends EditorPane {
 		if (!raw) { return ''; }
 		const d = new Date(String(raw));
 		if (isNaN(d.getTime())) { return String(raw).substring(0, 10); }
-		return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+		// mm/dd/yyyy — used in the tab label and the editor header title.
+		return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+	}
+
+	/** Tab + header title: "Encounter MM/DD/YYYY <id>". Falls back to today's
+	 *  date for a brand-new encounter with no service date yet, and omits the id
+	 *  until a real one has been minted (it is the literal "new" before save). */
+	private _encounterTitle(): string {
+		const date = this._serviceDate || new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+		const id = this.encounterId && this.encounterId !== 'new' ? this.encounterId : '';
+		return `Encounter ${date}${id ? ` ${id}` : ''}`;
 	}
 
 	/**
@@ -459,22 +466,16 @@ export class EncounterFormEditor extends EditorPane {
 		icon.textContent = '\u{1F4CB}';
 		icon.style.cssText = 'font-size:16px;';
 
+		// Title: "Encounter MM/DD/YYYY <id>" — same format as the tab label. The
+		// date of service is part of the title, so no separate DOS span is needed.
 		const title = DOM.append(this.headerBar, DOM.$('span'));
-		title.textContent = `Encounter ${this.encounterId}`;
+		title.textContent = this._encounterTitle();
 		title.style.cssText = 'font-size:14px;font-weight:700;';
 
 		if (this.patientName) {
 			const patient = DOM.append(this.headerBar, DOM.$('span'));
 			patient.textContent = this.patientName;
 			patient.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
-		}
-
-		// Date of service, shown next to the status badge.
-		if (this._serviceDate) {
-			const dos = DOM.append(this.headerBar, DOM.$('span'));
-			dos.textContent = this._serviceDate;
-			dos.title = 'Date of service';
-			dos.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		}
 
 		// Status badge
@@ -597,6 +598,9 @@ export class EncounterFormEditor extends EditorPane {
 				// Re-fetch the persisted composition (now keyed to the real encounter id)
 				// and re-render so the saved data is reflected immediately (issue 1).
 				await this._loadEncounterData().catch(() => { /* keep current view on reload failure */ });
+				// A brand-new encounter now has a real id + service date — refresh the
+				// tab label so "Encounter MM/DD/YYYY new" becomes "…  <id>".
+				if (this.input instanceof EncounterFormEditorInput) { this.input.setEncounterLabel(this._encounterTitle()); }
 				this._renderHeader();
 				this._renderForm();
 				this._updateAutoSaveIndicator('Saved');
