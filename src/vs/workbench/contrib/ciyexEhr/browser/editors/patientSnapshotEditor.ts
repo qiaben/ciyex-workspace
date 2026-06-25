@@ -1743,6 +1743,18 @@ export class PatientSnapshotEditor extends EditorPane {
 		return vit.filter(v => this._isToday(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date));
 	}
 
+	/** Best-effort recency timestamp (ms) for a vitals reading — used to pick the
+	 *  single most recent reading across the FHIR vitals store (shared with the
+	 *  Patient Chart editor) and the encounter-form composition. `_lastUpdated`
+	 *  reflects an EDIT (so a vital re-saved in the chart editor sorts to the top
+	 *  even though its recorded date is unchanged); the recorded date is the
+	 *  fallback. Returns -Infinity when no usable timestamp is present. */
+	private _vitalTime(v: Record<string, unknown>): number {
+		const raw = v._lastUpdated || v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date;
+		const t = raw ? Date.parse(String(raw)) : NaN;
+		return Number.isNaN(t) ? -Infinity : t;
+	}
+
 	/**
 	 * Map an encounter-form Composition's `vitals_*` fields onto the FHIR-vitals
 	 * record shape the Today's Vitals card reads (heightCm/weightKg/bpSystolic/…).
@@ -1774,9 +1786,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (n !== undefined) { out[target] = n; }
 		}
 		if (Object.keys(out).length === 0) { return null; }
-		// Tag as today's reading so it surfaces in the Today's Vitals card, and mark
+		// Stamp with the encounter date (the reading's date) and carry the
+		// composition's _lastUpdated so a freshly-edited encounter ranks correctly
+		// against the FHIR vitals store when picking the most recent reading. Mark
 		// the source so it is never treated as an editable FHIR Observation.
 		out.recordedAt = (encDate ? String(encDate) : new Date().toISOString());
+		if (comp._lastUpdated) { out._lastUpdated = comp._lastUpdated; }
 		out._source = 'encounter-form';
 		return out;
 	}
@@ -3256,7 +3271,6 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  When none are recorded for today, an INLINE entry form lets the MA type
 	 *  values straight in and save (no modal). */
 	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[], visitVitals?: Record<string, unknown> | null): void {
-		const todays = this._todaysVitals(vit);
 		const card = DOM.append(parent, DOM.$('.snap-card.snap-vitals-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
 		this._vitalsCardEl = card;
@@ -3264,10 +3278,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:320px;';
 
-		// Today's inline FHIR vitals win; otherwise fall back to the viewed visit's
-		// encounter vitals (mapped from the encounter-form composition) so a visit's
-		// recorded vitals always show — not only when dated exactly today.
-		const latest = (todays[0] ?? (visitVitals ?? undefined)) as Record<string, unknown> | undefined;
+		// Show the single MOST RECENT reading across the FHIR vitals store (shared
+		// with the Patient Chart editor — so a vital added/updated there reflects
+		// here) and the viewed visit's encounter-form composition. Sorting by
+		// `_vitalTime` (which prefers `_lastUpdated`) means an edit in either place
+		// surfaces, fixing "chart-editor vitals update not showing" and dropping the
+		// old today-only filter that hid edits to non-today readings.
+		const candidates = [...vit, ...(visitVitals ? [visitVitals] : [])];
+		candidates.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
+		const latest = (candidates[0] ?? undefined) as Record<string, unknown> | undefined;
 		// "Add Vitals" header button — always available so vitals can be recorded /
 		// updated straight from the snapshot (was missing entirely).
 		this._cardHeader(card, 'pulse', 'Vitals', latest ? 1 : 0, () => this._revealVitalsEntry?.());
