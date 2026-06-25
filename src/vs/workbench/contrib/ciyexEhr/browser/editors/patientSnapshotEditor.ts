@@ -1687,17 +1687,24 @@ export class PatientSnapshotEditor extends EditorPane {
 				if (fs && (fs.id !== undefined || Array.isArray(fs.items) || Array.isArray(fs.lines))) { feeSheet = fs; }
 			} catch { /* no fee sheet yet */ }
 
-			// Vitals captured in the encounter form (the `vitals_*` keys on the
-			// encounter-form Composition) are NOT FHIR vitals Observations, so they
-			// never showed in the Vitals card. The provider records vitals in the
-			// encounter, so surface that visit's encounter vitals here REGARDLESS of
-			// the encounter date — the snapshot can show any visit, and "encounter has
-			// vitals but the snapshot doesn't" was caused by filtering them to today.
-			// Real FHIR vitals recorded inline for today still take precedence.
+		}
+
+		// Vitals shown on the card are scoped to the VIEWED VISIT'S DATE: the
+		// encounter that belongs to THIS appointment (its linked encounter, or one
+		// dated on the appointment day) — never a stray same-day-today encounter. So
+		// a future appointment with no visit yet has no encounter vitals and the card
+		// stays blank until vitals are actually recorded for that date.
+		const apptDateRaw = String(apt?.start || apt?.startTime || '');
+		const linkedEncId = String(apt?.encounterId ?? '').trim();
+		const visitEnc = linkedEncId
+			? encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedEncId)
+			: encs.find(e => this._isSameDay(e.encounterDate || e.startDate || e.start || e.date || e.periodStart, apptDateRaw));
+		if (visitEnc) {
+			const veId = String(visitEnc.id ?? visitEnc.fhirId ?? '');
 			try {
-				const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(todayEncId)}`);
+				const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(veId)}`);
 				const { comp } = this._extractEncounterComposition(form);
-				const encDate = todayEnc?.encounterDate || todayEnc?.startDate || todayEnc?.start || todayEnc?.date || todayEnc?.periodStart;
+				const encDate = visitEnc.encounterDate || visitEnc.startDate || visitEnc.start || visitEnc.date || visitEnc.periodStart;
 				visitVitals = this._compositionVitalsRecord(comp, encDate);
 			} catch { /* no encounter-form vitals */ }
 		}
@@ -1707,7 +1714,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline, visitVitals);
+		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -1729,11 +1736,19 @@ export class PatientSnapshotEditor extends EditorPane {
 	// not yet reachable.
 
 	private _isToday(dateRaw: unknown): boolean {
-		if (!dateRaw) { return false; }
+		return this._isSameDay(dateRaw, new Date());
+	}
+
+	/** True when two dates fall on the same calendar day. Used to scope the Vitals
+	 *  card to the VIEWED APPOINTMENT'S date (not just today), so vitals show for
+	 *  the visit's day and a future visit with none recorded stays blank. */
+	private _isSameDay(dateRaw: unknown, refRaw: unknown): boolean {
+		if (!dateRaw || !refRaw) { return false; }
 		try {
 			const d = new Date(String(dateRaw));
-			const now = new Date();
-			return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+			const r = refRaw instanceof Date ? refRaw : new Date(String(refRaw));
+			if (isNaN(d.getTime()) || isNaN(r.getTime())) { return false; }
+			return d.getFullYear() === r.getFullYear() && d.getMonth() === r.getMonth() && d.getDate() === r.getDate();
 		} catch { return false; }
 	}
 
@@ -2819,6 +2834,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		appts: Record<string, unknown>[] = [],
 		pipeline?: VisitPipelineState,
 		visitVitals?: Record<string, unknown> | null,
+		apptDateRaw?: string,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
@@ -2834,7 +2850,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 
 		// Today's Vitals + Financials pair (recommended layout row 1)
-		this._renderTodayVitalsCard(grid, vit, visitVitals);
+		this._renderTodayVitalsCard(grid, vit, visitVitals, apptDateRaw);
 		this._renderFinancialsCard(grid, payments, statements);
 
 		// Visit History (2) lists the patient's APPOINTMENTS (the visits), while
@@ -3267,10 +3283,11 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _vitalsCardEl: HTMLElement | null = null;
 	private _revealVitalsEntry: (() => void) | null = null;
 
-	/** Today's Vitals only — older imported readings are hidden behind a link.
-	 *  When none are recorded for today, an INLINE entry form lets the MA type
-	 *  values straight in and save (no modal). */
-	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[], visitVitals?: Record<string, unknown> | null): void {
+	/** Vitals for the VIEWED APPOINTMENT'S date only — vitals recorded for that
+	 *  visit's day (via the Snapshot inline form, the Encounter, or the Patient
+	 *  Chart editor) show; otherwise the card is blank with an inline entry form.
+	 *  So a future appointment with nothing recorded for its date stays blank. */
+	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[], visitVitals?: Record<string, unknown> | null, apptDateRaw?: string): void {
 		const card = DOM.append(parent, DOM.$('.snap-card.snap-vitals-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
 		this._vitalsCardEl = card;
@@ -3278,13 +3295,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		const body = DOM.append(card, DOM.$('div'));
 		body.style.cssText = 'flex:1;overflow-y:auto;max-height:320px;';
 
-		// Show the single MOST RECENT reading across the FHIR vitals store (shared
-		// with the Patient Chart editor — so a vital added/updated there reflects
-		// here) and the viewed visit's encounter-form composition. Sorting by
-		// `_vitalTime` (which prefers `_lastUpdated`) means an edit in either place
-		// surfaces, fixing "chart-editor vitals update not showing" and dropping the
-		// old today-only filter that hid edits to non-today readings.
-		const candidates = [...vit, ...(visitVitals ? [visitVitals] : [])];
+		// Scope to the VIEWED APPOINTMENT'S date: FHIR vitals recorded on that day
+		// (from the Snapshot inline form or the Patient Chart editor — same store)
+		// plus this visit's own encounter-form vitals. Whichever was recorded last
+		// for that date shows; if nothing was recorded for the date, the card stays
+		// blank (so a future appointment with no visit yet shows no vitals). With no
+		// appointment date, fall back to today.
+		const dateRef = apptDateRaw && !isNaN(new Date(apptDateRaw).getTime()) ? apptDateRaw : new Date();
+		const dateVitals = vit.filter(v => this._isSameDay(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date, dateRef));
+		const candidates = [...dateVitals, ...(visitVitals ? [visitVitals] : [])];
 		candidates.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
 		const latest = (candidates[0] ?? undefined) as Record<string, unknown> | undefined;
 		// "Add Vitals" header button — always available so vitals can be recorded /
