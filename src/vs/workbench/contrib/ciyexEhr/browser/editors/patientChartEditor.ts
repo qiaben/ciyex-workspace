@@ -4101,10 +4101,21 @@ export class PatientChartEditor extends EditorPane {
 		};
 		refreshSortBtn();
 
-		const rows: Array<{ label: string; keys: string[]; unit?: string }> = [
+		// BMI is not stored on the FHIR vitals Observation (only height + weight are),
+		// so the BMI row was always blank. Compute it from this recording's weight &
+		// height (kg / m^2) when no explicit value is present.
+		const computeBmi = (rec: Record<string, unknown>): string => {
+			const w = Number(get(rec, ['weightKg', 'weight']));
+			const h = Number(get(rec, ['heightCm', 'height']));
+			if (!(w > 0) || !(h > 0)) { return ''; }
+			const m = h / 100;
+			const bmi = w / (m * m);
+			return Number.isFinite(bmi) ? bmi.toFixed(1) : '';
+		};
+		const rows: Array<{ label: string; keys: string[]; unit?: string; compute?: (rec: Record<string, unknown>) => string }> = [
 			{ label: 'Weight', keys: ['weightKg', 'weight'], unit: ' kg' },
 			{ label: 'Height', keys: ['heightCm', 'height'], unit: ' cm' },
-			{ label: 'BMI', keys: ['bmi'] },
+			{ label: 'BMI', keys: ['bmi'], compute: computeBmi },
 			{ label: 'BP Systolic', keys: ['bpSystolic', 'systolicBP', 'systolic'] },
 			{ label: 'BP Diastolic', keys: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
 			{ label: 'Pulse', keys: ['pulse', 'heartRate', 'hr'] },
@@ -4162,7 +4173,11 @@ export class PatientChartEditor extends EditorPane {
 				}
 			};
 			for (const r of rows) {
-				renderRow(r.label, (rec) => { const v = get(rec, r.keys); return v === undefined ? '' : `${v}${r.unit ?? ''}`; });
+				renderRow(r.label, (rec) => {
+					const v = get(rec, r.keys);
+					if (v === undefined) { return r.compute ? r.compute(rec) : ''; }
+					return `${v}${r.unit ?? ''}`;
+				});
 			}
 			// Signed row — interactive Sign / Signed toggle button per recording
 			// column, mirroring the ciyex-ehr-ui VitalsFlowsheet: an unsigned
