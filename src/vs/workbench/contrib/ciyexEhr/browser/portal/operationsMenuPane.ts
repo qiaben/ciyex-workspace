@@ -145,22 +145,22 @@ const ITEMS: OperationsItem[] = [
 			{ symbol: '\u{1F5D1}', label: 'Delete', color: '#ef4444', action: { kind: 'delete', path: r => `/api/inventory/${r.id}`, confirm: 'Delete this inventory item?' } },
 		],
 	},
-	{
-		// Fee Sheet: command-only — opens a blank/manual fee sheet. Per-encounter
-		// fee sheets are created from the encounter chart, so there is no list.
-		id: 'fee-sheet',
-		// allow-any-unicode-next-line
-		icon: '\u{1F4B2}',
-		label: 'Fee Sheet',
-		description: 'Encounter charges & billing',
-		command: 'ciyex.openFeeSheet',
-		color: '#10b981',
-		apiPath: '',
-		titleField: [],
-		actions: [],
-		commandOnly: true,
-		creatable: false,
-	},
+	// {
+	// 	// Fee Sheet: command-only — opens a blank/manual fee sheet. Per-encounter
+	// 	// fee sheets are created from the encounter chart, so there is no list.
+	// 	id: 'fee-sheet',
+	// 	// allow-any-unicode-next-line
+	// 	icon: '\u{1F4B2}',
+	// 	label: 'Fee Sheet',
+	// 	description: 'Encounter charges & billing',
+	// 	command: 'ciyex.openFeeSheet',
+	// 	color: '#10b981',
+	// 	apiPath: '',
+	// 	titleField: [],
+	// 	actions: [],
+	// 	commandOnly: true,
+	// 	creatable: false,
+	// },
 	{
 		// Payments (Transactions): \u{270F} Edit + \u{21A9} Refund + \u{2298} Void (clinicalEditors.ts:2690)
 		id: 'payments',
