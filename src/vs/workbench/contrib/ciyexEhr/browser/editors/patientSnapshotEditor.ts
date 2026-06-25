@@ -1503,10 +1503,22 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	private _lastRenderArgs: { patientId: string; patientName: string; appointmentId?: string } | null = null;
+	private _lastLoadAt = 0;
 	private _rerender(): void {
 		if (!this._lastRenderArgs) { return; }
 		const { patientId, patientName, appointmentId } = this._lastRenderArgs;
 		void this._loadAndRender(patientId, patientName, appointmentId);
+	}
+
+	/** Re-fetch when the snapshot becomes visible again so vitals (and other data)
+	 *  edited in another open editor — the Encounter or Patient Chart — show up
+	 *  without a manual reopen. Skipped right after a load to avoid a double fetch
+	 *  on first open. */
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		if (visible && this._lastRenderArgs && (Date.now() - this._lastLoadAt) > 1500) {
+			this._rerender();
+		}
 	}
 
 
@@ -1600,6 +1612,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
 		this._lastRenderArgs = { patientId, patientName, appointmentId };
+		this._lastLoadAt = Date.now();
 		const [patient, conditions, medications, vitals, encounters, labs, labResultsRaw, payments, statements, coverage, appointments] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
@@ -3282,12 +3295,17 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  querying the DOM (hygiene forbids querySelector). */
 	private _vitalsCardEl: HTMLElement | null = null;
 	private _revealVitalsEntry: (() => void) | null = null;
+	/** The viewed appointment's date — inline vitals are recorded for THIS date and
+	 *  upsert the shared per-date FHIR Observation (so they sync with the Encounter
+	 *  and Chart editor for that visit instead of creating a divergent copy). */
+	private _currentApptDateRaw: string = '';
 
 	/** Vitals for the VIEWED APPOINTMENT'S date only — vitals recorded for that
 	 *  visit's day (via the Snapshot inline form, the Encounter, or the Patient
 	 *  Chart editor) show; otherwise the card is blank with an inline entry form.
 	 *  So a future appointment with nothing recorded for its date stays blank. */
 	private _renderTodayVitalsCard(parent: HTMLElement, vit: Record<string, unknown>[], visitVitals?: Record<string, unknown> | null, apptDateRaw?: string): void {
+		this._currentApptDateRaw = apptDateRaw && !isNaN(new Date(apptDateRaw).getTime()) ? apptDateRaw : '';
 		const card = DOM.append(parent, DOM.$('.snap-card.snap-vitals-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;min-height:140px;display:flex;flex-direction:column;grid-column:span 2;';
 		this._vitalsCardEl = card;
@@ -3460,17 +3478,34 @@ export class PatientSnapshotEditor extends EditorPane {
 		return firstInput;
 	}
 
-	/** POST a new vitals reading for the current patient. Mirrors the chart
-	 *  editor: injects recordedAt (FhirPathMapper rejects empty) + patientId. */
+	/** Record vitals for the viewed visit. UPSERTS the ONE shared FHIR vitals
+	 *  Observation for the appointment's DATE — updating an existing same-date
+	 *  reading rather than POSTing a duplicate — so the value is the same record the
+	 *  Encounter and Patient Chart editor read/write for that visit. Falls back to
+	 *  today when no appointment date is known. */
 	private async _saveInlineVitals(payload: Record<string, unknown>): Promise<void> {
 		const pid = this._currentPatientId;
 		if (!pid) { throw new Error('No patient.'); }
-		const body = { ...payload, patientId: pid, recordedAt: new Date().toISOString() };
-		const res = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		});
+		// Record on the viewed appointment's date so the reading belongs to that
+		// visit (not just "now"); the Encounter/Chart editor key vitals by this date.
+		const dateRaw = this._currentApptDateRaw && !isNaN(new Date(this._currentApptDateRaw).getTime()) ? this._currentApptDateRaw : '';
+		const recordedAt = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
+		// Find an existing Observation for that date to update (avoids duplicates and
+		// keeps all three pages on one record).
+		let existingId = '';
+		try {
+			const listRaw = await this._fetch(`/api/fhir-resource/vitals/patient/${pid}?page=0&size=50`);
+			const inner = (listRaw?.data ?? listRaw) as Record<string, unknown> | undefined;
+			const arr = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : Array.isArray(listRaw) ? listRaw : [])) as Record<string, unknown>[];
+			const onDate = arr
+				.filter(v => this._isSameDay(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.date, recordedAt))
+				.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
+			if (onDate[0]) { existingId = String(onDate[0].id ?? onDate[0].fhirId ?? ''); }
+		} catch { /* no existing reading — create one */ }
+		const body = { ...payload, patientId: pid, recordedAt };
+		const res = existingId
+			? await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}/${existingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+			: await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 		if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
 		let saved: Record<string, unknown> | null = null;
 		try {
@@ -3478,7 +3513,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const cand = (j?.data ?? j) as Record<string, unknown> | null;
 			if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
 		} catch { /* non-JSON body */ }
-		this._trackCreated('vitals', { ...body, ...(saved || {}) });
+		this._trackCreated('vitals', { ...body, id: existingId || undefined, ...(saved || {}) });
 	}
 
 	/** "View historical vitals" link — older readings live in a popup so they

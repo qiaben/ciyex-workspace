@@ -42,10 +42,9 @@ export class EncounterFormEditor extends EditorPane {
 	private _autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	private _isDirty = false;
 	private _compositionId = '';
-	// Id of the FHIR vitals Observation this encounter's vitals are synced to (the
-	// SAME store the Patient Chart editor and Snapshot read), persisted on the
-	// composition as `vitals_observation_id` so the link survives reloads. Lets the
-	// three pages share one vitals reading instead of two divergent copies.
+	// Id of the shared FHIR vitals Observation for this visit's DATE — the SAME
+	// record the Snapshot and Patient Chart editor read/write. Resolved on load by
+	// date so the three pages share one vitals reading instead of divergent copies.
 	private _vitalsObsId = '';
 	private _encounterStatus = '';
 	private _serviceDate = '';
@@ -361,7 +360,6 @@ export class EncounterFormEditor extends EditorPane {
 							? [...content].sort((a, b) => String(b._lastUpdated ?? '').localeCompare(String(a._lastUpdated ?? '')))[0]
 							: dd;
 						if (comp && comp.id) { this._compositionId = String(comp.id); }
-						if (comp && comp.vitals_observation_id) { this._vitalsObsId = String(comp.vitals_observation_id); }
 						return comp ?? {};
 					}
 					return {};
@@ -382,20 +380,44 @@ export class EncounterFormEditor extends EditorPane {
 		const [fhir, ehr, form, vitals] = await Promise.all(loads);
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
 		this.encounterData = { ...vitals, ...fhir, ...ehr, ...form };
-		// If this encounter's vitals are synced to a specific FHIR Observation,
-		// reload THAT observation and let it win for the vitals_* fields — so an edit
-		// made in the Patient Chart editor (which writes the same Observation) shows
-		// here too. Falls back to the composition's own values on any failure.
-		if (this._vitalsObsId && this.patientId) {
+		this._serviceDate = this._extractServiceDate(this.encounterData);
+		// Vitals are shared across the Snapshot, this Encounter and the Patient Chart
+		// editor via ONE FHIR Observation per visit DATE. Load the most-recent vitals
+		// Observation recorded on this encounter's date and let it win for the
+		// vitals_* fields — so a value entered in the Snapshot or Chart editor for
+		// this date shows here too — and remember its id so save upserts the SAME
+		// record (no divergent copies). Falls back to the composition on failure.
+		const encDateRaw = this.encounterData['encounterDate'] ?? this.encounterData['startDate'] ?? this.encounterData['start'] ?? this.encounterData['date'];
+		if (this.patientId && encDateRaw) {
 			try {
-				const r = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}/${this._vitalsObsId}`);
-				if (r.ok) {
-					const linked = this._mapLatestVitals(await r.json());
-					if (Object.keys(linked).length > 0) { this.encounterData = { ...this.encounterData, ...linked }; }
+				const found = await this._findVitalsObsOnDate(String(encDateRaw));
+				if (found) {
+					this._vitalsObsId = found.id;
+					if (Object.keys(found.vitals).length > 0) { this.encounterData = { ...this.encounterData, ...found.vitals }; }
 				}
 			} catch { /* keep composition vitals on failure */ }
 		}
-		this._serviceDate = this._extractServiceDate(this.encounterData);
+	}
+
+	/** Find the most-recent FHIR vitals Observation recorded on the given calendar
+	 *  day (the shared per-visit-date record). Returns its id + mapped vitals_*
+	 *  fields, or null when none exists for that day. */
+	private async _findVitalsObsOnDate(dateRaw: string): Promise<{ id: string; vitals: Record<string, unknown> } | null> {
+		const ref = new Date(dateRaw);
+		if (isNaN(ref.getTime())) { return null; }
+		const sameDay = (v: unknown): boolean => {
+			const d = v ? new Date(String(v)) : null;
+			return !!d && !isNaN(d.getTime()) && d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth() && d.getDate() === ref.getDate();
+		};
+		const r = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=50`);
+		if (!r.ok) { return null; }
+		const arr = ((await r.json())?.data?.content ?? []) as Array<Record<string, unknown>>;
+		const onDate = arr
+			.filter(v => sameDay(v.recordedAt ?? v.effectiveDateTime ?? v.recordedDate ?? v.date))
+			.sort((a, b) => Date.parse(String(b._lastUpdated ?? b.recordedAt ?? '')) - Date.parse(String(a._lastUpdated ?? a.recordedAt ?? '')));
+		const obs = onDate[0];
+		if (!obs || !obs.id) { return null; }
+		return { id: String(obs.id), vitals: this._mapLatestVitals({ data: { content: [obs] } }) };
 	}
 
 	/** Inverse of {@link _mapLatestVitals}: map the encounter form's `vitals_*`
@@ -616,11 +638,12 @@ export class EncounterFormEditor extends EditorPane {
 		try {
 			// Resolve "new" to a real Encounter id before writing the Composition.
 			const encounterId = await this._ensureRealEncounterId(formData);
-			// Sync the vitals to the SHARED FHIR vitals store so they show in the
-			// Patient Chart editor and the Snapshot too (they read that store, not the
-			// encounter composition). Upsert the SAME Observation each save (id kept on
-			// the composition) so edits update one reading instead of piling up
-			// duplicates. Best-effort: never block the encounter save on a vitals error.
+			// Sync the vitals to the SHARED FHIR vitals store (the Snapshot and the
+			// Patient Chart editor read that store, NOT the encounter composition).
+			// Upsert the ONE Observation for this visit's DATE — found on load (or, if
+			// load missed it, looked up now) — so all three pages edit a single record
+			// instead of piling up divergent copies. Best-effort: a vitals error never
+			// blocks the encounter save.
 			const fhirVitals = this._vitalsToFhir(formData);
 			if (Object.keys(fhirVitals).length > 0) {
 				try {
@@ -628,19 +651,26 @@ export class EncounterFormEditor extends EditorPane {
 					const recordedAt = encDateRaw && !isNaN(new Date(String(encDateRaw)).getTime())
 						? new Date(String(encDateRaw)).toISOString()
 						: new Date().toISOString();
+					// Resolve the date's existing Observation if we don't already have it,
+					// so a vital entered for this date elsewhere is updated (not duplicated).
+					if (!this._vitalsObsId && encDateRaw) {
+						const found = await this._findVitalsObsOnDate(String(encDateRaw)).catch(() => null);
+						if (found) { this._vitalsObsId = found.id; }
+					}
 					const body = JSON.stringify({ ...fhirVitals, patientId, recordedAt });
-					const vRes = this._vitalsObsId
+					let vRes = this._vitalsObsId
 						? await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${patientId}/${this._vitalsObsId}`, { method: 'PUT', body })
 						: await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${patientId}`, { method: 'POST', body });
+					// A stale id (Observation deleted) 404s on PUT — fall back to create.
+					if (this._vitalsObsId && vRes.status === 404) {
+						vRes = await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${patientId}`, { method: 'POST', body });
+					}
 					if (vRes.ok) {
 						const vj = await vRes.json().catch(() => null);
 						const newId = String(vj?.data?.id ?? vj?.id ?? this._vitalsObsId ?? '');
 						if (newId) { this._vitalsObsId = newId; }
 					}
 				} catch { /* best-effort vitals sync */ }
-				// Persist the link on the composition so subsequent saves upsert the
-				// same Observation and reloads can re-read it.
-				if (this._vitalsObsId) { formData['vitals_observation_id'] = this._vitalsObsId; }
 			}
 			// Save to encounter-form composition (primary - matches EHR UI)
 			let compRes: Response;
