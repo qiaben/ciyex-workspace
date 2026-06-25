@@ -935,50 +935,82 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * collect endpoint's transaction shape.
 	 */
 	private async _savePayment(values: Record<string, string>): Promise<Response> {
-		// This form RECORDS an already-applied payment (no live Stripe charge), so
-		// there is never a saved card on hand. /api/payments/collect rejects
-		// `credit_card`/`debit_card` unless a paymentMethodId is supplied ("A saved
-		// payment method is required for card payments" → 400). Downgrade those two
-		// to `other` so a recorded card payment posts; every other method (cash,
-		// check, ach, fsa, hsa, bank_account, insurance, …) is accepted as-is.
-		const METHOD_MAP: Record<string, string> = {
-			credit_card: 'other', debit_card: 'other', cash: 'cash',
-			check: 'check', eft: 'ach', ach: 'ach', bank_account: 'bank_account',
-			fsa: 'fsa', hsa: 'hsa',
-		};
-		const rawMethod = String(values['paymentMethod'] || '').trim();
+		const payload = this._buildPaymentDto(values, /* downgradeCards */ true);
+		payload.patientId = this._currentPatientId;
 		// The RCM-style New Payment form has no plain "amount" field — it captures
-		// Paid / Allowed amounts. Fall back through them so the backend doesn't
-		// receive amount:0 (which fails with "A valid payment amount is required").
-		const amount = Number(
-			values['amount'] || values['paidAmount'] || values['allowedAmount'] || 0
-		);
-		if (!(amount > 0)) {
-			// Surface a client-side validation error instead of POSTing a 400.
+		// Paid / Allowed amounts. `_buildPaymentDto` falls back through them; if it
+		// still resolves to 0 the backend rejects with "A valid payment amount is
+		// required", so surface a client-side validation error instead of POSTing a 400.
+		if (!(Number(payload.amount) > 0)) {
 			return new Response(
 				JSON.stringify({ message: 'Enter a payment amount greater than 0.' }),
 				{ status: 400, headers: { 'Content-Type': 'application/json' } }
 			);
 		}
-		// Only send fields PaymentTransactionDto recognises. `invoiceNumber` (not
-		// `invoiceId`) and `referenceType` are the real DTO keys.
-		const payload: Record<string, unknown> = {
-			patientId: this._currentPatientId,
-			amount,
-			transactionType: 'payment',
-			paymentMethodType: METHOD_MAP[rawMethod] || (rawMethod || 'other'),
-			referenceType: String(values['referenceType'] || '').trim() || undefined,
-			description: String(values['description'] || values['payerName'] || '').trim() || undefined,
-			invoiceNumber: String(values['invoiceNumber'] || '').trim() || undefined,
-			receiptEmail: String(values['receiptEmail'] || '').trim() || undefined,
-			notes: String(values['notes'] || values['reference'] || '').trim() || undefined,
-			status: String(values['status'] || '').trim() || 'completed',
-		};
 		return this.apiService.fetch('/api/payments/collect', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
 		});
+	}
+
+	/**
+	 * Payment methods that need a saved card on file. This form RECORDS an
+	 * already-applied payment (no live Stripe charge), so there is never a saved
+	 * card on hand — `/api/payments/collect` (and the transaction PUT) reject
+	 * `credit_card`/`debit_card` unless a `paymentMethodId` is supplied ("A saved
+	 * payment method is required for card payments" → 400). Downgrade those two to
+	 * `other`; every other method (cash, check, ach, fsa, hsa, …) is kept as-is.
+	 */
+	private static readonly _PAYMENT_METHOD_MAP: Record<string, string> = {
+		credit_card: 'other', debit_card: 'other', cash: 'cash',
+		check: 'check', eft: 'ach', ach: 'ach', bank_account: 'bank_account',
+		fsa: 'fsa', hsa: 'hsa',
+	};
+
+	/** Transaction statuses the backend accepts; the shared payment form's Status
+	 *  select lists *invoice* statuses (issued/draft/balanced/cancelled), which a
+	 *  PaymentTransaction rejects, so we never forward one of those. */
+	private static readonly _PAYMENT_TXN_STATUSES = new Set(['completed', 'pending', 'failed', 'refunded', 'cancelled', 'voided', 'processing']);
+
+	/**
+	 * Build the `PaymentTransactionDto` body the `/api/payments` endpoints accept,
+	 * whitelisting ONLY recognised keys. Both create (POST /collect) and edit
+	 * (PUT /transactions/{id}) share this: editing previously sent the whole stored
+	 * record plus every form field (allocation fields, server-only keys, form-only
+	 * keys like `paymentMethod`/`reference`), which the backend's strict validation
+	 * rejected with 400. Pulling out a clean DTO is what fixes the edit-save 400.
+	 */
+	private _buildPaymentDto(values: Record<string, unknown>, downgradeCards = false): Record<string, unknown> {
+		const str = (v: unknown): string => String(v ?? '').trim();
+		const rawMethod = str(values['paymentMethod'] ?? values['paymentMethodType'] ?? values['method']);
+		// Only the live /collect endpoint needs the card→other downgrade (it tries to
+		// charge a saved card and 400s without one). Editing just updates a recorded
+		// payment, so the chosen method (e.g. Debit Card) is preserved verbatim.
+		const method = downgradeCards
+			? (PatientSnapshotEditor._PAYMENT_METHOD_MAP[rawMethod] || (rawMethod || 'other'))
+			: (rawMethod || 'other');
+		const dto: Record<string, unknown> = {
+			amount: Number(values['amount'] || values['paidAmount'] || values['allowedAmount'] || 0),
+			transactionType: str(values['transactionType']) || 'payment',
+			paymentMethodType: method,
+		};
+		// `collectedAt` is the DTO's date key; the form captures it as `paymentDate`.
+		const collectedAt = str(values['collectedAt'] ?? values['paymentDate'] ?? values['transactionDate']);
+		if (collectedAt) { dto.collectedAt = collectedAt.slice(0, 10); }
+		const referenceType = str(values['referenceType']);
+		if (referenceType) { dto.referenceType = referenceType; }
+		const description = str(values['description'] ?? values['payerName']);
+		if (description) { dto.description = description; }
+		const invoiceNumber = str(values['invoiceNumber']);
+		if (invoiceNumber) { dto.invoiceNumber = invoiceNumber; }
+		const receiptEmail = str(values['receiptEmail']);
+		if (receiptEmail) { dto.receiptEmail = receiptEmail; }
+		const notes = str(values['notes'] ?? values['reference']);
+		if (notes) { dto.notes = notes; }
+		const status = str(values['status']);
+		dto.status = PatientSnapshotEditor._PAYMENT_TXN_STATUSES.has(status) ? status : 'completed';
+		return dto;
 	}
 
 	/**
@@ -996,20 +1028,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (item.dateOfService) { out.dateOfService = dateOnly(item.dateOfService); }
 		if (!out.paymentMethod) { out.paymentMethod = String(item.paymentMethod ?? item.paymentMethodType ?? item.method ?? ''); }
 		if (out.amount === undefined || out.amount === null || out.amount === '') { out.amount = item.amount ?? item.totalAmount ?? ''; }
-		return out;
-	}
-
-	/**
-	 * Map the payment Edit form values back onto the transaction DTO keys so an
-	 * edited Payment Date / Method actually persists on PUT
-	 * /api/payments/transactions/{id} (inverse of {@link _normalizePaymentForEdit}).
-	 */
-	private _applyPaymentEditKeys(payload: Record<string, unknown>): Record<string, unknown> {
-		const out = { ...payload };
-		if (out.paymentDate) { out.collectedAt = out.paymentDate; }
-		const method = out.paymentMethod ?? out.paymentMethodType;
-		if (method) { out.paymentMethodType = method; }
-		if (out.amount !== undefined && out.amount !== '') { out.amount = Number(out.amount); }
+		// Map the remaining stored transaction keys onto their form-field keys so the
+		// Edit form opens fully populated (previously Reference / Description / Payer
+		// and Notes came up blank even though the record carried them).
+		if (!out.reference) { out.reference = String(item.reference ?? item.notes ?? ''); }
+		if (!out.notes) { out.notes = String(item.notes ?? ''); }
+		if (!out.description) { out.description = String(item.description ?? ''); }
+		if (!out.payerName) { out.payerName = String(item.payerName ?? item.description ?? ''); }
+		if (!out.referenceType) { out.referenceType = String(item.referenceType ?? ''); }
+		if (!out.invoiceNumber) { out.invoiceNumber = String(item.invoiceNumber ?? ''); }
+		if (!out.receiptEmail) { out.receiptEmail = String(item.receiptEmail ?? ''); }
 		return out;
 	}
 
@@ -1100,10 +1128,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 				const { url, method } = this._saveUrl(entity, existingId);
 				let payload: Record<string, unknown> = { ...next };
-				// Payment edit (PUT): map form keys back to the transaction DTO keys
-				// so an edited Payment Date / Method persists (create goes through
+				// Payment edit (PUT): send a clean, whitelisted transaction DTO so the
+				// backend doesn't 400 on form-only/extra fields (create goes through
 				// _savePayment above; this branch only runs for edits).
-				if (entity === 'payment') { payload = this._applyPaymentEditKeys(payload); }
+				if (entity === 'payment') {
+					payload = this._buildPaymentDto(payload);
+					payload.patientId = this._currentPatientId;
+					if (existingId) { payload.id = existingId; }
+				}
 				// Backend `vitals` POST without recordedAt is rejected by the
 				// FhirPathMapper validation — chart editor injects this exact
 				// fallback, so mirror it here.
@@ -1219,10 +1251,15 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 				const { url, method } = this._saveUrl(entity, existingId);
 				let payload: Record<string, unknown> = { ...item, ...next };
-				// Payment edit: map the form keys (paymentDate/paymentMethod) back to
-				// the transaction DTO keys (collectedAt/paymentMethodType) so changes
-				// persist (mirrors _normalizePaymentForEdit on the way in).
-				if (entity === 'payment') { payload = this._applyPaymentEditKeys(payload); }
+				// Payment edit: send a clean, whitelisted transaction DTO (built from the
+				// stored record merged with the form edits) so changes persist and the
+				// backend doesn't 400 on the stored record's server-only / nested fields.
+				if (entity === 'payment') {
+					payload = this._buildPaymentDto({ ...item, ...next });
+					payload.patientId = this._currentPatientId;
+					const payId = existingId ?? item.id ?? item.transactionId;
+					if (payId) { payload.id = payId; }
+				}
 				if (!reg.nonFhir && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
 				}
@@ -1563,13 +1600,19 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
 		this._lastRenderArgs = { patientId, patientName, appointmentId };
-		const [patient, conditions, medications, vitals, encounters, labs, payments, statements, coverage, appointments] = await Promise.allSettled([
+		const [patient, conditions, medications, vitals, encounters, labs, labResultsRaw, payments, statements, coverage, appointments] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
 			this._fetch(`/api/fhir-resource/medications/patient/${patientId}?page=0&size=50`),
 			this._fetch(`/api/fhir-resource/vitals/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/encounters/patient/${patientId}?page=0&size=50`),
 			this._fetch(`/api/fhir-resource/labs/patient/${patientId}?page=0&size=20`),
+			// Lab RESULTS entered in the clinical Labs page live in a separate, global
+			// store (/api/lab-results) — NOT the FHIR labs/orders endpoint above — so
+			// they were missing from the snapshot's Lab Results card. The endpoint has
+			// no patient-scoped route (the clinical editor loads all + filters
+			// client-side), so mirror that: pull a page and filter to this patient.
+			this._fetch(`/api/lab-results?page=0&size=500`),
 			this._fetch(`/api/payments/transactions/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
 			this._fetch(`/api/fhir-resource/insurance-coverage/patient/${patientId}?page=0&size=1`),
@@ -1613,7 +1656,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		const meds = this._mergePending('medications', this._filterDeleted('medications', this._list(medications)));
 		const vit = this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals)));
 		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
-		const labList = this._mergePending('labs', this._filterDeleted('labs', this._list(labs)));
+		// Combine FHIR lab orders with the clinical lab RESULTS (filtered to this
+		// patient + normalised onto the keys the Lab Results card reads), so results
+		// created on the clinical Labs page actually surface in the snapshot.
+		const labResults = this._normalizeLabResults(this._list(labResultsRaw), patientId);
+		const labList = this._mergePending('labs', this._filterDeleted('labs', [...this._list(labs), ...labResults]));
 		const payList = this._mergePending('payment', this._filterDeleted('payment', this._list(payments)));
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
@@ -1762,6 +1809,23 @@ export class PatientSnapshotEditor extends EditorPane {
 		const anyMatch = refs.some(r => r === pid);
 		if (anyRef && !anyMatch) { return encs; }
 		return encs.filter((_e, i) => !refs[i] || refs[i] === pid);
+	}
+
+	/** Filter the global `/api/lab-results` list to the patient on screen and map
+	 *  the lab-result DTO keys onto the ones the Lab Results card / `_isLabResult`
+	 *  read (`result`, `resultDate`, `collectionDate`). The DTO stores `value`,
+	 *  `collectedDate` and `reportedDate`, which otherwise rendered blank. */
+	private _normalizeLabResults(rows: Record<string, unknown>[], patientId: string): Record<string, unknown>[] {
+		const pid = String(patientId);
+		return rows
+			.filter(r => String(r.patientId ?? r.patient ?? '') === pid)
+			.map(r => ({
+				...r,
+				result: r.result ?? r.value,
+				testCode: r.testCode ?? r.loincCode,
+				resultDate: r.resultDate ?? r.reportedDate ?? r.collectedDate,
+				collectionDate: r.collectionDate ?? r.collectedDate,
+			}));
 	}
 
 	/** Keep only the appointments that belong to the patient on screen. The
@@ -2701,8 +2765,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 		};
 
-		// Edit appointment details (date / time / provider / reason …)
-		mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
+		// Edit appointment details (date / time / provider / reason …). Hidden once
+		// the appointment is finalized (Completed / Cancelled / No Show) — a closed-
+		// out visit's details should no longer be editable.
+		if (!isTerminal) {
+			mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
+		}
 		if (isTele) {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
@@ -2717,6 +2785,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			mkBtn('circle-slash', 'No Show', () => void this._changeApptStatus(appointmentId, 'No Show', apt), 'danger');
 			mkBtn('trash', 'Cancel', () => void this._changeApptStatus(appointmentId, 'Cancelled', apt), 'danger');
 		}
+
+		// A finalized non-telehealth appointment leaves no actions — drop the empty
+		// bar so it doesn't render a stray bordered strip under the card.
+		if (!bar.hasChildNodes()) { bar.remove(); }
 	}
 
 	private _renderGrid(

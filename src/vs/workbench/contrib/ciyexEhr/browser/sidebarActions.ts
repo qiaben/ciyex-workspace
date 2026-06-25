@@ -732,7 +732,9 @@ export function withTypeaheadSearch(
 			return list.map(p => {
 				const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || p.id);
 				const pid = String(p.id ?? p.patientId ?? '');
-				return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '' } };
+				const contact = (p.contact ?? p.contactInfo) as Record<string, unknown> | undefined;
+				const email = String(p.email || p.emailAddress || contact?.email || '');
+				return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '', email } };
 			});
 		} catch { return []; }
 	};
@@ -818,6 +820,22 @@ export function withTypeaheadSearch(
 		} catch { return []; }
 	};
 
+	// Back-fill a COMPANION field from a selection and mark it as a confirmed
+	// pick. Several companion fields (Lab Order's testCode, claims' payerId /
+	// insurerId, facilityId) are themselves rendered as strict-select search
+	// inputs — without stamping `dataset.selected`, the submit-time strict guard
+	// wipes the auto-filled value and the form can't be saved (the Lab Order
+	// "Test Code disappears on Create" bug).
+	const fillRelated = (
+		all: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+		key: string, val: string, onlyIfEmpty = false
+	): void => {
+		const i = all.get(key);
+		if (!i || (onlyIfEmpty && i.value)) { return; }
+		i.value = val;
+		i.dataset.selected = '1';
+	};
+
 	return fields.map(f => {
 		const k = f.key.toLowerCase();
 		if (k === 'patientname' || k === 'patientfirstname') {
@@ -830,6 +848,8 @@ export function withTypeaheadSearch(
 					set('patientId', item.details?.patientId || '');
 					set('patientFirstName', item.details?.firstName || '');
 					set('patientLastName', item.details?.lastName || '');
+					// Auto-fill the Receipt Email (Payments form) from the patient record.
+					if (item.details?.email) { set('receiptEmail', item.details.email); }
 				},
 			};
 		}
@@ -878,15 +898,22 @@ export function withTypeaheadSearch(
 			|| /diagnosis$/.test(k)) {
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('ICD10_CM', q) };
 		}
-		// Facility / location search (claims "Facility").
+		// Facility / location search (claims "Facility"). When the field already
+		// carries a select options source (optionsApiPath / preloaded options) —
+		// e.g. the Inventory "Location" dropdown, which loads its locations from
+		// the API exactly like its Category/Supplier siblings — leave it as a
+		// select dropdown instead of degrading it to a blank typeahead box.
 		if (k === 'facilityid' || k === 'facility' || k === 'locationid' || k === 'location') {
+			if (f.optionsApiPath || (f.options && f.options.length > 0)) {
+				return f;
+			}
 			return {
 				...f,
 				kind: 'search' as const,
 				onSearch: fetchFacilities,
 				onSelectSearchResult: (item, all) => {
 					const id = item.details?.id || '';
-					if (id) { for (const key of ['facilityId', 'locationId']) { const i = all.get(key); if (i) { i.value = id; } } }
+					if (id) { for (const key of ['facilityId', 'locationId']) { fillRelated(all, key, id); } }
 				},
 			};
 		}
@@ -907,7 +934,7 @@ export function withTypeaheadSearch(
 				})),
 				onSelectSearchResult: (item, all) => {
 					const code = item.details?.code || '';
-					if (code) { const i = all.get('testCode'); if (i) { i.value = code; } }
+					if (code) { fillRelated(all, 'testCode', code); }
 				},
 			};
 		}
@@ -960,7 +987,7 @@ export function withTypeaheadSearch(
 				},
 				onSelectSearchResult: (item, all) => {
 					const id = item.details?.id || '';
-					if (id) { for (const key of ['payerId', 'insurerId']) { const i = all.get(key); if (i) { i.value = id; } } }
+					if (id) { for (const key of ['payerId', 'insurerId']) { fillRelated(all, key, id); } }
 				},
 			};
 		}

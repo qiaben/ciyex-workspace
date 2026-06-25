@@ -140,7 +140,6 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	protected root!: HTMLElement;
 	protected headerEl!: HTMLElement;
 	protected mainEl!: HTMLElement;
-	protected practiceLabelEl!: HTMLElement;
 	protected clockDateEl!: HTMLElement;
 	protected clockTimeEl!: HTMLElement;
 
@@ -148,8 +147,11 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	protected providers: Provider[] = [];
 	protected locations: Location[] = [];
 	protected statusOptions: StatusOption[] = [];
-	protected practiceName: string = 'Practice';
 	protected loading: boolean = true;
+
+	/** Selected location filter; 'all' shows every location's appointments. */
+	protected selectedLocationId: string = 'all';
+	private locationSelectEl: HTMLSelectElement | null = null;
 
 	private clockTimer: number | null = null;
 	private refreshTimer: number | null = null;
@@ -221,12 +223,6 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerEl);
 
-		// Practice name (left) — allowed to shrink/ellipsize so the action
-		// buttons on the right are never pushed out of view.
-		this.practiceLabelEl = DOM.append(this.headerEl, DOM.$('div'));
-		this.practiceLabelEl.style.cssText = 'font-size:20px;font-weight:700;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-		this.practiceLabelEl.textContent = this.practiceName;
-
 		// Live clock (center) — takes the flexible middle space.
 		const clockWrap = DOM.append(this.headerEl, DOM.$('div'));
 		clockWrap.style.cssText = 'text-align:center;flex:1 1 auto;min-width:0;';
@@ -240,6 +236,11 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		// below the clock on very narrow windows instead of being clipped.
 		const actions = DOM.append(this.headerEl, DOM.$('div'));
 		actions.style.cssText = 'display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;';
+
+		// Location filter — "All Locations" plus one option per location. Lets the
+		// board be scoped to a single clinic instead of showing every location's
+		// schedule mixed together.
+		this._renderLocationFilter(actions);
 
 		// Refresh-now
 		const refreshBtn = this._makeIconButton(actions, 'Refresh', 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5', 'Refresh');
@@ -290,6 +291,47 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			txt.textContent = label;
 		}
 		return btn;
+	}
+
+	/** Build the location filter dropdown. Options are (re)populated from
+	 *  `this.locations` once reference data loads via `_populateLocationOptions`. */
+	private _renderLocationFilter(parent: HTMLElement): void {
+		const select = DOM.append(parent, DOM.$('select')) as HTMLSelectElement;
+		select.title = 'Filter by location';
+		select.setAttribute('aria-label', 'Filter by location');
+		const btnBg = 'var(--vscode-button-secondaryBackground, rgba(127,127,127,0.12))';
+		select.style.cssText = `height:36px;padding:0 12px;max-width:240px;background:${btnBg};border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.25));border-radius:8px;color:var(--vscode-foreground);cursor:pointer;font-size:13px;font-weight:600;`;
+		this.locationSelectEl = select;
+		this._populateLocationOptions();
+		select.addEventListener('change', () => {
+			this.selectedLocationId = select.value;
+			this._renderMain();
+		});
+	}
+
+	/** Sync the location dropdown's options + selection with `this.locations`. */
+	private _populateLocationOptions(): void {
+		const select = this.locationSelectEl;
+		if (!select) { return; }
+		DOM.clearNode(select);
+		const allOpt = DOM.append(select, DOM.$('option')) as HTMLOptionElement;
+		allOpt.value = 'all';
+		allOpt.textContent = 'All Locations';
+		for (const loc of this.locations) {
+			const opt = DOM.append(select, DOM.$('option')) as HTMLOptionElement;
+			opt.value = String(loc.id);
+			opt.textContent = loc.name || String(loc.id);
+		}
+		// Keep the current selection if it still exists; otherwise fall back to all.
+		const hasSelected = this.selectedLocationId === 'all' || this.locations.some(l => String(l.id) === this.selectedLocationId);
+		if (!hasSelected) { this.selectedLocationId = 'all'; }
+		select.value = this.selectedLocationId;
+	}
+
+	/** Appointments visible under the current location filter. */
+	private _visibleAppointments(): AppointmentDTO[] {
+		if (this.selectedLocationId === 'all') { return this.appointments; }
+		return this.appointments.filter(a => String(a.locationId) === this.selectedLocationId);
 	}
 
 	// allow-any-unicode-next-line
@@ -425,14 +467,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 				const d = await locRes.json();
 				const list = (d?.data?.content || d?.data || d?.content || d || []) as Location[];
 				this.locations = list;
-				// Derive practice name from the first location: "Sunrise Family
-				// Medicine - Main Clinic" → "Sunrise Family Medicine".
-				if (list.length > 0) {
-					const first = String(list[0].name || '');
-					const dashIdx = first.indexOf(' - ');
-					this.practiceName = dashIdx > 0 ? first.substring(0, dashIdx) : first;
-					if (this.practiceLabelEl) { this.practiceLabelEl.textContent = this.practiceName || 'Practice'; }
-				}
+				// The location dropdown renders before reference data loads, so
+				// refresh the options now that locations are known.
+				this._populateLocationOptions();
 			}
 			if (statusRes?.ok) {
 				const d = await statusRes.json();
@@ -535,7 +572,8 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	// ─── Staff Board ───────────────────────────────────────────────────────
 
 	private _renderStaffBoard(): void {
-		if (this.appointments.length === 0) {
+		const appointments = this._visibleAppointments();
+		if (appointments.length === 0) {
 			const empty = DOM.append(this.mainEl, DOM.$('div'));
 			empty.style.cssText = 'text-align:center;padding:64px 0;font-size:18px;opacity:0.4;';
 			empty.textContent = 'No appointments for today';
@@ -555,7 +593,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		}
 
 		const tbody = DOM.append(table, DOM.$('tbody'));
-		for (const a of this.appointments) {
+		for (const a of appointments) {
 			const tr = DOM.append(tbody, DOM.$('tr'));
 			const isCancelled = a.status === 'cancelled';
 			tr.style.cssText = `border-bottom:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.15));${isCancelled ? 'opacity:0.3;' : ''}`;
@@ -590,7 +628,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		summary.style.cssText = 'margin-top:24px;display:flex;align-items:center;gap:24px;padding:12px 16px;background:var(--vscode-editorWidget-background, rgba(127,127,127,0.08));border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.2));border-radius:8px;font-size:14px;flex-wrap:wrap;';
 
 		const counts: Record<string, number> = {};
-		for (const a of this.appointments) { counts[a.status] = (counts[a.status] || 0) + 1; }
+		for (const a of appointments) { counts[a.status] = (counts[a.status] || 0) + 1; }
 		for (const s of this.statusOptions) {
 			if (!counts[s.value]) { continue; }
 			const item = DOM.append(summary, DOM.$('span'));
@@ -611,7 +649,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		totalCount.style.cssText = 'font-weight:700;opacity:1;';
 		total.appendChild(document.createTextNode('Total: '));
 		total.appendChild(totalCount);
-		totalCount.textContent = String(this.appointments.length);
+		totalCount.textContent = String(appointments.length);
 	}
 
 	private _renderStatusPill(parent: HTMLElement, status: string): void {
@@ -634,7 +672,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		welcomeH.style.cssText = 'font-size:22px;font-weight:300;opacity:0.85;margin:0;';
 		welcomeH.textContent = 'Welcome! Your provider will be with you shortly.';
 
-		const active = this.appointments.filter(a => {
+		const active = this._visibleAppointments().filter(a => {
 			const opt = this._getStatusOption(a.status);
 			return !opt?.terminal && a.status !== 'cancelled' && a.status !== 'fulfilled';
 		});

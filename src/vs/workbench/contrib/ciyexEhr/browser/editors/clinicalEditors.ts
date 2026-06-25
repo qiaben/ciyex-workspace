@@ -4380,6 +4380,10 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 		key: 'patientName', label: 'Patient', type: 'search', required: true,
 		placeholder: 'Search patient...', apiPath: '/api/patients',
 		relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+		// Selecting a patient auto-fills the Receipt Email from their record so
+		// staff don't have to retype it. The candidate list covers the assorted
+		// shapes the patient endpoints use for the email value.
+		relatedFieldsMap: { receiptEmail: 'email||contact.email||contactInfo.email||emailAddress' },
 	},
 	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 	{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
