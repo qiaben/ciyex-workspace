@@ -707,6 +707,7 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 	const desc = Object.getOwnPropertyDescriptor(proto, 'value');
 	const protoSet = desc?.set;
 
+	let seeded = false;
 	const sync = (): void => {
 		const d = dateInp.value;
 		const t = timeHidden.value;
@@ -714,6 +715,12 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 		// Write through the prototype setter to avoid recursing into our override.
 		if (protoSet) { protoSet.call(hidden, combined); } else { hidden.value = combined; }
 		if (opts.onChange) { opts.onChange(combined); }
+		// Fire a DOM 'change' event so consumers that listen on the hidden input
+		// (e.g. the appointment form's "End = Start + 15min" auto-calc) react when
+		// the user changes the date OR time. The native datetime-local control
+		// emitted these; the custom dropdown did not, so the auto-calc never ran.
+		// Skip the initial seed (no listeners are attached yet at construction).
+		if (seeded) { hidden.dispatchEvent(new Event('change', { bubbles: true })); }
 	};
 
 	const timeHidden = createTimeDropdown({
@@ -741,6 +748,7 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 	}
 	// Seed the combined value from the initial date/time.
 	sync();
+	seeded = true;
 
 	return hidden;
 }

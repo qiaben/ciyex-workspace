@@ -893,16 +893,30 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
-		// CPT procedure code search.
+		// CPT procedure code search. Selecting a code auto-fills the companion
+		// "Procedure Description" box (Authorization drawer) from the result.
 		if (k === 'procedurecode' || k === 'cptcode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CPT', q) };
+			return {
+				...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('CPT', q),
+				onSelectSearchResult: (item, all) => {
+					const desc = item.details?.description || '';
+					if (desc) { for (const key of ['procedureDescription', 'cptDescription']) { fillRelated(all, key, desc); } }
+				},
+			};
 		}
 		// ICD-10 diagnosis code search (incl. the claim form's primary/secondary/
-		// tertiary/quaternary diagnosis pickers — QA issue 10).
+		// tertiary/quaternary diagnosis pickers — QA issue 10). Selecting a code
+		// auto-fills the companion "Diagnosis Description" box.
 		if (k === 'diagnosiscode' || k === 'icd10' || k === 'icdcode'
 			|| k === 'primarydiagnosis' || k === 'secondarydiagnosis' || k === 'tertiarydiagnosis' || k === 'quaternarydiagnosis'
 			|| /diagnosis$/.test(k)) {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('ICD10_CM', q) };
+			return {
+				...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('ICD10_CM', q),
+				onSelectSearchResult: (item, all) => {
+					const desc = item.details?.description || '';
+					if (desc) { for (const key of ['diagnosisDescription', 'icdDescription']) { fillRelated(all, key, desc); } }
+				},
+			};
 		}
 		// Facility / location search (claims "Facility"). When the field already
 		// carries a select options source (optionsApiPath / preloaded options) —

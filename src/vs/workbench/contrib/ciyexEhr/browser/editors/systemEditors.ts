@@ -531,6 +531,7 @@ export { DocScanningEditor } from './documentScanningEditor.js';
  */
 export class AuditLogEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexAuditLog';
+	private readonly _patientNameCache = new Map<string, string>();
 	protected readonly config: ClinicalEditorConfig = {
 		title: 'Audit Log',
 		apiPath: '/api/audit-log',
@@ -576,7 +577,18 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		cellRenderer: (key, value) => {
+		cellRenderer: (key, value, item) => {
+			if (key === 'patientName') {
+				if (value) { return String(value); }
+				// When the audited resource is itself a Patient, the resource name IS
+				// the patient — show it so the column isn't blank for those rows.
+				if (String(item.resourceType || '').toLowerCase() === 'patient' && item.resourceName) {
+					return String(item.resourceName);
+				}
+				// enrichItems resolves patientId → name asynchronously; until then
+				// (or when no patient is involved) leave the cell empty.
+				return '';
+			}
 			if (key === 'createdAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleString(); } catch { return String(value); }
 			}
@@ -592,6 +604,46 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 				return s.length > 60 ? s.slice(0, 60) + '…' : s;
 			}
 			return String(value ?? '');
+		},
+		// The Patient column was always blank: audit records carry a patientId (or
+		// nest it in `details`) but no patientName. Resolve the names from
+		// /api/patients/{id} (cached) so the column is populated.
+		enrichItems: async (items) => {
+			const patientIdOf = (it: Record<string, unknown>): string => {
+				const direct = it['patientId'] ?? it['patient_id'] ?? it['patientID'];
+				if (direct !== undefined && direct !== null && direct !== '' && String(direct) !== 'null') { return String(direct); }
+				// `details` is usually a JSON STRING ({"method":...,"patientId":13864}),
+				// so parse it before reading the nested patient id.
+				let d = it['details'];
+				if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = undefined; } }
+				if (d && typeof d === 'object') {
+					const dd = d as Record<string, unknown>;
+					const nested = dd['patientId'] ?? dd['patient_id'] ?? dd['patientID'];
+					if (nested !== undefined && nested !== null && nested !== '' && String(nested) !== 'null') { return String(nested); }
+				}
+				return '';
+			};
+			const missing = Array.from(new Set(items
+				.filter(it => !it['patientName'])
+				.map(patientIdOf)
+				.filter(pid => pid && !this._patientNameCache.has(pid))));
+			await Promise.all(missing.map(async pid => {
+				try {
+					const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(pid)}`);
+					if (!res.ok) { return; }
+					const data = await res.json();
+					const p = data?.data || data;
+					const first = p?.firstName || p?.identification?.firstName || '';
+					const last = p?.lastName || p?.identification?.lastName || '';
+					const full = `${first} ${last}`.trim();
+					if (full) { this._patientNameCache.set(pid, full); }
+				} catch { /* leave blank */ }
+			}));
+			for (const it of items) {
+				if (it['patientName']) { continue; }
+				const name = this._patientNameCache.get(patientIdOf(it));
+				if (name) { it['patientName'] = name; }
+			}
 		},
 		actions: [
 			{

@@ -41,7 +41,7 @@ interface Task {
 	createdAt?: string;
 }
 
-interface TaskStats { pending: number; inProgress: number; completed: number; overdue: number }
+interface TaskStats { pending: number; inProgress: number; completed: number; overdue: number; cancelled: number; deferred: number }
 
 const TASK_TYPES: Array<{ label: string; value: string }> = [
 	{ label: 'General', value: 'general' }, { label: 'Follow Up', value: 'follow_up' },
@@ -53,7 +53,7 @@ const TASK_TYPES: Array<{ label: string; value: string }> = [
 const STATUSES: Array<{ label: string; value: string }> = [
 	{ label: 'Pending', value: 'pending' }, { label: 'In Progress', value: 'in_progress' },
 	{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
-	{ label: 'Deferred', value: 'deferred' },
+	{ label: 'Deferred', value: 'deferred' }, { label: 'Overdue', value: 'overdue' },
 ];
 
 const PRIORITIES: Array<{ label: string; value: string }> = [
@@ -73,7 +73,7 @@ export class TasksEditor extends EditorPane {
 	private root!: HTMLElement;
 	private contentEl!: HTMLElement;
 	private tasks: Task[] = [];
-	private stats: TaskStats = { pending: 0, inProgress: 0, completed: 0, overdue: 0 };
+	private stats: TaskStats = { pending: 0, inProgress: 0, completed: 0, overdue: 0, cancelled: 0, deferred: 0 };
 	private filterStatus = '';
 	private filterPriority = '';
 	private filterType = '';
@@ -124,7 +124,14 @@ export class TasksEditor extends EditorPane {
 			if (res.ok) {
 				const data = await res.json();
 				const s = data?.data || data || {};
-				this.stats = { pending: s.pending || 0, inProgress: s.inProgress || s.in_progress || 0, completed: s.completed || 0, overdue: s.overdue || 0 };
+				this.stats = {
+					pending: s.pending || 0,
+					inProgress: s.inProgress || s.in_progress || 0,
+					completed: s.completed || 0,
+					overdue: s.overdue || 0,
+					cancelled: s.cancelled || 0,
+					deferred: s.deferred || 0,
+				};
 			}
 		} catch { /* */ }
 	}
@@ -195,7 +202,7 @@ export class TasksEditor extends EditorPane {
 
 	private _renderStats(): void {
 		const row = DOM.append(this.contentEl, DOM.$('div'));
-		row.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;';
+		row.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;';
 
 		const card = (label: string, count: number, color: string, icon: string) => {
 			const c = DOM.append(row, DOM.$('div'));
@@ -217,6 +224,8 @@ export class TasksEditor extends EditorPane {
 		card('In Progress', this.stats.inProgress, '#3b82f6', '\u25B6');
 		card('Completed', this.stats.completed, '#22c55e', '\u2705');
 		card('Overdue', this.stats.overdue, '#ef4444', '\u26A0');
+		card('Cancelled', this.stats.cancelled, '#6b7280', '\u2716');
+		card('Deferred', this.stats.deferred, '#8b5cf6', '\u23F8');
 	}
 
 	private _renderToolbar(): void {

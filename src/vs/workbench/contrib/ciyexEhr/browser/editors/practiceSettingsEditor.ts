@@ -316,11 +316,11 @@ export class PracticeSettingsEditor extends EditorPane {
 		// Practice Type (select)
 		this._gridSelect(grid, 'practiceType', 'Practice Type', this.practice.practiceType || '', PRACTICE_TYPES);
 		// NPI
-		this._gridField(grid, 'npi', 'NPI', this.practice.npi || '', 'text', 1);
+		this._gridField(grid, 'npi', 'NPI', this.practice.npi || '', 'text', 1, '10-digit NPI number');
 		// Tax ID
-		this._gridField(grid, 'taxId', 'Tax ID (EIN)', this.practice.taxId || '', 'text', 1);
+		this._gridField(grid, 'taxId', 'Tax ID (EIN)', this.practice.taxId || '', 'text', 1, 'XX-XXXXXXX');
 		// DBA
-		this._gridField(grid, 'dba', 'DBA / Alias', this.practice.dba || '', 'text', 3);
+		this._gridField(grid, 'dba', 'DBA / Alias', this.practice.dba || '', 'text', 3, 'Doing-business-as name');
 
 		return grid;
 	}
@@ -329,10 +329,10 @@ export class PracticeSettingsEditor extends EditorPane {
 		const grid = DOM.$('div');
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;';
 
-		this._gridField(grid, 'phone', 'Phone *', this.practice.phone || '', 'tel', 1);
-		this._gridField(grid, 'fax', 'Fax', this.practice.fax || '', 'tel', 1);
-		this._gridField(grid, 'email', 'Email', this.practice.email || '', 'email', 1);
-		this._gridField(grid, 'website', 'Website', this.practice.website || '', 'url', 3);
+		this._gridField(grid, 'phone', 'Phone *', this.practice.phone || '', 'tel', 1, '(555) 123-4567');
+		this._gridField(grid, 'fax', 'Fax', this.practice.fax || '', 'tel', 1, '(555) 123-4567');
+		this._gridField(grid, 'email', 'Email', this.practice.email || '', 'email', 1, 'name@example.com');
+		this._gridField(grid, 'website', 'Website', this.practice.website || '', 'url', 3, 'https://example.com');
 
 		return grid;
 	}
@@ -341,16 +341,16 @@ export class PracticeSettingsEditor extends EditorPane {
 		const grid = DOM.$('div');
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;';
 
-		this._gridField(grid, 'addressLine1', 'Address Line 1', this.practice.addressLine1 || '', 'text', 4);
-		this._gridField(grid, 'addressLine2', 'Address Line 2', this.practice.addressLine2 || '', 'text', 4);
-		this._gridField(grid, 'city', 'City', this.practice.city || '', 'text', 2);
-		this._gridField(grid, 'state', 'State', this.practice.state || '', 'text', 1);
-		this._gridField(grid, 'zip', 'ZIP', this.practice.zip || '', 'text', 1);
+		this._gridField(grid, 'addressLine1', 'Address Line 1', this.practice.addressLine1 || '', 'text', 4, 'Street address');
+		this._gridField(grid, 'addressLine2', 'Address Line 2', this.practice.addressLine2 || '', 'text', 4, 'Suite, unit, building (optional)');
+		this._gridField(grid, 'city', 'City', this.practice.city || '', 'text', 2, 'City');
+		this._gridField(grid, 'state', 'State', this.practice.state || '', 'text', 1, 'State');
+		this._gridField(grid, 'zip', 'ZIP', this.practice.zip || '', 'text', 1, 'ZIP code');
 
 		return grid;
 	}
 
-	private _gridField(parent: HTMLElement, key: keyof PracticeData, label: string, value: string, type: string, span: number): void {
+	private _gridField(parent: HTMLElement, key: keyof PracticeData, label: string, value: string, type: string, span: number, placeholder = ''): void {
 		const cell = DOM.append(parent, DOM.$('.ps-field'));
 		cell.style.cssText = `grid-column:span ${span};`;
 		const lbl = DOM.append(cell, DOM.$('label'));
@@ -359,6 +359,8 @@ export class PracticeSettingsEditor extends EditorPane {
 		const input = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 		input.type = type;
 		input.value = value;
+		// Fall back to "Enter <label>" so every field always shows a hint.
+		input.placeholder = placeholder || `Enter ${label.replace(/\s*\*$/, '').toLowerCase()}`;
 		input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
 		input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder)'; });
 		input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });

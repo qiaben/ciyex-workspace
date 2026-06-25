@@ -447,6 +447,7 @@ export class TasksSidebarPane extends ViewPane {
 					{ value: 'completed', label: 'Completed' },
 					{ value: 'cancelled', label: 'Cancelled' },
 					{ value: 'deferred', label: 'Deferred' },
+					{ value: 'overdue', label: 'Overdue' },
 				]
 			},
 			{ key: 'dueDate', label: 'Due Date', kind: 'date', widthPct: 50 },

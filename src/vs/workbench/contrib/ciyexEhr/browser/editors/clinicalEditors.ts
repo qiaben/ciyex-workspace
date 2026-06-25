@@ -607,6 +607,17 @@ export class LabsEditor extends ClinicalListEditorBase {
 				const alt = item.patientName || item.patientFullName || item.patient || '';
 				return String(alt || (item.patientId ? `Patient #${item.patientId}` : ''));
 			}
+			// TEST column: the order's "orderName" field is usually blank — the test
+			// is stored as testDisplay (name) + testCode (LOINC). Show the name with
+			// the code so the column isn't empty (QA: "test column not showing data").
+			if (key === 'orderName') {
+				const name = String(item.testDisplay || item.testName || '').trim();
+				const code = String(item.testCode || '').trim();
+				// Append the code only when the name doesn't already include it
+				// (several LOINC displays are already "<code> <description>").
+				const combined = name && code && !name.includes(code) ? `${name} (${code})` : (name || code);
+				return combined || String(item.orderName || _value || '');
+			}
 			return String(_value ?? '');
 		},
 		columns: [

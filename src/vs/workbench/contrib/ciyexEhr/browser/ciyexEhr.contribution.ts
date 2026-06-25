@@ -11,6 +11,7 @@ import { ICdsHooksService, CdsHooksService } from './cdsHooksService.js';
 import { ICiyexInstallationsService, CiyexInstallationsService } from './ciyexInstallationsService.js';
 import { ICiyexPaymentService, CiyexPaymentService } from './ciyexPaymentService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } from '../../../common/contributions.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { CiyexEhrContribution } from './ciyexEhrContribution.js';
@@ -64,3 +65,16 @@ Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
 // overlay is open, to match the dimmed workbench + title bar.
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
 	.registerWorkbenchContribution(CiyexWindowControlsDimmer, LifecyclePhase.Restored);
+
+// Default the editor tabs to shrink + wrap so the many EHR editor tabs
+// (patient charts, Snapshot, Tasks, Authorizations, Payments, …) stay within
+// the available width instead of overflowing / being cut off. Registered as a
+// DEFAULT override so users can still change it in settings. product.json
+// `configurationDefaults` is web-only, so the desktop EHR needs this here.
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
+	.registerDefaultConfigurations([{
+		overrides: {
+			'workbench.editor.tabSizing': 'shrink',
+			'workbench.editor.wrapTabs': true,
+		}
+	}]);

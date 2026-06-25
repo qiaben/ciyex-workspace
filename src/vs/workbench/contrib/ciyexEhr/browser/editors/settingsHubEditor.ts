@@ -4689,37 +4689,37 @@ export class SettingsHubEditor extends EditorPane {
 		};
 
 		const root = DOM.append(this.contentEl, DOM.$('div'));
-		root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a;';
+		root.style.cssText = 'height:100%;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-foreground);';
 
 		const header = DOM.append(root, DOM.$('div'));
-		header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:14px 20px;background:#ffffff;border-bottom:1px solid #e2e8f0;flex-shrink:0;';
+		header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--vscode-editorWidget-background);border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);flex-shrink:0;';
 
 		const brand = DOM.append(header, DOM.$('div'));
 		brand.style.cssText = 'display:flex;align-items:center;gap:10px;';
 		const brandIcon = DOM.append(brand, DOM.$('div'));
 		brandIcon.textContent = '\u{1F4C4}';
-		brandIcon.style.cssText = 'width:36px;height:36px;background:#dbeafe;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;';
+		brandIcon.style.cssText = 'width:36px;height:36px;background:var(--vscode-badge-background);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;';
 		const brandTxt = DOM.append(brand, DOM.$('div'));
 		const brandTitle = DOM.append(brandTxt, DOM.$('div'));
 		brandTitle.textContent = 'Template Documents';
-		brandTitle.style.cssText = 'font-size:14px;font-weight:700;color:#0f172a;';
+		brandTitle.style.cssText = 'font-size:14px;font-weight:700;color:var(--vscode-foreground);';
 		const brandSub = DOM.append(brandTxt, DOM.$('div'));
 		brandSub.textContent = 'Rich text template editor';
-		brandSub.style.cssText = 'font-size:11px;color:#64748b;';
+		brandSub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
 		const titleInp = DOM.append(header, DOM.$('input')) as HTMLInputElement;
 		titleInp.type = 'text';
 		titleInp.placeholder = 'Template title…';
-		titleInp.style.cssText = 'flex:1;min-width:160px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:#ffffff;color:#0f172a;outline:none;';
+		titleInp.style.cssText = 'flex:1;min-width:160px;padding:8px 12px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:8px;font-size:13px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);outline:none;';
 		titleInp.addEventListener('input', () => { state.title = titleInp.value; });
 
 		const ctxToggle = DOM.append(header, DOM.$('div'));
-		ctxToggle.style.cssText = 'display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;border:1px solid #e2e8f0;';
+		ctxToggle.style.cssText = 'display:inline-flex;background:var(--vscode-toolbar-hoverBackground);border-radius:8px;padding:3px;border:1px solid var(--vscode-editorWidget-border,#3c3c3c);';
 		const mkCtx = (label: string, val: 'ENCOUNTER' | 'PORTAL'): HTMLButtonElement => {
 			const b = DOM.append(ctxToggle, DOM.$('button')) as HTMLButtonElement;
 			b.textContent = label;
 			b.dataset.ctx = val;
-			b.style.cssText = 'padding:5px 12px;border:none;background:transparent;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:#64748b;';
+			b.style.cssText = 'padding:5px 12px;border:none;background:transparent;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);';
 			b.addEventListener('click', () => { state.context = val; renderCtxToggle(); void listLoad(); renderEditorMode(); });
 			return b;
 		};
@@ -4728,9 +4728,9 @@ export class SettingsHubEditor extends EditorPane {
 		const renderCtxToggle = (): void => {
 			for (const b of [encBtn, portalBtn]) {
 				const isActive = b.dataset.ctx === state.context;
-				b.style.background = isActive ? '#ffffff' : 'transparent';
-				b.style.color = isActive ? '#2563eb' : '#64748b';
-				b.style.boxShadow = isActive ? '0 1px 2px rgba(15,23,42,0.06)' : 'none';
+				b.style.background = isActive ? 'var(--vscode-editor-background)' : 'transparent';
+				b.style.color = isActive ? 'var(--vscode-textLink-foreground)' : 'var(--vscode-descriptionForeground)';
+				b.style.boxShadow = isActive ? '0 1px 2px rgba(0,0,0,0.2)' : 'none';
 			}
 		};
 		renderCtxToggle();
@@ -4741,9 +4741,9 @@ export class SettingsHubEditor extends EditorPane {
 			const b = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
 			b.textContent = glyph;
 			b.title = hint;
-			b.style.cssText = 'width:34px;height:34px;border:1px solid #cbd5e1;background:#ffffff;border-radius:8px;cursor:pointer;font-size:14px;color:#475569;display:inline-flex;align-items:center;justify-content:center;';
-			b.addEventListener('mouseenter', () => { b.style.background = '#f1f5f9'; });
-			b.addEventListener('mouseleave', () => { b.style.background = '#ffffff'; });
+			b.style.cssText = 'width:34px;height:34px;border:1px solid var(--vscode-input-border,#3c3c3c);background:var(--vscode-button-secondaryBackground,transparent);border-radius:8px;cursor:pointer;font-size:14px;color:var(--vscode-foreground);display:inline-flex;align-items:center;justify-content:center;';
+			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+			b.addEventListener('mouseleave', () => { b.style.background = 'var(--vscode-button-secondaryBackground,transparent)'; });
 			b.addEventListener('click', onClick);
 		};
 		mkIconBtn('+', 'New template', () => { state.selectedId = null; state.title = ''; state.content = ''; titleInp.value = ''; setEditorContent(''); renderEditorMode(); renderList(); });
@@ -4754,49 +4754,49 @@ export class SettingsHubEditor extends EditorPane {
 
 		const saveBtn = DOM.append(headerActions, DOM.$('button')) as HTMLButtonElement;
 		saveBtn.textContent = '\u{1F4BE} Save';
-		saveBtn.style.cssText = 'padding:8px 18px;background:#2563eb;color:#ffffff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;';
+		saveBtn.style.cssText = 'padding:8px 18px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;';
 		saveBtn.addEventListener('click', () => void saveCurrent());
 
 		const main = DOM.append(root, DOM.$('div'));
 		main.style.cssText = 'flex:1;display:flex;min-height:0;overflow:hidden;';
 
 		const sidebar = DOM.append(main, DOM.$('div'));
-		sidebar.style.cssText = 'width:260px;flex-shrink:0;background:#ffffff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;';
+		sidebar.style.cssText = 'width:260px;flex-shrink:0;background:var(--vscode-editorWidget-background);border-right:1px solid var(--vscode-editorWidget-border,#3c3c3c);display:flex;flex-direction:column;';
 		const sbHeader = DOM.append(sidebar, DOM.$('div'));
-		sbHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #e2e8f0;';
+		sbHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);';
 		const sbTitle = DOM.append(sbHeader, DOM.$('div'));
 		sbTitle.textContent = 'TEMPLATES';
-		sbTitle.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1px;color:#64748b;';
+		sbTitle.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1px;color:var(--vscode-descriptionForeground);';
 
 		const searchWrap = DOM.append(sidebar, DOM.$('div'));
-		searchWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid #e2e8f0;';
+		searchWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);';
 		const searchInp = DOM.append(searchWrap, DOM.$('input')) as HTMLInputElement;
 		searchInp.type = 'search';
 		searchInp.placeholder = 'Search…';
-		searchInp.style.cssText = 'width:100%;padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:6px;font-size:12px;outline:none;color:#0f172a;box-sizing:border-box;';
+		searchInp.style.cssText = 'width:100%;padding:6px 10px;border:1px solid var(--vscode-input-border,#3c3c3c);background:var(--vscode-input-background);border-radius:6px;font-size:12px;outline:none;color:var(--vscode-input-foreground);box-sizing:border-box;';
 		searchInp.addEventListener('input', () => { state.search = searchInp.value.toLowerCase(); renderList(); });
 
 		const listEl = DOM.append(sidebar, DOM.$('div'));
 		listEl.style.cssText = 'flex:1;overflow-y:auto;padding:8px 6px;';
 
 		const editorWrap = DOM.append(main, DOM.$('div'));
-		editorWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#ffffff;min-width:0;';
+		editorWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;background:var(--vscode-editor-background);min-width:0;';
 
 		const toolbar = DOM.append(editorWrap, DOM.$('div'));
-		toolbar.style.cssText = 'display:flex;align-items:center;gap:2px;padding:8px 12px;border-bottom:1px solid #e2e8f0;background:#ffffff;flex-wrap:wrap;';
+		toolbar.style.cssText = 'display:flex;align-items:center;gap:2px;padding:8px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,#3c3c3c);background:var(--vscode-editorWidget-background);flex-wrap:wrap;';
 		const tBtn = (glyph: string, hint: string, action: () => void): void => {
 			const b = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
 			b.textContent = glyph;
 			b.title = hint;
-			b.style.cssText = 'padding:5px 9px;border:none;background:transparent;cursor:pointer;border-radius:5px;font-size:13px;color:#475569;min-width:28px;font-weight:600;';
+			b.style.cssText = 'padding:5px 9px;border:none;background:transparent;cursor:pointer;border-radius:5px;font-size:13px;color:var(--vscode-foreground);min-width:28px;font-weight:600;';
 			b.addEventListener('mousedown', e => e.preventDefault());
-			b.addEventListener('mouseenter', () => { b.style.background = '#f1f5f9'; });
+			b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
 			b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
 			b.addEventListener('click', () => action());
 		};
 		const sep = (): void => {
 			const s = DOM.append(toolbar, DOM.$('span'));
-			s.style.cssText = 'width:1px;height:18px;background:#e2e8f0;margin:0 4px;';
+			s.style.cssText = 'width:1px;height:18px;background:var(--vscode-editorWidget-border,#3c3c3c);margin:0 4px;';
 		};
 		const exec = (cmd: string, val?: string): void => { mainWindow.document.execCommand(cmd, false, val); editorEl.focus(); state.content = getEditorContent(); };
 		tBtn('B', 'Bold', () => exec('bold'));
@@ -4835,7 +4835,7 @@ export class SettingsHubEditor extends EditorPane {
 		const spacer = DOM.append(toolbar, DOM.$('div'));
 		spacer.style.cssText = 'flex:1;';
 		const modeBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
-		modeBtn.style.cssText = 'padding:5px 12px;background:#0f172a;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		modeBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
 		modeBtn.addEventListener('click', () => {
 			if (state.mode === 'visual') {
 				state.content = getEditorContent();
@@ -4848,19 +4848,19 @@ export class SettingsHubEditor extends EditorPane {
 		});
 
 		const editorBox = DOM.append(editorWrap, DOM.$('div'));
-		editorBox.style.cssText = 'flex:1;overflow:auto;padding:24px;background:#ffffff;min-height:0;';
+		editorBox.style.cssText = 'flex:1;overflow:auto;padding:24px;background:var(--vscode-editor-background);min-height:0;';
 		const editorEl = DOM.append(editorBox, DOM.$('div'));
 		editorEl.contentEditable = 'true';
-		editorEl.style.cssText = 'min-height:300px;outline:none;font-size:14px;line-height:1.6;color:#0f172a;';
+		editorEl.style.cssText = 'min-height:300px;outline:none;font-size:14px;line-height:1.6;color:var(--vscode-foreground);';
 		editorEl.setAttribute('data-placeholder', 'Paste your HTML template here…');
 		editorEl.addEventListener('input', () => { state.content = getEditorContent(); });
 		const sourceArea = DOM.append(editorBox, DOM.$('textarea')) as HTMLTextAreaElement;
 		sourceArea.placeholder = 'Paste your HTML template here…';
-		sourceArea.style.cssText = 'width:100%;min-height:400px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;font-family:"SF Mono","Menlo","Consolas",monospace;font-size:12px;line-height:1.5;color:#0f172a;background:#f8fafc;resize:vertical;outline:none;box-sizing:border-box;display:none;';
+		sourceArea.style.cssText = 'width:100%;min-height:400px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:8px;padding:12px;font-family:"SF Mono","Menlo","Consolas",monospace;font-size:12px;line-height:1.5;color:var(--vscode-input-foreground);background:var(--vscode-input-background);resize:vertical;outline:none;box-sizing:border-box;display:none;';
 		sourceArea.addEventListener('input', () => { state.content = sourceArea.value; });
 
 		const footer = DOM.append(editorWrap, DOM.$('div'));
-		footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;';
+		footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:var(--vscode-editorWidget-background);border-top:1px solid var(--vscode-editorWidget-border,#3c3c3c);font-size:11px;color:var(--vscode-descriptionForeground);';
 		const footerLeft = DOM.append(footer, DOM.$('span'));
 		const footerRight = DOM.append(footer, DOM.$('span'));
 
@@ -4886,22 +4886,22 @@ export class SettingsHubEditor extends EditorPane {
 			if (filtered.length === 0) {
 				const empty = DOM.append(listEl, DOM.$('div'));
 				empty.textContent = state.templates.length === 0 ? 'No templates yet' : 'No matches';
-				empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:12px;';
+				empty.style.cssText = 'padding:24px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px;';
 				return;
 			}
 			for (const tpl of filtered) {
 				const isSel = state.selectedId !== null && state.selectedId === tpl.id;
 				const row = DOM.append(listEl, DOM.$('div'));
-				row.style.cssText = `padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;background:${isSel ? '#dbeafe' : 'transparent'};display:flex;align-items:center;gap:8px;`;
-				row.addEventListener('mouseenter', () => { if (!isSel) { row.style.background = '#f1f5f9'; } });
+				row.style.cssText = `padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;background:${isSel ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent'};display:flex;align-items:center;gap:8px;`;
+				row.addEventListener('mouseenter', () => { if (!isSel) { row.style.background = 'var(--vscode-list-hoverBackground)'; } });
 				row.addEventListener('mouseleave', () => { if (!isSel) { row.style.background = 'transparent'; } });
 				const nm = DOM.append(row, DOM.$('div'));
 				nm.textContent = tpl.name || '(untitled)';
-				nm.style.cssText = `flex:1;font-size:13px;font-weight:${isSel ? '600' : '500'};color:${isSel ? '#1e40af' : '#0f172a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+				nm.style.cssText = `flex:1;font-size:13px;font-weight:${isSel ? '600' : '500'};color:${isSel ? 'var(--vscode-list-activeSelectionForeground)' : 'var(--vscode-foreground)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
 				const del = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 				del.textContent = '\u{1F5D1}';
 				del.title = 'Delete';
-				del.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;color:#94a3b8;padding:2px 4px;';
+				del.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;color:var(--vscode-descriptionForeground);padding:2px 4px;';
 				del.addEventListener('click', async e => {
 					e.stopPropagation();
 					if (!tpl.id) { return; }
