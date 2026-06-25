@@ -2906,12 +2906,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			// is what guarantees a later step can never render done before an
 			// earlier one, no matter what stray same-day/patient-level data exists.
 			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
-			// Done steps stay clickable (revisit the module); the current step is
-			// clickable when it has an action; locked steps are inert.
-			const clickable = state !== 'locked' && !!s.action;
+			// Display-only: the strip reflects status and never navigates. No stage
+			// (done / next / locked) is clickable.
+			const clickable = false;
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-			tile.disabled = !clickable;
-			tile.title = state === 'locked' ? `Locked — finish "${stages[currentIdx]?.label ?? ''}" first` : s.action ? `Open ${s.label}` : s.label;
+			tile.disabled = true;
+			tile.title = s.label;
 			tile.style.cssText = [
 				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
