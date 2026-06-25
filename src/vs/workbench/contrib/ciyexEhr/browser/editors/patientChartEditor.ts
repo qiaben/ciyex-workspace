@@ -23,6 +23,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
+import { maskUsDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
 
 // --- Types ---
@@ -742,6 +743,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'prescribingDoctor', label: 'Prescriber', type: 'practitioner-search', placeholder: 'Search Prescriber', relatedField: 'prescriberName' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Draft', value: 'draft' },
 							{ label: 'Active', value: 'active' },
 							{ label: 'On Hold', value: 'on-hold' },
 							{ label: 'Stopped', value: 'stopped' },
@@ -760,8 +762,8 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'lab', title: 'Lab Order / Result', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'Test name' },
 					{ key: 'testCode', label: 'Test Code (LOINC)', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' } },
-					{ key: 'collectionDate', label: 'Collection Date', type: 'date' },
-					{ key: 'resultDate', label: 'Result Date', type: 'date' },
+					{ key: 'collectionDate', label: 'Collection Date', type: 'datetime' },
+					{ key: 'resultDate', label: 'Result Date', type: 'datetime' },
 					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
@@ -2530,7 +2532,7 @@ export class PatientChartEditor extends EditorPane {
 										ovType === 'select' && (backendType === 'text' || !backendType) ||
 										ovType === 'date' && backendType === 'datetime' ||
 										ovType === 'date' && backendType === 'text' ||
-										ovType === 'datetime' && (backendType === 'text' || !backendType) ||
+										ovType === 'datetime' && (backendType === 'text' || backendType === 'date' || !backendType) ||
 										ovType === 'phone' && (backendType === 'text' || !backendType) ||
 										ovType === 'email' && (backendType === 'text' || !backendType) ||
 										ovType === 'number' && backendType === 'text' ||
@@ -4253,10 +4255,27 @@ export class PatientChartEditor extends EditorPane {
 			case 'medications':
 				return [
 					{ label: 'All Statuses', value: '' },
+					{ label: 'Draft', value: 'draft' },
 					{ label: 'Active', value: 'active' },
 					{ label: 'On Hold', value: 'on-hold' },
 					{ label: 'Stopped', value: 'stopped' },
 					{ label: 'Completed', value: 'completed' },
+				];
+			case 'immunizations':
+				// Match the Immunization form's Status options (FHIR Immunization.status).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+					{ label: 'Not Done', value: 'not-done' },
+				];
+			case 'procedures':
+				// Match the Procedure form's Status options (FHIR Procedure.status).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'In Progress', value: 'in-progress' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
 				];
 			case 'billing':
 			case 'claims':
@@ -5772,6 +5791,16 @@ export class PatientChartEditor extends EditorPane {
 		const endInput = (this._formInputs.get('end') || this._formInputs.get('endDate')) as HTMLInputElement | undefined;
 		const durationInput = (this._formInputs.get('minutesDuration') || this._formInputs.get('duration')) as HTMLInputElement | undefined;
 
+		// Format a Date as a LOCAL "YYYY-MM-DDTHH:mm" string (the datetime-local
+		// shape the datetime dropdown stores). The previous code used
+		// toISOString(), which shifts the value into UTC — so a 9:07 AM start
+		// produced an End Date/Time hours off (and sometimes a different date),
+		// and the auto-fill looked broken (issue 10).
+		const toLocalDt = (d: Date): string => {
+			const pad = (n: number) => String(n).padStart(2, '0');
+			return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+		};
+
 		// Default start/end on a fresh form — start = now (rounded to next 5min),
 		// end = start + 15min. Reads existing record values via the hidden ISO
 		// field's value so it doesn't clobber an in-progress edit.
@@ -5779,11 +5808,9 @@ export class PatientChartEditor extends EditorPane {
 			const now = new Date();
 			now.setSeconds(0, 0);
 			now.setMinutes(now.getMinutes() + (5 - (now.getMinutes() % 5 || 5)));
-			const iso = now.toISOString().slice(0, 16);
-			startInput.value = iso;
+			startInput.value = toLocalDt(now);
 			if (endInput && !endInput.value) {
-				const e = new Date(now.getTime() + 15 * 60 * 1000);
-				endInput.value = e.toISOString().slice(0, 16);
+				endInput.value = toLocalDt(new Date(now.getTime() + 15 * 60 * 1000));
 			}
 		}
 
@@ -5807,8 +5834,9 @@ export class PatientChartEditor extends EditorPane {
 			const syncEndFromStart = () => {
 				const s = startInput.value ? new Date(startInput.value).getTime() : NaN;
 				if (!isNaN(s)) {
-					const e = new Date(s + DEFAULT_SLOT_MIN * 60 * 1000);
-					endInput.value = e.toISOString().slice(0, 16);
+					// The datetime dropdown's value setter syncs its visible date +
+					// time controls, so assigning here updates the End field's UI too.
+					endInput.value = toLocalDt(new Date(s + DEFAULT_SLOT_MIN * 60 * 1000));
 				}
 				recalcDuration();
 			};
@@ -5979,6 +6007,9 @@ export class PatientChartEditor extends EditorPane {
 		this._formInputs.set(f.key, hidden);
 
 		const sync = () => {
+			// Auto-insert slashes and cap the year at 4 digits as the user types.
+			const masked = maskUsDate(visible.value);
+			if (masked !== visible.value) { visible.value = masked; }
 			const iso = usToIso(visible.value);
 			hidden.value = iso;
 			visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
@@ -6770,7 +6801,18 @@ export class PatientChartEditor extends EditorPane {
 					return String(obj.text || obj.display || (obj.coding as Array<Record<string, string>>)?.[0]?.display || '');
 				}
 				if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
-					try { return new Date(v).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }); } catch { /* */ }
+					try {
+						const d = new Date(v);
+						// Show the time component when the value carries a real
+						// (non-midnight) time — e.g. lab Collection/Result Date store a
+						// timestamp and the list was dropping it (issue 11). Plain
+						// date-only values (no "T", or midnight) stay date-only.
+						const hasTime = /T\d{2}:\d{2}/.test(v) && !/T00:00(:00)?(\.\d+)?Z?$/.test(v);
+						if (hasTime) {
+							return d.toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+						}
+						return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+					} catch { /* */ }
 				}
 				return String(v).substring(0, 40);
 			});

@@ -960,6 +960,30 @@ export class ScheduleSidebarPane extends ViewPane {
 		}
 	}
 
+	/** Minutes between an appointment's start and end, mirroring the patient
+	 *  snapshot's calculation. Prefers an explicit minutes field, then a
+	 *  start/end diff; returns 0 when neither is available so callers can hide
+	 *  the duration instead of guessing a fixed value. */
+	private _apptDurationMin(apt: Appointment): number {
+		const r = apt as unknown as Record<string, unknown>;
+		const direct = Number(apt.duration ?? r.minutesDuration ?? r.durationMinutes ?? r.lengthMinutes ?? 0);
+		if (direct > 0) { return Math.round(direct); }
+		const startRaw = String(apt.start || apt.startTime || '');
+		const endRaw = String(r.end || r.endTime || r.appointmentEndTime || '');
+		if (startRaw && endRaw) {
+			const s = new Date(startRaw).getTime();
+			let e = new Date(endRaw).getTime();
+			if (isNaN(e)) {
+				// `end` may be a bare "HH:mm" — combine it with the start's date.
+				const tm = /^(\d{2}):(\d{2})/.exec(endRaw);
+				const dm = /^(\d{4}-\d{2}-\d{2})/.exec(startRaw);
+				if (tm && dm) { e = new Date(`${dm[1]}T${tm[1]}:${tm[2]}:00`).getTime(); }
+			}
+			if (!isNaN(s) && !isNaN(e) && e > s) { return Math.round((e - s) / 60000); }
+		}
+		return 0;
+	}
+
 	private _renderTeamsStyleRow(parent: HTMLElement, apt: Appointment): void {
 		const row = DOM.append(parent, DOM.$('.apt-row'));
 		row.style.cssText = 'display:flex;gap:10px;padding:8px 12px;border-bottom:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.12));cursor:pointer;align-items:flex-start;';
@@ -975,8 +999,12 @@ export class ScheduleSidebarPane extends ViewPane {
 				const d = new Date(String(rawTime));
 				if (!isNaN(d.getTime())) {
 					timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-					const dur = apt.duration || 30;
-					durStr = `${dur}m`;
+					// Compute the real duration from the appointment's own fields
+					// (start/end diff or a minutes field) instead of defaulting to 30 —
+					// a 15-min slot was showing "30m" here while the snapshot showed
+					// the correct "15 min".
+					const dur = this._apptDurationMin(apt);
+					durStr = dur > 0 ? `${dur}m` : '';
 				}
 			} catch { /* */ }
 		}

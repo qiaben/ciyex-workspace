@@ -11,6 +11,7 @@ import { CommandsRegistry, ICommandService } from '../../../../platform/commands
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { createCustomDropdown, createTimeDropdown, IDropdownOption } from './customDropdown.js';
+import { maskUsDate } from './ciyexDateMask.js';
 
 interface PatientResult {
 	id: string;
@@ -471,6 +472,9 @@ export class EhrTitlebarControls extends Disposable {
 			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 		};
 		this._register(DOM.addDisposableListener(dobVisible, 'input', () => {
+			// Auto-insert slashes and cap the year at 4 digits as the user types.
+			const masked = maskUsDate(dobVisible.value);
+			if (masked !== dobVisible.value) { dobVisible.value = masked; }
 			const iso = usToIso(dobVisible.value);
 			// Never silently cap to today — keep hidden value empty if invalid/future so
 			// save-time validation shows the correct error message.
@@ -1125,6 +1129,9 @@ export class EhrTitlebarControls extends Disposable {
 			picker.type = 'date';
 			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			visible.addEventListener('input', () => {
+				// Auto-insert slashes and cap the year at 4 digits as the user types.
+				const masked = maskUsDate(visible.value);
+				if (masked !== visible.value) { visible.value = masked; }
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
 				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';

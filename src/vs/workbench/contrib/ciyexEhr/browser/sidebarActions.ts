@@ -6,6 +6,7 @@
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { createTimeDropdown } from './customDropdown.js';
+import { createUsDateField } from './ciyexDateMask.js';
 import { FormFieldDef } from './editors/clinicalListEditor.js';
 
 /**
@@ -734,7 +735,8 @@ export function withTypeaheadSearch(
 				const pid = String(p.id ?? p.patientId ?? '');
 				const contact = (p.contact ?? p.contactInfo) as Record<string, unknown> | undefined;
 				const email = String(p.email || p.emailAddress || contact?.email || '');
-				return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '', email } };
+				const phone = String(p.phoneNumber || p.phone || p.mobile || p.cellPhone || p.homePhone || contact?.phoneNumber || contact?.phone || contact?.mobile || '');
+				return { value: name, label: name, description: pid ? `MRN ${pid}` : undefined, details: { patientId: pid, firstName: (p.firstName as string) || '', lastName: (p.lastName as string) || '', email, phone } };
 			});
 		} catch { return []; }
 	};
@@ -848,6 +850,10 @@ export function withTypeaheadSearch(
 					set('patientId', item.details?.patientId || '');
 					set('patientFirstName', item.details?.firstName || '');
 					set('patientLastName', item.details?.lastName || '');
+					// Auto-fill Phone + Email companions (Patient Recall form keys
+					// patientPhone / patientEmail) from the selected patient record.
+					if (item.details?.phone) { set('patientPhone', item.details.phone); }
+					if (item.details?.email) { set('patientEmail', item.details.email); }
 					// Auto-fill the Receipt Email (Payments form) from the patient record.
 					if (item.details?.email) { set('receiptEmail', item.details.email); }
 				},
@@ -1420,6 +1426,22 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			}
 			form.appendChild(wrap);
 			continue;
+		} else if (field.kind === 'date') {
+			// MM/DD/YYYY masked text + calendar picker instead of a native
+			// <input type="date">: the native picker renders in OS-locale order on
+			// Linux Electron and lets the year grow past 4 digits (6-digit-year bug)
+			// and never auto-inserts slashes. The hidden input carries the ISO value.
+			const dateCss = `padding:6px 8px;background:${inputBg};color:${colors.foreground};border:1px solid ${inputBorder};border-radius:4px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;width:100%;`;
+			const { hidden } = createUsDateField(doc, wrap, initial, dateCss, colors.foreground);
+			inputs.set(field.key, hidden);
+			if (field.hint) {
+				const hint = doc.createElement('div');
+				hint.textContent = field.hint;
+				hint.style.cssText = `font-size:11px;color:${colors.foreground};opacity:0.6;`;
+				wrap.appendChild(hint);
+			}
+			form.appendChild(wrap);
+			continue;
 		} else if (field.kind === 'search') {
 			// Typeahead — text input with a dropdown panel for matches.
 			//
@@ -1478,14 +1500,14 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// `readonly` trick — must NOT block our own search-typeahead
 			// listeners, so we attach a one-shot focus handler that drops the
 			// attribute before the user types the first character.
-			// 'time' is handled earlier via the custom dropdown; here only 'date'
-			// needs the native picker exempted from the readonly autofill trick.
+			// 'time' and 'date' are handled earlier via their own branches; here
+			// search fields manage their own readonly state.
 			if (field.readonly) {
 				// Genuinely read-only (derived) field — keep it non-editable.
 				// Do NOT attach the autofill-release handlers below (styling is
 				// applied after the cssText assignment further down).
 				input.setAttribute('readonly', 'readonly');
-			} else if (field.kind !== 'date' && field.kind !== 'search') {
+			} else if (field.kind !== 'search') {
 				// Search fields manage their own readonly state (locked after a
 				// dropdown pick), so they must not get the autofill-release trick —
 				// otherwise focusing a locked selection would silently unlock it.
@@ -2352,9 +2374,17 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 			return;
 		}
 
-		// text / number / email / tel / date / search
+		if (field.kind === 'date') {
+			// MM/DD/YYYY masked text + calendar picker (see openRecordEditDialog) —
+			// avoids the native date input's 6-digit-year / no-auto-slash behaviour.
+			const { hidden: hiddenDate } = createUsDateField(doc, host, initial, baseInput, c.fg);
+			inputs.set(field.key, hiddenDate);
+			return;
+		}
+
+		// text / number / email / tel / search
 		const inp = doc.createElement('input') as HTMLInputElement;
-		inp.type = field.kind && ['text', 'number', 'email', 'tel', 'date'].includes(field.kind) ? field.kind : 'text';
+		inp.type = field.kind && ['text', 'number', 'email', 'tel'].includes(field.kind) ? field.kind : 'text';
 		inp.value = initial;
 		inp.placeholder = field.placeholder || '';
 		inp.setAttribute('autocomplete', 'off');

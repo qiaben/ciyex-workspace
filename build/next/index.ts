@@ -1036,6 +1036,19 @@ ${tslib}`,
 // ============================================================================
 
 async function watch(): Promise<void> {
+	// The underlying file watcher (vscode-gulp-watch) stats files asynchronously to
+	// emit add/change/unlink events. Atomic saves (editors, the agent harness) create
+	// a short-lived `<file>.tmp.<pid>.<hash>` sibling that is renamed away before the
+	// stat resolves, producing a transient ENOENT that surfaces as an *uncaught*
+	// rejection and tears down the entire watch process. Swallow those so the watch
+	// stays alive across such races instead of crash-looping.
+	process.on('unhandledRejection', (reason: any) => {
+		if (reason && (reason.code === 'ENOENT' || reason.code === 'EPERM')) {
+			return;
+		}
+		console.error('[watch] Unhandled rejection:', reason);
+	});
+
 	if (!useEsbuildTranspile) {
 		console.log('Starting transpilation...');
 		console.log('Finished transpilation with 0 errors after 0 ms');

@@ -535,6 +535,10 @@ export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
 		searchValueField: 'code',
 		relatedField: 'testCode',
 		relatedDisplayFields: ['code', 'shortDescription'],
+		// Show only the description in the Test Name box after a pick (the LOINC
+		// code lands in the separate Test Code field via relatedField) — matches
+		// the screenshot and keeps the two fields from both showing the code.
+		selectDisplayField: 'shortDescription',
 		validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
 		validationMessage: 'Test Name must be at least 2 characters',
 	},
@@ -1818,37 +1822,39 @@ export const AUTHORIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
 	{ key: 'memberId', label: 'Member ID', type: 'text' },
 	{ key: 'authNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
+	// Issue #12: the first field is the CODE search (CPT) and the second field
+	// auto-fills the DESCRIPTION. Selecting a code from the dropdown puts just
+	// the code in the search box (selectDisplayField:'code') and writes the
+	// description into the companion Procedure Description box (relatedField +
+	// searchValueField:'shortDescription' feeds the related field the description).
 	{
-		key: 'procedureDescription', label: 'Procedure', type: 'search', required: true,
-		placeholder: 'Search CPT procedure (e.g. office visit)...',
+		key: 'procedureCode', label: 'Procedure Code', type: 'search', required: true,
+		placeholder: 'Search CPT code (e.g. 99213)...',
 		apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search',
 		searchParam: 'q',
-		searchDisplayField: 'shortDescription',
-		searchValueField: 'code',
-		relatedField: 'procedureCode',
+		searchDisplayField: 'code',
+		searchValueField: 'shortDescription',
+		relatedField: 'procedureDescription',
 		relatedDisplayFields: ['code', 'shortDescription'],
-		// Issue #7: dropdown shows "code description", but only the
-		// description lands in the Procedure box while the code fills the
-		// separate "CPT Code" box (relatedField above).
-		selectDisplayField: 'shortDescription',
-		validationPattern: '^[A-Za-z0-9 ,.\\-/()\\[\\]+&\']{2,}$',
-		validationMessage: 'Procedure must be at least 2 characters and contain only letters/numbers/punctuation',
+		selectDisplayField: 'code',
+		validationPattern: '^[0-9A-Z]{4,7}$',
+		validationMessage: 'Procedure code must be 4-7 alphanumerics (e.g. 99213, J0696)',
 	},
-	{ key: 'procedureCode', label: 'Procedure Code', type: 'text', required: true, placeholder: 'Auto-filled', validationPattern: '^[0-9A-Z]{4,7}$', validationMessage: 'Procedure code must be 4-7 alphanumerics (e.g. 99213, J0696)' },
+	{ key: 'procedureDescription', label: 'Procedure Description', type: 'text', placeholder: 'Auto-filled from code' },
 	{
-		key: 'diagnosisDescription', label: 'Diagnosis', type: 'search',
-		placeholder: 'Search ICD-10 diagnosis...',
+		key: 'diagnosisCode', label: 'Diagnosis Code', type: 'search',
+		placeholder: 'Search ICD-10 code (e.g. E11.9)...',
 		apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search',
 		searchParam: 'q',
-		searchDisplayField: 'shortDescription',
-		searchValueField: 'code',
-		relatedField: 'diagnosisCode',
+		searchDisplayField: 'code',
+		searchValueField: 'shortDescription',
+		relatedField: 'diagnosisDescription',
 		relatedDisplayFields: ['code', 'shortDescription'],
-		// Issue #7: ICD-10 code fills the "Diagnosis Code (ICD-10)" box;
-		// only the description lands in this "Diagnosis" box.
-		selectDisplayField: 'shortDescription',
+		selectDisplayField: 'code',
+		validationPattern: '^[A-Z][0-9][0-9A-Z](\\.[0-9A-Z]{1,4})?$',
+		validationMessage: 'ICD-10 format: e.g. E11.9, J18.9',
 	},
-	{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'text', placeholder: 'Auto-filled', validationPattern: '^[A-Z][0-9][0-9A-Z](\\.[0-9A-Z]{1,4})?$', validationMessage: 'ICD-10 format: e.g. E11.9, J18.9' },
+	{ key: 'diagnosisDescription', label: 'Diagnosis Description', type: 'text', placeholder: 'Auto-filled from code' },
 	{ key: 'reviewDate', label: 'Review Date', type: 'date' },
 	{ key: 'approvedDate', label: 'Approved Date', type: 'date' },
 	{ key: 'deniedDate', label: 'Denied Date', type: 'date' },

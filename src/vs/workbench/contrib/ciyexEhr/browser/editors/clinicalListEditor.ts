@@ -17,6 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { maskUsDate } from '../ciyexDateMask.js';
 
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
@@ -1583,6 +1584,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 										const relatedInput = inputs.get(field.relatedField);
 										if (relatedInput) {
 											relatedInput.value = String(result[valueField] ?? '');
+											// Mark the companion as a confirmed selection so, if it is
+											// itself a strict-select search field, the submit-time guard
+											// doesn't wipe this auto-filled value (issue 1 / issue 12).
+											relatedInput.dataset.selected = '1';
 										}
 									}
 									// Auto-fill additional related fields from the result (e.g. patientLastName, phone).
@@ -1618,7 +1623,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						dropdown.style.display = 'none';
 						// strictSelect: if the user typed without picking a result, wipe the
 						// stray text (and its related id) so only a real selection survives.
-						if (field.strictSelect && strictInput.dataset.selected !== '1' && strictInput.value) {
+						const relatedFilled = !!(field.relatedField && inputs.get(field.relatedField)?.value.trim());
+						if (field.strictSelect && strictInput.dataset.selected !== '1' && strictInput.value && !relatedFilled) {
 							strictInput.value = '';
 							if (field.relatedField) { const ri = inputs.get(field.relatedField); if (ri) { ri.value = ''; } }
 						}
@@ -1651,6 +1657,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				hidden.type = 'hidden';
 				visible.addEventListener('input', () => {
+					// Auto-insert slashes and cap the year at 4 digits as the user types.
+					const masked = maskUsDate(visible.value);
+					if (masked !== visible.value) { visible.value = masked; }
 					const iso = usToIso(visible.value);
 					hidden.value = iso;
 					visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
@@ -1838,7 +1847,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				// timer fires, so free-typed names can never be saved.
 				if (field.type === 'search' && field.strictSelect) {
 					const input = inputs.get(field.key);
-					if (input && input.value.trim() && input.dataset.selected !== '1') {
+					// Treat the field as a confirmed pick when its companion code/id
+					// (relatedField) is already populated — a filled companion can only
+					// come from a dropdown selection. This stops a stale `dataset.selected`
+					// flag from wiping a valid auto-filled code on Create (issue 1: Lab
+					// Order "Test Code disappears on Create").
+					const relatedFilled = !!(field.relatedField && inputs.get(field.relatedField)?.value.trim());
+					if (input && input.value.trim() && input.dataset.selected !== '1' && !relatedFilled) {
 						input.value = '';
 						if (field.relatedField) { const ri = inputs.get(field.relatedField); if (ri) { ri.value = ''; } }
 						failValidation(input, field.validationMessage || `Please select ${field.label} from the search results`, field);

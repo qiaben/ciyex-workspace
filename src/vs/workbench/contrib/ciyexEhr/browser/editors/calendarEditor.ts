@@ -19,6 +19,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
+import { maskUsDate } from '../ciyexDateMask.js';
 
 
 interface Appointment {
@@ -1302,6 +1303,9 @@ export class CalendarEditor extends EditorPane {
 			formFields.set(id, hidden);
 
 			const sync = () => {
+				// Auto-insert slashes and cap the year at 4 digits as the user types.
+				const masked = maskUsDate(visible.value);
+				if (masked !== visible.value) { visible.value = masked; }
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
 				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
