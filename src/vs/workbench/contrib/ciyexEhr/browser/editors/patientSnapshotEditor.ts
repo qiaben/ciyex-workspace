@@ -1051,6 +1051,15 @@ export class PatientSnapshotEditor extends EditorPane {
 			if (entity === 'demographics') {
 				return { url: `${ep}/${this._currentPatientId}`, method: 'PUT' };
 			}
+			// A payment edit PUTs to /api/payments/transactions/{id}, where {id} binds
+			// to a numeric `@PathVariable Long id`. If a row reaches save without a
+			// numeric transaction id, the URL becomes `.../undefined` and the backend
+			// returns a raw HTTP 500 ("Failed to convert value 'undefined' to Long")
+			// rather than a handled error. Guard it so the user sees a clear message
+			// instead of an opaque 500.
+			if (entity === 'payment' && isEdit && !/^\d+$/.test(String(existingId ?? ''))) {
+				throw new Error('This payment cannot be edited — its transaction id is missing. Refresh the page and try again.');
+			}
 			return { url: isEdit ? `${ep}/${existingId}` : ep, method: isEdit ? 'PUT' : 'POST' };
 		}
 		if (reg.fhirPatientScoped) {
@@ -1945,7 +1954,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		const allergies = (p?.allergies as string[] | undefined) || [];
 		const insurance = (cov[0] as Record<string, unknown> | undefined);
-		const insName = insurance?.payorName || insurance?.name || insurance?.coverageName || '';
+		const insName = insurance?.payerName || insurance?.payorName || insurance?.name || insurance?.coverageName || '';
 
 		const hdr = DOM.append(this.root, DOM.$('.snap-header'));
 		hdr.style.cssText = 'position:relative;padding:18px 24px 14px;border-bottom:1px solid var(--vscode-editorWidget-border);background:var(--vscode-editor-background);';
@@ -3227,7 +3236,8 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * wire row-click to the edit modal. Keeps the row compact in its idle
 	 * state and only surfaces actions when the user hovers/focuses.
 	 */
-	private _attachRowActions(rowEl: HTMLElement, entity: string, item: Record<string, unknown>): void {
+	private _attachRowActions(rowEl: HTMLElement, entity: string, item: Record<string, unknown>, opts?: { canEdit?: boolean; lockReason?: string }): void {
+		const locked = opts?.canEdit === false;
 		const actions = DOM.append(rowEl, DOM.$('div'));
 		actions.style.cssText = 'display:flex;align-items:center;gap:2px;flex-shrink:0;opacity:0;transition:opacity 0.12s ease-out;';
 
@@ -3244,10 +3254,21 @@ export class PatientSnapshotEditor extends EditorPane {
 			return b;
 		};
 
-		mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
+		// Locked rows (e.g. a refunded / voided payment, which the backend refuses
+		// to update — it 400s "Cannot update transaction with status: …") show a
+		// lock glyph in place of the edit pencil so users aren't offered a doomed
+		// edit. Delete stays available for correcting a mistaken row. Mirrors the
+		// signed-encounter lock in `_renderGridRowActions`.
+		if (locked) {
+			const lock = DOM.append(actions, DOM.$('span.codicon.codicon-lock'));
+			(lock as HTMLElement).style.cssText = 'width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--vscode-descriptionForeground);';
+			(lock as HTMLElement).title = opts?.lockReason || 'Locked — read only';
+		} else {
+			mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
+		}
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 
-		rowEl.style.cursor = 'pointer';
+		rowEl.style.cursor = locked ? 'default' : 'pointer';
 		rowEl.addEventListener('mouseenter', () => {
 			actions.style.opacity = '1';
 			rowEl.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.08))';
@@ -3258,6 +3279,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 		rowEl.addEventListener('click', (e) => {
 			if ((e.target as HTMLElement).closest('button')) { return; }
+			if (locked) { return; }
 			void this._openEditModal(entity, item);
 		});
 	}
@@ -3622,7 +3644,10 @@ export class PatientSnapshotEditor extends EditorPane {
 					amtEl.textContent = isNaN(amtNum) ? String(amt) : `$${amtNum.toFixed(2)}`;
 					amtEl.style.cssText = 'font-size:13px;font-weight:700;color:#22c55e;';
 				}
-				this._attachRowActions(r, 'payment', pay);
+				// Refunded / voided transactions are immutable server-side, so offer a
+				// read-only lock instead of an edit pencil that would 400 on save.
+				const payEditable = !['refunded', 'voided'].includes(String(pay.status || '').toLowerCase());
+				this._attachRowActions(r, 'payment', pay, payEditable ? undefined : { canEdit: false, lockReason: `${status || 'This'} payment is locked — read only` });
 			}
 			this._renderPagerFooter(card, 'payments', pageIdx, pageCount, total);
 		} else {

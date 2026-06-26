@@ -6067,6 +6067,19 @@ export class PatientChartEditor extends EditorPane {
 		// styling the test team referenced (clean name-only rows for
 		// patient picker, code-prefixed rows for code search).
 		const isCodeSearch = f.type === 'code-search' || f.type === 'coded';
+		// Foreign-key reference fields hold an id that must be resolved to a name for
+		// display. NAME-valued lookups (e.g. insurance `payerName`, which uses
+		// `valueField:'name'`) already store the display text — resolving them as ids
+		// returns null and blanked the field when re-opening edit (QA: payer /
+		// insurance showed nil after saving with a value). Computed here, before the
+		// value is shown, so the display logic can skip id→name resolution for them.
+		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
+			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key))
+			// Generic 'search' field where the field key is a foreign-key id —
+			// e.g. Patient Education materialId / educator. Selecting from the
+			// dropdown is required; free text deserialises to null and the
+			// backend rejects with "given id must not be null".
+			|| (f.type === 'search' && f.apiPath !== undefined);
 
 		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		input.type = 'text';
@@ -6077,7 +6090,10 @@ export class PatientChartEditor extends EditorPane {
 		// payer, …) the edit form receives the raw id. Show the resolved NAME in
 		// the visible input while keeping the id in the hidden value (issue 12).
 		const resolveDisplay = (): string => {
-			if (isCodeSearch || !currentValue) { return currentValue; }
+			// Only id-bearing references need id→name resolution. Code searches and
+			// name-valued lookups (e.g. `payerName`) already hold their display text,
+			// so showing it verbatim avoids blanking the field on edit.
+			if (isCodeSearch || !isIdLookup || !currentValue) { return currentValue; }
 			const r = this._resolveIdToName(f.key, currentValue);
 			return r === null || r === undefined ? '' : String(r);
 		};
@@ -6126,7 +6142,7 @@ export class PatientChartEditor extends EditorPane {
 		}
 		// Name caches may not be loaded on first render — resolve asynchronously
 		// and replace the raw id with the name once the caches populate (issue 12).
-		if (!isCodeSearch && currentValue && input.value === currentValue) {
+		if (!isCodeSearch && isIdLookup && currentValue && input.value === currentValue) {
 			void this._loadLookups().then(() => {
 				const resolved = resolveDisplay();
 				if (resolved && resolved !== currentValue) { input.value = resolved; }
@@ -6140,13 +6156,6 @@ export class PatientChartEditor extends EditorPane {
 		// whenever the user types so required-validation and the save
 		// payload stay correct. Code-search keeps "store-typed-text"
 		// because the value IS the code, not a foreign key.
-		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
-			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key))
-			// Generic 'search' field where the field key is a foreign-key id —
-			// e.g. Patient Education materialId / educator. Selecting from the
-			// dropdown is required; free text deserialises to null and the
-			// backend rejects with "given id must not be null".
-			|| (f.type === 'search' && f.apiPath !== undefined);
 		if (isIdLookup) {
 			input.addEventListener('input', () => { hidden.value = ''; });
 		} else {

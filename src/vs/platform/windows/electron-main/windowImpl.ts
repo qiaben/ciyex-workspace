@@ -461,15 +461,20 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 
 	private dimColor(color: string): string {
 
-		// Blend a CSS color with black at 30% opacity to match the
-		// dimming overlay of `rgba(0, 0, 0, 0.3)` used by modals.
+		// Blend a CSS color with black so the native min / maximize / close
+		// controls dim to the same shade as the dimmed title bar. The Ciyex
+		// EHR add/edit drawers dim the (DOM) title bar with
+		// `filter: brightness(0.75)` (see `ciyexCommon.css`), so we use the
+		// matching factor here. This is also close enough to the built-in
+		// modal scrim (`rgba(0, 0, 0, 0.3)`) that the controls stay visually
+		// consistent with it.
 
 		const parsed = Color.Format.CSS.parse(color);
 		if (!parsed) {
 			return color;
 		}
 
-		const dimFactor = 0.7; // 1 - 0.3 opacity of black overlay
+		const dimFactor = 0.75; // matches the title bar's `brightness(0.75)` dim
 		const r = Math.round(parsed.rgba.r * dimFactor);
 		const g = Math.round(parsed.rgba.g * dimFactor);
 		const b = Math.round(parsed.rgba.b * dimFactor);

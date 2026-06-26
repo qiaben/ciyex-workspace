@@ -242,13 +242,6 @@ export class MessagingEditor extends EditorPane {
 		// Spacer
 		DOM.append(this.headerEl, DOM.$('span')).style.flex = '1';
 
-		// Search button
-		const searchBtn = DOM.append(this.headerEl, DOM.$('button'));
-		// allow-any-unicode-next-line
-		searchBtn.textContent = '🔍';
-		searchBtn.title = 'Search messages';
-		searchBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;padding:4px;';
-
 		// Channel details button — opens the About / Members / Pinned / Files side
 		// panel. (Replaces the former inert "Pinned messages" pin button; pinned
 		// messages now live inside the details panel's Pinned tab.) Hidden for the

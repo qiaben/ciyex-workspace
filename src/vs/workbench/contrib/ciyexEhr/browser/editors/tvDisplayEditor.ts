@@ -17,6 +17,8 @@ import { StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorIn
 import { findWorkbenchRoot } from '../customDropdown.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
+import { IHostService } from '../../../../services/host/browser/host.js';
+import { isFullscreen } from '../../../../../base/browser/browser.js';
 
 // allow-any-unicode-next-line
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -163,8 +165,17 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		themeService: IThemeService,
 		storageService: IStorageService,
 		protected readonly apiService: ICiyexApiService,
+		protected readonly hostService: IHostService,
 	) {
 		super(id, group, telemetryService, themeService, storageService);
+		// Keep the board overlay and the OS window chrome in sync: if the window
+		// leaves fullscreen by any other means (e.g. F11), drop the overlay too so
+		// the restored window controls don't sit on top of a still-maximized board.
+		this._register(this.hostService.onDidChangeFullScreen(({ fullscreen }) => {
+			if (!fullscreen && this._cssFullscreen) {
+				this._setCssFullscreen(false);
+			}
+		}));
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -361,6 +372,10 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	 *  which is common inside the Electron workbench where the document is not
 	 *  allowed to enter fullscreen). */
 	private _cssFullscreen = false;
+	/** True only when *we* put the window into OS fullscreen, so on exit we
+	 *  restore exactly what we changed and never toggle a window the user had
+	 *  already fullscreened on their own. */
+	private _enteredOsFullscreen = false;
 	private _savedRootCss = '';
 	/** Escape-key listener active only while CSS-fullscreen, so the board can
 	 *  always be exited even if the header close button is overlapped. */
@@ -407,12 +422,19 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			this.root.style.width = '100vw';
 			this.root.style.height = '100vh';
 			this.root.style.zIndex = '2147483646';
-			// The OS / Electron window controls (minimize / maximize / close) sit
-			// at the very top-right above everything; without extra right padding
-			// they overlap the header's Close & Fullscreen buttons, which is why QA
-			// reported "no close button" on the full-screen board. Reserve space so
-			// the header actions clear the window controls.
-			this.headerEl.style.paddingRight = '148px';
+			this.headerEl.style.paddingRight = '24px';
+			// Enter real OS fullscreen as well. The CSS overlay alone can't hide the
+			// natively-drawn window controls (minimize / maximize / close) at the top
+			// right — they sit above all DOM and previously overlapped the header's
+			// Close / Exit Fullscreen buttons (QA: "no close button"). The OS hides
+			// that chrome entirely while fullscreen and restores it on exit. Only
+			// toggle (and remember) if the window wasn't already fullscreen, so we
+			// don't fight a user who fullscreened it themselves.
+			const fsWin = DOM.getWindow(this.root);
+			if (!isFullscreen(fsWin)) {
+				this._enteredOsFullscreen = true;
+				void this.hostService.toggleFullScreen(fsWin);
+			}
 			// Escape always exits fullscreen — a guaranteed way out even if the
 			// header buttons are obscured.
 			this._fsKeyListener?.dispose();
@@ -432,6 +454,16 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			this._fsKeyListener?.dispose();
 			this._fsKeyListener = undefined;
 			this._cssFullscreen = false;
+			// Leave OS fullscreen only if we were the ones who entered it, and only
+			// while still fullscreen (the window may already have left it — e.g. via
+			// F11 — which is what triggered this exit in the first place).
+			if (this._enteredOsFullscreen) {
+				const fsWin = DOM.getWindow(this.root);
+				if (isFullscreen(fsWin)) {
+					void this.hostService.toggleFullScreen(fsWin);
+				}
+				this._enteredOsFullscreen = false;
+			}
 		}
 	}
 
@@ -727,8 +759,9 @@ export class StaffTvBoardEditor extends TvDisplayEditorBase {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService apiService: ICiyexApiService,
+		@IHostService hostService: IHostService,
 	) {
-		super(StaffTvBoardEditor.ID, group, telemetryService, themeService, storageService, apiService);
+		super(StaffTvBoardEditor.ID, group, telemetryService, themeService, storageService, apiService, hostService);
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -747,8 +780,9 @@ export class WaitingRoomEditor extends TvDisplayEditorBase {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService apiService: ICiyexApiService,
+		@IHostService hostService: IHostService,
 	) {
-		super(WaitingRoomEditor.ID, group, telemetryService, themeService, storageService, apiService);
+		super(WaitingRoomEditor.ID, group, telemetryService, themeService, storageService, apiService, hostService);
 	}
 
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {

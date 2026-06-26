@@ -240,17 +240,42 @@ export class EncounterListPane extends ViewPane {
 
 	/** Populate {@link patientNameById} from the patients API (best-effort). */
 	private async _ensurePatientNameMap(): Promise<void> {
+		// 1) Bulk load — covers the common case (small/medium practices) in one request.
 		try {
 			const res = await this.apiService.fetch('/api/patients?page=0&size=500');
-			if (!res.ok) { return; }
-			const data = await res.json();
-			const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-			for (const p of list) {
-				const id = String(p.id ?? p.patientId ?? '').replace('Patient/', '');
-				const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || '');
-				if (id && name) { this.patientNameById.set(id, name); }
+			if (res.ok) {
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+				for (const p of list) {
+					const id = String(p.id ?? p.patientId ?? '').replace('Patient/', '');
+					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || '');
+					if (id && name) { this.patientNameById.set(id, name); }
+				}
 			}
-		} catch { /* best-effort: leave rows as "Unknown" if patients can't be fetched */ }
+		} catch { /* fall through to the per-id fallback below */ }
+		// 2) Per-id fallback for encounters whose patient the bulk page missed — e.g.
+		//    practices with >500 patients, where an existing patient's encounter would
+		//    otherwise still render "Unknown". Fetch those patients individually
+		//    (batched) so a real patient is never shown as Unknown. Mirrors the
+		//    appointments rail's enrichment.
+		const missingIds = [...new Set(this.allItems
+			.filter(it => !this._patientDisplayOf(it))
+			.map(it => this._patientIdOf(it))
+			.filter(id => id && !this.patientNameById.has(id)))];
+		const batchSize = 10;
+		for (let i = 0; i < missingIds.length; i += batchSize) {
+			const batch = missingIds.slice(i, i + batchSize);
+			await Promise.all(batch.map(async (id) => {
+				try {
+					const r = await this.apiService.fetch(`/api/patients/${id}`);
+					if (!r.ok) { return; }
+					const d = await r.json();
+					const p = (d?.data || d || {}) as Record<string, unknown>;
+					const name = `${(p.firstName as string) || ''} ${(p.lastName as string) || ''}`.trim() || String(p.name || '');
+					if (name) { this.patientNameById.set(id, name); }
+				} catch { /* leave as "Unknown" if even the direct fetch fails */ }
+			}));
+		}
 	}
 
 	private _renderList(search: string): void {

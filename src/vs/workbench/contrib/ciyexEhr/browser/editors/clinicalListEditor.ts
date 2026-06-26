@@ -1277,8 +1277,18 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		this.formOverlay.classList.add('ciyex-edit-dialog-overlay');
 		this.formOverlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;justify-content:flex-end;background:transparent;';
 
+		// Keep the scrim *below* the title bar. The title bar is already dimmed
+		// by `brightness(0.75)` (ciyexCommon.css `:has(.ciyex-edit-dialog-overlay)`)
+		// and the natively-drawn min/maximize/close controls dim to the matching
+		// shade via CiyexWindowControlsDimmer. A full-height backdrop (`inset:0`)
+		// would darken the DOM title bar a *second* time, but it can't cover the
+		// native controls — leaving them visibly lighter than the rest of the bar.
+		// eslint-disable-next-line no-restricted-syntax
+		const titlebarEl = overlayDoc.querySelector('.part.titlebar');
+		const titlebarHeight = titlebarEl ? (titlebarEl as HTMLElement).getBoundingClientRect().height : 35;
+
 		const backdrop = DOM.append(this.formOverlay, DOM.$('div'));
-		backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.4);';
+		backdrop.style.cssText = `position:absolute;top:${titlebarHeight}px;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);`;
 		backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) { this._closeForm(); } });
 
 		// Dialog (right-side panel) — flex column so header+footer are sticky and
@@ -1290,9 +1300,6 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// user was on a light theme (issue #18).
 		const themeType = this.themeService.getColorTheme().type;
 		const colorScheme = themeType === 'light' || themeType === 'hcLight' ? 'light' : 'dark';
-		// eslint-disable-next-line no-restricted-syntax
-		const titlebarEl = overlayDoc.querySelector('.part.titlebar');
-		const titlebarHeight = titlebarEl ? (titlebarEl as HTMLElement).getBoundingClientRect().height : 35;
 
 		// Full-height right-side drawer: flush to the top (just below the title
 		// bar so the window controls stay clickable) and to the bottom edge, with

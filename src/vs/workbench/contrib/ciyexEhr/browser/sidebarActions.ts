@@ -720,6 +720,23 @@ const FALLBACK_CVX_CODES: Array<{ code: string; shortDescription: string }> = [
 	{ code: '228', shortDescription: 'Zoster (shingles), recombinant (Shingrix)' },
 ];
 
+/**
+ * Built-in suggestions for the insurance / payer typeahead. The tenant's own
+ * `/api/insurance-companies` master list is often near-empty (a fresh tenant has
+ * one or none), which left the payer dropdown effectively blank. These common US
+ * payers are merged in as suggestions so the dropdown is useful out of the box;
+ * the field still accepts free text for any payer not listed here.
+ */
+const COMMON_PAYERS: readonly string[] = [
+	'Aetna', 'Anthem Blue Cross Blue Shield', 'Blue Cross Blue Shield', 'Cigna',
+	'UnitedHealthcare', 'Humana', 'Kaiser Permanente', 'Centene', 'Molina Healthcare',
+	'WellCare', 'Health Net', 'Oscar Health', 'Ambetter', 'Medicare', 'Medicaid',
+	'Tricare', 'Blue Shield of California', 'Highmark', 'Independence Blue Cross',
+	'Horizon Blue Cross Blue Shield', 'Harvard Pilgrim Health Care', 'Tufts Health Plan',
+	'UPMC Health Plan', 'Geisinger Health Plan', 'Premera Blue Cross', 'Regence',
+	'EmblemHealth', 'AmeriHealth', 'CareSource', 'Self-Pay',
+];
+
 export function withTypeaheadSearch(
 	fields: IEditFieldDef[],
 	api: { fetch(path: string, init?: RequestInit): Promise<Response> }
@@ -985,25 +1002,52 @@ export function withTypeaheadSearch(
 		// Insurance / payer search (incl. the claim form's "Payer / Insurer"
 		// picker keyed `payerId` — QA issue 10).
 		if (k === 'insurancename' || k === 'payername' || k === 'payerid' || k === 'payer' || k === 'insurerid' || k === 'insurer' || k === 'payorid') {
+			// Name-keyed payer fields (e.g. insurance coverage `payerName`) store a
+			// free-text payer/display name — the typeahead only SUGGESTS known
+			// insurance companies, it must not REQUIRE one. Strict selection wiped
+			// any value not picked from the (often near-empty) /api/insurance-companies
+			// list on blur/save, so editing a coverage record cleared the payer and
+			// blocked the update ("payer/insurance field clears on update"). Only the
+			// id-keyed pickers (claim form `payerId`/`insurerId`/`payorId`) stay
+			// strict, since those must resolve to a concrete insurance-company id.
+			const idBased = k === 'payerid' || k === 'insurerid' || k === 'payorid';
 			return {
 				...f,
 				kind: 'search' as const,
+				strictSelect: idBased ? f.strictSelect : false,
 				onSearch: async (q) => {
+					const lq = q.toLowerCase();
+					const seen = new Set<string>();
+					const out: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }> = [];
+					// Tenant's own payers first — they carry a real insurance-company id
+					// that the id-keyed claim picker needs. Payers live on
+					// `/api/insurance-companies` (the `/api/insurances` path the sidebar
+					// used before does not exist → 404). The route returns the full list
+					// ({ data: [...] }) with no server filter, so we match client-side.
 					try {
-						// Payers live on `/api/insurance-companies` (the `/api/insurances`
-						// path the sidebar used before does not exist → 404 → no results).
-						// The route returns the full list ({ data: [...] }) with no server
-						// filter, so we match the query client-side.
 						const res = await api.fetch(`/api/insurance-companies`);
-						if (!res.ok) { return []; }
-						const data = await res.json();
-						const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
-						const lq = q.toLowerCase();
-						return list
-							.filter(p => !lq || String(p.name || p.label || '').toLowerCase().includes(lq))
-							.slice(0, 10)
-							.map(p => ({ value: String(p.name || p.label || ''), label: String(p.name || p.label || ''), description: String(p.payerId || p.id || ''), details: { id: String(p.id ?? p.payerId ?? '') } }));
-					} catch { return []; }
+						if (res.ok) {
+							const data = await res.json();
+							const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+							for (const p of list) {
+								const name = String(p.name || p.label || '').trim();
+								if (!name || (lq && !name.toLowerCase().includes(lq))) { continue; }
+								const key = name.toLowerCase();
+								if (seen.has(key)) { continue; }
+								seen.add(key);
+								out.push({ value: name, label: name, description: String(p.payerId || p.id || ''), details: { id: String(p.id ?? p.payerId ?? '') } });
+							}
+						}
+					} catch { /* fall back to the built-in suggestions below */ }
+					// Common US payers as additional suggestions (no backend id).
+					for (const name of COMMON_PAYERS) {
+						if (lq && !name.toLowerCase().includes(lq)) { continue; }
+						const key = name.toLowerCase();
+						if (seen.has(key)) { continue; }
+						seen.add(key);
+						out.push({ value: name, label: name, details: { id: '' } });
+					}
+					return out.slice(0, 10);
 				},
 				onSelectSearchResult: (item, all) => {
 					const id = item.details?.id || '';
