@@ -1386,9 +1386,23 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 			const positionSelectPanel = () => {
 				const rect = trigger.getBoundingClientRect();
+				const viewportH = doc.defaultView?.innerHeight ?? doc.documentElement.clientHeight;
+				const gap = 2;
+				const spaceBelow = viewportH - rect.bottom - gap - 8;
+				const spaceAbove = rect.top - gap - 8;
+				// Flip above when there's no room below, and cap height to the side in
+				// use so the option list never spills off-screen in a tall drawer.
+				const flipUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+				panel.style.maxHeight = `${Math.max(120, Math.min(320, flipUp ? spaceAbove : spaceBelow))}px`;
 				panel.style.left = `${rect.left}px`;
-				panel.style.top = `${rect.bottom + 2}px`;
 				panel.style.minWidth = `${rect.width}px`;
+				if (flipUp) {
+					panel.style.top = 'auto';
+					panel.style.bottom = `${viewportH - rect.top + gap}px`;
+				} else {
+					panel.style.bottom = 'auto';
+					panel.style.top = `${rect.bottom + gap}px`;
+				}
 			};
 			const renderSelectOptions = () => {
 				DOM.clearNode(panel);
@@ -1674,9 +1688,26 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			// dialog's `transform` stacking context.
 			const positionPanel = () => {
 				const rect = inputEl.getBoundingClientRect();
+				const viewportH = doc.defaultView?.innerHeight ?? doc.documentElement.clientHeight;
+				const gap = 2;
+				const spaceBelow = viewportH - rect.bottom - gap - 8;
+				const spaceAbove = rect.top - gap - 8;
+				// Flip the panel above the input when there's no room below it (a
+				// field low in a tall drawer) so results aren't clipped off the
+				// bottom of the viewport, and cap the height to the side in use so
+				// the list stays fully on-screen at any window size.
+				const flipUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+				const maxH = Math.max(120, Math.min(280, flipUp ? spaceAbove : spaceBelow));
 				panel.style.left = `${rect.left}px`;
-				panel.style.top = `${rect.bottom + 2}px`;
 				panel.style.width = `${rect.width}px`;
+				panel.style.maxHeight = `${maxH}px`;
+				if (flipUp) {
+					panel.style.top = 'auto';
+					panel.style.bottom = `${viewportH - rect.top + gap}px`;
+				} else {
+					panel.style.bottom = 'auto';
+					panel.style.top = `${rect.bottom + gap}px`;
+				}
 			};
 			const renderResults = (results: Array<{ value: string; label: string; description?: string; details?: Record<string, string> }>) => {
 				DOM.clearNode(panel);
