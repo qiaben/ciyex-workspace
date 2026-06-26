@@ -18,8 +18,9 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch } from '../sidebarActions.js';
+import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
+import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
 
 interface QuickAction {
 	icon: string;
@@ -231,15 +232,36 @@ export class PatientSnapshotEditor extends EditorPane {
 			],
 			listPath: (pid) => `/api/fhir-resource/insurance-coverage/patient/${pid}?page=0&size=20`,
 		},
-		labs: {
-			title: 'Lab Orders', configKey: 'labs', basePath: '/api/fhir-resource/labs', fhirPatientScoped: true,
+		// Lab Orders and Lab Results both write to the CLINICAL stores
+		// (/api/lab-order/{patientId} and /api/lab-results) — the very same
+		// endpoints the clinical Labs page uses — so an order/result created on
+		// the snapshot shows up on the clinical Labs page (and the patient chart),
+		// and vice-versa. `nonFhir` keeps the generic delete/save off the FHIR
+		// "/patient/" URL shape; lab-specific URLs are built in `_saveUrl`,
+		// `_deleteItem` and `_loadEntityList`.
+		labOrders: {
+			title: 'Lab Orders', configKey: 'labs', basePath: '/api/lab-order', fhirPatientScoped: false, nonFhir: true,
+			columns: [
+				{ key: 'orderNumber', label: 'Order #', width: '120px' },
+				{ key: 'testDisplay', label: 'Test', width: '2fr', format: (_v, r) => String(r.testDisplay || r.testName || r.orderName || '—') },
+				{ key: 'physicianName', label: 'Provider', width: '120px' },
+				{ key: 'priority', label: 'Priority', width: '90px' },
+				{ key: 'status', label: 'Status', width: '100px' },
+				{ key: 'orderDate', label: 'Date', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+			],
+			listPath: () => `/api/lab-order/search?page=0&size=500`,
+		},
+		labResults: {
+			title: 'Lab Results', configKey: 'labs', basePath: '/api/lab-results', fhirPatientScoped: false, nonFhir: true,
 			columns: [
 				{ key: 'testName', label: 'Test', width: '2fr' },
-				{ key: 'testCode', label: 'LOINC', width: '110px' },
-				{ key: 'collectionDate', label: 'Collected', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'value', label: 'Value', width: '90px', format: (_v, r) => { const u = String(r.units || ''); const val = String(r.value ?? r.result ?? ''); return val ? (u ? `${val} ${u}` : val) : '—'; } },
+				{ key: 'referenceRange', label: 'Range', width: '100px' },
+				{ key: 'abnormalFlag', label: 'Flag', width: '80px' },
 				{ key: 'status', label: 'Status', width: '100px' },
+				{ key: 'collectedDate', label: 'Collected', width: '110px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
 			],
-			listPath: (pid) => `/api/fhir-resource/labs/patient/${pid}?page=0&size=50`,
+			listPath: () => `/api/lab-results?page=0&size=500`,
 		},
 		'visit-notes': {
 			title: 'Visit Notes', configKey: 'visit-notes', basePath: '/api/fhir-resource/visit-notes', fhirPatientScoped: true,
@@ -409,6 +431,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		// Procedures) so the popup matches the dedicated encounter editor.
 		if (entity === 'encounters') {
 			return withTypeaheadSearch(PatientSnapshotEditor._encounterFormFields(), this.apiService);
+		}
+		// Lab Orders / Lab Results reuse the EXACT clinical Labs page create/edit
+		// schema (one source of truth — {@link LAB_ORDER_FORM_FIELDS} /
+		// {@link LAB_RESULT_FORM_FIELDS}). The patient is fixed on the snapshot, so
+		// the patient-lookup fields are dropped and patientId is injected on save.
+		if (PatientSnapshotEditor._isLabEntity(entity)) {
+			const base = entity === 'labOrders' ? LAB_ORDER_FORM_FIELDS : LAB_RESULT_FORM_FIELDS;
+			const trimmed = base.filter(f => !['patientFirstName', 'patientId', 'patientLastName'].includes(f.key));
+			return withTypeaheadSearch(formFieldsToEditFields(trimmed), this.apiService);
 		}
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
 		if (!reg) { return []; }
@@ -588,19 +619,11 @@ export class PatientSnapshotEditor extends EditorPane {
 	private static readonly _ENCOUNTER_TEXT_FIELDS = ['assessment_diagnoses', 'procedures_data', 'plan_items', 'ros_data', 'pe_data'];
 
 	/**
-	 * True when a lab row is an actual RESULT (has a value, or a terminal/result
-	 * status), false when it's still just an open ORDER awaiting results. Orders
-	 * carry statuses like ordered/pending/in-progress/collected and no value yet;
-	 * they belong in "Pending Items", not the Lab Results list. Without this an
-	 * unresolved order showed in Lab Results with value "—" and an IN-PROGRESS
-	 * flag, reading as a stale result the user never entered.
+	 * The two clinical-backed lab entities the snapshot manages — Lab Orders
+	 * (/api/lab-order) and Lab Results (/api/lab-results).
 	 */
-	private static _isLabResult(lab: Record<string, unknown>): boolean {
-		const v = lab.result ?? lab.value;
-		const valStr = String(v ?? '').trim();
-		const hasValue = valStr !== '' && valStr !== '—';
-		if (hasValue) { return true; }
-		return !PatientSnapshotEditor._isLabOrderPending(String(lab.status || ''));
+	private static _isLabEntity(entity: string): boolean {
+		return entity === 'labOrders' || entity === 'labResults';
 	}
 
 	/**
@@ -746,7 +769,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		const inner = (raw.data ?? raw) as Record<string, unknown>;
 		const arr = (inner.problemsList || inner.allergiesList || inner.content || inner.list || inner.items || inner.records || (Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as unknown;
-		const items = Array.isArray(arr) ? arr as Array<Record<string, unknown>> : [];
+		let items = Array.isArray(arr) ? arr as Array<Record<string, unknown>> : [];
+		// The clinical lab endpoints (/api/lab-order/search, /api/lab-results) are
+		// global — they return EVERY patient's rows — so filter to the patient on
+		// screen (mirrors how the clinical Labs page filters client-side).
+		if (PatientSnapshotEditor._isLabEntity(entity)) {
+			const pid = String(this._currentPatientId);
+			items = items.filter(r => String(r.patientId ?? r.patient ?? '') === pid);
+		}
 		return this._mergePending(entity, this._filterDeleted(entity, items));
 	}
 
@@ -1046,6 +1076,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		const reg = PatientSnapshotEditor._ENTITY_REGISTRY[entity];
 		const isEdit = !!existingId;
 		const ep = reg.basePath;
+		// Lab Orders are patient-scoped but WITHOUT the FHIR "/patient/" segment:
+		// POST /api/lab-order/{patientId}, PUT /api/lab-order/{patientId}/{id}.
+		// (Lab Results use the plain nonFhir {base}/{id} shape below.)
+		if (entity === 'labOrders') {
+			return isEdit
+				? { url: `${ep}/${this._currentPatientId}/${existingId}`, method: 'PUT' }
+				: { url: `${ep}/${this._currentPatientId}`, method: 'POST' };
+		}
 		if (reg.nonFhir) {
 			// Non-FHIR: medical-problems / patients use plain {base} or {base}/{id}.
 			if (entity === 'demographics') {
@@ -1151,7 +1189,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				if (entity === 'vitals' && method === 'POST' && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
 				}
-				if (!reg.nonFhir && entity !== 'demographics') {
+				if ((!reg.nonFhir || PatientSnapshotEditor._isLabEntity(entity)) && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
 				}
 				const res = await this.apiService.fetch(url, {
@@ -1184,9 +1222,11 @@ export class PatientSnapshotEditor extends EditorPane {
 					primaryButton: 'Delete',
 				});
 				if (!confirm.confirmed) { return; }
-				const delUrl = reg.fhirPatientScoped
-					? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
-					: `${reg.basePath}/${id}`;
+				const delUrl = entity === 'labOrders'
+					? `${reg.basePath}/${this._currentPatientId}/${id}`
+					: reg.fhirPatientScoped
+						? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+						: `${reg.basePath}/${id}`;
 				const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
 				if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
 				this._trackDeleted(entity, id);
@@ -1269,7 +1309,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					const payId = existingId ?? item.id ?? item.transactionId;
 					if (payId) { payload.id = payId; }
 				}
-				if (!reg.nonFhir && entity !== 'demographics') {
+				if ((!reg.nonFhir || PatientSnapshotEditor._isLabEntity(entity)) && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
 				}
 				const res = await this.apiService.fetch(url, {
@@ -1297,9 +1337,11 @@ export class PatientSnapshotEditor extends EditorPane {
 					primaryButton: 'Delete',
 				});
 				if (!confirm.confirmed) { return; }
-				const delUrl = reg.fhirPatientScoped
-					? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
-					: `${reg.basePath}/${id}`;
+				const delUrl = entity === 'labOrders'
+					? `${reg.basePath}/${this._currentPatientId}/${id}`
+					: reg.fhirPatientScoped
+						? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+						: `${reg.basePath}/${id}`;
 				const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
 				if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
 				this._trackDeleted(entity, id);
@@ -1433,9 +1475,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 		if (!r.confirmed) { return; }
 		try {
-			const delUrl = reg.fhirPatientScoped
-				? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
-				: `${reg.basePath}/${id}`;
+			const delUrl = entity === 'labOrders'
+				? `${reg.basePath}/${this._currentPatientId}/${id}`
+				: reg.fhirPatientScoped
+					? `${reg.basePath}/patient/${this._currentPatientId}/${id}`
+					: `${reg.basePath}/${id}`;
 			const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
 			if (!res.ok) { throw new Error(`Delete failed (${res.status})`); }
 			this._trackDeleted(entity, id);
@@ -1622,18 +1666,20 @@ export class PatientSnapshotEditor extends EditorPane {
 	private async _loadAndRender(patientId: string, patientName: string, appointmentId?: string): Promise<void> {
 		this._lastRenderArgs = { patientId, patientName, appointmentId };
 		this._lastLoadAt = Date.now();
-		const [patient, conditions, medications, vitals, encounters, labs, labResultsRaw, payments, statements, coverage, appointments] = await Promise.allSettled([
+		const [patient, conditions, medications, vitals, encounters, labOrdersRaw, labResultsRaw, payments, statements, coverage, appointments] = await Promise.allSettled([
 			this._fetch(`/api/patients/${patientId}`),
 			this._fetch(`/api/medical-problems/${patientId}`),
 			this._fetch(`/api/fhir-resource/medications/patient/${patientId}?page=0&size=50`),
 			this._fetch(`/api/fhir-resource/vitals/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/encounters/patient/${patientId}?page=0&size=50`),
-			this._fetch(`/api/fhir-resource/labs/patient/${patientId}?page=0&size=20`),
-			// Lab RESULTS entered in the clinical Labs page live in a separate, global
-			// store (/api/lab-results) — NOT the FHIR labs/orders endpoint above — so
-			// they were missing from the snapshot's Lab Results card. The endpoint has
-			// no patient-scoped route (the clinical editor loads all + filters
-			// client-side), so mirror that: pull a page and filter to this patient.
+			// Lab ORDERS — the clinical /api/lab-order store (NOT the FHIR
+			// /api/fhir-resource/labs endpoint, which is a different table the
+			// clinical Labs page never reads). The endpoint is global with no
+			// patient-scoped route, so pull a page and filter to this patient below.
+			this._fetch(`/api/lab-order/search?page=0&size=500`),
+			// Lab RESULTS entered on the clinical Labs page live in a separate, global
+			// store (/api/lab-results). Same "load all + filter to this patient"
+			// approach as the orders above.
 			this._fetch(`/api/lab-results?page=0&size=500`),
 			this._fetch(`/api/payments/transactions/patient/${patientId}?page=0&size=20`),
 			this._fetch(`/api/fhir-resource/statements/patient/${patientId}?page=0&size=1`),
@@ -1678,11 +1724,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		const meds = this._mergePending('medications', this._filterDeleted('medications', this._list(medications)));
 		const vit = this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals)));
 		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
-		// Combine FHIR lab orders with the clinical lab RESULTS (filtered to this
-		// patient + normalised onto the keys the Lab Results card reads), so results
-		// created on the clinical Labs page actually surface in the snapshot.
-		const labResults = this._normalizeLabResults(this._list(labResultsRaw), patientId);
-		const labList = this._mergePending('labs', this._filterDeleted('labs', [...this._list(labs), ...labResults]));
+		// Lab ORDERS and lab RESULTS are now two distinct, clinically-backed
+		// collections (the snapshot shows each in its own card). Both come from the
+		// SAME stores the clinical Labs page uses — /api/lab-order/search and
+		// /api/lab-results — filtered to this patient, so a row created on either
+		// page appears on the other (and on the patient chart).
+		const orderRows = this._list(labOrdersRaw).filter(r => String(r.patientId ?? r.patient ?? '') === String(patientId));
+		const orderList = this._mergePending('labOrders', this._filterDeleted('labOrders', orderRows));
+		const resultRows = this._normalizeLabResults(this._list(labResultsRaw), patientId);
+		const resultList = this._mergePending('labResults', this._filterDeleted('labResults', resultRows));
 		const payList = this._mergePending('payment', this._filterDeleted('payment', this._list(payments)));
 		const stmtList = this._list(statements);
 		const cov = this._list(coverage);
@@ -1736,7 +1786,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
-		this._renderGrid(p, conds, meds, vit, encs, labList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw);
+		this._renderGrid(p, conds, meds, vit, encs, orderList, resultList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -2027,7 +2077,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ icon: 'warning', title: 'Add Problem', onClick: () => this._openCreateModal('problems') },
 			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openCreateModal('medications') },
 			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openCreateModal('insurance') },
-			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openCreateModal('labs') },
+			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openCreateModal('labOrders') },
 			{ icon: 'note', title: 'Add Visit Note', onClick: () => this._openCreateModal('visit-notes') },
 			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openCreateModal('statements') },
 			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openCreateModal('claims') },
@@ -2849,7 +2899,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		meds: Record<string, unknown>[],
 		vit: Record<string, unknown>[],
 		encs: Record<string, unknown>[],
-		labs: Record<string, unknown>[],
+		labOrders: Record<string, unknown>[],
+		labResults: Record<string, unknown>[],
 		payments: Record<string, unknown>[],
 		statements: Record<string, unknown>[],
 		apt?: Record<string, unknown> | null,
@@ -2905,15 +2956,18 @@ export class PatientSnapshotEditor extends EditorPane {
 			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
 		}, () => this._openCreateModal('medications'), 'medications', 2);
 
-		// Pending Items — unfinished work the doctor must action (full width)
-		this._renderPendingItems(grid, labs, encs);
+		// Pending Items — unfinished work the doctor must action (full width).
+		// Orders still awaiting a result drive the "Lab Results Pending" prompt.
+		this._renderPendingItems(grid, labOrders, encs);
 
-		// Bottom row: Lab Results (full width). Show only actual results — open
-		// orders still awaiting results live in "Pending Items" above, so they must
-		// not also appear here as value-less "results".
-		const labResults = labs.filter(l => PatientSnapshotEditor._isLabResult(l));
-		const labCard = this._renderWideCard(grid, 'beaker', 'Lab Results', 4, labResults.length, () => this._openCreateModal('labs'));
-		this._renderLabRows(labCard, labResults);
+		// Bottom rows: Lab Orders and Lab Results, each in its own full-width card
+		// with create / edit / delete. Both read & write the clinical lab stores so
+		// they stay in lock-step with the clinical Labs page and the patient chart.
+		const orderCard = this._renderWideCard(grid, 'beaker', 'Lab Orders', 4, labOrders.length, () => this._openCreateModal('labOrders'));
+		this._renderLabOrderRows(orderCard, labOrders);
+
+		const resultCard = this._renderWideCard(grid, 'graph', 'Lab Results', 4, labResults.length, () => this._openCreateModal('labResults'));
+		this._renderLabResultRows(resultCard, labResults);
 	}
 
 	/** The single, unified visit workflow — one continuous strip from arrival to
@@ -3346,9 +3400,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const candidates = [...dateVitals, ...(visitVitals ? [visitVitals] : [])];
 		candidates.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
 		const latest = (candidates[0] ?? undefined) as Record<string, unknown> | undefined;
-		// "Add Vitals" header button — always available so vitals can be recorded /
-		// updated straight from the snapshot (was missing entirely).
-		this._cardHeader(card, 'pulse', 'Vitals', latest ? 1 : 0, () => this._revealVitalsEntry?.());
+		// No (+) "Add Vitals" header button — vitals are recorded/updated via the
+		// inline entry form (the "Edit" link below, or the standalone form when no
+		// reading exists), so the header (+) was a redundant duplicate entry point.
+		this._cardHeader(card, 'pulse', 'Vitals', latest ? 1 : 0, undefined);
 		if (!latest) {
 			const msg = DOM.append(body, DOM.$('div'));
 			msg.textContent = 'No vitals recorded for this visit — enter below:';
@@ -3892,7 +3947,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
 		if (pendingLabs.length > 0) {
-			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labs', 'list') });
+			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labOrders', 'list') });
 		}
 		if (openEncounters.length > 0) {
 			items.push({ icon: 'note', label: 'Encounter Unsigned', detail: `${openEncounters.length} open encounter${openEncounters.length > 1 ? 's' : ''} to finalize`, color: '#3b9edd', onClick: () => this._openManager('encounters', 'list') });
@@ -4049,52 +4104,62 @@ export class PatientSnapshotEditor extends EditorPane {
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 	}
 
-	private _renderLabRows(card: HTMLElement, labs: Record<string, unknown>[]): void {
-		if (labs.length === 0) {
+	private _renderLabOrderRows(card: HTMLElement, orders: Record<string, unknown>[]): void {
+		this._renderLabTable(card, 'labOrders', orders, 'No lab orders');
+	}
+
+	private _renderLabResultRows(card: HTMLElement, results: Record<string, unknown>[]): void {
+		this._renderLabTable(card, 'labResults', results, 'No lab results found');
+	}
+
+	/**
+	 * Render a Lab Orders / Lab Results table straight from the entity registry's
+	 * column definitions, with per-row Edit / Delete actions wired to the same
+	 * clinical-store CRUD the cards' "+" buttons use. Driving both off the shared
+	 * `_ENTITY_REGISTRY[entity].columns` keeps the dashboard rows and the records
+	 * popup showing the SAME columns (one source of truth).
+	 */
+	private _renderLabTable(card: HTMLElement, entity: 'labOrders' | 'labResults', rows: Record<string, unknown>[], emptyText: string): void {
+		if (rows.length === 0) {
 			const empty = DOM.append(card, DOM.$('div'));
-			empty.textContent = 'No lab results found';
+			empty.textContent = emptyText;
 			empty.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);padding:8px 0;';
 			return;
 		}
+		const cols = PatientSnapshotEditor._ENTITY_REGISTRY[entity].columns;
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:1fr 100px 80px 50px 56px;gap:0;';
-		for (const lbl of ['Test', 'Date', 'Value', 'Flag', '']) {
+		table.style.cssText = `display:grid;grid-template-columns:${cols.map(c => c.width || '1fr').join(' ')} 56px;gap:0;`;
+		const headerCss = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
+		for (const c of cols) {
 			const h = DOM.append(table, DOM.$('div'));
-			h.textContent = lbl;
-			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
+			h.textContent = c.label;
+			h.style.cssText = headerCss;
 		}
-		const { page, pageIdx, pageCount, total } = this._paginate('labs', labs);
-		for (const lab of page) {
-			const name = lab.testName || lab.display || lab.name || (lab.code as Record<string, unknown>)?.text || '—';
-			const dateRaw = lab.resultDate || lab.collectionDate || lab.date || '';
-			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			const resultVal = lab.result || lab.value || '—';
-			const units = lab.units || '';
-			const val = units ? `${resultVal} ${units}` : String(resultVal);
-			const labStatus = String(lab.status || '').toLowerCase();
-			const isAbnormal = labStatus && !['final', 'ordered', ''].includes(labStatus);
-			const cells: Array<{ txt: string; isFlag?: boolean }> = [
-				{ txt: String(name) },
-				{ txt: dateStr },
-				{ txt: val },
-				{ txt: isAbnormal ? labStatus.toUpperCase() : '', isFlag: true },
-			];
-			for (const { txt, isFlag } of cells) {
+		const actHdr = DOM.append(table, DOM.$('div'));
+		actHdr.style.cssText = headerCss;
+		const { page, pageIdx, pageCount, total } = this._paginate(entity, rows);
+		for (const row of page) {
+			for (const c of cols) {
+				const raw = row[c.key];
+				const txt = c.format ? c.format(raw, row) : (raw === null || raw === undefined || raw === '' ? '—' : String(raw));
 				const cell = DOM.append(table, DOM.$('div'));
 				cell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:6px;';
-				if (isFlag && isAbnormal) {
+				// Colour-code abnormal result flags (red) so out-of-range results stand
+				// out, mirroring the clinical Lab Results table.
+				const isAbnormalFlag = entity === 'labResults' && c.key === 'abnormalFlag' && !!txt && txt.toLowerCase() !== 'normal' && txt !== '—';
+				if (isAbnormalFlag) {
 					const b = DOM.append(cell, DOM.$('span'));
-					b.textContent = txt;
+					b.textContent = txt.toUpperCase();
 					b.style.cssText = 'font-size:9px;padding:2px 5px;border-radius:6px;background:#ef444420;color:#ef4444;font-weight:700;';
 				} else {
 					cell.textContent = txt;
 				}
 			}
-			this._renderGridRowActions(table, 'labs', lab);
+			this._renderGridRowActions(table, entity, row);
 		}
-		this._renderPagerFooter(card, 'labs', pageIdx, pageCount, total);
+		this._renderPagerFooter(card, entity, pageIdx, pageCount, total);
 	}
 
 	private _cardHeader(card: HTMLElement, icon: string, title: string, count: number, onAdd?: () => void): void {

@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { usToIsoDate } from '../ciyexDateMask.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -1066,7 +1067,7 @@ export class AppointmentsEditor extends EditorPane {
 			const wrap = DOM.append(parent, DOM.$('div'));
 			wrap.style.cssText = 'position:relative;display:inline-block;';
 			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
-			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			const usToIso = (us: string): string => usToIsoDate(us);
 			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			visible.type = 'text';
 			visible.placeholder = 'MM/DD/YYYY';

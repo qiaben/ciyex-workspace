@@ -1832,6 +1832,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				errorMsg.textContent = `${f.label} is required`;
 				return;
 			}
+			// Reject a typed-but-invalid date (e.g. 13/33/2000) — createUsDateField
+			// empties the hidden ISO value and flags it via dataset.invalid.
+			if (f.kind === 'date' && inputEl?.dataset.invalid === '1') {
+				errorMsg.textContent = `Enter a valid ${f.label} (MM/DD/YYYY)`;
+				return;
+			}
 			// Digit-count constraints (e.g. fax number must be exactly 12 digits).
 			if ((f.minDigits || f.maxDigits) && v.trim()) {
 				const digitCount = v.replace(/\D/g, '').length;

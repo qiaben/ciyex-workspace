@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from './ciyexApiService.js';
+import { usToIsoDate } from './ciyexDateMask.js';
 import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
@@ -121,7 +122,7 @@ export class EncounterListPane extends ViewPane {
 			const wrap = DOM.append(parent, DOM.$('div'));
 			wrap.style.cssText = 'position:relative;display:inline-flex;flex:1;min-width:0;';
 			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
-			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			const usToIso = (us: string): string => usToIsoDate(us);
 			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			visible.type = 'text';
 			visible.placeholder = 'MM/DD/YYYY';

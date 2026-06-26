@@ -556,7 +556,11 @@ export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
 		], defaultValue: 'routine'
 	},
 	{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
-	{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)', defaultValue: () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } },
+	// On edit the time is read back via these aliases — different backends store
+	// it under orderTime / collectionTime / a datetime suffix on orderDate — and
+	// the orders config's transformEditItem derives HH:MM from any datetime field
+	// when none of them are present (QA: Order Time blank when editing).
+	{ key: 'orderTime', label: 'Order Time', type: 'text', placeholder: 'HH:MM (24h)', aliases: ['orderDateTime', 'collectionTime', 'orderedTime', 'specimenCollectionTime'], defaultValue: () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } },
 	{
 		key: 'physicianName', label: 'Ordering Provider', type: 'search', required: true,
 		placeholder: 'Search provider...', apiPath: '/api/providers',
@@ -573,6 +577,57 @@ export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
 	},
 	{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 	{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+];
+
+/**
+ * Canonical "New Lab Result" form schema for the clinical Labs page. Exported so
+ * the Patient Snapshot and Patient Chart pages render the EXACT same Lab Result
+ * create/edit fields (one source of truth, no drift) and write to the same
+ * `/api/lab-results` store — which is what makes a result created on any of the
+ * three pages show up on the other two.
+ */
+export const LAB_RESULT_FORM_FIELDS: FormFieldDef[] = [
+	// Patient is required — the lab_result row has a NOT NULL patient_id FK.
+	// Without these fields the create POSTed a null patientId and the DB
+	// rejected it ("null value in column patient_id ... violates not-null").
+	{
+		key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
+		placeholder: 'Search patient by name, MRN or ID...',
+		apiPath: '/api/patients', relatedField: 'patientId',
+		relatedDisplayFields: ['firstName', 'lastName'],
+		relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
+		aliases: ['firstName', 'patientFirst', 'patient.firstName'],
+	},
+	{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
+	{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
+	{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
+	{ key: 'procedureName', label: 'Procedure Name', type: 'text', placeholder: 'Procedure name' },
+	{ key: 'loincCode', label: 'LOINC Code', type: 'text', placeholder: 'e.g. 2345-7' },
+	{
+		key: 'status', label: 'Status', type: 'select', required: true, options: [
+			{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
+			{ label: 'Partial', value: 'partial' }, { label: 'Final', value: 'final' },
+			{ label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
+		], defaultValue: 'pending'
+	},
+	{
+		key: 'abnormalFlag', label: 'Abnormal Flag', type: 'select', options: [
+			{ label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
+			{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' }, { label: 'Abnormal', value: 'abnormal' },
+		], defaultValue: 'normal'
+	},
+	{ key: 'value', label: 'Value', type: 'text', required: true, placeholder: 'Result value', aliases: ['resultValue'] },
+	{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
+	{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
+	{ key: 'referenceLow', label: 'Ref Low', type: 'number', aliases: ['refLow'] },
+	{ key: 'referenceHigh', label: 'Ref High', type: 'number', aliases: ['refHigh'] },
+	{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
+	{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+	{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
+	{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
+	{ key: 'panelCode', label: 'Panel Code', type: 'text' },
+	{ key: 'recommendations', label: 'Recommendations', type: 'textarea', placeholder: 'Clinical recommendations...', width: 'span 2' },
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
 ];
 
 export class LabsEditor extends ClinicalListEditorBase {
@@ -598,6 +653,19 @@ export class LabsEditor extends ClinicalListEditorBase {
 		tableMinWidth: '1040px',
 		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
 		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
+		// Backfill Order Time on edit: if the record carries no standalone time
+		// field (orderTime/collectionTime/…) but one of its datetime fields has a
+		// time component (e.g. orderDate or createdAt as a full ISO timestamp),
+		// derive HH:MM so the edit form shows the time the order was placed
+		// instead of an empty field (QA: Order Time not fetched on edit).
+		transformEditItem: async (item) => {
+			if (!item.orderTime) {
+				const src = item.orderDateTime || item.collectionTime || item.orderDate || item.createdAt;
+				const m = src ? /[T ](\d{2}:\d{2})/.exec(String(src)) : null;
+				if (m) { item.orderTime = m[1]; }
+			}
+			return item;
+		},
 		cellRenderer: (key, _value, item) => {
 			if (key === 'patientFirstName') {
 				const fn = String(item.patientFirstName || '').trim();
@@ -770,49 +838,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
-		formFields: [
-			// Patient is required — the lab_result row has a NOT NULL patient_id FK.
-			// Without these fields the create POSTed a null patientId and the DB
-			// rejected it ("null value in column patient_id ... violates not-null").
-			{
-				key: 'patientFirstName', label: 'Patient', type: 'search', required: true,
-				placeholder: 'Search patient by name, MRN or ID...',
-				apiPath: '/api/patients', relatedField: 'patientId',
-				relatedDisplayFields: ['firstName', 'lastName'],
-				relatedFieldsMap: { patientFirstName: 'firstName', patientLastName: 'lastName' },
-				aliases: ['firstName', 'patientFirst', 'patient.firstName'],
-			},
-			{ key: 'patientId', label: 'Patient ID', type: 'number', required: true, placeholder: 'Auto-filled from patient search', aliases: ['patient.id'] },
-			{ key: 'patientLastName', label: 'Patient Last Name', type: 'text', placeholder: 'Auto-filled from patient search', aliases: ['lastName', 'patientLast', 'patient.lastName'] },
-			{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
-			{ key: 'procedureName', label: 'Procedure Name', type: 'text', placeholder: 'Procedure name' },
-			{ key: 'loincCode', label: 'LOINC Code', type: 'text', placeholder: 'e.g. 2345-7' },
-			{
-				key: 'status', label: 'Status', type: 'select', required: true, options: [
-					{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
-					{ label: 'Partial', value: 'partial' }, { label: 'Final', value: 'final' },
-					{ label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
-				], defaultValue: 'pending'
-			},
-			{
-				key: 'abnormalFlag', label: 'Abnormal Flag', type: 'select', options: [
-					{ label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
-					{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' }, { label: 'Abnormal', value: 'abnormal' },
-				], defaultValue: 'normal'
-			},
-			{ key: 'value', label: 'Value', type: 'text', required: true, placeholder: 'Result value', aliases: ['resultValue'] },
-			{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
-			{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
-			{ key: 'referenceLow', label: 'Ref Low', type: 'number', aliases: ['refLow'] },
-			{ key: 'referenceHigh', label: 'Ref High', type: 'number', aliases: ['refHigh'] },
-			{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
-			{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
-			{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
-			{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
-			{ key: 'panelCode', label: 'Panel Code', type: 'text' },
-			{ key: 'recommendations', label: 'Recommendations', type: 'textarea', placeholder: 'Clinical recommendations...', width: 'span 2' },
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
-		],
+		formFields: LAB_RESULT_FORM_FIELDS,
 		actions: [
 			// allow-any-unicode-next-line
 			{ label: 'Delete', icon: '\u{1F5D1}', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Delete this lab result?', type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/lab-results/${item.id}`, { method: 'DELETE' }); reload(); } } },
@@ -2922,8 +2948,12 @@ export const RECALL_FORM_FIELDS: FormFieldDef[] = [
 	// so an empty value doesn't trigger a confusing "Patient ID required"
 	// error against a field the user can't see (QA report 2026-05-11).
 	{ key: 'patientId', label: 'Patient ID', type: 'text', hidden: true, placeholder: 'Auto-filled' },
-	{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled' },
-	{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled' },
+	// Phone and Email mirror the selected patient's record (auto-filled from the
+	// patient search). They are read-only so they always match the patient's
+	// registered contact info and can't drift out of sync via hand-edits — e.g.
+	// inconsistent email casing (QA: recall email doesn't match patient's email).
+	{ key: 'patientPhone', label: 'Phone', type: 'text', placeholder: 'Auto-filled', readOnly: true },
+	{ key: 'patientEmail', label: 'Email', type: 'text', placeholder: 'Auto-filled', readOnly: true },
 	{
 		key: 'recallTypeName', label: 'Recall Type', type: 'select', required: true,
 		aliases: ['recallType', 'type'],
@@ -2951,9 +2981,11 @@ export const RECALL_FORM_FIELDS: FormFieldDef[] = [
 	},
 	{
 		key: 'status', label: 'Status', type: 'select', options: [
-			{ label: 'Pending', value: 'PENDING' }, { label: 'Overdue', value: 'OVERDUE' },
+			{ label: 'Pending', value: 'PENDING' }, { label: 'Due', value: 'DUE' },
+			{ label: 'Overdue', value: 'OVERDUE' },
 			{ label: 'Contacted', value: 'CONTACTED' }, { label: 'Scheduled', value: 'SCHEDULED' },
-			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Cancelled', value: 'CANCELLED' },
+			{ label: 'Completed', value: 'COMPLETED' }, { label: 'Declined', value: 'DECLINED' },
+			{ label: 'Cancelled', value: 'CANCELLED' },
 		], defaultValue: 'PENDING'
 	},
 	{
@@ -2977,10 +3009,12 @@ export class RecallEditor extends ClinicalListEditorBase {
 		compactStats: true,
 		statsFilterMap: {
 			overdue: 'OVERDUE',
+			dueTotal: 'DUE',
 			pendingTotal: 'PENDING',
 			contactedTotal: 'CONTACTED',
 			scheduledTotal: 'SCHEDULED',
 			completedThisMonth: 'COMPLETED',
+			declinedTotal: 'DECLINED',
 			cancelledTotal: 'CANCELLED',
 		},
 		searchPlaceholder: 'Search by patient name...',
@@ -3046,6 +3080,16 @@ export class RecallEditor extends ClinicalListEditorBase {
 						return opts.sort((a, b) => a.label.localeCompare(b.label));
 					} catch { return []; }
 				},
+				// The provider option label comes from /api/providers (often a fuller
+				// name like "Lily Martinez") while a recall row stores an abbreviated
+				// display name ("Lily M"). An exact compare would match nothing, so
+				// match loosely: equal, or either name contained in the other.
+				match: (item, value) => {
+					const p = String(item.providerName ?? '').trim().toLowerCase();
+					const v = value.trim().toLowerCase();
+					if (!p) { return false; }
+					return p === v || p.includes(v) || v.includes(p);
+				},
 			},
 			{
 				key: 'dueDateRange', placeholder: 'All Dates',
@@ -3056,6 +3100,37 @@ export class RecallEditor extends ClinicalListEditorBase {
 					{ label: 'Overdue', value: 'overdue' },
 					{ label: 'Next 30 Days', value: 'next_30' },
 				],
+				// `dueDateRange` is synthetic — there is no such field on a recall
+				// record — so it needs a custom matcher against the row's dueDate.
+				// Without this the default exact-field compare hides every row when a
+				// range is picked (QA: All Dates filter shows no data).
+				match: (item, value) => {
+					const raw = String(item.dueDate ?? '');
+					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw.split('T')[0]);
+					if (!m) { return false; }
+					const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+					due.setHours(0, 0, 0, 0);
+					const today = new Date();
+					today.setHours(0, 0, 0, 0);
+					const dayMs = 86400000;
+					switch (value) {
+						case 'today':
+							return due.getTime() === today.getTime();
+						case 'this_week': {
+							const start = new Date(today.getTime() - today.getDay() * dayMs);
+							const end = new Date(start.getTime() + 6 * dayMs);
+							return due >= start && due <= end;
+						}
+						case 'this_month':
+							return due.getFullYear() === today.getFullYear() && due.getMonth() === today.getMonth();
+						case 'overdue':
+							return due < today;
+						case 'next_30':
+							return due >= today && due <= new Date(today.getTime() + 30 * dayMs);
+						default:
+							return true;
+					}
+				},
 			},
 		],
 		formFields: RECALL_FORM_FIELDS,

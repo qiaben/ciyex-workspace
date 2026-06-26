@@ -23,7 +23,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
-import { maskUsDate } from '../ciyexDateMask.js';
+import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
 
 // --- Types ---
@@ -216,15 +216,31 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
+			// Lab Orders + Lab Results read & write the CLINICAL stores
+			// (/api/lab-order, /api/lab-results) — the SAME endpoints the clinical
+			// Labs page and the patient snapshot use — so a record created on any of
+			// those surfaces shows up here, and vice-versa. They are plain apiPath
+			// (non-FHIR) tabs filtered to the chart's patient in `_loadTabData`.
 			{
-				key: 'labs', label: 'Labs', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DiagnosticReport', 'Observation'],
+				key: 'labs', label: 'Lab Orders', icon: 'TestTube', emoji: '\u{1F9EA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/lab-order/search',
 				columns: [
-					{ key: 'testName', label: 'Test Name' },
-					{ key: 'testCode', label: 'Test Code' },
-					{ key: 'collectionDate', label: 'Collection Date' },
-					{ key: 'resultDate', label: 'Result Date' },
-					{ key: 'providerName', label: 'Provider' },
+					{ key: 'orderNumber', label: 'Order #' },
+					{ key: 'testDisplay', label: 'Test', aliases: ['testDisplay', 'testName', 'orderName'] },
+					{ key: 'physicianName', label: 'Provider', aliases: ['physicianName', 'orderingProvider', 'providerName'] },
+					{ key: 'priority', label: 'Priority' },
 					{ key: 'status', label: 'Status' },
+					{ key: 'orderDate', label: 'Order Date' },
+				],
+			},
+			{
+				key: 'lab-results', label: 'Lab Results', icon: 'TestTube', emoji: '\u{1F4CA}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/lab-results',
+				columns: [
+					{ key: 'testName', label: 'Test' },
+					{ key: 'value', label: 'Value' },
+					{ key: 'referenceRange', label: 'Range' },
+					{ key: 'abnormalFlag', label: 'Flag' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'collectedDate', label: 'Collected' },
 				],
 			},
 			{
@@ -748,6 +764,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'On Hold', value: 'on-hold' },
 							{ label: 'Stopped', value: 'stopped' },
 							{ label: 'Completed', value: 'completed' },
+							{ label: 'Cancelled', value: 'cancelled' },
 						]
 					},
 					{ key: 'instructions', label: 'Instructions', type: 'textarea', colSpan: 2, placeholder: 'Patient instructions' },
@@ -755,25 +772,80 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Lab ORDER form — matches the clinical Labs page "New Lab Order" schema so
+	// the chart writes the same flat DTO to /api/lab-order that the clinical page
+	// and the snapshot do (keys: orderNumber, testDisplay, testCode, status,
+	// priority, orderDate, physicianName, result, specimenId, diagnosisCode,
+	// procedureCode, notes). Provider is a plain text field (the clinical
+	// lab-order DTO stores physicianName as a display string, not a Practitioner
+	// reference).
 	labs: {
 		tabKey: 'labs',
 		sections: [
 			{
-				key: 'lab', title: 'Lab Order / Result', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'Test name' },
-					{ key: 'testCode', label: 'Test Code (LOINC)', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' } },
-					{ key: 'collectionDate', label: 'Collection Date', type: 'datetime' },
-					{ key: 'resultDate', label: 'Result Date', type: 'datetime' },
-					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+				key: 'order', title: 'Lab Order', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'orderNumber', label: 'Order Number', type: 'text', placeholder: 'Auto-generated', defaultValue: () => { const d = new Date(); const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; const rand = Math.random().toString(36).slice(2, 6).toUpperCase(); return `LAB-${ymd}-${rand}`; } },
+					{ key: 'labName', label: 'Lab Name', type: 'text', placeholder: 'Quest, LabCorp, etc.' },
+					{ key: 'testCode', label: 'Test Code (LOINC)', type: 'code-search', required: true, placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' }, relatedField: 'testDisplay' },
+					{ key: 'testDisplay', label: 'Test Name', type: 'text', required: true, placeholder: 'Test name', aliases: ['testName', 'orderName'] },
+					{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'physicianName', label: 'Ordering Provider', type: 'text', required: true, placeholder: 'Provider name', aliases: ['orderingProvider', 'providerName'] },
 					{
-						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Ordered', value: 'ordered' },
-							{ label: 'In Progress', value: 'in-progress' },
-							{ label: 'Final', value: 'final' },
-							{ label: 'Cancelled', value: 'cancelled' },
+						key: 'priority', label: 'Priority', type: 'select', options: [
+							{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 						]
 					},
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
+							{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+						]
+					},
+					{
+						key: 'result', label: 'Result Status', type: 'select', aliases: ['resultStatus'], options: [
+							{ label: 'Pending', value: 'Pending' }, { label: 'Preliminary', value: 'Preliminary' },
+							{ label: 'Final', value: 'Final' }, { label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
+						]
+					},
+					{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
+					{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'code-search', required: true, placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'code-search', required: true, placeholder: 'Search CPT codes', lookupConfig: { system: 'CPT' } },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
+				],
+			},
+		],
+	},
+	// Lab RESULT form — matches the clinical Labs page "New Lab Result" schema so
+	// the chart writes the same flat DTO to /api/lab-results.
+	'lab-results': {
+		tabKey: 'lab-results',
+		sections: [
+			{
+				key: 'result', title: 'Lab Result', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
+					{ key: 'loincCode', label: 'LOINC Code', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' } },
+					{
+						key: 'status', label: 'Status', type: 'select', required: true, options: [
+							{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
+							{ label: 'Partial', value: 'partial' }, { label: 'Final', value: 'final' },
+							{ label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
+						]
+					},
+					{
+						key: 'abnormalFlag', label: 'Abnormal Flag', type: 'select', options: [
+							{ label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
+							{ label: 'High', value: 'high' }, { label: 'Critical', value: 'critical' }, { label: 'Abnormal', value: 'abnormal' },
+						]
+					},
+					{ key: 'value', label: 'Value', type: 'text', required: true, placeholder: 'Result value', aliases: ['resultValue'] },
+					{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
+					{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
+					{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
+					{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
+					{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
+					{ key: 'recommendations', label: 'Recommendations', type: 'textarea', colSpan: 2, placeholder: 'Clinical recommendations...' },
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, placeholder: 'Additional notes...' },
 				],
 			},
 		],
@@ -2012,7 +2084,7 @@ export class PatientChartEditor extends EditorPane {
 		// the workspace test report (12.05.26) calls out parity with the EHR
 		// Web UI Clinical sidebar. Any extras shipped via user chart-layout
 		// or backend layout overrides are dropped here so they can't sneak in.
-		const CLINICAL_TAB_WHITELIST = ['clinical-alerts', 'medications', 'labs', 'immunizations', 'procedures', 'history'];
+		const CLINICAL_TAB_WHITELIST = ['clinical-alerts', 'medications', 'labs', 'lab-results', 'immunizations', 'procedures', 'history'];
 
 		this.categories = Array.from(byKey.values())
 			.sort((a, b) => a.position - b.position)
@@ -2293,9 +2365,40 @@ export class PatientChartEditor extends EditorPane {
 		return (!tab.apiPath && tab.fhirResources.length > 0) || !!tab.apiPath?.startsWith('/api/fhir-resource/');
 	}
 
+	/**
+	 * Every identifier form that may key this patient's records across stores.
+	 * The chart's `patientId` is often the FHIR id (the global patient search
+	 * opens the chart with `fhirId || id`), but the clinical lab stores key rows
+	 * by the numeric DB id / MRN. Matching a lab row's `patientId` against ANY of
+	 * these makes the lab tabs show the patient's orders/results regardless of
+	 * which id the row carries.
+	 */
+	private _patientIdSet(): Set<string> {
+		const pd = this.patientData || {};
+		return new Set([this.patientId, pd.id, pd.patientId, pd.mrn, pd.fhirId]
+			.map(v => String(v ?? '').trim()).filter(Boolean));
+	}
+
+	/**
+	 * The patient id to write to the clinical lab stores (/api/lab-order,
+	 * /api/lab-results) so a chart-created record carries the SAME patientId the
+	 * clinical Labs page and the snapshot use (the patient's DB id) — without it
+	 * a chart create posted under the FHIR id and the row never showed on the
+	 * other surfaces. Prefer the DB `id`, fall back to the chart's patientId.
+	 */
+	private _clinicalPatientId(): string {
+		const pd = this.patientData || {};
+		const dbId = pd.id ?? pd.patientId;
+		return String((dbId ?? this.patientId) || this.patientId);
+	}
+
 	private _isPatientScoped(tab: ChartTab): boolean {
-		// Tabs that pull from org-level collections
-		const orgLevelTabs = new Set(['facility']);
+		// Tabs that pull from org-level / global collections whose endpoints take
+		// NO "/patient/{id}" segment. The clinical lab stores are global
+		// (/api/lab-order/search, /api/lab-results) — the chart filters their rows
+		// to the current patient client-side in `_loadTabData` — so they must not
+		// get a patient path appended (which would 404).
+		const orgLevelTabs = new Set(['facility', 'labs', 'lab-results']);
 		if (orgLevelTabs.has(tab.key)) { return false; }
 		return true;
 	}
@@ -2358,6 +2461,12 @@ export class PatientChartEditor extends EditorPane {
 			// field (auto-closing MM/DD/YYYY picker) — force local so the date
 			// selection closes the calendar immediately. Issue 10.
 			'procedures',
+			// Labs now write to the clinical /api/lab-order + /api/lab-results stores,
+			// whose flat DTO keys are defined by the local configs below — the backend
+			// tab_field_config for 'labs' maps to FHIR DiagnosticReport paths and would
+			// produce the wrong field keys.
+			'labs',
+			'lab-results',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
@@ -2654,6 +2763,12 @@ export class PatientChartEditor extends EditorPane {
 		// method / educator blank after refresh.
 		if (tab.key === 'education') {
 			data = data.map(r => this._decodeEducationMeta(r));
+		}
+		// The clinical lab endpoints are global — keep only this patient's rows
+		// (mirrors how the clinical Labs page and the snapshot filter client-side).
+		if (tab.key === 'labs' || tab.key === 'lab-results') {
+			const ids = this._patientIdSet();
+			data = data.filter(r => ids.has(String(r.patientId ?? r.patient ?? '')));
 		}
 		data = this._mergePendingCreates(tab.key, data);
 		const result = { config, data };
@@ -2985,7 +3100,15 @@ export class PatientChartEditor extends EditorPane {
 				const ep = this._tabEndpoint(tab);
 				if (!ep) { continue; }
 				const url = this._buildCountUrl(tab, ep);
-				if (!url) { continue; }
+				if (!url) {
+					// No count endpoint (the lab tabs read global stores filtered to the
+					// patient client-side) — derive the badge from the loaded list length.
+					const cachedLen = this._tabDataCache.get(tab.key)?.data.length ?? 0;
+					this._tabCounts.set(tab.key, cachedLen);
+					const el = this._tabCountEls.get(tab.key);
+					if (el) { el.textContent = cachedLen > 0 ? String(cachedLen) : ''; el.style.visibility = cachedLen > 0 ? 'visible' : 'hidden'; }
+					continue;
+				}
 				fetches.push((async () => {
 					try {
 						const res = await this.apiService.fetch(url);
@@ -3014,6 +3137,10 @@ export class PatientChartEditor extends EditorPane {
 
 	/** Mirror the URL shape used by _loadTabData so counts match what the list shows. */
 	private _buildCountUrl(tab: ChartTab, ep: string): string | null {
+		// Lab tabs read global clinical stores and filter to the patient
+		// client-side — a count query would return every patient's rows. Return
+		// null so the badge derives from the patient-filtered list (see caller).
+		if (tab.key === 'labs' || tab.key === 'lab-results') { return null; }
 		if (tab.apiPath) {
 			if (tab.apiPath.includes('{patientId}')) {
 				const base = tab.apiPath.replace('{patientId}', this.patientId);
@@ -3172,7 +3299,7 @@ export class PatientChartEditor extends EditorPane {
 		this._renderSummaryCard(cardsGrid, 'problems', '\u{1F90D}', 'Medical Problems', 'Condition', ['conditionName', 'condition', 'code', 'display'], 'No problems recorded');
 		this._renderSummaryCard(cardsGrid, 'medications', '\u{1F48A}', 'Medications', 'MedicationRequest', ['medicationName', 'medication', 'name', 'code', 'display'], 'No active medications');
 		this._renderSummaryCard(cardsGrid, 'vitals', '\u{2764}\u{FE0F}', 'Vitals', 'Observation', ['vitalName', 'observationName', 'name', 'code', 'display', 'value'], 'No vitals recorded');
-		this._renderSummaryCard(cardsGrid, 'labs', '\u{1F9EA}', 'Lab Results', 'DiagnosticReport', ['testName', 'reportName', 'name', 'code', 'display'], 'No lab results');
+		this._renderSummaryCard(cardsGrid, 'lab-results', '\u{1F9EA}', 'Lab Results', 'DiagnosticReport', ['testName', 'reportName', 'name', 'code', 'display'], 'No lab results');
 		this._renderSummaryCard(cardsGrid, 'immunizations', '\u{1F489}', 'Immunizations', 'Immunization', ['vaccineName', 'vaccine', 'name', 'code', 'display'], 'No immunizations');
 		this._renderSummaryCard(cardsGrid, 'procedures', '\u{1FA7A}', 'Procedures', 'Procedure', ['procedureName', 'procedure', 'name', 'code', 'display'], 'No procedures');
 		this._renderSummaryCard(cardsGrid, 'documents', '\u{1F4C4}', 'Documents', 'DocumentReference', ['description', 'title', 'name', 'type'], 'No documents');
@@ -3611,6 +3738,15 @@ export class PatientChartEditor extends EditorPane {
 				} catch { return []; }
 			};
 			try {
+				// Labs live in the clinical /api/lab-results store (global, filtered to
+				// this patient client-side) — not a FHIR resource — so the dashboard
+				// card reads them straight from there.
+				if (navTab === 'lab-results' || navTab === 'labs') {
+					const all = await tryUrl('/api/lab-results?page=0&size=500');
+					const ids = this._patientIdSet();
+					renderItems(all.filter(r => ids.has(String(r.patientId ?? r.patient ?? ''))).slice(0, 3));
+					return;
+				}
 				let items = await tryUrl(`${fhirEp}/patient/${this.patientId}?page=0&size=3`);
 				if (items.length === 0 && legacyMap[resource]) {
 					items = await tryUrl(legacyMap[resource]);
@@ -3694,6 +3830,9 @@ export class PatientChartEditor extends EditorPane {
 	// --- Generic tab (list or form) ---
 
 	private _formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+	/** Visible MM/DD/YYYY input for each date field, keyed by field key, so the
+	 *  save guard can highlight/focus an invalid date without DOM selectors. */
+	private _dateVisibleByKey = new Map<string, HTMLInputElement>();
 	// Parallel map of field cell containers, keyed the same way as `_formInputs`.
 	// Used for inline validation (red-border + per-field error message).
 	private _formCells = new Map<string, HTMLElement>();
@@ -3758,6 +3897,7 @@ export class PatientChartEditor extends EditorPane {
 		if (config?.sections && isForm) {
 			// Form tab (e.g. Demographics): read-only by default; click Edit to unlock, then Save/Cancel.
 			this._formInputs.clear();
+			this._dateVisibleByKey.clear();
 			const initialRecord = data.length > 0 ? data : [{}];
 			this._renderForm(content, config.sections, initialRecord);
 
@@ -4260,6 +4400,7 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'On Hold', value: 'on-hold' },
 					{ label: 'Stopped', value: 'stopped' },
 					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
 				];
 			case 'immunizations':
 				// Match the Immunization form's Status options (FHIR Immunization.status).
@@ -4777,6 +4918,17 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	private async _saveFormTab(tab: ChartTab, btn: HTMLButtonElement): Promise<void> {
+		// Block save when any date field holds a typed-but-invalid value (e.g.
+		// 13/33/2000) — _buildDateInput flags these via dataset.invalid on the
+		// hidden ISO input registered in _formInputs.
+		for (const [key, el] of this._formInputs) {
+			if (DOM.isHTMLInputElement(el) && el.dataset.invalid === '1') {
+				this.notificationService.warn('Enter a valid date (MM/DD/YYYY) before saving.');
+				const vis = this._dateVisibleByKey.get(key);
+				if (vis) { vis.style.borderColor = '#ef4444'; vis.focus(); }
+				return;
+			}
+		}
 		const payload: Record<string, unknown> = {};
 		for (const [key, el] of this._formInputs) {
 			if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
@@ -4998,9 +5150,13 @@ export class PatientChartEditor extends EditorPane {
 					// apiPath endpoints (non-FHIR): /{ep}/{recordId}
 					const isFhir = this._isFhirResourceTab(tab);
 					const fhirPatient = isFhir && this._isPatientScoped(tab);
-					const delUrl = isFhir
-						? (fhirPatient ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/${recordId}`)
-						: `${ep}/${recordId}`;
+					// Lab orders delete at /api/lab-order/{patientId}/{id}; lab results
+					// (and every other apiPath tab) use the plain {ep}/{id} shape.
+					const delUrl = tab.key === 'labs'
+						? `/api/lab-order/${this._clinicalPatientId()}/${recordId}`
+						: isFhir
+							? (fhirPatient ? `${ep}/patient/${this.patientId}/${recordId}` : `${ep}/${recordId}`)
+							: `${ep}/${recordId}`;
 					const res = await this.apiService.fetch(delUrl, { method: 'DELETE' });
 					if (res.ok) {
 						this.notificationService.info(`${tab.label} record deleted`);
@@ -5138,6 +5294,12 @@ export class PatientChartEditor extends EditorPane {
 					const el = dialogInputs.get(f.key);
 					if (!el) { continue; }
 					const v = String(el.value ?? '').trim();
+					// Reject typed-but-invalid dates (e.g. 13/33/2000) — _buildDateInput
+					// flags these via dataset.invalid on the hidden ISO input.
+					if (f.type === 'date' && el.dataset.invalid === '1') {
+						invalidPattern.push({ key: f.key, label: f.label, el, msg: 'Enter a valid date (MM/DD/YYYY)' });
+						continue;
+					}
 					// Per-field validationPattern (declared in DEFAULT_FIELD_CONFIGS or
 					// shipped from backend tab_field_config) takes precedence — this is
 					// where US phone formats / email / lot-number / dosage etc.
@@ -5397,6 +5559,18 @@ export class PatientChartEditor extends EditorPane {
 				// — flat materialId + patientId go in the body (not the URL path).
 				if (tab.key === 'education' && !isEdit) {
 					url = '/api/education/assignments';
+				}
+				// Labs write to the clinical stores. Lab ORDERS are patient-scoped
+				// WITHOUT the FHIR "/patient/" segment (/api/lab-order/{pid}[/id]); lab
+				// RESULTS use the flat /api/lab-results[/id] shape the generic non-FHIR
+				// url above already produced. Both carry patientId in the body so the
+				// row links to this patient (the URL only carries it for orders).
+				if (tab.key === 'labs') {
+					const cpid = this._clinicalPatientId();
+					url = isEdit ? `/api/lab-order/${cpid}/${recordId}` : `/api/lab-order/${cpid}`;
+				}
+				if (tab.key === 'labs' || tab.key === 'lab-results') {
+					payload.patientId = this._clinicalPatientId();
 				}
 				const method = isEdit ? 'PUT' : 'POST';
 				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
@@ -5982,13 +6156,10 @@ export class PatientChartEditor extends EditorPane {
 			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 		};
-		const usToIso = (us: string): string => {
-			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
-			if (!m) { return ''; }
-			const mm = m[1].padStart(2, '0');
-			const dd = m[2].padStart(2, '0');
-			return `${m[3]}-${mm}-${dd}`;
-		};
+		// usToIsoDate validates real calendar dates and returns '' for impossible
+		// values (month 13, day 33, year 6676), so the hidden ISO field stays
+		// empty and the field shows a red border / blocks save for those.
+		const usToIso = (us: string): string => usToIsoDate(us);
 
 		const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		visible.type = 'text';
@@ -6005,6 +6176,7 @@ export class PatientChartEditor extends EditorPane {
 		hidden.type = 'hidden';
 		hidden.value = isoValue || '';
 		this._formInputs.set(f.key, hidden);
+		this._dateVisibleByKey.set(f.key, visible);
 
 		const sync = () => {
 			// Auto-insert slashes and cap the year at 4 digits as the user types.
@@ -6012,7 +6184,11 @@ export class PatientChartEditor extends EditorPane {
 			if (masked !== visible.value) { visible.value = masked; }
 			const iso = usToIso(visible.value);
 			hidden.value = iso;
-			visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+			const bad = !!visible.value && !iso;
+			// Flag invalid (non-empty but unparseable) dates so the save handler
+			// can reject them with a "valid date" message.
+			hidden.dataset.invalid = bad ? '1' : '';
+			visible.style.borderColor = bad ? '#ef4444' : '';
 		};
 		visible.addEventListener('input', sync);
 		visible.addEventListener('blur', sync);
@@ -6028,6 +6204,8 @@ export class PatientChartEditor extends EditorPane {
 		picker.addEventListener('change', () => {
 			visible.value = isoToUs(picker.value);
 			hidden.value = picker.value;
+			hidden.dataset.invalid = '';
+			visible.style.borderColor = '';
 			// Issue #6: auto-close the calendar popover once a date is chosen.
 			// Native date pickers keep the popup open after selection; blurring
 			// the (focused) picker collapses it immediately, matching the
@@ -7006,7 +7184,9 @@ export class PatientChartEditor extends EditorPane {
 			if (!ep) { return; }
 			const url = tab.key === 'vitals'
 				? `${ep}/patient/${this.patientId}/${recordId}`
-				: `${ep}/${recordId}`;
+				: tab.key === 'labs'
+					? `/api/lab-order/${this._clinicalPatientId()}/${recordId}`
+					: `${ep}/${recordId}`;
 			const res = await this.apiService.fetch(url, { method: 'DELETE' });
 			if (res.ok) {
 				this.notificationService.info(`${tab.label} record deleted`);

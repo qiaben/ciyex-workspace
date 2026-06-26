@@ -12,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { createUsDateField } from '../ciyexDateMask.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -517,6 +518,9 @@ export class EncounterFormEditor extends EditorPane {
 
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
 	private sectionCards = new Map<string, HTMLElement>();
+	/** Visible/hidden pairs for every rendered date field, so the save guard can
+	 *  locate a typed-but-invalid date and focus it without DOM selectors. */
+	private _dateFieldRefs: Array<{ hidden: HTMLInputElement; visible: HTMLInputElement }> = [];
 
 	// Complex (non-input) field values — diagnosis list, procedure list, plan
 	// items, ROS/exam grids — that live as in-memory arrays/objects rather than
@@ -629,6 +633,15 @@ export class EncounterFormEditor extends EditorPane {
 		if (this._isSigned) { return false; }
 		const { patientId } = this.input;
 		if (!this.encounterId) { this.notificationService.warn('No encounter ID'); return false; }
+
+		// Block save when any date field holds a typed-but-invalid value (e.g.
+		// 13/33/2000) — createUsDateField flags these via dataset.invalid.
+		const invalidDate = this._findInvalidDateInput();
+		if (invalidDate) {
+			this.notificationService.warn('Enter a valid date (MM/DD/YYYY) before saving.');
+			invalidDate.visible.focus();
+			return false;
+		}
 
 		const formData = this._collectFormData();
 
@@ -866,6 +879,16 @@ export class EncounterFormEditor extends EditorPane {
 			.filter(d => d.code);
 	}
 
+	/** Find the first date field whose typed value isn't a real calendar date
+	 *  (createUsDateField marks the hidden input with `dataset.invalid='1'`).
+	 *  Returns the visible/hidden pair so the caller can focus the field. */
+	private _findInvalidDateInput(): { hidden: HTMLInputElement; visible: HTMLInputElement } | null {
+		for (const ref of this._dateFieldRefs) {
+			if (ref.hidden.dataset.invalid === '1') { return ref; }
+		}
+		return null;
+	}
+
 	private _collectFormData(): Record<string, unknown> {
 		const formData: Record<string, unknown> = {};
 		for (const [, card] of this.sectionCards) {
@@ -1086,6 +1109,7 @@ export class EncounterFormEditor extends EditorPane {
 		const container = DOM.append(this.scrollArea, DOM.$('div'));
 		container.style.cssText = 'max-width:900px;margin:0 auto;padding:16px 24px 60px;';
 		this.sectionCards.clear();
+		this._dateFieldRefs = [];
 		this._complexFields.clear();
 
 		const readOnly = this._isSigned;
@@ -1210,14 +1234,34 @@ export class EncounterFormEditor extends EditorPane {
 					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
 					renderedInputs.set(f.key, inp);
-				} else if (f.type === 'date' || f.type === 'datetime') {
+				} else if (f.type === 'datetime') {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
-					inp.type = f.type === 'datetime' ? 'datetime-local' : 'date';
+					inp.type = 'datetime-local';
 					inp.value = String(val).split('T')[0];
 					inp.dataset.key = f.key;
 					inp.style.cssText = inputStyle + 'height:32px;';
 					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
+				} else if (f.type === 'date') {
+					// MM/DD/YYYY masked field with calendar picker and real-date
+					// validation (rejects 13/33/2000) instead of a native
+					// <input type="date">, which renders OS-locale order on Linux
+					// Electron and accepts impossible dates. The hidden input carries
+					// the ISO value and is collected by its dataset.key.
+					const dateDoc = cell.ownerDocument || document;
+					const { hidden, visible, picker } = createUsDateField(dateDoc, cell, String(val).split('T')[0], inputStyle + 'height:32px;');
+					hidden.dataset.key = f.key;
+					addFocus(visible);
+					// Track the visible/hidden pair so the save guard can find an
+					// invalid date and focus it without DOM selectors (hygiene).
+					this._dateFieldRefs.push({ hidden, visible });
+					if (readOnly) {
+						for (const el of [visible, picker]) {
+							el.readOnly = true;
+							el.style.opacity = '0.7';
+							el.style.pointerEvents = 'none';
+						}
+					}
 				} else {
 					const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 					inp.type = 'text'; inp.value = String(val); inp.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;

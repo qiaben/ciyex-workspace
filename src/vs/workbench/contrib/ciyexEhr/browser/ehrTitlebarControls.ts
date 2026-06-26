@@ -11,7 +11,7 @@ import { CommandsRegistry, ICommandService } from '../../../../platform/commands
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { createCustomDropdown, createTimeDropdown, IDropdownOption } from './customDropdown.js';
-import { maskUsDate } from './ciyexDateMask.js';
+import { maskUsDate, usToIsoDate } from './ciyexDateMask.js';
 
 interface PatientResult {
 	id: string;
@@ -462,11 +462,10 @@ export class EhrTitlebarControls extends Disposable {
 		const dobIcon = DOM.append(dobWrap, DOM.$('span'));
 		dobIcon.textContent = '\u{1F4C5}';
 		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
-		const usToIso = (us: string): string => {
-			const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
-			if (!m) { return ''; }
-			return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-		};
+		// usToIsoDate validates real calendar dates (rejects 13/33/2000), so an
+		// impossible DOB leaves the hidden value empty and fails the required check
+		// below instead of saving "2000-13-33".
+		const usToIso = (us: string): string => usToIsoDate(us);
 		const isoToUs = (iso: string): string => {
 			const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 			return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
@@ -862,10 +861,29 @@ export class EhrTitlebarControls extends Disposable {
 				return;
 			}
 
+			// Reject typed-but-invalid dates (e.g. 13/33/2000) before anything else —
+			// the hidden ISO is empty and dataset.invalid is set when the visible
+			// MM/DD/YYYY text isn't a real calendar date. Without this the empty ISO
+			// reads as "no date" and the appointment saved with a blank start/end.
+			if (startDate.dataset.invalid === '1' || endDate.dataset.invalid === '1') {
+				errorEl.textContent = 'Please enter a valid date (MM/DD/YYYY).';
+				errorEl.style.display = '';
+				return;
+			}
+
 			const sd = startDate.value;
 			const st = startTime.value || '00:00';
 			const ed = endDate.value || sd;
 			const et = endTime.value || st;
+
+			// A start date is required to schedule — block a dateless save so an
+			// appointment can't be created with an empty start (which is what an
+			// invalid date previously collapsed to).
+			if (!sd) {
+				errorEl.textContent = 'Please enter a valid Start Date (MM/DD/YYYY).';
+				errorEl.style.display = '';
+				return;
+			}
 
 			// Past date/time guard — cannot schedule in the past; if today is chosen
 			// the start time must not be earlier than now.
@@ -1121,7 +1139,9 @@ export class EhrTitlebarControls extends Disposable {
 			hidden.type = 'hidden';
 			hidden.name = name;
 			const isoToUs = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
-			const usToIso = (us: string): string => { const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us); if (!m) { return ''; } return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
+			// Validates real calendar dates so impossible values (13/33/2000) leave
+			// the hidden ISO field empty rather than forwarding a bad date.
+			const usToIso = (us: string): string => usToIsoDate(us);
 			// Native date picker overlays the calendar icon area (right 30 px) —
 			// opacity:0 but fully clickable so a direct user click opens the native
 			// calendar without needing showPicker() (which is unreliable in Electron).
@@ -1134,7 +1154,12 @@ export class EhrTitlebarControls extends Disposable {
 				if (masked !== visible.value) { visible.value = masked; }
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
-				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				const bad = !!visible.value && !iso;
+				// Flag a typed-but-invalid date (e.g. 13/33/2000) so the form's save
+				// handler can reject it — the hidden ISO is empty for these, which
+				// otherwise reads as "no date" and lets the appointment save dateless.
+				hidden.dataset.invalid = bad ? '1' : '';
+				visible.style.borderColor = bad ? '#ef4444' : '';
 				if (iso) { hidden.dispatchEvent(new Event('change', { bubbles: false })); }
 			});
 			picker.addEventListener('change', () => {

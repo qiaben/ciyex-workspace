@@ -19,7 +19,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
-import { maskUsDate } from '../ciyexDateMask.js';
+import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 
 
 interface Appointment {
@@ -593,6 +593,31 @@ export class CalendarEditor extends EditorPane {
 
 		// Patient / provider search with a live dropdown of matches
 		this._buildPatientProviderSearch(this.headerBar);
+
+		// When the calendar has been narrowed to specific provider(s) — e.g. via the
+		// search dropdown's "Filter by provider" — surface a one-click chip to clear
+		// the filter and return to the all-providers view. Without it the user is
+		// stranded on a single provider's column with no obvious way back home
+		// (QA: no "back to all providers" option after picking a provider).
+		if (this.providerFilter.size > 0) {
+			const ids = Array.from(this.providerFilter);
+			const labelText = ids.length === 1
+				? (this.providers.find(p => p.id === ids[0] || p.name === ids[0])?.name || 'Provider')
+				: `${ids.length} providers`;
+			const backChip = DOM.append(this.headerBar, DOM.$('button')) as HTMLButtonElement;
+			backChip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--vscode-input-border);border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;background:var(--vscode-button-secondaryBackground,transparent);color:var(--vscode-foreground);flex-shrink:0;';
+			backChip.textContent = `← All Providers (${labelText})`;
+			backChip.title = 'Show all providers';
+			backChip.addEventListener('mouseenter', () => { backChip.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+			backChip.addEventListener('mouseleave', () => { backChip.style.background = 'var(--vscode-button-secondaryBackground,transparent)'; });
+			backChip.addEventListener('click', () => {
+				this.providerFilter.clear();
+				this._headerRendered = false;
+				this._renderHeader();
+				this._updateHeaderCount();
+				this._renderGrid();
+			});
+		}
 
 		// Plain spacer between search and view toggles.
 		const spacer = DOM.append(this.headerBar, DOM.$('span'));
@@ -1283,11 +1308,11 @@ export class CalendarEditor extends EditorPane {
 				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 				return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 			};
-			const usToIso = (us: string): string => {
-				const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
-				if (!m) { return ''; }
-				return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-			};
+			// usToIsoDate validates real calendar dates and returns '' for
+			// impossible values like 13/33/2000, so the hidden ISO field (and the
+			// save-time guard below) reject them instead of forwarding
+			// "2000-13-33" to the API (QA: invalid-date appointment created).
+			const usToIso = (us: string): string => usToIsoDate(us);
 
 			const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			visible.type = 'text';
@@ -1308,7 +1333,11 @@ export class CalendarEditor extends EditorPane {
 				if (masked !== visible.value) { visible.value = masked; }
 				const iso = usToIso(visible.value);
 				hidden.value = iso;
-				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				const bad = !!visible.value && !iso;
+				// Flag invalid (non-empty but unparseable) dates so the save handler
+				// can show a "valid date" message rather than a "required" one.
+				hidden.dataset.invalid = bad ? '1' : '';
+				visible.style.borderColor = bad ? '#ef4444' : '';
 			};
 			visible.addEventListener('input', sync);
 			visible.addEventListener('blur', sync);
@@ -1600,6 +1629,19 @@ export class CalendarEditor extends EditorPane {
 				if (el) { el.style.borderColor = '#ef4444'; el.focus(); }
 				return true;
 			};
+			// Reject impossible typed dates (e.g. 13/33/2000) with a clear message
+			// before the required-empty checks — the hidden ISO field is empty for
+			// these, so without this they'd wrongly read as "required".
+			const invalidDate = (el: HTMLInputElement | undefined, label: string): boolean => {
+				if (el?.dataset.invalid === '1') {
+					this.notificationService.notify({ severity: Severity.Warning, message: `Enter a valid ${label} (MM/DD/YYYY)` });
+					el.focus();
+					return true;
+				}
+				return false;
+			};
+			if (invalidDate(startDateEl, 'Start Date')) { return; }
+			if (invalidDate(endDateEl, 'End Date')) { return; }
 			if (requireField(!!patName, patInput, 'Patient is required')) { return; }
 			if (requireField(!!startD, startDateEl, 'Start Date is required')) { return; }
 			if (requireField(!!startT, startTimeEl, 'Start Time is required')) { return; }

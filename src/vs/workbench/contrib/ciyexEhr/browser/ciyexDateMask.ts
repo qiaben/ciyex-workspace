@@ -23,10 +23,27 @@ export function isoToUsDate(iso: string): string {
 	return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 }
 
-/** Convert a MM/DD/YYYY string to an ISO date (yyyy-mm-dd). Returns '' if incomplete. */
+/**
+ * Convert a MM/DD/YYYY string to an ISO date (yyyy-mm-dd). Returns '' if the
+ * string is incomplete OR not a real calendar date — the month must be 1-12,
+ * the day must exist in that month (leap years included), and the year must be
+ * in a sane range (1900-2100). This rejects nonsense like 31/45/6676 that the
+ * old structure-only regex happily accepted (QA: date fields take month 31,
+ * day 45, year 6676).
+ */
 export function usToIsoDate(us: string): string {
 	const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
 	if (!m) { return ''; }
+	const month = Number(m[1]);
+	const day = Number(m[2]);
+	const year = Number(m[3]);
+	if (month < 1 || month > 12) { return ''; }
+	if (year < 1900 || year > 2100) { return ''; }
+	// `new Date(year, month, 0)` rolls back to the last day of `month` (months
+	// are 0-based, so passing `month` lands on the next month and day 0 steps
+	// back one), giving the correct day count including February in leap years.
+	const daysInMonth = new Date(year, month, 0).getDate();
+	if (day < 1 || day > daysInMonth) { return ''; }
 	return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 }
 
@@ -67,7 +84,12 @@ export function createUsDateField(
 		if (masked !== visible.value) { visible.value = masked; }
 		const iso = usToIsoDate(visible.value);
 		hidden.value = iso;
-		visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+		const bad = !!visible.value && !iso;
+		// Expose a flag so save handlers can reject a typed-but-invalid date
+		// (e.g. 13/33/2000) with a "valid date" message instead of silently
+		// saving the empty ISO value the parser produced.
+		hidden.dataset.invalid = bad ? '1' : '';
+		visible.style.borderColor = bad ? '#ef4444' : '';
 	};
 	visible.addEventListener('input', sync);
 	visible.addEventListener('blur', sync);
@@ -80,6 +102,7 @@ export function createUsDateField(
 	picker.addEventListener('change', () => {
 		visible.value = isoToUsDate(picker.value);
 		hidden.value = picker.value;
+		hidden.dataset.invalid = '';
 	});
 
 	const icon = doc.createElement('span');

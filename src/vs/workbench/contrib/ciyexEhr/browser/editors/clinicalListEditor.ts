@@ -17,7 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
-import { maskUsDate } from '../ciyexDateMask.js';
+import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
@@ -130,6 +130,14 @@ export interface FormFieldDef {
 	 * When set, keydown/paste/input guards enforce this at input time so
 	 * invalid characters never land in the field. */
 	typingPattern?: string;
+	/**
+	 * Render the field as read-only: the value is shown (and can still be
+	 * populated programmatically via auto-fill from a related `search` field),
+	 * but the user cannot type into or change it. Used for fields that mirror an
+	 * authoritative source — e.g. a recall's Phone/Email which must match the
+	 * selected patient's record and should never be hand-edited.
+	 */
+	readOnly?: boolean;
 }
 
 export interface FilterDropdownDef {
@@ -146,6 +154,15 @@ export interface FilterDropdownDef {
 	 * hardcoded set).
 	 */
 	optionsLoader?: () => Promise<Array<{ label: string; value: string }>>;
+	/**
+	 * Optional custom matcher. When set, an item passes this filter only if
+	 * `match(item, selectedValue)` returns true, instead of the default
+	 * exact field-value comparison. Use for synthetic filters whose value
+	 * doesn't map to a single item field — e.g. a due-date range, or a
+	 * provider filter whose option label is a fuller name than the item's
+	 * stored display name.
+	 */
+	match?: (item: Record<string, unknown>, value: string) => boolean;
 }
 
 
@@ -1166,6 +1183,16 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			// Additional dropdown filters (e.g. ruleType, severity)
 			for (const [k, v] of this.additionalFilterValues.entries()) {
 				if (!v) { continue; }
+				// A filter may supply a custom matcher (e.g. a due-date range, or a
+				// provider filter whose option label is fuller than the item's stored
+				// name). Use it instead of the default exact comparison — without this,
+				// synthetic filters like `dueDateRange` match no item field and
+				// silently hide every row (QA: recall filters show no data).
+				const def = cfg.additionalFilters?.find(f => f.key === k);
+				if (def?.match) {
+					if (!def.match(item, v)) { return false; }
+					continue;
+				}
 				const nv = norm(v);
 				// Check the primary key and common alias (ruleType ↔ type)
 				const candidates = [item[k], k === 'ruleType' ? item['type'] : undefined, k === 'type' ? item['ruleType'] : undefined];
@@ -1650,11 +1677,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 					return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
 				};
-				const usToIso = (us: string): string => {
-					const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(us);
-					if (!m) { return ''; }
-					return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-				};
+				// usToIsoDate validates real calendar dates (month 1-12, day in
+				// range, year 1900-2100) and returns '' for nonsense like 31/45/6676,
+				// so the red border + save-time guard below catch impossible dates.
+				const usToIso = (us: string): string => usToIsoDate(us);
 				const visible = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				visible.type = 'text';
 				visible.placeholder = 'MM/DD/YYYY';
@@ -1694,6 +1720,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				inputEl.type = field.type;
 				inputEl.style.cssText = inputStyle;
 				inputEl.placeholder = field.placeholder || '';
+				// readOnly: lock the field so the user can't edit it. Auto-fill from a
+				// related search field still writes via `.value` (readOnly only blocks
+				// user input), so e.g. the recall Phone/Email stay populated from the
+				// chosen patient but can never be hand-edited.
+				if (field.readOnly) {
+					(inputEl as HTMLInputElement).readOnly = true;
+					inputEl.style.cssText = inputStyle + 'opacity:0.7;cursor:not-allowed;';
+					inputEl.tabIndex = -1;
+				}
 				// typingPattern: enforce allowed characters at keystroke/paste/input level.
 				if (field.typingPattern) {
 					const tpRe = new RegExp(field.typingPattern);
@@ -1879,6 +1914,20 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					const v = input?.value.trim() || '';
 					if (v && !new RegExp(field.validationPattern).test(v)) {
 						failValidation(input, field.validationMessage || `${field.label} format is invalid`, field);
+						return;
+					}
+				}
+				// Date fields: the registered input is the hidden ISO field, which is
+				// '' whenever the visible MM/DD/YYYY text isn't a real calendar date
+				// (usToIsoDate rejects month 31, day 45, year 6676, …). If the user
+				// typed something but it didn't parse, reject rather than silently
+				// saving an empty date.
+				if (field.type === 'date') {
+					const refs = dateRefs.get(field.key);
+					const typed = refs?.visible.value.trim() || '';
+					const iso = inputs.get(field.key)?.value.trim() || '';
+					if (typed && !iso) {
+						failValidation(refs?.visible, field.validationMessage || `${field.label} must be a valid date (MM/DD/YYYY)`, field);
 						return;
 					}
 				}
