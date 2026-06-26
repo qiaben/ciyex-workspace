@@ -1237,13 +1237,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// related person's number, so the toggle reads first.
 					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{
-						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(US) (555) 123-4567',
-						// US-only: 10 digits with optional +1 country prefix and any
-						// of "()", "-", ".", or whitespace as separators. Catches the
-						// negative-test cases the team flagged (alpha chars, fewer
-						// than 10 digits, foreign-format numbers).
-						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
-						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
+						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '+1 555-123-4567',
+						// International: optional "+" country prefix then 7-15 digits with
+						// any of "()", "-", ".", or whitespace as separators. Still catches
+						// alpha chars / too-short numbers but accepts non-US formats.
+						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
+						validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -1373,15 +1372,15 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'phone', label: 'Phone', type: 'phone', placeholder: '(US) (555) 123-4567',
-						// US-only: 10 digits with optional +1 prefix and common separators.
-						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
-						validationMessage: 'Enter a valid US phone number e.g. (555) 123-4567',
+						key: 'phone', label: 'Phone', type: 'phone', placeholder: '+1 555-123-4567',
+						// International: optional "+" prefix then 7-15 digits with common separators.
+						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
+						validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567',
 					},
 					{
-						key: 'fax', label: 'Fax', type: 'phone', placeholder: '(US) (555) 123-4567',
-						validationPattern: '^(\\+?1[\\s\\-.]?)?\\(?\\d{3}\\)?[\\s\\-.]?\\d{3}[\\s\\-.]?\\d{4}$',
-						validationMessage: 'Enter a valid US fax number e.g. (555) 123-4567',
+						key: 'fax', label: 'Fax', type: 'phone', placeholder: '+1 555-123-4567',
+						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
+						validationMessage: 'Enter a valid fax number e.g. +1 555-123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -5286,7 +5285,11 @@ export class PatientChartEditor extends EditorPane {
 			// guardian, employer, pharmacy, ...) so the negative-test cases
 			// the team flagged on phone / email fields get caught even when
 			// the backend tab_field_config doesn't include a regex.
-			const US_PHONE_RX = /^(\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}$/;
+			// International phone (E.164-friendly): optional leading "+" country
+			// prefix then 7-15 digits with any of "()", "-", ".", or whitespace as
+			// separators. Replaces the old US-only 10-digit rule so non-US numbers
+			// are accepted across every patient form.
+			const INTL_PHONE_RX = /^\+?(?:[0-9][\s().\-]?){7,15}$/;
 			const EMAIL_RX = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
 			const invalidPattern: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
 			for (const sec of (config?.sections || [])) {
@@ -5322,10 +5325,10 @@ export class PatientChartEditor extends EditorPane {
 							continue;
 						}
 					} else if (v && f.type === 'phone') {
-						if (!US_PHONE_RX.test(v)) {
+						if (!INTL_PHONE_RX.test(v)) {
 							invalidPattern.push({
 								key: f.key, label: f.label, el,
-								msg: 'Enter a valid US phone number e.g. (555) 123-4567',
+								msg: 'Enter a valid phone number e.g. +1 555-123-4567',
 							});
 							continue;
 						}
@@ -5895,18 +5898,20 @@ export class PatientChartEditor extends EditorPane {
 					// Issue #8: every phone/fax field shows a number-format placeholder
 					// (e.g. "(555) 123-4567") instead of the generic "Enter <label>…",
 					// so the expected input is unambiguous and consistent app-wide.
-					inp.placeholder = f.placeholder || (f.type === 'phone' ? '(555) 123-4567' : `Enter ${f.label.toLowerCase()}...`);
+					inp.placeholder = f.placeholder || (f.type === 'phone' ? '+1 555-123-4567' : `Enter ${f.label.toLowerCase()}...`);
 					inp.style.cssText = inputStyle;
 					if (f.type === 'phone') {
-						// Issue #7b: enforce a 10-digit US phone (matches ciyex-ehr-ui
-						// isValidUSPhone — "must be exactly 10 digits"). Strip any
-						// non-digit input and cap at 10 so the field always carries a
-						// clean 10-digit value, consistent with the XXXXXXXXXX placeholder.
-						inp.setAttribute('inputmode', 'numeric');
-						inp.maxLength = 10;
+						// International phone: allow a leading "+" country prefix, digits
+						// and the usual separators "()", "-", ".", and spaces. We no longer
+						// strip to 10 digits (that rejected every non-US number). A length
+						// cap keeps it sane (E.164 is max 15 digits ~ 20 chars formatted).
+						inp.setAttribute('inputmode', 'tel');
+						inp.maxLength = 20;
 						inp.addEventListener('input', () => {
-							const digits = inp.value.replace(/\D/g, '').slice(0, 10);
-							if (inp.value !== digits) { inp.value = digits; }
+							let cleaned = inp.value.replace(/[^\d+()\-.\s]/g, '');
+							// A "+" is only valid as the very first character.
+							cleaned = cleaned.replace(/(?!^)\+/g, '');
+							if (inp.value !== cleaned) { inp.value = cleaned; }
 						});
 					}
 					this._formInputs.set(f.key, inp);

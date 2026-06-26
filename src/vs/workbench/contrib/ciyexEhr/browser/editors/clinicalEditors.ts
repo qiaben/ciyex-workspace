@@ -407,7 +407,7 @@ export const PRESCRIPTIONS_FORM_FIELDS: FormFieldDef[] = [
 		]
 	},
 	{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', required: true, placeholder: 'Pharmacy name', validationPattern: '^[A-Za-z0-9 ,.\\-/()&\']{2,128}$', validationMessage: 'Pharmacy Name must be 2-128 valid characters' },
-	{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be in (US) format: (555) 123-4567 or 555-123-4567' },
+	{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: '+1 555-123-4567', validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$', validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567' },
 	{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
 	{
 		key: 'priority', label: 'Priority', type: 'select', options: [
@@ -3233,6 +3233,17 @@ export class CodesEditor extends ClinicalListEditorBase {
 			},
 		],
 		formFields: MEDICAL_CODES_FORM_FIELDS,
+		// The Status / Diagnosis-Reporting / Service-Reporting selects carry string
+		// 'true'/'false' values, but the `global_codes` model fields are booleans.
+		// Sending the raw string let the backend coerce 'false' to a truthy value
+		// (any non-empty string is truthy), so toggling Active→Inactive "saved" but
+		// the row still came back Active. Coerce to a real boolean before saving.
+		beforeSave: (payload) => {
+			for (const k of ['active', 'diagnosisReporting', 'serviceReporting']) {
+				if (Object.prototype.hasOwnProperty.call(payload, k)) { payload[k] = payload[k] === true || payload[k] === 'true'; }
+			}
+			return payload;
+		},
 		cellRenderer: (key, value) => {
 			if (key === 'active') {
 				return value === true || value === 'true' ? 'Active' : 'Inactive';

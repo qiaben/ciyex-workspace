@@ -402,27 +402,19 @@ export class EhrTitlebarControls extends Disposable {
 		// Row 2: Phone, Gender
 		const row2 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const phone = this._createField(row2, 'Phone Number', 'tel', true, 'phoneNumber') as HTMLInputElement;
-		// US phone: 10 digits, formatted as (xxx) xxx-xxxx
-		phone.setAttribute('inputmode', 'numeric');
-		phone.setAttribute('autocomplete', 'tel-national');
-		phone.maxLength = 14;
-		phone.placeholder = '(555) 555-5555';
-		const formatPhone = () => {
-			const digits = phone.value.replace(/\D/g, '').slice(0, 10);
-			let formatted = digits;
-			if (digits.length > 6) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`; }
-			else if (digits.length > 3) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
-			else if (digits.length > 0) { formatted = `(${digits}`; }
-			phone.value = formatted;
+		// International phone: optional "+" country prefix, digits and the usual
+		// separators "()", "-", ".", spaces. No US-only auto-format / 10-digit lock.
+		phone.setAttribute('inputmode', 'tel');
+		phone.setAttribute('autocomplete', 'tel');
+		phone.maxLength = 20;
+		phone.placeholder = '+1 555-123-4567';
+		const sanitizePhone = () => {
+			let cleaned = phone.value.replace(/[^\d+()\-.\s]/g, '');
+			cleaned = cleaned.replace(/(?!^)\+/g, ''); // "+" only valid as first char
+			if (phone.value !== cleaned) { phone.value = cleaned; }
 		};
-		this._register(DOM.addDisposableListener(phone, 'input', formatPhone));
-		this._register(DOM.addDisposableListener(phone, 'paste', () => setTimeout(formatPhone, 0)));
-		// Block any keystroke that's not a digit, formatting char, or navigation key
-		this._register(DOM.addDisposableListener(phone, 'keydown', (e: KeyboardEvent) => {
-			const nav = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
-			if (nav.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
-			if (!/^[0-9]$/.test(e.key)) { e.preventDefault(); }
-		}));
+		this._register(DOM.addDisposableListener(phone, 'input', sanitizePhone));
+		this._register(DOM.addDisposableListener(phone, 'paste', () => setTimeout(sanitizePhone, 0)));
 		const gender = this._createSelectField(row2, 'Gender', true, 'gender', [
 			{ value: '', label: 'Select gender' },
 			{ value: 'male', label: 'Male' },
@@ -531,8 +523,8 @@ export class EhrTitlebarControls extends Disposable {
 				return;
 			}
 			const phoneDigits = phoneVal.replace(/\D/g, '');
-			if (phoneDigits.length !== 10) {
-				errorEl.textContent = 'Phone number must be exactly 10 digits (US format).';
+			if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+				errorEl.textContent = 'Enter a valid phone number (7-15 digits, e.g. +1 555-123-4567).';
 				errorEl.style.display = '';
 				return;
 			}

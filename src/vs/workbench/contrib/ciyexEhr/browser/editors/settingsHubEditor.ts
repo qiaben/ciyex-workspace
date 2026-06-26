@@ -33,14 +33,15 @@ function isValidEmail(value: string): boolean {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);
 }
 
-/** True when `value` is a valid US phone/fax number: exactly 10 digits. */
+/** True when `value` is a valid phone/fax number: 7-15 digits (E.164),
+ *  allowing an optional "+" country prefix and the usual separators. */
 function isValidPhone(value: string): boolean {
 	// Reject any letters outright (e.g. "555-CALL-NOW").
 	if (/[a-zA-Z]/.test(value)) { return false; }
 	const digits = value.replace(/[^\d]/g, '');
-	// US standard: exactly 10 digits once formatting is stripped. This also
-	// rejects overlong inputs (>10 digits) per the QA negative test cases.
-	return digits.length === 10;
+	// International standard: 7-15 digits once formatting is stripped (E.164 caps
+	// at 15). Accepts non-US numbers while still rejecting too-short / too-long.
+	return digits.length >= 7 && digits.length <= 15;
 }
 
 /** True when `value` is a valid NPI: exactly 10 digits, numeric only. */

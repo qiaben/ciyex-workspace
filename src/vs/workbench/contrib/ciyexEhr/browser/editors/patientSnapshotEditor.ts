@@ -1064,10 +1064,24 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (!out.reference) { out.reference = String(item.reference ?? item.notes ?? ''); }
 		if (!out.notes) { out.notes = String(item.notes ?? ''); }
 		if (!out.description) { out.description = String(item.description ?? ''); }
-		if (!out.payerName) { out.payerName = String(item.payerName ?? item.description ?? ''); }
+		if (!out.payerName) { out.payerName = String(item.payerName ?? item.payer ?? item.description ?? ''); }
 		if (!out.referenceType) { out.referenceType = String(item.referenceType ?? ''); }
 		if (!out.invoiceNumber) { out.invoiceNumber = String(item.invoiceNumber ?? ''); }
 		if (!out.receiptEmail) { out.receiptEmail = String(item.receiptEmail ?? ''); }
+		// Map the remaining Payment Information + Allocation & Adjustments fields onto
+		// their form-field keys (backend names differ for several), so the Edit form
+		// opens fully populated instead of leaving Status / Claim / the allocation
+		// breakdown blank.
+		if (!out.status) { out.status = String(item.status ?? item.paymentStatus ?? ''); }
+		if (!out.claimId) { out.claimId = String(item.claimId ?? item.claim ?? item.claimNumber ?? ''); }
+		const num = (v: unknown): string => { const s = String(v ?? '').trim(); return s === '' ? '' : s; };
+		if (!out.allowedAmount) { out.allowedAmount = num(item.allowedAmount ?? item.allowed); }
+		if (!out.paidAmount) { out.paidAmount = num(item.paidAmount ?? item.paid ?? item.amount); }
+		if (!out.adjustmentAmount) { out.adjustmentAmount = num(item.adjustmentAmount ?? item.adjustment); }
+		if (!out.adjustmentReason) { out.adjustmentReason = String(item.adjustmentReason ?? item.adjustmentCode ?? ''); }
+		if (!out.patientResponsibility) { out.patientResponsibility = num(item.patientResponsibility ?? item.patientResp); }
+		if (!out.remainingBalance) { out.remainingBalance = num(item.remainingBalance ?? item.balance); }
+		if (!out.eraReference) { out.eraReference = String(item.eraReference ?? item.erasReference ?? item.traceNumber ?? item.eftReference ?? ''); }
 		return out;
 	}
 
@@ -3205,8 +3219,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			const dx = enc.diagnosis || enc.primaryDiagnosis || enc.icdCode || '';
 			const detail = [cc, dx].filter(Boolean).map(String).join(' · ') || enc.notes || '—';
 			const status = enc.status || 'Unknown';
-			const statusLower = String(status).toLowerCase();
-			const sColor = statusLower.includes('finish') || statusLower.includes('complet') ? '#22c55e' : statusLower.includes('cancel') ? '#ef4444' : '#3b9edd';
+			// Collapse every encounter status onto the two states the workspace tracks
+			// (SIGNED / UNSIGNED) — the column must never show raw FHIR codes like
+			// "in-progress" / "scheduled" / "finished".
+			const normStatus = PatientSnapshotEditor._normalizeEncounterStatus(status);
+			const sColor = normStatus === 'SIGNED' ? '#22c55e' : '#f59e0b';
 
 			const dateCell = DOM.append(table, DOM.$('div'));
 			dateCell.textContent = dateStr;
@@ -3219,7 +3236,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const statusCell = DOM.append(table, DOM.$('div'));
 			statusCell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
 			const sb = DOM.append(statusCell, DOM.$('span'));
-			sb.textContent = String(status);
+			sb.textContent = normStatus === 'SIGNED' ? 'Signed' : 'Unsigned';
 			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
 
 			// Encounter History rows are Encounters — edit/delete must target the

@@ -1510,12 +1510,29 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				// monaco-workbench class makes --vscode-* vars resolve even if the
 				// host falls back to body.
 				dropdown.className = 'monaco-workbench';
-				dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10001;display:none;';
+				dropdown.style.cssText = 'position:fixed;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10001;display:none;';
 				const positionDropdown = () => {
 					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
+					const viewportH = win?.innerHeight ?? ownerDoc.documentElement.clientHeight;
+					const gap = 2;
+					const spaceBelow = viewportH - rect.bottom - gap - 8;
+					const spaceAbove = rect.top - gap - 8;
+					// Flip the panel above the input when there isn't room below it (a
+					// field low in a wide/short drawer) so results are never clipped off
+					// the bottom of the viewport. Cap the height to whichever side is
+					// used so the list stays fully on-screen at any window size.
+					const flipUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+					const maxH = Math.max(120, Math.min(280, flipUp ? spaceAbove : spaceBelow));
 					dropdown.style.left = `${rect.left}px`;
-					dropdown.style.top = `${rect.bottom + 2}px`;
 					dropdown.style.width = `${rect.width}px`;
+					dropdown.style.maxHeight = `${maxH}px`;
+					if (flipUp) {
+						dropdown.style.top = 'auto';
+						dropdown.style.bottom = `${viewportH - rect.top + gap}px`;
+					} else {
+						dropdown.style.bottom = 'auto';
+						dropdown.style.top = `${rect.bottom + gap}px`;
+					}
 				};
 				const repositionDropdown = () => { if (dropdown.style.display === 'block') { positionDropdown(); } };
 				const win = ownerDoc.defaultView;

@@ -45,7 +45,7 @@
       "visible": true,
       "collapsible": true,
       "fields": [
-        { "key": "phoneNumber", "label": "Mobile Phone", "type": "phone", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" }, "validation": { "pattern": "^\\d{10}$" } },
+        { "key": "phoneNumber", "label": "Mobile Phone", "type": "phone", "required": true, "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=mobile].value", "type": "string" }, "validation": { "pattern": "^\\+?(?:[0-9][\\s().\\-]?){7,15}$" } },
         { "key": "homePhone", "label": "Home Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=home].value", "type": "string" } },
         { "key": "workPhone", "label": "Work Phone", "type": "phone", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=phone&use=work].value", "type": "string" } },
         { "key": "email", "label": "Email", "type": "email", "colSpan": 1, "fhirMapping": { "resource": "Patient", "path": "telecom[?system=email].value", "type": "string" } },

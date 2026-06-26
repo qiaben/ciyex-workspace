@@ -285,6 +285,11 @@ export class EncounterListPane extends ViewPane {
 		const fromTs = this.dateFrom ? new Date(this.dateFrom).getTime() : 0;
 		const toTs = this.dateTo ? new Date(this.dateTo + 'T23:59:59').getTime() : 0;
 		const filtered = this.allItems.filter(item => {
+			// Hide orphan "Unknown" encounters — rows that resolve to neither a patient
+			// display name nor a patient id are encounters created without a subject.
+			// We no longer create these (the appointments create-path now refuses to),
+			// but legacy ones may still exist; never surface them in the rail.
+			if (!this._patientNameOf(item) && !this._patientIdOf(item)) { return false; }
 			if (this.filterValue && String(item.status || '').toUpperCase() !== this.filterValue.toUpperCase()) { return false; }
 			// Date range filter
 			if (fromTs || toTs) {

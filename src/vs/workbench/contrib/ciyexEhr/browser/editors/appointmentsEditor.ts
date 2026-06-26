@@ -1542,6 +1542,12 @@ export class AppointmentsEditor extends EditorPane {
 					}
 				}
 			}
+			// Never mint an encounter we can't attach to a patient: the POST endpoint
+			// creates the Encounter with no subject, and when the appointment has no
+			// resolvable patient id the follow-up link is skipped — leaving an orphan
+			// encounter that renders as "Unknown" in the encounter rail. Bail out of
+			// the create instead so unknown encounters are never created.
+			if (create && !this._resolveActionPatientId(row)) { return null; }
 			const res = await this.apiService.fetch(`/api/appointments/${row.id}/encounter`, create ? { method: 'POST' } : undefined);
 			if (!res.ok) { return null; }
 			const json = await res.json().catch(() => null) as Record<string, unknown> | null;

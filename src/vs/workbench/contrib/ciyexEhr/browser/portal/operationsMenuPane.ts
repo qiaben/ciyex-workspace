@@ -611,12 +611,23 @@ export class OperationsMenuPane extends ViewPane {
 
 		const id = row.id || row.fhirId;
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
+		// Keys backed by a boolean select (options are exactly true/false) — their
+		// form value is the STRING 'true'/'false', but the backend model field is a
+		// boolean, and any non-empty string is truthy. Coerce them on save so e.g.
+		// toggling a Medical Code Active→Inactive actually persists as `false`.
+		const boolKeys = new Set(fields
+			.filter(f => f.kind === 'select' && (f.options || []).length > 0
+				&& (f.options || []).every(o => o.value === 'true' || o.value === 'false'))
+			.map(f => f.key));
 		openRecordEditDialog({
 			title: `Edit ${item.label}`,
 			themeAnchor: this.container,
 			fields: withTypeaheadSearch(fields, this.apiService),
 			values: initialValues,
 			onSave: async (next) => {
+				for (const k of boolKeys) {
+					if (Object.prototype.hasOwnProperty.call(next, k)) { next[k] = next[k] === 'true' || next[k] === true; }
+				}
 				const payload = { ...row, ...next };
 				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
