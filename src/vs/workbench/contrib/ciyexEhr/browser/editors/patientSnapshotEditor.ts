@@ -1040,6 +1040,27 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (notes) { dto.notes = notes; }
 		const status = str(values['status']);
 		dto.status = PatientSnapshotEditor._PAYMENT_TXN_STATUSES.has(status) ? status : 'completed';
+		// Allocation & adjustment detail — the backend now persists these, so send
+		// them through so the Edit Payment form round-trips fully (was dropping
+		// payer / claim / date-of-service / the whole allocation section).
+		const dateOfService = str(values['dateOfService']);
+		if (dateOfService) { dto.dateOfService = dateOfService.slice(0, 10); }
+		const payerName = str(values['payerName']);
+		if (payerName) { dto.payerName = payerName; }
+		const claimId = str(values['claimId']);
+		if (claimId) { dto.claimId = claimId; }
+		const adjustmentReason = str(values['adjustmentReason']);
+		if (adjustmentReason) { dto.adjustmentReason = adjustmentReason; }
+		const eraReference = str(values['eraReference']);
+		if (eraReference) { dto.eraReference = eraReference; }
+		const num = (key: string): void => {
+			const raw = values[key];
+			if (raw === undefined || raw === null || str(raw) === '') { return; }
+			const n = Number(raw);
+			if (!isNaN(n)) { dto[key] = n; }
+		};
+		num('allowedAmount'); num('paidAmount'); num('adjustmentAmount');
+		num('patientResponsibility'); num('remainingBalance');
 		return dto;
 	}
 
