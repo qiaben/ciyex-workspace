@@ -9,6 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { formatUsPhone } from '../sidebarActions.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -366,9 +367,19 @@ export class PracticeSettingsEditor extends EditorPane {
 		input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;outline:none;';
 		input.addEventListener('focus', () => { input.style.borderColor = 'var(--vscode-focusBorder)'; });
 		input.addEventListener('blur', () => { input.style.borderColor = 'var(--vscode-input-border,#3c3c3c)'; });
+		// Phone / fax fields use US format `(555) 123-4567` app-wide — mask on input
+		// (and on the initial value) so they can never hold letters or >10 digits.
+		if (type === 'tel') {
+			input.setAttribute('inputmode', 'tel');
+			input.maxLength = 16;
+			if (input.value) { input.value = formatUsPhone(input.value); }
+		}
 		input.addEventListener('input', () => {
+			if (type === 'tel') {
+				const masked = formatUsPhone(input.value);
+				if (input.value !== masked) { input.value = masked; }
+			}
 			(this.practice as Record<string, unknown>)[key as string] = input.value;
-
 		});
 	}
 

@@ -25,7 +25,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
-import { parseSavedRecord, COMMON_PAYERS } from '../sidebarActions.js';
+import { parseSavedRecord, COMMON_PAYERS, formatUsPhone } from '../sidebarActions.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -1001,7 +1001,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'subscriberSSN', label: 'Subscriber SSN', type: 'text', placeholder: 'XXX-XX-XXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
-					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', placeholder: 'XXXXXXXXXX', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
+					{ key: 'subscriberPhone', label: 'Subscriber Phone', type: 'phone', placeholder: '(555) 123-4567', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 					{ key: 'subscriberAddress', label: 'Subscriber Address', type: 'text', colSpan: 2, placeholder: 'Full address', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 					{ key: 'subscriberEmployer', label: 'Subscriber Employer', type: 'text', showWhen: { field: 'subscriberRelationship', notEquals: 'self' } },
 				],
@@ -1238,12 +1238,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// related person's number, so the toggle reads first.
 					{ key: 'emergencyContact', label: 'Emergency Contact', type: 'boolean' },
 					{
-						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '+1 555-123-4567',
-						// International: optional "+" country prefix then 7-15 digits with
-						// any of "()", "-", ".", or whitespace as separators. Still catches
-						// alpha chars / too-short numbers but accepts non-US formats.
-						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
-						validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567',
+						key: 'phoneNumber', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
+						// US phone: 10 digits, optional leading +1, with "()", "-", "." or
+						// space separators. Rejects letters / wrong-length numbers.
+						validationPattern: '^\\+?1?[\\s().\\-]*(?:\\d[\\s().\\-]*){10}$',
+						validationMessage: 'Enter a valid 10-digit US phone number, e.g. (555) 123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -1373,15 +1372,15 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'phone', label: 'Phone', type: 'phone', placeholder: '+1 555-123-4567',
-						// International: optional "+" prefix then 7-15 digits with common separators.
-						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
-						validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567',
+						key: 'phone', label: 'Phone', type: 'phone', placeholder: '(555) 123-4567',
+						// US phone: 10 digits, optional leading +1, with common separators.
+						validationPattern: '^\\+?1?[\\s().\\-]*(?:\\d[\\s().\\-]*){10}$',
+						validationMessage: 'Enter a valid 10-digit US phone number, e.g. (555) 123-4567',
 					},
 					{
-						key: 'fax', label: 'Fax', type: 'phone', placeholder: '+1 555-123-4567',
-						validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$',
-						validationMessage: 'Enter a valid fax number e.g. +1 555-123-4567',
+						key: 'fax', label: 'Fax', type: 'phone', placeholder: '(555) 123-4567',
+						validationPattern: '^\\+?1?[\\s().\\-]*(?:\\d[\\s().\\-]*){10}$',
+						validationMessage: 'Enter a valid 10-digit US fax number, e.g. (555) 123-4567',
 					},
 					{
 						key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com',
@@ -4985,9 +4984,10 @@ export class PatientChartEditor extends EditorPane {
 			trackingNumber: { rx: /^[0-9]+$/, msg: 'Tracking number must contain digits only (0-9)' },
 			tracking_number: { rx: /^[0-9]+$/, msg: 'Tracking number must contain digits only (0-9)' },
 		};
-		// International phone (E.164-friendly): optional leading "+" country
-		// prefix then 7-15 digits with "()", "-", ".", or whitespace separators.
-		const INTL_PHONE_RX = /^\+?(?:[0-9][\s().\-]?){7,15}$/;
+		// US phone format (app-wide): exactly 10 digits, optionally with a leading
+		// "+1"/"1" country code and "()", "-", ".", or whitespace separators —
+		// e.g. "(555) 123-4567", "555-123-4567", "+1 555 123 4567".
+		const US_PHONE_RX = /^\+?1?[\s().\-]*(?:\d[\s().\-]*){10}$/;
 		const EMAIL_RX = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
 		const invalid: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
 		for (const sec of (sections || [])) {
@@ -5040,8 +5040,8 @@ export class PatientChartEditor extends EditorPane {
 						continue;
 					}
 				} else if (v && isPhone) {
-					if (!INTL_PHONE_RX.test(v)) {
-						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid phone number e.g. +1 555-123-4567' });
+					if (!US_PHONE_RX.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid 10-digit US phone number, e.g. (555) 123-4567' });
 						continue;
 					}
 				} else if (v && isEmail) {
@@ -5981,21 +5981,19 @@ export class PatientChartEditor extends EditorPane {
 					// Issue #8: every phone/fax field shows a number-format placeholder
 					// (e.g. "(555) 123-4567") instead of the generic "Enter <label>…",
 					// so the expected input is unambiguous and consistent app-wide.
-					inp.placeholder = f.placeholder || (f.type === 'phone' ? '+1 555-123-4567' : `Enter ${f.label.toLowerCase()}...`);
+					inp.placeholder = f.placeholder || (f.type === 'phone' ? '(555) 123-4567' : `Enter ${f.label.toLowerCase()}...`);
 					inp.style.cssText = inputStyle;
 					if (f.type === 'phone') {
-						// International phone: allow a leading "+" country prefix, digits
-						// and the usual separators "()", "-", ".", and spaces. We no longer
-						// strip to 10 digits (that rejected every non-US number). A length
-						// cap keeps it sane (E.164 is max 15 digits ~ 20 chars formatted).
+						// US phone format app-wide: auto-mask to `(555) 123-4567`, drop a
+						// leading "1" country code and hard-cap at 10 digits as the user
+						// types/pastes (shared formatUsPhone). Letters and over-length input
+						// are rejected so the field can only hold a US number.
 						inp.setAttribute('inputmode', 'tel');
-						inp.maxLength = 20;
-						inp.addEventListener('input', () => {
-							let cleaned = inp.value.replace(/[^\d+()\-.\s]/g, '');
-							// A "+" is only valid as the very first character.
-							cleaned = cleaned.replace(/(?!^)\+/g, '');
-							if (inp.value !== cleaned) { inp.value = cleaned; }
-						});
+						inp.maxLength = 16;
+						if (inp.value) { inp.value = formatUsPhone(inp.value); }
+						const maskPhone = () => { const f2 = formatUsPhone(inp.value); if (inp.value !== f2) { inp.value = f2; } };
+						inp.addEventListener('input', maskPhone);
+						inp.addEventListener('paste', () => setTimeout(maskPhone, 0));
 					}
 					this._formInputs.set(f.key, inp);
 				}

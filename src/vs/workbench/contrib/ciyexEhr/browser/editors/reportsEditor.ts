@@ -9,7 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { usToIsoDate } from '../ciyexDateMask.js';
+import { usToIsoDate, maskUsDate } from '../ciyexDateMask.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -1277,17 +1277,33 @@ export class ReportsEditor extends EditorPane {
 			const errEl = DOM.append(wrap, DOM.$('div'));
 			errEl.style.cssText = 'position:absolute;top:100%;left:0;margin-top:2px;font-size:10px;color:#ef4444;white-space:nowrap;display:none;z-index:5;';
 			visible.addEventListener('input', () => {
+				// Auto-insert the slashes as the user types (06122004 → 06/12/2004),
+				// matching every other manually-typed date field. Without this the
+				// field never formed MM/DD/YYYY on its own, so validation flagged
+				// "Invalid date" on each keystroke (QA: typing the from/to date shows
+				// invalid).
+				const masked = maskUsDate(visible.value);
+				if (masked !== visible.value) { visible.value = masked; }
 				const iso = usToIso(visible.value);
-				const bad = !!visible.value && !iso;
+				// Only flag invalid once a FULL MM/DD/YYYY (10 chars) is typed but
+				// doesn't parse (e.g. 13/45/2000) — a half-typed date must not error.
+				const bad = visible.value.length === 10 && !iso;
 				visible.style.borderColor = bad ? '#ef4444' : '';
 				errEl.textContent = bad ? 'Invalid date — use MM/DD/YYYY' : '';
 				errEl.style.display = bad ? 'block' : 'none';
-				// Don't reset the page / re-render the table on a half-typed or invalid
-				// date — only apply the filter once it parses (or is cleared).
-				if (bad) { return; }
-				this.filterValues[key] = iso;
-				this.currentPage = 0;
-				this._render();
+				if (iso) {
+					// Valid date — apply the filter.
+					this.filterValues[key] = iso;
+					this.currentPage = 0;
+					this._render();
+				} else if (visible.value === '' && this.filterValues[key]) {
+					// Cleared — drop the filter and refresh.
+					this.filterValues[key] = '';
+					this.currentPage = 0;
+					this._render();
+				}
+				// Half-typed / invalid: leave the previous filter untouched (no error
+				// thrash, no table reset until the date is complete or cleared).
 			});
 			const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			picker.type = 'date';

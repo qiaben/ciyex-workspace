@@ -560,7 +560,9 @@ export class EhrTitlebarControls extends Disposable {
 			if (!lName) { fail(lastName, 'Required'); }
 			else if (!nameRe.test(lName)) { fail(lastName, NAME_MSG); }
 			if (!phoneVal) { fail(phone, 'Required'); }
-			else if (phoneDigits.length < 7 || phoneDigits.length > 15) { fail(phone, 'Invalid phone number'); }
+			// US format: a complete number is exactly 10 digits. A partial entry
+			// (e.g. 5 digits) is rejected so an incomplete phone can't be saved.
+			else if (phoneDigits.length !== 10) { fail(phone, 'Enter a 10-digit number'); }
 			if (!genderVal) { fail(gender, 'Required'); }
 			if (!dobVisible.value.trim()) { fail(dobVisible, 'Required'); }
 			else if (!dobIso) { fail(dobVisible, 'Invalid date'); }
@@ -1087,6 +1089,13 @@ export class EhrTitlebarControls extends Disposable {
 		this._closeAllOverlays();
 		if (!isOpen) {
 			this._resetForm(this.patientOverlay);
+			// Clear any inline validation errors left over from a previous attempt so
+			// the form reopens clean — _resetForm only clears field VALUES, not the
+			// red borders / ".ehr-field-error" messages, which otherwise persisted
+			// across close/reopen (QA: reopened form showed all the prior errors).
+			this._clearPatientFieldErrors();
+			const errEl = this._patientFormElements.errorEl;
+			if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 			this._ensureInWorkbench(this.overlayBackdrop);
 			this._ensureInWorkbench(this.patientOverlay);
 			this._resetOverlayPosition(this.patientOverlay);

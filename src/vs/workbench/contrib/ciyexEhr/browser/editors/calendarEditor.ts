@@ -1616,7 +1616,14 @@ export class CalendarEditor extends EditorPane {
 		saveBtn.textContent = 'Schedule Appointment';
 		saveBtn.style.cssText = 'padding:6px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;';
 
+		// In-flight guard: the duplicate pre-check and the POST below are async, so
+		// without a synchronous flag set before the first await, rapid repeated
+		// clicks each created a separate appointment (QA: scheduling once produced
+		// many). Reset only on the early-return paths that keep the overlay open;
+		// the success/error paths remove the overlay (and this closure) entirely.
+		let submitting = false;
 		saveBtn.addEventListener('click', async () => {
+			if (submitting) { return; }
 			const patName = patInput.value;
 			const patId = patIdHidden.value;
 			const visitType = visitTypeEl.value;
@@ -1667,6 +1674,18 @@ export class CalendarEditor extends EditorPane {
 			if (requireField(!!provId, providerIdEl, 'Provider is required')) { return; }
 			if (requireField(!!locId, locationIdEl, 'Location is required')) { return; }
 
+			// All required fields are valid — claim the in-flight lock and disable
+			// the button NOW, before the first await (the dup-check), so a second
+			// click can't slip past while the check/POST are running.
+			submitting = true;
+			saveBtn.disabled = true;
+			saveBtn.textContent = 'Scheduling...';
+			const reopenForRetry = (): void => {
+				submitting = false;
+				saveBtn.disabled = false;
+				saveBtn.textContent = 'Schedule Appointment';
+			};
+
 			// Prevent double-booking: a patient may have at most one active
 			// appointment per calendar day. Check the server for the chosen day so
 			// the rule holds even when that date is outside the currently loaded
@@ -1692,6 +1711,7 @@ export class CalendarEditor extends EditorPane {
 						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.` });
 						patInput.style.borderColor = '#ef4444';
 						patInput.focus();
+						reopenForRetry();
 						return;
 					}
 				}
@@ -1703,9 +1723,6 @@ export class CalendarEditor extends EditorPane {
 			const duration = endMins > startMins ? endMins - startMins : 30;
 
 			const provName = this.providers.find(p => p.id === provId)?.name || '';
-
-			saveBtn.disabled = true;
-			saveBtn.textContent = 'Scheduling...';
 
 			try {
 				// Try FHIR-style endpoint first, fallback to simple

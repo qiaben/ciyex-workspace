@@ -15,6 +15,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { MessagingEditorInput } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { parseSavedRecord } from '../sidebarActions.js';
@@ -132,6 +133,7 @@ export class MessagingEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICommandService private readonly commandService: ICommandService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(MessagingEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -318,6 +320,39 @@ export class MessagingEditor extends EditorPane {
 				? 'Start a conversation...'
 				: 'No messages yet. Say something!';
 			return;
+		}
+
+		// Pinned messages pinned to the TOP of the conversation — a sticky bar that
+		// stays visible above the scrolling message list, so pinned items are always
+		// reachable at the top of all messages (they also remain in place below).
+		const pinnedMsgs = this.messages.filter(m => m.pinned && !m.deleted && !m.system);
+		if (pinnedMsgs.length > 0) {
+			const bar = DOM.append(this.messageListEl, DOM.$('div'));
+			bar.style.cssText = 'position:sticky;top:0;z-index:5;background:var(--vscode-editorWidget-background,rgba(127,127,127,0.06));border-bottom:1px solid var(--vscode-editorWidget-border);padding:6px 16px;backdrop-filter:blur(2px);';
+			const hdr = DOM.append(bar, DOM.$('div'));
+			hdr.textContent = `\u{1F4CC} Pinned (${pinnedMsgs.length})`;
+			hdr.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+			for (const m of pinnedMsgs) {
+				const item = DOM.append(bar, DOM.$('div'));
+				item.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;cursor:pointer;';
+				const who = DOM.append(item, DOM.$('span'));
+				who.textContent = m.senderName + ':';
+				who.style.cssText = 'font-weight:600;white-space:nowrap;flex-shrink:0;';
+				const txt = DOM.append(item, DOM.$('span'));
+				txt.textContent = (m.content || (m.attachments && m.attachments.length ? '\u{1F4CE} Attachment' : '')).replace(/\s+/g, ' ').trim();
+				txt.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vscode-foreground);';
+				// Click the pinned row → jump to the message in the conversation below.
+				item.addEventListener('click', () => {
+					// eslint-disable-next-line no-restricted-syntax
+					const target = this.messageListEl.querySelector(`[data-msg-id="${m.id}"]`) as HTMLElement | null;
+					if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+				});
+				const unpin = DOM.append(item, DOM.$('button'));
+				unpin.textContent = '\u{1F4CC}';
+				unpin.title = 'Unpin';
+				unpin.style.cssText = 'background:none;border:none;cursor:pointer;padding:0 2px;font-size:12px;flex-shrink:0;opacity:0.8;';
+				unpin.addEventListener('click', (e) => { e.stopPropagation(); void this._togglePin(m.id, true); });
+			}
 		}
 
 		let lastDate = '';
@@ -580,8 +615,9 @@ export class MessagingEditor extends EditorPane {
 		} catch { /* failed to start DM */ }
 	}
 
-	private _renderMessage(msg: Message): void {
-		const row = DOM.append(this.messageListEl, DOM.$('div'));
+	private _renderMessage(msg: Message, container: HTMLElement = this.messageListEl): void {
+		const row = DOM.append(container, DOM.$('div'));
+		row.setAttribute('data-msg-id', String(msg.id));
 		row.style.cssText = 'padding:6px 16px;display:flex;gap:10px;position:relative;';
 		row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; hoverActions.style.display = 'flex'; });
 		row.addEventListener('mouseleave', () => { row.style.background = ''; hoverActions.style.display = 'none'; });
@@ -1070,22 +1106,35 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	private async _togglePin(messageId: string, currentlyPinned: boolean): Promise<void> {
+		const msg = this.messages.find(m => m.id === messageId);
+		const next = !currentlyPinned;
+		// Flip + re-render FIRST so the click has an immediate effect (the message
+		// jumps into the Pinned bar at the top). Previously the optimistic update was
+		// gated behind res.ok, so a failed/slow request made clicking Pin look like it
+		// did nothing. We revert below if the server rejects it.
+		if (msg) { msg.pinned = next; }
+		this._renderMessages();
+		if (this.detailsOpen && this.detailsTab === 'pinned') { void this._renderDetails(); }
 		try {
 			const res = await this.apiService.fetch(`/api/messages/${messageId}/pin`, {
 				method: currentlyPinned ? 'DELETE' : 'POST',
 			});
-			if (!res.ok) { return; }
-			// Optimistically flip the local state and re-render so the pin badge and
-			// the details panel's Pinned tab update immediately — the polling reload
-			// alone wouldn't (the message ID set is unchanged).
-			const msg = this.messages.find(m => m.id === messageId);
-			if (msg) { msg.pinned = !currentlyPinned; }
-			this._renderMessages();
-			if (this.detailsOpen && this.detailsTab === 'pinned') { void this._renderDetails(); }
+			if (!res.ok) {
+				// Roll back the optimistic change and tell the user it didn't stick.
+				if (msg) { msg.pinned = currentlyPinned; }
+				this._renderMessages();
+				if (this.detailsOpen && this.detailsTab === 'pinned') { void this._renderDetails(); }
+				this.notificationService.notify({ severity: Severity.Warning, message: `Could not ${next ? 'pin' : 'unpin'} the message (HTTP ${res.status}).` });
+				return;
+			}
 			// Reconcile in the background — the pin state is already reflected above.
 			const input = this._getInput();
 			if (input) { void this._loadMessages(input.channelId, input.threadParentId); }
-		} catch { /* */ }
+		} catch {
+			if (msg) { msg.pinned = currentlyPinned; }
+			this._renderMessages();
+			this.notificationService.notify({ severity: Severity.Warning, message: `Could not ${next ? 'pin' : 'unpin'} the message (network error).` });
+		}
 	}
 
 	private _getInput(): MessagingEditorInput | undefined {
@@ -1310,14 +1359,30 @@ export class MessagingEditor extends EditorPane {
 	// without innerHTML (VS Code's Trusted Types policy throws on direct innerHTML string assignment).
 	// Order matters: longer markers (** , __, ~~) must be tested before single-char counterparts.
 	private _renderRichContent(container: HTMLElement, text: string): void {
-		// Known member names (e.g. "Shin Chan", "Victor A") let a mention span more
-		// than one word: the bare `@(\w+)` regex stopped at the first space, so
-		// "@Shin Chan" only highlighted "Shin" and the last name was dropped. Match
-		// the longest member display-name that follows the "@" and highlight it whole.
-		const memberNames = (this.channelInfo?.members ?? [])
-			.map(m => (m.displayName || '').trim())
-			.filter(Boolean)
-			.sort((a, b) => b.length - a.length);
+		// Known full names (e.g. "Shin Chan", "Victor A") let a mention span more
+		// than one word: the bare `@(\w+)` regex stops at the first space, so
+		// "@Shin Chan" would only highlight "Shin" and the last name (the second
+		// word) was dropped — the reported "only the first word is recognized" bug.
+		// We match the longest known name that follows the "@" and highlight it
+		// whole. Candidate names come from the channel members AND the message
+		// senders AND the loaded people directory: `channelInfo.members` is
+		// populated asynchronously (after the first message render), so relying on
+		// it alone left every mention first-word-only until members arrived. Message
+		// senders cover exactly the people most likely to be @mentioned.
+		const nameSet = new Set<string>();
+		for (const m of (this.channelInfo?.members ?? [])) {
+			const dn = (m.displayName || '').trim();
+			if (dn) { nameSet.add(dn); }
+		}
+		for (const msg of this.messages) {
+			const sn = (msg.senderName || '').trim();
+			if (sn) { nameSet.add(sn); }
+		}
+		for (const p of this.people) {
+			const pn = (p.name || '').trim();
+			if (pn) { nameSet.add(pn); }
+		}
+		const memberNames = Array.from(nameSet).sort((a, b) => b.length - a.length);
 		const pattern = /@(\w+)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|_(.+?)_|`(.+?)`/g;
 		let lastIndex = 0;
 		let match: RegExpExecArray | null;
@@ -1445,6 +1510,12 @@ export class MessagingEditor extends EditorPane {
 				members: ch.members as ChannelMember[] | undefined,
 			};
 			if (this.detailsOpen) { this._renderDetails(); }
+			// Re-parse @mentions in already-rendered messages now that the member
+			// names are available, so multi-word mentions stop being clipped to
+			// their first word once member details arrive. Guard on a rendered
+			// message existing so we never clobber the New Message people picker.
+			// eslint-disable-next-line no-restricted-syntax
+			if (this.messageListEl.querySelector('[data-msg-id]')) { this._renderMessages(); }
 		} catch { /* API not ready */ }
 	}
 
