@@ -122,11 +122,16 @@ export class PatientSnapshotEditor extends EditorPane {
 	private readonly _pageState = new Map<string, number>();
 	/** IDs of records the user just deleted on this patient. Filtered out of
 	 *  every list render until a fresh fetch confirms the server has removed
-	 *  them — covers HAPI's eventual-consistency search index lag. */
+	 *  them — covers HAPI's eventual-consistency search index lag. Keyed by
+	 *  `{patientId}::{entity}` so an overlay never leaks across patients (the
+	 *  editor pane instance is reused for every snapshot tab). */
 	private readonly _deletedIds = new Map<string, Set<string>>();
 	/** Records created in this session that the server's search index may not
 	 *  have surfaced yet. Merged into every list render until a subsequent
-	 *  fetch returns the same id, mirroring the chart editor's _pendingCreates. */
+	 *  fetch returns the same id, mirroring the chart editor's _pendingCreates.
+	 *  Keyed by `{patientId}::{entity}` — without the patient scope a vital (or
+	 *  any record) saved for one patient was overlaid onto every other patient's
+	 *  list when the same pane was reused for their snapshot. */
 	private readonly _pendingCreates = new Map<string, Array<Record<string, unknown>>>();
 	/** Appointment edits applied this session, keyed by appointment id. The
 	 *  status sub-resource lags (or a completed appointment's status only takes
@@ -780,8 +785,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		return this._mergePending(entity, this._filterDeleted(entity, items));
 	}
 
+	/** Scope an overlay key to the patient on screen so the pending-create and
+	 *  deleted-id overlays never bleed across patients (the editor pane is reused
+	 *  for every snapshot tab). */
+	private _overlayKey(entity: string): string {
+		return `${this._currentPatientId}::${entity}`;
+	}
+
 	private _filterDeleted(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-		const set = this._deletedIds.get(entity);
+		const set = this._deletedIds.get(this._overlayKey(entity));
 		if (!set || set.size === 0) { return items; }
 		const remaining: typeof items = [];
 		const stillPresent = new Set<string>();
@@ -802,23 +814,25 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	private _trackDeleted(entity: string, id: string): void {
-		let set = this._deletedIds.get(entity);
-		if (!set) { set = new Set<string>(); this._deletedIds.set(entity, set); }
+		const key = this._overlayKey(entity);
+		let set = this._deletedIds.get(key);
+		if (!set) { set = new Set<string>(); this._deletedIds.set(key, set); }
 		set.add(id);
 	}
 
 	private _trackCreated(entity: string, record: Record<string, unknown>): void {
 		const id = String(record.id ?? record.fhirId ?? '');
 		if (!id) { return; }
-		const arr = this._pendingCreates.get(entity) || [];
+		const key = this._overlayKey(entity);
+		const arr = this._pendingCreates.get(key) || [];
 		// Replace any prior entry with the same id (covers create-then-edit).
 		const filtered = arr.filter(r => String(r.id ?? r.fhirId ?? '') !== id);
 		filtered.unshift(record);
-		this._pendingCreates.set(entity, filtered);
+		this._pendingCreates.set(key, filtered);
 	}
 
 	private _mergePending(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-		const pending = this._pendingCreates.get(entity);
+		const pending = this._pendingCreates.get(this._overlayKey(entity));
 		if (!pending || pending.length === 0) { return items; }
 		const out = [...items];
 		const indexById = new Map<string, number>();
@@ -947,6 +961,18 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		const body = JSON.stringify({ ...payload, patientId: pid, id: encounterId });
 		const createUrl = `/api/fhir-resource/encounter-form/patient/${pid}?encounterRef=${encounterId}`;
+		// Persist the composition (the rich clinical content), then mirror the
+		// vitals onto the shared FHIR vitals store so an edit made in the encounter
+		// -history card surfaces on the Snapshot vitals card and the Encounter form.
+		const compRes = await this._saveEncounterCompositionDoc(createUrl, headers, body, pid, encounterId, existingId);
+		await this._upsertEncounterVitals(values, values['startDate']);
+		return compRes;
+	}
+
+	/** Write just the encounter-form Composition document (no vitals side-effect).
+	 *  Split out of {@link _saveEncounterComposition} so vitals can be upserted to
+	 *  the shared store afterwards regardless of which save branch ran. */
+	private async _saveEncounterCompositionDoc(createUrl: string, headers: Record<string, string>, body: string, pid: string, encounterId: string, existingId: string | undefined): Promise<Response> {
 		if (!existingId) {
 			return this.apiService.fetch(createUrl, { method: 'POST', headers, body });
 		}
@@ -1222,6 +1248,15 @@ export class PatientSnapshotEditor extends EditorPane {
 			normalizeEditItem: entity === 'payment'
 				? (row: Record<string, unknown>) => this._normalizePaymentForEdit(row)
 				: undefined,
+			// Editing an encounter row from the list view carries only the displayed
+			// columns (date/status/diagnosis) — load its full Encounter resource,
+			// composition (narrative/ROS/PE/assessment/…) and the shared FHIR vitals
+			// so the edit form pre-fills instead of opening blank (QA: "vitals and
+			// other data not fetching"). Payment edits already pre-fill via
+			// normalizeEditItem, so they need no async loader here.
+			loadEditItem: entity === 'encounters'
+				? (row: Record<string, unknown>) => this._loadEncounterForEdit(row)
+				: undefined,
 			saveRecord: async (next, existingId) => {
 				// Encounters need a two-step save (mirrors EncounterFormEditor):
 				//   1. POST /api/{patientId}/encounters to mint a real Encounter id
@@ -1355,6 +1390,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			// instead of dropping the user into the full records list.
 			closeOnSave: true,
 			loadList: () => this._loadEntityList(entity),
+			// Re-editing an encounter row from this dialog's list view must also load
+			// the full record (composition + shared FHIR vitals) so it pre-fills like
+			// the initial edit does.
+			loadEditItem: entity === 'encounters'
+				? (row: Record<string, unknown>) => this._loadEncounterForEdit(row)
+				: undefined,
 			saveRecord: async (next, existingId) => {
 				if (entity === 'encounters') {
 					const res = await this._saveEncounterComposition(next, existingId);
@@ -1534,6 +1575,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		// reference so the search field shows a name (QA issue 2: provider blank/raw).
 		merged.provider = pick('providerDisplay', 'providerName', 'practitionerName', 'encounterProvider', 'provider');
 		merged.chiefComplaint = pick('chiefComplaint', 'reason', 'reasonForVisit', 'reasonCode');
+
+		// Vitals live in the shared FHIR vitals store (ONE Observation per visit
+		// DATE) — not on the encounter composition, whose `vitals_*` are usually
+		// blank. Load the encounter date's reading and let it fill the vitals_*
+		// fields (mirrors EncounterFormEditor), so the edit form shows the real
+		// vitals instead of coming up empty. The save path writes any change back to
+		// this same record, so it also shows on the Snapshot card and Encounter form.
+		const encDateForVitals = merged.startDate || pick('encounterDate', 'start', 'periodStart', 'date');
+		const vitalsObs = await this._findVitalsObsOnDate(encDateForVitals);
+		if (vitalsObs) { Object.assign(merged, this._fhirToVitalsFields(vitalsObs)); }
 
 		// Stash the raw structured values and replace them with readable text so the
 		// popup textareas render the diagnoses/procedures/plan/ROS/PE instead of
@@ -1935,6 +1986,22 @@ export class PatientSnapshotEditor extends EditorPane {
 		return Number.isNaN(t) ? -Infinity : t;
 	}
 
+	/** The shared map between the FHIR vitals Observation keys and the encounter
+	 *  form's `vitals_*` field keys. One per row: `[fhirKey, formKey]`. Used to
+	 *  translate vitals in BOTH directions so the Snapshot's Today's Vitals card,
+	 *  the encounter-history edit form and the FHIR vitals store all stay in sync. */
+	private static readonly _VITALS_FIELD_MAP: ReadonlyArray<readonly [string, string]> = [
+		['bpSystolic', 'vitals_bp_systolic'],
+		['bpDiastolic', 'vitals_bp_diastolic'],
+		['pulse', 'vitals_heart_rate'],
+		['temperatureC', 'vitals_temperature'],
+		['oxygenSaturation', 'vitals_spo2'],
+		['respiration', 'vitals_respiratory_rate'],
+		['weightKg', 'vitals_weight'],
+		['heightCm', 'vitals_height'],
+		['bmi', 'vitals_bmi'],
+	];
+
 	/**
 	 * Map an encounter-form Composition's `vitals_*` fields onto the FHIR-vitals
 	 * record shape the Today's Vitals card reads (heightCm/weightKg/bpSystolic/…).
@@ -1949,19 +2016,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			const n = Number(v);
 			return Number.isFinite(n) ? n : undefined;
 		};
-		const mapping: Array<[string, string]> = [
-			['bpSystolic', 'vitals_bp_systolic'],
-			['bpDiastolic', 'vitals_bp_diastolic'],
-			['pulse', 'vitals_heart_rate'],
-			['temperatureC', 'vitals_temperature'],
-			['oxygenSaturation', 'vitals_spo2'],
-			['respiration', 'vitals_respiratory_rate'],
-			['weightKg', 'vitals_weight'],
-			['heightCm', 'vitals_height'],
-			['bmi', 'vitals_bmi'],
-		];
 		const out: Record<string, unknown> = {};
-		for (const [target, src] of mapping) {
+		for (const [target, src] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
 			const n = num(src);
 			if (n !== undefined) { out[target] = n; }
 		}
@@ -1974,6 +2030,88 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (comp._lastUpdated) { out._lastUpdated = comp._lastUpdated; }
 		out._source = 'encounter-form';
 		return out;
+	}
+
+	/** Find the most-recent FHIR vitals Observation recorded for the current
+	 *  patient on the given calendar day — the ONE shared per-visit-date record the
+	 *  Snapshot vitals card, the Encounter form and the Patient Chart all read.
+	 *  Returns the raw Observation (or null). Mirrors EncounterFormEditor._findVitalsObsOnDate. */
+	private async _findVitalsObsOnDate(dateRaw: unknown): Promise<Record<string, unknown> | null> {
+		const pid = this._currentPatientId;
+		if (!pid || !dateRaw) { return null; }
+		const ref = new Date(String(dateRaw));
+		if (isNaN(ref.getTime())) { return null; }
+		try {
+			const raw = await this._fetch(`/api/fhir-resource/vitals/patient/${pid}?page=0&size=50`);
+			const inner = (raw?.data ?? raw) as Record<string, unknown> | undefined;
+			const arr = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Array<Record<string, unknown>>;
+			const onDate = arr
+				.filter(v => this._isSameDay(v.recordedAt ?? v.effectiveDateTime ?? v.recordedDate ?? v.date, ref))
+				.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
+			return onDate[0] ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Translate a FHIR vitals Observation into the encounter form's `vitals_*`
+	 *  field keys so the edit form can pre-fill from the shared vitals store. */
+	private _fhirToVitalsFields(obs: Record<string, unknown>): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [fhirKey, formKey] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
+			const v = obs[fhirKey];
+			if (v !== undefined && v !== null && String(v).trim() !== '') { out[formKey] = v; }
+		}
+		return out;
+	}
+
+	/** Persist the encounter edit form's `vitals_*` values to the shared FHIR
+	 *  vitals store, keyed by the encounter's DATE — upserting the ONE Observation
+	 *  the Snapshot vitals card and the Encounter form read, so a vitals change made
+	 *  while editing an encounter in the history card shows in both places (and never
+	 *  spawns a divergent copy). No-op when the form carries no vitals values. */
+	private async _upsertEncounterVitals(values: Record<string, string>, encounterDate: unknown): Promise<void> {
+		const pid = this._currentPatientId;
+		if (!pid) { return; }
+		const fhir: Record<string, unknown> = {};
+		for (const [fhirKey, formKey] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
+			if (fhirKey === 'bmi') { continue; } // derived below from height/weight
+			const raw = values[formKey];
+			if (raw === undefined || String(raw).trim() === '') { continue; }
+			const n = Number(raw);
+			if (Number.isFinite(n)) { fhir[fhirKey] = n; }
+		}
+		if (Object.keys(fhir).length === 0) { return; }
+		const bmi = PatientSnapshotEditor._computeBmi(fhir.heightCm, fhir.weightKg);
+		if (bmi) { fhir.bmi = Number(bmi); }
+		// Key the reading to the encounter's date so it upserts the same per-visit
+		// record the Snapshot/Encounter form resolve by date (falls back to today).
+		const dateRaw = String(values['startDate'] || '') || (encounterDate ? String(encounterDate) : '');
+		const when = dateRaw && !isNaN(new Date(dateRaw).getTime()) ? new Date(dateRaw) : new Date();
+		const recordedAt = when.toISOString();
+		const existing = await this._findVitalsObsOnDate(recordedAt);
+		const existingId = existing ? String(existing.id ?? existing.fhirId ?? '') : '';
+		const body = JSON.stringify({ ...fhir, patientId: pid, recordedAt });
+		const headers = { 'Content-Type': 'application/json' };
+		const res = existingId
+			? await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}/${existingId}`, { method: 'PUT', headers, body })
+			: await this.apiService.fetch(`/api/fhir-resource/vitals/patient/${pid}`, { method: 'POST', headers, body });
+		if (!res.ok) {
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: `Vitals could not be saved to the patient record (HTTP ${res.status}); the encounter note was still saved.`,
+			});
+			return;
+		}
+		// Overlay the saved reading so the Snapshot vitals card reflects it at once,
+		// before the search index catches up (mirrors the inline vitals form).
+		let saved: Record<string, unknown> | null = null;
+		try {
+			const j = await res.json();
+			const cand = (j?.data ?? j) as Record<string, unknown> | null;
+			if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
+		} catch { /* non-JSON body */ }
+		this._trackCreated('vitals', { ...fhir, patientId: pid, recordedAt, id: existingId || undefined, ...(saved || {}) });
 	}
 
 	/** Extract the patient id an encounter is linked to, tolerant of the many

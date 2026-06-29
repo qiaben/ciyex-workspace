@@ -3970,7 +3970,10 @@ export class PatientChartEditor extends EditorPane {
 			});
 
 			saveBtn.addEventListener('click', async () => {
-				await this._saveFormTab(tab, saveBtn);
+				// Keep the form in edit mode when the save is blocked by validation
+				// so the inline field errors stay visible and editable.
+				const ok = await this._saveFormTab(tab, saveBtn, config);
+				if (!ok) { return; }
 				setReadOnly(true);
 				editBtn.style.display = '';
 				saveBtn.style.display = 'none';
@@ -4917,7 +4920,119 @@ export class PatientChartEditor extends EditorPane {
 		applyFilters();
 	}
 
-	private async _saveFormTab(tab: ChartTab, btn: HTMLButtonElement): Promise<void> {
+	/**
+	 * Validate user-entered values across a set of form sections, returning one
+	 * entry per field that fails format validation. Shared by the Demographics
+	 * (and other `display: 'form'` tabs) inline Save and the add/edit record
+	 * drawer so phone / email / name / lot / dose negative-test inputs are
+	 * blocked on every patient form rather than only in the drawer. Precedence
+	 * per field: typed-but-invalid date → per-field validationPattern → implicit
+	 * type=phone / type=email format → keyed fieldPatterns (name/title/lot/dose).
+	 */
+	private _collectFormatErrors(
+		sections: FieldSection[],
+		inputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+	): Array<{ key: string; label: string; el: HTMLElement; msg: string }> {
+		// Letters + spaces + hyphens + apostrophes — proper-name fields.
+		const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
+		// Free-text titles — letters, numbers and common punctuation.
+		const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
+		// Lot numbers: alphanumeric plus hyphens, 3-30 chars.
+		const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
+		// Dose: positive number, optional unit suffix (e.g. "1.5" or "0.5 mL").
+		const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?(?:\s*(mL|mg|mcg|units|IU|cc|g|%))?$/i;
+		const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
+			allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			procedureName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			alert: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			alertName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			description: { rx: namePattern, msg: 'No special characters allowed' },
+			materialTitle: { rx: titlePattern, msg: 'Title may contain letters, numbers and basic punctuation' },
+			subject: { rx: namePattern, msg: 'No special characters allowed' },
+			lotNumber: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
+			lot_number: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
+			dose: { rx: dosePattern, msg: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)' },
+			doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
+			dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
+		};
+		// International phone (E.164-friendly): optional leading "+" country
+		// prefix then 7-15 digits with "()", "-", ".", or whitespace separators.
+		const INTL_PHONE_RX = /^\+?(?:[0-9][\s().\-]?){7,15}$/;
+		const EMAIL_RX = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+		const invalid: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
+		for (const sec of (sections || [])) {
+			for (const f of (sec.fields || [])) {
+				const el = inputs.get(f.key);
+				if (!el) { continue; }
+				const v = String(el.value ?? '').trim();
+				// Reject typed-but-invalid dates (e.g. 13/33/2000) — _buildDateInput
+				// flags these via dataset.invalid on the hidden ISO input.
+				if (f.type === 'date' && el.dataset.invalid === '1') {
+					invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid date (MM/DD/YYYY)' });
+					continue;
+				}
+				// Per-field validationPattern takes precedence over the implicit
+				// type/keyed checks below.
+				if (v && f.validationPattern) {
+					let matched = true;
+					try {
+						const rx = new RegExp(f.validationPattern, 'i'); // case-insensitive so unit suffixes match any casing
+						matched = rx.test(v);
+					} catch { /* malformed regex — skip */ }
+					if (!matched) {
+						invalid.push({ key: f.key, label: f.label, el, msg: f.validationMessage || 'Invalid format' });
+						continue;
+					}
+				} else if (v && f.type === 'phone') {
+					if (!INTL_PHONE_RX.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid phone number e.g. +1 555-123-4567' });
+						continue;
+					}
+				} else if (v && f.type === 'email') {
+					if (!EMAIL_RX.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid email address' });
+						continue;
+					}
+				}
+				const rule = fieldPatterns[f.key];
+				if (rule && v && !rule.rx.test(v)) {
+					invalid.push({ key: f.key, label: f.label, el, msg: rule.msg });
+				}
+			}
+		}
+		return invalid;
+	}
+
+	/** Paint inline red-bordered error messages under each invalid field cell. */
+	private _showFieldErrors(
+		cells: Map<string, HTMLElement>,
+		errors: Array<{ key: string; label: string; el: HTMLElement; msg: string }>
+	): void {
+		for (const p of errors) {
+			p.el.style.borderColor = '#ef4444';
+			const cell = cells.get(p.key);
+			if (cell) {
+				for (const child of Array.from(cell.children)) {
+					if (child.classList.contains('field-error')) { child.remove(); }
+				}
+				const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+				errMsg.textContent = `${p.label}: ${p.msg}`;
+				errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+			}
+		}
+	}
+
+	private async _saveFormTab(tab: ChartTab, btn: HTMLButtonElement, config: FieldConfig | null): Promise<boolean> {
+		// Clear inline errors from a previous failed save attempt.
+		for (const cell of this._formCells.values()) {
+			for (const child of Array.from(cell.children)) {
+				if (child.classList.contains('field-error')) { child.remove(); }
+			}
+		}
 		// Block save when any date field holds a typed-but-invalid value (e.g.
 		// 13/33/2000) — _buildDateInput flags these via dataset.invalid on the
 		// hidden ISO input registered in _formInputs.
@@ -4926,8 +5041,21 @@ export class PatientChartEditor extends EditorPane {
 				this.notificationService.warn('Enter a valid date (MM/DD/YYYY) before saving.');
 				const vis = this._dateVisibleByKey.get(key);
 				if (vis) { vis.style.borderColor = '#ef4444'; vis.focus(); }
-				return;
+				return false;
 			}
+		}
+		// Block save when a field fails format validation (phone / email / name /
+		// lot / dose). Without this the Demographics inline Save bypassed the
+		// validation the add/edit drawer enforces, letting invalid phone numbers
+		// and email addresses reach the backend.
+		const invalid = this._collectFormatErrors(config?.sections || [], this._formInputs);
+		if (invalid.length > 0) {
+			this._showFieldErrors(this._formCells, invalid);
+			const first = invalid[0].el;
+			first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			if (typeof first.focus === 'function') { first.focus(); }
+			this.notificationService.warn(`Invalid: ${invalid.map(p => p.label).join(', ')}`);
+			return false;
 		}
 		const payload: Record<string, unknown> = {};
 		for (const [key, el] of this._formInputs) {
@@ -4940,12 +5068,13 @@ export class PatientChartEditor extends EditorPane {
 		}
 		if (Object.keys(payload).length === 0) {
 			this.notificationService.info('No changes to save');
-			return;
+			return true;
 		}
 
 		btn.disabled = true;
 		const prev = btn.textContent;
 		btn.textContent = 'Saving...';
+		let didSave = false;
 		try {
 			// Demographics → /api/patients/{id}, others → FHIR generic endpoint
 			const isDemographics = tab.fhirResources.includes('Patient');
@@ -4980,6 +5109,7 @@ export class PatientChartEditor extends EditorPane {
 			}
 			const res = await this.apiService.fetch(path, { method: 'PUT', body: JSON.stringify(body) });
 			if (res.ok) {
+				didSave = true;
 				this.notificationService.info(`${tab.label} saved`);
 				this._tabDataCache.delete(tab.key);
 				if (isDemographics) {
@@ -5003,6 +5133,7 @@ export class PatientChartEditor extends EditorPane {
 			btn.disabled = false;
 			btn.textContent = prev;
 		}
+		return didSave;
 	}
 
 	private _openAddRecordDialog(tab: ChartTab, config: FieldConfig | null, prefill?: Record<string, unknown>): void {
@@ -5251,110 +5382,11 @@ export class PatientChartEditor extends EditorPane {
 					}
 				}
 			}
-			// Pattern validation. Negative test cases the team flagged: name/title fields
-			// were accepting numbers and special characters, lot-number / dose fields were
-			// accepting special characters. Block them here with the same inline-error UX.
-			// Letters + spaces + hyphens + apostrophes — for fields that should be a
-			// proper name (allergen, medication, vaccine, procedure, condition, alert,
-			// test, document title).
-			const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
-			// Free-text titles (e.g. Education Topic "Type 2 Diabetes",
-			// "COVID-19 Vaccine FAQ") — letters, numbers and common punctuation.
-			const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
-			// Lot numbers: alphanumeric plus hyphens, 3-30 chars (pure numbers allowed).
-			const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
-			// Dose: positive number, unit suffix is optional (e.g., "1.5" or "0.5 mL").
-			const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?(?:\s*(mL|mg|mcg|units|IU|cc|g|%))?$/i;
-			const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
-				allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				procedureName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				alert: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				// Backend tab_field_config (V144 Flag) uses key `alertName`. Mirror
-				// the row above so the negative-test inputs (numbers / specials)
-				// fail validation regardless of which key the merged config emits.
-				alertName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-				description: { rx: namePattern, msg: 'No special characters allowed' },
-				materialTitle: { rx: titlePattern, msg: 'Title may contain letters, numbers and basic punctuation' },
-				subject: { rx: namePattern, msg: 'No special characters allowed' },
-				lotNumber: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
-				lot_number: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
-				dose: { rx: dosePattern, msg: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)' },
-				doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
-				dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
-			};
-			// Implicit format checks for type=phone / type=email when the
-			// field config didn't ship its own validationPattern. Applies
-			// across every patient-form (relationships, facility, demographics,
-			// guardian, employer, pharmacy, ...) so the negative-test cases
-			// the team flagged on phone / email fields get caught even when
-			// the backend tab_field_config doesn't include a regex.
-			// International phone (E.164-friendly): optional leading "+" country
-			// prefix then 7-15 digits with any of "()", "-", ".", or whitespace as
-			// separators. Replaces the old US-only 10-digit rule so non-US numbers
-			// are accepted across every patient form.
-			const INTL_PHONE_RX = /^\+?(?:[0-9][\s().\-]?){7,15}$/;
-			const EMAIL_RX = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
-			const invalidPattern: Array<{ key: string; label: string; el: HTMLElement; msg: string }> = [];
-			for (const sec of (config?.sections || [])) {
-				for (const f of (sec.fields || [])) {
-					const el = dialogInputs.get(f.key);
-					if (!el) { continue; }
-					const v = String(el.value ?? '').trim();
-					// Reject typed-but-invalid dates (e.g. 13/33/2000) — _buildDateInput
-					// flags these via dataset.invalid on the hidden ISO input.
-					if (f.type === 'date' && el.dataset.invalid === '1') {
-						invalidPattern.push({ key: f.key, label: f.label, el, msg: 'Enter a valid date (MM/DD/YYYY)' });
-						continue;
-					}
-					// Per-field validationPattern (declared in DEFAULT_FIELD_CONFIGS or
-					// shipped from backend tab_field_config) takes precedence — this is
-					// where US phone formats / email / lot-number / dosage etc.
-					// negative tests get caught. Without applying it here, those
-					// patterns were just decoration and the negative-test inputs
-					// reached the server.
-					if (v && f.validationPattern) {
-						let matched = true;
-						try {
-							const rx = new RegExp(f.validationPattern, 'i'); // case-insensitive so unit suffixes match any casing (e.g. dose "1.5 ml") — issue 9
-							matched = rx.test(v);
-						} catch { /* malformed regex — skip */ }
-						if (!matched) {
-							invalidPattern.push({
-								key: f.key,
-								label: f.label,
-								el,
-								msg: f.validationMessage || 'Invalid format',
-							});
-							continue;
-						}
-					} else if (v && f.type === 'phone') {
-						if (!INTL_PHONE_RX.test(v)) {
-							invalidPattern.push({
-								key: f.key, label: f.label, el,
-								msg: 'Enter a valid phone number e.g. +1 555-123-4567',
-							});
-							continue;
-						}
-					} else if (v && f.type === 'email') {
-						if (!EMAIL_RX.test(v)) {
-							invalidPattern.push({
-								key: f.key, label: f.label, el,
-								msg: 'Enter a valid email address',
-							});
-							continue;
-						}
-					}
-					const rule = fieldPatterns[f.key];
-					if (!rule) { continue; }
-					if (v && !rule.rx.test(v)) {
-						invalidPattern.push({ key: f.key, label: f.label, el, msg: rule.msg });
-					}
-				}
-			}
+			// Format validation (phone / email / name / title / lot / dose / dates)
+			// shared with the Demographics inline Save via _collectFormatErrors so
+			// the negative-test inputs the team flagged are blocked identically on
+			// every patient form.
+			const invalidPattern = this._collectFormatErrors(config?.sections || [], dialogInputs);
 			if (missing.length > 0 || invalidPattern.length > 0) {
 				for (const m of missing) {
 					m.el.style.borderColor = '#ef4444';
@@ -5365,15 +5397,7 @@ export class PatientChartEditor extends EditorPane {
 						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
 					}
 				}
-				for (const p of invalidPattern) {
-					p.el.style.borderColor = '#ef4444';
-					const cell = dialogCells.get(p.key);
-					if (cell) {
-						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
-						errMsg.textContent = `${p.label}: ${p.msg}`;
-						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
-					}
-				}
+				this._showFieldErrors(dialogCells, invalidPattern);
 				const firstEl = (missing[0]?.el ?? invalidPattern[0]?.el) as HTMLElement;
 				firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 				if (typeof firstEl.focus === 'function') { firstEl.focus(); }

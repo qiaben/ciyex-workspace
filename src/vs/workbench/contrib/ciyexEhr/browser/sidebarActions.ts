@@ -2075,6 +2075,15 @@ export interface IListAndFormDialogOptions {
 	 *  doesn't fetch all the data"). Only runs in edit mode; the row id is taken
 	 *  from the original row for save, so the mapping can't break the PUT target. */
 	normalizeEditItem?: (row: Record<string, unknown>) => Record<string, unknown>;
+	/** Optional ASYNC loader run when a row enters EDIT mode — both for the
+	 *  initial edit and for editing a row from the list view. The bare list row
+	 *  often carries only the columns shown in the list (e.g. an encounter row has
+	 *  date/status/diagnosis but not its composition narrative/ROS/PE or the shared
+	 *  FHIR vitals), so the edit form opened with most fields blank. The resolved
+	 *  record is what seeds the form; the ORIGINAL row still supplies the save id,
+	 *  so a loader that reshapes fields can't break the PUT target. Runs before
+	 *  `normalizeEditItem` (which then maps the loaded record's field names). */
+	loadEditItem?: (row: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 /** Field-group sections for the unified list/form popup. Clinical forms (the
@@ -2361,7 +2370,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					eBtn.style.cssText = `margin-top:2px;padding:7px 14px;border:1px solid ${c.border};border-radius:8px;background:transparent;color:${c.fg};font-size:12px;font-weight:600;cursor:pointer;`;
 					eBtn.addEventListener('mouseenter', () => { eBtn.style.background = c.hover; });
 					eBtn.addEventListener('mouseleave', () => { eBtn.style.background = 'transparent'; });
-					eBtn.addEventListener('click', () => renderForm(null));
+					eBtn.addEventListener('click', () => { void renderForm(null); });
 					empty.appendChild(eBtn);
 				}
 				scroll.appendChild(empty);
@@ -2390,7 +2399,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					const raw = (row[col.key] ?? '') as unknown;
 					cell.textContent = col.format ? col.format(raw, row) : String(raw || '—');
 					cell.style.cssText = `padding:9px 10px 9px 0;border-bottom:1px solid ${c.border};font-size:12.5px;color:${c.fg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background 0.1s;`;
-					cell.addEventListener('click', () => { renderForm(row); });
+					cell.addEventListener('click', () => { void renderForm(row); });
 					table.appendChild(cell);
 					cells.push(cell);
 				}
@@ -2411,7 +2420,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 					actCell.appendChild(b);
 				};
-				mkAct('edit', 'Edit', () => renderForm(row));
+				mkAct('edit', 'Edit', () => { void renderForm(row); });
 				if (opts.deleteRecord) {
 					mkAct('trash', 'Delete', () => { void handleDelete(row); });
 				}
@@ -2714,16 +2723,27 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		}
 	};
 
-	const renderForm = (existing: Record<string, unknown> | null): void => {
+	const renderForm = async (existing: Record<string, unknown> | null): Promise<void> => {
 		teardownPopovers();
 		currentMode = 'form';
 		editingItem = existing;
 		const isEdit = !!existing;
+		// For edits, optionally fetch the FULL record (async) before building the
+		// form — the list row may carry only the displayed columns, so without this
+		// the edit form opened with most fields blank (e.g. an encounter's vitals,
+		// narrative, ROS, PE). The list view stays visible during the fetch. Bail if
+		// the user navigated away (opened another row, or went back to the list)
+		// while it was in flight.
+		let full = existing;
+		if (isEdit && existing && opts.loadEditItem) {
+			try { full = await opts.loadEditItem(existing); } catch { full = existing; }
+			if (currentMode !== 'form' || editingItem !== existing) { return; }
+		}
 		// Seed the form from a normalized view of the row when editing, so stored
 		// field names that differ from the form keys (e.g. payment `collectedAt` →
 		// `paymentDate`) still pre-fill. `editingItem` keeps the original row so the
 		// save id is unchanged; only the values used to populate inputs are mapped.
-		const seed = isEdit && opts.normalizeEditItem ? opts.normalizeEditItem(existing!) : existing;
+		const seed = isEdit && opts.normalizeEditItem ? opts.normalizeEditItem(full!) : full;
 		titleEl.textContent = `${isEdit ? 'Edit' : 'New'} ${singular}`;
 		subtitleEl.textContent = isEdit ? 'Update the details below' : `Add a new ${singular.toLowerCase()} record`;
 		addBtn.style.display = 'none';
@@ -2967,7 +2987,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		if (firstField) { inputs.get(firstField.key)?.focus(); }
 	};
 
-	addBtn.addEventListener('click', () => renderForm(null));
+	addBtn.addEventListener('click', () => { void renderForm(null); });
 	closeBtn.addEventListener('click', () => close());
 
 	doc.addEventListener('keydown', onKey, true);
@@ -2976,9 +2996,9 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 	// initial mode
 	if (opts.initialMode === 'create') {
-		renderForm(null);
+		void renderForm(null);
 	} else if (opts.initialMode === 'edit' && opts.initialItem) {
-		renderForm(opts.initialItem);
+		void renderForm(opts.initialItem);
 	} else {
 		void renderList();
 	}
