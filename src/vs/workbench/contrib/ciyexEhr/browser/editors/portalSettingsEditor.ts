@@ -15,6 +15,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { PortalSettingsEditorInput } from './ciyexEditorInput.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
@@ -429,8 +430,13 @@ export class PortalSettingsEditor extends EditorPane {
 			this._iconBtn(actions, form.active === false ? '\u{1F441}\u200D\u{1F5E8}' : '\u{1F441}', form.active === false ? 'Enable' : 'Disable', async () => {
 				if (!form.id) { return; }
 				try {
-					await this.apiService.fetch(`/api/portal/config/forms/${form.id}/toggle?active=${form.active === false}`, { method: 'PATCH' });
-					await this._load();
+					const newActive = form.active === false;
+					await this.apiService.fetch(`/api/portal/config/forms/${form.id}/toggle?active=${newActive}`, { method: 'PATCH' });
+					// Flip the toggle instantly in-memory, then reconcile in the background.
+					const target = this.forms.find(f => f.id === form.id);
+					if (target) { target.active = newActive; }
+					this._render();
+					void this._load();
 				} catch { /* ignore */ }
 			});
 			if (form.id) {
@@ -765,9 +771,22 @@ export class PortalSettingsEditor extends EditorPane {
 			const url = form.id ? `/api/portal/config/forms/${form.id}` : '/api/portal/config/forms';
 			const res = await this.apiService.fetch(url, { method, body: JSON.stringify(form) });
 			if (res.ok) {
+				// Reflect the saved form instantly from the response (falling back to the
+				// edited form) so the list updates the moment Save completes, instead of
+				// blocking on a full refetch. Reconcile in the background.
+				const saved = (await parseSavedRecord(res)) ?? { ...form };
+				const savedForm = saved as unknown as PortalForm;
+				const existingIdx = this.forms.findIndex(f => (form.id && f.id === form.id) || f.formKey === form.formKey);
+				if (existingIdx >= 0) {
+					this.forms[existingIdx] = { ...this.forms[existingIdx], ...savedForm };
+				} else {
+					this.forms = [...this.forms, savedForm];
+				}
 				this.editingForm = null;
-				await this._load();
+				this._saving = false;
+				this._render();
 				this.notificationService.notify({ severity: Severity.Info, message: 'Form saved.' });
+				void this._load();
 				return;
 			}
 			const err = await res.json().catch(() => null);
@@ -784,8 +803,11 @@ export class PortalSettingsEditor extends EditorPane {
 		if (!confirmed) { return; }
 		try {
 			await this.apiService.fetch(`/api/portal/config/forms/${id}`, { method: 'DELETE' });
-			await this._load();
+			// Drop the form from the list instantly, then reconcile in the background.
+			this.forms = this.forms.filter(f => f.id !== id);
+			this._render();
 			this.notificationService.notify({ severity: Severity.Info, message: 'Form deleted.' });
+			void this._load();
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Delete failed: ${e}` });
 		}

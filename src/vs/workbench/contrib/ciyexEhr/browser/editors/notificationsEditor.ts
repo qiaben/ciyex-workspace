@@ -564,7 +564,16 @@ export class NotificationsEditor extends EditorPane {
 				const json = await res.json().catch(() => ({}));
 				if (res.ok && json?.success !== false) {
 					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Campaign updated.' : 'Campaign created.' });
+					// Optimistic: reflect the saved campaign in the list right away, then reconcile.
+					const saved = (json?.data && typeof json.data === 'object' && !Array.isArray(json.data)) ? json.data as Record<string, unknown> : null;
+					const record = saved ?? { ...payload, id: form.id };
+					if (isEdit) {
+						this.campaigns = this.campaigns.map(c => String(c.id) === String(form.id) ? { ...c, ...record } : c);
+					} else {
+						this.campaigns = [record, ...this.campaigns];
+					}
 					this.creatingCampaign = false;
+					this._render();
 					this._loadTab();
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || (isEdit ? 'Update failed.' : 'Create failed.') });
@@ -635,6 +644,9 @@ export class NotificationsEditor extends EditorPane {
 					const json = await res.json().catch(() => ({}));
 					if (res.ok && json?.success !== false) {
 						this.notificationService.notify({ severity: Severity.Info, message: 'Template deleted.' });
+						// Optimistic: remove the template from the list immediately, then reconcile.
+						this.templates = this.templates.filter(t => String(t.id) !== String(item.id));
+						this._render();
 					} else {
 						this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Delete failed.' });
 					}
@@ -793,8 +805,17 @@ export class NotificationsEditor extends EditorPane {
 				const json = await res.json().catch(() => ({}));
 				if (res.ok && json?.success !== false) {
 					this.notificationService.notify({ severity: Severity.Info, message: isEdit ? 'Template updated.' : 'Template created.' });
+					// Optimistic: reflect the saved template in the list right away, then reconcile.
+					const saved = (json?.data && typeof json.data === 'object' && !Array.isArray(json.data)) ? json.data as Record<string, unknown> : null;
+					const record = saved ?? { ...payload, id: editing?.id };
+					if (isEdit) {
+						this.templates = this.templates.map(t => String(t.id) === String(editing!.id) ? { ...t, ...record } : t);
+					} else {
+						this.templates = [record, ...this.templates];
+					}
 					this.editingTemplate = null;
 					this.editingTemplateActive = false;
+					this._render();
 					this._loadTab();
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Failed to save template.' });

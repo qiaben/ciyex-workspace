@@ -16,7 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
-import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, parseSavedRecord, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
 	id: string;
@@ -417,8 +417,14 @@ export class PatientListPane extends ViewPane {
 				const payload = { ...patient, ...next };
 				const res = await this.apiService.fetch(`/api/patients/${patient.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				Object.assign(patient, next);
+				// Reflect the edit instantly from the save response (falling back to the
+				// submitted values), then reconcile in the background so computed/canonical
+				// fields land without blocking the visible row update.
+				const saved = await parseSavedRecord(res) ?? next;
+				Object.assign(patient, saved);
 				this._renderList();
+				this._loaded = false;
+				void this._loadPatients();
 			},
 		});
 	}

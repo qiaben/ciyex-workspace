@@ -217,10 +217,13 @@ export class KioskEditor extends EditorPane {
 				idleTimeoutSec: Number(timeoutIn.value) || 60,
 			};
 			saveBtn.textContent = 'Saving...';
-			await this.apiService.fetch('/api/kiosk/config', {
+			const res = await this.apiService.fetch('/api/kiosk/config', {
 				method: 'PUT', headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload),
 			});
+			// Optimistic: keep in-memory config in step with the saved values so
+			// re-entering the Configuration tab reflects them without a refetch.
+			if (res.ok) { this.config = { ...this.config, ...payload }; }
 			saveBtn.textContent = 'Saved!';
 			setTimeout(() => { saveBtn.textContent = 'Save Configuration'; }, 1500);
 		});

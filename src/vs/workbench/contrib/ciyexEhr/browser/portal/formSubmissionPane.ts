@@ -138,8 +138,13 @@ export class FormSubmissionPane extends ViewPane {
 			acceptBtn.textContent = '✓ Accept';
 			acceptBtn.style.cssText = 'padding:2px 8px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;';
 			acceptBtn.addEventListener('click', async () => {
-				await this.apiService.fetch(`/api/portal/form-submissions/${item.id}/accept`, { method: 'PUT' });
-				this._load();
+				const res = await this.apiService.fetch(`/api/portal/form-submissions/${item.id}/accept`, { method: 'PUT' });
+				if (res.ok) {
+					// Optimistic: drop the accepted row immediately, reconcile in background.
+					this.items = this.items.filter(i => i.id !== item.id);
+					this._render();
+					void this._load();
+				}
 			});
 
 			const rejectBtn = DOM.append(actions, DOM.$('button'));
@@ -149,8 +154,13 @@ export class FormSubmissionPane extends ViewPane {
 			rejectBtn.addEventListener('click', async () => {
 				const reason = prompt('Rejection reason:');
 				if (reason !== null) {
-					await this.apiService.fetch(`/api/portal/form-submissions/${item.id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'PUT' });
-					this._load();
+					const res = await this.apiService.fetch(`/api/portal/form-submissions/${item.id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'PUT' });
+					if (res.ok) {
+						// Optimistic: drop the rejected row immediately, reconcile in background.
+						this.items = this.items.filter(i => i.id !== item.id);
+						this._render();
+						void this._load();
+					}
 				}
 			});
 		}

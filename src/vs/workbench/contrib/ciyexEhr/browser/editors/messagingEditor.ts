@@ -17,6 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 
 interface Message {
 	id: string;
@@ -197,13 +198,14 @@ export class MessagingEditor extends EditorPane {
 			return;
 		}
 
-		await this._loadMessages(input.channelId, input.threadParentId);
-
-		// Fetch full channel metadata (created date, members, topic) for the details
-		// panel. Threads share the parent channel, so skip for thread inputs.
+		// Kick off the independent channel-details fetch in parallel with the message
+		// load so they don't run sequentially (threads share the parent channel, so
+		// skip details for thread inputs).
 		if (!input.threadParentId) {
 			void this._loadChannelDetails(input.channelId);
 		}
+
+		await this._loadMessages(input.channelId, input.threadParentId);
 
 		// Mark channel as read
 		this.apiService.fetch(`/api/channels/${input.channelId}/read`, { method: 'POST' }).catch(() => { });
@@ -546,29 +548,32 @@ export class MessagingEditor extends EditorPane {
 				body: JSON.stringify({ targetUserId: person.id, targetUserName: person.name }),
 			});
 			if (!res.ok) { return; }
-			const data = await res.json();
-			const ch = data?.data || data;
-			if (!ch?.id) { return; }
+			// Backend returns `{ data: { id, name, type } }` (or a bare body).
+			const ch = await parseSavedRecord(res);
+			const chId = ch?.id ? String(ch.id) : '';
+			if (!chId) { return; }
+			const chName = ch?.name ? String(ch.name) : person.name;
+			const chType = ch?.type ? String(ch.type) : 'dm';
 
 			// Re-point the current editor at the real DM channel and load it.
-			this.channelInfo = { id: ch.id, name: ch.name || person.name, type: ch.type || 'dm' };
+			this.channelInfo = { id: chId, name: chName, type: chType };
 			const input = this._getInput();
 			if (input) {
 				// Mutate the input's channel identifiers so subsequent sends/polls
 				// target the resolved channel even though we keep the same editor.
-				(input as { channelId: string }).channelId = ch.id;
-				(input as { channelName: string }).channelName = ch.name || person.name;
-				(input as { channelType: string }).channelType = ch.type || 'dm';
+				(input as { channelId: string }).channelId = chId;
+				(input as { channelName: string }).channelName = chName;
+				(input as { channelType: string }).channelType = chType;
 				this._renderHeader(input);
-				await this._loadMessages(ch.id, input.threadParentId);
-				this.apiService.fetch(`/api/channels/${ch.id}/read`, { method: 'POST' }).catch(() => { });
+				await this._loadMessages(chId, input.threadParentId);
+				this.apiService.fetch(`/api/channels/${chId}/read`, { method: 'POST' }).catch(() => { });
 
 				// Begin polling the now-real channel.
 				this._stopPolling();
 				// eslint-disable-next-line no-restricted-globals
 				this.pollTimer = setInterval(() => {
 					if (!this.loading) {
-						this._loadMessages(ch.id, input.threadParentId);
+						this._loadMessages(chId, input.threadParentId);
 					}
 				}, 5000);
 			}
@@ -991,6 +996,35 @@ export class MessagingEditor extends EditorPane {
 				body: JSON.stringify(body),
 			});
 
+			// Optimistic instant reflect: append the sent message to the thread the
+			// moment the POST succeeds (parse the saved record, fall back to a locally
+			// built one) so it shows without waiting on a refetch round-trip. The
+			// background reconcile below then pulls the canonical message (server id,
+			// attachment cards, reactions). Skip the optimistic append for
+			// attachment-only sends — the attachment cards only exist after the
+			// reconcile, so let the background reload render the real message.
+			if (msgRes.ok && content && !hasAttachments) {
+				const saved = await parseSavedRecord(msgRes);
+				const optimistic: Message = {
+					id: String(saved?.id ?? `local-${Date.now()}`),
+					channelId: input.channelId,
+					senderId: String(saved?.senderId ?? this.currentUserId),
+					senderName: String(saved?.senderName ?? 'You'),
+					content: String(saved?.content ?? content),
+					parentId: input.threadParentId,
+					pinned: false,
+					edited: false,
+					deleted: false,
+					system: false,
+					createdAt: String(saved?.createdAt ?? new Date().toISOString()),
+				};
+				// Don't double-add if a poll already raced in the real message.
+				if (!this.messages.some(m => m.id === optimistic.id)) {
+					this.messages = [...this.messages, optimistic];
+					this._renderMessages();
+				}
+			}
+
 			// Upload each staged attachment against the freshly-created message.
 			if (hasAttachments && msgRes.ok) {
 				const msgData = await msgRes.json();
@@ -1016,8 +1050,9 @@ export class MessagingEditor extends EditorPane {
 				}
 			}
 
-			// Refresh immediately
-			await this._loadMessages(input.channelId, input.threadParentId);
+			// Reconcile in the background (non-blocking) so the optimistic message is
+			// replaced by the canonical server copy without holding up the UI.
+			void this._loadMessages(input.channelId, input.threadParentId);
 		} catch { /* failed to send */ }
 	}
 
@@ -1028,8 +1063,9 @@ export class MessagingEditor extends EditorPane {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ emoji }),
 			});
+			// Reconcile in the background so the reaction badge updates without blocking.
 			const input = this._getInput();
-			if (input) { await this._loadMessages(input.channelId, input.threadParentId); }
+			if (input) { void this._loadMessages(input.channelId, input.threadParentId); }
 		} catch { /* */ }
 	}
 
@@ -1046,8 +1082,9 @@ export class MessagingEditor extends EditorPane {
 			if (msg) { msg.pinned = !currentlyPinned; }
 			this._renderMessages();
 			if (this.detailsOpen && this.detailsTab === 'pinned') { void this._renderDetails(); }
+			// Reconcile in the background — the pin state is already reflected above.
 			const input = this._getInput();
-			if (input) { await this._loadMessages(input.channelId, input.threadParentId); }
+			if (input) { void this._loadMessages(input.channelId, input.threadParentId); }
 		} catch { /* */ }
 	}
 
@@ -1228,13 +1265,25 @@ export class MessagingEditor extends EditorPane {
 			this._clearInput();
 
 			try {
-				await this.apiService.fetch(`/api/messages/${messageId}`, {
+				const res = await this.apiService.fetch(`/api/messages/${messageId}`, {
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ content: newContent }),
 				});
+				if (res.ok) {
+					// Optimistic instant reflect: patch the edited message in place so the
+					// new content + "(edited)" badge show immediately, then reconcile in
+					// the background.
+					const saved = await parseSavedRecord(res);
+					const msg = this.messages.find(m => m.id === messageId);
+					if (msg) {
+						msg.content = String(saved?.content ?? newContent);
+						msg.edited = true;
+						this._renderMessages();
+					}
+				}
 				const input = this._getInput();
-				if (input) { await this._loadMessages(input.channelId, input.threadParentId); }
+				if (input) { void this._loadMessages(input.channelId, input.threadParentId); }
 			} catch { /* edit failed */ }
 
 			// Restore original send
@@ -1244,9 +1293,16 @@ export class MessagingEditor extends EditorPane {
 
 	private async _deleteMessage(messageId: string): Promise<void> {
 		try {
-			await this.apiService.fetch(`/api/messages/${messageId}`, { method: 'DELETE' });
+			const res = await this.apiService.fetch(`/api/messages/${messageId}`, { method: 'DELETE' });
+			if (res.ok) {
+				// Optimistic instant reflect: mark the message deleted so the
+				// "[This message was deleted]" placeholder shows right away, then
+				// reconcile in the background.
+				const msg = this.messages.find(m => m.id === messageId);
+				if (msg) { msg.deleted = true; this._renderMessages(); }
+			}
 			const input = this._getInput();
-			if (input) { await this._loadMessages(input.channelId, input.threadParentId); }
+			if (input) { void this._loadMessages(input.channelId, input.threadParentId); }
 		} catch { /* delete failed */ }
 	}
 

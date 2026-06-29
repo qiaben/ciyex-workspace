@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface TemplateDoc {
@@ -140,9 +141,16 @@ export class TemplatesPane extends ViewPane {
 				});
 				if (confirmed) {
 					try {
-						await this.apiService.fetch(`/api/template-documents/${item.id}`, { method: 'DELETE' });
-						this.notificationService.notify({ severity: Severity.Info, message: `Template "${item.name}" deleted` });
-						this._load();
+						const res = await this.apiService.fetch(`/api/template-documents/${item.id}`, { method: 'DELETE' });
+						if (res.ok) {
+							// Optimistic: drop the deleted row immediately, reconcile in background.
+							this.items = this.items.filter(i => i.id !== item.id);
+							this._render();
+							this.notificationService.notify({ severity: Severity.Info, message: `Template "${item.name}" deleted` });
+							void this._load();
+						} else {
+							this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete template' });
+						}
 					} catch {
 						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete template' });
 					}
@@ -169,8 +177,12 @@ export class TemplatesPane extends ViewPane {
 				body: JSON.stringify({ name, context: 'PORTAL', content: '<h1>New Template</h1>' }),
 			});
 			if (res.ok) {
+				// Optimistic: show the new template immediately, reconcile in background.
+				const saved = await parseSavedRecord(res) ?? { name, context: 'PORTAL', updatedAt: new Date().toISOString() };
+				this.items = [saved as unknown as TemplateDoc, ...this.items];
+				this._render();
 				this.notificationService.notify({ severity: Severity.Info, message: `Template "${name}" created` });
-				this._load();
+				void this._load();
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create template: ${err}` });

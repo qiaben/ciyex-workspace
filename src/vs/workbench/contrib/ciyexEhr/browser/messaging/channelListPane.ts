@@ -18,7 +18,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { MessagingEditorInput } from '../editors/ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createOverflowMenuButton, createRowActionsContainer, IOverflowMenuItem } from '../sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, IOverflowMenuItem, parseSavedRecord } from '../sidebarActions.js';
 
 interface Channel {
 	id: string;
@@ -654,11 +654,23 @@ export class ChannelListPane extends ViewPane {
 						body: JSON.stringify(payload),
 					});
 					if (res.ok) {
-						const data = await res.json();
-						const ch = data?.data || data;
+						// Parse the saved channel from the response so the new row shows
+						// instantly, without waiting on a second full-list GET.
+						const saved = await parseSavedRecord(res);
+						const chId = saved?.id ? String(saved.id) : '';
+						const chName = saved?.name ? String(saved.name) : value;
+						const chType = (saved?.type ? String(saved.type) : selectedType) as Channel['type'];
 						close();
-						await this._loadChannels();
-						const inp = new MessagingEditorInput(ch.id, ch.name, ch.type || selectedType);
+						// Optimistic instant reflect: prepend the freshly-created channel to
+						// the in-memory list and re-render now; the background reload below
+						// reconciles canonical server state (member list, ordering).
+						if (chId && !this.channels.some(c => c.id === chId)) {
+							this.channels = [{ id: chId, name: chName, type: chType }, ...this.channels];
+							this._renderFilterTabs();
+							this._renderList();
+						}
+						void this._loadChannels();
+						const inp = new MessagingEditorInput(chId, chName, chType || selectedType);
 						this.editorService.openEditor(inp, { pinned: true });
 					} else {
 						errEl.textContent = 'Failed to create channel';

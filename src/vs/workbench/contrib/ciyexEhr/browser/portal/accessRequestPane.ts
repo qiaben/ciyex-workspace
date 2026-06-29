@@ -141,8 +141,13 @@ export class AccessRequestPane extends ViewPane {
 			approveBtn.textContent = '✓ Approve';
 			approveBtn.style.cssText = 'padding:2px 8px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;';
 			approveBtn.addEventListener('click', async () => {
-				await this.apiService.fetch(`/api/portal/approvals/approve/${item.id}`, { method: 'PUT' });
-				this._load();
+				const res = await this.apiService.fetch(`/api/portal/approvals/approve/${item.id}`, { method: 'PUT' });
+				if (res.ok) {
+					// Optimistic: drop the approved row immediately, reconcile in background.
+					this.items = this.items.filter(i => i.id !== item.id);
+					this._render();
+					void this._load();
+				}
 			});
 
 			const denyBtn = DOM.append(actions, DOM.$('button'));
@@ -152,11 +157,16 @@ export class AccessRequestPane extends ViewPane {
 			denyBtn.addEventListener('click', async () => {
 				const reason = prompt('Denial reason:');
 				if (reason !== null) {
-					await this.apiService.fetch(
+					const res = await this.apiService.fetch(
 						`/api/portal/approvals/reject/${item.id}?reason=${encodeURIComponent(reason || 'No reason provided')}`,
 						{ method: 'PUT' },
 					);
-					this._load();
+					if (res.ok) {
+						// Optimistic: drop the denied row immediately, reconcile in background.
+						this.items = this.items.filter(i => i.id !== item.id);
+						this._render();
+						void this._load();
+					}
 				}
 			});
 		}

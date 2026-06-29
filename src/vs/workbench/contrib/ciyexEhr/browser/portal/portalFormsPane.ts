@@ -16,6 +16,7 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface PortalForm {
@@ -126,9 +127,18 @@ export class PortalFormsPane extends ViewPane {
 			toggle.style.cssText = 'cursor:pointer;';
 			toggle.addEventListener('change', async () => {
 				try {
-					await this.apiService.fetch(`/api/portal/config/forms/${item.id}/toggle?active=${toggle.checked}`, { method: 'PATCH' });
-					this._load();
+					const res = await this.apiService.fetch(`/api/portal/config/forms/${item.id}/toggle?active=${toggle.checked}`, { method: 'PATCH' });
+					if (res.ok) {
+						// Optimistic: patch the toggled row in place, reconcile in background.
+						this.items = this.items.map(i => i.id === item.id ? { ...i, active: toggle.checked } : i);
+						this._render();
+						void this._load();
+					} else {
+						toggle.checked = item.active;
+						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to toggle form status' });
+					}
 				} catch {
+					toggle.checked = item.active;
 					this.notificationService.notify({ severity: Severity.Error, message: 'Failed to toggle form status' });
 				}
 			});
@@ -154,9 +164,16 @@ export class PortalFormsPane extends ViewPane {
 				});
 				if (confirmed) {
 					try {
-						await this.apiService.fetch(`/api/portal/config/forms/${item.id}`, { method: 'DELETE' });
-						this.notificationService.notify({ severity: Severity.Info, message: `Form "${item.title}" deleted` });
-						this._load();
+						const res = await this.apiService.fetch(`/api/portal/config/forms/${item.id}`, { method: 'DELETE' });
+						if (res.ok) {
+							// Optimistic: drop the deleted row immediately, reconcile in background.
+							this.items = this.items.filter(i => i.id !== item.id);
+							this._render();
+							this.notificationService.notify({ severity: Severity.Info, message: `Form "${item.title}" deleted` });
+							void this._load();
+						} else {
+							this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete form' });
+						}
 					} catch {
 						this.notificationService.notify({ severity: Severity.Error, message: 'Failed to delete form' });
 					}
@@ -215,8 +232,16 @@ export class PortalFormsPane extends ViewPane {
 				}),
 			});
 			if (res.ok) {
+				// Optimistic: show the new form immediately, reconcile in background.
+				const saved = await parseSavedRecord(res) ?? {
+					title, formType,
+					formKey: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+					active: true, position: nextPosition,
+				};
+				this.items = [saved as unknown as PortalForm, ...this.items];
+				this._render();
 				this.notificationService.notify({ severity: Severity.Info, message: `Form "${title}" created` });
-				this._load();
+				void this._load();
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create form: ${err}` });

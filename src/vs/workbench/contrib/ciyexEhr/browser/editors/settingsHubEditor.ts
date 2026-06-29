@@ -18,6 +18,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { SettingsHubEditorInput } from './ciyexEditorInput.js';
 import { showThemedModal } from './clinicalListEditor.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
@@ -1049,9 +1050,11 @@ export class SettingsHubEditor extends EditorPane {
 		try {
 			const res = await this.apiService.fetch(`/api/fhir-resource/${encodeURIComponent(this.activeKey)}/${encodeURIComponent(id)}`, { method: 'DELETE' });
 			if (res.ok) {
-				await this._fetchFhirRecords(this.activeKey);
+				// Drop the row from the list instantly, then reconcile in the background.
+				this.records = this.records.filter(rec => ((rec as { id?: string }).id || (rec as { fhirId?: string }).fhirId) !== id);
 				this._renderContent();
 				this.notificationService.notify({ severity: Severity.Info, message: 'Record deleted.' });
+				void this._fetchFhirRecords(this.activeKey).then(() => this._renderContent());
 			} else {
 				const err = await res.json().catch(() => null);
 				this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Delete failed (${res.status})` });
@@ -2307,10 +2310,23 @@ export class SettingsHubEditor extends EditorPane {
 			const res = await this.apiService.fetch(url, { method, body: JSON.stringify(this.formData) });
 			if (res.ok) {
 				this.notificationService.notify({ severity: Severity.Info, message: 'Saved.' });
-				await this._fetchFhirRecords(this.activeKey);
+				// Reflect the saved record instantly from the response (falling back to
+				// the submitted form data) so the list updates the moment Save completes,
+				// instead of blocking on a full-list refetch. Reconcile in the background.
+				const saved = (await parseSavedRecord(res)) ?? { ...this.formData };
+				if (isEdit && id) {
+					this.records = this.records.map(r => {
+						const rid = (r as { id?: string }).id || (r as { fhirId?: string }).fhirId;
+						return rid === id ? { ...r, ...saved } : r;
+					});
+				} else if (!isEdit && this.page === 0 && !this.searchTerm) {
+					// Only prepend a fresh create on the unfiltered first page where it belongs.
+					this.records = [saved, ...this.records];
+				}
 				this.mode = 'list';
 				this.formData = {};
 				this.selectedRecord = null;
+				void this._fetchFhirRecords(this.activeKey).then(() => this._renderContent());
 			} else {
 				const err = await res.json().catch(() => null);
 				this.notificationService.notify({ severity: Severity.Error, message: err?.message || `Save failed (${res.status})` });

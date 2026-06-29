@@ -1724,7 +1724,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			this._fetch(`/api/appointments?patientId=${patientId}&page=0&size=50`),
 		]);
 
-		const apt = await this._fetchTodayAppointment(patientId, appointmentId);
+		// Today's appointment and the location-name cache are independent fetches —
+		// run them concurrently so the snapshot opens a round-trip faster.
+		const [apt] = await Promise.all([
+			this._fetchTodayAppointment(patientId, appointmentId),
+			this._ensureLocationNames(),
+		]);
 		// Reflect any status change made this session, since the refetched
 		// appointment may still carry the pre-change status (index lag / a
 		// Completed status that only the full PUT accepted).
@@ -1746,7 +1751,6 @@ export class PatientSnapshotEditor extends EditorPane {
 				if (linkedId) { apt.encounterId = linkedId; }
 			}
 		}
-		await this._ensureLocationNames();
 
 		if (this._currentPatientId !== patientId) { return; }
 
@@ -1785,17 +1789,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		// shape) — shown when there are no today FHIR vitals so the encounter's vitals
 		// always surface in the snapshot.
 		let visitVitals: Record<string, unknown> | null = null;
-		if (todayEncId) {
-			try {
-				const fsRaw = await this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`);
-				const fsInner = (fsRaw?.data ?? fsRaw) as unknown;
-				const fs = (Array.isArray(fsInner) ? fsInner[0] : fsInner) as Record<string, unknown> | null | undefined;
-				// Treat a non-empty object carrying an id (or line items) as a real fee sheet.
-				if (fs && (fs.id !== undefined || Array.isArray(fs.items) || Array.isArray(fs.lines))) { feeSheet = fs; }
-			} catch { /* no fee sheet yet */ }
 
-		}
-
+		// Resolve the viewed visit's encounter (synchronous) up front so its
+		// encounter-form fetch can run CONCURRENTLY with the fee-sheet fetch below —
+		// they hit independent endpoints, so awaiting them sequentially cost an extra
+		// round-trip on every snapshot open.
 		// Vitals shown on the card are scoped to the VIEWED VISIT'S DATE: the
 		// encounter that belongs to THIS appointment (its linked encounter, or one
 		// dated on the appointment day) — never a stray same-day-today encounter. So
@@ -1806,14 +1804,22 @@ export class PatientSnapshotEditor extends EditorPane {
 		const visitEnc = linkedEncId
 			? encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedEncId)
 			: encs.find(e => this._isSameDay(e.encounterDate || e.startDate || e.start || e.date || e.periodStart, apptDateRaw));
-		if (visitEnc) {
-			const veId = String(visitEnc.id ?? visitEnc.fhirId ?? '');
-			try {
-				const form = await this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(veId)}`);
-				const { comp } = this._extractEncounterComposition(form);
-				const encDate = visitEnc.encounterDate || visitEnc.startDate || visitEnc.start || visitEnc.date || visitEnc.periodStart;
-				visitVitals = this._compositionVitalsRecord(comp, encDate);
-			} catch { /* no encounter-form vitals */ }
+		const visitEncId = visitEnc ? String(visitEnc.id ?? visitEnc.fhirId ?? '') : '';
+
+		const [fsRaw, visitForm] = await Promise.all([
+			todayEncId ? this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`).catch(() => null) : Promise.resolve(null),
+			visitEnc && visitEncId ? this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(visitEncId)}`).catch(() => null) : Promise.resolve(null),
+		]);
+		if (fsRaw) {
+			const fsInner = (fsRaw?.data ?? fsRaw) as unknown;
+			const fs = (Array.isArray(fsInner) ? fsInner[0] : fsInner) as Record<string, unknown> | null | undefined;
+			// Treat a non-empty object carrying an id (or line items) as a real fee sheet.
+			if (fs && (fs.id !== undefined || Array.isArray(fs.items) || Array.isArray(fs.lines))) { feeSheet = fs; }
+		}
+		if (visitEnc && visitForm) {
+			const { comp } = this._extractEncounterComposition(visitForm);
+			const encDate = visitEnc.encounterDate || visitEnc.startDate || visitEnc.start || visitEnc.date || visitEnc.periodStart;
+			visitVitals = this._compositionVitalsRecord(comp, encDate);
 		}
 		if (this._currentPatientId !== patientId) { return; }
 

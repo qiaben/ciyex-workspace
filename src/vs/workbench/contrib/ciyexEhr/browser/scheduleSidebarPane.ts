@@ -172,6 +172,10 @@ export class ScheduleSidebarPane extends ViewPane {
 	 *  doesn't show". Cleared when the sidebar is recreated. */
 	private readonly _apptEditOverride = new Map<string, Partial<Appointment>>();
 	private refreshTimer: number | undefined;
+	/** Set once an appointments fetch returns successfully — even with zero rows —
+	 *  so the startup poll stops instead of refetching forever for a practice that
+	 *  legitimately has no appointments yet. */
+	private _appointmentsLoaded = false;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -311,7 +315,9 @@ export class ScheduleSidebarPane extends ViewPane {
 				if (!token) { return; } // Wait for login
 			} catch { return; }
 
-			if (this.appointments.length === 0) {
+			// Stop polling once a fetch has completed — even if it returned zero
+			// appointments — so a practice with no appointments doesn't poll forever.
+			if (!this._appointmentsLoaded) {
 				this._loadAndRender();
 			} else {
 				win.clearInterval(poll);
@@ -335,6 +341,9 @@ export class ScheduleSidebarPane extends ViewPane {
 			try {
 				const res = await this.apiService.fetch('/api/fhir-resource/appointments?page=0&size=500');
 				if (res.ok) {
+					// Mark loaded on any successful response (including an empty list) so
+					// the startup poll stops for a practice that has no appointments yet.
+					this._appointmentsLoaded = true;
 					const data = await res.json();
 					const raw = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
 					// Normalize FHIR field names to flat field names
@@ -642,7 +651,9 @@ export class ScheduleSidebarPane extends ViewPane {
 									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
 									if (res.ok) {
 										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName, 'Vitals', 'vitals'); } } catch { /* */ }
-										await this._loadAndRender();
+										// Reconcile the schedule list in the background — the user has
+										// already navigated to the freshly-created encounter.
+										void this._loadAndRender();
 									}
 								} catch { /* */ }
 							}
@@ -658,7 +669,9 @@ export class ScheduleSidebarPane extends ViewPane {
 									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
 									if (res.ok) {
 										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName); } } catch { /* */ }
-										await this._loadAndRender();
+										// Reconcile the schedule list in the background — the user has
+										// already navigated to the freshly-created encounter.
+										void this._loadAndRender();
 									}
 								} catch { /* */ }
 							}
@@ -1248,7 +1261,7 @@ export class ScheduleSidebarPane extends ViewPane {
 				// Remember the edit so it survives the reload even if the search index
 				// still serves the old values (also lets a Completed appointment's
 				// status change show right away).
-				this._apptEditOverride.set(String(apt.id ?? ''), {
+				const override: Partial<Appointment> = {
 					start: startTime,
 					startTime,
 					end: endTime || (aptRec.end as string | undefined),
@@ -1261,8 +1274,14 @@ export class ScheduleSidebarPane extends ViewPane {
 					providerName: provName,
 					practitionerName: provName,
 					providerId: provId,
-				});
-				await this._loadAndRender();
+				};
+				this._apptEditOverride.set(String(apt.id ?? ''), override);
+				// Optimistic instant reflect: patch the edited appointment in the
+				// in-memory list and re-render now, then reconcile with the server in
+				// the background instead of blocking on a full reload.
+				this.appointments = this.appointments.map(a => String(a.id ?? '') === String(apt.id ?? '') ? { ...a, ...override } : a);
+				this._render();
+				void this._loadAndRender();
 			},
 		});
 	}
@@ -1308,7 +1327,13 @@ export class ScheduleSidebarPane extends ViewPane {
 		} catch {
 			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, status: newStatus }) }); } catch { /* */ }
 		}
-		await this._loadAndRender();
+		// Optimistic instant reflect: record the override and patch the in-memory
+		// list so the new status shows immediately, then reconcile in the
+		// background instead of blocking on a full reload.
+		this._apptEditOverride.set(String(apt.id ?? ''), { ...this._apptEditOverride.get(String(apt.id ?? '')), status: newStatus });
+		this.appointments = this.appointments.map(a => String(a.id ?? '') === String(apt.id ?? '') ? { ...a, status: newStatus } : a);
+		this._render();
+		void this._loadAndRender();
 	}
 
 	private _renderWaitlist(): void {

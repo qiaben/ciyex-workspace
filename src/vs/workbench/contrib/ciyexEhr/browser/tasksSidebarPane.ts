@@ -18,7 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem, IEditFieldDef } from './sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, parseSavedRecord, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem, IEditFieldDef } from './sidebarActions.js';
 
 interface Task {
 	id: string;
@@ -121,15 +121,20 @@ export class TasksSidebarPane extends ViewPane {
 				if (!token) { return; }
 			} catch { return; }
 
+			// Stop the 2s bootstrap poll as soon as the first load succeeds and
+			// hand off to a single 30s refresh — without this the poll would
+			// keep firing forever even after data has loaded.
 			if (!this.loaded) {
-				this._loadAndRender();
+				void this._loadAndRender();
 			} else {
 				win.clearInterval(poll);
 				this.refreshTimer = win.setInterval(() => this._loadAndRender(), 30000);
 			}
 		}, 2000);
+		// Ensure the bootstrap poll is cleared on dispose if it never handed off.
+		this._register({ dispose: () => win.clearInterval(poll) });
 
-		this._loadAndRender();
+		void this._loadAndRender();
 	}
 
 	private async _loadAndRender(): Promise<void> {
@@ -486,7 +491,13 @@ export class TasksSidebarPane extends ViewPane {
 			onSave: async (next) => {
 				const res = await this.apiService.fetch('/api/tasks', { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
-				await this._loadAndRender();
+				// Optimistic instant reflect — prepend the new task from the save
+				// response (fallback to submitted values) and re-render now, then
+				// reconcile against the server list in the background.
+				const created = (await parseSavedRecord(res) ?? next) as unknown as Task;
+				this.tasks = [created, ...this.tasks];
+				this._render();
+				void this._loadAndRender();
 			},
 		});
 	}
@@ -501,7 +512,10 @@ export class TasksSidebarPane extends ViewPane {
 				const payload = { ...task, ...next };
 				const res = await this.apiService.fetch(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				Object.assign(task, next);
+				// Patch the row in place from the save response (fallback to the
+				// submitted values) so the edit reflects instantly with no refetch.
+				const saved = await parseSavedRecord(res);
+				Object.assign(task, next, saved ?? {});
 				this._render();
 			},
 		});

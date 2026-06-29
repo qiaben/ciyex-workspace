@@ -121,8 +121,12 @@ export class PracticeSettingsEditor extends EditorPane {
 		this.contentEl.style.color = 'var(--vscode-descriptionForeground)';
 
 		try {
-			// Fetch practice via tab-field-config "practice" page
-			const res = await this.apiService.fetch('/api/fhir-resource/practice?page=0&size=1');
+			// Fetch practice + logo in parallel — they are independent endpoints, so
+			// loading them sequentially needlessly doubled the time-to-first-render.
+			const [res, logoRes] = await Promise.all([
+				this.apiService.fetch('/api/fhir-resource/practice?page=0&size=1'),
+				this.apiService.fetch('/api/practice-logo').catch(() => null),
+			]);
 			let row: Record<string, unknown> | null = null;
 			if (res.ok) {
 				const body = await res.json();
@@ -131,14 +135,12 @@ export class PracticeSettingsEditor extends EditorPane {
 			}
 			this.practice = (row || {}) as PracticeData;
 
-			// Fetch logo
-			try {
-				const logoRes = await this.apiService.fetch('/api/practice-logo');
-				if (logoRes.ok) {
+			if (logoRes && logoRes.ok) {
+				try {
 					const json = await logoRes.json();
 					this.logoData = json?.data?.logoData || null;
-				}
-			} catch { /* no logo */ }
+				} catch { /* no logo */ }
+			}
 
 			this.contentEl.style.color = '';
 			this._render();

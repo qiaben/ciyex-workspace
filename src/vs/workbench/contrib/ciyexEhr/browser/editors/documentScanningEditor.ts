@@ -547,8 +547,11 @@ export class DocScanningEditor extends EditorPane {
 		try {
 			const res = await this.apiService.fetch(`/api/document-scanning/${doc.id}/ocr`, { method: 'POST' });
 			if (res.ok) {
+				// Optimistic: flip the row to "processing" immediately, reconcile in background.
+				this.documents = this.documents.map(d => d.id === doc.id ? { ...d, ocrStatus: 'processing' } : d);
+				this._renderTable();
 				this.notificationService.info('OCR processing started');
-				await this._loadData();
+				void this._loadData();
 			} else {
 				this.notificationService.error('Failed to start OCR');
 			}
@@ -609,8 +612,12 @@ export class DocScanningEditor extends EditorPane {
 		try {
 			const res = await this.apiService.fetch(`/api/document-scanning/${doc.id}`, { method: 'DELETE' });
 			if (res.ok) {
+				// Optimistic: drop the deleted row immediately, reconcile in background.
+				this.documents = this.documents.filter(d => d.id !== doc.id);
+				this.totalElements = Math.max(0, this.totalElements - 1);
+				this._renderTable();
 				this.notificationService.info('Document deleted');
-				await this._loadData();
+				void this._loadData();
 			} else {
 				this.notificationService.error('Failed to delete');
 			}

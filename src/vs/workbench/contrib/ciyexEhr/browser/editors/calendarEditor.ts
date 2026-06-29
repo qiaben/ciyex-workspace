@@ -19,6 +19,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, WaitingRoomEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 
 
@@ -235,10 +236,13 @@ export class CalendarEditor extends EditorPane {
 		this._renderHeader();
 		this._renderGrid();
 
-		// Retry loading every 2s until providers appear (no cap)
+		// Retry loading every 2s until providers appear, but cap the attempts so a
+		// practice that legitimately has no providers yet stops polling instead of
+		// refetching forever (a brand-new practice never populates this list).
 		const win = DOM.getActiveWindow();
+		let retryAttempts = 0;
 		const retryTimer = win.setInterval(() => {
-			if (this.providers.length > 0) {
+			if (this.providers.length > 0 || ++retryAttempts > 5) {
 				win.clearInterval(retryTimer);
 				return;
 			}
@@ -1698,6 +1702,7 @@ export class CalendarEditor extends EditorPane {
 				].filter(Boolean) as string[];
 
 				let success = false;
+				let savedRes: Response | null = null;
 				for (const endpoint of endpoints) {
 					try {
 						const body: Record<string, unknown> = {
@@ -1723,6 +1728,7 @@ export class CalendarEditor extends EditorPane {
 						const res = await this.apiService.fetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
 						if (res.ok) {
 							success = true;
+							savedRes = res;
 							break;
 						}
 					} catch { /* try next */ }
@@ -1731,7 +1737,26 @@ export class CalendarEditor extends EditorPane {
 				overlay.remove();
 				if (success) {
 					this.notificationService.notify({ severity: Severity.Info, message: `Scheduled ${visitType} for ${patName} at ${startT}${provName ? ' with ' + provName : ''}` });
-					await this._refresh();
+					// Optimistic instant reflect: surface the new appointment in the grid
+					// the moment Save completes, prepending it from the save response (or a
+					// fallback built from the submitted values), then reconcile in the
+					// background so the user never waits on a second full-list GET.
+					const saved = (savedRes ? await parseSavedRecord(savedRes) : null) ?? {
+						id: `optimistic-${Date.now()}`,
+						patientName: patName,
+						appointmentType: visitType,
+						status: status || 'scheduled',
+						startTime: `${startD}T${startT}:00`,
+						start: `${startD}T${startT}:00`,
+						duration,
+						providerId: provId || undefined,
+						providerName: provName || undefined,
+						locationId: locId || undefined,
+					};
+					this.appointments = [saved as unknown as Appointment, ...(this.appointments || [])];
+					this._renderHeader();
+					this._renderGrid();
+					void this._refresh();
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create appointment. Check API connection.' });
 				}

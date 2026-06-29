@@ -21,7 +21,7 @@ import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
-import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, parseSavedRecord, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
 
 export class EncounterListPane extends ViewPane {
 	static readonly ID = 'ciyex.encounters.view';
@@ -400,6 +400,32 @@ export class EncounterListPane extends ViewPane {
 		);
 	}
 
+	/**
+	 * Optimistic in-place patch: merge a just-saved encounter into the matching
+	 * in-memory row (by id/fhirId), re-apply the type/status normalization used by
+	 * {@link _loadData}, re-sort and re-render synchronously so the edit reflects
+	 * instantly — before the background {@link _loadData} reconcile lands.
+	 */
+	private _patchRow(encId: string, saved: Record<string, unknown>): void {
+		const idx = this.allItems.findIndex(it => String(it.id || it.fhirId || '') === encId);
+		if (idx === -1) { return; }
+		const merged = { ...this.allItems[idx], ...saved };
+		// Map type code → readable label (mirrors _loadData) so a saved FHIR code
+		// like "AMB" still renders as "Ambulatory".
+		const t = String(merged.type || '');
+		if (Object.prototype.hasOwnProperty.call(EncounterListPane.TYPE_MAP, t)) { merged.type = EncounterListPane.TYPE_MAP[t]; }
+		const s = String(merged.status || '');
+		if (!['SIGNED', 'UNSIGNED', 'INCOMPLETE'].includes(s.toUpperCase())) { merged.status = 'UNSIGNED'; }
+		this.allItems[idx] = merged;
+		this.allItems.sort((a, b) => {
+			const da = new Date(String(a.encounterDate || a.startDate || a.start || '0')).getTime();
+			const db = new Date(String(b.encounterDate || b.startDate || b.start || '0')).getTime();
+			return db - da;
+		});
+		// Re-render with no search term, matching _loadData's reconcile convention.
+		this._renderList('');
+	}
+
 	private _openEditDialog(item: Record<string, unknown>, encId: string, patName: string): void {
 		const dateRaw = String(item.encounterDate || item.startDate || item.start || '');
 		const initialDate = dateRaw ? dateRaw.slice(0, 10) : '';
@@ -471,7 +497,15 @@ export class EncounterListPane extends ViewPane {
 					};
 					const res = await this.apiService.fetch(`/api/${patientId}/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(body) });
 					if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-					await this._loadData();
+					// Optimistic reflect: patch the edited row in place from the saved
+					// record (or the submitted values) and re-render synchronously, then
+					// reconcile in the background so the edit shows instantly.
+					const saved = await parseSavedRecord(res) ?? {
+						id: encId, encounterDate: next.encounterDate, type: next.type,
+						encounterProvider: next.encounterProvider, status: next.status, reason: next.reason,
+					};
+					this._patchRow(encId, saved);
+					void this._loadData();
 					return;
 				}
 				// Fallback: no patient context — write through the generic FHIR
@@ -493,7 +527,14 @@ export class EncounterListPane extends ViewPane {
 				};
 				const res = await this.apiService.fetch(`/api/fhir-resource/encounters/${encId}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				await this._loadData();
+				// Optimistic reflect: patch the edited row in place, re-render
+				// synchronously, then reconcile via a non-blocking background reload.
+				const saved = await parseSavedRecord(res) ?? {
+					id: encId, encounterDate: next.encounterDate, type: next.type,
+					status: next.status, reason: next.reason,
+				};
+				this._patchRow(encId, saved);
+				void this._loadData();
 			},
 		});
 	}

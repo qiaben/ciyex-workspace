@@ -12,6 +12,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { BaseCiyexInput } from './ciyexEditorInput.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -573,9 +574,14 @@ export class MenuEditor extends EditorPane {
 			}
 		}
 
+		// Optimistic: patch the edited item in place so the rename/icon/route
+		// change shows instantly, then reconcile overrides in the background.
+		this.items = this.items.map(i => i.id === id
+			? { ...i, label: changes.label ?? i.label, icon: changes.icon ?? i.icon, screenSlug: changes.screenSlug ?? i.screenSlug, isModified: true }
+			: i);
 		this.editingId = null;
-		await this._loadMenu();
 		this._render();
+		void this._loadMenu().then(() => this._render());
 	}
 
 	private async _handleHide(itemId: string): Promise<void> {
@@ -583,7 +589,20 @@ export class MenuEditor extends EditorPane {
 		const { confirmed } = await this.dialogService.confirm({ message: `Hide "${item?.label}" from sidebar? You can restore it later.` });
 		if (!confirmed) { return; }
 		const res = await this.apiService.fetch(`/api/menus/ehr-sidebar/items/${itemId}/hide`, { method: 'POST' });
-		if (res.ok) { await this._loadMenu(); this._render(); }
+		if (res.ok) {
+			// Optimistic: drop the hidden item (and its descendants) from the visible tree at once.
+			const toHide = new Set<string>([itemId]);
+			let grew = true;
+			while (grew) {
+				grew = false;
+				for (const it of this.items) {
+					if (it.parentId && toHide.has(it.parentId) && !toHide.has(it.id)) { toHide.add(it.id); grew = true; }
+				}
+			}
+			this.items = this.items.filter(i => !toHide.has(i.id));
+			this._render();
+			void this._loadMenu().then(() => this._render());
+		}
 		else { this.notificationService.notify({ severity: Severity.Error, message: `Hide failed (${res.status}).` }); }
 	}
 
@@ -663,11 +682,25 @@ export class MenuEditor extends EditorPane {
 				body: JSON.stringify({ fhirResources: fhirArray, fieldConfig: { sections: [] }, category: 'Settings' }),
 			});
 		}
+		// Optimistic: show the new custom item in the tree right away, then reconcile.
+		const saved = await parseSavedRecord(res);
+		const newId = (saved?.id as string) || `tmp-${Date.now()}`;
+		this.items = [...this.items, {
+			id: newId,
+			parentId: this.addParentId,
+			itemKey: key,
+			label: this.newItem.label,
+			icon: this.newItem.icon || null,
+			screenSlug: this.newItem.screenSlug || null,
+			position: siblings.length,
+			isCustom: true,
+		}];
+		if (this.addParentId) { this.expanded.add(this.addParentId); }
 		this.showAddForm = false;
 		this.newItem = { label: '', icon: 'FileText', screenSlug: '', itemKey: '', fhirResources: '' };
 		this.addParentId = null;
-		await this._loadMenu();
 		this._render();
+		void this._loadMenu().then(() => this._render());
 	}
 
 	private async _handleReset(): Promise<void> {

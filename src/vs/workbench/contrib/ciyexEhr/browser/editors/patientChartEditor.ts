@@ -25,6 +25,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -4982,8 +4983,14 @@ export class PatientChartEditor extends EditorPane {
 				this.notificationService.info(`${tab.label} saved`);
 				this._tabDataCache.delete(tab.key);
 				if (isDemographics) {
-					await this._loadPatient();
+					// Reflect the demographics edit instantly: merge the saved response
+					// (falling back to the submitted body) into patientData and repaint
+					// the header now, then reconcile from the server in the BACKGROUND
+					// instead of blocking the render on a full re-fetch.
+					const saved = await parseSavedRecord(res) ?? body;
+					this.patientData = { ...(this.patientData || {}), ...saved };
 					this._renderHeader();
+					void this._loadPatient().then(() => this._renderHeader());
 				}
 				this._renderMain();
 			} else {

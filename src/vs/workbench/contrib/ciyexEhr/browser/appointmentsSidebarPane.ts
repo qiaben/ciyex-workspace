@@ -18,7 +18,7 @@ import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import * as DOM from '../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem } from './sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IOverflowMenuItem, parseSavedRecord } from './sidebarActions.js';
 
 interface FhirActor {
 	reference?: string;
@@ -740,7 +740,14 @@ export class AppointmentsSidebarPane extends ViewPane {
 				};
 				const res = await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				await this._loadAll();
+				// Optimistic instant reflect: patch the edited appointment in place from
+				// the save response (or the submitted payload) and re-render now, then
+				// reconcile with the server in the background instead of blocking on a
+				// full reload.
+				const patch = (await parseSavedRecord(res) ?? payload) as unknown as Partial<Appointment>;
+				this.appointments = this.appointments.map(a => String(a.id) === String(apt.id) ? { ...a, ...patch } : a);
+				this._render();
+				void this._loadAll();
 			},
 		});
 	}

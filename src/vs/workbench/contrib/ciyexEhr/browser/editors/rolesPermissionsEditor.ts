@@ -14,6 +14,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { RolesEditorInput2 } from './ciyexEditorInput.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface Role {
@@ -114,8 +115,13 @@ export class RolesPermissionsEditor extends EditorPane {
 			delBtn.addEventListener('click', async (e) => {
 				e.stopPropagation();
 				if (confirm(`Delete role "${role.name}"?`)) {
-					await this.apiService.fetch(`/api/admin/roles/${role.id}`, { method: 'DELETE' });
-					this._loadRoles();
+					const res = await this.apiService.fetch(`/api/admin/roles/${role.id}`, { method: 'DELETE' });
+					if (res.ok || res.status === 204) {
+						// Optimistic: drop the role from the list right away, reconcile in background.
+						this.roles = this.roles.filter(r => r.id !== role.id);
+						this._render();
+						void this._loadRoles();
+					}
 				}
 			});
 		}
@@ -170,12 +176,19 @@ export class RolesPermissionsEditor extends EditorPane {
 		const description = prompt('Description:', '');
 
 		try {
-			await this.apiService.fetch('/api/admin/roles', {
+			const res = await this.apiService.fetch('/api/admin/roles', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name, label: name, description, permissions: [], smartScopes: [] }),
 			});
-			this._loadRoles();
+			if (res.ok) {
+				// Optimistic: show the new role immediately, then reconcile in background.
+				const saved = await parseSavedRecord(res);
+				const role: Role = (saved as unknown as Role | null) ?? { id: `tmp-${Date.now()}`, name, label: name, description: description ?? undefined, permissions: [], smartScopes: [] };
+				this.roles = [role, ...this.roles];
+				this._render();
+				void this._loadRoles();
+			}
 		} catch { /* */ }
 	}
 

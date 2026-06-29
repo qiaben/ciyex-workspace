@@ -73,8 +73,8 @@ export class UserManagementEditor extends EditorPane {
 	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		if (!(input instanceof UserManagementEditorInput)) { return; }
-		await this._loadRoles();
-		await this._loadUsers();
+		// Load roles and users in parallel — they are independent.
+		await Promise.all([this._loadRoles(), this._loadUsers()]);
 	}
 
 	private async _loadRoles(): Promise<void> {
@@ -307,7 +307,18 @@ export class UserManagementEditor extends EditorPane {
 							resetDate: new Date().toISOString().split('T')[0],
 						});
 					}
-					await this._loadUsers();
+					// Optimistic: reflect the saved user in the list immediately, then reconcile in background.
+					const saved = (json?.data && typeof json.data === 'object' && !Array.isArray(json.data)) ? json.data as Record<string, unknown> : null;
+					if (isEdit) {
+						const patch = (saved ?? { ...form }) as Partial<User>;
+						this.users = this.users.map(u => u.id === user!.id ? { ...u, ...patch, id: user!.id } : u);
+					} else {
+						const created = (saved ?? { ...form, enabled: true }) as unknown as User;
+						if (!created.id) { created.id = `tmp-${Date.now()}`; }
+						this.users = [created, ...this.users];
+					}
+					this._render();
+					void this._loadUsers();
 				} else {
 					this.notificationService.notify({ severity: Severity.Error, message: json?.message || `Save failed (${res.status})` });
 					saveBtn.disabled = false;
@@ -367,7 +378,10 @@ export class UserManagementEditor extends EditorPane {
 			const res = await this.apiService.fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' });
 			if (res.ok || res.status === 204) {
 				this.notificationService.notify({ severity: Severity.Info, message: `User ${user.email} deleted.` });
-				await this._loadUsers();
+				// Optimistic: remove the user from the list immediately, reconcile in background.
+				this.users = this.users.filter(u => u.id !== user.id);
+				this._render();
+				void this._loadUsers();
 				return;
 			}
 			// Try to get a useful error message

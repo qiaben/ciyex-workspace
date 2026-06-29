@@ -17,6 +17,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { FeeSheetEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, IDropdownOption } from '../customDropdown.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 
 /** A single billable line on the fee sheet. Mirrors the OpenEMR fee-sheet row. */
 interface FeeItem {
@@ -131,7 +132,21 @@ export class FeeSheetEditor extends EditorPane {
 
 	/** Load price levels, providers, and any existing fee sheet for the encounter. */
 	private async _loadData(): Promise<void> {
-		// Price levels (from Settings → Price Level).
+		// These three loads are independent — run them in parallel so the editor
+		// opens as fast as the slowest request rather than the sum of all three.
+		// Each keeps its own try/catch so one failure can't sink the others, and
+		// the existing fee sheet must apply LAST since it overrides the default
+		// price level / providers chosen above.
+		const [, , feeSheet] = await Promise.all([
+			this._loadPriceLevels(),
+			this._loadProviders(),
+			this._loadExistingFeeSheet(),
+		]);
+		if (feeSheet) { this._applyExistingFeeSheet(feeSheet); }
+	}
+
+	/** Price levels (from Settings → Price Level). */
+	private async _loadPriceLevels(): Promise<void> {
 		try {
 			const res = await this.apiService.fetch('/api/price-levels');
 			if (res.ok) {
@@ -145,8 +160,10 @@ export class FeeSheetEditor extends EditorPane {
 				else if (this.priceLevels.length) { this.selectedPriceLevel = this.priceLevels[0].value; }
 			}
 		} catch { /* not authenticated / offline */ }
+	}
 
-		// Providers — merge facade + FHIR sources (mirrors calendarEditor).
+	/** Providers — merge facade + FHIR sources (mirrors calendarEditor). */
+	private async _loadProviders(): Promise<void> {
 		try {
 			const results = await Promise.all([
 				this.apiService.fetch('/api/providers').then(async r => r.ok ? await r.json() : null).catch(() => null),
@@ -164,25 +181,29 @@ export class FeeSheetEditor extends EditorPane {
 			}
 			this.providers = Array.from(byId.values());
 		} catch { /* */ }
+	}
 
-		// Existing fee sheet for this encounter (signed-encounter fetch path).
-		if (this.encounterId && this.encounterId !== '_') {
-			try {
-				const res = await this.apiService.fetch(`/api/fee-sheets/encounter/${encodeURIComponent(this.encounterId)}`);
-				if (res.ok) {
-					const data = await res.json() as Record<string, unknown>;
-					const fs = (data?.data ?? data) as Record<string, unknown>;
-					if (fs && (fs.id || Array.isArray(fs.items))) {
-						this.feeSheetId = fs.id !== undefined && fs.id !== null ? String(fs.id) : null;
-						if (fs.priceLevel) { this.selectedPriceLevel = String(fs.priceLevel); }
-						if (fs.renderingProvider) { this.renderingProvider = String(fs.renderingProvider); }
-						if (fs.supervisingProvider) { this.supervisingProvider = String(fs.supervisingProvider); }
-						const rawItems = (fs.items as Array<Record<string, unknown>>) || [];
-						this.items = rawItems.map(it => this._normalizeItem(it));
-					}
-				}
-			} catch { /* no existing fee sheet — start blank */ }
-		}
+	/** Existing fee sheet for this encounter (signed-encounter fetch path). */
+	private async _loadExistingFeeSheet(): Promise<Record<string, unknown> | null> {
+		if (!this.encounterId || this.encounterId === '_') { return null; }
+		try {
+			const res = await this.apiService.fetch(`/api/fee-sheets/encounter/${encodeURIComponent(this.encounterId)}`);
+			if (res.ok) {
+				const data = await res.json() as Record<string, unknown>;
+				const fs = (data?.data ?? data) as Record<string, unknown>;
+				if (fs && (fs.id || Array.isArray(fs.items))) { return fs; }
+			}
+		} catch { /* no existing fee sheet — start blank */ }
+		return null;
+	}
+
+	private _applyExistingFeeSheet(fs: Record<string, unknown>): void {
+		this.feeSheetId = fs.id !== undefined && fs.id !== null ? String(fs.id) : null;
+		if (fs.priceLevel) { this.selectedPriceLevel = String(fs.priceLevel); }
+		if (fs.renderingProvider) { this.renderingProvider = String(fs.renderingProvider); }
+		if (fs.supervisingProvider) { this.supervisingProvider = String(fs.supervisingProvider); }
+		const rawItems = (fs.items as Array<Record<string, unknown>>) || [];
+		this.items = rawItems.map(it => this._normalizeItem(it));
 	}
 
 	private _normalizeItem(it: Record<string, unknown>): FeeItem {
@@ -560,8 +581,9 @@ export class FeeSheetEditor extends EditorPane {
 				this.notificationService.notify({ severity: Severity.Error, message: `Save failed (${res.status}).` });
 				return false;
 			}
-			const data = await res.json().catch(() => ({}));
-			const saved = (data?.data ?? data) as Record<string, unknown>;
+			// Capture the persisted id from the save response (shared envelope
+			// parser) so a subsequent Save/Send-to-Billing reuses it as a PUT.
+			const saved = await parseSavedRecord(res);
 			if (saved?.id !== undefined && saved?.id !== null) { this.feeSheetId = String(saved.id); }
 			return true;
 		} catch (e) {

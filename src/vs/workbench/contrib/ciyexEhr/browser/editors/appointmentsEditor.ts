@@ -583,7 +583,12 @@ export class AppointmentsEditor extends EditorPane {
 				body: JSON.stringify({ status: newStatus }),
 			});
 			this.editingStatusId = null;
-			await this._loadAppointments();
+			// Optimistic instant reflect: patch the edited row's status in place and
+			// re-render immediately, then reconcile with the server in the background
+			// so the new status shows without waiting on a full-list GET.
+			this.rows = this.rows.map(r => r.id === id ? { ...r, status: normalizeStatus(newStatus) } : r);
+			this._render();
+			void this._loadAppointments();
 			// Marking an appointment "Completed" auto-creates its encounter and opens
 			// the encounter screen so the provider lands on the chart instead of
 			// creating one manually. This is the canonical trigger and is enforced on
@@ -609,7 +614,11 @@ export class AppointmentsEditor extends EditorPane {
 				body: JSON.stringify({ room }),
 			});
 			this.editingRoomId = null;
-			await this._loadAppointments();
+			// Optimistic instant reflect: patch the room in place and re-render now,
+			// then reconcile in the background instead of blocking on a full reload.
+			this.rows = this.rows.map(r => r.id === id ? { ...r, room } : r);
+			this._render();
+			void this._loadAppointments();
 		} catch { /* */ }
 	}
 
