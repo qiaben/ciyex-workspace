@@ -18,7 +18,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields, resolveFieldDefault } from '../sidebarActions.js';
 import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
@@ -566,13 +566,22 @@ export class OperationsMenuPane extends ViewPane {
 		// Type=Payment, Status=Completed). The editor's create form applies these on
 		// open; without them required selects (e.g. Method) start empty and the
 		// create POST is rejected.
-		for (const f of item.editFields) { initialValues[f.key] = f.defaultValue ?? ''; }
+		for (const f of item.editFields) { initialValues[f.key] = resolveFieldDefault(f) ?? ''; }
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
 		// Some resources create through a different endpoint than their list path
 		// (e.g. Payments: list GET /transactions, create POST /collect). Posting to
 		// the list path when it has no POST handler returns 500.
 		const createPath = item.createApiPath ?? basePath;
 		const fields = withTypeaheadSearch(await loadFieldOptions(item.editFields, this.apiService), this.apiService);
+		// Keys backed by a boolean select (options are exactly true/false) — their
+		// form value is the STRING 'true'/'false', but the backend model field is a
+		// boolean, and any non-empty string is truthy. Coerce on create so a new
+		// Medical Code created as Inactive actually persists as `false` (mirrors
+		// the same coercion in _openEditDialog).
+		const boolKeys = new Set(fields
+			.filter(f => f.kind === 'select' && (f.options || []).length > 0
+				&& (f.options || []).every(o => o.value === 'true' || o.value === 'false'))
+			.map(f => f.key));
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,
 			themeAnchor: this.container,
@@ -580,6 +589,9 @@ export class OperationsMenuPane extends ViewPane {
 			values: initialValues,
 			primaryLabel: 'Create',
 			onSave: async (next) => {
+				for (const k of boolKeys) {
+					if (Object.prototype.hasOwnProperty.call(next, k)) { next[k] = next[k] === 'true' || next[k] === true; }
+				}
 				const res = await this.apiService.fetch(createPath, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
 				await this._loadItemData(item);

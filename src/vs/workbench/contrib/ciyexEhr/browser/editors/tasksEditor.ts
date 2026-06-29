@@ -116,23 +116,40 @@ export class TasksEditor extends EditorPane {
 
 	private async _loadAll(): Promise<void> {
 		await Promise.all([this._loadStats(), this._loadTasks()]);
+		// Re-render once both finish so the stat cards reflect the (slower) full-list
+		// stats fetch even if _loadTasks rendered first — otherwise the cards stayed
+		// at their initial zeros while the rows were already shown.
+		this._render();
 	}
 
 	private async _loadStats(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/tasks/stats');
-			if (res.ok) {
-				const data = await res.json();
-				const s = data?.data || data || {};
-				this.stats = {
-					pending: s.pending || 0,
-					inProgress: s.inProgress || s.in_progress || 0,
-					completed: s.completed || 0,
-					overdue: s.overdue || 0,
-					cancelled: s.cancelled || 0,
-					deferred: s.deferred || 0,
-				};
+			// Derive the summary-card counts from the FULL task list rather than the
+			// dedicated /api/tasks/stats endpoint, whose aggregate counts drifted from
+			// the actual task statuses (QA: 2 overdue rows shown as 1, deferred rows
+			// counted as 0). Counting by the same normalized `status` the table renders
+			// keeps every card exactly in sync with the status column. The list is
+			// fetched UNFILTERED so the cards always reflect every task, not the page.
+			const res = await this.apiService.fetch('/api/tasks?page=0&size=1000');
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const page = data?.data || data || {};
+			const all = (page.content || []) as Task[];
+			const stats: TaskStats = { pending: 0, inProgress: 0, completed: 0, overdue: 0, cancelled: 0, deferred: 0 };
+			for (const t of all) {
+				// Normalize "In Progress" / "in-progress" / "IN_PROGRESS" → in_progress.
+				const status = String(t.status || '').toLowerCase().replace(/[\s-]+/g, '_');
+				switch (status) {
+					case 'pending': stats.pending++; break;
+					case 'in_progress': stats.inProgress++; break;
+					case 'completed': stats.completed++; break;
+					case 'overdue': stats.overdue++; break;
+					case 'cancelled': case 'canceled': stats.cancelled++; break;
+					case 'deferred': stats.deferred++; break;
+					default: break;
+				}
 			}
+			this.stats = stats;
 		} catch { /* */ }
 	}
 

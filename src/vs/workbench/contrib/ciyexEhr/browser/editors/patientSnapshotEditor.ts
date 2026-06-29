@@ -2902,12 +2902,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
 		};
 
-		// Edit appointment details (date / time / provider / reason …). Hidden once
-		// the appointment is finalized (Completed / Cancelled / No Show) — a closed-
-		// out visit's details should no longer be editable.
-		if (!isTerminal) {
-			mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
-		}
+		// Edit appointment details (date / time / provider / reason …). Always
+		// available — even on a finalized (Completed / Cancelled / No Show) visit a
+		// correction may be needed (wrong provider, time, reason), and the card's
+		// Status dropdown is editable in every state, so Edit Details must match.
+		mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
 		if (isTele) {
 			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
 		}
@@ -3236,7 +3235,25 @@ export class PatientSnapshotEditor extends EditorPane {
 		for (const enc of page) {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			const cc = enc.chiefComplaint || enc.reason || enc.reasonCode || '';
+			// The chief complaint entered in the encounter form is persisted on the
+			// Encounter resource as `reasonForVisit` (and may also arrive as a FHIR
+			// `reasonCode` CodeableConcept). The history column previously only read
+			// `chiefComplaint`/`reason`, so it rendered blank for saved encounters
+			// (QA: chief complaint not showing). Pull from every known shape and
+			// coerce CodeableConcept objects to their display text.
+			const ccText = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v; }
+				if (Array.isArray(v)) { return v.map(ccText).filter(Boolean).join(', '); }
+				if (typeof v === 'object') {
+					const o = v as Record<string, unknown>;
+					const coding = Array.isArray(o.coding) ? (o.coding[0] as Record<string, unknown> | undefined) : undefined;
+					return String(o.text || o.display || coding?.display || coding?.code || '');
+				}
+				return '';
+			};
+			const cc = ccText(enc.chiefComplaint) || ccText(enc.reasonForVisit) || ccText(enc.reason)
+				|| ccText(enc.reasonText) || ccText(enc.reasonDisplay) || ccText(enc.reasonCode);
 			const dx = enc.diagnosis || enc.primaryDiagnosis || enc.icdCode || '';
 			const detail = [cc, dx].filter(Boolean).map(String).join(' · ') || enc.notes || '—';
 			const status = enc.status || 'Unknown';

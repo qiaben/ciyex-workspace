@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, resolveFieldDefault } from '../sidebarActions.js';
 import {
 	PRESCRIPTIONS_FORM_FIELDS, LAB_ORDER_FORM_FIELDS, IMMUNIZATIONS_FORM_FIELDS,
 	REFERRALS_FORM_FIELDS, CARE_PLANS_FORM_FIELDS, AUTHORIZATIONS_FORM_FIELDS, EDUCATION_FORM_FIELDS,
@@ -572,7 +572,10 @@ export class ClinicalMenuPane extends ViewPane {
 			return;
 		}
 		const initialValues: Record<string, unknown> = {};
-		for (const f of item.editFields) { initialValues[f.key] = f.defaultValue ?? ''; }
+		// Resolve dynamic defaults (e.g. an auto-generated lab order number) fresh
+		// per drawer open, so a new order gets a NEW number rather than one frozen
+		// at config-build time.
+		for (const f of item.editFields) { initialValues[f.key] = resolveFieldDefault(f) ?? ''; }
 		const basePath = item.apiPath.split('?')[0].replace(/\/$/, '');
 		openRecordEditDialog({
 			title: `New ${item.label.replace(/s$/, '') || item.label}`,

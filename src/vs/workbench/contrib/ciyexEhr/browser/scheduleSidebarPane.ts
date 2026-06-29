@@ -38,6 +38,8 @@ interface Appointment {
 	status: string;
 	startTime: string;
 	start?: string;
+	end?: string;
+	endTime?: string;
 	duration?: number;
 	providerName?: string;
 	practitionerName?: string;
@@ -1201,6 +1203,21 @@ export class ScheduleSidebarPane extends ViewPane {
 				// FHIR reference alongside the display name.
 				const provName = String(next.providerName || '');
 				const provId = provName ? (this._providerIdByName.get(provName) || '') : '';
+				// Preserve the appointment's length when only the start time changes.
+				// This form has no end-time/duration field, so spreading `...apt` kept
+				// the OLD `end`/`endTime` while `start` moved — the snapshot then derived
+				// the duration from new-start vs stale-end and showed "—" (QA: "changed
+				// time, duration not showing on snapshot"). Recompute the end from the
+				// new start + the original duration and send duration explicitly.
+				const durMin = this._apptDurationMin(apt);
+				const startMs = Date.parse(startTime);
+				const pad2 = (n: number): string => String(n).padStart(2, '0');
+				let endTime = '';
+				if (durMin > 0 && !Number.isNaN(startMs)) {
+					const e = new Date(startMs + durMin * 60000);
+					endTime = `${e.getFullYear()}-${pad2(e.getMonth() + 1)}-${pad2(e.getDate())}T${pad2(e.getHours())}:${pad2(e.getMinutes())}:00`;
+				}
+				const aptRec = apt as unknown as Record<string, unknown>;
 				// Update both `start` and `startTime`; the FHIR-normalized appointments
 				// API may read either, and leaving one stale caused the time field to
 				// "revert" on subsequent loads.
@@ -1208,6 +1225,9 @@ export class ScheduleSidebarPane extends ViewPane {
 					...apt,
 					start: startTime,
 					startTime,
+					end: endTime || aptRec.end,
+					endTime: endTime || aptRec.endTime,
+					duration: durMin || apt.duration,
 					status,
 					appointmentType: visitType,
 					visitType,
@@ -1231,6 +1251,9 @@ export class ScheduleSidebarPane extends ViewPane {
 				this._apptEditOverride.set(String(apt.id ?? ''), {
 					start: startTime,
 					startTime,
+					end: endTime || (aptRec.end as string | undefined),
+					endTime: endTime || (aptRec.endTime as string | undefined),
+					duration: durMin || apt.duration,
 					status,
 					appointmentType: visitType,
 					visitType,

@@ -148,8 +148,13 @@ export class TasksSidebarPane extends ViewPane {
 	}
 
 	private _isOverdue(t: Task): boolean {
-		if (!t.dueDate) { return false; }
 		if (t.status === 'completed' || t.status === 'cancelled') { return false; }
+		// An explicit 'overdue' status counts as overdue even without a due date,
+		// so the sidebar's Overdue tally matches the task's stored status (QA: a
+		// task marked Overdue was missed when it had no due date).
+		const status = String(t.status || '').toLowerCase().replace(/[\s-]+/g, '_');
+		if (status === 'overdue') { return true; }
+		if (!t.dueDate) { return false; }
 		const due = new Date(t.dueDate);
 		if (isNaN(due.getTime())) { return false; }
 		const today = new Date();

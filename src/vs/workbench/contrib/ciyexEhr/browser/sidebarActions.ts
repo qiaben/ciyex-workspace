@@ -44,6 +44,21 @@ function isCodiconName(value: string): boolean {
 	return /^[a-z][a-z0-9-]*$/.test(value);
 }
 
+/**
+ * Mask a phone string into US standard form as the user types: `(555) 123-4567`.
+ * Strips all non-digits, drops a leading US "1" country code, and caps at 10
+ * significant digits — so a phone field can never hold letters or >10 digits.
+ */
+export function formatUsPhone(raw: string): string {
+	let digits = (raw || '').replace(/\D/g, '');
+	if (digits.length === 11 && digits.startsWith('1')) { digits = digits.slice(1); }
+	digits = digits.slice(0, 10);
+	if (digits.length === 0) { return ''; }
+	if (digits.length <= 3) { return `(${digits}`; }
+	if (digits.length <= 6) { return `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
+	return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 /** Render a codicon class span or fall back to a monochrome text glyph. */
 function setIconContent(host: HTMLElement, symbol: string): void {
 	host.textContent = '';
@@ -591,6 +606,22 @@ export interface IEditFieldDef {
 	 *  pre-select the same defaults as the editor's "New" form (e.g. status =
 	 *  Active, priority = Routine, refills = 0). */
 	defaultValue?: string | number;
+	/** Lazy initial value, resolved each time a create form opens. Used for
+	 *  dynamic defaults like an auto-generated order number (`LAB-YYYYMMDD-XXXX`)
+	 *  that must be FRESH per new record — a static {@link defaultValue} captured
+	 *  at config-build time would otherwise repeat the same value every time. */
+	defaultValueFn?: () => string | number;
+}
+
+/**
+ * Resolve a field's create-time default: prefer the lazy {@link IEditFieldDef.defaultValueFn}
+ * (evaluated fresh now) over the static {@link IEditFieldDef.defaultValue}.
+ * Returns `undefined` when the field has no default.
+ */
+export function resolveFieldDefault(field: IEditFieldDef): string | undefined {
+	if (field.defaultValueFn) { return String(field.defaultValueFn()); }
+	if (field.defaultValue !== undefined && field.defaultValue !== null) { return String(field.defaultValue); }
+	return undefined;
 }
 
 /**
@@ -608,8 +639,13 @@ export interface IEditFieldDef {
  */
 export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDef[] {
 	return formFields.map((f): IEditFieldDef => {
-		const def = typeof f.defaultValue === 'function' ? f.defaultValue() : f.defaultValue;
+		// Keep a FUNCTION default lazy (resolved per form-open) so dynamic values
+		// like an auto-generated lab order number are freshly generated each time
+		// instead of frozen at config-build time. Static defaults pass through.
+		const fn = typeof f.defaultValue === 'function' ? (f.defaultValue as () => string | number) : undefined;
+		const def = fn ? undefined : (f.defaultValue as string | number | undefined);
 		return {
+			defaultValueFn: fn,
 			key: f.key,
 			label: f.label,
 			// 'search' degrades to text; withTypeaheadSearch re-upgrades known keys.
@@ -1532,7 +1568,7 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 			searchPanel = doc.createElement('div');
 			// Mirror workbench theme classes onto the typeahead panel so the
 			// `var(--vscode-…)` lookups resolve on the panel itself.
-			searchPanel.className = 'ciyex-typeahead-panel';
+			searchPanel.className = 'ciyex-typeahead-panel ciyex-search-dropdown';
 			// `position:fixed` so the panel is positioned against the viewport
 			// — we set top/left explicitly from the input's getBoundingClientRect
 			// when results are shown. z-index:10000 keeps it above the dialog
@@ -1632,6 +1668,21 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 					capped.value = kept;
 				}
 			});
+		}
+		// Phone/fax fields must never hold letters. A field with its own
+		// `maxDigits` cap (e.g. fax) just strips non-numeric characters; a plain
+		// phone field is masked into US format `(555) 123-4567`, capped at 10
+		// digits (QA: patient phone accepted letters and >10 digits).
+		if (field.kind === 'tel' && DOM.isHTMLInputElement(input)) {
+			const tel = input;
+			if (field.maxDigits) {
+				tel.addEventListener('input', () => {
+					const cleaned = tel.value.replace(/[^\d()\-.\s+]/g, '');
+					if (tel.value !== cleaned) { tel.value = cleaned; }
+				});
+			} else {
+				tel.addEventListener('input', () => { tel.value = formatUsPhone(tel.value); });
+			}
 		}
 		input.addEventListener('focus', () => {
 			input.style.borderColor = 'var(--vscode-focusBorder, #007fd4)';
@@ -1882,6 +1933,15 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 						: `${f.label} must be at least ${f.minDigits} digits`;
 					return;
 				}
+			}
+			// Email fields must be a syntactically valid address (local@domain.tld).
+			// Validation patterns are dropped when an editor form is adapted into this
+			// drawer, so without this an invalid Receipt Email like "415@example" (no
+			// TLD) or a bare number saved through (QA: payment email accepted garbage).
+			if ((f.kind === 'email' || /e-?mail/i.test(f.label)) && v.trim()
+				&& !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim())) {
+				errorMsg.textContent = `Enter a valid ${f.label} (e.g. name@example.com)`;
+				return;
 			}
 			result[f.key] = v;
 		}
@@ -2533,13 +2593,31 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				if (inp.value.trim()) { setLocked(true); }
 			}
 			const panel = doc.createElement('div');
+			panel.className = 'ciyex-search-dropdown';
 			panel.style.cssText = `position:fixed;background:${c.popoverBg};color:${c.fg};border:1px solid ${c.border};border-radius:9px;box-shadow:0 10px 28px ${c.shadow};z-index:10000;max-height:240px;overflow-y:auto;display:none;padding:4px;`;
 			workbenchRoot.appendChild(panel);
 			const position = (): void => {
 				const r = inp.getBoundingClientRect();
+				const viewportH = doc.defaultView?.innerHeight ?? doc.documentElement.clientHeight;
+				const gap = 4;
+				const spaceBelow = viewportH - r.bottom - gap - 8;
+				const spaceAbove = r.top - gap - 8;
+				// Flip the panel above the field when there's no room below it (a field
+				// low in a tall form on a large/maximized window) so the result list
+				// isn't clipped off the bottom of the viewport, and cap its height to
+				// the available space so it always stays fully on-screen.
+				const flipUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+				const maxH = Math.max(120, Math.min(280, flipUp ? spaceAbove : spaceBelow));
 				panel.style.left = `${r.left}px`;
-				panel.style.top = `${r.bottom + 4}px`;
 				panel.style.width = `${r.width}px`;
+				panel.style.maxHeight = `${maxH}px`;
+				if (flipUp) {
+					panel.style.top = 'auto';
+					panel.style.bottom = `${viewportH - r.top + gap}px`;
+				} else {
+					panel.style.bottom = 'auto';
+					panel.style.top = `${r.bottom + gap}px`;
+				}
 			};
 			const reposition = (): void => { if (panel.style.display === 'block') { position(); } };
 			doc.defaultView?.addEventListener('scroll', reposition, true);
@@ -2687,7 +2765,14 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				}
 				wrap.appendChild(lbl);
 
-				const initial = String((existing?.[field.key] ?? '') as string | number);
+				// On a fresh create form (no existing record), seed the field with its
+				// configured default — including dynamic defaults like an auto-generated
+				// lab order number. Without this the "Order Number" input rendered blank
+				// even though the field defines an auto-generated default.
+				const provided = existing?.[field.key];
+				const initial = (provided !== undefined && provided !== null && provided !== '')
+					? String(provided as string | number)
+					: (isEdit ? '' : (resolveFieldDefault(field) ?? ''));
 				renderFieldControl(field, initial, inputs, wrap);
 
 				if (field.hint) {
@@ -2799,6 +2884,14 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				}
 				if (f.required && !v.trim()) {
 					setError(`${f.label} is required`);
+					return;
+				}
+				// Email fields must be a valid address (local@domain.tld) — guards the
+				// snapshot's Receipt Email and any other email field from accepting a
+				// bare number or a domain with no TLD (QA: payment email accepted "415@example").
+				if ((f.kind === 'email' || /e-?mail/i.test(f.label)) && v.trim()
+					&& !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim())) {
+					setError(`Enter a valid ${f.label} (e.g. name@example.com)`);
 					return;
 				}
 				result[f.key] = v;

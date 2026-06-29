@@ -278,9 +278,15 @@ export class MessagingEditor extends EditorPane {
 				if (!Array.isArray(newMessages)) { newMessages = []; }
 			}
 
-			// Only re-render if messages changed
-			if (JSON.stringify(newMessages.map((m: Message) => m.id)) !== JSON.stringify(this.messages.map(m => m.id))
-				|| newMessages.length !== this.messages.length) {
+			// Only re-render if messages changed. The signature must include the
+			// per-message state that affects rendering (pinned / edited content /
+			// reactions / deleted) — keying off the ID set alone meant a pin/unpin,
+			// edit or reaction never re-rendered because the ID set was unchanged
+			// (QA: clicking Pin did nothing).
+			const sig = (list: Message[]): string => JSON.stringify(list.map(m => [
+				m.id, m.pinned, m.content, m.deleted, m.updatedAt, (m.reactions ?? []).map(r => `${r.emoji}:${r.count}`),
+			]));
+			if (sig(newMessages) !== sig(this.messages) || newMessages.length !== this.messages.length) {
 				this.messages = newMessages;
 				this._renderMessages();
 			}
@@ -1029,9 +1035,17 @@ export class MessagingEditor extends EditorPane {
 
 	private async _togglePin(messageId: string, currentlyPinned: boolean): Promise<void> {
 		try {
-			await this.apiService.fetch(`/api/messages/${messageId}/pin`, {
+			const res = await this.apiService.fetch(`/api/messages/${messageId}/pin`, {
 				method: currentlyPinned ? 'DELETE' : 'POST',
 			});
+			if (!res.ok) { return; }
+			// Optimistically flip the local state and re-render so the pin badge and
+			// the details panel's Pinned tab update immediately — the polling reload
+			// alone wouldn't (the message ID set is unchanged).
+			const msg = this.messages.find(m => m.id === messageId);
+			if (msg) { msg.pinned = !currentlyPinned; }
+			this._renderMessages();
+			if (this.detailsOpen && this.detailsTab === 'pinned') { void this._renderDetails(); }
 			const input = this._getInput();
 			if (input) { await this._loadMessages(input.channelId, input.threadParentId); }
 		} catch { /* */ }
@@ -1240,6 +1254,14 @@ export class MessagingEditor extends EditorPane {
 	// without innerHTML (VS Code's Trusted Types policy throws on direct innerHTML string assignment).
 	// Order matters: longer markers (** , __, ~~) must be tested before single-char counterparts.
 	private _renderRichContent(container: HTMLElement, text: string): void {
+		// Known member names (e.g. "Shin Chan", "Victor A") let a mention span more
+		// than one word: the bare `@(\w+)` regex stopped at the first space, so
+		// "@Shin Chan" only highlighted "Shin" and the last name was dropped. Match
+		// the longest member display-name that follows the "@" and highlight it whole.
+		const memberNames = (this.channelInfo?.members ?? [])
+			.map(m => (m.displayName || '').trim())
+			.filter(Boolean)
+			.sort((a, b) => b.length - a.length);
 		const pattern = /@(\w+)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|_(.+?)_|`(.+?)`/g;
 		let lastIndex = 0;
 		let match: RegExpExecArray | null;
@@ -1249,9 +1271,20 @@ export class MessagingEditor extends EditorPane {
 			}
 			const [full, mention, bold, underline, strike, italic, code] = match;
 			if (mention !== undefined) {
+				// Extend the mention to the full member name when the text after "@"
+				// begins with a known multi-word display name.
+				let mentionText = mention;
+				const afterAt = text.slice(match.index + 1);
+				const fullName = memberNames.find(n => afterAt.toLowerCase().startsWith(n.toLowerCase()));
+				if (fullName && fullName.length > mention.length) {
+					mentionText = afterAt.slice(0, fullName.length);
+				}
 				const span = DOM.append(container, DOM.$('span'));
-				span.textContent = `@${mention}`;
+				span.textContent = `@${mentionText}`;
 				span.style.cssText = 'background:rgba(0,122,204,0.15);color:var(--vscode-textLink-foreground);padding:0 2px;border-radius:3px;';
+				lastIndex = match.index + 1 + mentionText.length;
+				pattern.lastIndex = lastIndex;
+				continue;
 			} else if (bold !== undefined) {
 				const el = DOM.append(container, DOM.$('strong'));
 				el.textContent = bold;

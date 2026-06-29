@@ -79,6 +79,31 @@ function isReasonableId(value: string): boolean {
 	return /^[A-Za-z0-9][A-Za-z0-9\- ]*$/.test(v);
 }
 
+/** True when `value` is a valid US ZIP: 5 digits, optionally +4 (`12345` or `12345-6789`). */
+function isValidZip(value: string): boolean {
+	return /^\d{5}(-\d{4})?$/.test(value.trim());
+}
+
+/**
+ * Format a phone string into US standard form as the user types:
+ * `(555) 123-4567`. Strips everything but digits, drops a leading US "1"
+ * country code, and caps at 10 significant digits.
+ */
+function formatUsPhone(raw: string): string {
+	let digits = (raw || '').replace(/\D/g, '');
+	if (digits.length === 11 && digits.startsWith('1')) { digits = digits.slice(1); }
+	digits = digits.slice(0, 10);
+	if (digits.length === 0) { return ''; }
+	if (digits.length <= 3) { return `(${digits}`; }
+	if (digits.length <= 6) { return `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
+	return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+/** Normalize a field key/label down to bare alphanumerics for matching (last dot-segment). */
+function normalizeSeg(key: string): string {
+	return (key.split('.').pop() || key).replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
 interface FieldDef {
 	key: string;
 	label: string;
@@ -1909,7 +1934,27 @@ export class SettingsHubEditor extends EditorPane {
 			inp.placeholder = ph;
 			inp.readOnly = isView || !!field.readOnly;
 			inp.style.cssText = inputStyle;
-			inp.addEventListener('input', () => { this.formData[field.key] = inp.value; });
+			// Live input masking for phone/fax/zip fields (matched by normalized
+			// key segment + label) so the value is coerced into a valid shape as
+			// the user types or pastes — not just rejected on save.
+			const seg = normalizeSeg(field.key);
+			const labelSeg = field.label.replace(/[^a-z0-9]/gi, '').toLowerCase();
+			const isFax = seg.includes('fax') || labelSeg.includes('fax');
+			const isPhone = !isFax && (t === 'tel' || t === 'phone' || /phone|mobile|cell/.test(seg) || /phone|mobile|cell/.test(labelSeg));
+			const isZip = seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || /zip|postal/.test(labelSeg);
+			inp.addEventListener('input', () => {
+				if (isPhone) {
+					inp.value = formatUsPhone(inp.value);
+				} else if (isFax) {
+					// Fax: digits only (US standard formatting applied for readability).
+					inp.value = formatUsPhone(inp.value);
+				} else if (isZip) {
+					// ZIP: digits with an optional +4 dash, max 9 digits.
+					const d = inp.value.replace(/\D/g, '').slice(0, 9);
+					inp.value = d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+				}
+				this.formData[field.key] = inp.value;
+			});
 		}
 
 		if (error) {
@@ -2184,6 +2229,12 @@ export class SettingsHubEditor extends EditorPane {
 		// NPI — numeric, exactly 10 digits.
 		if (seg === 'npi' || looks(/\bnpi\b/)) {
 			return isValidNpi(value) ? undefined : `${field.label} must be a 10-digit NPI number`;
+		}
+		// ZIP / postal code — 5 digits or 5+4 (`12345` / `12345-6789`). Matched
+		// off the normalized segment (`address.zipCode` → `zipcode`) and labels
+		// like "Zip Code" / "Postal Code".
+		if (seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || looks(/zip|postal/)) {
+			return isValidZip(value) ? undefined : `${field.label} must be a valid ZIP code (e.g. 12345 or 12345-6789)`;
 		}
 		// First / Last / Middle name — must contain only letters, spaces,
 		// hyphens, apostrophes or periods (no digits at all), matching the

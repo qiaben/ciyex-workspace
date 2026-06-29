@@ -402,16 +402,23 @@ export class EhrTitlebarControls extends Disposable {
 		// Row 2: Phone, Gender
 		const row2 = DOM.append(form, DOM.$('.ehr-form-row.ehr-form-row-2'));
 		const phone = this._createField(row2, 'Phone Number', 'tel', true, 'phoneNumber') as HTMLInputElement;
-		// International phone: optional "+" country prefix, digits and the usual
-		// separators "()", "-", ".", spaces. No US-only auto-format / 10-digit lock.
+		// US phone: auto-format into `(555) 123-4567` and hard-cap at 10 digits.
+		// Letters and over-length input are rejected as the user types/pastes
+		// (QA: new patient phone accepted letters and >10 digits).
 		phone.setAttribute('inputmode', 'tel');
 		phone.setAttribute('autocomplete', 'tel');
-		phone.maxLength = 20;
-		phone.placeholder = '+1 555-123-4567';
+		phone.maxLength = 16;
+		phone.placeholder = '(555) 123-4567';
 		const sanitizePhone = () => {
-			let cleaned = phone.value.replace(/[^\d+()\-.\s]/g, '');
-			cleaned = cleaned.replace(/(?!^)\+/g, ''); // "+" only valid as first char
-			if (phone.value !== cleaned) { phone.value = cleaned; }
+			let digits = phone.value.replace(/\D/g, '');
+			if (digits.length === 11 && digits.startsWith('1')) { digits = digits.slice(1); }
+			digits = digits.slice(0, 10);
+			let formatted = '';
+			if (digits.length === 0) { formatted = ''; }
+			else if (digits.length <= 3) { formatted = `(${digits}`; }
+			else if (digits.length <= 6) { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3)}`; }
+			else { formatted = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`; }
+			if (phone.value !== formatted) { phone.value = formatted; }
 		};
 		this._register(DOM.addDisposableListener(phone, 'input', sanitizePhone));
 		this._register(DOM.addDisposableListener(phone, 'paste', () => setTimeout(sanitizePhone, 0)));
