@@ -25,7 +25,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
-import { parseSavedRecord } from '../sidebarActions.js';
+import { parseSavedRecord, COMMON_PAYERS } from '../sidebarActions.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -1847,7 +1847,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'clearinghouse', label: 'Clearinghouse', type: 'text', placeholder: 'e.g., Change Healthcare' },
 					{ key: 'trackingNumber', label: 'Tracking #', type: 'text', placeholder: 'Tracking number' },
 					{ key: 'totalCharge', label: 'Total Charge', type: 'number', placeholder: '0.00' },
-					{ key: 'insurer', label: 'Insurer / Payer', type: 'lookup', placeholder: 'Search Payer', lookupConfig: { endpoint: '/api/organizations', displayField: 'name', valueField: 'id', searchable: true } },
+					// Payers/insurers live in the insurance-companies catalog (Blue Cross,
+					// Aetna, Cigna…), NOT /api/organizations — every other payer lookup in
+					// this file uses this endpoint. The old /api/organizations target
+					// returned no payers, so the "Search Payer" typeahead listed nothing.
+					{ key: 'insurer', label: 'Insurer / Payer', type: 'lookup', placeholder: 'Search Payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', displayField: 'name', valueField: 'id', searchable: true } },
 					{ key: 'billingProvider', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
 					// Service period (FHIR Claim.billablePeriod.start/.end) — matches
 					// the ciyex-ehr-ui submission "Service From / Service To" fields.
@@ -3905,16 +3909,25 @@ export class PatientChartEditor extends EditorPane {
 			const secondaryBtnStyle = 'padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
 
 			const setReadOnly = (readOnly: boolean) => {
-				for (const el of this._formInputs.values()) {
-					if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
-						el.disabled = readOnly;
-					} else if (el.tagName === 'SELECT') {
-						(el as HTMLSelectElement).disabled = readOnly;
-					} else {
-						(el as HTMLInputElement | HTMLTextAreaElement).readOnly = readOnly;
-					}
-					el.style.opacity = readOnly ? '0.75' : '1';
-					el.style.cursor = readOnly ? 'not-allowed' : '';
+				// Lock EVERY control inside the form — not just the value-holders in
+				// _formInputs. Date, lookup/search and file fields render a VISIBLE
+				// input (and the date field also a native calendar picker) separate
+				// from the hidden value input registered in _formInputs.
+				//
+				// Use `disabled` (NOT `readOnly`) for every control: a readOnly text
+				// input can still be FOCUSED, and the lookup/search "dropdown" fields
+				// open their results popover on focus — so a read-only-but-focusable
+				// field still let the user pick a new value from the dropdown. `disabled`
+				// blocks focus entirely, so text, selects, date pickers AND the
+				// focus-triggered search dropdowns are all truly locked until Edit.
+				// Values are still read programmatically from _formInputs on save
+				// (disabled controls keep their `.value`), so nothing is lost.
+				// eslint-disable-next-line no-restricted-syntax
+				const controls = content.querySelectorAll('input, select, textarea');
+				for (const node of Array.from(controls) as Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
+					node.disabled = readOnly;
+					node.style.opacity = readOnly ? '0.75' : '1';
+					node.style.cursor = readOnly ? 'not-allowed' : '';
 				}
 			};
 
@@ -3928,10 +3941,19 @@ export class PatientChartEditor extends EditorPane {
 				return snap;
 			};
 			const restore = (snap: Map<string, string | boolean>) => {
+				const isoToUs = (iso: string): string => {
+					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+					return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+				};
 				for (const [k, el] of this._formInputs) {
 					const v = snap.get(k);
 					if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') { el.checked = !!v; }
 					else { el.value = String(v ?? ''); }
+					// Date fields keep their displayed MM/DD/YYYY value in a separate
+					// visible input — revert that too, else Cancel leaves the edited
+					// text on screen while the saved (hidden) value is the original.
+					const vis = this._dateVisibleByKey.get(k);
+					if (vis) { vis.value = isoToUs(String(v ?? '')); vis.style.borderColor = ''; }
 				}
 			};
 
@@ -4958,6 +4980,10 @@ export class PatientChartEditor extends EditorPane {
 			dose: { rx: dosePattern, msg: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)' },
 			doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
+			// Claim submission tracking number: digits only — reject letters/specials
+			// (camelCase + snake_case so it fires whichever key the merged config emits).
+			trackingNumber: { rx: /^[0-9]+$/, msg: 'Tracking number must contain digits only (0-9)' },
+			tracking_number: { rx: /^[0-9]+$/, msg: 'Tracking number must contain digits only (0-9)' },
 		};
 		// International phone (E.164-friendly): optional leading "+" country
 		// prefix then 7-15 digits with "()", "-", ".", or whitespace separators.
@@ -4969,12 +4995,38 @@ export class PatientChartEditor extends EditorPane {
 				const el = inputs.get(f.key);
 				if (!el) { continue; }
 				const v = String(el.value ?? '').trim();
+				// Claim Modifier (e.g. itemModifier): standard medical coding modifiers
+				// are ALPHANUMERIC — "25", "59", "GT", "E/M". Accept letters/digits plus
+				// the separators used for E/M and multi-modifier lists, and OVERRIDE any
+				// stricter (e.g. numeric-only) pattern a merged config might carry, so a
+				// valid modifier is never rejected in the create OR edit claim form.
+				if (/modifier/i.test(f.key) || /^modifiers?$/i.test(f.label || '')) {
+					if (v && !/^[A-Za-z0-9][A-Za-z0-9 ,/\-]*$/.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: 'Modifier accepts letters and numbers (e.g. 25, 59, GT)' });
+					}
+					continue;
+				}
 				// Reject typed-but-invalid dates (e.g. 13/33/2000) — _buildDateInput
 				// flags these via dataset.invalid on the hidden ISO input.
 				if (f.type === 'date' && el.dataset.invalid === '1') {
 					invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid date (MM/DD/YYYY)' });
 					continue;
 				}
+				// A date of birth can never be in the future. Scope to birth-date
+				// fields (other date fields — next appointment, follow-up — may be
+				// future) by key/label. `v` is the hidden ISO yyyy-mm-dd value.
+				if (f.type === 'date' && v && (/dob|birth/i.test(f.key) || /birth/i.test(f.label))) {
+					const d = new Date(v);
+					const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
+					if (!isNaN(d.getTime()) && d.getTime() > endOfToday.getTime()) {
+						invalid.push({ key: f.key, label: f.label, el, msg: 'Date of birth cannot be in the future' });
+						continue;
+					}
+				}
+				// Treat any phone/email field by TYPE or by key/label, so validation
+				// holds even when the config types the field as plain text.
+				const isPhone = f.type === 'phone' || /phone|mobile|fax|tel(?:ephone)?/i.test(f.key) || /phone|mobile|fax/i.test(f.label);
+				const isEmail = f.type === 'email' || /e-?mail/i.test(f.key) || /e-?mail/i.test(f.label);
 				// Per-field validationPattern takes precedence over the implicit
 				// type/keyed checks below.
 				if (v && f.validationPattern) {
@@ -4987,12 +5039,12 @@ export class PatientChartEditor extends EditorPane {
 						invalid.push({ key: f.key, label: f.label, el, msg: f.validationMessage || 'Invalid format' });
 						continue;
 					}
-				} else if (v && f.type === 'phone') {
+				} else if (v && isPhone) {
 					if (!INTL_PHONE_RX.test(v)) {
 						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid phone number e.g. +1 555-123-4567' });
 						continue;
 					}
-				} else if (v && f.type === 'email') {
+				} else if (v && isEmail) {
 					if (!EMAIL_RX.test(v)) {
 						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid email address' });
 						continue;
@@ -6489,16 +6541,25 @@ export class PatientChartEditor extends EditorPane {
 			if (timer) { clearTimeout(timer); }
 			timer = setTimeout(async () => {
 				try {
-					const url = this._buildSearchUrl(f, q.trim());
-					if (!url) { return; }
 					let items: Array<{ code: string; label: string }> = [];
-					try {
-						const res = await this.apiService.fetch(url);
-						if (res.ok) {
-							const data = await res.json();
-							items = this._extractSearchItems(f, data);
-						}
-					} catch { /* fall through to fallback */ }
+					if (this._isPayerLookup(f)) {
+						// Payer/insurer pickers: the tenant master list is often near-empty
+						// and the FHIR-resource endpoint returns a shape the generic extractor
+						// can't read, so the dropdown listed nothing. Mirror the sidebar's
+						// proven search — the tenant's /api/insurance-companies list (filtered
+						// client-side) plus the COMMON_PAYERS suggestions (Blue Cross, Aetna, Cigna…).
+						items = await this._searchPayers(q.trim(), f);
+					} else {
+						const url = this._buildSearchUrl(f, q.trim());
+						if (!url) { return; }
+						try {
+							const res = await this.apiService.fetch(url);
+							if (res.ok) {
+								const data = await res.json();
+								items = this._extractSearchItems(f, data);
+							}
+						} catch { /* fall through to fallback */ }
+					}
 					// When the ciyex-codes proxy returns nothing (e.g. the org has
 					// no app_installation row so the proxy 404s, or the service is
 					// unreachable), fall back to the main backend's /api/global_codes
@@ -6651,6 +6712,63 @@ export class PatientChartEditor extends EditorPane {
 			if (related) { related.value = match.label || match.code; }
 		}
 		dropdown.style.display = 'none';
+	}
+
+	/**
+	 * True for the payer/insurer lookup pickers (claim submission insurer, denial
+	 * payer/insurer, ERA payer, claim payer, …). These need the dedicated
+	 * `_searchPayers` path rather than the generic endpoint search because the
+	 * tenant's insurance-company list is often near-empty and the FHIR-resource
+	 * endpoint returns a shape the generic extractor can't parse.
+	 */
+	private _isPayerLookup(f: FieldDef): boolean {
+		if (f.type !== 'lookup') { return false; }
+		const ep = String(f.lookupConfig?.endpoint || '');
+		if (/insurance-compan/i.test(ep)) { return true; }
+		return /^(payerId|payerName|payer|insurer|insurerId|payorId|payorName)$/i.test(f.key);
+	}
+
+	/**
+	 * Search payers/insurers the same way the sidebar does: the tenant's own
+	 * `/api/insurance-companies` master list (returned unfiltered, so we match
+	 * client-side and keep each payer's real id) merged with the built-in
+	 * `COMMON_PAYERS` suggestions (Blue Cross, Aetna, Cigna, …) so the dropdown is
+	 * useful even when the tenant list is empty.
+	 */
+	private async _searchPayers(q: string, f: FieldDef): Promise<Array<{ code: string; label: string }>> {
+		const lq = q.toLowerCase();
+		const seen = new Set<string>();
+		const out: Array<{ code: string; label: string }> = [];
+		// Name-valued payer fields (e.g. insurance coverage `payerName`,
+		// valueField:'name') must store the display name; id-keyed pickers
+		// (payerId / insurer, the default) store the insurance-company id.
+		const useNameAsValue = f.lookupConfig?.valueField === 'name';
+		try {
+			const res = await this.apiService.fetch('/api/insurance-companies');
+			if (res.ok) {
+				const data = await res.json() as Record<string, unknown>;
+				const list = ((data?.data as Record<string, unknown>)?.content
+					|| (data?.content as unknown[])
+					|| (data?.data as unknown[])
+					|| []) as Array<Record<string, unknown>>;
+				for (const p of (Array.isArray(list) ? list : [])) {
+					const name = String(p.name || p.label || '').trim();
+					if (!name || (lq && !name.toLowerCase().includes(lq))) { continue; }
+					const key = name.toLowerCase();
+					if (seen.has(key)) { continue; }
+					seen.add(key);
+					out.push({ code: useNameAsValue ? name : String(p.id ?? p.payerId ?? name), label: name });
+				}
+			}
+		} catch { /* fall back to the built-in suggestions below */ }
+		for (const name of COMMON_PAYERS) {
+			if (lq && !name.toLowerCase().includes(lq)) { continue; }
+			const key = name.toLowerCase();
+			if (seen.has(key)) { continue; }
+			seen.add(key);
+			out.push({ code: name, label: name });
+		}
+		return out.slice(0, 10);
 	}
 
 	private _buildSearchUrl(f: FieldDef, q: string): string | null {

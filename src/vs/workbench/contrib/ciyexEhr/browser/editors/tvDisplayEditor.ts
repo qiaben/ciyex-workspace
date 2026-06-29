@@ -83,16 +83,6 @@ function normalizeApptTimes(appt: AppointmentDTO): AppointmentDTO {
 	return { ...appt, appointmentStartDate: startDate, appointmentStartTime: startTime };
 }
 
-function getInitials(name: string): string {
-	if (!name) { return '?'; }
-	return name
-		.split(' ')
-		.filter(Boolean)
-		.map(w => w[0])
-		.join('.')
-		.toUpperCase();
-}
-
 function formatTime(timeStr: string): string {
 	if (!timeStr) { return ''; }
 	const [h, m] = timeStr.split(':');
@@ -695,7 +685,7 @@ abstract class TvDisplayEditorBase extends EditorPane {
 	}
 
 	// allow-any-unicode-next-line
-	// ─── Waiting Room (HIPAA-safe — initials only) ─────────────────────────
+	// ─── Waiting Room (shows each waiting patient's full name) ─────────────
 
 	private _renderWaitingRoom(): void {
 		const welcome = DOM.append(this.mainEl, DOM.$('div'));
@@ -724,9 +714,9 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			const card = DOM.append(grid, DOM.$('div'));
 			card.style.cssText = `padding:20px;border-radius:12px;text-align:center;background:var(--vscode-editorWidget-background, rgba(127,127,127,0.08));border:1px solid var(--vscode-editorWidget-border, rgba(127,127,127,0.18));border-left:4px solid ${color};`;
 
-			const initials = DOM.append(card, DOM.$('div'));
-			initials.style.cssText = 'font-size:28px;font-weight:700;margin-bottom:8px;opacity:0.9;';
-			initials.textContent = getInitials(a.patientName || '');
+			const nameEl = DOM.append(card, DOM.$('div'));
+			nameEl.style.cssText = 'font-size:20px;font-weight:700;margin-bottom:8px;opacity:0.9;line-height:1.25;word-break:break-word;';
+			nameEl.textContent = a.patientName || '—';
 
 			const time = DOM.append(card, DOM.$('div'));
 			time.style.cssText = 'font-size:13px;opacity:0.6;margin-bottom:12px;';

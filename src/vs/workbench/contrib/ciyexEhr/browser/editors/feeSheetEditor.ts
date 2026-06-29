@@ -175,7 +175,15 @@ export class FeeSheetEditor extends EditorPane {
 				for (const p of (Array.isArray(arr) ? arr : [])) {
 					const id = String(p.id ?? p.providerId ?? '');
 					if (!id) { continue; }
-					const name = String(p.name ?? (`${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || id));
+					// Provider DTOs nest the name under `identification`
+					// (firstName/lastName), unlike the flat patient shape — mirror
+					// calendarEditor so the dropdown shows provider names instead of
+					// falling back to the raw provider id.
+					const ident = (p as { identification?: { prefix?: string; firstName?: string; lastName?: string } }).identification;
+					const first = ident?.firstName || (p['identification.firstName'] as string) || (p.firstName as string) || '';
+					const last = ident?.lastName || (p['identification.lastName'] as string) || (p.lastName as string) || '';
+					const full = `${ident?.prefix || (p['identification.prefix'] as string) || ''} ${first} ${last}`.trim();
+					const name = full || String(p.name ?? p.fullName ?? p.displayName ?? p.username ?? id);
 					byId.set(id, { value: id, label: name });
 				}
 			}

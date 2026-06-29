@@ -485,6 +485,15 @@ export class EhrTitlebarControls extends Disposable {
 			dobVisible.value = isoToUs(dobPicker.value);
 			dobVisible.style.borderColor = '';
 		}));
+		// Open the native calendar on ANY click in the icon overlay. The bare date
+		// input only pops the picker when the click lands exactly on its tiny
+		// indicator glyph, so a click a few px off (over the text area / emoji) just
+		// focused the field and nothing opened — the reported "icon sometimes
+		// doesn't open the calendar". showPicker() makes the whole 30px hot-zone
+		// open it; we still keep the input so its native indicator keeps working.
+		this._register(DOM.addDisposableListener(dobPicker, 'click', () => {
+			try { dobPicker.showPicker?.(); } catch { /* already open / not allowed in this context */ }
+		}));
 		const email = this._createField(row3, 'Email', 'email', true, 'email') as HTMLInputElement;
 
 		// Communication Consent
@@ -514,39 +523,59 @@ export class EhrTitlebarControls extends Disposable {
 
 		this._register(DOM.addDisposableListener(saveBtn, 'click', async () => {
 			errorEl.style.display = 'none';
+			this._clearPatientFieldErrors();
 
 			const fName = firstName.value.trim();
 			const mName = middleName.value.trim();
 			const lName = lastName.value.trim();
 			const phoneVal = phone.value.trim();
 			const genderVal = gender.value;
-			const dobVal = dob.value;
 			const emailVal = email.value.trim();
-
-			// Validation
-			if (!fName || !lName || !phoneVal || !genderVal || !dobVal || !emailVal) {
-				errorEl.textContent = 'Please fill in all required fields.';
-				errorEl.style.display = '';
-				return;
-			}
 			const phoneDigits = phoneVal.replace(/\D/g, '');
-			if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-				errorEl.textContent = 'Enter a valid phone number (7-15 digits, e.g. +1 555-123-4567).';
-				errorEl.style.display = '';
-				return;
-			}
-			if (dobVal > new Date().toISOString().slice(0, 10)) {
-				errorEl.textContent = 'Date of birth cannot be in the future.';
-				errorEl.style.display = '';
-				return;
-			}
-			// Email validation — RFC 5322-ish: local@domain.tld with at least one dot in domain
+			// Recompute the DOB from the visible field so a valid-but-future date
+			// (which the input handler deliberately keeps out of the hidden ISO
+			// value) is still detected here and reported as a future-date error
+			// rather than as a generic "required"/"invalid" message.
+			const dobIso = usToIso(dobVisible.value.trim());
+
+			// Per-field inline validation — collect EVERY invalid field (don't stop
+			// at the first) so the user sees all errors at once under each field, and
+			// block submission until they are all cleared. Email regex is RFC
+			// 5322-ish: local@domain.tld with at least one dot in the domain.
 			const emailRe = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
-			if (!emailRe.test(emailVal)) {
-				errorEl.textContent = 'Please enter a valid email address (e.g. name@example.com).';
-				errorEl.style.display = '';
+			// Names: must start with a letter, then letters plus optional spaces,
+			// dots, hyphens and apostrophes (e.g. "Anne-Marie", "O'Brien", "St. John").
+			// Digits anywhere are rejected so numeric input fails validation.
+			const nameRe = /^[A-Za-z][A-Za-z.\-'\s]*$/;
+			const NAME_MSG = 'Letters only';
+			let firstInvalid: HTMLElement | null = null;
+			const fail = (field: HTMLElement, message: string) => {
+				this._setFieldError(field, message);
+				if (!firstInvalid) { firstInvalid = field; }
+			};
+
+			if (!fName) { fail(firstName, 'Required'); }
+			else if (!nameRe.test(fName)) { fail(firstName, NAME_MSG); }
+			if (mName && !nameRe.test(mName)) { fail(middleName, NAME_MSG); }
+			if (!lName) { fail(lastName, 'Required'); }
+			else if (!nameRe.test(lName)) { fail(lastName, NAME_MSG); }
+			if (!phoneVal) { fail(phone, 'Required'); }
+			else if (phoneDigits.length < 7 || phoneDigits.length > 15) { fail(phone, 'Invalid phone number'); }
+			if (!genderVal) { fail(gender, 'Required'); }
+			if (!dobVisible.value.trim()) { fail(dobVisible, 'Required'); }
+			else if (!dobIso) { fail(dobVisible, 'Invalid date'); }
+			else if (dobIso > todayIso) { fail(dobVisible, 'Cannot be in the future'); }
+			if (!emailVal) { fail(email, 'Required'); }
+			else if (!emailRe.test(emailVal)) { fail(email, 'Invalid email format'); }
+
+			if (firstInvalid) {
+				const invalidEl = firstInvalid as HTMLElement;
+				invalidEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				if (typeof invalidEl.focus === 'function') { invalidEl.focus(); }
 				return;
 			}
+
+			const dobVal = dobIso;
 
 			const body = {
 				firstName: fName,
@@ -1167,6 +1196,11 @@ export class EhrTitlebarControls extends Disposable {
 				visible.dispatchEvent(new Event('input'));
 				hidden.dispatchEvent(new Event('change', { bubbles: false }));
 			});
+			// Open the native calendar on any click in the icon overlay, not just on
+			// the date input's tiny indicator glyph (see DOB note in _buildPatientOverlay).
+			picker.addEventListener('click', () => {
+				try { picker.showPicker?.(); } catch { /* already open / not allowed in this context */ }
+			});
 			// Calendar emoji icon — visual only (pointer-events:none); clicks go through to the picker overlay above
 			const icon = DOM.append(wrap, DOM.$('span'));
 			icon.textContent = '\u{1F4C5}';
@@ -1236,6 +1270,36 @@ export class EhrTitlebarControls extends Disposable {
 		const labelEl = DOM.append(wrapper, DOM.$('label'));
 		labelEl.textContent = label;
 		return input;
+	}
+
+	/**
+	 * Show an inline validation error beneath a Create-Patient field: tint the
+	 * input border red and render a small message inside the field's
+	 * `.ehr-form-group`. Custom-dropdown fields (e.g. Gender) have an inline-styled
+	 * trigger rather than an `.ehr-form-input`, so only the message is shown for
+	 * those (clearing their border later would otherwise drop the themed color).
+	 */
+	private _setFieldError(field: HTMLElement, message: string): void {
+		const group = (field.closest('.ehr-form-group') as HTMLElement | null) ?? field.parentElement;
+		if (!group) { return; }
+		if (DOM.isHTMLInputElement(field) && field.classList.contains('ehr-form-input')) {
+			field.style.borderColor = '#ef4444';
+		}
+		// eslint-disable-next-line no-restricted-syntax
+		let err = group.querySelector(':scope > .ehr-field-error') as HTMLElement | null;
+		if (!err) { err = DOM.append(group, DOM.$('.ehr-field-error')); }
+		err.textContent = message;
+		err.style.cssText = 'color:#f48771;font-size:11px;margin-top:4px;';
+	}
+
+	/** Clear all inline field errors and border highlights from the Create-Patient form. */
+	private _clearPatientFieldErrors(): void {
+		const overlay = this.patientOverlay;
+		if (!overlay) { return; }
+		// eslint-disable-next-line no-restricted-syntax
+		overlay.querySelectorAll('.ehr-field-error').forEach(el => el.remove());
+		// eslint-disable-next-line no-restricted-syntax
+		overlay.querySelectorAll('input.ehr-form-input').forEach(el => { (el as HTMLElement).style.borderColor = ''; });
 	}
 
 	private readonly _patientFormElements: { inputs: HTMLInputElement[]; selects: HTMLInputElement[]; textareas: HTMLTextAreaElement[]; errorEl: HTMLElement | null } = { inputs: [], selects: [], textareas: [], errorEl: null };

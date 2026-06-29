@@ -402,9 +402,17 @@ export class CalendarEditor extends EditorPane {
 				// "steven mendosa" appear even though Settings → Providers lists none of
 				// them. For a brand-new practice with no providers the list stays empty.
 				const isActive = (p: Record<string, string>): boolean => {
+					// `systemAccess.status` is the provider's LOGIN-ACCOUNT state, not
+					// whether they are a schedulable practitioner — a value of "false"
+					// (paired with `hasAccount: false`) just means the provider has no
+					// portal login, which is normal for staff who only get scheduled.
+					// So only hide providers EXPLICITLY marked inactive/disabled; a
+					// missing / "false" / "0" status must NOT drop them, or every
+					// login-less provider vanishes from the calendar and their
+					// appointments collapse into a single "Unassigned" column.
 					const raw = (p['systemAccess.status'] as string | undefined) ?? (p as { systemAccess?: { status?: string } }).systemAccess?.status;
 					if (raw === null || raw === undefined || raw === '') { return true; }
-					return !['INACTIVE', 'DISABLED', 'FALSE', 'SUSPENDED', '0', 'BLOCKED'].includes(String(raw).toUpperCase());
+					return !['INACTIVE', 'DISABLED', 'SUSPENDED', 'BLOCKED'].includes(String(raw).toUpperCase());
 				};
 				const toProvider = (p: Record<string, string>): { id: string; name: string } => {
 					const first = (p as { identification?: { firstName?: string } }).identification?.firstName || p['identification.firstName'] || p.firstName || '';
@@ -979,19 +987,24 @@ export class CalendarEditor extends EditorPane {
 			return localDateStr(d) === dateStr;
 		});
 
-		// Re-key any appointment whose provider doesn't match a visible column to
-		// the "Unassigned" bucket (empty key) so it always lands somewhere.
+		// Map an appointment to its provider column. Match on ANY of the provider
+		// fields (id / name / practitioner) against the roster so an appointment is
+		// never mis-bucketed just because its first populated field isn't the one the
+		// roster is keyed by. Returns '' only when none match a loaded provider.
 		const knownKeys = new Set<string>();
 		for (const p of activeProviders) { knownKeys.add(String(p.id)); knownKeys.add(String(p.name)); }
 		const provKeyOf = (a: Appointment): string => {
-			const k = String(a.providerId || a.providerName || a.practitionerName || '');
-			return knownKeys.has(k) ? k : '';
+			for (const cand of [a.providerId, a.providerName, a.practitionerName]) {
+				const k = String(cand ?? '');
+				if (k && knownKeys.has(k)) { return k; }
+			}
+			return '';
 		};
-		// Add the Unassigned column only when there are orphan appointments and the
-		// user hasn't narrowed the view with an explicit provider filter.
-		if (this.providerFilter.size === 0 && viewAppointments.some(a => provKeyOf(a) === '')) {
-			activeProviders = [...activeProviders, { id: '', name: 'Unassigned' }];
-		}
+		// The timeline shows provider columns ONLY — no synthetic "Unassigned"
+		// column (per product requirement). Appointments with no provider (or one
+		// not on the practice roster) are not placed in the day grid; they remain
+		// visible in the Week and Month views, which list every appointment
+		// regardless of provider.
 
 		if (activeProviders.length === 0) {
 			const empty = DOM.append(this.gridContainer, DOM.$('div'));

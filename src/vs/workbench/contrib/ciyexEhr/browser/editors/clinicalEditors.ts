@@ -1593,6 +1593,7 @@ export const CARE_PLANS_FORM_FIELDS: FormFieldDef[] = [
 		key: 'status', label: 'Status', type: 'select', options: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
 			{ label: 'On Hold', value: 'on_hold' }, { label: 'Completed', value: 'completed' },
+			{ label: 'Revoked', value: 'revoked' },
 		], defaultValue: 'draft'
 	},
 	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },

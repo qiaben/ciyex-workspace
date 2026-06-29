@@ -791,7 +791,7 @@ const FALLBACK_CVX_CODES: Array<{ code: string; shortDescription: string }> = [
  * payers are merged in as suggestions so the dropdown is useful out of the box;
  * the field still accepts free text for any payer not listed here.
  */
-const COMMON_PAYERS: readonly string[] = [
+export const COMMON_PAYERS: readonly string[] = [
 	'Aetna', 'Anthem Blue Cross Blue Shield', 'Blue Cross Blue Shield', 'Cigna',
 	'UnitedHealthcare', 'Humana', 'Kaiser Permanente', 'Centene', 'Molina Healthcare',
 	'WellCare', 'Health Net', 'Oscar Health', 'Ambetter', 'Medicare', 'Medicaid',
