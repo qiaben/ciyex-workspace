@@ -235,6 +235,11 @@ export class GenericListPane extends ViewPane {
 			const data = await response.json();
 			const items = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
 			if (items.length === 0) {
+				// Mark as loaded even when empty — otherwise the 2s retry interval in
+				// renderBody never clears and re-fetches this endpoint forever, adding
+				// constant background load that slows every other request.
+				this._allItems = [];
+				this._loaded = true;
 				this._showMsg(this._config.emptyMessage || 'No items found');
 				return;
 			}

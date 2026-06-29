@@ -20,7 +20,7 @@ import { ICiyexAuthService } from '../../../ciyexAuth/browser/ciyexAuthService.j
 import { localize } from '../../../../../nls.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, parseSavedRecord } from '../sidebarActions.js';
 import { FAX_FORM_FIELDS } from '../editors/systemEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
@@ -341,7 +341,28 @@ export class SystemMenuPane extends ViewPane {
 	}
 
 	private async _loadAllData(): Promise<void> {
-		for (const item of SYSTEM_ITEMS) { await this._loadItemData(item); }
+		// Concurrent section fetches — independent endpoints, so a serial
+		// `for…await` made the rail's load time the SUM of all round-trips.
+		await Promise.all(SYSTEM_ITEMS.map(item => this._loadItemData(item)));
+	}
+
+	/**
+	 * Reflect a just-saved record in a section's cached rows immediately, then
+	 * reconcile with the server in the background. `mode: 'create'` prepends;
+	 * `'update'` patches the matching row in place.
+	 */
+	private _applyOptimistic(item: SystemItem, record: DataRow, mode: 'create' | 'update'): void {
+		const rows = this.data.get(item.id) || [];
+		const idOf = (r: DataRow) => r.id ?? r.fhirId;
+		if (mode === 'create') {
+			this.data.set(item.id, [record, ...rows]);
+			this.counts.set(item.id, (this.counts.get(item.id) ?? rows.length) + 1);
+		} else {
+			const target = idOf(record);
+			this.data.set(item.id, rows.map(r => idOf(r) === target ? { ...r, ...record } : r));
+		}
+		this._render();
+		void this._loadItemData(item);
 	}
 
 	private async _loadItemData(item: SystemItem): Promise<void> {
@@ -596,7 +617,7 @@ export class SystemMenuPane extends ViewPane {
 			} catch (e) {
 				await this.dialogService.error(localize('actionFailed', "Action failed ({0}).", e instanceof Error ? e.message : String(e)));
 			}
-			await this._loadItemData(item);
+			void this._loadItemData(item);
 		}
 	}
 
@@ -618,7 +639,8 @@ export class SystemMenuPane extends ViewPane {
 			onSave: async (next) => {
 				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
-				await this._loadItemData(item);
+				const saved = await parseSavedRecord(res) ?? { ...next };
+				this._applyOptimistic(item, saved as DataRow, 'create');
 			},
 		});
 	}
@@ -652,7 +674,8 @@ export class SystemMenuPane extends ViewPane {
 				const payload = { ...row, ...next };
 				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				await this._loadItemData(item);
+				const saved = await parseSavedRecord(res) ?? payload;
+				this._applyOptimistic(item, saved as DataRow, 'update');
 			},
 		});
 	}

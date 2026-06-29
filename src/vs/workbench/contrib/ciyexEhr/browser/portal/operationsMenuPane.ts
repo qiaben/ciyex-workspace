@@ -18,7 +18,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields, resolveFieldDefault } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields, resolveFieldDefault, parseSavedRecord } from '../sidebarActions.js';
 import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
@@ -290,7 +290,32 @@ export class OperationsMenuPane extends ViewPane {
 	}
 
 	private async _loadAllData(): Promise<void> {
-		for (const item of ITEMS) { if (item.commandOnly) { continue; } await this._loadItemData(item); }
+		// Fetch every section concurrently — they're independent endpoints, so a
+		// serial `for…await` made the rail's total load time the SUM of all
+		// section round-trips. Each `_loadItemData` re-renders as it resolves, so
+		// sections still appear progressively.
+		await Promise.all(ITEMS.filter(item => !item.commandOnly).map(item => this._loadItemData(item)));
+	}
+
+	/**
+	 * Reflect a just-saved record in a section's cached rows *immediately* so the
+	 * UI updates the instant Save completes, then reconcile with the server in
+	 * the background to pick up any server-computed fields. `mode: 'create'`
+	 * prepends; `'update'` patches the matching row in place.
+	 */
+	private _applyOptimistic(item: OperationsItem, record: DataRow, mode: 'create' | 'update'): void {
+		const rows = this.data.get(item.id) || [];
+		const idOf = (r: DataRow) => r.id ?? r.fhirId;
+		if (mode === 'create') {
+			this.data.set(item.id, [record, ...rows]);
+			this.counts.set(item.id, (this.counts.get(item.id) ?? rows.length) + 1);
+		} else {
+			const target = idOf(record);
+			this.data.set(item.id, rows.map(r => idOf(r) === target ? { ...r, ...record } : r));
+		}
+		this._render();
+		// Background reconcile — non-blocking so the user never waits on it.
+		void this._loadItemData(item);
 	}
 
 	private async _loadItemData(item: OperationsItem): Promise<void> {
@@ -551,7 +576,8 @@ export class OperationsMenuPane extends ViewPane {
 			} catch {
 				this.notificationService.notify({ severity: Severity.Error, message: `${a.label} failed. Please try again.` });
 			}
-			await this._loadItemData(item);
+			// Reconcile in the background so the menu stays responsive.
+			void this._loadItemData(item);
 		}
 	}
 
@@ -594,7 +620,10 @@ export class OperationsMenuPane extends ViewPane {
 				}
 				const res = await this.apiService.fetch(createPath, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
-				await this._loadItemData(item);
+				// Show the new record instantly using the POST response (falling back
+				// to the submitted values), then reconcile in the background.
+				const saved = await parseSavedRecord(res) ?? { ...next };
+				this._applyOptimistic(item, saved as DataRow, 'create');
 			},
 		});
 	}
@@ -643,7 +672,9 @@ export class OperationsMenuPane extends ViewPane {
 				const payload = { ...row, ...next };
 				const res = await this.apiService.fetch(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				await this._loadItemData(item);
+				// Patch the edited row in place instantly, then reconcile.
+				const saved = await parseSavedRecord(res) ?? payload;
+				this._applyOptimistic(item, saved as DataRow, 'update');
 			},
 		});
 	}

@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
-import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, resolveFieldDefault } from '../sidebarActions.js';
+import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, resolveFieldDefault, parseSavedRecord } from '../sidebarActions.js';
 import {
 	PRESCRIPTIONS_FORM_FIELDS, LAB_ORDER_FORM_FIELDS, IMMUNIZATIONS_FORM_FIELDS,
 	REFERRALS_FORM_FIELDS, CARE_PLANS_FORM_FIELDS, AUTHORIZATIONS_FORM_FIELDS, EDUCATION_FORM_FIELDS,
@@ -295,9 +295,29 @@ export class ClinicalMenuPane extends ViewPane {
 	}
 
 	private async _loadAllData(): Promise<void> {
-		for (const item of CLINICAL_ITEMS) {
-			await this._loadItemData(item);
+		// Concurrent section fetches — each endpoint is independent, so a serial
+		// `for…await` made the rail's load time the SUM of all round-trips. Each
+		// `_loadItemData` re-renders as it resolves, so sections appear progressively.
+		await Promise.all(CLINICAL_ITEMS.map(item => this._loadItemData(item)));
+	}
+
+	/**
+	 * Reflect a just-saved record in a section's cached rows immediately so the UI
+	 * updates the instant Save completes, then reconcile with the server in the
+	 * background. `mode: 'create'` prepends; `'update'` patches in place.
+	 */
+	private _applyOptimistic(item: ClinicalItem, record: DataRow, mode: 'create' | 'update'): void {
+		const rows = this.data.get(item.id) || [];
+		const idOf = (r: DataRow) => r.id ?? r.fhirId;
+		if (mode === 'create') {
+			this.data.set(item.id, [record, ...rows]);
+			this.counts.set(item.id, (this.counts.get(item.id) ?? rows.length) + 1);
+		} else {
+			const target = idOf(record);
+			this.data.set(item.id, rows.map(r => idOf(r) === target ? { ...r, ...record } : r));
 		}
+		this._render();
+		void this._loadItemData(item);
 	}
 
 	private async _loadItemData(item: ClinicalItem): Promise<void> {
@@ -561,7 +581,7 @@ export class ClinicalMenuPane extends ViewPane {
 					body: k.body ? JSON.stringify(k.body) : undefined,
 				});
 			} catch { /* */ }
-			await this._loadItemData(item);
+			void this._loadItemData(item);
 		}
 	}
 
@@ -591,7 +611,8 @@ export class ClinicalMenuPane extends ViewPane {
 				const url = item.buildCreateUrl ? item.buildCreateUrl(next) : basePath;
 				const res = await this.apiService.fetch(url, { method: 'POST', body: JSON.stringify(next) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
-				await this._loadItemData(item);
+				const saved = await parseSavedRecord(res) ?? { ...next };
+				this._applyOptimistic(item, saved as DataRow, 'create');
 			},
 		});
 	}
@@ -629,7 +650,8 @@ export class ClinicalMenuPane extends ViewPane {
 				const url = item.buildItemUrl ? item.buildItemUrl(payload) : `${basePath}/${id}`;
 				const res = await this.apiService.fetch(url, { method: 'PUT', body: JSON.stringify(payload) });
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
-				await this._loadItemData(item);
+				const saved = await parseSavedRecord(res) ?? payload;
+				this._applyOptimistic(item, saved as DataRow, 'update');
 			},
 		});
 	}

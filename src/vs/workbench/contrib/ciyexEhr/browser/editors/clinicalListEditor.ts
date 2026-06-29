@@ -18,6 +18,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
+import { parseSavedRecord } from '../sidebarActions.js';
 
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
@@ -2049,8 +2050,29 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				});
 				if (res.ok) {
 					this._closeForm();
-					if (cfg.statsPath) { this._loadStats(); }
-					this._loadData();
+					// Reflect the change instantly from the save response so the row
+					// appears/updates the moment Save completes, instead of waiting on a
+					// second full-list GET. The background reconcile below then pulls the
+					// canonical server state (computed fields, sort order, totals).
+					const saved = await parseSavedRecord(res);
+					if (isEdit) {
+						// Patch the edited row in place — it's already visible on this page.
+						const editedId = this.editingItem?.id;
+						const patch = saved ?? payload;
+						if (editedId !== undefined && editedId !== null) {
+							this.items = this.items.map(it => it.id === editedId ? { ...it, ...patch } : it);
+							this._render();
+						}
+					} else if (this.currentPage === 0 && !this.searchValue && !this.statusFilter && !this.priorityFilter) {
+						// Only prepend a freshly-created record on the unfiltered first
+						// page, where it unambiguously belongs at the top; an active
+						// search/filter or a later page is reconciled by the GET below.
+						const created = saved ?? payload;
+						this.items = [created, ...this.items];
+						this._render();
+					}
+					if (cfg.statsPath) { void this._loadStats(); }
+					void this._loadData();
 				} else {
 					const errData = await res.json().catch(() => null) as Record<string, unknown> | null;
 					const msg = (errData?.['message'] as string)

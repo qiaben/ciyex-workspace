@@ -625,6 +625,34 @@ export function resolveFieldDefault(field: IEditFieldDef): string | undefined {
 }
 
 /**
+ * Parse a create/update API response body into the single record that was
+ * persisted, so callers can reflect it in the list *immediately* instead of
+ * waiting for a second full-list GET round-trip (the source of the "record
+ * takes a while to show up after Save" lag).
+ *
+ * Handles the two shapes our backends return:
+ *  - The `ApiResponse` envelope `{ data: { ...entity } }` (most controllers).
+ *  - A bare entity body `{ ...entity }` (a few raw endpoints).
+ *
+ * Returns `null` when the body carries no usable object — e.g. a `204 No
+ * Content`, an empty body, or an array — in which case the caller should fall
+ * back to an optimistic record built from the submitted form values.
+ */
+export async function parseSavedRecord(res: Response): Promise<Record<string, unknown> | null> {
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		return null;
+	}
+	if (!body || typeof body !== 'object' || Array.isArray(body)) { return null; }
+	const envelope = body as Record<string, unknown>;
+	const inner = Object.prototype.hasOwnProperty.call(envelope, 'data') ? envelope.data : envelope;
+	if (!inner || typeof inner !== 'object' || Array.isArray(inner)) { return null; }
+	return inner as Record<string, unknown>;
+}
+
+/**
  * Adapt an editor's {@link FormFieldDef} list (the canonical "New X" form schema
  * in the editors) into the sidebar drawer's {@link IEditFieldDef} shape, so the
  * `+` quick-create drawer always shows the SAME fields as the full editor's
