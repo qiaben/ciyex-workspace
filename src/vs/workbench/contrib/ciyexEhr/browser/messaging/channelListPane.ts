@@ -230,7 +230,11 @@ export class ChannelListPane extends ViewPane {
 		addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; });
 		addBtn.addEventListener('click', (e) => { e.stopPropagation(); this._createChannel(title === 'CHANNELS' ? 'channel' : 'dm'); });
 
-		for (const ch of channels) {
+		// Pinned chats float to the TOP of the section (1st place). Array.sort is
+		// stable, so unpinned rows keep their existing order and pinned rows keep
+		// theirs — pinning a chat from the ⋯ menu moves it straight to the top.
+		const ordered = [...channels].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+		for (const ch of ordered) {
 			this._renderChannelRow(ch);
 		}
 	}

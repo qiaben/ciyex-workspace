@@ -2713,6 +2713,28 @@ export class PatientChartEditor extends EditorPane {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
 		}
 
+		// Medical-coding modifiers (e.g. "25", "59", "GT", "E/M") are ALPHANUMERIC.
+		// Some backend tab_field_config rows ship the claim modifier as a numeric
+		// field (type:'number'), whose <input type="number"> blocks letters at the
+		// keyboard so "GT"/"E/M" could never be typed. Coerce any modifier field to
+		// plain text and drop a numeric validationPattern so letters are accepted;
+		// _collectFormatErrors then validates it with the alphanumeric modifier rule.
+		// Fresh copies are made so a shared DEFAULT_FIELD_CONFIGS entry isn't mutated.
+		if (config?.sections) {
+			const isModifier = (f: FieldDef) => /modifier/i.test(f.key) || /^modifiers?$/i.test(f.label || '');
+			if (config.sections.some(sec => (sec.fields || []).some(isModifier))) {
+				config = {
+					...config,
+					sections: config.sections.map(sec => ({
+						...sec,
+						fields: (sec.fields || []).map(f => isModifier(f)
+							? { ...f, type: f.type === 'number' ? 'text' : f.type, validationPattern: undefined }
+							: f),
+					})),
+				};
+			}
+		}
+
 		// apiPath override (e.g. /api/cds/alerts, /api/payments/transactions) — query string safe.
 		// If apiPath contains {patientId}, substitute; otherwise append /patient/{id} for patient-scoped endpoints.
 		// Non-patient-scoped endpoints (facility/locations) should use {patientId}-free path as-is.

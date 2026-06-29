@@ -489,16 +489,24 @@ export class EncounterFormEditor extends EditorPane {
 			}
 			return undefined;
 		};
+		// Each form field is filled from the FIRST present source key. The vitals
+		// store/Observation shape varies (camelCase, snake_case, unit-suffixed), so
+		// every known alias is listed — heart rate, temperature and respiratory rate
+		// were fetching blank because their backend keys (e.g. the Fahrenheit-labelled
+		// temperature stored as `temperatureF`, `heart_rate`/`respiratory_rate`
+		// snake_case) weren't covered while BP/SpO2/weight/height/BMI were.
 		const out: Record<string, unknown> = {
-			vitals_bp_systolic: num('bpSystolic', 'systolicBP', 'systolic'),
-			vitals_bp_diastolic: num('bpDiastolic', 'diastolicBP', 'diastolic'),
-			vitals_heart_rate: num('pulse', 'heartRate', 'hr'),
-			vitals_temperature: num('temperatureC', 'temperature', 'temp'),
-			vitals_spo2: num('oxygenSaturation', 'spo2', 'o2sat'),
-			vitals_respiratory_rate: num('respiration', 'respiratoryRate', 'rr'),
-			vitals_weight: num('weightKg', 'weight', 'bodyWeight'),
-			vitals_height: num('heightCm', 'height', 'bodyHeight'),
-			vitals_bmi: num('bmi', 'bodyMassIndex'),
+			vitals_bp_systolic: num('bpSystolic', 'systolicBP', 'systolic', 'bp_systolic', 'systolicBp'),
+			vitals_bp_diastolic: num('bpDiastolic', 'diastolicBP', 'diastolic', 'bp_diastolic', 'diastolicBp'),
+			vitals_heart_rate: num('pulse', 'heartRate', 'heart_rate', 'pulseRate', 'heartRateBpm', 'hr'),
+			// Fahrenheit-labelled field — prefer the Fahrenheit value when present, else
+			// fall back to the Celsius/legacy keys so a value always surfaces.
+			vitals_temperature: num('temperatureF', 'tempF', 'temperatureC', 'tempC', 'temperature', 'temp'),
+			vitals_spo2: num('oxygenSaturation', 'spo2', 'spO2', 'o2sat', 'oxygen_saturation', 'oxygenSat'),
+			vitals_respiratory_rate: num('respiration', 'respiratoryRate', 'respiratory_rate', 'respRate', 'respirationRate', 'rr'),
+			vitals_weight: num('weightKg', 'weight', 'bodyWeight', 'weight_kg'),
+			vitals_height: num('heightCm', 'height', 'bodyHeight', 'height_cm'),
+			vitals_bmi: num('bmi', 'bodyMassIndex', 'BMI'),
 		};
 		// Drop undefined keys so they don't shadow other sources with `undefined`.
 		for (const k of Object.keys(out)) {

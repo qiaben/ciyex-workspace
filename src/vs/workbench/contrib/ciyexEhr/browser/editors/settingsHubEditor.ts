@@ -86,6 +86,18 @@ function isValidZip(value: string): boolean {
 }
 
 /**
+ * True when `value` looks like a real website / URL: an optional `http(s)://`
+ * scheme, a dotted domain with a 2+ character TLD, and an optional
+ * port/path/query/fragment. Accepts `example.com`, `www.example.com`,
+ * `https://sub.example.co.uk/path`; rejects bare words ("abc"), values with
+ * spaces, and anything without a TLD.
+ */
+function isValidWebsite(value: string): boolean {
+	const v = value.trim();
+	return /^(https?:\/\/)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(v);
+}
+
+/**
  * Format a phone string into US standard form as the user types:
  * `(555) 123-4567`. Strips everything but digits, drops a leading US "1"
  * country code, and caps at 10 significant digits.
@@ -2215,6 +2227,14 @@ export class SettingsHubEditor extends EditorPane {
 				: `${field.label} must contain only letters, numbers, hyphens, or periods`;
 		}
 
+		// Website / URL — by input type, key, segment or label (Insurance, Facility,
+		// Practice and Referral forms all carry a Website field). An uploaded image
+		// stored on a url-typed field arrives as a `data:` URL — skip those (they are
+		// validated by the image control, not as a web address).
+		if (type === 'url' || seg === 'website' || seg === 'websiteurl' || seg === 'weburl' || looks(/website|web ?site/)) {
+			if (value.trim().startsWith('data:')) { return undefined; }
+			return isValidWebsite(value) ? undefined : `${field.label} must be a valid website (e.g. https://example.com)`;
+		}
 		// Email — by key, label, input type or normalized segment
 		// (e.g. `contact.email` → seg `email`). Covers labels like "Email".
 		if (type === 'email' || seg === 'email' || seg.includes('email') || labelNorm.includes('email')) {
