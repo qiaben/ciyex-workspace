@@ -1707,14 +1707,28 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				visible.maxLength = 10;
 				const hidden = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				hidden.type = 'hidden';
+				// Inline validation hint shown directly under the field. usToIsoDate
+				// returns '' for an impossible calendar date (e.g. 23/45/2000), so we
+				// flag the field red AND surface a readable message immediately as the
+				// user types — not only when they hit Save (QA: date fields silently
+				// accept invalid dates with no error message).
+				const dateErr = DOM.append(wrap, DOM.$('div'));
+				dateErr.style.cssText = 'font-size:10px;color:#ef4444;margin-top:3px;display:none;';
+				const syncDateError = () => {
+					const iso = usToIso(visible.value);
+					const bad = !!visible.value && !iso;
+					visible.style.borderColor = bad ? '#ef4444' : '';
+					dateErr.textContent = bad ? 'Invalid date — please enter a real date (MM/DD/YYYY)' : '';
+					dateErr.style.display = bad ? 'block' : 'none';
+				};
 				visible.addEventListener('input', () => {
 					// Auto-insert slashes and cap the year at 4 digits as the user types.
 					const masked = maskUsDate(visible.value);
 					if (masked !== visible.value) { visible.value = masked; }
-					const iso = usToIso(visible.value);
-					hidden.value = iso;
-					visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+					hidden.value = usToIso(visible.value);
+					syncDateError();
 				});
+				visible.addEventListener('blur', syncDateError);
 				// Native picker — fully overlaid on top of the icon area so clicking
 				// the icon opens the calendar. We hide the native chrome via opacity:0.
 				const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
@@ -1724,6 +1738,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				picker.addEventListener('change', () => {
 					visible.value = isoToUs(picker.value);
 					hidden.value = picker.value;
+					visible.style.borderColor = '';
+					dateErr.textContent = '';
+					dateErr.style.display = 'none';
 				});
 				// Visible icon (decorative) — sits behind the transparent picker so
 				// clicks fall through to the picker. pointer-events:none keeps the

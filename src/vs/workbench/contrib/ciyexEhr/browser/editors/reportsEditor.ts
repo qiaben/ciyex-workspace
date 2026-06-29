@@ -1270,9 +1270,21 @@ export class ReportsEditor extends EditorPane {
 			visible.maxLength = 10;
 			visible.value = isoToUs(this.filterValues[key] || '');
 			visible.style.cssText = INPUT_STYLE + 'padding-right:30px;width:130px;';
+			// Inline validation message — usToIsoDate returns '' for an impossible
+			// calendar date (e.g. 12/45/2000), so we flag the field red AND surface a
+			// readable "Invalid date" hint below it instead of silently swallowing the
+			// value (QA: report filters accept invalid dates with no error).
+			const errEl = DOM.append(wrap, DOM.$('div'));
+			errEl.style.cssText = 'position:absolute;top:100%;left:0;margin-top:2px;font-size:10px;color:#ef4444;white-space:nowrap;display:none;z-index:5;';
 			visible.addEventListener('input', () => {
 				const iso = usToIso(visible.value);
-				visible.style.borderColor = visible.value && !iso ? '#ef4444' : '';
+				const bad = !!visible.value && !iso;
+				visible.style.borderColor = bad ? '#ef4444' : '';
+				errEl.textContent = bad ? 'Invalid date — use MM/DD/YYYY' : '';
+				errEl.style.display = bad ? 'block' : 'none';
+				// Don't reset the page / re-render the table on a half-typed or invalid
+				// date — only apply the filter once it parses (or is cleared).
+				if (bad) { return; }
 				this.filterValues[key] = iso;
 				this.currentPage = 0;
 				this._render();
@@ -1283,6 +1295,9 @@ export class ReportsEditor extends EditorPane {
 			picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			picker.addEventListener('change', () => {
 				visible.value = isoToUs(picker.value);
+				visible.style.borderColor = '';
+				errEl.textContent = '';
+				errEl.style.display = 'none';
 				this.filterValues[key] = picker.value;
 				this.currentPage = 0;
 				this._render();

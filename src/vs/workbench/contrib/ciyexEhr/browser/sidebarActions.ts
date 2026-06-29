@@ -2067,6 +2067,14 @@ export interface IListAndFormDialogOptions {
 	 *  view. Used for focused single-record edits (e.g. the snapshot's edit-pencil)
 	 *  where bouncing back to the full list after saving is unwanted. */
 	closeOnSave?: boolean;
+	/** Optional transform applied to a stored row before it seeds the EDIT form,
+	 *  so a record whose backend field names differ from the form keys pre-fills
+	 *  correctly. Example: a payment row stores `collectedAt`/`paymentMethodType`
+	 *  but the form fields are keyed `paymentDate`/`paymentMethod`, so without this
+	 *  the list-edit form opened with Payment Date and Method blank (QA: "edit
+	 *  doesn't fetch all the data"). Only runs in edit mode; the row id is taken
+	 *  from the original row for save, so the mapping can't break the PUT target. */
+	normalizeEditItem?: (row: Record<string, unknown>) => Record<string, unknown>;
 }
 
 /** Field-group sections for the unified list/form popup. Clinical forms (the
@@ -2711,6 +2719,11 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		currentMode = 'form';
 		editingItem = existing;
 		const isEdit = !!existing;
+		// Seed the form from a normalized view of the row when editing, so stored
+		// field names that differ from the form keys (e.g. payment `collectedAt` →
+		// `paymentDate`) still pre-fill. `editingItem` keeps the original row so the
+		// save id is unchanged; only the values used to populate inputs are mapped.
+		const seed = isEdit && opts.normalizeEditItem ? opts.normalizeEditItem(existing!) : existing;
 		titleEl.textContent = `${isEdit ? 'Edit' : 'New'} ${singular}`;
 		subtitleEl.textContent = isEdit ? 'Update the details below' : `Add a new ${singular.toLowerCase()} record`;
 		addBtn.style.display = 'none';
@@ -2797,7 +2810,7 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				// configured default — including dynamic defaults like an auto-generated
 				// lab order number. Without this the "Order Number" input rendered blank
 				// even though the field defines an auto-generated default.
-				const provided = existing?.[field.key];
+				const provided = seed?.[field.key];
 				const initial = (provided !== undefined && provided !== null && provided !== '')
 					? String(provided as string | number)
 					: (isEdit ? '' : (resolveFieldDefault(field) ?? ''));

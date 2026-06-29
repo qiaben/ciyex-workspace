@@ -79,6 +79,12 @@ export function createUsDateField(
 	hidden.type = 'hidden';
 	hidden.value = isoValue || '';
 
+	// Inline validation hint shown directly under the field so a typed-but-invalid
+	// date (e.g. 23/45/2000) surfaces a readable message as the user types, not
+	// only when they hit Save.
+	const err = doc.createElement('div');
+	err.style.cssText = 'font-size:10px;color:#ef4444;margin-top:3px;display:none;';
+
 	const sync = () => {
 		const masked = maskUsDate(visible.value);
 		if (masked !== visible.value) { visible.value = masked; }
@@ -90,6 +96,8 @@ export function createUsDateField(
 		// saving the empty ISO value the parser produced.
 		hidden.dataset.invalid = bad ? '1' : '';
 		visible.style.borderColor = bad ? '#ef4444' : '';
+		err.textContent = bad ? 'Invalid date — please enter a real date (MM/DD/YYYY)' : '';
+		err.style.display = bad ? 'block' : 'none';
 	};
 	visible.addEventListener('input', sync);
 	visible.addEventListener('blur', sync);
@@ -103,6 +111,9 @@ export function createUsDateField(
 		visible.value = isoToUsDate(picker.value);
 		hidden.value = picker.value;
 		hidden.dataset.invalid = '';
+		visible.style.borderColor = '';
+		err.textContent = '';
+		err.style.display = 'none';
 	});
 
 	const icon = doc.createElement('span');
@@ -113,6 +124,7 @@ export function createUsDateField(
 	wrap.appendChild(hidden);
 	wrap.appendChild(picker);
 	wrap.appendChild(icon);
+	wrap.appendChild(err);
 	container.appendChild(wrap);
 	return { hidden, visible, picker };
 }

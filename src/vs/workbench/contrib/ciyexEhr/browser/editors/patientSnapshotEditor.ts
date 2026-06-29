@@ -890,18 +890,41 @@ export class PatientSnapshotEditor extends EditorPane {
 			// endpoint, since the encounter-form composition save below only carries
 			// clinical content, not the Encounter's own fields. Mirrors encounterListPane.
 			const reason = String(values['chiefComplaint'] || values['reason'] || '').trim();
-			await this.apiService.fetch(`/api/${pid}/encounters/${encounterId}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					visitCategory: values['type'] || undefined,
-					encounterDate: values['startDate'] || undefined,
-					endDate: endDate || undefined,
-					encounterProvider: String(values['provider'] || '').trim() || undefined,
-					status: statusVal,
-					reasonForVisit: reason || undefined,
-				}),
-			}).catch(() => { /* non-fatal: the composition save below still runs */ });
+			// Persist the encounter-level status (Signed/Unsigned) here. This is the
+			// SAME endpoint the Encounters side-menu list reads, so a successful PUT is
+			// what makes a status change in the snapshot show up there too. Previously
+			// the result was swallowed with `.catch(() => {})`, so a status PUT that the
+			// server rejected (4xx/5xx resolves without throwing) failed silently — the
+			// snapshot showed the new status from its local overlay while the encounter
+			// list kept the old one (QA: status change not reflected in side-menu). Now
+			// we check the response and warn the user when the status did not persist.
+			try {
+				const stRes = await this.apiService.fetch(`/api/${pid}/encounters/${encounterId}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						visitCategory: values['type'] || undefined,
+						encounterDate: values['startDate'] || undefined,
+						endDate: endDate || undefined,
+						encounterProvider: String(values['provider'] || '').trim() || undefined,
+						status: statusVal,
+						reasonForVisit: reason || undefined,
+					}),
+				});
+				if (!stRes.ok) {
+					this.notificationService.notify({
+						severity: Severity.Warning,
+						message: `Encounter status could not be updated (HTTP ${stRes.status}); the clinical note was still saved.`,
+					});
+				}
+			} catch {
+				// Network failure only — the composition save below still runs so the
+				// clinical content isn't lost.
+				this.notificationService.notify({
+					severity: Severity.Warning,
+					message: 'Encounter status could not be updated (network error); the clinical note was still saved.',
+				});
+			}
 		}
 		const headers = { 'Content-Type': 'application/json' };
 		// Convert the structured-field textareas (diagnoses/procedures/plan/ROS/PE)
@@ -1072,6 +1095,26 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * Payment form opened with Payment Date and Method blank (Payment Date is
 	 * required, so the form could not even be saved).
 	 */
+	/**
+	 * Re-fetch the full payment transaction by id before opening the Edit form.
+	 * The Payment History list rows can be a trimmed projection (so the Edit form
+	 * opened with Date of Service / Reference Type / Receipt Email / allocation
+	 * fields blank even though the stored transaction carried them — QA: "edit
+	 * doesn't fetch all the data"). GET /api/payments/transactions/{id} returns the
+	 * canonical record; merge it over the list row so every field pre-fills. Falls
+	 * back to the list row if the id is non-numeric or the fetch fails.
+	 */
+	private async _loadFullPayment(item: Record<string, unknown>): Promise<Record<string, unknown>> {
+		const id = String(item.id ?? item.transactionId ?? '').trim();
+		if (!/^\d+$/.test(id)) { return item; }
+		try {
+			const res = await this._fetch(`/api/payments/transactions/${id}`);
+			const full = (res && (res.data ?? res)) as Record<string, unknown> | null;
+			if (full && typeof full === 'object') { return { ...item, ...full }; }
+		} catch { /* fall through with the list row */ }
+		return item;
+	}
+
 	private _normalizePaymentForEdit(item: Record<string, unknown>): Record<string, unknown> {
 		const dateOnly = (v: unknown): string => { const s = String(v ?? '').trim(); return s ? s.slice(0, 10) : ''; };
 		const out: Record<string, unknown> = { ...item };
@@ -1170,6 +1213,15 @@ export class PatientSnapshotEditor extends EditorPane {
 			// list view so users can keep managing the collection.
 			closeOnSave: initialMode === 'create',
 			loadList: () => this._loadEntityList(entity),
+			// Payment History opens this dialog in LIST mode; clicking a row's edit
+			// pencil seeds the form from the raw transaction row, whose field names
+			// (collectedAt / paymentMethodType / …) differ from the form keys
+			// (paymentDate / paymentMethod / …). Map them so the edit form pre-fills
+			// Payment Date, Method and the allocation breakdown instead of opening
+			// blank (QA: payment edit "doesn't fetch all the data").
+			normalizeEditItem: entity === 'payment'
+				? (row: Record<string, unknown>) => this._normalizePaymentForEdit(row)
+				: undefined,
 			saveRecord: async (next, existingId) => {
 				// Encounters need a two-step save (mirrors EncounterFormEditor):
 				//   1. POST /api/{patientId}/encounters to mint a real Encounter id
@@ -1290,7 +1342,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// form (QA issue 2: encounter edit opened with start/end date, provider
 		// and vitals all blank).
 		const initialItem = entity === 'encounters' ? await this._loadEncounterForEdit(item)
-			: entity === 'payment' ? this._normalizePaymentForEdit(item)
+			: entity === 'payment' ? this._normalizePaymentForEdit(await this._loadFullPayment(item))
 				: item;
 		openListAndFormDialog({
 			title: reg.title,
@@ -3221,7 +3273,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._revealVitalsEntry?.();
 	}
 
-	private _renderEncounterClinicalRows(card: HTMLElement, encs: Record<string, unknown>[]): void {
+	private _renderEncounterClinicalRows(card: HTMLElement, encsInput: Record<string, unknown>[]): void {
+		// Show the most recent encounter first, then older ones (QA: Encounter
+		// History should list latest → oldest). Read the date from any of the keys
+		// an encounter row can carry; rows with no parseable date sort to the bottom.
+		const encDateMs = (e: Record<string, unknown>): number => {
+			const raw = e.encounterDate || e.startDate || e.start || e.date || e.periodStart || e.createdAt || '';
+			const t = raw ? new Date(String(raw)).getTime() : NaN;
+			return isNaN(t) ? -Infinity : t;
+		};
+		const encs = [...encsInput].sort((a, b) => encDateMs(b) - encDateMs(a));
 		if (encs.length === 0) {
 			const empty = DOM.append(card, DOM.$('div'));
 			empty.textContent = 'No encounters found';
