@@ -5483,6 +5483,44 @@ export class PatientChartEditor extends EditorPane {
 				return;
 			}
 
+			// Appointments: the End Date/Time must not be in the past, and must come
+			// after the Start — editing an appointment to a previous end date is
+			// invalid (a date-comparison rule a regex pattern can't express).
+			if (tab.key === 'appointments') {
+				const endEl = dialogInputs.get('end');
+				const startEl = dialogInputs.get('start');
+				const endVal = String(endEl?.value ?? '').trim();
+				const startVal = String(startEl?.value ?? '').trim();
+				const endDate = endVal ? new Date(endVal) : null;
+				let apptErr = '';
+				if (endDate && !isNaN(endDate.getTime())) {
+					if (endDate.getTime() < Date.now()) {
+						apptErr = 'We can\'t assign a previous end date — choose a future date and time.';
+					} else if (startVal) {
+						const startDate = new Date(startVal);
+						if (!isNaN(startDate.getTime()) && endDate.getTime() <= startDate.getTime()) {
+							apptErr = 'End Date/Time must be after the Start Date/Time.';
+						}
+					}
+				}
+				if (apptErr) {
+					const cell = dialogCells.get('end');
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = apptErr;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+					const focusEl = (this._dateVisibleByKey.get('end') ?? (endEl as HTMLElement | undefined));
+					if (focusEl) {
+						focusEl.style.borderColor = '#ef4444';
+						focusEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
+					}
+					this.notificationService.warn(apptErr);
+					return;
+				}
+			}
+
 			const isFhir = this._isFhirResourceTab(tab);
 			// FHIR endpoints take patientId from the URL path, not the body.
 			// apiPath endpoints (e.g. /api/cds/alerts) still need patientId in the body.
