@@ -80,9 +80,9 @@ function isReasonableId(value: string): boolean {
 	return /^[A-Za-z0-9][A-Za-z0-9\- ]*$/.test(v);
 }
 
-/** True when `value` is a valid US ZIP: 5 digits, optionally +4 (`12345` or `12345-6789`). */
+/** True when `value` is a valid US ZIP: exactly 5 digits (`12345`). */
 function isValidZip(value: string): boolean {
-	return /^\d{5}(-\d{4})?$/.test(value.trim());
+	return /^\d{5}$/.test(value.trim());
 }
 
 /**
@@ -1964,9 +1964,8 @@ export class SettingsHubEditor extends EditorPane {
 					// Fax: digits only (US standard formatting applied for readability).
 					inp.value = formatUsPhone(inp.value);
 				} else if (isZip) {
-					// ZIP: digits with an optional +4 dash, max 9 digits.
-					const d = inp.value.replace(/\D/g, '').slice(0, 9);
-					inp.value = d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+					// ZIP: digits only, exactly 5 (extra digits / letters stripped as typed).
+					inp.value = inp.value.replace(/\D/g, '').slice(0, 5);
 				}
 				this.formData[field.key] = inp.value;
 			});
@@ -2257,7 +2256,7 @@ export class SettingsHubEditor extends EditorPane {
 		// off the normalized segment (`address.zipCode` → `zipcode`) and labels
 		// like "Zip Code" / "Postal Code".
 		if (seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || looks(/zip|postal/)) {
-			return isValidZip(value) ? undefined : `${field.label} must be a valid ZIP code (e.g. 12345 or 12345-6789)`;
+			return isValidZip(value) ? undefined : `${field.label} must be exactly 5 digits (e.g. 12345)`;
 		}
 		// First / Last / Middle name — must contain only letters, spaces,
 		// hyphens, apostrophes or periods (no digits at all), matching the

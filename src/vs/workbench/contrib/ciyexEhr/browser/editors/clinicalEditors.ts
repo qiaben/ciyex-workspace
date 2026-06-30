@@ -625,7 +625,7 @@ export const LAB_RESULT_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 	{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
 	{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
-	{ key: 'panelCode', label: 'Panel Code', type: 'text', placeholder: 'e.g. CBC, 24323-8', typingPattern: '[A-Za-z0-9.\\-]', validationPattern: '^[A-Za-z0-9.\\-]{1,20}$', validationMessage: 'Panel Code may contain only letters, numbers, dot or hyphen (max 20)' },
+	{ key: 'panelCode', label: 'Panel Code', type: 'text', placeholder: 'e.g. 245321', typingPattern: '[0-9]', maxDigits: 6, validationPattern: '^[0-9]{6}$', validationMessage: 'Panel Code must be exactly 6 digits' },
 	{ key: 'recommendations', label: 'Recommendations', type: 'textarea', placeholder: 'Clinical recommendations...', width: 'span 2' },
 	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
 ];
@@ -1271,7 +1271,7 @@ export const IMMUNIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 		],
 	},
 	{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'], typingPattern: '[A-Za-z0-9\\-]', validationPattern: '^[A-Za-z0-9\\-]{1,20}$', validationMessage: 'Lot Number may contain only letters, numbers and hyphens (max 20)' },
+	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'e.g. FR8912', aliases: ['lot'], typingPattern: '[A-Za-z0-9]', validationPattern: '^[A-Za-z0-9]{5,10}$', validationMessage: 'Lot Number must be 5-10 letters and numbers only (e.g. FR8912)' },
 	{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 	// Administration Details
 	{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },

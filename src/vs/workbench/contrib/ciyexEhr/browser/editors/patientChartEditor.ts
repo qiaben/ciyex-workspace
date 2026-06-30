@@ -859,9 +859,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
 					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
 					{
-						key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'Lot #',
-						validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{2,29}$',
-						validationMessage: 'Lot number must be 3-30 alphanumeric characters',
+						key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'e.g. FR8912',
+						validationPattern: '^[A-Za-z0-9]{5,10}$',
+						validationMessage: 'Lot number must be 5-10 letters and numbers only (e.g. FR8912)',
 					},
 					{
 						key: 'dose', label: 'Dose', type: 'text', placeholder: 'e.g., 0.5 mL',
@@ -4980,8 +4980,8 @@ export class PatientChartEditor extends EditorPane {
 		const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
 		// Free-text titles — letters, numbers and common punctuation.
 		const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
-		// Lot numbers: alphanumeric plus hyphens, 3-30 chars.
-		const lotPattern = /^[A-Za-z0-9][A-Za-z0-9\-]{2,29}$/;
+		// Lot numbers: 5-10 letters and numbers only (e.g. FR8912, GJ8539).
+		const lotPattern = /^[A-Za-z0-9]{5,10}$/;
 		// Dose: positive number, optional unit suffix (e.g. "1.5" or "0.5 mL").
 		const dosePattern = /^(?!0+(?:\.0+)?\s*$)\d+(?:\.\d+)?(?:\s*(mL|mg|mcg|units|IU|cc|g|%))?$/i;
 		const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
@@ -4996,8 +4996,8 @@ export class PatientChartEditor extends EditorPane {
 			description: { rx: namePattern, msg: 'No special characters allowed' },
 			materialTitle: { rx: titlePattern, msg: 'Title may contain letters, numbers and basic punctuation' },
 			subject: { rx: namePattern, msg: 'No special characters allowed' },
-			lotNumber: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
-			lot_number: { rx: lotPattern, msg: 'Lot number must be 3-30 alphanumeric characters' },
+			lotNumber: { rx: lotPattern, msg: 'Lot number must be 5-10 letters and numbers only (e.g. FR8912)' },
+			lot_number: { rx: lotPattern, msg: 'Lot number must be 5-10 letters and numbers only (e.g. FR8912)' },
 			dose: { rx: dosePattern, msg: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)' },
 			doseNumber: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },
 			dose_number: { rx: /^[1-9]\d?$/, msg: 'Dose number must be a positive whole number between 1 and 99' },

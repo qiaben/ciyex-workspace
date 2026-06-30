@@ -105,6 +105,20 @@ export class MessagingEditor extends EditorPane {
 	// can drive `document.execCommand` for true WYSIWYG rich-text — matches the
 	// EHR-UI ComposeBar (textareas show only markdown markers, not actual formatting).
 	private inputEl!: HTMLDivElement;
+	// @-mention autocomplete: a Slack/WhatsApp-style popup that lists the current
+	// channel's members as the user types "@". `mentionDropdownEl` is the popup
+	// element; `mentionState` is non-null only while the popup is open and tracks
+	// the in-progress "@query", its position in the input's text node, the filtered
+	// member matches and the highlighted row.
+	private mentionDropdownEl: HTMLElement | undefined;
+	private mentionState: {
+		node: Text;
+		atIndex: number;
+		caretIndex: number;
+		query: string;
+		matches: ChannelMember[];
+		activeIndex: number;
+	} | null = null;
 	// Pending-attachment preview tray: files chosen via the attach menu / camera
 	// are staged here (with thumbnails + a remove button) and only uploaded when
 	// the user actually hits Send, so they can review or drop them beforehand.
@@ -823,7 +837,8 @@ export class MessagingEditor extends EditorPane {
 
 	private _buildCompose(): void {
 		// Switch compose layout to a column so the toolbar sits above the input.
-		this.composeEl.style.cssText = 'padding:8px 16px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;gap:6px;flex-shrink:0;';
+		// `position:relative` anchors the absolutely-positioned @-mention popup.
+		this.composeEl.style.cssText = 'position:relative;padding:8px 16px;border-top:1px solid var(--vscode-editorWidget-border);display:flex;flex-direction:column;gap:6px;flex-shrink:0;';
 
 		// Formatting toolbar (Bold / Italic / Underline / Code / Link / Bullet / Emoji)
 		const toolbar = DOM.append(this.composeEl, DOM.$('.messaging-toolbar'));
@@ -936,7 +951,31 @@ export class MessagingEditor extends EditorPane {
 			+ '.messaging-input ul{padding-left:20px;list-style:disc;}'
 			+ '.messaging-input pre{background:var(--vscode-textCodeBlock-background);padding:6px 8px;border-radius:4px;font-family:monospace;font-size:12px;white-space:pre-wrap;}'
 			+ '.messaging-input code{background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;font-family:monospace;font-size:12px;}';
+		// @-mention popup — lists channel members as the user types "@", like a
+		// Slack/WhatsApp group mention. Anchored above the input via composeEl's
+		// relative positioning; hidden until an "@query" matches a member.
+		this.mentionDropdownEl = DOM.append(this.composeEl, DOM.$('.messaging-mention-popup'));
+		this.mentionDropdownEl.style.cssText = 'position:absolute;left:16px;bottom:52px;min-width:220px;max-width:340px;max-height:200px;overflow-y:auto;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background));border:1px solid var(--vscode-dropdown-border,var(--vscode-editorWidget-border));border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:1600;display:none;padding:4px 0;';
+
+		// Recompute the @-mention state on every content change.
+		this.inputEl.addEventListener('input', () => this._updateMentionAutocomplete());
+		// Close the popup when clicking outside the input or the popup itself.
+		DOM.getActiveWindow().document.addEventListener('mousedown', (e) => {
+			const t = e.target as Node;
+			if (this.mentionState && !this.inputEl.contains(t) && !this.mentionDropdownEl?.contains(t)) {
+				this._closeMention();
+			}
+		});
+
 		this.inputEl.addEventListener('keydown', (e) => {
+			// When the @-mention popup is open, arrows navigate it and Enter/Tab
+			// pick the highlighted member instead of sending / inserting a newline.
+			if (this.mentionState) {
+				if (e.key === 'ArrowDown') { e.preventDefault(); this._moveMentionSelection(1); return; }
+				if (e.key === 'ArrowUp') { e.preventDefault(); this._moveMentionSelection(-1); return; }
+				if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this._commitMention(this.mentionState.matches[this.mentionState.activeIndex]); return; }
+				if (e.key === 'Escape') { e.preventDefault(); this._closeMention(); return; }
+			}
 			// Keyboard shortcuts for formatting
 			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
 				if (e.key === 'b' || e.key === 'B') { e.preventDefault(); this._execFormat('bold'); return; }
@@ -961,6 +1000,111 @@ export class MessagingEditor extends EditorPane {
 		sendBtn.title = 'Send';
 		sendBtn.style.cssText = 'padding:6px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0;';
 		sendBtn.addEventListener('click', () => this._sendMessage());
+	}
+
+	/**
+	 * Detect an in-progress "@query" at the caret and (re)open the member-mention
+	 * popup with the channel members that match it. Closes the popup when the caret
+	 * isn't on an "@token", when nothing matches, or when the channel has no members.
+	 */
+	private _updateMentionAutocomplete(): void {
+		if (!this.mentionDropdownEl) { return; }
+		const members = this.channelInfo?.members ?? [];
+		if (members.length === 0) { this._closeMention(); return; }
+		const win = DOM.getActiveWindow();
+		const sel = win.getSelection();
+		if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) { this._closeMention(); return; }
+		const range = sel.getRangeAt(0);
+		const node = range.startContainer;
+		if (node.nodeType !== Node.TEXT_NODE) { this._closeMention(); return; }
+		const textNode = node as Text;
+		const caretIndex = range.startOffset;
+		const before = (textNode.textContent || '').slice(0, caretIndex);
+		// "@" must start the input or follow whitespace; the query that follows has
+		// no spaces (a single mention token), e.g. "@vi" anchored to the caret.
+		const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
+		if (!m) { this._closeMention(); return; }
+		const query = m[1];
+		const atIndex = caretIndex - query.length - 1;
+		const ql = query.toLowerCase();
+		const matches = members
+			.filter(mem => !ql || mem.displayName.toLowerCase().includes(ql))
+			.slice(0, 8);
+		if (matches.length === 0) { this._closeMention(); return; }
+		this.mentionState = { node: textNode, atIndex, caretIndex, query, matches, activeIndex: 0 };
+		this._renderMentionDropdown();
+	}
+
+	/** Render the member rows of the open @-mention popup (highlighting the active row). */
+	private _renderMentionDropdown(): void {
+		const st = this.mentionState;
+		const el = this.mentionDropdownEl;
+		if (!st || !el) { return; }
+		DOM.clearNode(el);
+		st.matches.forEach((mem, i) => {
+			const row = DOM.append(el, DOM.$('.messaging-mention-item'));
+			row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px;color:var(--vscode-foreground);background:${i === st.activeIndex ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent'};`;
+			const av = DOM.append(row, DOM.$('span'));
+			const initials = mem.avatar?.initials || mem.displayName.split(/\s+/).map(p => p[0] || '').join('').slice(0, 2).toUpperCase();
+			av.textContent = initials;
+			av.style.cssText = `width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0;background:${mem.avatar?.color || 'var(--vscode-badge-background)'};`;
+			const name = DOM.append(row, DOM.$('span'));
+			name.textContent = mem.displayName;
+			name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			if (mem.role) {
+				const role = DOM.append(row, DOM.$('span'));
+				role.textContent = mem.role;
+				role.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);text-transform:capitalize;flex-shrink:0;';
+			}
+			row.addEventListener('mouseenter', () => { st.activeIndex = i; this._renderMentionDropdown(); });
+			// Keep the caret/selection in the input so insertion targets the right spot.
+			row.addEventListener('mousedown', (e) => { e.preventDefault(); });
+			row.addEventListener('click', () => this._commitMention(mem));
+		});
+		el.style.display = 'block';
+	}
+
+	/** Move the @-mention popup highlight by `delta`, wrapping around the list. */
+	private _moveMentionSelection(delta: number): void {
+		const st = this.mentionState;
+		if (!st) { return; }
+		const n = st.matches.length;
+		st.activeIndex = (st.activeIndex + delta + n) % n;
+		this._renderMentionDropdown();
+	}
+
+	/**
+	 * Replace the in-progress "@query" with the chosen member's full name (followed
+	 * by a trailing space) and place the caret after it. The plain "@Name" text
+	 * is rendered as a mention chip by {@link _parseRichText} on send.
+	 */
+	private _commitMention(member: ChannelMember | undefined): void {
+		const st = this.mentionState;
+		if (!st || !member) { this._closeMention(); return; }
+		const node = st.node;
+		const full = node.textContent || '';
+		const before = full.slice(0, st.atIndex);
+		const after = full.slice(st.caretIndex);
+		const insert = `@${member.displayName} `;
+		node.textContent = before + insert + after;
+		const win = DOM.getActiveWindow();
+		const sel = win.getSelection();
+		if (sel) {
+			const range = win.document.createRange();
+			const offset = Math.min((before + insert).length, (node.textContent || '').length);
+			range.setStart(node, offset);
+			range.collapse(true);
+			sel.removeAllRanges();
+			sel.addRange(range);
+		}
+		this._closeMention();
+		this.inputEl.focus();
+	}
+
+	/** Hide and reset the @-mention popup. */
+	private _closeMention(): void {
+		this.mentionState = null;
+		if (this.mentionDropdownEl) { this.mentionDropdownEl.style.display = 'none'; }
 	}
 
 	/**
