@@ -819,6 +819,18 @@ export class TasksEditor extends EditorPane {
 			() => addField('Reference ID', 'referenceId', 'text', { placeholder: 'Reference ID (numeric)' }),
 		);
 
+		// Reference ID is numeric only — strip any non-digit as it is typed (or
+		// pasted) so letters/symbols never make it into the field. Save-time
+		// validation below is the backstop. Applies to both create and edit.
+		const referenceIdInput = fields.get('referenceId') as HTMLInputElement | undefined;
+		if (referenceIdInput) {
+			referenceIdInput.inputMode = 'numeric';
+			referenceIdInput.addEventListener('input', () => {
+				const digitsOnly = referenceIdInput.value.replace(/\D/g, '');
+				if (referenceIdInput.value !== digitsOnly) { referenceIdInput.value = digitsOnly; }
+			});
+		}
+
 		addField('Notes', 'notes', 'textarea', { placeholder: 'Additional notes...' });
 
 		// Buttons
@@ -952,6 +964,17 @@ export class TasksEditor extends EditorPane {
 					this.notificationService.notify({ severity: Severity.Warning, message: `${label} contains invalid characters. Use only letters, numbers, spaces, and common punctuation.` });
 					return;
 				}
+			}
+
+			// Reference ID must be numeric only (digits 0-9). The input strips
+			// non-digits live, but validate on save as a backstop in case a value
+			// was set programmatically or restored on edit.
+			const refIdInput = fields.get('referenceId') as HTMLInputElement | undefined;
+			const refIdVal = refIdInput?.value?.trim() || '';
+			if (refIdVal && !/^\d+$/.test(refIdVal)) {
+				if (refIdInput) { showFieldError('referenceId', refIdInput, 'Reference ID must be a number'); }
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Reference ID must contain digits only (0-9)' });
+				return;
 			}
 
 			const payload: Record<string, unknown> = {};

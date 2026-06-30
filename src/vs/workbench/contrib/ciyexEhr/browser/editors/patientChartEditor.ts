@@ -1404,7 +1404,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'issue', title: 'Issue', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'conditionName', label: 'Issue', type: 'text', required: true, placeholder: 'Issue name' },
+					{ key: 'conditionName', label: 'Issue Name', type: 'text', required: true, placeholder: 'Issue name' },
 					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' }, relatedField: 'conditionName' },
 					{
 						key: 'severity', label: 'Severity', type: 'select', options: [
@@ -2470,6 +2470,13 @@ export class PatientChartEditor extends EditorPane {
 			// produce the wrong field keys.
 			'labs',
 			'lab-results',
+			// Issues: the backend tab_field_config row ships the Issue Name field
+			// without `required`, so the create/edit drawer let users save empty
+			// records (no issue name). Force the rich local config so the
+			// `conditionName` field renders required:true and the shared
+			// required-field validation blocks submission with
+			// "Issue Name is required" until it's filled.
+			'issues',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
@@ -4464,6 +4471,21 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Completed', value: 'completed' },
 					{ label: 'Cancelled', value: 'cancelled' },
 				];
+			case 'report':
+				// Match the Diagnostic Report form's Status options (FHIR
+				// DiagnosticReport.status) so the table filter and the create/edit
+				// form offer the SAME values. The tab previously fell through to the
+				// generic clinical default (Active / Inactive / Resolved), which never
+				// matched a single report row whose status is registered/final/etc.
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Registered', value: 'registered' },
+					{ label: 'Partial', value: 'partial' },
+					{ label: 'Preliminary', value: 'preliminary' },
+					{ label: 'Final', value: 'final' },
+					{ label: 'Amended', value: 'amended' },
+					{ label: 'Cancelled', value: 'cancelled' },
+				];
 			case 'billing':
 			case 'claims':
 				return [
@@ -4837,10 +4859,15 @@ export class PatientChartEditor extends EditorPane {
 			const holder = holderEl.value.trim();
 			const num = numberEl.value.trim();
 			const cvv = cvvEl.value.trim();
+			const city = cityEl.value.trim();
+			const state = stateEl.value.trim();
 			if (!holder) { errEl.textContent = 'Card holder name is required.'; errEl.style.display = ''; return; }
 			if (!card && !num) { errEl.textContent = 'Card number is required.'; errEl.style.display = ''; return; }
 			if (!card && !cvv) { errEl.textContent = 'CVV is required.'; errEl.style.display = ''; return; }
 			if (cvv && !/^\d{3}$/.test(cvv)) { errEl.textContent = 'CVV must be exactly 3 digits.'; errEl.style.display = ''; return; }
+			// City / State: letters and spaces only — reject digits or other symbols.
+			if (city && !/^[A-Za-z ]+$/.test(city)) { errEl.textContent = 'City must contain only letters and spaces.'; errEl.style.display = ''; return; }
+			if (state && !/^[A-Za-z ]+$/.test(state)) { errEl.textContent = 'State must contain only letters and spaces.'; errEl.style.display = ''; return; }
 
 			const payload: Record<string, unknown> = {
 				patientId: this.patientId,
@@ -4849,8 +4876,8 @@ export class PatientChartEditor extends EditorPane {
 				expiryMonth: Number(monthEl.value),
 				expiryYear: Number(yearEl.value),
 				billingAddress: addrEl.value.trim() || undefined,
-				billingCity: cityEl.value.trim() || undefined,
-				billingState: stateEl.value.trim() || undefined,
+				billingCity: city || undefined,
+				billingState: state || undefined,
 				billingZip: zipEl.value.trim() || undefined,
 				billingCountry: countryEl.value.trim() || 'USA',
 				isDefault: isDefaultEl.checked,
@@ -5049,6 +5076,20 @@ export class PatientChartEditor extends EditorPane {
 				// holds even when the config types the field as plain text.
 				const isPhone = f.type === 'phone' || /phone|mobile|fax|tel(?:ephone)?/i.test(f.key) || /phone|mobile|fax/i.test(f.label);
 				const isEmail = f.type === 'email' || /e-?mail/i.test(f.key) || /e-?mail/i.test(f.label);
+				// Email format is canonical — enforce a real email shape for ANY
+				// email-typed or email-keyed field up front, BEFORE the generic
+				// validationPattern branch. The Demographics "Email Address" and
+				// Guardian "Email" ship without a strict pattern, and a merged
+				// backend tab_field_config could carry a permissive one, which would
+				// otherwise let invalid addresses ("abc", "a@b") reach the patient
+				// record because the email check used to sit behind the
+				// validationPattern arm of the if/else chain.
+				if (v && isEmail) {
+					if (!EMAIL_RX.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: f.validationMessage || 'Enter a valid email address' });
+					}
+					continue;
+				}
 				// Per-field validationPattern takes precedence over the implicit
 				// type/keyed checks below.
 				if (v && f.validationPattern) {
@@ -5064,11 +5105,6 @@ export class PatientChartEditor extends EditorPane {
 				} else if (v && isPhone) {
 					if (!US_PHONE_RX.test(v)) {
 						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid 10-digit US phone number, e.g. (555) 123-4567' });
-						continue;
-					}
-				} else if (v && isEmail) {
-					if (!EMAIL_RX.test(v)) {
-						invalid.push({ key: f.key, label: f.label, el, msg: 'Enter a valid email address' });
 						continue;
 					}
 				}

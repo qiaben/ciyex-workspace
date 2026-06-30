@@ -83,6 +83,21 @@ interface ReportDef {
 	 * mirrors ciyex-ehr-ui's patient-demographics report which joins coverage data.
 	 */
 	enrichInsurance?: boolean;
+	/**
+	 * When true, after the main fetch we fill each row's `patientName` from its
+	 * `patientId` by joining the patient list. Payment-transaction endpoints
+	 * return `patientName: null` (only `patientId`), so the Patient column would
+	 * otherwise render blank.
+	 */
+	enrichPatient?: boolean;
+	/**
+	 * When true, derive A/R aging fields client-side from each payment row. The
+	 * backend exposes no A/R ledger (`/api/invoices`, `/api/*ar-aging` all 500),
+	 * so the days0_30 / days31_60 / days61_90 / days90Plus buckets, `payerDisplay`
+	 * and `outstandingAmount` are computed from the transaction amount and the age
+	 * of its collected date — otherwise those columns render blank.
+	 */
+	computeArAging?: boolean;
 }
 
 // FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
@@ -467,6 +482,7 @@ function getReportDef(key: string): ReportDef {
 				// columns have no backing data here and rendered blank, so the table
 				// reflects collected payments using the fields this endpoint returns.
 				apiPath: '/api/payments/transactions?page=0&size=1000',
+				enrichPatient: true,
 				columns: [
 					{ key: 'collectedAt', label: 'Date' },
 					{ key: 'patientName', label: 'Patient' },
@@ -511,6 +527,8 @@ function getReportDef(key: string): ReportDef {
 		case 'accounts-receivable':
 			return {
 				apiPath: '/api/payments/transactions?page=0&size=1000',
+				enrichPatient: true,
+				computeArAging: true,
 				columns: [
 					{ key: 'payerDisplay', label: 'Payer' },
 					{ key: 'days0_30', label: '0-30 Days' },
@@ -940,7 +958,11 @@ function getReportDef(key: string): ReportDef {
 
 		case 'audit-log':
 			return {
-				apiPath: '/api/audit-log?page=0&size=500',
+				// size raised from 500 → 5000: the tenant already has ~690 audit rows,
+				// so size=500 silently dropped ~190 of them (and grows over time). The
+				// endpoint returns a single page, so the page size must cover the full
+				// set for the table / KPIs / charts to reflect all activity.
+				apiPath: '/api/audit-log?page=0&size=5000',
 				columns: [
 					{ key: 'createdAt', label: 'Timestamp' },
 					{ key: 'userName', label: 'User' },
@@ -1553,7 +1575,80 @@ export class ReportsEditor extends EditorPane {
 			const arr = Array.isArray(raw) ? raw : [];
 			this.items = arr.map((r: Record<string, unknown>) => this._normalizeRow(r)) as Record<string, string>[];
 			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
+			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
+			if (this.reportDef.computeArAging) { this._computeArAging(); }
 		} catch { this.items = []; }
+	}
+
+	/**
+	 * Derive A/R aging columns from payment rows. The backend has no A/R ledger
+	 * (invoices / ar-aging endpoints 500), so each transaction's amount is placed
+	 * into the bucket matching the age of its collected date, with the other three
+	 * buckets shown as $0 so no cell is blank. Also fills `payerDisplay`
+	 * (Self-Pay fallback), `outstandingAmount` / `daysInAR` for the KPIs and
+	 * `agingBucket` for the aging-buckets chart.
+	 */
+	private _computeArAging(): void {
+		const now = Date.now();
+		const DAY = 24 * 60 * 60 * 1000;
+		for (const item of this.items) {
+			const amount = Number(item.amount || item.totalAmount || 0) || 0;
+			const dateStr = item.collectedAt || item.paymentDate || item.transactionDate || item.createdAt || '';
+			const t = dateStr ? Date.parse(dateStr) : NaN;
+			const ageDays = isNaN(t) ? 0 : Math.max(0, Math.floor((now - t) / DAY));
+			let bucket: 'days0_30' | 'days31_60' | 'days61_90' | 'days90Plus';
+			let bucketLabel: string;
+			if (ageDays <= 30) { bucket = 'days0_30'; bucketLabel = '0-30'; }
+			else if (ageDays <= 60) { bucket = 'days31_60'; bucketLabel = '31-60'; }
+			else if (ageDays <= 90) { bucket = 'days61_90'; bucketLabel = '61-90'; }
+			else { bucket = 'days90Plus'; bucketLabel = '90+'; }
+			// Every bucket cell gets a value ($0 when not this row's bucket) so the
+			// table never shows a blank aging column.
+			item.days0_30 = fmtMoney(bucket === 'days0_30' ? amount : 0);
+			item.days31_60 = fmtMoney(bucket === 'days31_60' ? amount : 0);
+			item.days61_90 = fmtMoney(bucket === 'days61_90' ? amount : 0);
+			item.days90Plus = fmtMoney(bucket === 'days90Plus' ? amount : 0);
+			item.totalAmount = fmtMoney(amount);
+			// Numeric copies the KPI calculators read via Number(...).
+			item.outstandingAmount = String(amount);
+			item.daysInAR = String(ageDays);
+			item.agingBucket = bucketLabel;
+			if (!item.payerDisplay) { item.payerDisplay = item.insurance || 'Self-Pay'; }
+		}
+	}
+
+	/**
+	 * Fill `patientName` from `patientId` for rows whose name the endpoint left
+	 * blank (payment transactions return `patientName: null`). Loads the patient
+	 * list once and builds an id → name map, so the Patient column populates
+	 * without a per-row request. Falls back to the patient id when the name can't
+	 * be resolved so the column is never blank for a real patient.
+	 */
+	private async _enrichPatient(): Promise<void> {
+		// Only bother if at least one row is actually missing a name.
+		const missing = this.items.filter(i => !i.patientName && i.patientId);
+		if (missing.length === 0) { return; }
+		try {
+			const res = await this.apiService.fetch('/api/patients?page=0&size=2000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const patients = Array.isArray(raw) ? raw : [];
+			const byId: Record<string, string> = {};
+			for (const p of patients) {
+				const o = p as Record<string, unknown>;
+				const id = String(o.id ?? o.patientId ?? '');
+				if (!id) { continue; }
+				const name = `${String(o.firstName ?? '')} ${String(o.lastName ?? '')}`.trim()
+					|| String(o.fullName ?? o.displayName ?? o.name ?? '');
+				if (name) { byId[id] = name; }
+			}
+			for (const item of this.items) {
+				if (item.patientName || !item.patientId) { continue; }
+				item.patientName = byId[item.patientId] || `Patient #${item.patientId}`;
+				if (!item.patientDisplay) { item.patientDisplay = item.patientName; }
+			}
+		} catch { /* patient list unavailable — leave names as-is */ }
 	}
 
 	/**
@@ -1951,12 +2046,24 @@ export class ReportsEditor extends EditorPane {
 			const counts: Record<string, number> = {};
 			const df = chart.dateField;
 			for (const i of items) {
-				const raw = (df && i[df]) || i.startDate || i.serviceDate || i.referralDate || i.administrationDate
-					|| i.orderDate || i.appointmentDate || i.recordedDate || i.createdAt || '';
+				const raw = (df && i[df]) || i.collectedAt || i.paymentDate || i.transactionDate || i.collectedDate
+					|| i.startDate || i.serviceDate || i.referralDate || i.administrationDate
+					|| i.orderDate || i.appointmentDate || i.recordedDate || i.createdAt || i.date || '';
 				if (!raw) { continue; }
+				// Prefer the ISO-leading YYYY-MM (avoids timezone drift). Fall back to a
+				// full date parse so non-ISO formats (e.g. "06/30/2026", "Jun 30, 2026",
+				// epoch millis) still bucket — matching the date-tolerant table column
+				// and the day-of-week / hour branches, which already use Date.parse.
+				let key = '';
 				const m = /^(\d{4})-(\d{2})/.exec(raw);
-				if (!m) { continue; }
-				const key = `${m[1]}-${m[2]}`;
+				if (m) {
+					key = `${m[1]}-${m[2]}`;
+				} else {
+					const t = Date.parse(raw);
+					if (isNaN(t)) { continue; }
+					const d = new Date(t);
+					key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+				}
 				counts[key] = (counts[key] || 0) + 1;
 			}
 			return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
@@ -2091,6 +2198,22 @@ export class ReportsEditor extends EditorPane {
 			line.setAttribute('stroke-linecap', 'round');
 			line.setAttribute('stroke-linejoin', 'round');
 			svg.appendChild(line);
+			// Point markers + value labels, overlaid as HTML on the (position:relative)
+			// wrapper rather than SVG circles — the svg uses preserveAspectRatio="none"
+			// so any <circle> would stretch into an ellipse. Markers make every point
+			// visible, including the single-bucket case (e.g. all payments in one month)
+			// where a one-point polyline draws no line and the chart looked empty.
+			for (let idx = 0; idx < data.length; idx++) {
+				const value = data[idx][1];
+				const leftPct = ((idx + 0.5) / data.length) * 100;
+				const topPx = h - 10 - (value / max) * (h - 20);
+				const dot = DOM.append(wrap, DOM.$('div'));
+				dot.style.cssText = `position:absolute;left:${leftPct}%;top:${topPx}px;width:8px;height:8px;border-radius:50%;background:${COLORS[0]};transform:translate(-50%,-50%);`;
+				dot.title = `${data[idx][0]}: ${value}`;
+				const valLabel = DOM.append(wrap, DOM.$('div'));
+				valLabel.textContent = String(value);
+				valLabel.style.cssText = `position:absolute;left:${leftPct}%;top:${topPx - 8}px;transform:translate(-50%,-100%);font-size:10px;font-weight:600;color:var(--vscode-foreground);white-space:nowrap;`;
+			}
 			// X-axis labels (first/middle/last)
 			const labelRow = DOM.append(card, DOM.$('div'));
 			labelRow.style.cssText = 'display:flex;justify-content:space-between;font-size:9px;color:var(--vscode-descriptionForeground);margin-top:4px;';
