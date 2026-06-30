@@ -1252,11 +1252,20 @@ export class PatientSnapshotEditor extends EditorPane {
 			// columns (date/status/diagnosis) — load its full Encounter resource,
 			// composition (narrative/ROS/PE/assessment/…) and the shared FHIR vitals
 			// so the edit form pre-fills instead of opening blank (QA: "vitals and
-			// other data not fetching"). Payment edits already pre-fill via
-			// normalizeEditItem, so they need no async loader here.
+			// other data not fetching").
+			//
+			// Payment History rows are likewise a trimmed list projection: the Edit
+			// form opened with Payment Date / Method / allocation fields blank because
+			// the synchronous normalizeEditItem only remaps whatever the row carried —
+			// it can't pull the fields the list view omits. Refetch the full
+			// transaction first (GET /api/payments/transactions/{id}) so every field is
+			// present before normalizeEditItem maps the backend names onto the form
+			// keys (QA: payment edit "still not fetching the data, showing nil").
 			loadEditItem: entity === 'encounters'
 				? (row: Record<string, unknown>) => this._loadEncounterForEdit(row)
-				: undefined,
+				: entity === 'payment'
+					? (row: Record<string, unknown>) => this._loadFullPayment(row)
+					: undefined,
 			saveRecord: async (next, existingId) => {
 				// Encounters need a two-step save (mirrors EncounterFormEditor):
 				//   1. POST /api/{patientId}/encounters to mint a real Encounter id
@@ -3239,12 +3248,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			// is what guarantees a later step can never render done before an
 			// earlier one, no matter what stray same-day/patient-level data exists.
 			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
-			// Display-only: the strip reflects status and never navigates. No stage
-			// (done / next / locked) is clickable.
-			const clickable = false;
+			// Only COMPLETED steps are clickable — the user can revisit any step the
+			// visit has already passed (open its appointment / encounter / fee sheet /
+			// payment). The current "next" step and every locked future step are inert:
+			// the next action is driven from the workflow banner above, and a step the
+			// visit hasn't reached yet must not be openable. So a step like Sign & Lock
+			// becomes clickable only after it is signed, and Fee Sheet only after the
+			// fee sheet is created — exactly when each turns green/done.
+			const clickable = state === 'done' && !!s.action;
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-			tile.disabled = true;
-			tile.title = s.label;
+			tile.disabled = !clickable;
+			tile.title = clickable ? `${s.label} — open` : s.label;
 			tile.style.cssText = [
 				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
@@ -3263,11 +3277,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			subEl.textContent = state === 'done' ? s.doneSub : s.sub;
 			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
 			if (clickable) {
-				tile.addEventListener('mouseenter', () => { if (state !== 'next') { tile.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.22))'; } });
-				tile.addEventListener('mouseleave', () => {
-					if (state === 'done') { tile.style.background = 'rgba(34,197,94,0.10)'; }
-					else if (state !== 'next') { tile.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.08))'; }
-				});
+				// clickable is only ever true for a done (green) step.
+				tile.addEventListener('mouseenter', () => { tile.style.background = 'rgba(34,197,94,0.22)'; });
+				tile.addEventListener('mouseleave', () => { tile.style.background = 'rgba(34,197,94,0.10)'; });
 				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
 			}
 		});
@@ -3339,7 +3351,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			{
 				key: 'checkin', label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn,
 				sub: 'Patient arrives', doneSub: 'Checked in',
-				action: checkedIn ? undefined : () => void this._changeApptStatus(appointmentId, 'Checked-in', apt),
+				// Once checked in, the step is reviewable: clicking re-opens the
+				// appointment so the front desk can amend the visit.
+				action: checkedIn ? () => void this._openApptEdit(apt) : () => void this._changeApptStatus(appointmentId, 'Checked-in', apt),
 			},
 			{
 				key: 'room', label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned,
@@ -3355,8 +3369,9 @@ export class PatientSnapshotEditor extends EditorPane {
 				key: 'completed', label: 'Completed', role: 'Front desk', icon: 'check', done: completed,
 				sub: 'Mark complete', doneSub: 'Visit complete',
 				// Marking Completed auto-creates + links the encounter (single-action
-				// rule). Already-completed re-selects are a no-op inside _applyStatusSelection.
-				action: completed ? undefined : () => void this._applyStatusSelection(apt, appointmentId, 'Completed'),
+				// rule). Once complete the step is reviewable — clicking re-opens the
+				// appointment rather than re-running the status change.
+				action: completed ? () => void this._openApptEdit(apt) : () => void this._applyStatusSelection(apt, appointmentId, 'Completed'),
 			},
 			{
 				key: 'encounter', label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter,
