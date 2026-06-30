@@ -220,6 +220,10 @@ export class MessagingEditor extends EditorPane {
 		if (!input.threadParentId) {
 			void this._loadChannelDetails(input.channelId);
 		}
+		// Load the authoritative member roster (channel-scoped, so also for threads)
+		// from the dedicated endpoint — the channel-list payload's embedded members
+		// can be partial, which left the @-mention popup showing only the owner.
+		void this._loadChannelMembers(input.channelId);
 
 		await this._loadMessages(input.channelId, input.threadParentId);
 
@@ -1009,7 +1013,7 @@ export class MessagingEditor extends EditorPane {
 	 */
 	private _updateMentionAutocomplete(): void {
 		if (!this.mentionDropdownEl) { return; }
-		const members = this.channelInfo?.members ?? [];
+		const members = this._mentionCandidates();
 		if (members.length === 0) { this._closeMention(); return; }
 		const win = DOM.getActiveWindow();
 		const sel = win.getSelection();
@@ -1047,7 +1051,9 @@ export class MessagingEditor extends EditorPane {
 			const av = DOM.append(row, DOM.$('span'));
 			const initials = mem.avatar?.initials || mem.displayName.split(/\s+/).map(p => p[0] || '').join('').slice(0, 2).toUpperCase();
 			av.textContent = initials;
-			av.style.cssText = `width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0;background:${mem.avatar?.color || 'var(--vscode-badge-background)'};`;
+			// Avatar colour from the API is a Tailwind class (not CSS), so use the
+			// theme badge colours here for a valid, theme-consistent swatch.
+			av.style.cssText = 'width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--vscode-badge-foreground);background:var(--vscode-badge-background);flex-shrink:0;';
 			const name = DOM.append(row, DOM.$('span'));
 			name.textContent = mem.displayName;
 			name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
@@ -1667,7 +1673,12 @@ export class MessagingEditor extends EditorPane {
 				createdAt: ch.createdAt as string | undefined,
 				createdBy: ch.createdBy as string | undefined,
 				memberCount: ch.memberCount as number | undefined,
-				members: ch.members as ChannelMember[] | undefined,
+				// Keep whichever roster is fuller: the dedicated /members endpoint
+				// (loaded in parallel) is authoritative, so don't let a partial
+				// embedded list from /api/channels overwrite it.
+				members: (Array.isArray(ch.members) && (ch.members as ChannelMember[]).length >= (this.channelInfo.members?.length ?? 0))
+					? ch.members as ChannelMember[]
+					: this.channelInfo.members,
 			};
 			if (this.detailsOpen) { this._renderDetails(); }
 			// Re-parse @mentions in already-rendered messages now that the member
@@ -1677,6 +1688,56 @@ export class MessagingEditor extends EditorPane {
 			// eslint-disable-next-line no-restricted-syntax
 			if (this.messageListEl.querySelector('[data-msg-id]')) { this._renderMessages(); }
 		} catch { /* API not ready */ }
+	}
+
+	/**
+	 * Fetch the channel's full member roster from the dedicated
+	 * `GET /api/channels/{id}/members` endpoint and store it on `channelInfo`.
+	 * This is the authoritative source for the @-mention popup — the channel-list
+	 * payload's embedded `members` can be partial (it left the popup listing only
+	 * the channel owner).
+	 */
+	private async _loadChannelMembers(channelId: string): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`/api/channels/${channelId}/members`);
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const list: Array<Record<string, unknown>> = data?.data || data?.content || (Array.isArray(data) ? data : []);
+			if (!Array.isArray(list) || list.length === 0) { return; }
+			// Ignore a response that arrived after the user switched channels.
+			if (this.channelInfo?.id !== channelId) { return; }
+			this.channelInfo.members = list.map(m => ({
+				userId: String(m.userId ?? ''),
+				displayName: String(m.displayName ?? m.userId ?? ''),
+				role: m.role as string | undefined,
+				joinedAt: m.joinedAt as string | undefined,
+				avatar: m.avatar as ChannelMember['avatar'],
+			}));
+			this.channelInfo.memberCount = this.channelInfo.members.length;
+			if (this.detailsOpen) { this._renderDetails(); }
+			// eslint-disable-next-line no-restricted-syntax
+			if (this.messageListEl.querySelector('[data-msg-id]')) { this._renderMessages(); }
+		} catch { /* API not ready */ }
+	}
+
+	/**
+	 * Build the @-mention candidate list: the channel's members merged with anyone
+	 * who has posted in the channel (deduped by display name), so every group
+	 * participant is mentionable even when the membership roster is sparse.
+	 */
+	private _mentionCandidates(): ChannelMember[] {
+		const byName = new Map<string, ChannelMember>();
+		for (const m of (this.channelInfo?.members ?? [])) {
+			const dn = (m.displayName || '').trim();
+			if (dn) { byName.set(dn.toLowerCase(), m); }
+		}
+		for (const msg of this.messages) {
+			const sn = (msg.senderName || '').trim();
+			if (sn && !byName.has(sn.toLowerCase())) {
+				byName.set(sn.toLowerCase(), { userId: msg.senderId, displayName: sn });
+			}
+		}
+		return Array.from(byName.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
 	}
 
 	/** Show/hide the channel-details side panel. */
