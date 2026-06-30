@@ -73,6 +73,18 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		this._register(this.authService.onDidChangeAuthState(state => {
 			if (state === CiyexAuthState.Authenticated) {
+				// Account switch detection. login()/signup()/changePassword() set
+				// the auth state straight to Authenticated WITHOUT passing through
+				// NotAuthenticated, so when a second account is used (or a brand-new
+				// practice is signed up) on the same window, _onSignedOut() never
+				// runs. The previous user's editor tabs keep their cached, tenant-
+				// scoped data and the permissions/menus are never reloaded -> the new
+				// account sees the previous account's data across every module.
+				// If the identity (user + org) changed since we last bootstrapped,
+				// tear the old session down first, then re-bootstrap for the new one.
+				if (this._authenticated && this._readIdentity() !== this._currentIdentity) {
+					this._onSignedOut();
+				}
 				this._onAuthenticated();
 			} else if (state === CiyexAuthState.NotAuthenticated) {
 				this._onSignedOut();
@@ -278,8 +290,27 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	}
 
 	private _authenticated = false;
+	private _currentIdentity: string | undefined;
 	private _statusBarEntries: { dispose(): void }[] = [];
 	private _unreadPollTimer: number | undefined;
+
+	/**
+	 * Identity of the account the EHR last bootstrapped for: user id + org alias.
+	 * Used to detect an in-place account switch (login/signup that goes straight
+	 * to Authenticated without a NotAuthenticated transition) so we can tear down
+	 * the previous user's cached editors/services before re-bootstrapping.
+	 * Note: _storeAuth() writes these localStorage keys BEFORE firing the
+	 * Authenticated state change, so they are already the NEW user's values here.
+	 */
+	private _readIdentity(): string {
+		try {
+			const uid = localStorage.getItem('ciyex_user_id') || localStorage.getItem('ciyex_email') || '';
+			const org = localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || '';
+			return `${uid}|${org}`;
+		} catch {
+			return '';
+		}
+	}
 
 	private _onSignedOut(): void {
 		// Tear down everything tied to the previous user so the next login
@@ -287,6 +318,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		// sign-out keeps the first user's permissions, menus, role badge,
 		// and any cached service state.
 		this._authenticated = false;
+		this._currentIdentity = undefined;
 		this.permissionService.reset();
 		this.menuService.reset();
 		this.installationsService.reset();
@@ -321,6 +353,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	private async _onAuthenticated(): Promise<void> {
 		if (this._authenticated) { return; }
 		this._authenticated = true;
+		this._currentIdentity = this._readIdentity();
 
 		// Hide developer sidebar containers immediately (no API call)
 		this._hideDevSidebarContainers();

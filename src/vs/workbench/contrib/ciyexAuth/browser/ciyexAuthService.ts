@@ -761,6 +761,12 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 			})();
 			if (alias) {
 				localStorage.setItem('ciyex_selected_tenant', alias);
+			} else {
+				// New login resolved no org — never inherit the previous user's
+				// tenant, which would put a stale X-Tenant-Name on requests and a
+				// wrong org badge in the status bar.
+				localStorage.removeItem('ciyex_selected_tenant');
+				localStorage.removeItem('ciyex_tenant');
 			}
 		} catch { /* */ }
 	}
