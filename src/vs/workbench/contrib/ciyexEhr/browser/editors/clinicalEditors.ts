@@ -625,7 +625,7 @@ export const LAB_RESULT_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 	{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
 	{ key: 'panelName', label: 'Panel Name', type: 'text', placeholder: 'CBC, BMP...' },
-	{ key: 'panelCode', label: 'Panel Code', type: 'text' },
+	{ key: 'panelCode', label: 'Panel Code', type: 'text', placeholder: 'e.g. CBC, 24323-8', typingPattern: '[A-Za-z0-9.\\-]', validationPattern: '^[A-Za-z0-9.\\-]{1,20}$', validationMessage: 'Panel Code may contain only letters, numbers, dot or hyphen (max 20)' },
 	{ key: 'recommendations', label: 'Recommendations', type: 'textarea', placeholder: 'Clinical recommendations...', width: 'span 2' },
 	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...', width: 'span 2' },
 ];
@@ -1271,7 +1271,7 @@ export const IMMUNIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 		],
 	},
 	{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
-	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'] },
+	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'ABC123', aliases: ['lot'], typingPattern: '[A-Za-z0-9\\-]', validationPattern: '^[A-Za-z0-9\\-]{1,20}$', validationMessage: 'Lot Number may contain only letters, numbers and hyphens (max 20)' },
 	{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 	// Administration Details
 	{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
@@ -1624,6 +1624,7 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 			{ label: 'Revoked', value: 'revoked' },
 		],
 		formFields: CARE_PLANS_FORM_FIELDS,
+		endNotBeforeStart: { startKey: 'startDate', endKey: 'endDate', message: 'End Date cannot be earlier than Start Date' },
 		formExtras: (host, editing) => renderCarePlanExtras(host, editing, this.apiService),
 		additionalFilters: [
 			{
@@ -3155,6 +3156,51 @@ export class RecallEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(RecallEditor.ID, group, t, th, s, a, d); }
 }
 
+// Medical Code Active/Inactive - local persistence.
+// The `global_codes` PUT endpoint does NOT persist the `active` field: it echoes
+// the submitted value back in the response, but a subsequent GET still returns
+// the code as Active (verified against api-dev). So toggling Active->Inactive
+// never stuck no matter how the value was typed/coerced. Until the backend
+// supports it, we remember the user's choice locally (keyed by tenant + code id)
+// and re-apply it to every loaded row, so the change persists across reloads
+// within the app. Shared by the full Codes editor and the Operations pane.
+const MEDICAL_CODE_ACTIVE_OVERRIDE_KEY = 'ciyex.medicalCode.activeOverrides';
+
+function _medicalCodeOverrideTenant(): string {
+	try { return localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant') || ''; } catch { return ''; }
+}
+
+function _readMedicalCodeOverrides(): Record<string, boolean> {
+	try {
+		const raw = localStorage.getItem(MEDICAL_CODE_ACTIVE_OVERRIDE_KEY);
+		const parsed = raw ? JSON.parse(raw) : {};
+		return parsed && typeof parsed === 'object' ? parsed as Record<string, boolean> : {};
+	} catch { return {}; }
+}
+
+/** Persist a Medical Code's Active/Inactive choice locally (tenant-scoped). */
+export function setMedicalCodeActiveOverride(id: unknown, active: boolean): void {
+	if (id === undefined || id === null || id === '') { return; }
+	try {
+		const all = _readMedicalCodeOverrides();
+		all[`${_medicalCodeOverrideTenant()}::${String(id)}`] = active;
+		localStorage.setItem(MEDICAL_CODE_ACTIVE_OVERRIDE_KEY, JSON.stringify(all));
+	} catch { /* storage is best-effort */ }
+}
+
+/** Re-apply locally-stored Active/Inactive overrides onto loaded code rows. */
+export function applyMedicalCodeActiveOverrides(items: Record<string, unknown>[]): Record<string, unknown>[] {
+	const all = _readMedicalCodeOverrides();
+	if (!Object.keys(all).length) { return items; }
+	const tenant = _medicalCodeOverrideTenant();
+	return items.map(it => {
+		const id = it.id ?? it.fhirId;
+		if (id === undefined || id === null) { return it; }
+		const key = `${tenant}::${String(id)}`;
+		return Object.prototype.hasOwnProperty.call(all, key) ? { ...it, active: all[key] } : it;
+	});
+}
+
 export const MEDICAL_CODES_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'code', label: 'Code', type: 'text', required: true, placeholder: 'e.g. 99213' },
 	{
@@ -3245,6 +3291,14 @@ export class CodesEditor extends ClinicalListEditorBase {
 			}
 			return payload;
 		},
+		// The backend ignores `active` on update, so remember the Active/Inactive
+		// choice locally and re-apply it to every loaded row (QA issue 10).
+		afterSave: (saved) => {
+			if (Object.prototype.hasOwnProperty.call(saved, 'active')) {
+				setMedicalCodeActiveOverride(saved.id ?? saved.fhirId, saved.active === true || saved.active === 'true');
+			}
+		},
+		enrichItems: async (items) => applyMedicalCodeActiveOverrides(items),
 		cellRenderer: (key, value) => {
 			if (key === 'active') {
 				return value === true || value === 'true' ? 'Active' : 'Inactive';

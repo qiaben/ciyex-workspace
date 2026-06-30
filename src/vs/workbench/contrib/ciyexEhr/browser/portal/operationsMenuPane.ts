@@ -19,7 +19,7 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields, resolveFieldDefault, parseSavedRecord } from '../sidebarActions.js';
-import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS } from '../editors/clinicalEditors.js';
+import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS, setMedicalCodeActiveOverride, applyMedicalCodeActiveOverrides } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -325,7 +325,10 @@ export class OperationsMenuPane extends ViewPane {
 			const res = await this.apiService.fetch(item.apiPath);
 			if (res.ok) {
 				const data = await res.json();
-				const rows = (data?.data?.content || data?.content || data?.data || (Array.isArray(data) ? data : [])) as DataRow[];
+				let rows = (data?.data?.content || data?.content || data?.data || (Array.isArray(data) ? data : [])) as DataRow[];
+				// Medical Codes Active/Inactive isn't persisted by the backend, so
+				// re-apply the locally-stored choice (shared with the Codes editor).
+				if (item.id === 'codes') { rows = applyMedicalCodeActiveOverrides(rows as Record<string, unknown>[]) as DataRow[]; }
 				this.data.set(item.id, rows);
 				const total = data?.data?.totalElements ?? data?.totalElements ?? rows.length;
 				this.counts.set(item.id, total);
@@ -623,6 +626,11 @@ export class OperationsMenuPane extends ViewPane {
 				// Show the new record instantly using the POST response (falling back
 				// to the submitted values), then reconcile in the background.
 				const saved = await parseSavedRecord(res) ?? { ...next };
+				// Medical Codes: the backend ignores `active`, so persist the choice
+				// locally (re-applied on every load).
+				if (item.id === 'codes' && Object.prototype.hasOwnProperty.call(saved, 'active')) {
+					setMedicalCodeActiveOverride((saved as DataRow).id ?? (saved as DataRow).fhirId, (saved as Record<string, unknown>).active === true);
+				}
 				this._applyOptimistic(item, saved as DataRow, 'create');
 			},
 		});
@@ -674,6 +682,12 @@ export class OperationsMenuPane extends ViewPane {
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				// Patch the edited row in place instantly, then reconcile.
 				const saved = await parseSavedRecord(res) ?? payload;
+				// Medical Codes: backend ignores `active`; persist Active/Inactive
+				// locally so it sticks across reloads (matches the Codes editor).
+				if (item.id === 'codes' && Object.prototype.hasOwnProperty.call(next, 'active')) {
+					setMedicalCodeActiveOverride(id, next.active === true);
+					(saved as Record<string, unknown>).active = next.active === true;
+				}
 				this._applyOptimistic(item, saved as DataRow, 'update');
 			},
 		});

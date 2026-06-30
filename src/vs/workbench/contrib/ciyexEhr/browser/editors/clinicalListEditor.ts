@@ -234,6 +234,20 @@ export interface ClinicalEditorConfig {
 	 */
 	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean) => Record<string, unknown>;
 	/**
+	 * Called after a successful create/update with the saved record (the parsed
+	 * server response merged over the submitted payload, always carrying `id`).
+	 * Use for client-side bookkeeping the backend can't persist itself — e.g.
+	 * Medical Codes Active/Inactive, which the `global_codes` PUT endpoint ignores,
+	 * so the editor remembers the choice locally and re-applies it via {@link enrichItems}.
+	 */
+	afterSave?: (saved: Record<string, unknown>, isEdit: boolean) => void;
+	/**
+	 * Cross-field date-order guard: when both date fields carry a value, the end
+	 * date must not be earlier than the start date. Use for forms with a start/end
+	 * date pair (e.g. Care Plans) so an end-before-start record can never be saved.
+	 */
+	endNotBeforeStart?: { startKey: string; endKey: string; message?: string };
+	/**
 	 * Optional async transformer applied to the record before the EDIT form is
 	 * seeded. Use to backfill fields the row/GET-by-id doesn't carry — e.g. the
 	 * lab-result DTO only has `patientId`, so this fetches the patient and adds
@@ -1992,6 +2006,22 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			}
 
+			// Cross-field date-order guard (e.g. Care Plans end date must not precede
+			// the start date). The registered date input holds the ISO value, which
+			// sorts lexicographically, so a plain string compare is correct.
+			if (cfg.endNotBeforeStart) {
+				const { startKey, endKey, message } = cfg.endNotBeforeStart;
+				const startVal = inputs.get(startKey)?.value.trim() || '';
+				const endVal = inputs.get(endKey)?.value.trim() || '';
+				if (startVal && endVal && endVal < startVal) {
+					const endField = fields.find(f => f.key === endKey) || fields[0];
+					const startLabel = fields.find(f => f.key === startKey)?.label || 'Start Date';
+					const focusEl = dateRefs.get(endKey)?.visible ?? inputs.get(endKey);
+					failValidation(focusEl, message || `${endField.label} cannot be earlier than ${startLabel}`, endField);
+					return;
+				}
+			}
+
 			// Build payload from form values
 			const formValues: Record<string, unknown> = {};
 			for (const field of fields) {
@@ -2000,6 +2030,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const v = input.value.trim();
 				if (field.type === 'number') {
 					formValues[field.key] = v === '' ? null : Number(v);
+				} else if (field.type === 'select' && (field.options || []).length > 0
+					&& (field.options || []).every(o => o.value === 'true' || o.value === 'false')) {
+					// Boolean-backed select (options are exactly true/false): the form
+					// value is the STRING 'true'/'false', but the backend field is a
+					// boolean and any non-empty string is truthy. Coerce so toggling a
+					// Medical Code Active→Inactive actually persists as `false` instead
+					// of staying Active (QA issue 10).
+					formValues[field.key] = v === 'true';
 				} else {
 					formValues[field.key] = v;
 				}
@@ -2072,6 +2110,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					// second full-list GET. The background reconcile below then pulls the
 					// canonical server state (computed fields, sort order, totals).
 					const saved = await parseSavedRecord(res);
+					// afterSave bookkeeping (e.g. persist Medical Code Active/Inactive
+					// locally since the backend ignores it). Runs BEFORE _loadData so the
+					// enrichItems re-apply below sees the freshly-stored override.
+					if (cfg.afterSave) {
+						const rec: Record<string, unknown> = { ...payload, ...(saved ?? {}) };
+						if (rec.id === undefined || rec.id === null) { rec.id = this.editingItem?.id; }
+						try { cfg.afterSave(rec, isEdit); } catch { /* best-effort */ }
+					}
 					if (isEdit) {
 						// Patch the edited row in place — it's already visible on this page.
 						const editedId = this.editingItem?.id;

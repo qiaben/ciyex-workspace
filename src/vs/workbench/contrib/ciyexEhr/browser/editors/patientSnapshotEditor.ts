@@ -1313,6 +1313,17 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 				if ((!reg.nonFhir || PatientSnapshotEditor._isLabEntity(entity)) && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
+					// Lab orders/results created from the snapshot must carry the
+					// patient's name — the Lab Orders list falls back to "Patient #<id>"
+					// when patientFirstName/Last are blank. The full Labs page fills these
+					// from the patient search; here the patient is fixed, so backfill from
+					// the known display name (QA issue 1).
+					if (PatientSnapshotEditor._isLabEntity(entity) && this._currentPatientName) {
+						const parts = this._currentPatientName.trim().split(/\s+/);
+						if (!payload.patientFirstName) { payload.patientFirstName = parts[0] || this._currentPatientName; }
+						if (!payload.patientLastName) { payload.patientLastName = parts.slice(1).join(' '); }
+						if (!payload.patientName) { payload.patientName = this._currentPatientName; }
+					}
 				}
 				const res = await this.apiService.fetch(url, {
 					method,

@@ -282,6 +282,22 @@ export class MessagingEditor extends EditorPane {
 				if (!Array.isArray(newMessages)) { newMessages = []; }
 			}
 
+			// Normalize the boolean flags from the backend DTO, which names them
+			// `isPinned` / `isEdited` / `isDeleted` / `isSystem` (and
+			// `threadReplyCount`). The frontend Message uses `pinned` / `edited` /
+			// `deleted` / `system` / `replyCount`; the old code assigned the raw rows
+			// straight through, so `m.pinned` was always undefined and a pinned
+			// message never entered the Pinned bar — clicking Pin looked like it did
+			// nothing (QA issue 9).
+			for (const m of newMessages) {
+				const raw = m as unknown as Record<string, unknown>;
+				m.pinned = raw.pinned === true || raw.isPinned === true || (raw.pinnedAt !== null && raw.pinnedAt !== undefined && raw.pinnedAt !== '');
+				m.edited = raw.edited === true || raw.isEdited === true;
+				m.deleted = raw.deleted === true || raw.isDeleted === true;
+				m.system = raw.system === true || raw.isSystem === true;
+				if (m.replyCount === undefined && typeof raw.threadReplyCount === 'number') { m.replyCount = raw.threadReplyCount as number; }
+			}
+
 			// Only re-render if messages changed. The signature must include the
 			// per-message state that affects rendering (pinned / edited content /
 			// reactions / deleted) — keying off the ID set alone meant a pin/unpin,

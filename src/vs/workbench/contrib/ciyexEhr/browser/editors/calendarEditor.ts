@@ -1674,6 +1674,18 @@ export class CalendarEditor extends EditorPane {
 			if (requireField(!!provId, providerIdEl, 'Provider is required')) { return; }
 			if (requireField(!!locId, locationIdEl, 'Location is required')) { return; }
 
+			// End must be after start (QA issue 6: an end date/time earlier than
+			// the start was saved without complaint). Date fields hold ISO values
+			// and times are HH:MM, so `${date}T${time}` strings sort correctly.
+			const startDT = `${startD}T${startT}`;
+			const endDT = `${endD}T${endT}`;
+			if (endDT <= startDT) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'End date/time must be after the start date/time' });
+				if (endDateEl) { endDateEl.style.borderColor = '#ef4444'; }
+				if (endTimeEl) { endTimeEl.style.borderColor = '#ef4444'; endTimeEl.focus(); }
+				return;
+			}
+
 			// All required fields are valid — claim the in-flight lock and disable
 			// the button NOW, before the first await (the dup-check), so a second
 			// click can't slip past while the check/POST are running.

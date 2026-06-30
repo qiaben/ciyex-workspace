@@ -567,6 +567,17 @@ export interface IEditFieldDef {
 	maxDigits?: number;
 	/** For numeric/tel inputs: enforce a minimum number of digits on save. */
 	minDigits?: number;
+	/** Regex source enforced on save: a non-empty value that doesn't match is
+	 *  rejected. Carried over from the editor's {@link FormFieldDef.validationPattern}
+	 *  so the snapshot drawer / record modal enforce the SAME rules as the full
+	 *  editor (e.g. Panel Code, Pharmacy Phone, Lot Number, Facility Phone). */
+	validationPattern?: string;
+	/** Error message shown when {@link validationPattern} fails. */
+	validationMessage?: string;
+	/** Regex source that each individual typed character must match. When set,
+	 *  keydown/paste/input guards keep invalid characters from ever landing in
+	 *  the field (mirrors {@link FormFieldDef.typingPattern}). */
+	typingPattern?: string;
 	required?: boolean;
 	placeholder?: string;
 	hint?: string;
@@ -661,9 +672,9 @@ export async function parseSavedRecord(res: Response): Promise<Record<string, un
  *
  * `search` fields map to plain text here; {@link withTypeaheadSearch} (applied
  * when the drawer opens) upgrades the well-known keys (patient, provider, code
- * systems, insurance, …) back into real typeaheads by key. Validation patterns
- * are intentionally dropped — the drawer doesn't enforce them — but every field,
- * label, option, default and hidden flag carries over.
+ * systems, insurance, …) back into real typeaheads by key. Validation patterns,
+ * messages and typing guards carry over so the drawer enforces the SAME rules as
+ * the full editor (e.g. Panel Code / Pharmacy Phone / Lot Number / Facility Phone).
  */
 export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDef[] {
 	return formFields.map((f): IEditFieldDef => {
@@ -685,6 +696,9 @@ export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDe
 			optionLabelKey: f.optionsLabelField,
 			optionValueKey: f.optionsValueField,
 			maxDigits: f.maxDigits,
+			validationPattern: f.validationPattern,
+			validationMessage: f.validationMessage,
+			typingPattern: f.typingPattern,
 			hidden: f.hidden,
 			defaultValue: def,
 			// Mirror the editor form's per-field layout exactly: the editor renders
@@ -1044,8 +1058,12 @@ export function withTypeaheadSearch(
 			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q) };
 		}
 		// NDC medication code search (ciyex-codes has no RxNorm system; meds are NDC).
+		// strictSelect:false — the NDC dataset is often empty for an org, so the
+		// dropdown returns nothing and a strict field would WIPE the user's typed
+		// code on blur/save (QA: "Medication Code does not accept or retain manually
+		// entered values"). The typeahead only SUGGESTS codes; free text is kept.
 		if (k === 'medicationcode' || k === 'rxnormcode' || k === 'ndccode') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('NDC', q) };
+			return { ...f, kind: 'search' as const, strictSelect: false, onSearch: (q) => fetchCodeSystem('NDC', q) };
 		}
 		// HCPCS code search.
 		if (k === 'hcpcscode') {
@@ -1712,6 +1730,21 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				tel.addEventListener('input', () => { tel.value = formatUsPhone(tel.value); });
 			}
 		}
+		// typingPattern: keep characters that don't match out of the field at
+		// keystroke/paste/input time (e.g. Lot Number alphanumerics only), mirroring
+		// the full editor's per-character guard.
+		if (field.typingPattern && DOM.isHTMLInputElement(input)) {
+			const tpRe = new RegExp(field.typingPattern);
+			const navKeys = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+			input.addEventListener('keydown', (e: KeyboardEvent) => {
+				if (navKeys.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
+				if (!tpRe.test(e.key)) { e.preventDefault(); }
+			});
+			input.addEventListener('input', () => {
+				const clean = input.value.split('').filter(ch => tpRe.test(ch)).join('');
+				if (clean !== input.value) { input.value = clean; }
+			});
+		}
 		input.addEventListener('focus', () => {
 			input.style.borderColor = 'var(--vscode-focusBorder, #007fd4)';
 		});
@@ -1971,7 +2004,33 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				errorMsg.textContent = `Enter a valid ${f.label} (e.g. name@example.com)`;
 				return;
 			}
+			// Phone / fax fields must hold a real number — no letters, 10-15 digits.
+			// Validation patterns aren't always present (some phone fields rely on
+			// this generic guard), so block alpha / wrong-length here too (QA:
+			// Pharmacy Phone / Facility Phone accepted letters and excess digits).
+			if ((f.kind === 'tel' || /\b(phone|fax|mobile|cell)\b/i.test(f.label)) && v.trim()) {
+				const digits = v.replace(/\D/g, '');
+				if (/[A-Za-z]/.test(v) || digits.length < 10 || digits.length > 15) {
+					errorMsg.textContent = f.validationMessage || `Enter a valid ${f.label} (10-15 digits)`;
+					return;
+				}
+			}
+			// validationPattern carried over from the editor's FormFieldDef — a
+			// non-empty value that doesn't match is rejected (e.g. Panel Code).
+			if (f.validationPattern && v.trim() && !new RegExp(f.validationPattern).test(v.trim())) {
+				errorMsg.textContent = f.validationMessage || `${f.label} format is invalid`;
+				return;
+			}
 			result[f.key] = v;
+		}
+		// Generic start/end date-order guard (e.g. Care Plans) — the date input
+		// holds the ISO value, which sorts lexicographically, so a string compare
+		// is correct. Mirrors the full editor's endNotBeforeStart check.
+		const startIso = inputs.get('startDate')?.value.trim() || '';
+		const endIso = inputs.get('endDate')?.value.trim() || '';
+		if (startIso && endIso && endIso < startIso) {
+			errorMsg.textContent = 'End Date cannot be earlier than Start Date';
+			return;
 		}
 		// Merge composite-section data (Goals / Interventions, …) so the saved
 		// payload matches the full editor form exactly.
@@ -2599,6 +2658,20 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		}
 		inp.addEventListener('focus', () => focusRing(inp, true));
 		inp.addEventListener('blur', () => focusRing(inp, false));
+		// typingPattern: keep non-matching characters out of the field at
+		// keystroke/paste/input time (e.g. Panel Code / Lot Number alphanumerics).
+		if (field.typingPattern) {
+			const tpRe = new RegExp(field.typingPattern);
+			const navKeys = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+			inp.addEventListener('keydown', (e: KeyboardEvent) => {
+				if (navKeys.includes(e.key) || e.ctrlKey || e.metaKey) { return; }
+				if (!tpRe.test(e.key)) { e.preventDefault(); }
+			});
+			inp.addEventListener('input', () => {
+				const clean = inp.value.split('').filter(ch => tpRe.test(ch)).join('');
+				if (clean !== inp.value) { inp.value = clean; }
+			});
+		}
 		host.appendChild(inp);
 		inputs.set(field.key, inp);
 
@@ -2955,7 +3028,30 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					setError(`Enter a valid ${f.label} (e.g. name@example.com)`);
 					return;
 				}
+				// Phone / fax fields: no letters, 10-15 digits (QA: Facility Phone
+				// accepted letters and excess digits).
+				if ((f.kind === 'tel' || /\b(phone|fax|mobile|cell)\b/i.test(f.label)) && v.trim()) {
+					const digits = v.replace(/\D/g, '');
+					if (/[A-Za-z]/.test(v) || digits.length < 10 || digits.length > 15) {
+						setError(f.validationMessage || `Enter a valid ${f.label} (10-15 digits)`);
+						return;
+					}
+				}
+				// validationPattern carried over from the editor's FormFieldDef
+				// (e.g. Panel Code) — reject a non-empty value that doesn't match.
+				if (f.validationPattern && v.trim() && !new RegExp(f.validationPattern).test(v.trim())) {
+					setError(f.validationMessage || `${f.label} format is invalid`);
+					return;
+				}
 				result[f.key] = v;
+			}
+			// Generic start/end date-order guard (e.g. Care Plans) — ISO values in
+			// the date inputs sort lexicographically.
+			const startIso = inputs.get('startDate')?.value.trim() || '';
+			const endIso = inputs.get('endDate')?.value.trim() || '';
+			if (startIso && endIso && endIso < startIso) {
+				setError('End Date cannot be earlier than Start Date');
+				return;
 			}
 			saveBtn.disabled = true;
 			saveBtn.style.opacity = '0.65';
