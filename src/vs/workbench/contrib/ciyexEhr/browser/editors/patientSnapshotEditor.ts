@@ -798,6 +798,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			const pid = String(this._currentPatientId);
 			items = items.filter(r => String(r.patientId ?? r.patient ?? '') === pid);
 		}
+		// The generic FHIR `/vitals/patient/{id}` endpoint can return cross-patient
+		// rows, so the historical-vitals popup must scope to the patient on screen
+		// too (same guard the display card applies in `_loadAndRender`).
+		if (entity === 'vitals') {
+			items = this._filterToPatient(items, this._currentPatientId);
+		}
 		return this._mergePending(entity, this._filterDeleted(entity, items));
 	}
 
@@ -1900,7 +1906,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		const p = ((patientRaw?.data ?? patientRaw) as Record<string, unknown> | null);
 		const conds = this._mergePending('problems', this._filterDeleted('problems', this._list(conditions)));
 		const meds = this._mergePending('medications', this._filterDeleted('medications', this._list(medications)));
-		const vit = this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals)));
+		// Defensively scope vitals to THIS patient, mirroring the guard the sibling
+		// patient-scoped lists already apply (encounters, appointments, labs): those
+		// endpoints can return cross-patient rows in some orgs, which surfaced one
+		// patient's data on another's card. The vitals list was the only one left
+		// unguarded. Best-effort — a vitals row that carries no patient reference is
+		// kept (the endpoint is the authority), so this only drops rows explicitly
+		// tagged for a different patient.
+		const vit = this._filterToPatient(this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals))), patientId);
 		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
 		// Lab ORDERS and lab RESULTS are now two distinct, clinically-backed
 		// collections (the snapshot shows each in its own card). Both come from the
@@ -2082,6 +2095,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			const inner = (raw?.data ?? raw) as Record<string, unknown> | undefined;
 			const arr = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : Array.isArray(raw) ? raw : [])) as Array<Record<string, unknown>>;
 			const onDate = arr
+				// Scope to this patient — the endpoint can return cross-patient rows, and
+				// upserting the wrong patient's same-date Observation would overwrite it.
+				.filter(v => { const rp = this._encounterPatientId(v); return !rp || rp === String(pid); })
 				.filter(v => this._isSameDay(v.recordedAt ?? v.effectiveDateTime ?? v.recordedDate ?? v.date, ref))
 				.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
 			return onDate[0] ?? null;
@@ -3877,6 +3893,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			const inner = (listRaw?.data ?? listRaw) as Record<string, unknown> | undefined;
 			const arr = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : Array.isArray(listRaw) ? listRaw : [])) as Record<string, unknown>[];
 			const onDate = arr
+				// Scope to this patient — the endpoint can return cross-patient rows, so a
+				// same-date reading from another patient must not be picked up and updated.
+				.filter(v => { const rp = this._encounterPatientId(v); return !rp || rp === String(pid); })
 				.filter(v => this._isSameDay(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.date, recordedAt))
 				.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
 			if (onDate[0]) { existingId = String(onDate[0].id ?? onDate[0].fhirId ?? ''); }
