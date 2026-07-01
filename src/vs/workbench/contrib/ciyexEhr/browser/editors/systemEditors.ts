@@ -331,6 +331,17 @@ export class ConsentsEditor extends ClinicalListEditorBase {
  * Fax Editor — Inbound/outbound fax queue management.
  */
 export const FAX_FORM_FIELDS: FormFieldDef[] = [
+	// Direction mirrors the listing page's "All Directions" filter (Inbound /
+	// Outbound). New faxes composed here default to Outbound. Editing an existing
+	// fax pre-fills its stored direction so the form and the filter stay
+	// consistent (QA: filter offered Inbound/Outbound but the edit form had no
+	// Direction field at all).
+	{
+		key: 'direction', label: 'Direction', type: 'select', defaultValue: 'outbound', options: [
+			{ label: 'Inbound', value: 'inbound' },
+			{ label: 'Outbound', value: 'outbound' },
+		]
+	},
 	{ key: 'recipientName', label: 'Recipient Name', type: 'search', required: true, placeholder: 'Search recipient...', apiPath: '/api/providers', searchDisplayField: 'name', searchValueField: 'id', relatedDisplayFields: ['firstName', 'lastName'] },
 	// Fax number must be a 10-digit US number, with an optional leading "1"/"+1"
 	// country code (so 10 or 11 digits total). The pattern allows the usual

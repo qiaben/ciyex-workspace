@@ -495,7 +495,9 @@ export class CarePlansEditorInput extends BaseClinicalEditorInput {
 export class CdsEditorInput extends BaseClinicalEditorInput {
 	static readonly ID = 'workbench.input.ciyexCds';
 	readonly clinicalId = CdsEditorInput.ID;
-	readonly clinicalLabel = 'Clinical Decision Support';
+	// Match the sidebar/system menu label and the editor's own title so opening
+	// the module (or its edit form) doesn't appear to rename it (QA issue 4).
+	readonly clinicalLabel = 'Clinical Alerts';
 	readonly clinicalIcon = 'warning';
 }
 

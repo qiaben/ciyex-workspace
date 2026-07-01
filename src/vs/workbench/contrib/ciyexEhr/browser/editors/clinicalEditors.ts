@@ -437,10 +437,26 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		columns: [
 			{ key: 'patientName', label: 'Patient' }, { key: 'medicationName', label: 'Medication' },
 			{ key: 'sig', label: 'SIG' }, { key: 'quantity', label: 'Qty', width: '60px' },
-			{ key: 'refillsRemaining', label: 'Refills', width: '60px' }, { key: 'pharmacyName', label: 'Pharmacy' },
+			{ key: 'refills', label: 'Refills', width: '60px' }, { key: 'pharmacyName', label: 'Pharmacy' },
 			{ key: 'prescriberName', label: 'Prescriber' },
 			{ key: 'priority', label: 'Priority', width: '80px' }, { key: 'status', label: 'Status', width: '90px' },
 		],
+		// The edit form's "Total Refills" field is `refills`; the list column must
+		// read the SAME field so an edit (e.g. 14 → 15) is reflected immediately.
+		// The previous column read `refillsRemaining` — a distinct, server-derived
+		// value that never changed on a plain edit, so the saved Total Refills
+		// appeared to "not update". Fall back to refillsRemaining only when the
+		// list DTO doesn't carry `refills`.
+		cellRenderer: (key, value, item) => {
+			if (key === 'refills') {
+				const total = item['refills'];
+				const rem = item['refillsRemaining'];
+				const v = (total !== undefined && total !== null && total !== '') ? total
+					: (rem !== undefined && rem !== null && rem !== '') ? rem : 0;
+				return String(v);
+			}
+			return String(value ?? '');
+		},
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'On Hold', value: 'on_hold' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Discontinued', value: 'discontinued' },
@@ -1274,7 +1290,9 @@ export const IMMUNIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'e.g. FR8912', aliases: ['lot'], typingPattern: '[A-Za-z0-9]', validationPattern: '^[A-Za-z0-9]{5,10}$', validationMessage: 'Lot Number must be 5-10 letters and numbers only (e.g. FR8912)' },
 	{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
 	// Administration Details
-	{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true },
+	// Admin Date must not be a past-year date — the form previously accepted any
+	// date (e.g. 2022) and created the immunization with no validation (QA issue 3).
+	{ key: 'administrationDate', label: 'Admin Date', type: 'date', required: true, minDate: 'year-start', validationMessage: 'Admin Date cannot be a past-year date' },
 	{
 		key: 'site', label: 'Site', type: 'select', options: [
 			{ label: 'Select site...', value: '' },
@@ -1651,7 +1669,11 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 export class CdsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexCds';
 	protected readonly config: ClinicalEditorConfig = {
-		title: 'Clinical Decision Support', apiPath: '/api/cds/rules',
+		// Titled "Clinical Alerts" to match the sidebar/system menu label and the
+		// editor tab. Previously the page + edit form read "Clinical Decision
+		// Support" while the module was launched as "Clinical Alerts", so opening
+		// the edit form appeared to rename the module (QA issue 4).
+		title: 'Clinical Alerts', apiPath: '/api/cds/rules',
 		statsPath: '/api/cds/stats',
 		searchPlaceholder: 'Search rules...',
 		clientSideFilter: ['name', 'ruleType', 'type', 'description', 'severity', 'triggerEvent', 'actionType', 'message', 'id'],
@@ -1835,6 +1857,18 @@ export class CdsEditor extends ClinicalListEditorBase {
 					{ label: 'Medical Assistant', value: 'ma' },
 				],
 				defaultValue: 'all',
+			},
+			// Status (Active/Inactive) — the main page and its Active/Inactive tabs
+			// let a rule be deactivated, but the edit form had no way to set it (QA
+			// issue 4). Backed by the boolean `isActive` (options are exactly
+			// true/false, so the base editor coerces the value to a real boolean);
+			// `beforeSave` mirrors it onto the string `status` the backend also
+			// reads. On edit the record's boolean isActive seeds the select directly.
+			{
+				key: 'isActive', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'true' },
+					{ label: 'Inactive', value: 'false' },
+				], defaultValue: 'true',
 			},
 			// Row 6: full-width alert message (required)
 			{ key: 'message', label: 'Alert Message', type: 'textarea', required: true, placeholder: 'Message shown to the provider when this rule fires...', width: 'span 2' },
@@ -3213,8 +3247,8 @@ export const MEDICAL_CODES_FORM_FIELDS: FormFieldDef[] = [
 		]
 	},
 	{ key: 'modifier', label: 'Modifier', type: 'text', placeholder: 'e.g. 25, 59, GT' },
-	{ key: 'category', label: 'Category', type: 'text' },
-	{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true },
+	{ key: 'category', label: 'Category', type: 'text', placeholder: 'e.g. Office Visit, Preventive, Surgery' },
+	{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true, placeholder: 'e.g. Office/outpatient visit, established patient' },
 	{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
 	{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
 	{ key: 'relateTo', label: 'Related To', type: 'text', placeholder: 'Related code or category', aliases: ['relatedTo'] },

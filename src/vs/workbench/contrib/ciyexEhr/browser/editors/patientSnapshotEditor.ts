@@ -415,6 +415,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		// snapshot popup form behaves the same as the full chart editor form.
 		if (f.showWhen) { out.showWhen = f.showWhen; }
 
+		// Carry field-level validation so the snapshot popup enforces the SAME
+		// rules as the full chart editor — previously these were dropped, so e.g.
+		// payment amount fields accepted negatives and date fields accepted
+		// past-year values with no validation (QA issues 7 & 8).
+		if (f.validationPattern) { out.validationPattern = f.validationPattern; }
+		if (f.validationMessage) { out.validationMessage = f.validationMessage; }
+		if (f.minDate) { out.minDate = f.minDate; }
+
 		// Derived / display-only fields (chart editor marks these `localOnly`)
 		// render read-only so the user can't hand-edit a computed value.
 		if (f.localOnly) { out.readonly = true; }
@@ -458,6 +466,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (entity === 'medications') {
 			const prescriber = fields.find(f => f.key === 'prescribingDoctor');
 			if (prescriber) { prescriber.required = true; }
+			// "Date Issued" (the medication start/authored date) must not be a
+			// past-year date — the form previously saved medications with a date
+			// like 2022 and no validation (QA issue 8).
+			const dateIssued = fields.find(f => f.key === 'startDate');
+			if (dateIssued) {
+				dateIssued.minDate = 'year-start';
+				dateIssued.validationMessage = 'Date Issued cannot be a past-year date';
+			}
 		}
 		return withTypeaheadSearch(fields, this.apiService);
 	}

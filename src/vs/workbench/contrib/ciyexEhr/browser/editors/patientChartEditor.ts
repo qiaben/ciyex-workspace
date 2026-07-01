@@ -35,7 +35,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -1490,7 +1490,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						], defaultValue: 'credit_card'
 					},
-					{ key: 'amount', label: 'Total Amount', type: 'number', required: true, placeholder: '0.00' },
+					{ key: 'amount', label: 'Total Amount', type: 'number', required: true, placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Total Amount must be a non-negative number' },
 					{ key: 'reference', label: 'Reference / Check #', type: 'text', placeholder: 'Optional' },
 					{ key: 'payerName', label: 'Payer / Insurance', type: 'text', placeholder: 'Aetna, BCBS, patient self...' },
 					{ key: 'claimId', label: 'Apply to Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
@@ -1523,9 +1523,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 			{
 				key: 'allocation', title: 'Allocation & Adjustments', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'allowedAmount', label: 'Allowed Amount', type: 'number', placeholder: '0.00' },
-					{ key: 'paidAmount', label: 'Paid Amount', type: 'number', placeholder: '0.00' },
-					{ key: 'adjustmentAmount', label: 'Adjustment Amount', type: 'number', placeholder: '0.00' },
+					{ key: 'allowedAmount', label: 'Allowed Amount', type: 'number', placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Allowed Amount must be a non-negative number' },
+					{ key: 'paidAmount', label: 'Paid Amount', type: 'number', placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Paid Amount must be a non-negative number' },
+					{ key: 'adjustmentAmount', label: 'Adjustment Amount', type: 'number', placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Adjustment Amount must be a non-negative number' },
 					{
 						key: 'adjustmentReason', label: 'Adjustment Reason', type: 'select', options: [
 							{ label: 'None', value: '' },
@@ -1539,8 +1539,8 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'OTHER' },
 						]
 					},
-					{ key: 'patientResponsibility', label: 'Patient Responsibility', type: 'number', placeholder: '0.00' },
-					{ key: 'remainingBalance', label: 'Remaining Balance', type: 'number', placeholder: '0.00' },
+					{ key: 'patientResponsibility', label: 'Patient Responsibility', type: 'number', placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Patient Responsibility must be a non-negative number' },
+					{ key: 'remainingBalance', label: 'Remaining Balance', type: 'number', placeholder: '0.00', validationPattern: '^\\d+(\\.\\d+)?$', validationMessage: 'Remaining Balance must be a non-negative number' },
 					{ key: 'eraReference', label: 'ERA / EFT Reference', type: 'text', placeholder: 'Optional ERA trace #' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Enter notes...', colSpan: 2 },
 				],

@@ -574,6 +574,10 @@ export interface IEditFieldDef {
 	validationPattern?: string;
 	/** Error message shown when {@link validationPattern} fails. */
 	validationMessage?: string;
+	/** For 'date' fields: the earliest date accepted. An ISO date string, or the
+	 *  tokens `'today'` (current date) / `'year-start'` (Jan 1 of the current
+	 *  year — rejects any past-year date). Enforced on save. */
+	minDate?: 'today' | 'year-start' | string;
 	/** Regex source that each individual typed character must match. When set,
 	 *  keydown/paste/input guards keep invalid characters from ever landing in
 	 *  the field (mirrors {@link FormFieldDef.typingPattern}). */
@@ -3042,6 +3046,20 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 				if (f.validationPattern && v.trim() && !new RegExp(f.validationPattern).test(v.trim())) {
 					setError(f.validationMessage || `${f.label} format is invalid`);
 					return;
+				}
+				// minDate: reject a date earlier than the allowed floor (e.g. a
+				// past-year "Date Issued"). The date input holds the ISO value,
+				// which sorts lexicographically, so a plain string compare works.
+				if (f.kind === 'date' && f.minDate && v.trim()) {
+					const min = f.minDate === 'today'
+						? new Date().toISOString().slice(0, 10)
+						: f.minDate === 'year-start'
+							? `${new Date().getFullYear()}-01-01`
+							: f.minDate;
+					if (v.trim() < min) {
+						setError(f.validationMessage || `${f.label} cannot be a past-year date`);
+						return;
+					}
 				}
 				result[f.key] = v;
 			}

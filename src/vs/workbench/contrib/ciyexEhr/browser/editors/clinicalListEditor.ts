@@ -20,6 +20,18 @@ import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { parseSavedRecord } from '../sidebarActions.js';
 
+/**
+ * Resolve a {@link FormFieldDef.minDate} token/string to a concrete ISO date
+ * (yyyy-mm-dd). `'today'` → the current date; `'year-start'` → Jan 1 of the
+ * current year (so any prior-year date is out of range); any other value is
+ * treated as a literal ISO date.
+ */
+export function resolveMinDate(min: string): string {
+	if (min === 'today') { return new Date().toISOString().slice(0, 10); }
+	if (min === 'year-start') { return `${new Date().getFullYear()}-01-01`; }
+	return min;
+}
+
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
 interface ActionDef {
@@ -124,6 +136,14 @@ export interface FormFieldDef {
 	minValue?: number;
 	/** Maximum allowed numeric value. Maps to HTML `max` attribute and is enforced on save. */
 	maxValue?: number;
+	/**
+	 * For 'date' fields: the earliest date the field accepts. Accepts an ISO
+	 * date string, or the tokens `'today'` (resolves to the current date) and
+	 * `'year-start'` (resolves to Jan 1 of the current year — rejects any
+	 * past-year date). Enforced on save and mapped to the picker's `min`
+	 * attribute so the calendar can't pick an out-of-range date.
+	 */
+	minDate?: 'today' | 'year-start' | string;
 	/** Render the field off-screen. Used for fields that should only be filled via auto-fill
 	 * from a related `search`-type field (e.g. patientId, materialId). */
 	hidden?: boolean;
@@ -1748,6 +1768,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const picker = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 				picker.type = 'date';
 				picker.title = 'Open calendar';
+				// minDate: constrain the native calendar so an out-of-range date
+				// (e.g. a past-year admin date) can't be picked. Save-time validation
+				// below still guards typed input.
+				if (field.minDate) { picker.min = resolveMinDate(field.minDate); }
 				picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 				picker.addEventListener('change', () => {
 					visible.value = isoToUs(picker.value);
@@ -1978,6 +2002,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					if (typed && !iso) {
 						failValidation(refs?.visible, field.validationMessage || `${field.label} must be a valid date (MM/DD/YYYY)`, field);
 						return;
+					}
+					// minDate: reject a date earlier than the allowed floor. ISO dates
+					// sort lexicographically, so a plain string compare is correct.
+					if (iso && field.minDate) {
+						const min = resolveMinDate(field.minDate);
+						if (iso < min) {
+							failValidation(refs?.visible, field.validationMessage || `${field.label} cannot be a past-year date`, field);
+							return;
+						}
 					}
 				}
 				if (field.type === 'number') {

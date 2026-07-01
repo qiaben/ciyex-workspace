@@ -1052,6 +1052,12 @@ export class AppointmentsEditor extends EditorPane {
 			const o = DOM.append(statusSel, DOM.$('option')) as HTMLOptionElement;
 			o.value = s.value; o.textContent = s.label;
 		}
+		// Restore the active selection: `_loadAppointments()` re-renders the whole
+		// filter row (also on the 30s auto-refresh), rebuilding this select from
+		// scratch. Without re-asserting the value it snapped back to the first
+		// option ("All Status") every reload, so a chosen "Completed" appeared to
+		// revert on its own (QA issue 5).
+		statusSel.value = this.statusFilter;
 		statusSel.addEventListener('change', () => {
 			this.statusFilter = statusSel.value;
 			this.currentPage = 1;
