@@ -373,7 +373,12 @@ export class EncounterFormEditor extends EditorPane {
 			// `vitals_*` keys and merged as the lowest-priority layer so an explicit
 			// value already saved on THIS encounter's composition still wins.
 			this.patientId
-				? this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`)
+				// size=50, not size=1: the vitals endpoint is NOT sorted newest-first
+				// (it returned the OLDEST record first), so size=1 pre-filled the encounter
+				// from a stale vitals record — the just-recorded Heart Rate / Temperature /
+				// Respiratory Rate came back blank. Fetch a page and let _mapLatestVitals
+				// pick the most recent by recordedAt.
+				? this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=50`)
 					.then(async r => (r.ok ? this._mapLatestVitals(await r.json()) : {}))
 					.catch(() => ({}))
 				: Promise.resolve({}),
@@ -486,7 +491,15 @@ export class EncounterFormEditor extends EditorPane {
 		const d = json as Record<string, unknown> | null;
 		const data = (d?.['data'] ?? d) as Record<string, unknown> | undefined;
 		const content = (data?.['content'] ?? data) as unknown;
-		const latest = (Array.isArray(content) ? content[0] : (Array.isArray(data) ? (data as unknown[])[0] : data)) as Record<string, unknown> | undefined;
+		const rows = (Array.isArray(content) ? content : (Array.isArray(data) ? data : [data])) as Array<Record<string, unknown>>;
+		// The endpoint is NOT ordered newest-first, so `rows[0]` can be a stale record.
+		// Pick the most recently recorded/updated one so the encounter pre-fills from
+		// the vitals the user actually just entered.
+		const stamp = (r: Record<string, unknown> | undefined): string =>
+			String(r?.['recordedAt'] ?? r?.['_lastUpdated'] ?? r?.['effectiveDateTime'] ?? '');
+		const latest = rows
+			.filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+			.sort((a, b) => stamp(b).localeCompare(stamp(a)))[0];
 		if (!latest || typeof latest !== 'object') { return {}; }
 		const num = (...keys: string[]): unknown => {
 			for (const k of keys) {
