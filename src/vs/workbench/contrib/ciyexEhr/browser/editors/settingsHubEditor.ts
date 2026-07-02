@@ -76,13 +76,10 @@ function isPersonName(value: string): boolean {
  */
 function isReasonableId(value: string): boolean {
 	const v = value.trim();
-	// A medical license number is a short alphanumeric identifier (typically
-	// 4-15 characters). The previous 32-char ceiling let a 29-char string of
-	// gibberish through with no real validation (QA: License Number accepted an
-	// excessive number of characters). Cap it at 15 so obviously-invalid runs
-	// are rejected while every real state license format still fits.
-	if (v.length < 4 || v.length > 15) { return false; }
-	return /^[A-Za-z0-9][A-Za-z0-9\- ]*$/.test(v);
+	// License Number must be EXACTLY 5 alphanumeric characters (letters and/or
+	// digits) — QA requires a fixed 5-character license, rejecting anything
+	// shorter, longer, or containing separators/symbols.
+	return /^[A-Za-z0-9]{5}$/.test(v);
 }
 
 /** True when `value` is a valid US ZIP: exactly 5 digits (`12345`). */
@@ -2272,12 +2269,13 @@ export class SettingsHubEditor extends EditorPane {
 		if (nameSegs.has(seg) || /^(first|last|middle) ?name$/.test(label)) {
 			return isPersonName(value) ? undefined : `${field.label} must contain only letters, spaces, hyphens, or apostrophes`;
 		}
-		// License number — non-empty, reasonable length, alphanumeric. Matched
-		// off the normalized segment (`professionalDetails.licenseNumber` →
-		// `licensenumber`) and the "License Number" label. Checked before the
-		// generic name rule so a license value isn't mis-validated as a name.
-		if (seg === 'licensenumber' || seg.includes('license') || seg.includes('licence') || looks(/licen[cs]e/)) {
-			return isReasonableId(value) ? undefined : `${field.label} must be 4-15 letters or numbers`;
+		// License NUMBER only — exactly 5 alphanumeric characters. Scoped strictly
+		// to the license-number field: the previous broad `seg.includes('license')`
+		// also matched "License State" (e.g. "Iowa") and "License Expiry Date",
+		// wrongly forcing those to be exactly 5 chars too. Match only the number
+		// field by its exact segment or a "License Number/No/#" label.
+		if (seg === 'licensenumber' || seg === 'licencenumber' || looks(/licen[cs]e\s*(number|no\.?|#)/)) {
+			return isReasonableId(value) ? undefined : `${field.label} must be exactly 5 letters or numbers`;
 		}
 		// Other names — company / payer / practice / provider / organization
 		// names must be real names, not blank or purely numeric garbage
