@@ -3673,7 +3673,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		{ key: 'pulse', label: 'Pulse', unit: '/min' },
 		{ key: 'respiration', label: 'Respiration', unit: '/min' },
 		// allow-any-unicode-next-line
-		{ key: 'temperatureC', label: 'Temperature', unit: '°C', step: '0.1' },
+		{ key: 'temperatureC', label: 'Temperature', unit: '°F', step: '0.1' },
 		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
 	];
 
@@ -3748,7 +3748,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			['Pulse', latest.pulse, '/min'],
 			['Respiration', latest.respiration, '/min'],
 			// allow-any-unicode-next-line
-			['Temperature', latest.temperatureC, '°C'],
+			['Temperature', latest.temperatureC, '°F'],
 			['SpO2', latest.oxygenSaturation, '%'],
 		];
 
