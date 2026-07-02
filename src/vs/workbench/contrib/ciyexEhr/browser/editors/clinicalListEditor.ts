@@ -32,6 +32,18 @@ export function resolveMinDate(min: string): string {
 	return min;
 }
 
+/**
+ * Resolve a {@link FormFieldDef.maxDate} token/string to a concrete ISO date
+ * (yyyy-mm-dd). `'today'` → the current date (rejects any future date, e.g. a
+ * medication Date Issued dated tomorrow); `'year-end'` → Dec 31 of the current
+ * year (rejects any future-year date); any other value is a literal ISO date.
+ */
+export function resolveMaxDate(max: string): string {
+	if (max === 'today') { return new Date().toISOString().slice(0, 10); }
+	if (max === 'year-end') { return `${new Date().getFullYear()}-12-31`; }
+	return max;
+}
+
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
 interface ActionDef {
@@ -144,6 +156,14 @@ export interface FormFieldDef {
 	 * attribute so the calendar can't pick an out-of-range date.
 	 */
 	minDate?: 'today' | 'year-start' | string;
+	/**
+	 * For 'date' fields: the latest date the field accepts. Accepts an ISO date
+	 * string, or the tokens `'today'` (current date — rejects any future date)
+	 * and `'year-end'` (Dec 31 of the current year — rejects any future-year
+	 * date). Enforced on save and mapped to the picker's `max` attribute so the
+	 * calendar can't pick an out-of-range date.
+	 */
+	maxDate?: 'today' | 'year-end' | string;
 	/** Render the field off-screen. Used for fields that should only be filled via auto-fill
 	 * from a related `search`-type field (e.g. patientId, materialId). */
 	hidden?: boolean;
@@ -1772,6 +1792,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				// (e.g. a past-year admin date) can't be picked. Save-time validation
 				// below still guards typed input.
 				if (field.minDate) { picker.min = resolveMinDate(field.minDate); }
+				// maxDate: block a future (e.g. a Date Issued dated in a future year)
+				// from being picked in the calendar; save-time validation guards typing.
+				if (field.maxDate) { picker.max = resolveMaxDate(field.maxDate); }
 				picker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 				picker.addEventListener('change', () => {
 					visible.value = isoToUs(picker.value);
@@ -2009,6 +2032,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						const min = resolveMinDate(field.minDate);
 						if (iso < min) {
 							failValidation(refs?.visible, field.validationMessage || `${field.label} cannot be a past-year date`, field);
+							return;
+						}
+					}
+					// maxDate: reject a date later than the allowed ceiling (e.g. a
+					// future-year "Date Issued").
+					if (iso && field.maxDate) {
+						const max = resolveMaxDate(field.maxDate);
+						if (iso > max) {
+							failValidation(refs?.visible, field.validationMessage || `${field.label} cannot be a future date`, field);
 							return;
 						}
 					}

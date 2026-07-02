@@ -578,6 +578,18 @@ export interface IEditFieldDef {
 	 *  tokens `'today'` (current date) / `'year-start'` (Jan 1 of the current
 	 *  year — rejects any past-year date). Enforced on save. */
 	minDate?: 'today' | 'year-start' | string;
+	/** For 'date' fields: the latest date accepted. An ISO date string, or the
+	 *  tokens `'today'` (current date — rejects any future date) / `'year-end'`
+	 *  (Dec 31 of the current year — rejects any future-year date). Enforced on
+	 *  save (mirrors {@link FormFieldDef.maxDate}). */
+	maxDate?: 'today' | 'year-end' | string;
+	/** For 'number' fields: the minimum accepted value (mirrors
+	 *  {@link FormFieldDef.minValue}). Enforced on save so the drawer rejects
+	 *  e.g. a negative Quantity / Fee / Ref Low that the full editor also blocks. */
+	minValue?: number;
+	/** For 'number' fields: the maximum accepted value (mirrors
+	 *  {@link FormFieldDef.maxValue}). Enforced on save. */
+	maxValue?: number;
 	/** Regex source that each individual typed character must match. When set,
 	 *  keydown/paste/input guards keep invalid characters from ever landing in
 	 *  the field (mirrors {@link FormFieldDef.typingPattern}). */
@@ -703,6 +715,10 @@ export function formFieldsToEditFields(formFields: FormFieldDef[]): IEditFieldDe
 			validationPattern: f.validationPattern,
 			validationMessage: f.validationMessage,
 			typingPattern: f.typingPattern,
+			minDate: f.minDate,
+			maxDate: f.maxDate,
+			minValue: f.minValue,
+			maxValue: f.maxValue,
 			hidden: f.hidden,
 			defaultValue: def,
 			// Mirror the editor form's per-field layout exactly: the editor renders
@@ -1057,9 +1073,18 @@ export function withTypeaheadSearch(
 				},
 			};
 		}
-		// LOINC lab test code search.
-		if (k === 'testcode' || k === 'loinc') {
-			return { ...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q) };
+		// LOINC lab test code search. `loinccode` is the Lab Result form's key —
+		// without it the LOINC Code box stayed a plain text input (QA: make it a
+		// searchable option). Selecting a code back-fills the Test Name companion
+		// when it is still empty so the two fields stay in sync.
+		if (k === 'testcode' || k === 'loinc' || k === 'loinccode') {
+			return {
+				...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q),
+				onSelectSearchResult: (item, all) => {
+					const desc = item.details?.description || '';
+					if (desc) { fillRelated(all, 'testName', desc, /*onlyIfEmpty*/ true); }
+				},
+			};
 		}
 		// NDC medication code search (ciyex-codes has no RxNorm system; meds are NDC).
 		// strictSelect:false — the NDC dataset is often empty for an org, so the
@@ -2025,6 +2050,32 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				errorMsg.textContent = f.validationMessage || `${f.label} format is invalid`;
 				return;
 			}
+			// Date floor / ceiling — the date input holds an ISO value which sorts
+			// lexicographically, so a string compare is correct. Validation tokens
+			// are dropped when an editor form is adapted into this drawer, so mirror
+			// the full editor here (e.g. Patient Recall Due Date not a past year).
+			if (f.kind === 'date' && v.trim()) {
+				if (f.minDate) {
+					const min = f.minDate === 'today'
+						? new Date().toISOString().slice(0, 10)
+						: f.minDate === 'year-start' ? `${new Date().getFullYear()}-01-01` : f.minDate;
+					if (v.trim() < min) { errorMsg.textContent = f.validationMessage || `${f.label} cannot be a past-year date`; return; }
+				}
+				if (f.maxDate) {
+					const max = f.maxDate === 'today'
+						? new Date().toISOString().slice(0, 10)
+						: f.maxDate === 'year-end' ? `${new Date().getFullYear()}-12-31` : f.maxDate;
+					if (v.trim() > max) { errorMsg.textContent = f.validationMessage || `${f.label} cannot be a future date`; return; }
+				}
+			}
+			// Numeric floor / ceiling — reject e.g. a negative Quantity / Fee / Ref
+			// Low (QA: create & edit form accepted negative values).
+			if (f.kind === 'number' && v.trim()) {
+				const n = Number(v.trim());
+				if (!isFinite(n) || isNaN(n)) { errorMsg.textContent = `${f.label} must be a valid number`; return; }
+				if (f.minValue !== undefined && n < f.minValue) { errorMsg.textContent = f.validationMessage || `${f.label} must be ${f.minValue} or greater`; return; }
+				if (f.maxValue !== undefined && n > f.maxValue) { errorMsg.textContent = f.validationMessage || `${f.label} must be ${f.maxValue} or less`; return; }
+			}
 			result[f.key] = v;
 		}
 		// Generic start/end date-order guard (e.g. Care Plans) — the date input
@@ -2583,8 +2634,27 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 			const position = (): void => {
 				const r = trigger.getBoundingClientRect();
 				panel.style.left = `${r.left}px`;
-				panel.style.top = `${r.bottom + 4}px`;
 				panel.style.minWidth = `${r.width}px`;
+				// Flip the panel above the trigger and clamp its height when there
+				// isn't enough room below — a select near the bottom of a modal (e.g.
+				// the New Lab Order "Result Status", the last-but-one field) otherwise
+				// opens downward and its options are clipped off the page (QA issue 6).
+				const view = doc.defaultView;
+				const vh = view?.innerHeight || doc.documentElement.clientHeight;
+				const margin = 8;
+				const gap = 4;
+				const desired = 260;
+				const spaceBelow = vh - r.bottom - margin;
+				const spaceAbove = r.top - margin;
+				if (spaceBelow >= Math.min(desired, 160) || spaceBelow >= spaceAbove) {
+					panel.style.top = `${r.bottom + gap}px`;
+					panel.style.bottom = 'auto';
+					panel.style.maxHeight = `${Math.max(120, Math.min(desired, spaceBelow))}px`;
+				} else {
+					panel.style.top = 'auto';
+					panel.style.bottom = `${vh - r.top + gap}px`;
+					panel.style.maxHeight = `${Math.max(120, Math.min(desired, spaceAbove))}px`;
+				}
 			};
 			const renderOpts = (): void => {
 				DOM.clearNode(panel);
@@ -3060,6 +3130,27 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 						setError(f.validationMessage || `${f.label} cannot be a past-year date`);
 						return;
 					}
+				}
+				// maxDate: reject a date later than the allowed ceiling (e.g. a
+				// medication "Date Issued" dated in a future year).
+				if (f.kind === 'date' && f.maxDate && v.trim()) {
+					const max = f.maxDate === 'today'
+						? new Date().toISOString().slice(0, 10)
+						: f.maxDate === 'year-end'
+							? `${new Date().getFullYear()}-12-31`
+							: f.maxDate;
+					if (v.trim() > max) {
+						setError(f.validationMessage || `${f.label} cannot be a future date`);
+						return;
+					}
+				}
+				// Numeric floor / ceiling — reject e.g. a negative Ref Low / Ref High
+				// (QA: negatives were accepted and saved).
+				if (f.kind === 'number' && v.trim()) {
+					const n = Number(v.trim());
+					if (!isFinite(n) || isNaN(n)) { setError(`${f.label} must be a valid number`); return; }
+					if (f.minValue !== undefined && n < f.minValue) { setError(f.validationMessage || `${f.label} must be ${f.minValue} or greater`); return; }
+					if (f.maxValue !== undefined && n > f.maxValue) { setError(f.validationMessage || `${f.label} must be ${f.maxValue} or less`); return; }
 				}
 				result[f.key] = v;
 			}

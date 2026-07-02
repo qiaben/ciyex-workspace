@@ -1334,8 +1334,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'author', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Current', value: 'current' },
-							{ label: 'Superseded', value: 'superseded' },
+							// Match the note signing-workflow vocabulary the list/table
+							// displays (UNSIGNED / SIGNED / …) so the create/edit form and
+							// the status filter agree with the stored value (QA issue 4).
+							{ label: 'Unsigned', value: 'unsigned' },
+							{ label: 'Signed', value: 'signed' },
+							{ label: 'Amended', value: 'amended' },
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
@@ -4427,8 +4431,19 @@ export class PatientChartEditor extends EditorPane {
 	// Status filter options per tab — different resources use different status vocabularies.
 	private _statusFilterOptions(tab: ChartTab): Array<{ label: string; value: string }> {
 		switch (tab.key) {
-			case 'documents':
 			case 'visit-notes':
+				// Visit-note rows carry the signing-workflow status the table renders
+				// (UNSIGNED / SIGNED / …), NOT the FHIR DocumentReference.status
+				// vocabulary — so filtering by "Current"/"Superseded" never matched a
+				// single row (QA issue 4). Offer the statuses the notes actually use.
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Unsigned', value: 'unsigned' },
+					{ label: 'Signed', value: 'signed' },
+					{ label: 'Amended', value: 'amended' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+				];
+			case 'documents':
 				return [
 					{ label: 'All Statuses', value: '' },
 					{ label: 'Current', value: 'current' },

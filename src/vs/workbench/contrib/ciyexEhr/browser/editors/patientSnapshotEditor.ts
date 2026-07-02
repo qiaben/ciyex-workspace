@@ -260,7 +260,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			title: 'Lab Results', configKey: 'labs', basePath: '/api/lab-results', fhirPatientScoped: false, nonFhir: true,
 			columns: [
 				{ key: 'testName', label: 'Test', width: '2fr' },
-				{ key: 'value', label: 'Value', width: '90px', format: (_v, r) => { const u = String(r.units || ''); const val = String(r.value ?? r.result ?? ''); return val ? (u ? `${val} ${u}` : val) : '—'; } },
+				// Value shows ONLY the numeric result — the unit lives in its own
+				// place (form field `units`) and is NOT appended here, so the column
+				// no longer reads like it merged the value and unit columns.
+				{ key: 'value', label: 'Value', width: '90px', format: (_v, r) => { const val = String(r.value ?? r.result ?? ''); return val !== '' ? val : '—'; } },
 				{ key: 'referenceRange', label: 'Range', width: '100px' },
 				{ key: 'abnormalFlag', label: 'Flag', width: '80px' },
 				{ key: 'status', label: 'Status', width: '100px' },
@@ -466,13 +469,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (entity === 'medications') {
 			const prescriber = fields.find(f => f.key === 'prescribingDoctor');
 			if (prescriber) { prescriber.required = true; }
-			// "Date Issued" (the medication start/authored date) must not be a
-			// past-year date — the form previously saved medications with a date
-			// like 2022 and no validation (QA issue 8).
+			// "Date Issued" (the medication start/authored date) must be neither a
+			// past-year date nor a FUTURE date — the form previously saved medications
+			// with a date like 2022 (no lower bound) and 2027 (no upper bound), with
+			// no validation (QA issue 8 / the Date-Issued future-year report).
 			const dateIssued = fields.find(f => f.key === 'startDate');
 			if (dateIssued) {
 				dateIssued.minDate = 'year-start';
-				dateIssued.validationMessage = 'Date Issued cannot be a past-year date';
+				dateIssued.maxDate = 'today';
+				dateIssued.validationMessage = 'Date Issued cannot be a past-year or future date';
 			}
 		}
 		return withTypeaheadSearch(fields, this.apiService);
@@ -4058,10 +4063,10 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ key: 'expiryMonth', label: 'Expiry Month', kind: 'select', required: true, widthPct: 50, options: months },
 				{ key: 'expiryYear', label: 'Expiry Year', kind: 'select', required: true, widthPct: 50, options: years },
 				{ key: 'billingAddress', label: 'Billing Address', kind: 'text', placeholder: '123 Main St', widthPct: 100 },
-				{ key: 'billingCity', label: 'City', kind: 'text', widthPct: 50 },
-				{ key: 'billingState', label: 'State', kind: 'text', widthPct: 50 },
-				{ key: 'billingZip', label: 'Zip Code', kind: 'text', widthPct: 50 },
-				{ key: 'billingCountry', label: 'Country', kind: 'text', widthPct: 50 },
+				{ key: 'billingCity', label: 'City', kind: 'text', placeholder: 'New York', widthPct: 50 },
+				{ key: 'billingState', label: 'State', kind: 'text', placeholder: 'NY', widthPct: 50 },
+				{ key: 'billingZip', label: 'Zip Code', kind: 'text', placeholder: '10001', widthPct: 50 },
+				{ key: 'billingCountry', label: 'Country', kind: 'text', placeholder: 'USA', widthPct: 50 },
 				{ key: 'isDefault', label: 'Set as default', kind: 'select', widthPct: 100, options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
 			],
 			values: {
@@ -4268,7 +4273,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
 		if (pendingLabs.length > 0) {
-			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labOrders', 'list') });
+			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labResults', 'list') });
 		}
 		if (openEncounters.length > 0) {
 			items.push({ icon: 'note', label: 'Encounter Unsigned', detail: `${openEncounters.length} open encounter${openEncounters.length > 1 ? 's' : ''} to finalize`, color: '#3b9edd', onClick: () => this._openManager('encounters', 'list') });

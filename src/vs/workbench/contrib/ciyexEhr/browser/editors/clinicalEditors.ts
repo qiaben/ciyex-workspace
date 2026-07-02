@@ -397,9 +397,12 @@ export const PRESCRIPTIONS_FORM_FIELDS: FormFieldDef[] = [
 		]
 	},
 	{ key: 'sig', label: 'SIG (Directions)', type: 'text', required: true, placeholder: 'Take 1 tablet by mouth twice daily', validationPattern: '^[A-Za-z0-9 ,.\\-/()+:;\'&]{2,256}$', validationMessage: 'SIG must be 2-256 characters using only letters, numbers, and standard punctuation' },
-	{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30' },
-	{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30' },
-	{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0 },
+	// Quantity / Days Supply / Refills are counts — never negative (QA: the
+	// create & edit form accepted negative values). minValue:0 maps to the input
+	// `min` attribute and is enforced on save.
+	{ key: 'quantity', label: 'Quantity', type: 'number', placeholder: '30', minValue: 0 },
+	{ key: 'daysSupply', label: 'Days Supply', type: 'number', placeholder: '30', minValue: 0 },
+	{ key: 'refills', label: 'Total Refills', type: 'number', placeholder: '3', defaultValue: 0, minValue: 0 },
 	{
 		key: 'deaSchedule', label: 'DEA Schedule', type: 'select', options: [
 			{ label: 'Schedule II', value: 'II' }, { label: 'Schedule III', value: 'III' },
@@ -635,8 +638,10 @@ export const LAB_RESULT_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'value', label: 'Value', type: 'text', required: true, placeholder: 'Result value', aliases: ['resultValue'] },
 	{ key: 'units', label: 'Units', type: 'text', placeholder: 'mg/dL, mmol/L...' },
 	{ key: 'referenceRange', label: 'Reference Range', type: 'text', placeholder: '70-100' },
-	{ key: 'referenceLow', label: 'Ref Low', type: 'number', aliases: ['refLow'] },
-	{ key: 'referenceHigh', label: 'Ref High', type: 'number', aliases: ['refHigh'] },
+	// Reference bounds are non-negative concentrations/counts — the form must
+	// reject negative Ref Low / Ref High (QA: negatives were accepted and saved).
+	{ key: 'referenceLow', label: 'Ref Low', type: 'number', aliases: ['refLow'], minValue: 0 },
+	{ key: 'referenceHigh', label: 'Ref High', type: 'number', aliases: ['refHigh'], minValue: 0 },
 	{ key: 'specimen', label: 'Specimen', type: 'text', placeholder: 'Blood, Urine...' },
 	{ key: 'collectedDate', label: 'Collected Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 	{ key: 'reportedDate', label: 'Reported Date', type: 'date' },
@@ -3009,7 +3014,10 @@ export const RECALL_FORM_FIELDS: FormFieldDef[] = [
 		placeholder: 'Search provider...', apiPath: '/api/providers',
 		relatedDisplayFields: ['firstName', 'lastName'],
 	},
-	{ key: 'dueDate', label: 'Due Date', type: 'date', required: true },
+	// A recall due date must not fall in a past year (QA: Due Date showed 2025
+	// while the current year is later). year-start still allows an
+	// earlier-this-year date so a genuinely overdue recall stays editable.
+	{ key: 'dueDate', label: 'Due Date', type: 'date', required: true, minDate: 'year-start', validationMessage: 'Due Date cannot be a past-year date' },
 	{
 		key: 'priority', label: 'Priority', type: 'select', options: [
 			{ label: 'Normal', value: 'NORMAL' }, { label: 'High', value: 'HIGH' }, { label: 'Urgent', value: 'URGENT' },
@@ -3250,7 +3258,9 @@ export const MEDICAL_CODES_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'category', label: 'Category', type: 'text', placeholder: 'e.g. Office Visit, Preventive, Surgery' },
 	{ key: 'shortDescription', label: 'Short Description', type: 'text', required: true, placeholder: 'e.g. Office/outpatient visit, established patient' },
 	{ key: 'description', label: 'Full Description', type: 'textarea', placeholder: 'Detailed description of this code...', width: 'span 2' },
-	{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number' },
+	// A fee is a monetary amount — never negative (QA: negative Fee Standard was
+	// accepted and the code created). minValue:0 blocks it in create & edit.
+	{ key: 'feeStandard', label: 'Fee Standard ($)', type: 'number', minValue: 0 },
 	{ key: 'relateTo', label: 'Related To', type: 'text', placeholder: 'Related code or category', aliases: ['relatedTo'] },
 	{
 		key: 'active', label: 'Status', type: 'select', options: [
