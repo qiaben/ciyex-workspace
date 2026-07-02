@@ -826,6 +826,7 @@ export class EhrTitlebarControls extends Disposable {
 			parent: providerGroup,
 			options: this._providerOptions,
 			placeholder: 'Select a provider...',
+			required: true,
 			triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
 		});
 
@@ -840,6 +841,7 @@ export class EhrTitlebarControls extends Disposable {
 			parent: locationGroup,
 			options: this._locationOptions,
 			placeholder: 'Select a location...',
+			required: true,
 			triggerStyle: EhrTitlebarControls._dropdownTriggerStyle,
 		});
 
