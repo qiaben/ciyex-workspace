@@ -2119,6 +2119,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			const v = obs[fhirKey];
 			if (v !== undefined && v !== null && String(v).trim() !== '') { out[formKey] = v; }
 		}
+		// Notes is a free-text field outside the numeric map — surface it too so an
+		// edit form pre-fills the saved vitals note.
+		const notesV = obs['notes'];
+		if (notesV !== undefined && notesV !== null && String(notesV).trim() !== '') { out['vitals_notes'] = notesV; }
 		return out;
 	}
 
@@ -2138,6 +2142,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			const n = Number(raw);
 			if (Number.isFinite(n)) { fhir[fhirKey] = n; }
 		}
+		// Vitals notes are free text (FHIR Observation.note[0].text) — handled
+		// outside the numeric map so a note entered on the Snapshot persists to the
+		// shared vitals store and surfaces on the Encounter form's vitals section.
+		const notesRaw = values['vitals_notes'];
+		if (notesRaw !== undefined && String(notesRaw).trim() !== '') { fhir['notes'] = String(notesRaw).trim(); }
 		if (Object.keys(fhir).length === 0) { return; }
 		const bmi = PatientSnapshotEditor._computeBmi(fhir.heightCm, fhir.weightKg);
 		if (bmi) { fhir.bmi = Number(bmi); }

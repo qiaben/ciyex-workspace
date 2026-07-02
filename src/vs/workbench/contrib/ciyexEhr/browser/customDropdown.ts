@@ -31,6 +31,14 @@ export interface ICreateCustomDropdownOptions {
 	initialValue?: string;
 	/** Placeholder shown in the trigger when no value is selected. */
 	placeholder?: string;
+	/**
+	 * When true this is a required field, so the placeholder is NOT rendered as a
+	 * selectable "clear" row in the list (an empty choice is meaningless when a
+	 * value is mandatory, and duplicating the placeholder alongside the real
+	 * options reads as redundant). The placeholder still shows in the trigger
+	 * until the user picks a value.
+	 */
+	required?: boolean;
 	/** Optional CSS for the visible trigger so it matches the host form's input styling. */
 	triggerStyle?: string;
 	/** Called when the user picks a new option. */
@@ -219,12 +227,14 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	};
 	const renderOptions = () => {
 		DOM.clearNode(panel);
-		// When a placeholder is supplied, surface it as a "clear" row at the
-		// top of the list so the user can reset the selection — this mirrors
-		// the original native <select> behaviour where `Select Priority...`
-		// appeared as a selectable (empty-value) first option.
+		// For OPTIONAL fields, surface the placeholder as a "clear" row at the top
+		// of the list so the user can reset the selection — this mirrors the
+		// original native <select> behaviour where `Select Priority...` appeared as
+		// a selectable (empty-value) first option. Required fields skip it: an empty
+		// choice is invalid there, so showing "Select a provider…" next to the real
+		// providers is redundant and confusing.
 		const rows: Array<{ value: string; label: string; placeholder?: boolean }> = [];
-		if (opts.placeholder) {
+		if (opts.placeholder && !opts.required) {
 			rows.push({ value: '', label: opts.placeholder, placeholder: true });
 		}
 		for (const o of opts.options) { rows.push({ value: o.value, label: o.label }); }

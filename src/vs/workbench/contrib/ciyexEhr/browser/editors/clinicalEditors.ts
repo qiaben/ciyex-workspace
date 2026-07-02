@@ -838,7 +838,8 @@ export class LabsEditor extends ClinicalListEditorBase {
 		],
 		statusTabs: [
 			{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
-			{ label: 'Final', value: 'final' }, { label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
+			{ label: 'Partial', value: 'partial' }, { label: 'Final', value: 'final' },
+			{ label: 'Corrected', value: 'corrected' }, { label: 'Amended', value: 'amended' },
 		],
 		additionalFilters: [
 			{

@@ -445,6 +445,12 @@ export class EncounterFormEditor extends EditorPane {
 		};
 		const out: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(map)) { if (v !== undefined) { out[k] = v; } }
+		// Vitals notes are free text (FHIR Observation.note[0].text), not a number,
+		// so they fall outside the numeric map above. Carry the string through
+		// explicitly — otherwise a vitals note is dropped on the way to the shared
+		// vitals store and never shows on the Snapshot / Encounter vitals card.
+		const notes = form['vitals_notes'];
+		if (notes !== undefined && notes !== null && String(notes).trim() !== '') { out['notes'] = String(notes).trim(); }
 		return out;
 	}
 
@@ -507,6 +513,9 @@ export class EncounterFormEditor extends EditorPane {
 			vitals_weight: num('weightKg', 'weight', 'bodyWeight', 'weight_kg'),
 			vitals_height: num('heightCm', 'height', 'bodyHeight', 'height_cm'),
 			vitals_bmi: num('bmi', 'bodyMassIndex', 'BMI'),
+			// Free-text vitals note (FHIR Observation.note[0].text) — read it back so
+			// the Encounter form shows a note saved from the Snapshot/vitals card.
+			vitals_notes: num('notes', 'note', 'comment'),
 		};
 		// Drop undefined keys so they don't shadow other sources with `undefined`.
 		for (const k of Object.keys(out)) {

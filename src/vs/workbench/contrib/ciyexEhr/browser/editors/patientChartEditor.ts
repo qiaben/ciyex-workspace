@@ -25,7 +25,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
-import { parseSavedRecord, COMMON_PAYERS, formatUsPhone } from '../sidebarActions.js';
+import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -623,7 +623,15 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Allergy Details', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'allergyName', label: 'Allergen', type: 'text', required: true, placeholder: 'Allergen name' },
+					// letters + spaces only (reject numeric input like "55555"). Backend
+					// migration V172 renamed this field's label to "Allergy" and added a
+					// separate `allergen` field below — the validation is carried on BOTH by
+					// key so whichever the tenant's config surfaces stays letters-only.
+					{ key: 'allergyName', label: 'Allergy', type: 'text', required: true, placeholder: 'Allergy name', validationPattern: '^[A-Za-z][A-Za-z ]*$', validationMessage: 'Allergy may contain only letters and spaces' },
+					// The "Allergen" field the QA report flagged (V172, reaction[0].substance.text).
+					// This override injects the letters-only rule onto the backend `allergen`
+					// field via the per-field config merge (matched by key).
+					{ key: 'allergen', label: 'Allergen', type: 'text', placeholder: 'Specific allergen/substance', validationPattern: '^[A-Za-z][A-Za-z ]*$', validationMessage: 'Allergen may contain only letters and spaces' },
 					{
 						key: 'status', label: 'Clinical Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
@@ -1565,7 +1573,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'periodStart', label: 'Period Start', type: 'date' },
 					{ key: 'periodEnd', label: 'Period End', type: 'date' },
 					{ key: 'dueDate', label: 'Due Date', type: 'date' },
-					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Linked invoice...' },
+					{ key: 'invoiceNumber', label: 'Invoice Number', type: 'text', placeholder: 'Linked invoice...', validationPattern: '^[A-Za-z0-9][A-Za-z0-9-]*$', validationMessage: 'Invoice Number may contain only letters, numbers, and hyphens' },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Draft', value: 'draft' },
@@ -2869,10 +2877,13 @@ export class PatientChartEditor extends EditorPane {
 				} catch { update(key, '—'); }
 			})();
 		};
-		run('allergies', `/api/allergy-intolerances/${this.patientId}`, 'allergiesList', 'NKA');
-		run('problems', `/api/medical-problems/${this.patientId}`, 'problemsList', 'None');
+		// Every empty row uses the SAME "No records" label — previously each row had
+		// its own wording (NKA / None / No records / No recorded vitals), which the
+		// test team flagged as inconsistent for an identical "nothing on file" state.
+		run('allergies', `/api/allergy-intolerances/${this.patientId}`, 'allergiesList', 'No records');
+		run('problems', `/api/medical-problems/${this.patientId}`, 'problemsList', 'No records');
 		run('history', `/api/fhir-resource/history/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
-		run('vitals', `/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`, undefined, 'No recorded vitals');
+		run('vitals', `/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
 	}
 
 	// --- Header ---
@@ -4513,6 +4524,19 @@ export class PatientChartEditor extends EditorPane {
 				];
 			case 'denials':
 				// ClaimResponse.status value set (matches the Denial form's Status field).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Draft', value: 'draft' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+				];
+			case 'era-remittance':
+				// PaymentReconciliation.status value set — MUST match the era-remittance
+				// form's Status field options (Active / Cancelled / Draft / Entered in
+				// Error). Without this case the tab fell through to the generic clinical
+				// default (Active / Inactive / Resolved), which never matched an ERA row
+				// and disagreed with the create/edit form's Status dropdown.
 				return [
 					{ label: 'All Statuses', value: '' },
 					{ label: 'Active', value: 'active' },
@@ -6652,11 +6676,11 @@ export class PatientChartEditor extends EditorPane {
 				try {
 					let items: Array<{ code: string; label: string }> = [];
 					if (this._isPayerLookup(f)) {
-						// Payer/insurer pickers: the tenant master list is often near-empty
-						// and the FHIR-resource endpoint returns a shape the generic extractor
-						// can't read, so the dropdown listed nothing. Mirror the sidebar's
-						// proven search — the tenant's /api/insurance-companies list (filtered
-						// client-side) plus the COMMON_PAYERS suggestions (Blue Cross, Aetna, Cigna…).
+						// Payer/insurer pickers: the FHIR-resource endpoint returns a shape the
+						// generic extractor can't read, so the dropdown listed nothing. Mirror
+						// the sidebar's proven search — ONLY the tenant's own
+						// /api/insurance-companies records (filtered client-side), so the list
+						// shows just the insurance companies the tenant actually added.
 						items = await this._searchPayers(q.trim(), f);
 					} else {
 						const url = this._buildSearchUrl(f, q.trim());
@@ -6838,11 +6862,12 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	/**
-	 * Search payers/insurers the same way the sidebar does: the tenant's own
-	 * `/api/insurance-companies` master list (returned unfiltered, so we match
-	 * client-side and keep each payer's real id) merged with the built-in
-	 * `COMMON_PAYERS` suggestions (Blue Cross, Aetna, Cigna, …) so the dropdown is
-	 * useful even when the tenant list is empty.
+	 * Search payers/insurers the same way the sidebar does: ONLY the tenant's own
+	 * `/api/insurance-companies` records (returned unfiltered, so we match
+	 * client-side and keep each payer's real id), de-duplicated by name with empty
+	 * names dropped. Built-in common-payer suggestions are intentionally NOT added
+	 * — the dropdown must show only the insurance companies the tenant has actually
+	 * created, so a tenant with a single "abc" payer sees exactly that one entry.
 	 */
 	private async _searchPayers(q: string, f: FieldDef): Promise<Array<{ code: string; label: string }>> {
 		const lq = q.toLowerCase();
@@ -6869,14 +6894,7 @@ export class PatientChartEditor extends EditorPane {
 					out.push({ code: useNameAsValue ? name : String(p.id ?? p.payerId ?? name), label: name });
 				}
 			}
-		} catch { /* fall back to the built-in suggestions below */ }
-		for (const name of COMMON_PAYERS) {
-			if (lq && !name.toLowerCase().includes(lq)) { continue; }
-			const key = name.toLowerCase();
-			if (seen.has(key)) { continue; }
-			seen.add(key);
-			out.push({ code: name, label: name });
-		}
+		} catch { /* no tenant payers reachable — return whatever matched (possibly none) */ }
 		return out.slice(0, 10);
 	}
 

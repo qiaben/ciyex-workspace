@@ -818,23 +818,6 @@ const FALLBACK_CVX_CODES: Array<{ code: string; shortDescription: string }> = [
 	{ code: '228', shortDescription: 'Zoster (shingles), recombinant (Shingrix)' },
 ];
 
-/**
- * Built-in suggestions for the insurance / payer typeahead. The tenant's own
- * `/api/insurance-companies` master list is often near-empty (a fresh tenant has
- * one or none), which left the payer dropdown effectively blank. These common US
- * payers are merged in as suggestions so the dropdown is useful out of the box;
- * the field still accepts free text for any payer not listed here.
- */
-export const COMMON_PAYERS: readonly string[] = [
-	'Aetna', 'Anthem Blue Cross Blue Shield', 'Blue Cross Blue Shield', 'Cigna',
-	'UnitedHealthcare', 'Humana', 'Kaiser Permanente', 'Centene', 'Molina Healthcare',
-	'WellCare', 'Health Net', 'Oscar Health', 'Ambetter', 'Medicare', 'Medicaid',
-	'Tricare', 'Blue Shield of California', 'Highmark', 'Independence Blue Cross',
-	'Horizon Blue Cross Blue Shield', 'Harvard Pilgrim Health Care', 'Tufts Health Plan',
-	'UPMC Health Plan', 'Geisinger Health Plan', 'Premera Blue Cross', 'Regence',
-	'EmblemHealth', 'AmeriHealth', 'CareSource', 'Self-Pay',
-];
-
 export function withTypeaheadSearch(
 	fields: IEditFieldDef[],
 	api: { fetch(path: string, init?: RequestInit): Promise<Response> }
@@ -1149,15 +1132,10 @@ export function withTypeaheadSearch(
 								out.push({ value: name, label: name, description: String(p.payerId || p.id || ''), details: { id: String(p.id ?? p.payerId ?? '') } });
 							}
 						}
-					} catch { /* fall back to the built-in suggestions below */ }
-					// Common US payers as additional suggestions (no backend id).
-					for (const name of COMMON_PAYERS) {
-						if (lq && !name.toLowerCase().includes(lq)) { continue; }
-						const key = name.toLowerCase();
-						if (seen.has(key)) { continue; }
-						seen.add(key);
-						out.push({ value: name, label: name, details: { id: '' } });
-					}
+					} catch { /* no tenant payers reachable — return whatever matched (possibly none) */ }
+					// Only the tenant's own insurance companies are offered — built-in
+					// common-payer suggestions are intentionally NOT appended, so the
+					// dropdown lists exactly the insurance records that were added.
 					return out.slice(0, 10);
 				},
 				onSelectSearchResult: (item, all) => {

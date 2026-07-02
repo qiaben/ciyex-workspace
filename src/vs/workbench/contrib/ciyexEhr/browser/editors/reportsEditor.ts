@@ -22,7 +22,6 @@ const _printTtPolicy = createTrustedTypesPolicy('ciyexEhrPrint', { createHTML: (
 
 const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#14b8a6'];
 const INPUT_STYLE = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
-const BTN_PRIMARY = 'padding:6px 14px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
 const BTN_SECONDARY = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:4px;cursor:pointer;font-size:12px;';
 
 interface ColumnDef {
@@ -98,6 +97,16 @@ interface ReportDef {
 	 * of its collected date — otherwise those columns render blank.
 	 */
 	computeArAging?: boolean;
+	/**
+	 * When true, the TABLE renders one aggregated row per provider (grouped on
+	 * `providerDisplay`) instead of one row per raw encounter — filling the
+	 * per-provider `encounters` count and `patientsPerDay` that don't exist on an
+	 * individual encounter (why the Provider Productivity table looked empty
+	 * beyond the Provider column). KPIs and charts keep using the raw rows, so the
+	 * "Encounters by Provider" counts stay correct. wRVU/charges/collections have
+	 * no encounter-side source and remain blank.
+	 */
+	groupByProvider?: boolean;
 }
 
 // FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
@@ -616,6 +625,12 @@ function getReportDef(key: string): ReportDef {
 		case 'payer-mix':
 			return {
 				apiPath: '/api/patients?page=0&size=1000',
+				// `/api/patients` carries no insurance, so without the Coverage join
+				// every row's `payerDisplay` was blank — the Payer column, the payer
+				// KPIs and all three by-payer charts came up empty ("data not
+				// loading"). Join coverage the same way patient-demographics does so
+				// each patient resolves to its payer (Self-Pay when uncovered).
+				enrichInsurance: true,
 				columns: [
 					{ key: 'payerDisplay', label: 'Payer' },
 					{ key: 'patientCount', label: 'Patients' },
@@ -657,7 +672,14 @@ function getReportDef(key: string): ReportDef {
 
 		case 'cpt-utilization':
 			return {
-				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				// CPT codes live on invoice line items, NOT on encounters — the old
+				// `/encounters/report/encounterAll` source carried no procedure code, so
+				// the CPT Code + Description columns were always blank. `/api/reports/
+				// cpt-utilization` flattens every invoice line in the practice into one
+				// row per procedure (cptCode / description / providerDisplay /
+				// totalAmount / startDate). (wRVU and E&M level are still unbacked — no
+				// endpoint exposes them — so those KPI/chart stay empty.)
+				apiPath: '/api/reports/cpt-utilization',
 				// Columns match ciyex-ehr-ui: CPT Code, Description, Volume, Total Charges, wRVU
 				columns: [
 					{ key: 'cptCode', label: 'CPT Code' },
@@ -805,6 +827,10 @@ function getReportDef(key: string): ReportDef {
 		case 'provider-productivity':
 			return {
 				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				// Encounters come back one row each; the table needs one row PER
+				// PROVIDER with the encounter count + patients/day, so aggregate for the
+				// table (charts/KPIs still count the raw encounter rows).
+				groupByProvider: true,
 				columns: [
 					{ key: 'providerDisplay', label: 'Provider' },
 					{ key: 'encounters', label: 'Encounters' },
@@ -1081,80 +1107,98 @@ function getReportDef(key: string): ReportDef {
 		// allow-any-unicode-next-line
 		// ─── ADMINISTRATIVE ───
 		case 'portal-usage':
+			// Patient-portal enrollment overview. There is no backend portal-usage
+			// analytics endpoint (all portal routes are patient-facing /me|/my) and no
+			// ehr-ui equivalent report, so the previous per-feature columns (feature /
+			// totalUsage / uniqueUsers / avgPerUser / trend30d) had no data source and
+			// every cell rendered blank. Instead we surface the real, resolvable patient
+			// data the /api/patients endpoint returns — who can be reached on the portal
+			// (email/phone on file), when they registered, and whether they're active.
 			return {
 				apiPath: '/api/patients?page=0&size=1000',
 				columns: [
-					{ key: 'feature', label: 'Feature' },
-					{ key: 'totalUsage', label: 'Total Usage' },
-					{ key: 'uniqueUsers', label: 'Unique Users' },
-					{ key: 'avgPerUser', label: 'Avg/User' },
-					{ key: 'trend30d', label: '30d Trend (%)' },
+					{ key: 'name', label: 'Patient' },
+					{ key: 'email', label: 'Email' },
+					{ key: 'phone', label: 'Phone' },
+					{ key: 'createdAt', label: 'Registered' },
+					{ key: 'active', label: 'Status' },
 				],
 				filters: [
 					DATE_FROM, DATE_TO,
-					{
-						type: 'select', key: 'feature', label: 'Feature', options: [
-							{ value: '', label: 'All Feature' },
-							{ value: 'view-chart', label: 'View Chart' },
-							{ value: 'schedule-appointment', label: 'Schedule Appointment' },
-							{ value: 'refill-prescription', label: 'Refill Prescription' },
-							{ value: 'bill-payment', label: 'Bill Payment' },
-							{ value: 'download-records', label: 'Download Records' },
-							{ value: 'message', label: 'Message' },
-						]
-					},
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'Active', label: 'Active' },
+						{ value: 'Inactive', label: 'Inactive' },
+					]),
 				],
 				kpis: [
+					{ label: 'Total Patients', calc: items => String(items.length), color: COLORS[0] },
+					{ label: 'Active', calc: items => String(countWhere(items, i => /active/i.test(i.active || ''))), color: COLORS[1] },
 					{
-						label: 'Enrolled %', calc: items => {
-							const enrolled = countWhere(items, i => i.portalEnrolled === 'true' || /enrolled/i.test(i.portalStatus || ''));
-							return items.length ? fmtPct(100 * enrolled / items.length) : '0%';
-						}, color: COLORS[0]
-					},
-					{ label: 'Active Users (30d)', calc: items => String(countWhere(items, i => !!i.lastPortalLogin)), color: COLORS[1] },
-					{ label: 'Messages Sent', calc: items => String(items.reduce((s, i) => s + Number(i.messageCount || 0), 0)), color: COLORS[2] },
-					{ label: 'Online Bookings', calc: items => String(items.reduce((s, i) => s + Number(i.onlineBookings || 0), 0)), color: COLORS[3] },
-				],
-				charts: [
-					{ type: 'bar', groupKey: 'feature', label: 'Feature Usage' },
-					{ type: 'line', groupKey: '', label: 'Enrollment Trend', aggregate: 'month', dateField: 'createdAt' },
-					{ type: 'pie', groupKey: 'ageGroup', label: 'Active Users by Age' },
-				],
-			};
-
-		case 'document-completion':
-			return {
-				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
-				columns: [
-					{ key: 'providerDisplay', label: 'Provider' },
-					{ key: 'unsigned', label: 'Unsigned' },
-					{ key: 'avgAgeDays', label: 'Avg Age (days)' },
-					{ key: 'oldestDays', label: 'Oldest (days)' },
-					{ key: 'signedToday', label: 'Signed Today' },
-				],
-				filters: DEFAULT_FILTERS,
-				kpis: [
-					{ label: 'Unsigned Notes', calc: items => String(countWhere(items, i => /unsigned|in[-_ ]?progress|draft/i.test(i.status || ''))), color: COLORS[0] },
-					{ label: 'Incomplete Encounters', calc: items => String(countWhere(items, i => !/complet|signed|finished/i.test(i.status || ''))), color: COLORS[1] },
-					{
-						label: 'Avg Sign Time (hrs)', calc: items => {
-							const times = items.map(i => Number(i.signTimeHours || 0)).filter(n => n > 0);
-							return times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : '0';
+						label: 'Reachable %', calc: items => {
+							const reachable = countWhere(items, i => !!(i.email || i.phone));
+							return items.length ? fmtPct(100 * reachable / items.length) : '0%';
 						}, color: COLORS[2]
 					},
 					{
-						label: 'On-Time Rate', calc: items => {
-							const onTime = countWhere(items, i => Number(i.signTimeHours || 0) <= 24);
-							return items.length ? fmtPct(100 * onTime / items.length) : '0%';
+						label: 'New This Month', calc: items => {
+							const now = new Date(); const mStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+							return String(countWhere(items, i => { const d = i.createdAt || i.registrationDate; return !!d && new Date(d).getTime() >= mStart; }));
 						}, color: COLORS[3]
 					},
 				],
 				charts: [
-					{ type: 'bar', groupKey: 'providerDisplay', label: 'Unsigned by Provider' },
-					{ type: 'bar', groupKey: 'unsignedAgeBucket', label: 'Unsigned Note Aging' },
-					{ type: 'line', groupKey: '', label: 'Completion Rate Trend', aggregate: 'month', dateField: 'startDate' },
+					{ type: 'line', groupKey: '', label: 'Registration Trend', aggregate: 'month', dateField: 'createdAt' },
+					{ type: 'donut', groupKey: 'active', label: 'Patient Status' },
+					{ type: 'pie', groupKey: 'ageGroup', label: 'By Age Group' },
 				],
 			};
+
+		case 'document-completion': {
+			// Per-encounter detail rows (mirrors ciyex-ehr-ui's Encounter report, which
+			// lists Patient / Date / Provider / Type / Status / Diagnosis). The columns
+			// previously read aggregate keys (unsigned / avgAgeDays / oldestDays /
+			// signedToday) that the /api/encounters/report/encounterAll rows don't carry,
+			// so every cell rendered blank ("details data not visible"). The keys below
+			// are all resolved by _normalizeRow from the encounterAll row shape.
+			const isSigned = (i: Record<string, string>): boolean => {
+				const st = (i.status || '').toLowerCase();
+				return /complet|finished/.test(st) || (st.includes('signed') && !st.includes('unsigned'));
+			};
+			return {
+				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				columns: [
+					{ key: 'patientRefDisplay', label: 'Patient' },
+					{ key: 'startDate', label: 'Date' },
+					{ key: 'providerDisplay', label: 'Provider' },
+					{ key: 'type', label: 'Visit Type' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'diagnosis', label: 'Diagnosis' },
+				],
+				filters: [
+					DATE_FROM, DATE_TO, PROVIDER_FILTER,
+					// Signed / Unsigned / Incomplete — the essence of a document-completion
+					// report and the same toggle ciyex-ehr-ui offers on the Encounter page.
+					STATUS_FILTER([
+						{ value: '', label: 'All Status' },
+						{ value: 'signed', label: 'Signed' },
+						{ value: 'unsigned', label: 'Unsigned' },
+						{ value: 'incomplete', label: 'Incomplete' },
+					]),
+				],
+				kpis: [
+					{ label: 'Total Notes', calc: items => String(items.length), color: COLORS[0] },
+					{ label: 'Signed', calc: items => String(countWhere(items, isSigned)), color: COLORS[1] },
+					{ label: 'Unsigned', calc: items => String(countWhere(items, i => /unsigned|in[-_ ]?progress|draft|pending/i.test(i.status || ''))), color: COLORS[2] },
+					{ label: 'Completion %', calc: items => items.length ? fmtPct(100 * countWhere(items, isSigned) / items.length) : '0%', color: COLORS[3] },
+				],
+				charts: [
+					{ type: 'bar', groupKey: 'providerDisplay', label: 'Encounters by Provider' },
+					{ type: 'pie', groupKey: 'status', label: 'By Completion Status' },
+					{ type: 'line', groupKey: '', label: 'Completion Trend', aggregate: 'month', dateField: 'startDate' },
+				],
+			};
+		}
 
 		// allow-any-unicode-next-line
 		// ─── AI USAGE ─── (handled separately by _renderAiUsage)
@@ -1373,29 +1417,7 @@ export class ReportsEditor extends EditorPane {
 			}
 		}
 
-		const spacer = DOM.append(this.filtersEl, DOM.$('span'));
-		spacer.style.flex = '1';
-
-		// Single "Generate" button matching ciyex-ehr-ui: it re-fetches data with the
-		// current filters and re-renders. There is no separate "Clear Filters" / "Refresh".
-		const generateBtn = DOM.append(this.filtersEl, DOM.$('button')) as HTMLButtonElement;
-		generateBtn.textContent = 'Generate';
-		generateBtn.style.cssText = BTN_PRIMARY + 'font-weight:600;padding:6px 18px;';
-		generateBtn.addEventListener('click', async () => {
-			generateBtn.disabled = true;
-			generateBtn.textContent = 'Loading...';
-			generateBtn.style.opacity = '0.6';
-			try {
-				await this._loadData();
-				this._buildFilters();
-				this._populateProviderFilter();
-				this._render();
-			} finally {
-				generateBtn.disabled = false;
-				generateBtn.textContent = 'Generate';
-				generateBtn.style.opacity = '';
-			}
-		});
+		// No "Generate" button: changing any filter dropdown re-renders immediately.
 	}
 
 	private _populateProviderFilter(): void {
@@ -1922,21 +1944,67 @@ export class ReportsEditor extends EditorPane {
 		}
 
 		if (this.sortKey) {
-			const dir = this.sortDir === 'asc' ? 1 : -1;
-			result = [...result].sort((a, b) => {
-				const av = a[this.sortKey] || '';
-				const bv = b[this.sortKey] || '';
-				const an = Number(av); const bn = Number(bv);
-				if (!isNaN(an) && !isNaN(bn) && av && bv) { return (an - bn) * dir; }
-				return av.localeCompare(bv) * dir;
-			});
+			result = this._sortRows(result);
 		}
 
 		return result;
 	}
 
+	/** Apply the active column sort to any row set (used for both the raw list and
+	 *  the aggregated Provider Productivity table). */
+	private _sortRows(rows: Record<string, string>[]): Record<string, string>[] {
+		if (!this.sortKey) { return rows; }
+		const dir = this.sortDir === 'asc' ? 1 : -1;
+		return [...rows].sort((a, b) => {
+			const av = a[this.sortKey] || '';
+			const bv = b[this.sortKey] || '';
+			const an = Number(av); const bn = Number(bv);
+			if (!isNaN(an) && !isNaN(bn) && av && bv) { return (an - bn) * dir; }
+			return av.localeCompare(bv) * dir;
+		});
+	}
+
+	/** Collapse raw encounter rows into one row per provider for the Provider
+	 *  Productivity table: `encounters` = count, `patientsPerDay` = distinct
+	 *  patients / distinct service days. wRVU/charges/collections have no
+	 *  encounter-side source, so they stay blank (not a misleading 0). */
+	private _aggregateByProvider(rows: Record<string, string>[]): Record<string, string>[] {
+		const groups = new Map<string, { encounters: number; patients: Set<string>; days: Set<string> }>();
+		for (const r of rows) {
+			const key = r.providerDisplay || r.encounterProvider || 'Unassigned';
+			let g = groups.get(key);
+			if (!g) { g = { encounters: 0, patients: new Set<string>(), days: new Set<string>() }; groups.set(key, g); }
+			g.encounters++;
+			const pid = r.patientId || r.patientName;
+			if (pid) { g.patients.add(pid); }
+			const day = (r.startDate || r.encounterDate || '').slice(0, 10);
+			if (day) { g.days.add(day); }
+		}
+		const out: Record<string, string>[] = [];
+		for (const [provider, g] of groups) {
+			const days = g.days.size || 1;
+			const patients = g.patients.size || g.encounters;
+			out.push({
+				providerDisplay: provider,
+				encounters: String(g.encounters),
+				patientsPerDay: (patients / days).toFixed(1),
+				wRVU: '',
+				charges: '',
+				collections: '',
+			});
+		}
+		// Busiest providers first when the user hasn't picked a sort column.
+		out.sort((a, b) => Number(b.encounters) - Number(a.encounters));
+		return out;
+	}
+
 	private _render(): void {
 		const filtered = this._filteredItems();
+		// The table can show an aggregated view (one row per provider) while the
+		// KPIs and charts keep counting the raw rows below.
+		const tableRows = this.reportDef.groupByProvider
+			? this._sortRows(this._aggregateByProvider(filtered))
+			: filtered;
 
 		// KPIs
 		DOM.clearNode(this.kpiEl);
@@ -1965,7 +2033,7 @@ export class ReportsEditor extends EditorPane {
 		const tableHeader = DOM.append(this.tableEl, DOM.$('div'));
 		tableHeader.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
 		const tableTitle = DOM.append(tableHeader, DOM.$('h3'));
-		tableTitle.textContent = `Detail Data (${filtered.length} records)`;
+		tableTitle.textContent = `Detail Data (${tableRows.length} records)`;
 		tableTitle.style.cssText = 'font-size:13px;font-weight:600;margin:0;flex:1;';
 
 		const tbl = DOM.append(this.tableEl, DOM.$('div'));
@@ -1989,7 +2057,7 @@ export class ReportsEditor extends EditorPane {
 
 		const start = this.currentPage * this.pageSize;
 		const end = start + this.pageSize;
-		const pageItems = filtered.slice(start, end);
+		const pageItems = tableRows.slice(start, end);
 		if (pageItems.length === 0) {
 			const empty = DOM.append(tbl, DOM.$('div'));
 			empty.style.cssText = 'padding:30px;text-align:center;color:var(--vscode-descriptionForeground);';
@@ -2012,12 +2080,12 @@ export class ReportsEditor extends EditorPane {
 		}
 
 		// Pagination
-		const totalPages = Math.max(1, Math.ceil(filtered.length / this.pageSize));
-		if (filtered.length > 0) {
+		const totalPages = Math.max(1, Math.ceil(tableRows.length / this.pageSize));
+		if (tableRows.length > 0) {
 			const pag = DOM.append(this.tableEl, DOM.$('div'));
 			pag.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 4px;justify-content:space-between;';
 			const info = DOM.append(pag, DOM.$('span'));
-			info.textContent = `Showing ${Math.min(start + 1, filtered.length)}-${Math.min(end, filtered.length)} of ${filtered.length} records`;
+			info.textContent = `Showing ${Math.min(start + 1, tableRows.length)}-${Math.min(end, tableRows.length)} of ${tableRows.length} records`;
 			info.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 
 			const pagBtns = DOM.append(pag, DOM.$('div'));

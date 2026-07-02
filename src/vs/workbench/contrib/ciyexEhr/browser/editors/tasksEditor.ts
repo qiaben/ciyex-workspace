@@ -695,6 +695,10 @@ export class TasksEditor extends EditorPane {
 							}
 							item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 							item.addEventListener('mouseleave', () => { item.style.background = ''; });
+							// Prevent the input from blurring when a suggestion is pressed —
+							// otherwise the blur handler's 150ms wipe erases the name before
+							// the click commits it ("name disappears on one click").
+							item.addEventListener('mousedown', (e) => { e.preventDefault(); });
 							item.addEventListener('click', () => {
 								assignedToInput.value = displayName;
 								lockProv(true);
@@ -787,6 +791,9 @@ export class TasksEditor extends EditorPane {
 								item.textContent = `${p.firstName || ''} ${p.lastName || ''} — ID: ${p.id || ''}`;
 								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 								item.addEventListener('mouseleave', () => { item.style.background = ''; });
+								// Prevent the input blur (and its 150ms wipe) from firing before the
+								// click commits the pick, so the patient name survives one click.
+								item.addEventListener('mousedown', (e) => { e.preventDefault(); });
 								item.addEventListener('click', () => {
 									patNameInput.value = `${p.firstName || ''} ${p.lastName || ''}`.trim();
 									patIdInput.value = p.id || '';

@@ -896,7 +896,10 @@ export class CalendarEditor extends EditorPane {
 					});
 
 					const cell = DOM.append(table, DOM.$('.cal-cell'));
-					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${isBlocked ? 'background:rgba(128,128,128,0.06);' : ''}`;
+					// `cursor:pointer` so the hand shows on every empty slot — the whole
+					// cell is click-to-create (see listener below), but without this it
+					// rendered the default arrow and read as non-interactive.
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${isBlocked ? 'background:rgba(128,128,128,0.06);' : ''}`;
 					if (!isBlocked) {
 						cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
 						cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
@@ -1074,7 +1077,7 @@ export class CalendarEditor extends EditorPane {
 					const prov = activeProviders[pi];
 					const provColor = PROVIDER_COLORS[pi % PROVIDER_COLORS.length];
 					const cell = DOM.append(table, DOM.$('.cal-cell'));
-					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
 					cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
 					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
 
@@ -1394,6 +1397,7 @@ export class CalendarEditor extends EditorPane {
 					options,
 					initialValue: value,
 					placeholder: `Select ${label}...`,
+					required,
 					triggerStyle: inputStyle,
 				});
 				sel.id = id;
@@ -1579,12 +1583,15 @@ export class CalendarEditor extends EditorPane {
 		prioritySel.id = 'priority';
 		formFields.set('priority', prioritySel);
 
-		// Provider — pre-select the column that was clicked (if any)
-		const provOptions = [{ value: '', label: 'Select provider...' }, ...this.providers.map(p => ({ value: p.id, label: p.name }))];
+		// Provider — pre-select the column that was clicked (if any). No explicit
+		// empty option: createCustomDropdown already surfaces the `Select Provider...`
+		// placeholder as a clear row, so adding one here duplicated it in the list.
+		const provOptions = this.providers.map(p => ({ value: p.id, label: p.name }));
 		const providerIdEl = field('Provider', 'providerId', 'select', providerId || '', true, provOptions) as HTMLSelectElement;
 
-		// Location
-		const locOptions = [{ value: '', label: 'Select location...' }, ...this.locations.map(l => ({ value: l.id, label: l.name }))];
+		// Location — same as Provider: the placeholder row is provided by the
+		// dropdown itself, so we must not add a second `Select location...` option.
+		const locOptions = this.locations.map(l => ({ value: l.id, label: l.name }));
 		const locationIdEl = field('Location', 'locationId', 'select', '', true, locOptions) as HTMLSelectElement;
 
 		// Status

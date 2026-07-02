@@ -1319,6 +1319,22 @@ export class EhrTitlebarControls extends Disposable {
 		for (const el of elements.inputs) {
 			if (el.type === 'checkbox') { el.checked = true; }
 			else { el.value = ''; }
+			// Date fields render as [visible-text, hidden, picker, icon] inside an
+			// `.ehr-date-wrap`; only the hidden ISO input is tracked in `inputs`, so
+			// clearing it alone leaves the visible MM/DD/YYYY text and the native
+			// picker still showing the previous date. That stale display then reads
+			// back as an empty start date on the next save ("Please enter a valid
+			// Start Date (MM/DD/YYYY)."). Clear every input in the wrap so the field
+			// is genuinely empty after a reset.
+			const dateWrap = el.closest('.ehr-date-wrap');
+			if (dateWrap) {
+				// eslint-disable-next-line no-restricted-syntax
+				dateWrap.querySelectorAll('input').forEach(inp => {
+					inp.value = '';
+					inp.dataset.invalid = '';
+					inp.style.borderColor = '';
+				});
+			}
 		}
 		for (const el of elements.selects) {
 			// Custom-dropdown inputs reset by writing their value (the overridden
