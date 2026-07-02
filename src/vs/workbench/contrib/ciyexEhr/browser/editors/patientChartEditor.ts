@@ -1752,7 +1752,14 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'disposition', label: 'Disposition', type: 'textarea', colSpan: 2 },
 					{ key: 'created', label: 'Response Date', type: 'date' },
 					{ key: 'insurer', label: 'Insurer', type: 'lookup', placeholder: 'Search insurer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', valueField: 'id', displayField: 'name' } },
-					{ key: 'request', label: 'Original Claim Ref', type: 'text', placeholder: 'e.g. Claim/123' },
+					// Maps to ClaimResponse.request — a FHIR reference HAPI validates for
+					// existence. As free text a user could type a bare claim number (e.g.
+					// "345") that isn't a real Claim id, producing HAPI-1094 "Resource
+					// Claim/345 not found" and failing the whole save. Make it a lookup on
+					// actual claims (mirrors the backend's V145 config + the payments
+					// "Apply to Claim" field above) so the value is a real Claim id, or
+					// leave it blank (optional → no reference → the denial still saves).
+					{ key: 'request', label: 'Original Claim', type: 'lookup', placeholder: 'Search claim by number', lookupConfig: { endpoint: '/api/fhir-resource/claims', valueField: 'id', displayField: 'identifier' } },
 					{ key: 'preAuthRef', label: 'Pre-Auth Reference', type: 'text' },
 					{
 						key: 'use', label: 'Use', type: 'select', options: [
@@ -4498,19 +4505,18 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Cancelled', value: 'cancelled' },
 				];
 			case 'report':
-				// Match the Diagnostic Report form's Status options (FHIR
-				// DiagnosticReport.status) so the table filter and the create/edit
-				// form offer the SAME values. The tab previously fell through to the
-				// generic clinical default (Active / Inactive / Resolved), which never
-				// matched a single report row whose status is registered/final/etc.
+				// Match the New/Edit Report form's Status dropdown so the table filter
+				// and the create/edit form offer the SAME values (per the request to
+				// align the filter to the form). NOTE: the live form (backend
+				// tab-field-config) uses Complete / Pending / Error, so the filter
+				// mirrors those. Reports created before this used FHIR
+				// DiagnosticReport.status values (registered/final/…) and only surface
+				// under "All Statuses".
 				return [
 					{ label: 'All Statuses', value: '' },
-					{ label: 'Registered', value: 'registered' },
-					{ label: 'Partial', value: 'partial' },
-					{ label: 'Preliminary', value: 'preliminary' },
-					{ label: 'Final', value: 'final' },
-					{ label: 'Amended', value: 'amended' },
-					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Complete', value: 'complete' },
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Error', value: 'error' },
 				];
 			case 'billing':
 			case 'claims':
@@ -5112,9 +5118,15 @@ export class PatientChartEditor extends EditorPane {
 					}
 				}
 				// Treat any phone/email field by TYPE or by key/label, so validation
-				// holds even when the config types the field as plain text.
-				const isPhone = f.type === 'phone' || /phone|mobile|fax|tel(?:ephone)?/i.test(f.key) || /phone|mobile|fax/i.test(f.label);
-				const isEmail = f.type === 'email' || /e-?mail/i.test(f.key) || /e-?mail/i.test(f.label);
+				// holds even when the config types the field as plain text. The
+				// key/label heuristic must NOT fire on non-text inputs: the boolean
+				// Communication-Consent toggles "Allow Email Communication" (allowEmail)
+				// and "Allow Voicemail" (allowVoicemail) both contain "email", so their
+				// on/off value was being validated as an email address — it never matched
+				// EMAIL_RX, so the whole Demographics form silently refused to save.
+				const isTextInput = !/^(boolean|checkbox|switch|toggle|select|enum|radio|date|datetime|number|file)$/i.test(f.type || '');
+				const isPhone = isTextInput && (f.type === 'phone' || /phone|mobile|fax|tel(?:ephone)?/i.test(f.key) || /phone|mobile|fax/i.test(f.label));
+				const isEmail = isTextInput && (f.type === 'email' || /e-?mail/i.test(f.key) || /e-?mail/i.test(f.label));
 				// Email format is canonical — enforce a real email shape for ANY
 				// email-typed or email-keyed field up front, BEFORE the generic
 				// validationPattern branch. The Demographics "Email Address" and
@@ -5794,7 +5806,21 @@ export class PatientChartEditor extends EditorPane {
 					payload.patientId = this._clinicalPatientId();
 				}
 				const method = isEdit ? 'PUT' : 'POST';
-				const res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				let res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				// A denial's optional "Original Claim" (ClaimResponse.request) is a FHIR
+				// reference HAPI validates for existence. If it points at a Claim that
+				// doesn't exist (e.g. a bare claim number typed into an older text field),
+				// the WHOLE save fails with HAPI-1094 "Resource Claim/<id> not found,
+				// specified in path: ClaimResponse.request". The link is optional, so drop
+				// it and retry once rather than losing the entire denial. Mirrors the
+				// reference-prefix guards above and the upsert fallback used elsewhere.
+				if (!res.ok && payload.request) {
+					const errText = await res.clone().text().catch(() => '');
+					if (/HAPI-1094/i.test(errText) && /request/i.test(errText)) {
+						delete payload.request;
+						res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+					}
+				}
 				if (res.ok) {
 					this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
 					overlay.remove();
