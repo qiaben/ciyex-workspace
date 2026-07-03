@@ -111,6 +111,12 @@ export class MessagingEditor extends EditorPane {
 	// the in-progress "@query", its position in the input's text node, the filtered
 	// member matches and the highlighted row.
 	private mentionDropdownEl: HTMLElement | undefined;
+	// Org-wide people directory (staff + patients) merged into the @-mention
+	// candidates — the channel roster alone can be a single owner row, but every
+	// org user (provider, nurse, patient, …) should be mentionable. Loaded once
+	// per editor from the same endpoints as the add-people picker.
+	private orgDirectory: ChannelMember[] = [];
+	private orgDirectoryLoaded = false;
 	private mentionState: {
 		node: Text;
 		atIndex: number;
@@ -224,6 +230,9 @@ export class MessagingEditor extends EditorPane {
 		// from the dedicated endpoint — the channel-list payload's embedded members
 		// can be partial, which left the @-mention popup showing only the owner.
 		void this._loadChannelMembers(input.channelId);
+		// Org-wide directory for the @-mention popup (staff + patients) — loaded
+		// once per editor; channel switches reuse the cached list.
+		void this._loadOrgDirectory();
 
 		await this._loadMessages(input.channelId, input.threadParentId);
 
@@ -781,24 +790,24 @@ export class MessagingEditor extends EditorPane {
 		const hoverActions = DOM.append(row, DOM.$('div'));
 		hoverActions.style.cssText = 'display:none;position:absolute;right:16px;top:-8px;background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:2px;gap:2px;';
 
+		// Highlighting is done via the `.messaging-hover-action:hover` CSS rule rather
+		// than JS mouseenter/mouseleave — when the action bar is hidden while the
+		// pointer sits on a button, mouseleave never fires and the JS-set background
+		// stays stuck, so several icons end up highlighted at once.
 		for (const emoji of QUICK_REACTIONS.slice(0, 3)) {
-			const btn = DOM.append(hoverActions, DOM.$('button'));
+			const btn = DOM.append(hoverActions, DOM.$('button.messaging-hover-action'));
 			btn.textContent = emoji;
 			btn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
-			btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
-			btn.addEventListener('mouseleave', () => { btn.style.background = ''; });
 			btn.addEventListener('click', () => this._toggleReaction(msg.id, emoji));
 		}
 
 		// Reply button
 		if (!this._getInput()?.threadParentId) {
-			const replyBtn = DOM.append(hoverActions, DOM.$('button'));
+			const replyBtn = DOM.append(hoverActions, DOM.$('button.messaging-hover-action'));
 			// allow-any-unicode-next-line
 			replyBtn.textContent = '💬';
 			replyBtn.title = 'Reply in thread';
 			replyBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
-			replyBtn.addEventListener('mouseenter', () => { replyBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
-			replyBtn.addEventListener('mouseleave', () => { replyBtn.style.background = ''; });
 			replyBtn.addEventListener('click', () => {
 				const inp = this._getInput();
 				if (inp) {
@@ -808,33 +817,27 @@ export class MessagingEditor extends EditorPane {
 		}
 
 		// Pin button
-		const pinBtn = DOM.append(hoverActions, DOM.$('button'));
+		const pinBtn = DOM.append(hoverActions, DOM.$('button.messaging-hover-action'));
 		// allow-any-unicode-next-line
 		pinBtn.textContent = '📌';
 		pinBtn.title = msg.pinned ? 'Unpin' : 'Pin';
 		pinBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
-		pinBtn.addEventListener('mouseenter', () => { pinBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
-		pinBtn.addEventListener('mouseleave', () => { pinBtn.style.background = ''; });
 		pinBtn.addEventListener('click', () => this._togglePin(msg.id, msg.pinned));
 
 		// Edit button (only for own messages)
 		if (msg.senderId === this.currentUserId) {
-			const editBtn = DOM.append(hoverActions, DOM.$('button'));
+			const editBtn = DOM.append(hoverActions, DOM.$('button.messaging-hover-action'));
 			// allow-any-unicode-next-line
 			editBtn.textContent = '✏️';
 			editBtn.title = 'Edit';
 			editBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
-			editBtn.addEventListener('mouseenter', () => { editBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
-			editBtn.addEventListener('mouseleave', () => { editBtn.style.background = ''; });
 			editBtn.addEventListener('click', () => this._editMessage(msg.id, msg.content));
 
-			const delBtn = DOM.append(hoverActions, DOM.$('button'));
+			const delBtn = DOM.append(hoverActions, DOM.$('button.messaging-hover-action'));
 			// allow-any-unicode-next-line
 			delBtn.textContent = '🗑️';
 			delBtn.title = 'Delete';
 			delBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:14px;border-radius:4px;';
-			delBtn.addEventListener('mouseenter', () => { delBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
-			delBtn.addEventListener('mouseleave', () => { delBtn.style.background = ''; });
 			delBtn.addEventListener('click', () => this._deleteMessage(msg.id));
 		}
 	}
@@ -1031,9 +1034,10 @@ export class MessagingEditor extends EditorPane {
 		const query = m[1];
 		const atIndex = caretIndex - query.length - 1;
 		const ql = query.toLowerCase();
+		// No hard row cap — the popup itself is height-capped and scrolls, and a
+		// bare "@" should list every mentionable person in the org.
 		const matches = members
-			.filter(mem => !ql || mem.displayName.toLowerCase().includes(ql))
-			.slice(0, 8);
+			.filter(mem => !ql || mem.displayName.toLowerCase().includes(ql));
 		if (matches.length === 0) { this._closeMention(); return; }
 		this.mentionState = { node: textNode, atIndex, caretIndex, query, matches, activeIndex: 0 };
 		this._renderMentionDropdown();
@@ -1721,9 +1725,53 @@ export class MessagingEditor extends EditorPane {
 	}
 
 	/**
+	 * Fetch the org-wide people directory for the @-mention popup: staff via
+	 * `/api/admin/users` and patients via `/api/patients` — the same endpoints the
+	 * add-people picker uses. The channel roster alone can be just the owner, but
+	 * every org user (provider, nurse, patient, …) should be mentionable. Either
+	 * fetch failing (e.g. no admin scope) degrades to whatever the other returned.
+	 */
+	private async _loadOrgDirectory(): Promise<void> {
+		if (this.orgDirectoryLoaded) { return; }
+		this.orgDirectoryLoaded = true;
+		const staff = async (): Promise<ChannelMember[]> => {
+			try {
+				const res = await this.apiService.fetch('/api/admin/users?page=0&size=100');
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const users = (data?.data || data?.content || data || []) as Array<{ id: string; firstName?: string; lastName?: string; email?: string; roles?: string[] }>;
+				return users.filter(u => u.id).map(u => ({
+					userId: u.id,
+					displayName: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id,
+					role: (u.roles?.[0] || 'staff').toLowerCase().replace(/_/g, ' '),
+				}));
+			} catch { return []; }
+		};
+		const patients = async (): Promise<ChannelMember[]> => {
+			try {
+				const res = await this.apiService.fetch('/api/patients?page=0&size=100');
+				if (!res.ok) { return []; }
+				const data = await res.json();
+				const list = (data?.data?.content || data?.content || data?.data || []) as Array<{ id?: string; fhirId?: string; firstName?: string; lastName?: string }>;
+				return list.map(p => ({
+					userId: String(p.fhirId || p.id || ''),
+					displayName: `${p.firstName || ''} ${p.lastName || ''}`.trim() || String(p.fhirId || p.id || ''),
+					role: 'patient',
+				})).filter(c => c.userId);
+			} catch { return []; }
+		};
+		const [s, p] = await Promise.all([staff(), patients()]);
+		this.orgDirectory = [...s, ...p];
+		// If the user already has the @-popup open, fold the new names in live.
+		if (this.mentionState) { this._updateMentionAutocomplete(); }
+	}
+
+	/**
 	 * Build the @-mention candidate list: the channel's members merged with anyone
-	 * who has posted in the channel (deduped by display name), so every group
-	 * participant is mentionable even when the membership roster is sparse.
+	 * who has posted in the channel plus the org-wide directory (staff + patients),
+	 * deduped by display name — so every org user is mentionable even when the
+	 * membership roster is sparse. Channel-roster entries win the dedup so their
+	 * role labels (owner/member) are kept.
 	 */
 	private _mentionCandidates(): ChannelMember[] {
 		const byName = new Map<string, ChannelMember>();
@@ -1735,6 +1783,12 @@ export class MessagingEditor extends EditorPane {
 			const sn = (msg.senderName || '').trim();
 			if (sn && !byName.has(sn.toLowerCase())) {
 				byName.set(sn.toLowerCase(), { userId: msg.senderId, displayName: sn });
+			}
+		}
+		for (const person of this.orgDirectory) {
+			const dn = person.displayName.trim();
+			if (dn && !byName.has(dn.toLowerCase())) {
+				byName.set(dn.toLowerCase(), person);
 			}
 		}
 		return Array.from(byName.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));

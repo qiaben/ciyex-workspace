@@ -838,3 +838,11 @@ nested rectangular box the user does not want. Suppress it for a single rounded 
 	scrollbar-width: none !important;
 	-ms-overflow-style: none !important;
 }
+
+/* --- Messaging: message hover-action bar (react / reply / pin / edit / delete).
+ * Highlight is pure CSS :hover so exactly the icon under the pointer lights up;
+ * JS-set backgrounds got stuck when the bar was hidden mid-hover, leaving
+ * several icons highlighted at once. --- */
+.messaging-editor .messaging-hover-action:hover {
+	background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)) !important;
+}
