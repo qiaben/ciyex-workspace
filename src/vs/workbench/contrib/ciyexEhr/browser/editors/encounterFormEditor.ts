@@ -366,42 +366,33 @@ export class EncounterFormEditor extends EditorPane {
 					return {};
 				}).catch(() => ({}))
 				: Promise.resolve({}),
-			// Pre-fill the Vitals section from the patient's most recent recorded
-			// vitals Observation (the same source the patient chart reads). Without
-			// this the Vitals fields opened blank on a fresh encounter even though
-			// the patient had vitals on file (QA issue 9). Mapped to the form's
-			// `vitals_*` keys and merged as the lowest-priority layer so an explicit
-			// value already saved on THIS encounter's composition still wins.
-			this.patientId
-				// size=50, not size=1: the vitals endpoint is NOT sorted newest-first
-				// (it returned the OLDEST record first), so size=1 pre-filled the encounter
-				// from a stale vitals record — the just-recorded Heart Rate / Temperature /
-				// Respiratory Rate came back blank. Fetch a page and let _mapLatestVitals
-				// pick the most recent by recordedAt.
-				? this.apiService.fetch(`/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=50`)
-					.then(async r => (r.ok ? this._mapLatestVitals(await r.json()) : {}))
-					.catch(() => ({}))
-				: Promise.resolve({}),
 		];
-		const [fhir, ehr, form, vitals] = await Promise.all(loads);
+		const [fhir, ehr, form] = await Promise.all(loads);
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
-		this.encounterData = { ...vitals, ...fhir, ...ehr, ...form };
+		this.encounterData = { ...fhir, ...ehr, ...form };
 		this._serviceDate = this._extractServiceDate(this.encounterData);
-		// Vitals are shared across the Snapshot, this Encounter and the Patient Chart
-		// editor via ONE FHIR Observation per visit DATE. Load the most-recent vitals
-		// Observation recorded on this encounter's date and let it win for the
-		// vitals_* fields — so a value entered in the Snapshot or Chart editor for
-		// this date shows here too — and remember its id so save upserts the SAME
-		// record (no divergent copies). Falls back to the composition on failure.
+		// Vitals are DATE-scoped, never "most recent across all dates". The Snapshot,
+		// this Encounter and the Patient Chart all read the ONE FHIR Observation
+		// recorded on the visit's DATE. Pre-fill the Vitals section ONLY from that
+		// per-date record — so a fresh visit with no vitals for its own date opens
+		// blank (matching the Snapshot), instead of leaking another day's numbers.
+		// (Previously a global most-recent fallback pulled in an unrelated record,
+		// which also surfaced as empty Heart Rate / Temperature / Respiratory Rate
+		// when that stale record lacked those FHIR components.) A value already saved
+		// on THIS encounter's composition wins; the per-date reading only fills gaps.
+		// The record's id is remembered so save upserts the SAME record (no copies).
 		const encDateRaw = this.encounterData['encounterDate'] ?? this.encounterData['startDate'] ?? this.encounterData['start'] ?? this.encounterData['date'];
 		if (this.patientId && encDateRaw) {
 			try {
 				const found = await this._findVitalsObsOnDate(String(encDateRaw));
 				if (found) {
 					this._vitalsObsId = found.id;
-					if (Object.keys(found.vitals).length > 0) { this.encounterData = { ...this.encounterData, ...found.vitals }; }
+					for (const [k, v] of Object.entries(found.vitals)) {
+						const cur = this.encounterData[k];
+						if (cur === undefined || cur === null || String(cur).trim() === '') { this.encounterData[k] = v; }
+					}
 				}
-			} catch { /* keep composition vitals on failure */ }
+			} catch { /* no vitals for this date — leave the section blank */ }
 		}
 	}
 
