@@ -160,6 +160,7 @@ function getReportDef(key: string): ReportDef {
 					{ key: 'ageGroup', label: 'Age Group' },
 					{ key: 'active', label: 'Status' },
 					{ key: 'insurance', label: 'Insurance' },
+					{ key: 'providerDisplay', label: 'Provider' },
 				],
 				filters: [
 					DATE_FROM, DATE_TO, PROVIDER_FILTER,

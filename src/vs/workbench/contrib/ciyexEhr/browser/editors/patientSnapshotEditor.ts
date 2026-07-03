@@ -480,6 +480,19 @@ export class PatientSnapshotEditor extends EditorPane {
 				dateIssued.validationMessage = 'Date Issued cannot be a past-year or future date';
 			}
 		}
+		// Snapshot-only: the Active Problems onset/resolved dates must stay within
+		// the CURRENT calendar year (past & future MONTHS allowed, but no past- or
+		// future-YEAR dates) — the form previously accepted any year (QA issue 1).
+		if (entity === 'problems') {
+			for (const key of ['onsetDate', 'resolvedDate']) {
+				const dateField = fields.find(f => f.key === key);
+				if (dateField) {
+					dateField.minDate = 'year-start';
+					dateField.maxDate = 'year-end';
+					dateField.validationMessage = `${dateField.label} must be within the current year`;
+				}
+			}
+		}
 		return withTypeaheadSearch(fields, this.apiService);
 	}
 
@@ -1963,10 +1976,15 @@ export class PatientSnapshotEditor extends EditorPane {
 			: encs.find(e => this._isSameDay(e.encounterDate || e.startDate || e.start || e.date || e.periodStart, apptDateRaw));
 		const visitEncId = visitEnc ? String(visitEnc.id ?? visitEnc.fhirId ?? '') : '';
 
-		const [fsRaw, visitForm] = await Promise.all([
+		const [fsRaw, visitForm, visitNotesRaw] = await Promise.all([
 			todayEncId ? this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`).catch(() => null) : Promise.resolve(null),
 			visitEnc && visitEncId ? this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(visitEncId)}`).catch(() => null) : Promise.resolve(null),
+			// Visit notes drive whether the "Treatment Plan" pending tile shows: once a
+			// note exists for the patient the care plan is considered actioned (QA — the
+			// tile previously always showed even after notes were created).
+			this._fetch(`/api/fhir-resource/visit-notes/patient/${patientId}?page=0&size=1`).catch(() => null),
 		]);
+		const hasVisitNotes = this._list({ status: 'fulfilled', value: visitNotesRaw }).length > 0;
 		if (fsRaw) {
 			const fsInner = (fsRaw?.data ?? fsRaw) as unknown;
 			const fs = (Array.isArray(fsInner) ? fsInner[0] : fsInner) as Record<string, unknown> | null | undefined;
@@ -1984,7 +2002,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
-		this._renderGrid(p, conds, meds, vit, encs, orderList, resultList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw);
+		this._renderGrid(p, conds, meds, vit, encs, orderList, resultList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw, hasVisitNotes);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -3204,6 +3222,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		pipeline?: VisitPipelineState,
 		visitVitals?: Record<string, unknown> | null,
 		apptDateRaw?: string,
+		hasVisitNotes: boolean = false,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
@@ -3254,7 +3273,7 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		// Pending Items — unfinished work the doctor must action (full width).
 		// Orders still awaiting a result drive the "Lab Results Pending" prompt.
-		this._renderPendingItems(grid, labOrders, encs);
+		this._renderPendingItems(grid, labOrders, encs, hasVisitNotes);
 
 		// Bottom rows: Lab Orders and Lab Results, each in its own full-width card
 		// with create / edit / delete. Both read & write the clinical lab stores so
@@ -4273,7 +4292,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Pending Items — unfinished clinical work the provider must action. The
 	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
 	 *  unfinished work"). Each item is derived from real record state. */
-	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[]): void {
+	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
 		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')));
 		const openEncounters = encs.filter(e => {
 			const s = String(e.status || '').toLowerCase();
@@ -4289,8 +4308,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		// NOTE: no "create encounter" pending tile — encounters are created
 		// automatically when the visit is marked Completed, never by a manual click.
-		// Treatment plan visibility — always offer a quick entry point.
-		items.push({ icon: 'checklist', label: 'Treatment Plan', detail: 'Review or update the care plan', color: '#a78bfa', onClick: () => this._openManager('visit-notes', 'list') });
+		// Treatment plan is pending only until a visit note is written for the patient;
+		// once a note exists the care plan is considered actioned so the tile is dropped
+		// (QA — it previously showed unconditionally even after notes were created).
+		if (!hasVisitNotes) {
+			items.push({ icon: 'checklist', label: 'Treatment Plan', detail: 'Review or update the care plan', color: '#a78bfa', onClick: () => this._openManager('visit-notes', 'list') });
+		}
 
 		const card = DOM.append(grid, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';

@@ -1882,7 +1882,7 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ key: 'recommendation', label: 'Recommendation', type: 'textarea', placeholder: 'Recommended action for the provider...', width: 'span 2' },
 			// Row 8: referenceUrl + snoozeDays
 			{ key: 'referenceUrl', label: 'Reference URL', type: 'text', placeholder: 'https://...', aliases: ['reference_url', 'refUrl'], validationPattern: '^(https?://.*)?$', validationMessage: 'Must be a valid https:// URL' },
-			{ key: 'snoozeDays', label: 'Snooze (days)', type: 'number', placeholder: 'Leave empty for no snooze', aliases: ['snooze_days'] },
+			{ key: 'snoozeDays', label: 'Snooze (days)', type: 'number', placeholder: 'Leave empty for no snooze', aliases: ['snooze_days'], minValue: 0, validationMessage: 'Snooze (days) cannot be negative' },
 		],
 		actions: [
 			// Issue #13: the Active/Inactive toggle now lives in the Status column

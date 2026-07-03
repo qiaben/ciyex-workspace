@@ -1064,8 +1064,11 @@ export function withTypeaheadSearch(
 			return {
 				...f, kind: 'search' as const, onSearch: (q) => fetchCodeSystem('LOINC', q),
 				onSelectSearchResult: (item, all) => {
+					// Always overwrite the Test Name with the newly-picked code's
+					// description. onlyIfEmpty was true, which left a stale test name
+					// when the user changed the LOINC code a second time (QA).
 					const desc = item.details?.description || '';
-					if (desc) { fillRelated(all, 'testName', desc, /*onlyIfEmpty*/ true); }
+					if (desc) { fillRelated(all, 'testName', desc); }
 				},
 			};
 		}

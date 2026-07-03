@@ -212,7 +212,11 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'medicationName', label: 'Medication Name' },
 					{ key: 'dosage', label: 'Dosage' },
 					{ key: 'frequency', label: 'Frequency' },
-					{ key: 'startDate', label: 'Start Date' },
+					// The FHIR MedicationRequest read-back returns the issued date under
+					// authoredOn/effectiveDateTime rather than `startDate`, so the column
+					// was blank even after Date Issued was saved (QA). Resolve via alias
+					// chain so whichever date key the record carries is displayed.
+					{ key: 'startDate', label: 'Date Issued', aliases: ['startDate', 'authoredOn', 'effectiveDateTime', 'dateWritten', 'dateIssued', 'recordedDate'] },
 					{ key: 'prescriberName', label: 'Prescriber', aliases: ['prescriberDisplay', 'prescribingDoctorDisplay', 'prescriberName', 'prescriber', 'prescribingDoctor', 'requester', 'orderedBy'] },
 					{ key: 'status', label: 'Status' },
 				],
@@ -4456,6 +4460,7 @@ export class PatientChartEditor extends EditorPane {
 				// single row (QA issue 4). Offer the statuses the notes actually use.
 				return [
 					{ label: 'All Statuses', value: '' },
+					{ label: 'Current', value: 'current' },
 					{ label: 'Unsigned', value: 'unsigned' },
 					{ label: 'Signed', value: 'signed' },
 					{ label: 'Amended', value: 'amended' },
@@ -4550,6 +4555,17 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Draft', value: 'draft' },
 					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
+			case 'clinical-alerts':
+				// Match the Clinical Alert form's Status options — the alert can be
+				// "Entered in Error" but that value was missing from the generic
+				// clinical default below, so such alerts never matched a filter (QA).
+				return [
+					{ label: 'All Clinical Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+					{ label: 'Resolved', value: 'resolved' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+				];
 			default:
 				return [
 					{ label: 'All Clinical Statuses', value: '' },
@@ -4583,6 +4599,66 @@ export class PatientChartEditor extends EditorPane {
 		return y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth() + 1);
 	}
 
+	/** Payment History for the chart Payment tab — lists completed/recorded
+	 *  payment transactions from the SAME store the snapshot Financials reads
+	 *  (/api/payments/transactions/patient/{id}), so a payment collected via the
+	 *  snapshot appears here too (QA: chart Payment tab showed nothing). */
+	private async _renderChartPaymentHistory(container: HTMLElement): Promise<void> {
+		const section = DOM.append(container, DOM.$('div'));
+		section.style.cssText = 'margin-bottom:18px;';
+		const heading = DOM.append(section, DOM.$('div'));
+		heading.textContent = 'Payment History';
+		heading.style.cssText = 'font-size:12px;font-weight:700;color:var(--vscode-foreground);margin:0 0 10px;';
+
+		let payments: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch(`/api/payments/transactions/patient/${this.patientId}?page=0&size=50`);
+			if (res.ok) {
+				const data = await res.json();
+				payments = (data?.data?.content || data?.data || data?.content || (Array.isArray(data) ? data : [])) as Array<Record<string, unknown>>;
+			}
+		} catch { payments = []; }
+
+		if (payments.length === 0) {
+			const empty = DOM.append(section, DOM.$('div'));
+			empty.style.cssText = 'text-align:center;padding:24px;color:var(--vscode-descriptionForeground);font-size:12px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+			empty.textContent = 'No payments recorded.';
+			return;
+		}
+
+		const titleCase = (v: unknown): string => { const s = String(v ?? '').trim(); return s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—'; };
+		const table = DOM.append(section, DOM.$('div'));
+		table.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		const gridCols = '120px 110px 1fr 1fr 110px';
+		const hdrRow = DOM.append(table, DOM.$('div'));
+		hdrRow.style.cssText = `display:grid;grid-template-columns:${gridCols};gap:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);background:rgba(128,128,128,0.06);border-bottom:1px solid var(--vscode-editorWidget-border);`;
+		for (const label of ['Date', 'Amount', 'Type', 'Method', 'Status']) {
+			const h = DOM.append(hdrRow, DOM.$('span'));
+			h.textContent = label;
+		}
+		// Most-recent first.
+		const sorted = [...payments].sort((a, b) => {
+			const da = new Date(String(a.collectedAt || a.paymentDate || a.date || a.transactionDate || a.created || 0)).getTime();
+			const db = new Date(String(b.collectedAt || b.paymentDate || b.date || b.transactionDate || b.created || 0)).getTime();
+			return db - da;
+		});
+		for (const pay of sorted) {
+			const row = DOM.append(table, DOM.$('div'));
+			row.style.cssText = `display:grid;grid-template-columns:${gridCols};gap:8px;padding:7px 12px;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.06);`;
+			const dateRaw = String(pay.collectedAt || pay.paymentDate || pay.date || pay.transactionDate || pay.created || '');
+			const dateStr = dateRaw ? new Date(dateRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+			const amtNum = parseFloat(String(pay.amount ?? pay.totalAmount ?? ''));
+			const amtStr = isNaN(amtNum) ? '—' : `$${amtNum.toFixed(2)}`;
+			const method = titleCase(pay.paymentMethodType ?? pay.paymentMethod ?? pay.method ?? pay.paymentType);
+			const cells = [dateStr, amtStr, titleCase(pay.transactionType ?? pay.paymentType), method, titleCase(pay.status)];
+			for (const c of cells) {
+				const cell = DOM.append(row, DOM.$('span'));
+				cell.textContent = c;
+				cell.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			}
+		}
+	}
+
 	private async _renderPatientCreditCards(container: HTMLElement, actionSlot: HTMLElement): Promise<void> {
 		DOM.clearNode(container);
 		DOM.clearNode(actionSlot);
@@ -4591,6 +4667,17 @@ export class PatientChartEditor extends EditorPane {
 		const addBtn = DOM.append(actionSlot, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+ Add Card';
 		addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
+
+		// Payment History — completed payments recorded for this patient. The tab
+		// previously showed ONLY saved cards, so a completed payment (visible in the
+		// snapshot Financials) never appeared here (QA). Render the same transactions
+		// the snapshot reads before the "Payment Methods" (cards) section below.
+		await this._renderChartPaymentHistory(container);
+
+		// Payment Methods heading (cards live below the payment history).
+		const cardsHeading = DOM.append(container, DOM.$('div'));
+		cardsHeading.textContent = 'Payment Methods';
+		cardsHeading.style.cssText = 'font-size:12px;font-weight:700;color:var(--vscode-foreground);margin:4px 0 10px;';
 
 		// Search bar
 		const filterBar = DOM.append(container, DOM.$('div'));
