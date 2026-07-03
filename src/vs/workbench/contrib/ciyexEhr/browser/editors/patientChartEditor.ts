@@ -35,7 +35,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -1345,10 +1345,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// and the test team flagged the search as not working.
 					{ key: 'author', label: 'Author', type: 'practitioner-search', placeholder: 'Search Author' },
 					{
-						key: 'status', label: 'Status', type: 'select', options: [
-							// Match the note signing-workflow vocabulary the list/table
-							// displays (UNSIGNED / SIGNED / …) so the create/edit form and
-							// the status filter agree with the stored value (QA issue 4).
+						// `mergeOptions`: the backend visit-notes tab_field_config ships
+						// only Current/Superseded/Entered in Error, but the signing
+						// workflow the list/table renders also needs Signed/Unsigned
+						// (+ Amended). Union them so the create/edit form offers all of
+						// them instead of the backend set alone (QA: add Sign/Unsign).
+						key: 'status', label: 'Status', type: 'select', mergeOptions: true, options: [
 							{ label: 'Unsigned', value: 'unsigned' },
 							{ label: 'Signed', value: 'signed' },
 							{ label: 'Amended', value: 'amended' },
@@ -2701,8 +2703,16 @@ export class PatientChartEditor extends EditorPane {
 										// Without this, "given id must not be null" save errors slipped
 										// through because validation didn't flag the empty field.
 										required: f.required ?? ov.required,
-										// Only fall back to local options if backend left them empty.
-										options: hasBackendOptions ? backendOpts : ov.options,
+										// Options resolution: normally backend options win when present
+										// and local is the fallback. But when the local override sets
+										// `mergeOptions`, UNION the two (backend first, then any local
+										// option whose value the backend didn't ship) — used for the
+										// visit-note Status, where the backend tab_field_config only
+										// ships Current/Superseded/Entered in Error but the signing
+										// workflow also needs Signed/Unsigned/Amended.
+										options: (ov.mergeOptions && hasBackendOptions)
+											? PatientChartEditor._mergeSelectOptions(backendOpts!, ov.options)
+											: (hasBackendOptions ? backendOpts : ov.options),
 									};
 								}),
 							}));
@@ -4451,6 +4461,20 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	// Status filter options per tab — different resources use different status vocabularies.
+	/** Union two select-option lists, keeping backend options first and appending
+	 *  any local option whose value the backend didn't already ship (case-insensitive
+	 *  match on the option value). Used when a field sets `mergeOptions` so the
+	 *  form offers both the backend vocabulary and the local extras. */
+	private static _mergeSelectOptions(
+		backend: Array<{ label: string; value: string } | string>,
+		local: Array<{ label: string; value: string } | string> | undefined,
+	): Array<{ label: string; value: string } | string> {
+		const valOf = (o: { label: string; value: string } | string): string => (typeof o === 'string' ? o : o.value);
+		const seen = new Set(backend.map(o => valOf(o).toLowerCase()));
+		const extras = (local || []).filter(o => !seen.has(valOf(o).toLowerCase()));
+		return [...backend, ...extras];
+	}
+
 	private _statusFilterOptions(tab: ChartTab): Array<{ label: string; value: string }> {
 		switch (tab.key) {
 			case 'visit-notes':

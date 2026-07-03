@@ -90,6 +90,13 @@ interface ReportDef {
 	 */
 	enrichPatient?: boolean;
 	/**
+	 * When true, after the main fetch we fill each patient row's provider
+	 * (`providerDisplay`/`providerName`) by joining the encounter list — the
+	 * `/api/patients` endpoint carries no provider, so the Provider column would
+	 * otherwise render blank. The most recent encounter's `providerDisplay` wins.
+	 */
+	enrichProvider?: boolean;
+	/**
 	 * When true, derive A/R aging fields client-side from each payment row. The
 	 * backend exposes no A/R ledger (`/api/invoices`, `/api/*ar-aging` all 500),
 	 * so the days0_30 / days31_60 / days61_90 / days90Plus buckets, `payerDisplay`
@@ -153,6 +160,7 @@ function getReportDef(key: string): ReportDef {
 			return {
 				apiPath: '/api/patients?page=0&size=1000',
 				enrichInsurance: true,
+				enrichProvider: true,
 				columns: [
 					{ key: 'name', label: 'Name' },
 					{ key: 'gender', label: 'Gender' },
@@ -939,6 +947,7 @@ function getReportDef(key: string): ReportDef {
 		case 'care-gaps-analysis':
 			return {
 				apiPath: '/api/patients?page=0&size=500',
+				enrichProvider: true,
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'gapType', label: 'Gap Type' },
@@ -1598,6 +1607,7 @@ export class ReportsEditor extends EditorPane {
 			const arr = Array.isArray(raw) ? raw : [];
 			this.items = arr.map((r: Record<string, unknown>) => this._normalizeRow(r)) as Record<string, string>[];
 			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
+			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
 			if (this.reportDef.computeArAging) { this._computeArAging(); }
 		} catch { this.items = []; }
@@ -1730,6 +1740,48 @@ export class ReportsEditor extends EditorPane {
 				else if (!item.insurance) { item.insurance = 'Self-Pay'; }
 			}
 		} catch { /* coverage endpoint may be unavailable — leave insurance as-is */ }
+	}
+
+	/**
+	 * Patient records from `/api/patients` do not carry a provider. Join the
+	 * encounter list (`/api/fhir-resource/encounters`) by patient id so the
+	 * Provider column populates with the patient's most-recent treating provider
+	 * (each encounter ships `providerDisplay` + `patientId`/`patientRef`).
+	 */
+	private async _enrichProvider(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/fhir-resource/encounters?page=0&size=2000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const encounters = Array.isArray(raw) ? raw : [];
+			const refId = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v.includes('/') ? v.substring(v.lastIndexOf('/') + 1) : v; }
+				const o = v as Record<string, unknown>;
+				const r = o.reference;
+				return typeof r === 'string' ? (r.includes('/') ? r.substring(r.lastIndexOf('/') + 1) : r) : '';
+			};
+			// patientId → { provider, when } keeping the most recent encounter's provider.
+			const byPatient: Record<string, { provider: string; when: number }> = {};
+			for (const enc of encounters) {
+				const e = enc as Record<string, unknown>;
+				const pid = String(e.patientId || refId(e.patientRef) || refId(e.subject) || '');
+				if (!pid) { continue; }
+				const provider = String(e.providerDisplay || e.providerName || e.practitionerName || '').trim();
+				if (!provider) { continue; }
+				const when = Date.parse(String(e.startDate || e.start || e.date || e.periodStart || e._lastUpdated || '')) || 0;
+				const cur = byPatient[pid];
+				if (!cur || when >= cur.when) { byPatient[pid] = { provider, when }; }
+			}
+			if (Object.keys(byPatient).length === 0) { return; }
+			for (const item of this.items) {
+				if (item.providerDisplay || item.providerName) { continue; }
+				const pid = item.id || item.patientId || item.fhirId;
+				const prov = (pid && byPatient[pid]?.provider) || '';
+				if (prov) { item.providerDisplay = prov; item.providerName = prov; }
+			}
+		} catch { /* encounters endpoint may be unavailable — leave provider as-is */ }
 	}
 
 	private _normalizeRow(r: Record<string, unknown>): Record<string, string> {
