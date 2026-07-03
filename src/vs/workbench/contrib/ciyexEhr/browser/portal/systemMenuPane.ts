@@ -36,6 +36,8 @@ interface SystemItem {
 	id: string;
 	icon: string;
 	label: string;
+	/** Short label for the top quick-action button bar. Falls back to {@link label}. */
+	short?: string;
 	description: string;
 	command: string;
 	color: string;
@@ -63,6 +65,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{26A0}',
 		label: 'Clinical Alerts',
+		short: 'CDS',
 		description: 'CDS alerts and triggers',
 		command: 'ciyex.openCds',
 		color: '#f59e0b',
@@ -139,6 +142,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4DC}',
 		label: 'Consents',
+		short: 'Consent',
 		description: 'HIPAA, treatment, research consents',
 		command: 'ciyex.openConsents',
 		color: '#3b82f6',
@@ -185,6 +189,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F514}',
 		label: 'Notifications',
+		short: 'Notif',
 		description: 'System and portal notifications',
 		command: 'ciyex.openNotifications',
 		color: '#a855f7',
@@ -209,6 +214,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4E0}',
 		label: 'Fax',
+		short: 'Fax',
 		description: 'Inbound/outbound fax queue',
 		command: 'ciyex.openFax',
 		color: '#22c55e',
@@ -233,6 +239,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4F7}',
 		label: 'Document Scanning',
+		short: 'Scan',
 		description: 'OCR upload and processing',
 		command: 'ciyex.openDocScanning',
 		color: '#06b6d4',
@@ -254,6 +261,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F5A5}',
 		label: 'Check-in Kiosk',
+		short: 'Kiosk',
 		description: 'Kiosk config and check-ins',
 		command: 'ciyex.openKiosk',
 		color: '#ec4899',
@@ -273,6 +281,7 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4CB}',
 		label: 'Audit Log',
+		short: 'Audit',
 		description: 'System activity and compliance',
 		command: 'ciyex.openAuditLog',
 		color: '#6b7280',
@@ -420,29 +429,24 @@ export class SystemMenuPane extends ViewPane {
 
 	private _renderQuickActions(): void {
 		const bar = DOM.append(this.container, DOM.$('.quick-actions'));
-		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		const actions: Array<{ icon: string; label: string; command: string; color: string }> = [
-			// allow-any-unicode-next-line
-			{ icon: '\u{26A0}', label: 'CDS', command: 'ciyex.openCds', color: '#f59e0b' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F514}', label: 'Alerts', command: 'ciyex.openNotifications', color: '#a855f7' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F4E0}', label: 'Fax', command: 'ciyex.openFax', color: '#22c55e' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F4CB}', label: 'Audit', command: 'ciyex.openAuditLog', color: '#6b7280' },
-		];
-		for (const a of actions) {
+		// Equal-width grid columns so every button is the same size regardless of
+		// its label length (a flex bar sized each button to its text). Columns fill
+		// the row and wrap onto extra rows as the module count grows.
+		bar.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		// One quick button per system module (derived from SYSTEM_ITEMS) so the bar
+		// mirrors the full menu below.
+		for (const item of SYSTEM_ITEMS) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-			btn.title = `Quick: ${a.label}`;
-			btn.style.cssText = `flex:1;padding:4px 6px;border:none;border-radius:3px;background:${a.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;`;
+			btn.title = `Quick: ${item.label}`;
+			btn.style.cssText = `padding:4px 6px;border:none;border-radius:3px;background:${item.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;overflow:hidden;`;
 			const ic = DOM.append(btn, DOM.$('span'));
-			ic.textContent = a.icon;
+			ic.textContent = item.icon;
 			const lbl = DOM.append(btn, DOM.$('span'));
-			lbl.textContent = a.label;
+			lbl.textContent = item.short || item.label;
 			lbl.style.cssText = 'font-weight:600;';
 			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
 			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(a.command); });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(item.command); });
 		}
 	}
 

@@ -79,6 +79,11 @@ export interface FormFieldDef {
 	 * {@link optionsLabelField} (default 'name') and {@link optionsValueField}
 	 * (default 'id'). Lets a select behave like the ehr-ui native dropdowns. */
 	optionsApiPath?: string;
+	/** For a 'select' type: render the (static {@link options}) as a row of
+	 *  always-visible pill buttons inside a bordered box instead of a dropdown —
+	 *  used for short status/state fields where seeing every choice at a glance is
+	 *  clearer than opening a popover. */
+	segmented?: boolean;
 	/** For 'select' with {@link optionsApiPath}: item field to show. Default 'name'. */
 	optionsLabelField?: string;
 	/** For 'select' with {@link optionsApiPath}: item field used as the value. Default 'id'. */
@@ -1439,6 +1444,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// For strictSelect search fields: lock helpers keyed by field.key so the
 		// edit-prefill step can mark an already-saved value as a locked selection.
 		const strictLockRefs = new Map<string, (locked: boolean) => void>();
+		// Segmented (pill-box) select fields: key → repaint callback so the initial
+		// / edit-seeded value highlights the right pill (mirrors dateRefs seeding).
+		const segmentedRefs = new Map<string, (value: string) => void>();
 
 		for (const field of fields) {
 			// Every typeahead/search field locks to a value chosen from its results
@@ -1464,7 +1472,35 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 			let inputEl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
-			if (field.type === 'select' && (field.options || field.optionsApiPath)) {
+			if (field.type === 'select' && field.segmented && field.options) {
+				// Segmented pill-box: every option is a clickable chip inside a
+				// bordered box (no dropdown to open). A hidden native <select> holds
+				// the value so the shared seed (inputEl.value = val) and save
+				// (inputs.get(key).value) paths keep working unchanged.
+				const hidden = DOM.append(group, DOM.$('select')) as HTMLSelectElement;
+				hidden.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;opacity:0;';
+				for (const o of field.options) {
+					const opt = DOM.append(hidden, DOM.$('option')) as HTMLOptionElement;
+					opt.value = o.value; opt.textContent = o.label;
+				}
+				const box = DOM.append(group, DOM.$('div'));
+				box.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:6px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:var(--vscode-input-background);box-sizing:border-box;';
+				const pills = new Map<string, HTMLElement>();
+				const paint = (sel: string): void => {
+					for (const [v, el] of pills) {
+						const on = v === sel;
+						el.style.cssText = `padding:4px 12px;border-radius:12px;font-size:12px;line-height:1.4;cursor:pointer;user-select:none;transition:background 0.1s;border:1px solid ${on ? 'var(--vscode-focusBorder,#007fd4)' : 'var(--vscode-input-border,#3c3c3c)'};background:${on ? 'var(--vscode-button-background,#0e639c)' : 'transparent'};color:${on ? 'var(--vscode-button-foreground,#fff)' : 'var(--vscode-foreground)'};font-weight:${on ? '600' : '400'};`;
+					}
+				};
+				for (const o of field.options) {
+					const pill = DOM.append(box, DOM.$('span'));
+					pill.textContent = o.label;
+					pills.set(o.value, pill);
+					pill.addEventListener('click', () => { hidden.value = o.value; paint(o.value); });
+				}
+				inputEl = hidden;
+				segmentedRefs.set(field.key, paint);
+			} else if (field.type === 'select' && (field.options || field.optionsApiPath)) {
 				// Use the shared custom dropdown instead of a native <select>.
 				// Native <option> popups are rendered by the OS using its own
 				// colour scheme — on dark workbench themes that produces faint
@@ -1915,6 +1951,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				val = typeof dv === 'function' ? String((dv as () => string | number)()) : String(dv ?? '');
 			}
 			inputEl.value = val;
+			// Segmented pill-box: highlight the pill matching the seeded value.
+			if (field.type === 'select' && field.segmented) { segmentedRefs.get(field.key)?.(val); }
 			// strictSelect search field opened for edit with a saved value — treat
 			// it as an existing selection: lock it (read-only + clear button to change) so the
 			// blur-clear doesn't wipe the already-saved provider.

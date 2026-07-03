@@ -565,7 +565,7 @@ export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
 	},
 	{ key: 'testCode', label: 'Test Code (LOINC)', type: 'text', required: true, placeholder: 'Auto-filled from test search', validationPattern: '^[0-9A-Za-z\\-]{1,16}$', validationMessage: 'Invalid LOINC code format' },
 	{
-		key: 'status', label: 'Status', type: 'select', options: [
+		key: 'status', label: 'Status', type: 'select', segmented: true, options: [
 			{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
 			{ label: 'Pending', value: 'pending' }, { label: 'Completed', value: 'completed' },
 			{ label: 'Cancelled', value: 'cancelled' }, { label: 'Revoked', value: 'revoked' },

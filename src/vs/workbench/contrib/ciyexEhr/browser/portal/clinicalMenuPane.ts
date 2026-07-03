@@ -37,6 +37,9 @@ interface ClinicalItem {
 	id: string;
 	icon: string;
 	label: string;
+	/** Short label for the top quick-action button bar (e.g. "Rx" for
+	 *  Prescriptions). Falls back to {@link label} when omitted. */
+	short?: string;
 	description: string;
 	command: string;
 	color: string;
@@ -79,6 +82,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F48A}',
 		label: 'Prescriptions',
+		short: 'Rx',
 		description: 'Active Rx, refills, discontinue',
 		command: 'ciyex.openPrescriptions',
 		color: '#f97316',
@@ -101,6 +105,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F52C}',
 		label: 'Lab Orders & Results',
+		short: 'Lab',
 		description: 'Order volume, status, turnaround',
 		command: 'ciyex.openLabs',
 		color: '#3b82f6',
@@ -132,6 +137,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F489}',
 		label: 'Immunizations',
+		short: 'Imm',
 		description: 'Vaccine records, CVX codes',
 		command: 'ciyex.openImmunizations',
 		color: '#22c55e',
@@ -152,6 +158,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4CB}',
 		label: 'Referrals',
+		short: 'Ref',
 		description: 'Status workflow, specialist tracking',
 		command: 'ciyex.openReferrals',
 		color: '#a855f7',
@@ -182,6 +189,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F6E1}',
 		label: 'Authorizations',
+		short: 'Auth',
 		description: 'Prior auth, approve/deny/appeal',
 		command: 'ciyex.openAuthorizations',
 		color: '#0ea5e9',
@@ -206,6 +214,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{2764}',
 		label: 'Care Plans',
+		short: 'Care',
 		description: 'Goals, interventions, categories',
 		command: 'ciyex.openCarePlans',
 		color: '#ef4444',
@@ -228,6 +237,7 @@ const CLINICAL_ITEMS: ClinicalItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4DA}',
 		label: 'Patient Education',
+		short: 'Educ',
 		description: 'Education materials and handouts',
 		command: 'ciyex.openEducation',
 		color: '#eab308',
@@ -377,31 +387,25 @@ export class ClinicalMenuPane extends ViewPane {
 
 	private _renderQuickActions(): void {
 		const bar = DOM.append(this.container, DOM.$('.quick-actions'));
-		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-wrap:wrap;';
+		// Equal-width grid columns so every button is the same size regardless of
+		// its label length. Columns fill the row and wrap onto extra rows.
+		bar.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
 
-		const actions: Array<{ icon: string; label: string; command: string; color: string }> = [
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F48A}', label: 'Rx', command: 'ciyex.openPrescriptions', color: '#f97316' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F52C}', label: 'Lab', command: 'ciyex.openLabs', color: '#3b82f6' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F489}', label: 'Imm', command: 'ciyex.openImmunizations', color: '#22c55e' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F4CB}', label: 'Ref', command: 'ciyex.openReferrals', color: '#a855f7' },
-		];
-
-		for (const a of actions) {
+		// One quick button per clinical module (derived from CLINICAL_ITEMS) so the
+		// bar always mirrors the full menu below instead of a hardcoded subset. The
+		// bar wraps, so extra modules flow onto a second row.
+		for (const item of CLINICAL_ITEMS) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-			btn.title = `Quick: ${a.label}`;
-			btn.style.cssText = `flex:1;padding:4px 6px;border:none;border-radius:3px;background:${a.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;min-width:50px;`;
+			btn.title = `Quick: ${item.label}`;
+			btn.style.cssText = `padding:4px 6px;border:none;border-radius:3px;background:${item.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;overflow:hidden;`;
 			const ic = DOM.append(btn, DOM.$('span'));
-			ic.textContent = a.icon;
+			ic.textContent = item.icon;
 			const lbl = DOM.append(btn, DOM.$('span'));
-			lbl.textContent = a.label;
+			lbl.textContent = item.short || item.label;
 			lbl.style.cssText = 'font-weight:600;';
 			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
 			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(a.command); });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(item.command); });
 		}
 	}
 

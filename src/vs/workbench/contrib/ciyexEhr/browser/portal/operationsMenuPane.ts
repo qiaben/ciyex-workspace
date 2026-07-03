@@ -41,6 +41,8 @@ interface OperationsItem {
 	id: string;
 	icon: string;
 	label: string;
+	/** Short label for the top quick-action button bar. Falls back to {@link label}. */
+	short?: string;
 	description: string;
 	command: string;
 	color: string;
@@ -84,6 +86,7 @@ const ITEMS: OperationsItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F514}',
 		label: 'Patient Recall',
+		short: 'Recall',
 		description: 'Follow-up, outreach, compliance',
 		command: 'ciyex.openRecall',
 		color: '#f59e0b',
@@ -106,6 +109,7 @@ const ITEMS: OperationsItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4D6}',
 		label: 'Medical Codes',
+		short: 'Codes',
 		description: 'ICD-10, CPT, HCPCS, SNOMED',
 		command: 'ciyex.openCodes',
 		color: '#3b82f6',
@@ -126,6 +130,7 @@ const ITEMS: OperationsItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4E6}',
 		label: 'Inventory',
+		short: 'Inv',
 		description: 'Supplies, stock, orders',
 		command: 'ciyex.openInventory',
 		color: '#a855f7',
@@ -167,6 +172,7 @@ const ITEMS: OperationsItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4B3}',
 		label: 'Payments',
+		short: 'Pay',
 		description: 'Transactions, plans, ledger',
 		command: 'ciyex.openPayments',
 		color: '#22c55e',
@@ -192,6 +198,7 @@ const ITEMS: OperationsItem[] = [
 		// allow-any-unicode-next-line
 		icon: '\u{1F4C4}',
 		label: 'Claims',
+		short: 'Claim',
 		description: 'Claim submission, status tracking',
 		command: 'ciyex.openClaims',
 		color: '#06b6d4',
@@ -376,27 +383,23 @@ export class OperationsMenuPane extends ViewPane {
 
 	private _renderQuickActions(): void {
 		const bar = DOM.append(this.container, DOM.$('.quick-actions'));
-		bar.style.cssText = 'display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
-		const actions: Array<{ icon: string; label: string; command: string; color: string }> = [
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F514}', label: 'Recall', command: 'ciyex.openRecall', color: '#f59e0b' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F4B3}', label: 'Pay', command: 'ciyex.openPayments', color: '#22c55e' },
-			// allow-any-unicode-next-line
-			{ icon: '\u{1F4C4}', label: 'Claim', command: 'ciyex.openClaims', color: '#06b6d4' },
-		];
-		for (const a of actions) {
+		// Equal-width grid columns so every button is the same size regardless of
+		// its label length. Columns fill the row and wrap onto extra rows.
+		bar.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:4px;padding:6px 10px;border-bottom:1px solid var(--vscode-editorWidget-border);';
+		// One quick button per operations module (derived from ITEMS) so the bar
+		// mirrors the full menu below. The bar wraps onto extra rows as needed.
+		for (const item of ITEMS) {
 			const btn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-			btn.title = `Quick: ${a.label}`;
-			btn.style.cssText = `flex:1;padding:4px 6px;border:none;border-radius:3px;background:${a.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;`;
+			btn.title = `Quick: ${item.label}`;
+			btn.style.cssText = `padding:4px 6px;border:none;border-radius:3px;background:${item.color};color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;overflow:hidden;`;
 			const ic = DOM.append(btn, DOM.$('span'));
-			ic.textContent = a.icon;
+			ic.textContent = item.icon;
 			const lbl = DOM.append(btn, DOM.$('span'));
-			lbl.textContent = a.label;
+			lbl.textContent = item.short || item.label;
 			lbl.style.cssText = 'font-weight:600;';
 			btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; });
 			btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; });
-			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(a.command); });
+			btn.addEventListener('click', (e) => { e.stopPropagation(); this.commandService.executeCommand(item.command); });
 		}
 	}
 
