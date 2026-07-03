@@ -423,19 +423,28 @@ export class EncounterFormEditor extends EditorPane {
 	 *  values are included. (Temperature is passed through as-is, matching how the
 	 *  rest of the app maps `vitals_temperature` ↔ `temperatureC`.) */
 	private _vitalsToFhir(form: Record<string, unknown>): Record<string, unknown> {
-		const num = (key: string): number | undefined => {
-			const v = form[key];
-			if (v === undefined || v === null || String(v).trim() === '') { return undefined; }
-			const n = Number(v);
-			return Number.isFinite(n) ? n : undefined;
+		const num = (...keys: string[]): number | undefined => {
+			for (const key of keys) {
+				const v = form[key];
+				if (v === undefined || v === null || String(v).trim() === '') { continue; }
+				const n = Number(v);
+				if (Number.isFinite(n)) { return n; }
+			}
+			return undefined;
 		};
 		const map: Record<string, number | undefined> = {
 			bpSystolic: num('vitals_bp_systolic'),
 			bpDiastolic: num('vitals_bp_diastolic'),
-			pulse: num('vitals_heart_rate'),
-			temperatureC: num('vitals_temperature'),
+			// The encounter-form's backend field config keys three vitals as
+			// vitals_hr / vitals_temp / vitals_rr, while the Snapshot and the local
+			// config use vitals_heart_rate / vitals_temperature / vitals_respiratory_rate.
+			// Read BOTH so a value entered on the encounter form is saved to the shared
+			// vitals store (otherwise Heart Rate / Temperature / Respiratory Rate were
+			// silently dropped on save from the encounter).
+			pulse: num('vitals_heart_rate', 'vitals_hr'),
+			temperatureC: num('vitals_temperature', 'vitals_temp'),
 			oxygenSaturation: num('vitals_spo2'),
-			respiration: num('vitals_respiratory_rate'),
+			respiration: num('vitals_respiratory_rate', 'vitals_rr'),
 			weightKg: num('vitals_weight'),
 			heightCm: num('vitals_height'),
 		};
@@ -521,6 +530,15 @@ export class EncounterFormEditor extends EditorPane {
 			// the Encounter form shows a note saved from the Snapshot/vitals card.
 			vitals_notes: num('notes', 'note', 'comment'),
 		};
+		// The encounter-form's backend field config keys Heart Rate / Temperature /
+		// Respiratory Rate as vitals_hr / vitals_temp / vitals_rr (the Snapshot and the
+		// local config use vitals_heart_rate / vitals_temperature / vitals_respiratory_rate).
+		// Mirror the values onto BOTH key conventions so those three fields populate
+		// regardless of which config drives the form — otherwise they render blank
+		// while BP/SpO2/Weight/Height/BMI (whose keys already match) fill in.
+		if (out.vitals_heart_rate !== undefined) { out.vitals_hr = out.vitals_heart_rate; }
+		if (out.vitals_temperature !== undefined) { out.vitals_temp = out.vitals_temperature; }
+		if (out.vitals_respiratory_rate !== undefined) { out.vitals_rr = out.vitals_respiratory_rate; }
 		// Drop undefined keys so they don't shadow other sources with `undefined`.
 		for (const k of Object.keys(out)) {
 			if (out[k] === undefined) { delete out[k]; }
