@@ -567,8 +567,12 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ key: 'vitals_respiratory_rate', label: 'Respiratory Rate (/min)', kind: 'number', widthPct: 25 },
 			{ key: 'vitals_weight', label: 'Weight (kg)', kind: 'number', widthPct: 25 },
 			{ key: 'vitals_height', label: 'Height (cm)', kind: 'number', widthPct: 25 },
-			{ key: 'vitals_bmi', label: 'BMI', kind: 'number', placeholder: 'Auto-calculated', widthPct: 25 },
-			{ key: 'vitals_pain_level', label: 'Pain Level (0-10)', kind: 'number', widthPct: 25 },
+			// BMI is not stored on the FHIR vitals Observation (only height + weight),
+			// so it opened blank. Auto-calculate it from THIS form's vitals_weight /
+			// vitals_height keys (not the chart's heightCm/weightKg) — read-only, live,
+			// matching the chart flowsheet + dedicated encounter editor.
+			{ key: 'vitals_bmi', label: 'BMI', kind: 'number', placeholder: 'Auto-calculated', widthPct: 25, readonly: true, compute: (vals) => PatientSnapshotEditor._computeBmi(vals['vitals_height'], vals['vitals_weight']) },
+			// Pain Level intentionally omitted from the encounter edit form (product decision).
 			{ key: 'vitals_notes', label: 'Vitals Notes', placeholder: 'Additional notes...', widthPct: 50 },
 
 			// --- Physical Exam (grid collapsed to textarea) ---
