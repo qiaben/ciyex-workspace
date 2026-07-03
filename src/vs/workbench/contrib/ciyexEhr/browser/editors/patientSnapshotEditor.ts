@@ -705,6 +705,25 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/**
+	 * Collapse a Composition's FLAT per-system keys for a section (prefix `pe_` /
+	 * `ros_`) into the `{system: finding}` object the popup's ROS / PE textareas
+	 * render via {@link _encounterFieldToText}. Text findings (e.g. `pe_heent`)
+	 * pass through; per-system booleans (e.g. `ros_gi`) map to Positive / Negative.
+	 * The collapsed `${prefix}data` key and the `_normal` display-flag booleans
+	 * (e.g. `pe_heent_normal`) are skipped.
+	 */
+	private static _collapseGranularSection(src: Record<string, unknown>, prefix: string): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const [k, v] of Object.entries(src)) {
+			if (!k.startsWith(prefix) || k === `${prefix}data` || k.endsWith('_normal')) { continue; }
+			const sys = k.slice(prefix.length);
+			if (typeof v === 'string' && v.trim() !== '') { out[sys] = v.trim(); }
+			else if (typeof v === 'boolean') { out[sys] = v ? 'Positive' : 'Negative'; }
+		}
+		return out;
+	}
+
+	/**
 	 * Render a structured composition value as the multi-line text the popup
 	 * textareas display. Diagnoses/procedures become "CODE — Description" lines,
 	 * plan items one-per-line, and ROS/PE grids "System: finding" lines. Strings
@@ -1638,7 +1657,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		// Provider: prefer a human-readable display over the raw "Practitioner/{id}"
 		// reference so the search field shows a name (QA issue 2: provider blank/raw).
 		merged.provider = pick('providerDisplay', 'providerName', 'practitionerName', 'encounterProvider', 'provider');
-		merged.chiefComplaint = pick('chiefComplaint', 'reason', 'reasonForVisit', 'reasonCode');
+		// Chief Complaint: the encounter-form Composition (written by the dedicated
+		// Encounter editor) stores it as `cc_text`. Prefer that over the bare Encounter
+		// resource's generic `reason` ("Manual encounter") so the popup shows the real
+		// complaint (e.g. "high fever") instead of the placeholder.
+		merged.chiefComplaint = pick('cc_text', 'chiefComplaint', 'reason', 'reasonForVisit', 'reasonCode');
 
 		// Vitals live in the shared FHIR vitals store (ONE Observation per visit
 		// DATE) — not on the encounter composition, whose `vitals_*` are usually
@@ -1649,6 +1672,21 @@ export class PatientSnapshotEditor extends EditorPane {
 		const encDateForVitals = merged.startDate || pick('encounterDate', 'start', 'periodStart', 'date');
 		const vitalsObs = await this._findVitalsObsOnDate(encDateForVitals);
 		if (vitalsObs) { Object.assign(merged, this._fhirToVitalsFields(vitalsObs)); }
+
+		// Review of Systems / Physical Exam: compositions written by the dedicated
+		// Encounter editor store these as FLAT per-system keys (ros_gi, pe_heent, …),
+		// not the collapsed ros_data / pe_data object this popup's textareas read — so
+		// they came up blank even though the encounter had a full ROS/PE. When the
+		// collapsed form is absent, rebuild it from the flat keys so the real findings
+		// show (mirrors how the dedicated Encounter editor renders them).
+		if (!merged['pe_data'] || typeof merged['pe_data'] !== 'object') {
+			const pe = PatientSnapshotEditor._collapseGranularSection(merged, 'pe_');
+			if (Object.keys(pe).length > 0) { merged['pe_data'] = pe; }
+		}
+		if (!merged['ros_data'] || typeof merged['ros_data'] !== 'object') {
+			const ros = PatientSnapshotEditor._collapseGranularSection(merged, 'ros_');
+			if (Object.keys(ros).length > 0) { merged['ros_data'] = ros; }
+		}
 
 		// Stash the raw structured values and replace them with readable text so the
 		// popup textareas render the diagnoses/procedures/plan/ROS/PE instead of
