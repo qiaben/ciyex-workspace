@@ -890,8 +890,28 @@ export class PatientSnapshotEditor extends EditorPane {
 		const arr = this._pendingCreates.get(key) || [];
 		// Replace any prior entry with the same id (covers create-then-edit).
 		const filtered = arr.filter(r => String(r.id ?? r.fhirId ?? '') !== id);
-		filtered.unshift(record);
+		// Stamp the client time the overlay was captured so _mergePending can tell
+		// when the server row has since been updated by ANOTHER editor (Encounter /
+		// Patient Chart) and yield to it instead of shadowing it forever.
+		filtered.unshift({ ...record, _pendingClientAt: Date.now() });
 		this._pendingCreates.set(key, filtered);
+	}
+
+	/** True when the freshly-fetched server row is a NEWER version than our locally
+	 *  captured overlay — i.e. the same record was edited elsewhere (e.g. the
+	 *  Encounter form's vitals) after we saved it here. In that case the overlay is
+	 *  stale and must not shadow the server copy. Prefers a server-vs-server
+	 *  `_lastUpdated` comparison (no clock skew); falls back to the client capture
+	 *  time with a grace margin when the save response carried no timestamp. When no
+	 *  server timestamp is available at all, returns false so index-lag protection
+	 *  (the overlay's real purpose) is preserved. */
+	private _serverSupersedesOverlay(serverRow: Record<string, unknown>, overlay: Record<string, unknown>): boolean {
+		const serverLU = Date.parse(String(serverRow._lastUpdated ?? ''));
+		if (!Number.isFinite(serverLU)) { return false; }
+		const overlayLU = Date.parse(String(overlay._lastUpdated ?? ''));
+		if (Number.isFinite(overlayLU)) { return serverLU > overlayLU; }
+		const capturedAt = Number(overlay._pendingClientAt ?? 0);
+		return capturedAt > 0 && serverLU > capturedAt + 5000;
 	}
 
 	private _mergePending(entity: string, items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
@@ -900,22 +920,35 @@ export class PatientSnapshotEditor extends EditorPane {
 		const out = [...items];
 		const indexById = new Map<string, number>();
 		out.forEach((r, i) => { const id = String(r.id ?? r.fhirId ?? ''); if (id) { indexById.set(id, i); } });
+		const superseded = new Set<string>();
 		for (const p of pending) {
 			const pid = String(p.id ?? p.fhirId ?? '');
 			if (pid && indexById.has(pid)) {
-				// The server already returns this row — but for an EDIT its search
-				// index may still hold the stale values (e.g. the old date). Overlay
-				// our locally-saved copy so the user's change is reflected instead of
-				// being discarded as "server caught up" (QA: edited date not showing).
 				const i = indexById.get(pid)!;
-				out[i] = { ...out[i], ...p };
+				// If the server row is NEWER than our overlay, the same record was
+				// edited in another editor (e.g. vitals saved from the Encounter form)
+				// after we saved it here — the server copy wins and the stale overlay
+				// is dropped, so the other editor's change shows (bug: Encounter vitals
+				// not reflecting on the Snapshot). Otherwise the server's search index
+				// may still hold stale values right after OUR save, so overlay our
+				// locally-saved copy (QA: edited date not showing).
+				if (this._serverSupersedesOverlay(out[i], p)) {
+					superseded.add(pid);
+				} else {
+					out[i] = { ...out[i], ...p };
+				}
 			} else {
 				// A create the server hasn't indexed yet — surface it at the top.
 				out.unshift(p);
 			}
 		}
-		// Keep the overlay for the session: it's small, replaces by id, and clears
-		// when the editor is reopened. This avoids a stale-vs-fresh flip-flop.
+		// Drop overlays the server has since superseded so they don't linger and
+		// re-shadow future fetches; keep the rest for the session (small, replaced
+		// by id, cleared on reopen) to avoid a stale-vs-fresh flip-flop.
+		if (superseded.size > 0) {
+			const key = this._overlayKey(entity);
+			this._pendingCreates.set(key, pending.filter(r => !superseded.has(String(r.id ?? r.fhirId ?? ''))));
+		}
 		return out;
 	}
 
@@ -4133,8 +4166,8 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ key: 'expiryMonth', label: 'Expiry Month', kind: 'select', required: true, widthPct: 50, options: months },
 				{ key: 'expiryYear', label: 'Expiry Year', kind: 'select', required: true, widthPct: 50, options: years },
 				{ key: 'billingAddress', label: 'Billing Address', kind: 'text', placeholder: '123 Main St', widthPct: 100 },
-				{ key: 'billingCity', label: 'City', kind: 'text', placeholder: 'New York', widthPct: 50 },
-				{ key: 'billingState', label: 'State', kind: 'text', placeholder: 'NY', widthPct: 50 },
+				{ key: 'billingCity', label: 'City', kind: 'text', placeholder: 'New York', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'City may only contain letters and spaces.' },
+				{ key: 'billingState', label: 'State', kind: 'text', placeholder: 'NY', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'State may only contain letters and spaces.' },
 				{ key: 'billingZip', label: 'Zip Code', kind: 'text', placeholder: '10001', widthPct: 50 },
 				{ key: 'billingCountry', label: 'Country', kind: 'text', placeholder: 'USA', widthPct: 50 },
 				{ key: 'isDefault', label: 'Set as default', kind: 'select', widthPct: 100, options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },

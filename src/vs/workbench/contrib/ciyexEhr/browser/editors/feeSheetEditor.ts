@@ -294,9 +294,13 @@ export class FeeSheetEditor extends EditorPane {
 			lbl.style.cssText = 'display:block;font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
 			createCustomDropdown({
 				parent: cell,
-				options: [{ value: '', label: '— N/A —' }, ...this.providers],
+				// Only real providers as options — the empty "— N/A —" row and the
+				// placeholder "clear" row are omitted (placeholder still shows in the
+				// trigger via `required` until a provider is picked).
+				options: [...this.providers],
 				initialValue: value,
 				placeholder: 'Select provider…',
+				required: true,
 				onChange,
 			});
 		};
