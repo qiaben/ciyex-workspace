@@ -20,7 +20,7 @@ import { BaseCiyexInput, AppointmentsEditorInput, StaffTvBoardEditorInput, Waiti
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
 import { parseSavedRecord } from '../sidebarActions.js';
-import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
+import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 
 
 interface Appointment {
@@ -1374,10 +1374,12 @@ export class CalendarEditor extends EditorPane {
 				sync();
 			});
 
-			// Calendar icon — visual only, clicks pass through to picker overlay
-			const icon = DOM.append(wrap, DOM.$('span'));
-			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);pointer-events:none;line-height:1;';
+			// Calendar icon — clickable so clicking the glyph itself opens the picker too
+			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-input-placeholderForeground,#888);cursor:pointer;line-height:1;';
+			// Open the calendar from a click anywhere in the icon column, not just
+			// the native input's tiny indicator glyph.
+			enablePickerClick(picker, icon);
 		};
 
 		// Helper: create form field

@@ -11,7 +11,7 @@ import { CommandsRegistry, ICommandService } from '../../../../platform/commands
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { createCustomDropdown, createTimeDropdown, IDropdownOption } from './customDropdown.js';
-import { maskUsDate, usToIsoDate } from './ciyexDateMask.js';
+import { enablePickerClick, maskUsDate, usToIsoDate } from './ciyexDateMask.js';
 
 interface PatientResult {
 	id: string;
@@ -458,9 +458,11 @@ export class EhrTitlebarControls extends Disposable {
 		dobPicker.max = todayIso;
 		dobPicker.style.cssText = 'position:absolute;top:0;right:0;width:30px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 		dobPicker.title = 'Open calendar';
-		const dobIcon = DOM.append(dobWrap, DOM.$('span'));
-		dobIcon.textContent = '\u{1F4C5}';
-		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+		const dobIcon = DOM.append(dobWrap, DOM.$('span.codicon.codicon-calendar'));
+		dobIcon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+		// Open the calendar from a click anywhere in the icon column, not just the
+		// native input's tiny indicator glyph.
+		enablePickerClick(dobPicker, dobIcon);
 		// usToIsoDate validates real calendar dates (rejects 13/33/2000), so an
 		// impossible DOB leaves the hidden value empty and fails the required check
 		// below instead of saving "2000-13-33".
@@ -1207,15 +1209,12 @@ export class EhrTitlebarControls extends Disposable {
 				visible.dispatchEvent(new Event('input'));
 				hidden.dispatchEvent(new Event('change', { bubbles: false }));
 			});
-			// Open the native calendar on any click in the icon overlay, not just on
-			// the date input's tiny indicator glyph (see DOB note in _buildPatientOverlay).
-			picker.addEventListener('click', () => {
-				try { picker.showPicker?.(); } catch { /* already open / not allowed in this context */ }
-			});
-			// Calendar emoji icon — visual only (pointer-events:none); clicks go through to the picker overlay above
-			const icon = DOM.append(wrap, DOM.$('span'));
-			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none;line-height:1;';
+			// Calendar icon — clickable so clicking the glyph itself opens the picker too
+			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+			// Open the native calendar on any click in the icon column, not just on
+			// the date input's tiny indicator glyph.
+			enablePickerClick(picker, icon);
 			return hidden;
 		}
 

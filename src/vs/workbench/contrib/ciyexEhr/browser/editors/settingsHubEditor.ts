@@ -10,6 +10,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { createTimeDropdown } from '../customDropdown.js';
+import { enablePickerClick } from '../ciyexDateMask.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -1942,7 +1943,8 @@ export class SettingsHubEditor extends EditorPane {
 			const v = (value as string | null) || '';
 			inp.value = typeof v === 'string' && v.length >= 10 ? v.substring(0, 10) : '';
 			inp.readOnly = isView || !!field.readOnly;
-			inp.style.cssText = inputStyle;
+			inp.style.cssText = inputStyle + (inp.readOnly ? '' : 'cursor:pointer;');
+			if (!inp.readOnly) { enablePickerClick(inp); }
 			inp.addEventListener('input', () => { this.formData[field.key] = inp.value || null; });
 		} else {
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;

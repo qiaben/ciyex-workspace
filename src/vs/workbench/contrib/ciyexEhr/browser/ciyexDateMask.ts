@@ -48,6 +48,29 @@ export function usToIsoDate(us: string): string {
 }
 
 /**
+ * Make a native date/time `<input>` open its calendar/clock popup from a click
+ * anywhere in its hit area, not only when the click lands on the tiny built-in
+ * picker indicator. Chromium opens the popup only on an indicator hit; a click
+ * on the rest of the (transparent, overlaid) input does nothing — this is the
+ * "the cursor turns into a hand but clicking won't open the calendar" bug.
+ * `showPicker()` opens it from anywhere. Also wires any extra `triggers` (e.g. a
+ * decorative calendar/clock icon) to open the same popup so clicking the glyph
+ * itself works too.
+ */
+export function enablePickerClick(picker: HTMLInputElement, ...triggers: HTMLElement[]): void {
+	const open = () => {
+		try {
+			if (typeof picker.showPicker === 'function') { picker.showPicker(); } else { picker.focus(); }
+		} catch { /* showPicker needs transient user activation / may be unsupported */ }
+	};
+	picker.addEventListener('click', open);
+	for (const trigger of triggers) {
+		trigger.style.cursor = 'pointer';
+		trigger.addEventListener('click', open);
+	}
+}
+
+/**
  * Build a US-format (MM/DD/YYYY) masked date field: a visible text input that
  * auto-inserts slashes and caps the year at 4 digits (via {@link maskUsDate}),
  * a hidden input that always holds the ISO value the backend expects, and a
@@ -117,8 +140,12 @@ export function createUsDateField(
 	});
 
 	const icon = doc.createElement('span');
-	icon.textContent = '\u{1F4C5}';
-	icon.style.cssText = `position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:${iconColor};pointer-events:none;line-height:1;`;
+	icon.className = 'codicon codicon-calendar';
+	icon.style.cssText = `position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:${iconColor};cursor:pointer;line-height:1;`;
+
+	// Open the calendar from a click anywhere in the icon column, not just the
+	// native input's tiny indicator glyph.
+	enablePickerClick(picker, icon);
 
 	wrap.appendChild(visible);
 	wrap.appendChild(hidden);

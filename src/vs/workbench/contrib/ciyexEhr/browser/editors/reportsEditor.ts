@@ -9,7 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { usToIsoDate, maskUsDate } from '../ciyexDateMask.js';
+import { enablePickerClick, usToIsoDate, maskUsDate } from '../ciyexDateMask.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -114,6 +114,54 @@ interface ReportDef {
 	 * no encounter-side source and remain blank.
 	 */
 	groupByProvider?: boolean;
+
+	/**
+	 * When set, the Payer Mix table collapses raw patient rows into one row per
+	 * payer with a `patientCount` and `patientPct` that don't exist on an
+	 * individual patient (why the table looked empty beyond the Payer column).
+	 * KPIs and charts keep using the raw rows, so the by-payer counts stay
+	 * correct. revenue/revenuePct/avgReimbRate have no patient-side source (they
+	 * need a payments join the backend doesn't expose) and remain blank.
+	 */
+	groupByPayer?: boolean;
+
+	/**
+	 * When set, the Scheduling Utilization table collapses raw appointment rows
+	 * into one row per provider with `booked` (count), `completed` (count) and
+	 * `utilization` (kept ÷ booked) that don't exist on an individual appointment
+	 * (why the table looked empty beyond the Provider column). KPIs and charts
+	 * keep using the raw rows. `availableSlots` (no free-slot feed) and `revenue`
+	 * (needs a payments join the backend doesn't expose) remain blank.
+	 */
+	groupBySchedule?: boolean;
+
+	/**
+	 * When set, the Disease Registry table collapses raw encounter rows into one
+	 * row per condition (`totalPatients` = distinct patients, `avgDaysSinceVisit`
+	 * = mean days since each patient's most recent visit for that condition).
+	 * `controlled`/`controlPct` have no encounter-side source and stay blank.
+	 */
+	groupByCondition?: boolean;
+	/**
+	 * When set, join the encounter list once and stamp each patient row with
+	 * `lastVisit` / `daysSinceVisit` / `visitCount12mo` / `edVisits12mo`. Powers
+	 * the derived Care Gaps and Risk Stratification reports (the patient feed
+	 * carries no visit history).
+	 */
+	enrichEncounterStats?: boolean;
+	/**
+	 * When set, derive real "overdue for visit" care gaps from each patient's last
+	 * visit (needs {@link enrichEncounterStats}). Rows without an open gap are
+	 * dropped so the table lists only actionable gaps — the backend has no
+	 * care-gap engine, so this is the honest, computable substitute.
+	 */
+	deriveCareGaps?: boolean;
+	/**
+	 * When set, derive a utilization-based risk score/tier per patient from visit
+	 * and ED-visit frequency (needs {@link enrichEncounterStats}). The backend has
+	 * no risk-scoring engine; this is a transparent proxy, not a clinical model.
+	 */
+	deriveRisk?: boolean;
 }
 
 // FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
@@ -640,6 +688,9 @@ function getReportDef(key: string): ReportDef {
 				// loading"). Join coverage the same way patient-demographics does so
 				// each patient resolves to its payer (Self-Pay when uncovered).
 				enrichInsurance: true,
+				// The raw feed is one row per patient; pivot to one row per payer so
+				// the Patients / Patient % columns populate instead of staying blank.
+				groupByPayer: true,
 				columns: [
 					{ key: 'payerDisplay', label: 'Payer' },
 					{ key: 'patientCount', label: 'Patients' },
@@ -876,6 +927,10 @@ function getReportDef(key: string): ReportDef {
 		case 'scheduling-utilization':
 			return {
 				apiPath: '/api/appointments?page=0&size=1000',
+				// The raw feed is one row per appointment; pivot to one row per
+				// provider so Booked / Completed / Utilization % populate instead of
+				// staying blank.
+				groupBySchedule: true,
 				columns: [
 					{ key: 'providerName', label: 'Provider' },
 					{ key: 'availableSlots', label: 'Available Slots' },
@@ -945,9 +1000,15 @@ function getReportDef(key: string): ReportDef {
 
 		case 'care-gaps':
 		case 'care-gaps-analysis':
+			// No backend care-gap engine exists, so gaps are derived from real visit
+			// history: a patient over a year past their last visit (or never seen and
+			// registered over a year ago) is an open "Annual Visit" gap. Provider +
+			// visit stats are joined from the encounter list.
 			return {
 				apiPath: '/api/patients?page=0&size=500',
 				enrichProvider: true,
+				enrichEncounterStats: true,
+				deriveCareGaps: true,
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'gapType', label: 'Gap Type' },
@@ -958,37 +1019,24 @@ function getReportDef(key: string): ReportDef {
 				],
 				filters: [
 					PROVIDER_FILTER,
-					{
-						type: 'select', key: 'gapType', label: 'Gap Type', options: [
-							{ value: '', label: 'All Gap Type' },
-							{ value: 'screenings', label: 'Screenings' },
-							{ value: 'immunizations', label: 'Immunizations' },
-							{ value: 'follow-ups', label: 'Follow-ups' },
-						]
-					},
+					{ type: 'select', key: 'gapType', label: 'Gap Type', searchable: true, dynamic: true },
 					{ type: 'select', key: 'description', label: 'Description', searchable: true, dynamic: true },
 				],
 				kpis: [
 					{ label: 'Total Open Gaps', calc: items => String(items.length), color: COLORS[0] },
+					{ label: 'Overdue > 90 Days', calc: items => String(countWhere(items, i => Number(i.daysOverdue || 0) > 90)), color: COLORS[1] },
 					{
-						label: 'Closed This Month', calc: items => {
-							const now = new Date(); const mStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-							return String(countWhere(items, i => /closed/i.test(i.status || '') && new Date(i.closedAt || 0).getTime() >= mStart));
-						}, color: COLORS[1]
-					},
-					{
-						label: 'Closure Rate', calc: items => {
-							const c = countWhere(items, i => /closed/i.test(i.status || ''));
-							return items.length ? fmtPct(100 * c / items.length) : '0%';
+						label: 'Avg Days Overdue', calc: items => {
+							const d = items.map(i => Number(i.daysOverdue || 0)).filter(n => n > 0);
+							return d.length ? String(Math.round(d.reduce((a, b) => a + b, 0) / d.length)) : '0';
 						}, color: COLORS[2]
 					},
-					{ label: 'Revenue Opportunity', calc: items => fmtMoney(items.length * 200), color: COLORS[3] },
+					{ label: 'Never Seen', calc: items => String(countWhere(items, i => /no visit/i.test(i.description || ''))), color: COLORS[3] },
 				],
 				charts: [
 					{ type: 'bar', groupKey: 'gapType', label: 'Gaps by Type' },
-					{ type: 'area', groupKey: '', label: 'Gap Closure Trend', aggregate: 'month', dateField: 'closedAt' },
 					{ type: 'horizontalBar', groupKey: 'providerName', label: 'Open Gaps by Provider', limit: 10 },
-					{ type: 'pie', groupKey: 'gapType', label: 'By Gap Type' },
+					{ type: 'pie', groupKey: 'description', label: 'By Gap Reason' },
 				],
 			};
 
@@ -1039,6 +1087,9 @@ function getReportDef(key: string): ReportDef {
 		case 'disease-registry':
 			return {
 				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				// One row per raw encounter; pivot to one row per condition so Total
+				// Patients / Avg Days Since Visit populate instead of staying blank.
+				groupByCondition: true,
 				columns: [
 					{ key: 'condition', label: 'Condition' },
 					{ key: 'totalPatients', label: 'Total Patients' },
@@ -1074,8 +1125,14 @@ function getReportDef(key: string): ReportDef {
 			};
 
 		case 'risk-stratification':
+			// No backend risk engine exists, so the score/tier is a transparent
+			// utilization proxy derived from 12-month visit + ED-visit frequency
+			// (see _deriveRisk) — not a clinical model. `conditions` needs a bulk
+			// problem-list endpoint that doesn't exist and stays blank.
 			return {
 				apiPath: '/api/patients?page=0&size=500',
+				enrichEncounterStats: true,
+				deriveRisk: true,
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'riskScore', label: 'Risk Score' },
@@ -1099,7 +1156,7 @@ function getReportDef(key: string): ReportDef {
 				kpis: [
 					{ label: 'Total Patients', calc: items => String(items.length), color: COLORS[0] },
 					{ label: 'High Risk', calc: items => String(countWhere(items, i => /high/i.test(i.riskTier || ''))), color: COLORS[1] },
-					{ label: 'Rising Risk', calc: items => String(countWhere(items, i => /rising/i.test(i.riskTrend || ''))), color: COLORS[2] },
+					{ label: 'With ED Visits', calc: items => String(countWhere(items, i => Number(i.edVisits || 0) > 0)), color: COLORS[2] },
 					{
 						label: 'Avg Risk Score', calc: items => {
 							const scores = items.map(i => Number(i.riskScore || 0)).filter(n => n > 0);
@@ -1109,8 +1166,8 @@ function getReportDef(key: string): ReportDef {
 				],
 				charts: [
 					{ type: 'pie', groupKey: 'riskTier', label: 'Risk Tier Distribution' },
-					{ type: 'horizontalBar', groupKey: 'topRiskFactor', label: 'Top Risk Factors', limit: 10 },
-					{ type: 'bar', groupKey: '', label: 'Risk Migration Trend', aggregate: 'month', dateField: 'recordedDate' },
+					{ type: 'bar', groupKey: 'riskTier', label: 'Patients by Risk Tier' },
+					{ type: 'line', groupKey: '', label: 'Visit Volume Trend', aggregate: 'month', dateField: 'lastVisit' },
 				],
 			};
 
@@ -1394,9 +1451,11 @@ export class ReportsEditor extends EditorPane {
 				this.currentPage = 0;
 				this._render();
 			});
-			const icon = DOM.append(wrap, DOM.$('span'));
-			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+			// Open the calendar from a click anywhere in the icon column, not just
+			// the native input's tiny indicator glyph.
+			enablePickerClick(picker, icon);
 		};
 
 		for (const f of this.reportDef.filters) {
@@ -1609,7 +1668,10 @@ export class ReportsEditor extends EditorPane {
 			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
 			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
+			if (this.reportDef.enrichEncounterStats) { await this._enrichEncounterStats(); }
 			if (this.reportDef.computeArAging) { this._computeArAging(); }
+			if (this.reportDef.deriveCareGaps) { this._deriveCareGaps(); }
+			if (this.reportDef.deriveRisk) { this._deriveRisk(); }
 		} catch { this.items = []; }
 	}
 
@@ -1784,6 +1846,148 @@ export class ReportsEditor extends EditorPane {
 		} catch { /* encounters endpoint may be unavailable — leave provider as-is */ }
 	}
 
+	/**
+	 * Join the encounter list once and stamp each patient row with the visit
+	 * history the `/api/patients` feed lacks: `lastVisit` (ISO date),
+	 * `daysSinceVisit`, `visitCount12mo` and `edVisits12mo`. Powers the derived
+	 * Care Gaps and Risk Stratification reports.
+	 */
+	private async _enrichEncounterStats(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/fhir-resource/encounters?page=0&size=2000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const encounters = Array.isArray(raw) ? raw : [];
+			const refId = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v.includes('/') ? v.substring(v.lastIndexOf('/') + 1) : v; }
+				const o = v as Record<string, unknown>;
+				const r = o.reference;
+				return typeof r === 'string' ? (r.includes('/') ? r.substring(r.lastIndexOf('/') + 1) : r) : '';
+			};
+			const now = Date.now();
+			const DAY = 24 * 60 * 60 * 1000;
+			const YEAR = 365 * DAY;
+			const stats: Record<string, { last: number; visits12: number; ed12: number }> = {};
+			for (const enc of encounters) {
+				const e = enc as Record<string, unknown>;
+				const pid = String(e.patientId || refId(e.patientRef) || refId(e.subject) || '');
+				if (!pid) { continue; }
+				const when = Date.parse(String(e.startDate || e.start || e.date || e.periodStart || e._lastUpdated || '')) || 0;
+				const type = String(e.type || e.encounterType || e.class || e.visitCategory || '').toLowerCase();
+				const isED = /emer|emergency|urgent/.test(type);
+				let s = stats[pid];
+				if (!s) { s = { last: 0, visits12: 0, ed12: 0 }; stats[pid] = s; }
+				if (when > s.last) { s.last = when; }
+				if (when && now - when <= YEAR) { s.visits12++; if (isED) { s.ed12++; } }
+			}
+			for (const item of this.items) {
+				const pid = item.id || item.patientId || item.fhirId;
+				const s = pid ? stats[pid] : undefined;
+				if (s && s.last) {
+					item.lastVisit = new Date(s.last).toISOString().slice(0, 10);
+					item.daysSinceVisit = String(Math.max(0, Math.floor((now - s.last) / DAY)));
+				} else {
+					item.lastVisit = '';
+					item.daysSinceVisit = '';
+				}
+				item.visitCount12mo = String(s?.visits12 || 0);
+				item.edVisits12mo = String(s?.ed12 || 0);
+			}
+		} catch { /* encounters endpoint may be unavailable — leave stats blank */ }
+	}
+
+	/**
+	 * Derive real "overdue for visit" care gaps from each patient's last-visit
+	 * date (stamped by {@link _enrichEncounterStats}). A patient more than a year
+	 * past their last visit — or never seen and registered over a year ago — is an
+	 * open gap; everyone else is dropped so the table lists only actionable gaps.
+	 * The backend has no care-gap engine, so this is the honest computable stand-in.
+	 */
+	private _deriveCareGaps(): void {
+		const GAP_DAYS = 365;
+		const now = Date.now();
+		const DAY = 24 * 60 * 60 * 1000;
+		const gaps: Record<string, string>[] = [];
+		for (const item of this.items) {
+			const hasVisit = !!item.lastVisit;
+			let overdue: number;
+			let dueTs: number;
+			if (hasVisit) {
+				const days = Number(item.daysSinceVisit || 0);
+				if (days <= GAP_DAYS) { continue; }
+				overdue = days - GAP_DAYS;
+				dueTs = Date.parse(item.lastVisit) + GAP_DAYS * DAY;
+			} else {
+				// Never seen — judge against registration date; skip if we can't.
+				const reg = Date.parse(item.createdAt || item.registrationDate || '') || 0;
+				if (!reg || now - reg <= GAP_DAYS * DAY) { continue; }
+				dueTs = reg + GAP_DAYS * DAY;
+				overdue = Math.floor((now - dueTs) / DAY);
+			}
+			item.gapType = 'Annual Visit';
+			item.description = hasVisit ? 'Overdue for annual visit' : 'No visit on record';
+			item.dueDate = new Date(dueTs).toISOString().slice(0, 10);
+			item.daysOverdue = String(overdue);
+			item.status = 'open';
+			gaps.push(item);
+		}
+		this.items = gaps;
+	}
+
+	/**
+	 * Derive a transparent, utilization-based risk score/tier per patient from the
+	 * 12-month visit and ED-visit counts stamped by {@link _enrichEncounterStats}:
+	 * +10 per visit, +25 per ED visit, capped at 100. This is an explainable proxy,
+	 * NOT a clinical risk model (the backend exposes no risk-scoring engine).
+	 * `conditions` needs a bulk problem-list endpoint that doesn't exist → blank.
+	 */
+	private _deriveRisk(): void {
+		for (const item of this.items) {
+			const visits = Number(item.visitCount12mo || 0);
+			const ed = Number(item.edVisits12mo || 0);
+			const score = Math.min(100, visits * 10 + ed * 25);
+			item.riskScore = String(score);
+			item.riskTier = score >= 75 ? 'Very High' : score >= 50 ? 'High' : score >= 25 ? 'Moderate' : 'Low';
+			item.edVisits = String(ed);
+			if (!item.conditions) { item.conditions = ''; }
+		}
+	}
+
+	/** Collapse raw encounter rows into one row per condition for the Disease
+	 *  Registry table: `totalPatients` = distinct patients, `avgDaysSinceVisit` =
+	 *  mean days since each patient's most recent visit for that condition.
+	 *  `controlled`/`controlPct` have no encounter-side source and stay blank. */
+	private _aggregateByCondition(rows: Record<string, string>[]): Record<string, string>[] {
+		const now = Date.now();
+		const DAY = 24 * 60 * 60 * 1000;
+		const groups = new Map<string, { patients: Set<string>; recentByPatient: Map<string, number> }>();
+		for (const r of rows) {
+			const key = r.condition || r.diagnosis || r.code || 'Unspecified';
+			let g = groups.get(key);
+			if (!g) { g = { patients: new Set<string>(), recentByPatient: new Map<string, number>() }; groups.set(key, g); }
+			const pid = r.patientId || r.patientName || r.patientRefDisplay || '';
+			if (pid) { g.patients.add(pid); }
+			const when = Date.parse(r.startDate || r.recordedDate || r.serviceDate || '') || 0;
+			if (pid && when) { const cur = g.recentByPatient.get(pid) || 0; if (when > cur) { g.recentByPatient.set(pid, when); } }
+		}
+		const out: Record<string, string>[] = [];
+		for (const [condition, g] of groups) {
+			const recents = [...g.recentByPatient.values()];
+			const avgDays = recents.length ? Math.round(recents.reduce((sum, w) => sum + Math.max(0, (now - w) / DAY), 0) / recents.length) : 0;
+			out.push({
+				condition,
+				totalPatients: String(g.patients.size),
+				controlled: '',
+				controlPct: '',
+				avgDaysSinceVisit: recents.length ? String(avgDays) : '',
+			});
+		}
+		out.sort((a, b) => Number(b.totalPatients) - Number(a.totalPatients));
+		return out;
+	}
+
 	private _normalizeRow(r: Record<string, unknown>): Record<string, string> {
 		const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 			v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -1867,7 +2071,14 @@ export class ReportsEditor extends EditorPane {
 
 		if (!out['code']) { out['code'] = pickFirst(out['display'], out['text'], out['diagnosisCode'], out['icdCode'], out['conditionCode']); }
 		if (!out['icdCode']) { out['icdCode'] = pickFirst(out['diagnosisCode'], out['code'], out['conditionCode']); }
-		if (!out['description']) { out['description'] = pickFirst(out['display'], out['text'], out['shortDescription'], out['conditionName'], out['diagnosisDescription']); }
+		// CPT Utilization: the invoice-line feed exposes the procedure code under
+		// varying keys depending on the backend build (`cptCode` in the newer map,
+		// but `cpt4`/`cpt`/`code`/`procedureCode` in the deployed invoice-line
+		// shape), which left the CPT Code column blank. Resolve it from any alias.
+		if (!out['cptCode']) { out['cptCode'] = pickFirst(out['cpt4'], out['cpt'], out['procedureCode'], out['lineCode'], out['hcpcs'], out['billingCode'], out['code']); }
+		// Description likewise arrives as `treatment`/`procedureDescription`/etc. on
+		// the invoice-line shape; fall back to those before the diagnosis-side keys.
+		if (!out['description']) { out['description'] = pickFirst(out['treatment'], out['procedureDescription'], out['lineTreatment'], out['cptDescription'], out['procedureName'], out['serviceDescription'], out['display'], out['text'], out['shortDescription'], out['conditionName'], out['diagnosisDescription']); }
 		// diagnosis column for encounter summary — map from FHIR Encounter reasonCode/diagnoses
 		if (!out['diagnosis']) {
 			out['diagnosis'] = pickFirst(
@@ -1879,6 +2090,9 @@ export class ReportsEditor extends EditorPane {
 				out['cc_text'], out['chiefComplaint'], out['reasonForVisit'], out['reason'],
 			);
 		}
+		// Disease Registry groups on `condition`; encounterAll carries the dx under
+		// `diagnosis`/`code`, so mirror it here or the Condition column is blank.
+		if (!out['condition']) { out['condition'] = pickFirst(out['diagnosis'], out['code'], out['conditionName'], out['reasonCode'], out['reasonDisplay']); }
 		// Prefer a readable display/category, then the raw `type`, and translate any
 		// FHIR class code (AMB/VR/EMER/…) to a friendly label so the Visit Type
 		// column shows e.g. "Ambulatory" instead of "AMB".
@@ -1897,9 +2111,13 @@ export class ReportsEditor extends EditorPane {
 			out['paymentMethodLabel'] = brand && last4 ? `${brand} ••${last4}` : pickFirst(out['paymentMethodType'], brand);
 		}
 
-		if (!out['createdAt']) { out['createdAt'] = pickFirst(out['audit.createdDate'], out['createdDate'], out['registrationDate'], out['_lastUpdated'], out['timestamp']); }
+		if (!out['createdAt']) { out['createdAt'] = pickFirst(out['audit.createdDate'], out['createdDate'], out['createdOn'], out['registrationDate'], out['_lastUpdated'], out['timestamp']); }
 		if (!out['startDate']) { out['startDate'] = pickFirst(out['start'], out['period.start'], out['effectiveDate']); }
-		if (!out['serviceDate']) { out['serviceDate'] = pickFirst(out['serviced'], out['servicedDate'], out['period.start'], out['date']); }
+		// `/api/all-claims` (PatientClaimDto) carries only `createdOn` as its date —
+		// no serviced/period — so fall back to it, otherwise the denial-management
+		// Date column and the "Denial Trend" chart (dateField: serviceDate) come up
+		// empty ("No data") even though rows load.
+		if (!out['serviceDate']) { out['serviceDate'] = pickFirst(out['serviced'], out['servicedDate'], out['period.start'], out['date'], out['createdOn']); }
 		if (!out['orderDate']) { out['orderDate'] = pickFirst(out['orderDateTime'], out['authoredOn'], out['date']); }
 		if (!out['referralDate']) { out['referralDate'] = pickFirst(out['authoredOn'], out['createdAt'], out['createdDate']); }
 		if (!out['administrationDate']) { out['administrationDate'] = pickFirst(out['occurrenceDate'], out['date'], out['administeredDate'], out['administrationDate']); }
@@ -2051,13 +2269,80 @@ export class ReportsEditor extends EditorPane {
 		return out;
 	}
 
+	/** Collapse raw patient rows into one row per payer for the Payer Mix table:
+	 *  `patientCount` = patients with that payer, `patientPct` = share of the
+	 *  total. revenue/revenuePct/avgReimbRate have no patient-side source (they
+	 *  need a payments join the backend doesn't expose), so they stay blank
+	 *  rather than a misleading 0. */
+	private _aggregateByPayer(rows: Record<string, string>[]): Record<string, string>[] {
+		const groups = new Map<string, number>();
+		for (const r of rows) {
+			const key = r.payerDisplay || r.insurance || 'Self-Pay';
+			groups.set(key, (groups.get(key) || 0) + 1);
+		}
+		const total = rows.length || 1;
+		const out: Record<string, string>[] = [];
+		for (const [payer, count] of groups) {
+			out.push({
+				payerDisplay: payer,
+				patientCount: String(count),
+				patientPct: fmtPct(100 * count / total),
+				revenue: '',
+				revenuePct: '',
+				avgReimbRate: '',
+			});
+		}
+		// Largest payers first when the user hasn't picked a sort column.
+		out.sort((a, b) => Number(b.patientCount) - Number(a.patientCount));
+		return out;
+	}
+
+	/** Collapse raw appointment rows into one row per provider for the Scheduling
+	 *  Utilization table: `booked` = appointments, `completed` = fulfilled count,
+	 *  `utilization` = kept (non-cancel/no-show) ÷ booked — the same measure as
+	 *  this report's Utilization Rate KPI. `availableSlots` (no free-slot feed)
+	 *  and `revenue` (needs a payments join) have no source, so they stay blank
+	 *  rather than a misleading 0. */
+	private _aggregateBySchedule(rows: Record<string, string>[]): Record<string, string>[] {
+		const groups = new Map<string, { booked: number; completed: number; kept: number }>();
+		for (const r of rows) {
+			const key = r.providerName || r.providerDisplay || 'Unassigned';
+			let g = groups.get(key);
+			if (!g) { g = { booked: 0, completed: 0, kept: 0 }; groups.set(key, g); }
+			g.booked++;
+			const status = r.status || '';
+			if (/complet|fulfilled/i.test(status)) { g.completed++; }
+			if (!/cancel|no[-_ ]?show/i.test(status)) { g.kept++; }
+		}
+		const out: Record<string, string>[] = [];
+		for (const [provider, g] of groups) {
+			out.push({
+				providerName: provider,
+				availableSlots: '',
+				booked: String(g.booked),
+				completed: String(g.completed),
+				utilization: g.booked ? fmtPct(100 * g.kept / g.booked) : '0%',
+				revenue: '',
+			});
+		}
+		// Busiest providers first when the user hasn't picked a sort column.
+		out.sort((a, b) => Number(b.booked) - Number(a.booked));
+		return out;
+	}
+
 	private _render(): void {
 		const filtered = this._filteredItems();
 		// The table can show an aggregated view (one row per provider) while the
 		// KPIs and charts keep counting the raw rows below.
 		const tableRows = this.reportDef.groupByProvider
 			? this._sortRows(this._aggregateByProvider(filtered))
-			: filtered;
+			: this.reportDef.groupByPayer
+				? this._sortRows(this._aggregateByPayer(filtered))
+				: this.reportDef.groupBySchedule
+					? this._sortRows(this._aggregateBySchedule(filtered))
+					: this.reportDef.groupByCondition
+						? this._sortRows(this._aggregateByCondition(filtered))
+						: filtered;
 
 		// KPIs
 		DOM.clearNode(this.kpiEl);
@@ -2406,7 +2691,9 @@ export class ReportsEditor extends EditorPane {
 		const fromInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
 		fromInput.type = 'date';
 		fromInput.value = isoOf(monthAgo);
-		fromInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;';
+		fromInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;cursor:pointer;';
+		// Open the calendar from a click anywhere in the field, not just the tiny indicator.
+		enablePickerClick(fromInput);
 
 		const toSep = DOM.append(filters, DOM.$('span'));
 		toSep.textContent = 'to';
@@ -2415,7 +2702,9 @@ export class ReportsEditor extends EditorPane {
 		const toInput = DOM.append(filters, DOM.$('input')) as HTMLInputElement;
 		toInput.type = 'date';
 		toInput.value = isoOf(today);
-		toInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;';
+		toInput.style.cssText = INPUT_STYLE + 'color-scheme:dark light;cursor:pointer;';
+		// Open the calendar from a click anywhere in the field, not just the tiny indicator.
+		enablePickerClick(toInput);
 
 		const spacer = DOM.append(filters, DOM.$('span'));
 		spacer.style.flex = '1';

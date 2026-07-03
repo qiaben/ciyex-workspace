@@ -6,6 +6,7 @@
 import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { enablePickerClick } from '../ciyexDateMask.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -150,8 +151,9 @@ export function renderCarePlanExtras(host: HTMLElement, editing: Record<string, 
 		dateLabel.style.cssText = labelStyle;
 		const dateInput = DOM.append(dateCell, DOM.$('input')) as HTMLInputElement;
 		dateInput.type = 'date';
-		dateInput.style.cssText = inputStyle;
+		dateInput.style.cssText = inputStyle + 'cursor:pointer;';
 		dateInput.value = seed?.targetDate ? String(seed.targetDate).slice(0, 10) : '';
+		enablePickerClick(dateInput);
 
 		const statusCell = DOM.append(sub, DOM.$('div'));
 		const statusLabel = DOM.append(statusCell, DOM.$('label'));
@@ -4297,12 +4299,14 @@ export class InventoryEditor extends ClinicalListEditorBase {
 		const dateInputStyle = inputStyle + 'color-scheme:dark light;';
 		const odWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(odWrap, 'Order Date');
 		const orderDate = DOM.append(odWrap, DOM.$('input')) as HTMLInputElement;
-		orderDate.type = 'date'; orderDate.style.cssText = dateInputStyle;
+		orderDate.type = 'date'; orderDate.style.cssText = dateInputStyle + 'cursor:pointer;';
 		orderDate.value = String(existing?.orderDate ?? '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+		enablePickerClick(orderDate);
 		const edWrap = DOM.append(hr2, DOM.$('div')); fieldLabel(edWrap, 'Expected Date');
 		const expectedDate = DOM.append(edWrap, DOM.$('input')) as HTMLInputElement;
-		expectedDate.type = 'date'; expectedDate.style.cssText = dateInputStyle;
+		expectedDate.type = 'date'; expectedDate.style.cssText = dateInputStyle + 'cursor:pointer;';
 		expectedDate.value = String(existing?.expectedDate ?? '').slice(0, 10);
+		enablePickerClick(expectedDate);
 
 		// Notes.
 		const ntWrap = DOM.append(body, DOM.$('div')); ntWrap.style.cssText = 'margin-bottom:14px;'; fieldLabel(ntWrap, 'Notes');

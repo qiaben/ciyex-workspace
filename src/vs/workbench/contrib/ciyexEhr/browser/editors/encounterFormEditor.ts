@@ -12,7 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { createUsDateField } from '../ciyexDateMask.js';
+import { createUsDateField, enablePickerClick } from '../ciyexDateMask.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -372,15 +372,21 @@ export class EncounterFormEditor extends EditorPane {
 		this.encounterData = { ...fhir, ...ehr, ...form };
 		this._serviceDate = this._extractServiceDate(this.encounterData);
 		// Vitals are DATE-scoped, never "most recent across all dates". The Snapshot,
-		// this Encounter and the Patient Chart all read the ONE FHIR Observation
-		// recorded on the visit's DATE. Pre-fill the Vitals section ONLY from that
-		// per-date record — so a fresh visit with no vitals for its own date opens
-		// blank (matching the Snapshot), instead of leaking another day's numbers.
-		// (Previously a global most-recent fallback pulled in an unrelated record,
-		// which also surfaced as empty Heart Rate / Temperature / Respiratory Rate
-		// when that stale record lacked those FHIR components.) A value already saved
-		// on THIS encounter's composition wins; the per-date reading only fills gaps.
-		// The record's id is remembered so save upserts the SAME record (no copies).
+		// this Encounter and the Patient Chart all read/write the ONE FHIR Observation
+		// recorded on the visit's DATE. Pre-fill the Vitals section from that per-date
+		// record — so a fresh visit with no vitals for its own date opens blank
+		// (matching the Snapshot), instead of leaking another day's numbers.
+		//
+		// The shared per-date Observation is the SOURCE OF TRUTH and OVERRIDES the
+		// encounter composition's stale `vitals_*` copy: the Snapshot edits only that
+		// Observation (not the composition), so if the composition won, a vital edited
+		// on the Snapshot would never appear here (the values would silently diverge —
+		// e.g. Snapshot showing BP 16/… while this form kept the old 126/…). Overriding
+		// keeps Snapshot ↔ Encounter in sync both ways and matches how the Snapshot's
+		// own encounter-edit dialog loads vitals (_loadEncounterForEdit). Keys the
+		// Observation does not define (e.g. pain level, unsupported by the vitals store)
+		// keep their composition value. The record's id is remembered so save upserts
+		// the SAME record (no copies).
 		const encDateRaw = this.encounterData['encounterDate'] ?? this.encounterData['startDate'] ?? this.encounterData['start'] ?? this.encounterData['date'];
 		if (this.patientId && encDateRaw) {
 			try {
@@ -388,8 +394,7 @@ export class EncounterFormEditor extends EditorPane {
 				if (found) {
 					this._vitalsObsId = found.id;
 					for (const [k, v] of Object.entries(found.vitals)) {
-						const cur = this.encounterData[k];
-						if (cur === undefined || cur === null || String(cur).trim() === '') { this.encounterData[k] = v; }
+						if (v !== undefined && v !== null && String(v).trim() !== '') { this.encounterData[k] = v; }
 					}
 				}
 			} catch { /* no vitals for this date — leave the section blank */ }
@@ -450,6 +455,15 @@ export class EncounterFormEditor extends EditorPane {
 		};
 		const out: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(map)) { if (v !== undefined) { out[k] = v; } }
+		// Recompute BMI from height/weight so the shared store's stored BMI never
+		// drifts from the numbers on an encounter edit (mirrors the Snapshot's save,
+		// which also recomputes on write). Both cards recompute BMI for display, but
+		// keep the persisted value correct for any consumer that reads it directly.
+		if (typeof map.heightCm === 'number' && typeof map.weightKg === 'number') {
+			const heightM = map.heightCm / 100;
+			const bmi = heightM > 0 ? map.weightKg / (heightM * heightM) : 0;
+			if (Number.isFinite(bmi) && bmi > 0) { out.bmi = Number(bmi.toFixed(1)); }
+		}
 		// Vitals notes are free text (FHIR Observation.note[0].text), not a number,
 		// so they fall outside the numeric map above. Carry the string through
 		// explicitly — otherwise a vitals note is dropped on the way to the shared
@@ -1278,8 +1292,8 @@ export class EncounterFormEditor extends EditorPane {
 					inp.type = 'datetime-local';
 					inp.value = String(val).split('T')[0];
 					inp.dataset.key = f.key;
-					inp.style.cssText = inputStyle + 'height:32px;';
-					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
+					inp.style.cssText = inputStyle + 'height:32px;cursor:pointer;';
+					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; } else { enablePickerClick(inp); }
 					addFocus(inp);
 				} else if (f.type === 'date') {
 					// MM/DD/YYYY masked field with calendar picker and real-date

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as DOM from '../../../../base/browser/dom.js';
+import { enablePickerClick } from './ciyexDateMask.js';
 
 /**
  * Shared dropdown / typeahead controls used across every Ciyex create+edit
@@ -459,9 +460,8 @@ export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputE
 	const triggerLabel = doc.createElement('span');
 	triggerLabel.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 	const triggerIcon = doc.createElement('span');
-	// allow-any-unicode-next-line
-	triggerIcon.textContent = '\u{1F551}';
-	triggerIcon.style.cssText = 'opacity:0.7;font-size:12px;flex-shrink:0;margin-left:6px;';
+	triggerIcon.className = 'codicon codicon-clock';
+	triggerIcon.style.cssText = 'opacity:0.7;font-size:14px;flex-shrink:0;margin-left:6px;';
 	trigger.appendChild(triggerLabel);
 	trigger.appendChild(triggerIcon);
 	const refreshTriggerLabel = () => {
@@ -702,7 +702,9 @@ export function createDateTimeDropdown(opts: ICreateDateTimeDropdownOptions): HT
 	const dateInp = doc.createElement('input') as HTMLInputElement;
 	dateInp.type = 'date';
 	dateInp.value = initialDate || '';
-	dateInp.style.cssText = innerStyle + 'flex:1 1 56%;min-width:0;padding:7px 4px 7px 9px;';
+	dateInp.style.cssText = innerStyle + 'flex:1 1 56%;min-width:0;padding:7px 4px 7px 9px;cursor:pointer;';
+	// Open the calendar from a click anywhere in the date half, not just the tiny indicator.
+	enablePickerClick(dateInp);
 	wrap.appendChild(dateInp);
 
 	const divider = doc.createElement('div');

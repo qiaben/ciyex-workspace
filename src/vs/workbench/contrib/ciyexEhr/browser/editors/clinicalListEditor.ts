@@ -17,7 +17,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
-import { maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
+import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { parseSavedRecord } from '../sidebarActions.js';
 
 /**
@@ -1803,12 +1803,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					dateErr.textContent = '';
 					dateErr.style.display = 'none';
 				});
-				// Visible icon (decorative) — sits behind the transparent picker so
-				// clicks fall through to the picker. pointer-events:none keeps the
-				// real input click target on the underlying picker.
-				const icon = DOM.append(wrap, DOM.$('span'));
-				icon.textContent = '\u{1F4C5}';
-				icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+				// Visible icon — clickable so clicking the glyph itself opens the picker too
+				const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+				icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+				// Open the calendar from a click anywhere in the icon column, not just
+				// the native input's tiny indicator glyph.
+				enablePickerClick(picker, icon);
 				dateRefs.set(field.key, { visible, picker });
 				inputEl = hidden;
 			} else {

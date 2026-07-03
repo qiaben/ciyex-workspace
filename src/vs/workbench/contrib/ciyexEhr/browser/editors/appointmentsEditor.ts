@@ -9,7 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { usToIsoDate } from '../ciyexDateMask.js';
+import { enablePickerClick, usToIsoDate } from '../ciyexDateMask.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -1109,9 +1109,11 @@ export class AppointmentsEditor extends EditorPane {
 				hidden.value = picker.value;
 				visible.dispatchEvent(new CustomEvent('iso-change', { detail: picker.value }));
 			});
-			const icon = DOM.append(wrap, DOM.$('span'));
-			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+			icon.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+			// Open the calendar from a click anywhere in the icon column, not just
+			// the native input's tiny indicator glyph.
+			enablePickerClick(picker, icon);
 			return hidden;
 		};
 		const fromInput = buildRangeDateInput(dateRight, this.dateFromCustom, 'From date');

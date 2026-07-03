@@ -16,7 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from './ciyexApiService.js';
-import { usToIsoDate } from './ciyexDateMask.js';
+import { enablePickerClick, usToIsoDate } from './ciyexDateMask.js';
 import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import * as DOM from '../../../../base/browser/dom.js';
@@ -139,9 +139,11 @@ export class EncounterListPane extends ViewPane {
 			picker.value = isoValue || '';
 			picker.style.cssText = 'position:absolute;top:0;right:0;width:24px;height:100%;opacity:0;cursor:pointer;border:none;background:transparent;color-scheme:dark light;padding:0;margin:0;';
 			picker.addEventListener('change', () => { visible.value = isoToUs(picker.value); onChange(picker.value); });
-			const icon = DOM.append(wrap, DOM.$('span'));
-			icon.textContent = '\u{1F4C5}';
-			icon.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--vscode-descriptionForeground);pointer-events:none;line-height:1;';
+			const icon = DOM.append(wrap, DOM.$('span.codicon.codicon-calendar'));
+			icon.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1;';
+			// Open the calendar from a click anywhere in the icon column, not just
+			// the native input's tiny indicator glyph.
+			enablePickerClick(picker, icon);
 		};
 
 		const fromLabel = DOM.append(dateRow, DOM.$('span'));
