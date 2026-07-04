@@ -248,14 +248,19 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'collectedDate', label: 'Collected' },
 				],
 			},
+			// Immunizations read & write the CLINICAL store (/api/immunizations) —
+			// the SAME endpoint the clinical Immunizations page uses — so a record
+			// created on either surface shows up on the other (QA issues 4 & 5).
+			// Plain apiPath (non-FHIR) tab filtered to the chart's patient in
+			// `_loadTabData`, mirroring the labs unification above.
 			{
-				key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['Immunization'],
+				key: 'immunizations', label: 'Immunizations', icon: 'Syringe', emoji: '\u{1F489}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/immunizations',
 				columns: [
 					{ key: 'vaccineName', label: 'Vaccine' },
-					{ key: 'cvxCode', label: 'CVX Code' },
-					{ key: 'administeredDate', label: 'Date Administered' },
-					{ key: 'lotNumber', label: 'Lot Number' },
-					{ key: 'dose', label: 'Dose' },
+					{ key: 'cvxCode', label: 'CVX Code', aliases: ['cvxCode', 'cvx', 'vaccineCode'] },
+					{ key: 'administrationDate', label: 'Date Administered', aliases: ['administrationDate', 'administeredDate'] },
+					{ key: 'lotNumber', label: 'Lot Number', aliases: ['lotNumber', 'lot'] },
+					{ key: 'doseSeries', label: 'Dose', aliases: ['doseSeries', 'doseNumber', 'dose'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -291,7 +296,8 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'visitCategory', label: 'Visit Type', aliases: ['visitCategory', 'type', 'encounterType', 'serviceType', 'class', 'visitType'] },
 					{ key: 'encounterProvider', label: 'Provider', aliases: ['encounterProvider', 'providerDisplay', 'providerName', 'practitionerName', 'performerDisplay'] },
 					{ key: 'encounterDate', label: 'Date', aliases: ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'created', 'createdAt', '_lastUpdated'] },
-					{ key: 'endDate', label: 'End Date', aliases: ['endDate', 'end', 'periodEnd', 'endDateTime', 'periodEndDate', 'encounterEnd', 'effectiveEnd'] },
+					// End Date column removed — the encounter create/edit form has no
+					// End Date field, so the column could never be populated (QA issue 3).
 					{ key: 'status', label: 'Status' },
 				],
 			},
@@ -321,14 +327,18 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			},
 			// Referrals visible per the 02.05.26 *workspace* test report
 			// (Encounters sub-pages must include Referrals after Visit Notes).
+			// Referrals read & write the CLINICAL store (/api/referrals) — the SAME
+			// endpoint the clinical Referrals page uses — so a record created on
+			// either surface shows up on the other (QA issue 6). Plain apiPath
+			// (non-FHIR) tab filtered to the chart's patient in `_loadTabData`.
 			{
-				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ServiceRequest'],
+				key: 'referrals', label: 'Referrals', icon: 'ArrowRight', emoji: '\u{27A1}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/referrals',
 				columns: [
-					{ key: 'referralType', label: 'Referral Type' },
+					{ key: 'specialistName', label: 'Refer To', aliases: ['specialistName', 'referredTo', 'referTo'] },
 					{ key: 'specialty', label: 'Specialty' },
-					{ key: 'referredTo', label: 'Referred To' },
-					{ key: 'date', label: 'Date' },
+					{ key: 'urgency', label: 'Priority', aliases: ['urgency', 'priority'] },
 					{ key: 'status', label: 'Status' },
+					{ key: 'referralDate', label: 'Date', aliases: ['referralDate', 'date'] },
 				],
 			},
 		],
@@ -863,54 +873,125 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			},
 		],
 	},
+	// Immunization form — matches the clinical Immunizations page schema so the
+	// chart writes the same flat DTO to /api/immunizations that the clinical
+	// page uses (keys: vaccineName, cvxCode, manufacturer, lotNumber,
+	// expirationDate, administrationDate, site, route, doseNumber/doseSeries,
+	// administeredBy, status, notes). patientId/patientName are injected by the
+	// chart's save handler; the dose split into doseNumber+doseSeries happens
+	// there too.
 	immunizations: {
 		tabKey: 'immunizations',
 		sections: [
 			{
 				key: 'imm', title: 'Immunization', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' } },
-					{ key: 'administeredDate', label: 'Date Administered', type: 'date', required: true },
+					{ key: 'cvxCode', label: 'Vaccine CVX Code', type: 'code-search', required: true, placeholder: 'Search CVX codes', lookupConfig: { system: 'CVX' }, relatedField: 'vaccineName', aliases: ['cvx', 'vaccineCode'] },
+					{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Influenza, inactivated' },
+					{ key: 'administrationDate', label: 'Date Administered', type: 'date', required: true, aliases: ['administeredDate'] },
 					{
 						key: 'lotNumber', label: 'Lot Number', type: 'text', placeholder: 'e.g. FR8912',
 						validationPattern: '^[A-Za-z0-9]{5,10}$',
 						validationMessage: 'Lot number must be 5-10 letters and numbers only (e.g. FR8912)',
 					},
 					{
-						key: 'dose', label: 'Dose', type: 'text', placeholder: 'e.g., 0.5 mL',
+						// Keyed `doseSeries` (the free-text DTO column), NOT `doseNumber`:
+						// the shared format validator has a built-in doseNumber rule that
+						// only accepts whole 1-99 (dose-in-series), which would reject
+						// "0.5 mL". The save handler derives the Integer doseNumber from
+						// this text.
+						key: 'doseSeries', label: 'Dose', type: 'text', placeholder: 'e.g., 0.5 mL', aliases: ['doseNumber', 'dose'],
 						validationPattern: '^(?!0+(?:\\.0+)?\\s*$)\\d+(?:\\.\\d+)?(?:\\s*(mL|mg|mcg|units|IU|cc|g|%))?$',
 						validationMessage: 'Dose must be a positive number (e.g., 1.5 or 0.5 mL)',
 					},
 					{
 						key: 'route', label: 'Route', type: 'select', placeholder: 'Select route…', options: [
-							{ label: 'Intramuscular (IM)', value: 'intramuscular' },
-							{ label: 'Subcutaneous (SC)', value: 'subcutaneous' },
-							{ label: 'Oral', value: 'oral' },
-							{ label: 'Intranasal', value: 'intranasal' },
-							{ label: 'Intradermal', value: 'intradermal' },
+							{ label: 'Intramuscular (IM)', value: 'IM' },
+							{ label: 'Subcutaneous (SC)', value: 'SC' },
+							{ label: 'Oral', value: 'PO' },
+							{ label: 'Intranasal', value: 'IN' },
+							{ label: 'Intradermal', value: 'ID' },
 						]
 					},
 					{
 						key: 'site', label: 'Site', type: 'select', placeholder: 'Select site…', options: [
-							{ label: 'Left Arm', value: 'left arm' },
-							{ label: 'Right Arm', value: 'right arm' },
-							{ label: 'Left Thigh', value: 'left thigh' },
-							{ label: 'Right Thigh', value: 'right thigh' },
-							{ label: 'Left Deltoid', value: 'left deltoid' },
-							{ label: 'Right Deltoid', value: 'right deltoid' },
-							{ label: 'Left Gluteal', value: 'left gluteal' },
-							{ label: 'Right Gluteal', value: 'right gluteal' },
+							{ label: 'Left Arm', value: 'left_arm' },
+							{ label: 'Right Arm', value: 'right_arm' },
+							{ label: 'Left Thigh', value: 'left_thigh' },
+							{ label: 'Right Thigh', value: 'right_thigh' },
+							{ label: 'Left Deltoid', value: 'left_deltoid' },
+							{ label: 'Right Deltoid', value: 'right_deltoid' },
+							{ label: 'Left Gluteal', value: 'left_gluteal' },
+							{ label: 'Right Gluteal', value: 'right_gluteal' },
+						]
+					},
+					{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
+					{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
+					{ key: 'administeredBy', label: 'Administered By', type: 'text', placeholder: 'Provider name', aliases: ['provider', 'administeredByName', 'providerName'] },
+					{
+						key: 'status', label: 'Status', type: 'select', options: [
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Entered in Error', value: 'entered_in_error' },
+							{ label: 'Not Done', value: 'not_done' },
+						]
+					},
+					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, placeholder: 'Notes' },
+				],
+			},
+		],
+	},
+	// Referral form — matches the clinical Referrals page schema so the chart
+	// writes the same flat DTO to /api/referrals that the clinical page uses.
+	// patientId/patientName are injected by the chart's save handler.
+	referrals: {
+		tabKey: 'referrals',
+		sections: [
+			{
+				key: 'ref', title: 'Referral', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'referringProvider', label: 'Referring Provider', type: 'text', required: true, placeholder: 'Referring provider name', aliases: ['referringProviderName', 'referringPrescriber'] },
+					{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
+					{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, placeholder: 'e.g. Dr. Jane Smith', validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
+					{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
+					{
+						key: 'specialty', label: 'Specialty', type: 'select', placeholder: 'Select specialty…', options: [
+							{ label: 'Allergy/Immunology', value: 'Allergy/Immunology' },
+							{ label: 'Cardiology', value: 'Cardiology' }, { label: 'Dermatology', value: 'Dermatology' },
+							{ label: 'Endocrinology', value: 'Endocrinology' }, { label: 'ENT', value: 'ENT' },
+							{ label: 'Gastroenterology', value: 'Gastroenterology' },
+							{ label: 'Geriatrics', value: 'Geriatrics' },
+							{ label: 'Hematology', value: 'Hematology' },
+							{ label: 'Infectious Disease', value: 'Infectious Disease' },
+							{ label: 'Nephrology', value: 'Nephrology' }, { label: 'Neurology', value: 'Neurology' },
+							{ label: 'Obstetrics/Gynecology', value: 'Obstetrics/Gynecology' },
+							{ label: 'Oncology', value: 'Oncology' }, { label: 'Ophthalmology', value: 'Ophthalmology' },
+							{ label: 'Orthopedics', value: 'Orthopedics' },
+							{ label: 'Pain Management', value: 'Pain Management' },
+							{ label: 'Pediatrics', value: 'Pediatrics' },
+							{ label: 'Physical Medicine', value: 'Physical Medicine' },
+							{ label: 'Podiatry', value: 'Podiatry' }, { label: 'Psychiatry', value: 'Psychiatry' },
+							{ label: 'Pulmonology', value: 'Pulmonology' }, { label: 'Radiology', value: 'Radiology' },
+							{ label: 'Rheumatology', value: 'Rheumatology' },
+							{ label: 'Sports Medicine', value: 'Sports Medicine' },
+							{ label: 'Surgery', value: 'Surgery' }, { label: 'Urology', value: 'Urology' },
+							{ label: 'Other', value: 'Other' },
+						]
+					},
+					{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g. City Medical Center', validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
+					{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
+					{
+						key: 'urgency', label: 'Urgency', type: 'select', options: [
+							{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 						]
 					},
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Completed', value: 'completed' },
-							{ label: 'Entered in Error', value: 'entered-in-error' },
-							{ label: 'Not Done', value: 'not-done' },
+							{ label: 'Draft', value: 'draft' }, { label: 'Sent', value: 'sent' },
+							{ label: 'Acknowledged', value: 'acknowledged' }, { label: 'Scheduled', value: 'scheduled' },
+							{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Denied', value: 'denied' },
 						]
 					},
-					// Free-text Notes — maps to FHIR Immunization.note[0].text via the
-					// backend immunizations tab_field_config `notes` field.
-					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2, placeholder: 'Notes' },
+					{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true, colSpan: 2, placeholder: 'Reason for referral...' },
+					{ key: 'clinicalNotes', label: 'Clinical Notes', type: 'textarea', colSpan: 2, placeholder: 'Relevant clinical information...' },
 				],
 			},
 		],
@@ -1481,9 +1562,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		// Mirrors the EHR Web UI Post Payment / Collect Payment form. Fields
 		// are grouped into Payment Information (always visible) and
 		// Allocation & Adjustments (the line-item breakdown the test team
-		// flagged as missing in the workspace). Status defaults to 'posted'
+		// flagged as missing in the workspace). Status defaults to 'completed'
 		// because both Post Payment and Collect Payment workflows record an
-		// applied payment, never a draft.
+		// applied payment.
 		sections: [
 			{
 				key: 'payment', title: 'Payment Information', columns: 2, visible: true, collapsible: false, fields: [
@@ -1530,12 +1611,20 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'description', label: 'Description', type: 'text', placeholder: 'Payment for visit...' },
 					{ key: 'receiptEmail', label: 'Receipt Email', type: 'email', placeholder: 'patient@email.com' },
 					{
+						// Status options are the PaymentTransaction statuses the backend
+						// accepts. The previous options were INVOICE statuses (Posted /
+						// Draft / Balanced) — a transaction PUT rejects those, so the
+						// snapshot silently swapped whatever the user picked back to
+						// "completed" and the edit never stuck (QA issue 8).
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Posted', value: 'issued' },
-							{ label: 'Draft', value: 'draft' },
-							{ label: 'Balanced', value: 'balanced' },
+							{ label: 'Completed', value: 'completed' },
+							{ label: 'Pending', value: 'pending' },
+							{ label: 'Processing', value: 'processing' },
+							{ label: 'Failed', value: 'failed' },
+							{ label: 'Refunded', value: 'refunded' },
+							{ label: 'Voided', value: 'voided' },
 							{ label: 'Cancelled', value: 'cancelled' },
-						], defaultValue: 'issued'
+						], defaultValue: 'completed'
 					},
 				],
 			},
@@ -2408,6 +2497,19 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	/**
+	 * Encounters carry a signing-workflow state, not a clinical status: the
+	 * chart's Encounters table shows the SAME Signed / Unsigned the patient
+	 * snapshot shows instead of the raw FHIR Encounter.status ("Finished").
+	 * Mirrors PatientSnapshotEditor._normalizeEncounterStatus — "sign" (but not
+	 * "unsign"), "finish" or "complet" (but not "incomplet") mean SIGNED.
+	 */
+	private static _encounterSignedLabel(raw: unknown): 'Signed' | 'Unsigned' {
+		const s = String(raw ?? '').toLowerCase();
+		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'))
+			? 'Signed' : 'Unsigned';
+	}
+
+	/**
 	 * The patient id to write to the clinical lab stores (/api/lab-order,
 	 * /api/lab-results) so a chart-created record carries the SAME patientId the
 	 * clinical Labs page and the snapshot use (the patient's DB id) — without it
@@ -2422,11 +2524,12 @@ export class PatientChartEditor extends EditorPane {
 
 	private _isPatientScoped(tab: ChartTab): boolean {
 		// Tabs that pull from org-level / global collections whose endpoints take
-		// NO "/patient/{id}" segment. The clinical lab stores are global
-		// (/api/lab-order/search, /api/lab-results) — the chart filters their rows
+		// NO "/patient/{id}" segment. The clinical lab / immunization / referral
+		// stores are global (/api/lab-order/search, /api/lab-results,
+		// /api/immunizations, /api/referrals) — the chart filters their rows
 		// to the current patient client-side in `_loadTabData` — so they must not
 		// get a patient path appended (which would 404).
-		const orgLevelTabs = new Set(['facility', 'labs', 'lab-results']);
+		const orgLevelTabs = new Set(['facility', 'labs', 'lab-results', 'immunizations', 'referrals']);
 		if (orgLevelTabs.has(tab.key)) { return false; }
 		return true;
 	}
@@ -2473,7 +2576,12 @@ export class PatientChartEditor extends EditorPane {
 			// returned an explicit empty string left the form unguarded.
 			// Force-use the rich local config so pure-number lot numbers
 			// ("15") and bare-number doses ("10") are rejected client-side.
+			// Immunizations + Referrals now also write to the clinical
+			// /api/immunizations + /api/referrals stores whose flat DTO keys
+			// are defined by the local configs — the backend tab_field_config
+			// rows map to FHIR paths and would produce the wrong field keys.
 			'immunizations',
+			'referrals',
 			// 12.05.26 test report issue 4: Education create failed with
 			// "The given id must not be null" because the backend's
 			// tab_field_config for education didn't expose `materialId` as
@@ -2829,9 +2937,10 @@ export class PatientChartEditor extends EditorPane {
 		if (tab.key === 'education') {
 			data = data.map(r => this._decodeEducationMeta(r));
 		}
-		// The clinical lab endpoints are global — keep only this patient's rows
-		// (mirrors how the clinical Labs page and the snapshot filter client-side).
-		if (tab.key === 'labs' || tab.key === 'lab-results') {
+		// The clinical lab / immunization / referral endpoints are global — keep
+		// only this patient's rows (mirrors how the clinical pages and the
+		// snapshot filter client-side).
+		if (tab.key === 'labs' || tab.key === 'lab-results' || tab.key === 'immunizations' || tab.key === 'referrals') {
 			const ids = this._patientIdSet();
 			data = data.filter(r => ids.has(String(r.patientId ?? r.patient ?? '')));
 		}
@@ -3205,10 +3314,11 @@ export class PatientChartEditor extends EditorPane {
 
 	/** Mirror the URL shape used by _loadTabData so counts match what the list shows. */
 	private _buildCountUrl(tab: ChartTab, ep: string): string | null {
-		// Lab tabs read global clinical stores and filter to the patient
-		// client-side — a count query would return every patient's rows. Return
-		// null so the badge derives from the patient-filtered list (see caller).
-		if (tab.key === 'labs' || tab.key === 'lab-results') { return null; }
+		// Lab / immunization / referral tabs read global clinical stores and
+		// filter to the patient client-side — a count query would return every
+		// patient's rows. Return null so the badge derives from the
+		// patient-filtered list (see caller).
+		if (tab.key === 'labs' || tab.key === 'lab-results' || tab.key === 'immunizations' || tab.key === 'referrals') { return null; }
 		if (tab.apiPath) {
 			if (tab.apiPath.includes('{patientId}')) {
 				const base = tab.apiPath.replace('{patientId}', this.patientId);
@@ -3811,6 +3921,17 @@ export class PatientChartEditor extends EditorPane {
 				// card reads them straight from there.
 				if (navTab === 'lab-results' || navTab === 'labs') {
 					const all = await tryUrl('/api/lab-results?page=0&size=500');
+					const ids = this._patientIdSet();
+					renderItems(all.filter(r => ids.has(String(r.patientId ?? r.patient ?? ''))).slice(0, 3));
+					return;
+				}
+				// Immunizations live in the clinical /api/immunizations store
+				// (global, filtered to this patient client-side) — not a FHIR
+				// resource. Reading the FHIR endpoint painted rows for OTHER data
+				// (a bare resource id like "15363") that the patient's
+				// Immunizations tab never showed (QA issue 5).
+				if (navTab === 'immunizations') {
+					const all = await tryUrl('/api/immunizations?page=0&size=500');
 					const ids = this._patientIdSet();
 					renderItems(all.filter(r => ids.has(String(r.patientId ?? r.patient ?? ''))).slice(0, 3));
 					return;
@@ -4497,6 +4618,16 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Superseded', value: 'superseded' },
 					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
+			case 'encounters':
+				// Encounter rows render the signing-workflow state (Signed /
+				// Unsigned — same as the patient snapshot), so the filter offers
+				// exactly those two values instead of the generic clinical
+				// statuses that never matched a row (QA issue 2).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Signed', value: 'signed' },
+					{ label: 'Unsigned', value: 'unsigned' },
+				];
 			case 'appointments':
 				return [
 					{ label: 'All Statuses', value: '' },
@@ -4518,12 +4649,28 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Cancelled', value: 'cancelled' },
 				];
 			case 'immunizations':
-				// Match the Immunization form's Status options (FHIR Immunization.status).
+				// Match the Immunization form's Status options (clinical
+				// /api/immunizations store values — underscored, same as the
+				// clinical Immunizations page).
 				return [
 					{ label: 'All Statuses', value: '' },
 					{ label: 'Completed', value: 'completed' },
-					{ label: 'Entered in Error', value: 'entered-in-error' },
-					{ label: 'Not Done', value: 'not-done' },
+					{ label: 'Entered in Error', value: 'entered_in_error' },
+					{ label: 'Not Done', value: 'not_done' },
+				];
+			case 'referrals':
+				// Match the clinical /api/referrals store's status workflow — the
+				// generic clinical default (Active/Inactive/Resolved) never matched
+				// a referral row.
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Draft', value: 'draft' },
+					{ label: 'Sent', value: 'sent' },
+					{ label: 'Acknowledged', value: 'acknowledged' },
+					{ label: 'Scheduled', value: 'scheduled' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Denied', value: 'denied' },
 				];
 			case 'procedures':
 				// Match the Procedure form's Status options (FHIR Procedure.status).
@@ -5098,6 +5245,11 @@ export class PatientChartEditor extends EditorPane {
 		};
 
 		const statusOf = (item: Record<string, unknown>): string => {
+			// Encounters filter on the same Signed / Unsigned state the table
+			// renders — the raw FHIR status vocabulary never matched (QA issue 2).
+			if (tab.key === 'encounters') {
+				return PatientChartEditor._encounterSignedLabel(item.status).toLowerCase();
+			}
 			const cs = item.clinicalStatus as unknown;
 			if (typeof cs === 'string') { return cs.toLowerCase(); }
 			if (cs && typeof cs === 'object') {
@@ -5915,6 +6067,33 @@ export class PatientChartEditor extends EditorPane {
 				}
 				if (tab.key === 'labs' || tab.key === 'lab-results') {
 					payload.patientId = this._clinicalPatientId();
+				}
+				// Immunizations / Referrals write to the clinical stores
+				// (/api/immunizations, /api/referrals) — the same rows the clinical
+				// pages list (QA issues 4 & 6). Carry the clinical patient id and
+				// display name so the row links to this patient over there.
+				if (tab.key === 'immunizations' || tab.key === 'referrals') {
+					payload.patientId = this._clinicalPatientId();
+					if (!payload.patientName) {
+						const pd = this.patientData || {};
+						payload.patientName = this.patientName || `${String(pd.firstName || '')} ${String(pd.lastName || '')}`.trim();
+					}
+				}
+				// The clinical immunizations DTO stores dose-in-series as an Integer
+				// (doseNumber) plus the free "0.5 mL" text in doseSeries — split it
+				// exactly like the clinical page's beforeSave does, so units typed
+				// in the chart don't blow up the backend's Integer column.
+				if (tab.key === 'immunizations') {
+					const rawDose = String(payload.doseNumber ?? payload.doseSeries ?? payload.dose ?? '').trim();
+					delete payload.dose;
+					if (rawDose) {
+						const m = rawDose.match(/-?\d+(?:\.\d+)?/);
+						const num = m ? parseFloat(m[0]) : NaN;
+						payload.doseNumber = Number.isFinite(num) ? Math.round(num) : null;
+						payload.doseSeries = rawDose;
+					} else {
+						payload.doseNumber = null;
+					}
 				}
 				const method = isEdit ? 'PUT' : 'POST';
 				let res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
@@ -7276,6 +7455,12 @@ export class PatientChartEditor extends EditorPane {
 				picked = fallback;
 			}
 			if (picked.length === 0) { return null; }
+			// Encounters special-case: the encounter create/edit form has no End
+			// Date field, so an End Date column from the backend tab_field_config
+			// could never be filled in — drop it (QA issue 3).
+			if (tab.key === 'encounters') {
+				picked = picked.filter(c => !/^(endDate|end_date|end|endDateTime|periodEnd|period_end|periodEndDate)$/i.test(c.key) && !/^end\s*date$/i.test(c.label || ''));
+			}
 			// Allergies special-case: ensure allergen column, drop end-date columns
 			if (tab.key === 'allergies' || tab.key === 'allergy-intolerances') {
 				picked = picked.filter(c => !/^(endDate|end_date|end|abatement|abatementDate)$/i.test(c.key));
@@ -7389,6 +7574,12 @@ export class PatientChartEditor extends EditorPane {
 						v = candidate;
 						break;
 					}
+				}
+				// Encounters: show the signing-workflow state (Signed / Unsigned)
+				// the patient snapshot shows, not the raw FHIR status ("Finished")
+				// — QA issue 2.
+				if (tab.key === 'encounters' && (k === 'status' || String(cols[idx] || '').trim().toLowerCase() === 'status')) {
+					return PatientChartEditor._encounterSignedLabel(v || item.status);
 				}
 				// Provider / organization / location columns frequently arrive as
 				// raw IDs (numeric, UUID, "Practitioner/abc-123"). Swap with the

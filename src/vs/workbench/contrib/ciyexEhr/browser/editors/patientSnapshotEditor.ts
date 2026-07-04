@@ -1143,9 +1143,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		fsa: 'fsa', hsa: 'hsa',
 	};
 
-	/** Transaction statuses the backend accepts; the shared payment form's Status
-	 *  select lists *invoice* statuses (issued/draft/balanced/cancelled), which a
-	 *  PaymentTransaction rejects, so we never forward one of those. */
+	/** Transaction statuses the backend accepts. The shared payment form's Status
+	 *  select now lists exactly these (it used to list *invoice* statuses —
+	 *  issued/draft/balanced — which a PaymentTransaction rejects, so every edit
+	 *  silently fell back to 'completed' and the status change never stuck, QA
+	 *  issue 8). The guard below stays as a safety net for stale stored values. */
 	private static readonly _PAYMENT_TXN_STATUSES = new Set(['completed', 'pending', 'failed', 'refunded', 'cancelled', 'voided', 'processing']);
 
 	/**
@@ -3347,8 +3349,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		}, () => this._openCreateModal('medications'), 'medications', 2);
 
 		// Pending Items — unfinished work the doctor must action (full width).
-		// Orders still awaiting a result drive the "Lab Results Pending" prompt.
-		this._renderPendingItems(grid, labOrders, encs, hasVisitNotes);
+		// Orders still awaiting a result drive the "Lab Results Pending" prompt;
+		// orders whose result has already arrived are excluded.
+		this._renderPendingItems(grid, labOrders, labResults, encs, hasVisitNotes);
 
 		// Bottom rows: Lab Orders and Lab Results, each in its own full-width card
 		// with create / edit / delete. Both read & write the clinical lab stores so
@@ -4367,8 +4370,30 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Pending Items — unfinished clinical work the provider must action. The
 	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
 	 *  unfinished work"). Each item is derived from real record state. */
-	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
-		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')));
+	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], results: Record<string, unknown>[], encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
+		// An order stops being "pending" once a completed result exists for it —
+		// matched by explicit order linkage when the result carries one, else by
+		// test name. Previously only the ORDER's status was checked, so a final
+		// result could exist while the card still said "Lab Results Pending"
+		// (QA issue 7).
+		const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase();
+		const doneResults = results.filter(r => /^(final|corrected|amended|complete|completed)$/.test(norm(r.status)));
+		const resultOrderIds = new Set<string>();
+		const resultTestNames = new Set<string>();
+		for (const r of doneResults) {
+			for (const k of ['labOrderId', 'orderId', 'labOrderNumber', 'orderNumber']) {
+				const v = norm(r[k]);
+				if (v) { resultOrderIds.add(v); }
+			}
+			const t = norm(r.testName ?? r.testDisplay ?? r.name);
+			if (t) { resultTestNames.add(t); }
+		}
+		const hasCompletedResult = (o: Record<string, unknown>): boolean => {
+			if ([o.id, o.orderNumber, o.labOrderId].map(norm).some(id => !!id && resultOrderIds.has(id))) { return true; }
+			const t = norm(o.testDisplay ?? o.testName ?? o.orderName);
+			return !!t && resultTestNames.has(t);
+		};
+		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')) && !hasCompletedResult(l));
 		const openEncounters = encs.filter(e => {
 			const s = String(e.status || '').toLowerCase();
 			return s.includes('progress') || s.includes('unsign') || s === 'arrived' || s === 'planned';

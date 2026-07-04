@@ -46,9 +46,14 @@ function isValidPhone(value: string): boolean {
 	return digits.length >= 7 && digits.length <= 15;
 }
 
-/** True when `value` is a valid NPI: exactly 10 digits, numeric only. */
+/**
+ * True when `value` is a valid NPI: exactly 10 digits, numeric only, and not
+ * the same digit repeated 10 times (e.g. "7777777777") — a real NPI is never
+ * a single repeated digit.
+ */
 function isValidNpi(value: string): boolean {
-	return /^\d{10}$/.test(value.trim());
+	const v = value.trim();
+	return /^\d{10}$/.test(v) && !/^(\d)\1{9}$/.test(v);
 }
 
 /**
@@ -2254,7 +2259,7 @@ export class SettingsHubEditor extends EditorPane {
 		}
 		// NPI — numeric, exactly 10 digits.
 		if (seg === 'npi' || looks(/\bnpi\b/)) {
-			return isValidNpi(value) ? undefined : `${field.label} must be a 10-digit NPI number`;
+			return isValidNpi(value) ? undefined : `${field.label} must be a valid 10-digit NPI number (a single repeated digit is not a valid NPI)`;
 		}
 		// ZIP / postal code — 5 digits or 5+4 (`12345` / `12345-6789`). Matched
 		// off the normalized segment (`address.zipCode` → `zipcode`) and labels
