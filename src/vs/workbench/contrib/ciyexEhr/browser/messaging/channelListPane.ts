@@ -118,7 +118,7 @@ export class ChannelListPane extends ViewPane {
 		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 		btn.textContent = symbol;
 		btn.title = label;
-		btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:4px;cursor:pointer;font-size:16px;line-height:1;background:transparent;color:var(--vscode-foreground);height:28px;width:28px;min-width:28px;';
+		btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:4px;cursor:pointer;font-size:18px;line-height:1;background:transparent;color:var(--vscode-foreground);height:28px;width:28px;min-width:28px;';
 		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
 		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
 		btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
@@ -225,7 +225,7 @@ export class ChannelListPane extends ViewPane {
 		const addBtn = DOM.append(header, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+';
 		addBtn.title = title === 'CHANNELS' ? 'New Channel' : 'New DM';
-		addBtn.style.cssText = 'padding:0 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-descriptionForeground);height:16px;line-height:16px;';
+		addBtn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:4px;cursor:pointer;font-size:18px;line-height:1;background:transparent;color:var(--vscode-foreground);height:22px;width:22px;min-width:22px;flex-shrink:0;';
 		addBtn.addEventListener('mouseenter', () => { addBtn.style.background = 'var(--vscode-list-hoverBackground)'; });
 		addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; });
 		addBtn.addEventListener('click', (e) => { e.stopPropagation(); this._createChannel(title === 'CHANNELS' ? 'channel' : 'dm'); });
