@@ -1066,10 +1066,17 @@ export class MessagingEditor extends EditorPane {
 				role.textContent = mem.role;
 				role.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);text-transform:capitalize;flex-shrink:0;';
 			}
-			row.addEventListener('mouseenter', () => { st.activeIndex = i; this._renderMentionDropdown(); });
-			// Keep the caret/selection in the input so insertion targets the right spot.
-			row.addEventListener('mousedown', (e) => { e.preventDefault(); });
-			row.addEventListener('click', () => this._commitMention(mem));
+			// Update the highlight in place — rebuilding the rows here would replace
+			// the element under the cursor mid-press and swallow the selection.
+			row.addEventListener('mouseenter', () => {
+				st.activeIndex = i;
+				for (const child of el.children) {
+					(child as HTMLElement).style.background = child === row ? 'var(--vscode-list-activeSelectionBackground)' : 'transparent';
+				}
+			});
+			// Commit on mousedown (preventDefault keeps the caret in the input so
+			// the mention text is inserted at the right spot).
+			row.addEventListener('mousedown', (e) => { e.preventDefault(); this._commitMention(mem); });
 		});
 		el.style.display = 'block';
 	}
