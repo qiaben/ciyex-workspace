@@ -222,8 +222,11 @@ export class TasksSidebarPane extends ViewPane {
 
 		const total = this.tasks.length;
 		const done = this.tasks.filter(t => t.status === 'completed').length;
-		const pending = this.tasks.filter(t => t.status === 'pending' || t.status === 'in_progress').length;
 		const overdue = this.tasks.filter(t => this._isOverdue(t)).length;
+		// "Open" must exclude tasks that are already tallied under Overdue, otherwise a
+		// pending/in_progress task past its due date is double-counted in both badges
+		// (QA: Open showed 3 while only 2 tasks were genuinely open — the third was overdue).
+		const pending = this.tasks.filter(t => (t.status === 'pending' || t.status === 'in_progress') && !this._isOverdue(t)).length;
 
 		this._statBadge(stats, String(total), 'Total', 'var(--vscode-foreground)');
 		this._statBadge(stats, String(done), 'Completed', '#22c55e');
