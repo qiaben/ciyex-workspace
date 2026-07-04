@@ -63,7 +63,40 @@ const ITEM_KEY_TO_COMMAND: Record<string, string> = {
 	'tasks': 'ciyex.openTasks',
 	'messaging': 'ciyex.openMessaging',
 	'developer-portal': 'ciyex.openDeveloperPortal',
+	// System children — each has a dedicated editor command (mirrors SystemMenuPane's
+	// ITEMS). These were previously absent, so System menu clicks fell through to
+	// ITEM_KEY_TO_VIEW ids (ciyex.system.*) that are NOT registered as views, and
+	// nothing opened. Route them to the editor command instead.
+	'clinical-alerts': 'ciyex.openCds', 'cds': 'ciyex.openCds', 'alerts': 'ciyex.openCds',
+	'consents': 'ciyex.openConsents',
+	'notifications': 'ciyex.openNotifications',
+	'fax': 'ciyex.openFax',
+	'document-scanning': 'ciyex.openDocScanning', 'docscanning': 'ciyex.openDocScanning', 'docscan': 'ciyex.openDocScanning',
+	'kiosk': 'ciyex.openKiosk',
+	'audit-log': 'ciyex.openAuditLog', 'auditlog': 'ciyex.openAuditLog', 'audit': 'ciyex.openAuditLog',
+	// Key/slug aliases — the backend menu `itemKey` can differ from the screenSlug
+	// (e.g. item "Inventory" has itemKey 'inventory' but slug '/inventory-management';
+	// "Codes" resolves via slug 'codes'). resolveNavTarget() also tries the slug, but
+	// list the common aliases so an itemKey-only match still lands on the editor.
+	'inventory': 'ciyex.openInventory',
+	'medical-codes': 'ciyex.openCodes',
+	'claims': 'ciyex.openClaims',
+	'patient-recall': 'ciyex.openRecall',
 };
+
+/**
+ * Resolve a menu item to its navigation target, trying the API `itemKey` first
+ * and then the `screenSlug` (stripped of its leading "/"). The maps are keyed in
+ * slug style (e.g. `inventory-management`), but the backend `itemKey` doesn't
+ * always match the slug — without the slug fallback those items resolved to
+ * nothing and the click did nothing. Editor command wins over sidebar view.
+ */
+function resolveNavTarget(itemKey: string, slug: string | null | undefined): { cmd?: string; view?: string } {
+	const slugKey = (slug || '').replace(/^\/+/, '').trim().toLowerCase();
+	const cmd = ITEM_KEY_TO_COMMAND[itemKey] || (slugKey ? ITEM_KEY_TO_COMMAND[slugKey] : undefined);
+	const view = ITEM_KEY_TO_VIEW[itemKey] || (slugKey ? ITEM_KEY_TO_VIEW[slugKey] : undefined);
+	return { cmd, view };
+}
 
 export const ICiyexMenuService = createDecorator<ICiyexMenuService>('ciyexMenuService');
 
@@ -252,18 +285,19 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 				const commandId = `ciyex.nav.${item.itemKey}`;
 				this._menuDisposables.add(MenuRegistry.addCommand({ id: commandId, title: { value: item.label, original: item.label } }));
 				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
-					const editorCmd = ITEM_KEY_TO_COMMAND[item.itemKey];
+					const { cmd: editorCmd, view: viewId } = resolveNavTarget(item.itemKey, item.screenSlug);
 					if (editorCmd) {
-						accessor.get(ICommandService).executeCommand(editorCmd);
+						accessor.get(ICommandService).executeCommand(editorCmd)
+							.catch(err => this.logService.error(`[CiyexMenu] ${item.label} -> ${editorCmd} failed`, err));
 						this.logService.info(`[CiyexMenu] Navigate (editor): ${item.label} -> ${editorCmd}`);
 						return;
 					}
-					const viewsService = accessor.get(IViewsService);
-					const viewId = ITEM_KEY_TO_VIEW[item.itemKey];
 					if (viewId) {
-						viewsService.openView(viewId, true);
+						accessor.get(IViewsService).openView(viewId, true);
+						this.logService.info(`[CiyexMenu] Navigate (view): ${item.label} -> ${viewId}`);
+						return;
 					}
-					this.logService.info(`[CiyexMenu] Navigate (view): ${item.label} -> ${viewId || item.screenSlug}`);
+					this.logService.warn(`[CiyexMenu] No navigation target for ${item.label} (key=${item.itemKey}, slug=${item.screenSlug})`);
 				}));
 				this._menuDisposables.add(MenuRegistry.appendMenuItem(MenubarCiyexMenu, {
 					command: { id: commandId, title: item.label },
@@ -303,20 +337,20 @@ export class CiyexMenuService extends Disposable implements ICiyexMenuService {
 				}));
 
 				this._menuDisposables.add(CommandsRegistry.registerCommand(commandId, (accessor) => {
-					// Try EditorPane command first, then sidebar view
-					const editorCmd = ITEM_KEY_TO_COMMAND[child.itemKey];
+					// Try EditorPane command first (by itemKey or screenSlug), then sidebar view.
+					const { cmd: editorCmd, view: viewId } = resolveNavTarget(child.itemKey, slug);
 					if (editorCmd) {
-						const commandService = accessor.get(ICommandService);
-						commandService.executeCommand(editorCmd);
+						accessor.get(ICommandService).executeCommand(editorCmd)
+							.catch(err => this.logService.error(`[CiyexMenu] ${child.label} -> ${editorCmd} failed`, err));
 						this.logService.info(`[CiyexMenu] Navigate (editor): ${child.label} -> ${editorCmd}`);
 						return;
 					}
-					const viewsService = accessor.get(IViewsService);
-					const viewId = ITEM_KEY_TO_VIEW[child.itemKey];
 					if (viewId) {
-						viewsService.openView(viewId, true);
+						accessor.get(IViewsService).openView(viewId, true);
+						this.logService.info(`[CiyexMenu] Navigate (view): ${child.label} -> ${viewId}`);
+						return;
 					}
-					this.logService.info(`[CiyexMenu] Navigate (view): ${child.label} -> ${viewId || slug}`);
+					this.logService.warn(`[CiyexMenu] No navigation target for ${child.label} (key=${child.itemKey}, slug=${slug})`);
 				}));
 
 				// Register menu item
