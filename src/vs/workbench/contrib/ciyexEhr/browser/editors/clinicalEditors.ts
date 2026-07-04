@@ -721,9 +721,8 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'status', label: 'Status', width: '90px' },
 			{ key: 'orderDate', label: 'Date', width: '90px' },
 		],
-		// Status / Priority / Result all live in the toolbar as dropdowns, mirroring
-		// the web app's /labs page (QA report 2026-05-11).
-		statusAsDropdown: true,
+		// Status renders as pill tabs (like Prescriptions); Priority / Result stay as
+		// toolbar dropdowns.
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },

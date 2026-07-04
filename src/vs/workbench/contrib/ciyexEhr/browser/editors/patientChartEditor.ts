@@ -6791,7 +6791,15 @@ export class PatientChartEditor extends EditorPane {
 		// insurance showed nil after saving with a value). Computed here, before the
 		// value is shown, so the display logic can skip id→name resolution for them.
 		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
-			|| (f.type === 'lookup' && /(^|[A-Za-z])(materialId|locationId|providerId|patientId|formId|payerId|encounterId|organizationId|insurerId)$/.test(f.key))
+			// Every `lookup` in the chart editor points at an id-keyed catalog
+			// (insurance companies, locations, claims, …) and therefore stores an
+			// id that must be resolved to a name for display — EXCEPT the one
+			// NAME-valued lookup (`valueField:'name'`, insurance `payerName`) which
+			// already holds its display text. Keying off `valueField` rather than a
+			// hardcoded list of key names fixes reference fields whose key doesn't
+			// end in "Id" (e.g. submissions `insurer`, claims `facilityId`,
+			// appointment `location`), which previously showed the raw id on edit.
+			|| (f.type === 'lookup' && f.lookupConfig?.valueField !== 'name')
 			// Generic 'search' field where the field key is a foreign-key id —
 			// e.g. Patient Education materialId / educator. Selecting from the
 			// dropdown is required; free text deserialises to null and the
@@ -6860,9 +6868,21 @@ export class PatientChartEditor extends EditorPane {
 		// Name caches may not be loaded on first render — resolve asynchronously
 		// and replace the raw id with the name once the caches populate (issue 12).
 		if (!isCodeSearch && isIdLookup && currentValue && input.value === currentValue) {
-			void this._loadLookups().then(() => {
-				const resolved = resolveDisplay();
-				if (resolved && resolved !== currentValue) { input.value = resolved; }
+			void this._loadLookups().then(async () => {
+				let resolved = resolveDisplay();
+				// Bulk caches only hold the first ~500 rows; a referenced record
+				// outside that window (e.g. a billing provider / insurer not in the
+				// first page) leaves the raw id visible. Fetch that single record by
+				// id and re-resolve so the edit form shows the NAME, not the id.
+				if (!resolved || resolved === currentValue) {
+					const fetched = await this._fetchReferenceName(f.key, currentValue);
+					if (fetched) { resolved = fetched; }
+				}
+				// Only overwrite while the field still shows the raw id — never clobber
+				// a name the user has since typed or picked from the dropdown.
+				if (resolved && resolved !== currentValue && input.value === currentValue) {
+					input.value = resolved;
+				}
 			}).catch(() => { /* leave the id visible if lookups fail */ });
 		}
 		// Foreign-key references — patient / practitioner pickers and
@@ -7784,6 +7804,55 @@ export class PatientChartEditor extends EditorPane {
 		// Only re-render if we actually learned a new name AND this tab is still
 		// the one on screen, so the freshly-fetched names paint into the table.
 		if (resolvedAny && this.activeTab === tab.key) { this._renderMain(); }
+	}
+
+	/**
+	 * Fetch a single referenced record's display name by id when the bulk lookup
+	 * caches missed it (e.g. a billing provider or insurer outside the first ~500
+	 * rows loaded by `_loadLookups`). Picks the endpoint set from the field key's
+	 * category — practitioner / organization-payer / location — populates the
+	 * matching cache, and returns the name so the edit form can show it instead of
+	 * the raw id. Returns undefined when nothing resolves (id left visible).
+	 */
+	private async _fetchReferenceName(fieldKey: string, rawId: string): Promise<string | undefined> {
+		const id = rawId.includes('/') ? rawId.split('/').pop() || rawId : rawId;
+		if (!id) { return undefined; }
+		const key = fieldKey.toLowerCase();
+		const isProvider = /(provider|practitioner|performer|author|prescrib|physician|doctor|orderedby|ordering|referrer|referredby|signedby|recorder|reporter|enterer|orderer|requester|educator)/.test(key);
+		const isOrg = /(insur|payer|payor|organization|company)/.test(key);
+		const isLocation = /(location|facility|site)/.test(key);
+		const urls = isProvider ? [`/api/providers/${id}`, `/api/fhir-resource/practitioners/${id}`]
+			: isOrg ? [`/api/insurance-companies/${id}`, `/api/fhir-resource/insurance-companies/${id}`, `/api/organizations/${id}`, `/api/fhir-resource/organizations/${id}`]
+				: isLocation ? [`/api/locations/${id}`, `/api/fhir-resource/locations/${id}`]
+					: [];
+		for (const url of urls) {
+			try {
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) { continue; }
+				const d = await res.json();
+				const p = (d?.data ?? d) as Record<string, unknown>;
+				if (!p || typeof p !== 'object') { continue; }
+				const idn = (p as Record<string, Record<string, unknown>>).identification;
+				const first = String(idn?.firstName ?? p.firstName ?? '').trim();
+				const last = String(idn?.lastName ?? p.lastName ?? '').trim();
+				const name = (`${first} ${last}`.trim())
+					|| String(p.name ?? p.displayName ?? p.fullName ?? p.organizationName ?? p.payerName ?? p.companyName ?? p.insuranceName ?? p.insuranceCompanyName ?? p.locationName ?? p.username ?? '').trim();
+				if (!name) { continue; }
+				if (isProvider) {
+					this._providerNameById.set(id, name);
+					this._providerNameById.set(`Practitioner/${id}`, name);
+					this._providerNameById.set(`PractitionerRole/${id}`, name);
+				} else if (isOrg) {
+					this._orgNameById.set(id, name);
+					this._orgNameById.set(`Organization/${id}`, name);
+				} else if (isLocation) {
+					this._locationNameById.set(id, name);
+					this._locationNameById.set(`Location/${id}`, name);
+				}
+				return name;
+			} catch { /* try next url */ }
+		}
+		return undefined;
 	}
 
 	/** Delete a record from a list tab, then refresh the view + counts + Quick Info. */

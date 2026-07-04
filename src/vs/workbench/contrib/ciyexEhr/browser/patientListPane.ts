@@ -16,7 +16,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
-import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, parseSavedRecord, renderShowMoreFooter, IOverflowMenuItem } from './sidebarActions.js';
+import { createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, parseSavedRecord, IOverflowMenuItem } from './sidebarActions.js';
 
 interface IPatientRow {
 	id: string;
@@ -38,9 +38,10 @@ export class PatientListPane extends ViewPane {
 	private _searchQuery = '';
 	private _statusFilter: 'all' | 'active' | 'inactive' = 'all';
 	private _genderFilter: 'all' | 'male' | 'female' | 'unknown' = 'all';
-	// Patient list shows more rows by default than other sidebars since users
-	// need to scroll a roster, not just a day's schedule.
-	private _visibleCount = 25;
+	// Patient roster is paged rather than "show more"-style so users can jump
+	// through a long list a page at a time (mirrors the EHR-UI patient table).
+	private static readonly PAGE_SIZE = 20;
+	private _page = 0;
 	private _searchTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
@@ -66,11 +67,11 @@ export class PatientListPane extends ViewPane {
 			if (state === CiyexAuthState.NotAuthenticated) {
 				this._patients = [];
 				this._loaded = false;
-				this._visibleCount = 25;
+				this._page = 0;
 			} else if (state === CiyexAuthState.Authenticated) {
 				this._loaded = false;
 				this._patients = [];
-				this._visibleCount = 25;
+				this._page = 0;
 				if (this._listEl) {
 					this._renderList(); // immediately wipe stale rows before async fetch
 					void this._loadPatients();
@@ -110,7 +111,7 @@ export class PatientListPane extends ViewPane {
 		searchInput.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 8px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);font-size:11px;outline:none;';
 		searchInput.addEventListener('input', () => {
 			this._searchQuery = searchInput.value.trim();
-			this._visibleCount = 25;
+			this._page = 0;
 			this._renderList();
 			// Debounce server-side search for queries that might not be in the
 			// already-loaded batch (e.g. large patient rosters > 500).
@@ -137,7 +138,7 @@ export class PatientListPane extends ViewPane {
 		}
 		statusSel.addEventListener('change', () => {
 			this._statusFilter = statusSel.value as 'all' | 'active' | 'inactive';
-			this._visibleCount = 25;
+			this._page = 0;
 			this._renderList();
 		});
 		filterRow.appendChild(statusSel);
@@ -153,7 +154,7 @@ export class PatientListPane extends ViewPane {
 		}
 		genderSel.addEventListener('change', () => {
 			this._genderFilter = genderSel.value as 'all' | 'male' | 'female' | 'unknown';
-			this._visibleCount = 25;
+			this._page = 0;
 			this._renderList();
 		});
 		filterRow.appendChild(genderSel);
@@ -200,12 +201,59 @@ export class PatientListPane extends ViewPane {
 		while (this._footerEl.firstChild) {
 			this._footerEl.removeChild(this._footerEl.firstChild);
 		}
-		renderShowMoreFooter(
-			this._footerEl,
-			{ visibleCount: Math.min(this._visibleCount, filteredTotal), totalCount: filteredTotal },
-			(next) => { this._visibleCount = next; this._renderList(); },
-			() => { this._visibleCount = 25; this._renderList(); },
-		);
+
+		const size = PatientListPane.PAGE_SIZE;
+		const pageCount = Math.max(1, Math.ceil(filteredTotal / size));
+		if (this._page > pageCount - 1) { this._page = pageCount - 1; }
+
+		// Left: which patients are currently shown out of the filtered total.
+		const info = document.createElement('span');
+		info.style.cssText = 'opacity:0.8;color:var(--vscode-descriptionForeground);white-space:nowrap;';
+		if (filteredTotal === 0) {
+			info.textContent = '0 patients';
+		} else {
+			const from = this._page * size + 1;
+			const to = Math.min(filteredTotal, from + size - 1);
+			info.textContent = `${from}\u2013${to} of ${filteredTotal} patients`;
+		}
+		this._footerEl.appendChild(info);
+
+		// Right: prev / "Page X of Y" / next.
+		const nav = document.createElement('div');
+		nav.style.cssText = 'display:flex;gap:4px;align-items:center;';
+
+		const mkBtn = (label: string, title: string, disabled: boolean, onClick: () => void): HTMLButtonElement => {
+			const b = document.createElement('button');
+			b.type = 'button';
+			b.textContent = label;
+			b.title = title;
+			b.disabled = disabled;
+			b.style.cssText = `padding:2px 8px;border:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.3));border-radius:3px;background:transparent;color:var(--vscode-foreground);font-size:11px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '0.4' : '1'};`;
+			if (!disabled) {
+				b.addEventListener('mouseenter', () => { b.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08))'; });
+				b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+				b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); onClick(); });
+			}
+			return b;
+		};
+
+		nav.appendChild(mkBtn('\u2039', 'Previous page', this._page <= 0, () => this._goToPage(this._page - 1)));
+
+		const pageLabel = document.createElement('span');
+		pageLabel.style.cssText = 'color:var(--vscode-descriptionForeground);white-space:nowrap;padding:0 2px;';
+		pageLabel.textContent = `Page ${this._page + 1} of ${pageCount}`;
+		nav.appendChild(pageLabel);
+
+		nav.appendChild(mkBtn('\u203a', 'Next page', this._page >= pageCount - 1, () => this._goToPage(this._page + 1)));
+
+		this._footerEl.appendChild(nav);
+	}
+
+	private _goToPage(page: number): void {
+		this._page = Math.max(0, page);
+		this._renderList();
+		// Jump back to the top of the roster when the page changes.
+		this._listEl?.parentElement?.scrollTo({ top: 0 });
 	}
 
 	private _filteredPatients(): IPatientRow[] {
@@ -307,9 +355,12 @@ export class PatientListPane extends ViewPane {
 			return;
 		}
 
-		// Render only the first `_visibleCount` rows; the footer (Show More)
-		// reveals the rest.
-		const pageRows = rows.slice(0, Math.min(this._visibleCount, rows.length));
+		// Render a single page of rows; the footer's prev/next moves between pages.
+		// Clamp the page in case filtering shrank the result set below the current page.
+		const pageCount = Math.max(1, Math.ceil(rows.length / PatientListPane.PAGE_SIZE));
+		if (this._page > pageCount - 1) { this._page = pageCount - 1; }
+		const start = this._page * PatientListPane.PAGE_SIZE;
+		const pageRows = rows.slice(start, start + PatientListPane.PAGE_SIZE);
 		this._renderFooter(rows.length);
 		for (const patient of pageRows) {
 			const row = document.createElement('div');

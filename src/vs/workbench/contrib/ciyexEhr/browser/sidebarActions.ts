@@ -123,6 +123,12 @@ export function createRowActionsContainer(parent: HTMLElement): HTMLElement {
 export interface IShowMoreState {
 	visibleCount: number;
 	totalCount: number;
+	/**
+	 * Plural noun for what is being counted (e.g. "patients", "appointments").
+	 * When set, the footer reads "Showing X of Y <noun>" instead of the bare
+	 * "X of Y" so users can tell what the count refers to. Defaults to "records".
+	 */
+	noun?: string;
 }
 
 /**
@@ -146,11 +152,14 @@ export function renderShowMoreFooter(
 		return;
 	}
 
+	const noun = state.noun || 'records';
+	const shown = Math.min(visibleCount, totalCount);
+
 	const footer = DOM.append(parent, DOM.$('.ciyex-show-more'));
 	footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;font-size:11px;color:var(--vscode-descriptionForeground);';
 
 	const info = DOM.append(footer, DOM.$('span'));
-	info.textContent = `${Math.min(visibleCount, totalCount)} of ${totalCount}`;
+	info.textContent = `Showing ${shown} of ${totalCount} ${noun}`;
 	info.style.cssText = 'opacity:0.8;';
 
 	const nav = DOM.append(footer, DOM.$('div'));
@@ -162,7 +171,7 @@ export function renderShowMoreFooter(
 		const remaining = totalCount - visibleCount;
 		const batch = Math.min(SIDEBAR_LOAD_MORE_BATCH, remaining);
 		more.textContent = remaining > batch ? `Show More (${batch})` : 'Show All';
-		more.title = 'Reveal more records';
+		more.title = `Reveal more ${noun}`;
 		more.style.cssText = 'padding:3px 10px;border:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.3));border-radius:3px;background:transparent;color:var(--vscode-foreground);font-size:11px;cursor:pointer;';
 		more.addEventListener('mouseenter', () => { more.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08))'; });
 		more.addEventListener('mouseleave', () => { more.style.background = 'transparent'; });
@@ -177,7 +186,7 @@ export function renderShowMoreFooter(
 		const less = DOM.append(nav, DOM.$('button')) as HTMLButtonElement;
 		less.type = 'button';
 		less.textContent = 'Show Less';
-		less.title = 'Collapse list';
+		less.title = `Show fewer ${noun}`;
 		less.style.cssText = 'padding:3px 10px;border:1px solid var(--vscode-editorWidget-border,rgba(128,128,128,0.3));border-radius:3px;background:transparent;color:var(--vscode-descriptionForeground);font-size:11px;cursor:pointer;';
 		less.addEventListener('mouseenter', () => { less.style.background = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08))'; });
 		less.addEventListener('mouseleave', () => { less.style.background = 'transparent'; });

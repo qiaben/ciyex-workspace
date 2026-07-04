@@ -302,7 +302,7 @@ export class TasksSidebarPane extends ViewPane {
 			for (let i = 0; i < visible; i++) { this._renderTaskRow(section, filtered[i]); }
 			renderShowMoreFooter(
 				section,
-				{ visibleCount: visible, totalCount: filtered.length },
+				{ visibleCount: visible, totalCount: filtered.length, noun: 'tasks' },
 				(next) => { this.visibleCount = next; this._render(); },
 				() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
 			);

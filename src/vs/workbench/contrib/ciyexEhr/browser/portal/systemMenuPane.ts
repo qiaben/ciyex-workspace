@@ -535,7 +535,7 @@ export class SystemMenuPane extends ViewPane {
 		for (let i = 0; i < visible; i++) { this._renderDataRow(sub, item, rows[i]); }
 		renderShowMoreFooter(
 			sub,
-			{ visibleCount: visible, totalCount: rows.length },
+			{ visibleCount: visible, totalCount: rows.length, noun: item.label.toLowerCase() },
 			(next) => { this.visibleCounts.set(item.id, next); this._render(); },
 			() => { this.visibleCounts.set(item.id, SIDEBAR_INITIAL_PAGE_SIZE); this._render(); },
 		);

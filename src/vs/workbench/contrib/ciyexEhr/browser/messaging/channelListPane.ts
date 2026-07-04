@@ -118,7 +118,7 @@ export class ChannelListPane extends ViewPane {
 		const btn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 		btn.textContent = symbol;
 		btn.title = label;
-		btn.style.cssText = 'padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px;background:transparent;color:var(--vscode-foreground);height:24px;min-width:24px;';
+		btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:4px;cursor:pointer;font-size:16px;line-height:1;background:transparent;color:var(--vscode-foreground);height:28px;width:28px;min-width:28px;';
 		btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--vscode-list-hoverBackground)'; });
 		btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
 		btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });

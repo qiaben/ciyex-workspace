@@ -396,7 +396,7 @@ export class EncounterListPane extends ViewPane {
 		footerWrap.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);';
 		renderShowMoreFooter(
 			footerWrap,
-			{ visibleCount: visible, totalCount: filtered.length },
+			{ visibleCount: visible, totalCount: filtered.length, noun: 'encounters' },
 			(next) => { this.visibleCount = next; this._renderList(search); },
 			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._renderList(search); },
 		);

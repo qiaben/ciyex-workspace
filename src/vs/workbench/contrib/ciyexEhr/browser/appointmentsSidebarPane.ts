@@ -653,7 +653,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 		bar.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;background:var(--vscode-sideBar-background);';
 		renderShowMoreFooter(
 			bar,
-			{ visibleCount: Math.min(this.visibleCount, filtered.length), totalCount: filtered.length },
+			{ visibleCount: Math.min(this.visibleCount, filtered.length), totalCount: filtered.length, noun: 'appointments' },
 			(next) => { this.visibleCount = next; this._render(); },
 			() => { this.visibleCount = SIDEBAR_INITIAL_PAGE_SIZE; this._render(); },
 		);
