@@ -1695,6 +1695,17 @@ export class CalendarEditor extends EditorPane {
 				return;
 			}
 
+			// Reject appointments in the past (QA: with the clock at 11:45 a 9:00
+			// slot on the same day was still booked). `${date}T${time}` with no zone
+			// parses as local time, matching the local `new Date()` we compare to.
+			const startWhen = new Date(`${startD}T${startT}`);
+			if (!isNaN(startWhen.getTime()) && startWhen.getTime() < Date.now()) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'Appointment cannot be scheduled in the past' });
+				if (startDateEl) { startDateEl.style.borderColor = '#ef4444'; }
+				if (startTimeEl) { startTimeEl.style.borderColor = '#ef4444'; startTimeEl.focus(); }
+				return;
+			}
+
 			// All required fields are valid — claim the in-flight lock and disable
 			// the button NOW, before the first await (the dup-check), so a second
 			// click can't slip past while the check/POST are running.
