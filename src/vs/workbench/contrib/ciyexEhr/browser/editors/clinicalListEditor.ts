@@ -768,7 +768,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				this.items = [];
 				this.totalPages = 1;
 			}
-			if (this.config.enrichItems && this.items.length) {
+			// Run even when the primary endpoint returned nothing — enrichers may
+			// MERGE rows from a second store (e.g. patient chart alerts into the
+			// CDS rules list), which must surface on an otherwise empty page.
+			if (this.config.enrichItems) {
 				try {
 					const enriched = await this.config.enrichItems(this.items);
 					if (Array.isArray(enriched)) { this.items = enriched; }
@@ -1152,7 +1155,9 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const acts = DOM.append(r, DOM.$('div'));
 				acts.style.cssText = 'display:flex;gap:2px;';
 
-				if (cfg.editable && cfg.formFields) {
+				// Rows merged from a foreign store (marked __readonly by enrichItems)
+				// can't be edited through this editor's form/PUT endpoint.
+				if (cfg.editable && cfg.formFields && item['__readonly'] !== true) {
 					const editBtn = DOM.append(acts, DOM.$('button'));
 					// allow-any-unicode-next-line
 					editBtn.textContent = '✏️';

@@ -1687,6 +1687,31 @@ export class CdsEditor extends ClinicalListEditorBase {
 		editable: true,
 		refetchOnEdit: true,
 		mergeOnEdit: true,
+		// Patient chart alerts live in a SEPARATE store (FHIR Flag resources via
+		// /api/fhir-resource/clinical-alerts) from the CDS rules this module
+		// manages — an alert created on a patient's Clinical Alerts tab never
+		// appeared here (QA issue 9). Merge them in as read-only "Patient Alert"
+		// rows so the System module shows every clinical alert in the org.
+		enrichItems: async (items) => {
+			const res = await this.apiService.fetch('/api/fhir-resource/clinical-alerts?page=0&size=200');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const flags = (json?.data?.content || json?.content || []) as Record<string, unknown>[];
+			if (!Array.isArray(flags) || flags.length === 0) { return; }
+			const flagRows = flags.map(f => ({
+				id: `flag-${f['id'] ?? f['fhirId'] ?? ''}`,
+				name: String(f['alertName'] || f['alert'] || 'Patient alert'),
+				ruleType: 'patient_alert',
+				triggerEvent: 'patient_chart',
+				actionType: 'alert',
+				severity: String(f['severity'] || ''),
+				status: String(f['status'] || ''),
+				isActive: String(f['status'] || '').toLowerCase() === 'active',
+				description: String(f['notes'] || ''),
+				__readonly: true,
+			}));
+			return items.concat(flagRows);
+		},
 		createDefaults: {
 			ruleType: 'custom',
 			actionType: 'alert',
@@ -1734,6 +1759,9 @@ export class CdsEditor extends ClinicalListEditorBase {
 				// render a blank, non-clickable cell).
 				key: 'isActive', label: 'Status', width: '90px', emptyLabel: 'Inactive',
 				onClick: async (item, api, reload, dlg) => {
+					// Merged patient-alert rows are managed on the patient chart,
+					// not through the CDS rules endpoints — ignore the click.
+					if (item['__readonly'] === true) { return; }
 					let res = await api.fetch(`/api/cds/rules/${item.id}/toggle`, { method: 'POST' });
 					if (!res.ok) {
 						const next = !(item.isActive === true || item.status === 'active');
@@ -1767,6 +1795,7 @@ export class CdsEditor extends ClinicalListEditorBase {
 					{ label: 'Condition-Based', value: 'condition_based' },
 					{ label: 'Lab Value', value: 'lab_value' },
 					{ label: 'Custom', value: 'custom' },
+					{ label: 'Patient Alert', value: 'patient_alert' },
 				],
 			},
 			{
@@ -1889,7 +1918,7 @@ export class CdsEditor extends ClinicalListEditorBase {
 			// Issue #13: the Active/Inactive toggle now lives in the Status column
 			// (above), so the actions column only keeps Edit (editable) + Delete.
 			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			{ label: 'Delete', icon: '🗑️', visible: item => item['__readonly'] !== true, handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CdsEditor.ID, group, t, th, s, a, d); }

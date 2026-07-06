@@ -952,7 +952,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'ref', title: 'Referral', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'referringProvider', label: 'Referring Provider', type: 'text', required: true, placeholder: 'Referring provider name', aliases: ['referringProviderName', 'referringPrescriber'] },
+					// Provider search (stores the chosen provider's NAME — the flat
+					// /api/referrals DTO carries a name string, not an FK) so the user
+					// picks from the practice's providers instead of typing free text
+					// (QA issue 8).
+					{ key: 'referringProvider', label: 'Referring Provider', type: 'practitioner-search', required: true, placeholder: 'Search provider', storeLabelAsValue: true, aliases: ['referringProviderName', 'referringPrescriber'] },
 					{ key: 'referralDate', label: 'Referral Date', type: 'date', required: true, defaultValue: () => new Date().toISOString().slice(0, 10) },
 					{ key: 'specialistName', label: 'Specialist Name', type: 'text', required: true, placeholder: 'e.g. Dr. Jane Smith', validationPattern: '^[A-Za-z\\s\\-\'.]+$', validationMessage: 'Specialist name must contain only letters, spaces, hyphens, apostrophes or periods' },
 					{ key: 'specialistNpi', label: 'Specialist NPI', type: 'text', placeholder: '10-digit NPI', validationPattern: '^\\d{10}$', validationMessage: 'NPI must be exactly 10 digits' },
@@ -1070,7 +1074,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'Other' },
 						]
 					},
-					{ key: 'policyNumber', label: 'Policy / Member ID', type: 'text', required: true, placeholder: 'Member ID' },
+					// Member IDs are catalog identifiers — letters, digits and hyphens
+					// only. Without this pattern the field accepted any special
+					// characters and saved unvalidated (QA issue 6).
+					{ key: 'policyNumber', label: 'Policy / Member ID', type: 'text', required: true, placeholder: 'Member ID', validationPattern: '^[A-Za-z0-9][A-Za-z0-9\\-]{2,24}$', validationMessage: 'Policy / Member ID must be 3-25 characters — letters, numbers and hyphens only' },
 					{ key: 'groupNumber', label: 'Group Number', type: 'text', placeholder: 'Group #' },
 					{ key: 'copayAmount', label: 'Copay Amount', type: 'text', placeholder: '$0.00' },
 					{ key: 'policyEffectiveDate', label: 'Effective Date', type: 'date' },
@@ -2995,6 +3002,39 @@ export class PatientChartEditor extends EditorPane {
 				console.error(`[patientChart] ${tab.key} GET ${url} threw:`, e);
 			}
 		}
+		// Documents uploaded through System → Document Scanning & OCR live in the
+		// separate /api/document-scanning store, not as FHIR DocumentReferences —
+		// so a scan tagged to this patient never appeared on the chart's Documents
+		// tab (QA issue 10). Merge this patient's scans in as read-only rows
+		// (they are managed — OCR/delete — from the Document Scanning module).
+		if (tab.key === 'documents') {
+			try {
+				const res = await this.apiService.fetch('/api/document-scanning?page=0&size=200');
+				if (res.ok) {
+					const json = await res.json();
+					const scans = (json?.data?.content || json?.content || []) as Record<string, unknown>[];
+					const ids = this._patientIdSet();
+					for (const s of (Array.isArray(scans) ? scans : [])) {
+						if (!ids.has(String(s.patientId ?? '').trim())) { continue; }
+						// Carry the name/category/date under EVERY key the column
+						// config may use — the table columns come from the backend
+						// tab_field_config (title/category/documentDate), while the
+						// local fallback uses description/type/date.
+						const docName = String(s.originalFileName || s.fileName || 'Scanned document');
+						const category = String(s.category || 'scanned').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+						data.push({
+							id: `scan-${s.id}`,
+							title: docName, description: docName, name: docName,
+							type: category, category: category, documentType: category,
+							date: s.createdAt, documentDate: s.createdAt, created: s.createdAt, createdAt: s.createdAt,
+							authorName: 'Document Scanning', author: 'Document Scanning',
+							status: 'current',
+							__readonly: true,
+						});
+					}
+				}
+			} catch { /* scanning store unreachable — chart still shows FHIR documents */ }
+		}
 		// The deployed education backend drops `deliveryMethod` / `educator`
 		// (its DTO has no such columns), so the workspace persists them inside
 		// the form-unused `notes` field as JSON. Decode them back here so the
@@ -4724,6 +4764,30 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Entered in Error', value: 'entered_in_error' },
 					{ label: 'Not Done', value: 'not_done' },
 				];
+			case 'lab-results':
+				// Match the Lab Result form's Status options (Pending/…/Amended) —
+				// the generic clinical default (Active/Inactive/Resolved) never
+				// matched a result row's "Partial" etc. (QA issue 3).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Preliminary', value: 'preliminary' },
+					{ label: 'Partial', value: 'partial' },
+					{ label: 'Final', value: 'final' },
+					{ label: 'Corrected', value: 'corrected' },
+					{ label: 'Amended', value: 'amended' },
+				];
+			case 'education':
+				// Match the Education form's Status options (Assigned/Viewed/…) —
+				// the generic clinical default never matched an "Assigned" row
+				// (QA issue 7).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Assigned', value: 'assigned' },
+					{ label: 'Viewed', value: 'viewed' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Dismissed', value: 'dismissed' },
+				];
 			case 'referrals':
 				// Match the clinical /api/referrals store's status workflow — the
 				// generic clinical default (Active/Inactive/Resolved) never matched
@@ -5394,6 +5458,11 @@ export class PatientChartEditor extends EditorPane {
 		const namePattern = /^[A-Za-z][A-Za-z\s\-'.,()]*$/;
 		// Free-text titles — letters, numbers and common punctuation.
 		const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
+		// Catalog-sourced clinical names (CPT procedure / LOINC test descriptions)
+		// legitimately contain digits and symbols — e.g. "RADIOLOGIC EXAM CHEST
+		// 4+ VIEWS", "Hemoglobin A1c" — so the letters-only namePattern rejected
+		// the very value the code search auto-filled (QA issue 5).
+		const clinicalNamePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&+%:;]*$/;
 		// Lot numbers: 5-10 letters and numbers only (e.g. FR8912, GJ8539).
 		const lotPattern = /^[A-Za-z0-9]{5,10}$/;
 		// Dose: positive number, optional unit suffix (e.g. "1.5" or "0.5 mL").
@@ -5401,12 +5470,12 @@ export class PatientChartEditor extends EditorPane {
 		const fieldPatterns: Record<string, { rx: RegExp; msg: string }> = {
 			allergyName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 			medicationName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-			procedureName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			procedureName: { rx: clinicalNamePattern, msg: 'Procedure name may contain letters, numbers and basic punctuation' },
 			condition: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 			conditionName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 			alert: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
 			alertName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
-			testName: { rx: namePattern, msg: 'Letters only — no numbers or special characters' },
+			testName: { rx: clinicalNamePattern, msg: 'Test name may contain letters, numbers and basic punctuation' },
 			description: { rx: namePattern, msg: 'No special characters allowed' },
 			materialTitle: { rx: titlePattern, msg: 'Title may contain letters, numbers and basic punctuation' },
 			subject: { rx: namePattern, msg: 'No special characters allowed' },
@@ -5946,6 +6015,33 @@ export class PatientChartEditor extends EditorPane {
 						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
 					}
 					this.notificationService.warn(apptErr);
+					return;
+				}
+			}
+
+			// Clinical Alerts: the End Date must not be earlier than the Identified
+			// Date (QA issue 2: an end date before the identified date saved
+			// successfully). Both fields hold ISO yyyy-mm-dd values, so a plain
+			// string comparison orders correctly.
+			if (tab.key === 'clinical-alerts') {
+				const identifiedVal = String(dialogInputs.get('identifiedDate')?.value ?? '').trim();
+				const endEl = dialogInputs.get('endDate');
+				const endVal = String(endEl?.value ?? '').trim();
+				if (identifiedVal && endVal && endVal < identifiedVal) {
+					const alertErr = 'End Date cannot be earlier than the Identified Date.';
+					const cell = dialogCells.get('endDate');
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = alertErr;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+					const focusEl = (this._dateVisibleByKey.get('endDate') ?? (endEl as HTMLElement | undefined));
+					if (focusEl) {
+						focusEl.style.borderColor = '#ef4444';
+						focusEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
+					}
+					this.notificationService.warn(alertErr);
 					return;
 				}
 			}
@@ -7747,6 +7843,13 @@ export class PatientChartEditor extends EditorPane {
 			let onDelete: (() => void) | undefined = !recordId || tab.readOnly || writeOnceTabs.has(tab.key)
 				? undefined
 				: () => this._deleteListRecord(tab, recordId);
+
+			// Rows merged from a foreign store (e.g. Document Scanning scans on the
+			// Documents tab) are view-only here — editing/deleting them must happen
+			// in their own module, not through this tab's endpoints.
+			if (item['__readonly'] === true) {
+				return { cells, onClick: undefined, onDelete: undefined, extraActions: undefined };
+			}
 
 			let extraActions: Array<{ icon: string; title: string; color?: string; onClick: () => void }> | undefined;
 

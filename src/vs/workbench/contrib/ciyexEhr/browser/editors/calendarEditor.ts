@@ -1738,9 +1738,11 @@ export class CalendarEditor extends EditorPane {
 			};
 
 			// Prevent double-booking: a patient may have at most one active
-			// appointment per calendar day. Check the server for the chosen day so
-			// the rule holds even when that date is outside the currently loaded
-			// range (cancelled appointments don't count, so a patient can be
+			// appointment per calendar day PER VISIT TYPE — a second visit of a
+			// different type (e.g. Lab Work after an Urgent visit) on the same day
+			// is a legitimate booking (QA issue 1). Check the server for the chosen
+			// day so the rule holds even when that date is outside the currently
+			// loaded range (cancelled appointments don't count, so a patient can be
 			// re-booked after a cancellation). A flat-shape match (patientId) is
 			// preferred; we fall back to name when no stable id is available.
 			const matchesPatient = (a: Appointment): boolean => {
@@ -1749,17 +1751,35 @@ export class CalendarEditor extends EditorPane {
 				return !!patName && (a.patientName || '').trim().toLowerCase() === patName.trim().toLowerCase();
 			};
 			try {
-				const dupRes = await this.apiService.fetch(`/api/appointments?page=0&size=500&dateFrom=${startD}&dateTo=${startD}`);
+				// Ask the server to scope the rows to this patient too — fresh FHIR
+				// rows in some envs come back with NO flat patientId/patientName at
+				// all, so client-side matching alone can't identify them, while the
+				// backend's ?patientId= filter still resolves the FHIR reference.
+				const dupUrl = `/api/appointments?page=0&size=500&dateFrom=${startD}&dateTo=${startD}`
+					+ (patId ? `&patientId=${encodeURIComponent(patId)}` : '');
+				const dupRes = await this.apiService.fetch(dupUrl);
 				if (dupRes.ok) {
 					const dupData = await dupRes.json();
 					const existing = (dupData?.data?.content || dupData?.content || (Array.isArray(dupData?.data) ? dupData.data : (Array.isArray(dupData) ? dupData : []))) as Appointment[];
+					const newType = (visitType || '').trim().toLowerCase();
+					// A row with no patient identity of its own is trusted to belong to
+					// this patient only when the server was asked to filter by patientId.
+					const rowIsAnonymous = (a: Appointment): boolean =>
+						!resolveApptPatientId(a) && !(a.patientName || '').trim();
 					const clash = existing.some(a => {
 						if ((a.status || '').toLowerCase() === 'cancelled') { return false; }
+						// Only a SAME visit type on the same day is a duplicate (QA
+						// issue 1). When the existing row's type can't be resolved
+						// (some backends drop the visit-type CodeableConcept from the
+						// flat DTO) we let the booking through rather than resurrect
+						// the blanket one-per-day block the test team rejected.
+						const aType = (getAppointmentType(a) || '').trim().toLowerCase();
+						if (!aType || aType !== newType) { return false; }
 						const aDate = this._parseAptDate(a);
-						return !!aDate && localDateStr(aDate) === startD && matchesPatient(a);
+						return !!aDate && localDateStr(aDate) === startD && (matchesPatient(a) || (!!patId && rowIsAnonymous(a)));
 					});
 					if (clash) {
-						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.` });
+						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has a ${visitType || ''} appointment on ${startD}. Only one appointment per visit type per patient per day is allowed.`.replace(/\s+/g, ' ') });
 						patInput.style.borderColor = '#ef4444';
 						patInput.focus();
 						reopenForRetry();
@@ -1787,7 +1807,13 @@ export class CalendarEditor extends EditorPane {
 				for (const endpoint of endpoints) {
 					try {
 						const body: Record<string, unknown> = {
-							appointmentType: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0276', code: visitType, display: visitType }], text: visitType },
+							// Plain string, NOT a CodeableConcept object: the backend's
+							// flat-field mapper maps appointmentType → text and silently
+							// DROPS an object value, so appointments created here came
+							// back with no visit type at all (blank block labels and an
+							// unenforceable per-visit-type duplicate check). Existing
+							// string-typed rows round-trip correctly.
+							appointmentType: visitType,
 							status: status || 'scheduled',
 							priority: (formFields.get('priority') as HTMLSelectElement | undefined)?.value || 'routine',
 							start: `${startD}T${startT}:00`,
