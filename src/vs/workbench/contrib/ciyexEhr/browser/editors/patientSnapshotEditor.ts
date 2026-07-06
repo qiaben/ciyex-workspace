@@ -4171,7 +4171,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ key: 'billingAddress', label: 'Billing Address', kind: 'text', placeholder: '123 Main St', widthPct: 100 },
 				{ key: 'billingCity', label: 'City', kind: 'text', placeholder: 'New York', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'City may only contain letters and spaces.' },
 				{ key: 'billingState', label: 'State', kind: 'text', placeholder: 'NY', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'State may only contain letters and spaces.' },
-				{ key: 'billingZip', label: 'Zip Code', kind: 'text', placeholder: '10001', widthPct: 50 },
+				{ key: 'billingZip', label: 'Zip Code', kind: 'text', placeholder: '10001', widthPct: 50, typingPattern: '[0-9]', validationPattern: '^\\d{5}$', validationMessage: 'Zip Code must be exactly 5 digits (e.g. 10001).' },
 				{ key: 'billingCountry', label: 'Country', kind: 'text', placeholder: 'USA', widthPct: 50 },
 				{ key: 'isDefault', label: 'Set as default', kind: 'select', widthPct: 100, options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
 			],
@@ -4198,6 +4198,12 @@ export class PatientSnapshotEditor extends EditorPane {
 				// 1-2 digit CVV reached the server and bounced as "Save failed".
 				if (!/^\d{13,16}$/.test(num)) { throw new Error('Card number must be 13-16 digits.'); }
 				if (!/^\d{3,4}$/.test(cvv)) { throw new Error('CVV must be 3 or 4 digits.'); }
+				// Billing ZIP is numeric-only (US 5-digit). The field-level
+				// typingPattern/validationPattern blocks letters as typed, but guard
+				// here too so a bypassed/pasted non-numeric value can't reach the
+				// backend and get stored as invalid data.
+				const zip = String(next.billingZip || '').trim();
+				if (zip && !/^\d{5}$/.test(zip)) { throw new Error('Zip Code must be exactly 5 digits (e.g. 10001).'); }
 				const payload: Record<string, unknown> = {
 					patientId: this._currentPatientId,
 					cardHolderName: String(next.cardHolderName).trim(),

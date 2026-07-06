@@ -124,6 +124,16 @@ const STATUS_COLORS: Record<string, string> = {
 	'cancelled': '#ef4444', 'noshow': '#dc2626', 'no-show': '#dc2626',
 };
 
+// AM vs PM shading for the day/provider timelines. Morning (AM) rows get a
+// subtle neutral-grey wash while afternoon/evening (PM) rows keep the plain
+// editor background, so the two halves of the day read apart at a glance. The
+// tint is a theme-agnostic grey (rgba over 128,128,128) so it darkens slightly
+// on light themes and lightens slightly on dark themes without hardcoding a
+// theme colour — matching the existing rgba greys used for blocked/hover cells.
+const AM_SLOT_BG = 'rgba(128,128,128,0.11)';
+const AM_SLOT_HOVER = 'rgba(128,128,128,0.17)';
+const PM_SLOT_HOVER = 'rgba(128,128,128,0.05)';
+
 /** Friendly status label shown on timeline blocks (matches the chips users expect:
  *  Scheduled, Check In, Confirmed, Completed, No Show, Cancelled). */
 function statusLabel(status: string | undefined | null): string {
@@ -871,7 +881,7 @@ export class CalendarEditor extends EditorPane {
 
 				// Time label — show on every 30-min slot (e.g. 9:00, 9:30, 10:00)
 				const timeCell = DOM.append(table, DOM.$('.cal-time'));
-				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;white-space:nowrap;overflow:hidden;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}`;
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;white-space:nowrap;overflow:hidden;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}${hour < 12 ? `background:${AM_SLOT_BG};` : ''}`;
 				{
 					const h12 = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
 					const ampm = hour >= 12 ? 'PM' : 'AM';
@@ -896,13 +906,19 @@ export class CalendarEditor extends EditorPane {
 					});
 
 					const cell = DOM.append(table, DOM.$('.cal-cell'));
+					// AM rows carry a subtle grey wash; blocked (out-of-availability)
+					// slots keep their own grey. Blocked wins when both apply.
+					const isAM = hour < 12;
+					const baseBg = isBlocked ? 'rgba(128,128,128,0.06)' : (isAM ? AM_SLOT_BG : '');
 					// `cursor:pointer` so the hand shows on every empty slot — the whole
 					// cell is click-to-create (see listener below), but without this it
 					// rendered the default arrow and read as non-interactive.
-					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${isBlocked ? 'background:rgba(128,128,128,0.06);' : ''}`;
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${baseBg ? `background:${baseBg};` : ''}`;
 					if (!isBlocked) {
-						cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
-						cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+						// Restore the AM/PM base on leave rather than clearing it, so the
+						// morning wash survives hover.
+						cell.addEventListener('mouseenter', () => { cell.style.background = isAM ? AM_SLOT_HOVER : PM_SLOT_HOVER; });
+						cell.addEventListener('mouseleave', () => { cell.style.background = baseBg; });
 					}
 
 					// Click to create appointment
@@ -1063,7 +1079,7 @@ export class CalendarEditor extends EditorPane {
 				const isHourStart = minute === 0;
 
 				const timeCell = DOM.append(table, DOM.$('.cal-time'));
-				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;white-space:nowrap;overflow:hidden;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}`;
+				timeCell.style.cssText = `height:${slotHeight}px;border-right:1px solid var(--vscode-editorWidget-border);padding:0 4px;font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;line-height:${slotHeight}px;white-space:nowrap;overflow:hidden;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : ''}${!isHourStart ? 'opacity:0.7;' : ''}${hour < 12 ? `background:${AM_SLOT_BG};` : ''}`;
 				{
 					const h12 = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
 					const ampm = hour >= 12 ? 'PM' : 'AM';
@@ -1077,9 +1093,12 @@ export class CalendarEditor extends EditorPane {
 					const prov = activeProviders[pi];
 					const provColor = PROVIDER_COLORS[pi % PROVIDER_COLORS.length];
 					const cell = DOM.append(table, DOM.$('.cal-cell'));
-					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}`;
-					cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(128,128,128,0.04)'; });
-					cell.addEventListener('mouseleave', () => { cell.style.background = ''; });
+					// AM rows carry a subtle grey wash so morning reads apart from afternoon.
+					const isAM = hour < 12;
+					const baseBg = isAM ? AM_SLOT_BG : '';
+					cell.style.cssText = `height:${slotHeight}px;border-right:1px solid rgba(128,128,128,0.1);position:relative;cursor:pointer;${isHourStart ? 'border-top:1px solid var(--vscode-editorWidget-border);' : 'border-top:1px solid rgba(128,128,128,0.05);'}${baseBg ? `background:${baseBg};` : ''}`;
+					cell.addEventListener('mouseenter', () => { cell.style.background = isAM ? AM_SLOT_HOVER : PM_SLOT_HOVER; });
+					cell.addEventListener('mouseleave', () => { cell.style.background = baseBg; });
 
 					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 					cell.addEventListener('click', () => this._createAppointment(dateStr, timeStr, prov.id));

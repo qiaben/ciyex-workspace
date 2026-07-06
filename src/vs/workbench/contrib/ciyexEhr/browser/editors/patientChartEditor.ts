@@ -35,7 +35,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean; storeLabelAsValue?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -88,7 +88,11 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'reaction', label: 'Reaction', aliases: ['reaction', 'manifestation'] },
 					{ key: 'severity', label: 'Severity' },
 					{ key: 'status', label: 'Status', aliases: ['status', 'clinicalStatus'] },
-					{ key: 'startDate', label: 'Start Date', aliases: ['startDate', 'recordedDate', 'onsetDate', 'onsetDateTime'] },
+					// Onset/Start Date must resolve ONLY from true onset fields. `recordedDate`
+					// is the FHIR resource-creation timestamp (auto-stamped ~now by HAPI), so
+					// including it made a blank onset render as the current date/time. Dropped
+					// it so an unspecified onset shows empty instead of "today".
+					{ key: 'startDate', label: 'Start Date', aliases: ['startDate', 'onsetDate', 'onsetDateTime'] },
 				],
 			},
 			{
@@ -799,9 +803,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	// the chart writes the same flat DTO to /api/lab-order that the clinical page
 	// and the snapshot do (keys: orderNumber, testDisplay, testCode, status,
 	// priority, orderDate, physicianName, result, specimenId, diagnosisCode,
-	// procedureCode, notes). Provider is a plain text field (the clinical
-	// lab-order DTO stores physicianName as a display string, not a Practitioner
-	// reference).
+	// procedureCode, notes). Ordering Provider is a practitioner SEARCH that
+	// stores the chosen provider's NAME (storeLabelAsValue) rather than an id —
+	// the clinical lab-order DTO keeps physicianName as a display string, not a
+	// Practitioner reference, so the search must persist the name, not the id.
 	labs: {
 		tabKey: 'labs',
 		sections: [
@@ -812,7 +817,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'testCode', label: 'Test Code (LOINC)', type: 'code-search', required: true, placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' }, relatedField: 'testDisplay' },
 					{ key: 'testDisplay', label: 'Test Name', type: 'text', required: true, placeholder: 'Test name', aliases: ['testName', 'orderName'] },
 					{ key: 'orderDate', label: 'Order Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
-					{ key: 'physicianName', label: 'Ordering Provider', type: 'text', required: true, placeholder: 'Provider name', aliases: ['orderingProvider', 'providerName'] },
+					{ key: 'physicianName', label: 'Ordering Provider', type: 'practitioner-search', required: true, placeholder: 'Search provider', storeLabelAsValue: true, aliases: ['orderingProvider', 'providerName'] },
 					{
 						key: 'priority', label: 'Priority', type: 'select', options: [
 							{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
@@ -2316,6 +2321,67 @@ export class PatientChartEditor extends EditorPane {
 			if (id && name) { this._locationNameById.set(id, name); }
 		}
 		this._lookupsLoaded = true;
+	}
+
+	/**
+	 * Best-effort display NAME for an id-bearing reference field, read from a
+	 * SIBLING key on the same edit record. FHIR reference fields round-trip as a
+	 * bare id (e.g. claims `providerId` / `payerId`), but the backend also
+	 * returns a human-readable companion (`providerName`, `insuranceName`,
+	 * `payerDisplay`, a reference `.display`, …) — the list columns already alias
+	 * these. The edit form used to ignore them and lean solely on id→name cache
+	 * resolution, which misses when the saved id is a FHIR reference id outside
+	 * the lookup cache, so the field re-opened showing the raw id (QA: billing
+	 * provider / insurer changed to their id numbers after save + re-edit).
+	 * Prefer the companion name here. Returns '' when none looks like a real name.
+	 */
+	private _referenceDisplayHint(record: Record<string, unknown>, f: FieldDef): string {
+		// Only id-bearing references need a name hint. Name-valued lookups
+		// (`valueField:'name'`), `storeLabelAsValue` searches, and code searches
+		// already hold their display text.
+		const isIdLookup = !f.storeLabelAsValue && (
+			f.type === 'patient-search' || f.type === 'practitioner-search'
+			|| (f.type === 'lookup' && f.lookupConfig?.valueField !== 'name')
+			|| (f.type === 'search' && f.apiPath !== undefined));
+		if (!isIdLookup) { return ''; }
+		const isName = (s: string): boolean => {
+			if (!s) { return false; }
+			const looksLikeId = /^[0-9a-fA-F]{8}-[0-9a-fA-F-]{20,}$/.test(s)
+				|| /^\d+$/.test(s)
+				|| /^[A-Z][A-Za-z]+\/[A-Za-z0-9-]+$/.test(s);
+			return !looksLikeId;
+		};
+		// A reference-object display on the field value itself wins.
+		const rawVal = record[f.key];
+		if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+			const d = (rawVal as Record<string, unknown>).display;
+			if (typeof d === 'string' && isName(d.trim())) { return d.trim(); }
+		}
+		const key = f.key.toLowerCase();
+		const base = f.key.replace(/Id$/, '');
+		// Candidate sibling keys, mirroring the list columns' display aliases so
+		// the edit form shows the same name the table does. Dotted paths (FHIR
+		// reference `.display`) are resolved below.
+		const keys = [`${base}Name`, `${base}Display`, `${f.key}Name`, `${f.key}Display`];
+		if (/(provider|practitioner|performer|author|prescrib|physician|doctor|referrer|educator)/.test(key)) {
+			keys.push('providerName', 'providerDisplay', 'practitionerName', 'performerDisplay');
+		}
+		if (/(insur|payer|payor|insurer|organization|company)/.test(key)) {
+			keys.push('insuranceName', 'payerName', 'insurerName', 'payerDisplay', 'insurerDisplay', 'organizationDisplay', 'organizationName', 'insuranceCompanyName', 'payor.display', 'payor.0.display', 'coverage.payor.display', 'coverage.payor.0.display');
+		}
+		if (/(location|facility|site)/.test(key)) {
+			keys.push('locationName', 'facilityName', 'locationDisplay');
+		}
+		for (const k of keys) {
+			// Resolve dotted paths ("payor.0.display") the same way the list's
+			// alias extractor does, so nested FHIR reference displays are picked up.
+			const v = k.includes('.')
+				? k.split('.').reduce<unknown>((acc, part) => (acc !== null && acc !== undefined ? (acc as Record<string, unknown>)[part] : undefined), record)
+				: record[k];
+			const s = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+			if (isName(s)) { return s; }
+		}
+		return '';
 	}
 
 	/**
@@ -5111,7 +5177,10 @@ export class PatientChartEditor extends EditorPane {
 		const addrEl = makeInput('Billing Address', true, { placeholder: '123 Main St' });
 		const cityEl = makeInput('City', false, { maxLength: 50, placeholder: 'New York' });
 		const stateEl = makeInput('State', false, { maxLength: 50, placeholder: 'NY' });
-		const zipEl = makeInput('Zip Code', false, { maxLength: 10, placeholder: '10001' });
+		const zipEl = makeInput('Zip Code', false, { maxLength: 5, placeholder: '10001' });
+		// Zip Code is numeric only — strip any non-digit as typed/pasted (maxLength
+		// alone doesn't block letters) so an invalid ZIP can't be entered.
+		zipEl.addEventListener('input', () => { zipEl.value = zipEl.value.replace(/\D/g, '').slice(0, 5); });
 		const countryEl = makeInput('Country', false, { maxLength: 50, placeholder: 'USA' });
 		const isDefaultEl = makeCheckbox('Set as default payment method', true);
 		const isActiveEl = makeCheckbox('Active', true);
@@ -5171,6 +5240,10 @@ export class PatientChartEditor extends EditorPane {
 			// City / State: letters and spaces only — reject digits or other symbols.
 			if (city && !/^[A-Za-z ]+$/.test(city)) { errEl.textContent = 'City must contain only letters and spaces.'; errEl.style.display = ''; return; }
 			if (state && !/^[A-Za-z ]+$/.test(state)) { errEl.textContent = 'State must contain only letters and spaces.'; errEl.style.display = ''; return; }
+			// Zip Code: numeric only (US 5-digit) — reject letters/symbols so invalid
+			// billing ZIPs can't be saved.
+			const zip = zipEl.value.trim();
+			if (zip && !/^\d{5}$/.test(zip)) { errEl.textContent = 'Zip Code must be exactly 5 digits (e.g. 10001).'; errEl.style.display = ''; return; }
 
 			const payload: Record<string, unknown> = {
 				patientId: this.patientId,
@@ -5220,13 +5293,19 @@ export class PatientChartEditor extends EditorPane {
 		searchInput.placeholder = `Search by ${tab.label}...`;
 		searchInput.style.cssText = inputStyle + 'flex:1;min-width:200px;max-width:320px;';
 
-		const statusSel = DOM.append(filterBar, DOM.$('select')) as HTMLSelectElement;
-		statusSel.style.cssText = inputStyle + 'cursor:pointer;min-width:180px;';
-		// Status options differ by tab; fall back to clinical values for everything else
-		const filterOpts = this._statusFilterOptions(tab);
-		for (const opt of filterOpts) {
-			const o = DOM.append(statusSel, DOM.$('option')) as HTMLOptionElement;
-			o.value = opt.value; o.textContent = opt.label;
+		// Status filter dropdown. Omitted on the History tab — its rows carry no
+		// meaningful clinical status (and the create page has no status field), so
+		// the "All Clinical Statuses" dropdown was noise there (QA request).
+		let statusSel: HTMLSelectElement | undefined;
+		if (tab.key !== 'history') {
+			statusSel = DOM.append(filterBar, DOM.$('select')) as HTMLSelectElement;
+			statusSel.style.cssText = inputStyle + 'cursor:pointer;min-width:180px;';
+			// Status options differ by tab; fall back to clinical values for everything else
+			const filterOpts = this._statusFilterOptions(tab);
+			for (const opt of filterOpts) {
+				const o = DOM.append(statusSel, DOM.$('option')) as HTMLOptionElement;
+				o.value = opt.value; o.textContent = opt.label;
+			}
 		}
 
 		const countBadge = DOM.append(filterBar, DOM.$('span'));
@@ -5263,7 +5342,7 @@ export class PatientChartEditor extends EditorPane {
 
 		const applyFilters = () => {
 			const q = searchInput.value.trim();
-			const st = statusSel.value;
+			const st = statusSel ? statusSel.value : '';
 			const filtered = data.filter(it => matches(it, q) && (!st || statusOf(it) === st));
 			DOM.clearNode(tableWrap);
 			countBadge.textContent = `${filtered.length} record${filtered.length === 1 ? '' : 's'}`;
@@ -5294,7 +5373,7 @@ export class PatientChartEditor extends EditorPane {
 			if (searchTimer) { clearTimeout(searchTimer); }
 			searchTimer = setTimeout(applyFilters, 150);
 		});
-		statusSel.addEventListener('change', applyFilters);
+		statusSel?.addEventListener('change', applyFilters);
 		applyFilters();
 	}
 
@@ -6382,7 +6461,17 @@ export class PatientChartEditor extends EditorPane {
 					inp.style.cssText = inputStyle;
 					this._formInputs.set(f.key, inp);
 				} else if (f.type === 'code-search' || f.type === 'practitioner-search' || f.type === 'patient-search' || f.type === 'lookup' || f.type === 'coded' || (f.type === 'search' && f.apiPath)) {
-					this._buildSearchInput(cell, f, String(val ?? ''), inputStyle);
+					// Reference fields round-trip as a bare id. Drill a reference
+					// object down to its id string for the hidden save value, and
+					// seed the visible input from the record's companion display
+					// name so re-editing shows the name, not the id.
+					let cv: unknown = val;
+					if (cv && typeof cv === 'object' && !Array.isArray(cv)) {
+						const r = cv as Record<string, unknown>;
+						cv = (typeof r.reference === 'string' ? r.reference : r.id) ?? '';
+					}
+					const displayHint = this._referenceDisplayHint(record, f);
+					this._buildSearchInput(cell, f, String(cv ?? ''), inputStyle, displayHint);
 				} else if (f.type === 'file' || f.type === 'image' || /photo|avatar|picture/i.test(f.key) || /^image(url)?$/i.test(f.key)) {
 					// File / photo upload — reads the selected file as a base64 data
 					// URL and stores it on the hidden input so the save payload picks
@@ -6765,7 +6854,7 @@ export class PatientChartEditor extends EditorPane {
 	 * input; the underlying code/id stored in a hidden sibling we register as
 	 * the form input). Used for ICD/CPT/LOINC/CVX codes and practitioner pickers.
 	 */
-	private _buildSearchInput(cell: HTMLElement, f: FieldDef, currentValue: string, inputStyle: string): void {
+	private _buildSearchInput(cell: HTMLElement, f: FieldDef, currentValue: string, inputStyle: string, displayHint: string = ''): void {
 		// Capture the inputs map ACTIVE AT RENDER TIME. The create/edit drawer
 		// renders into a temporary `_formInputs` map and then restores the original
 		// on `this` (see `_openRecordDialog`), so reading `this._formInputs` later
@@ -6790,7 +6879,13 @@ export class PatientChartEditor extends EditorPane {
 		// returns null and blanked the field when re-opening edit (QA: payer /
 		// insurance showed nil after saving with a value). Computed here, before the
 		// value is shown, so the display logic can skip id→name resolution for them.
-		const isIdLookup = f.type === 'patient-search' || f.type === 'practitioner-search'
+		// `storeLabelAsValue` fields SEARCH a reference catalog (e.g. providers)
+		// but persist the chosen NAME, not the id — the lab-order DTO keeps
+		// `physicianName` as a display string. Treat them like a name-valued
+		// lookup for value handling (store/show the name verbatim, no id→name
+		// resolution) while keeping the search dropdown.
+		const isIdLookup = !f.storeLabelAsValue && (
+			f.type === 'patient-search' || f.type === 'practitioner-search'
 			// Every `lookup` in the chart editor points at an id-keyed catalog
 			// (insurance companies, locations, claims, …) and therefore stores an
 			// id that must be resolved to a name for display — EXCEPT the one
@@ -6804,7 +6899,8 @@ export class PatientChartEditor extends EditorPane {
 			// e.g. Patient Education materialId / educator. Selecting from the
 			// dropdown is required; free text deserialises to null and the
 			// backend rejects with "given id must not be null".
-			|| (f.type === 'search' && f.apiPath !== undefined);
+			|| (f.type === 'search' && f.apiPath !== undefined)
+		);
 
 		const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 		input.type = 'text';
@@ -6822,7 +6918,11 @@ export class PatientChartEditor extends EditorPane {
 			const r = this._resolveIdToName(f.key, currentValue);
 			return r === null || r === undefined ? '' : String(r);
 		};
-		input.value = resolveDisplay();
+		// A companion display name from the edit record (billing provider /
+		// insurer / facility name) wins over id→name resolution: the saved id is
+		// often a FHIR reference id the lookup cache can't resolve, which left the
+		// raw id showing on re-edit. The hidden field still holds the id for save.
+		input.value = displayHint || resolveDisplay();
 
 		// Decorative search icon on the right edge of the input.
 		const searchIcon = DOM.append(wrap, DOM.$('span'));
@@ -7090,11 +7190,12 @@ export class PatientChartEditor extends EditorPane {
 									input.value = `${it.code} - ${it.label}`;
 									hidden.value = it.code;
 								} else {
-									// Show the chosen name in the visible
-									// input; persist the underlying ID for
-									// the save payload.
+									// Show the chosen name in the visible input. Persist
+									// the underlying id for the save payload — EXCEPT
+									// `storeLabelAsValue` fields (e.g. lab-order Ordering
+									// Provider) which store the display NAME itself.
 									input.value = it.label || it.code;
-									hidden.value = it.code;
+									hidden.value = f.storeLabelAsValue ? (it.label || it.code) : it.code;
 								}
 								// Honor relatedField — fill the companion form field
 								// (e.g. materialTitle for materialId) with the display
