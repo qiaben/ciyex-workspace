@@ -6700,7 +6700,11 @@ export class PatientChartEditor extends EditorPane {
 		// Default start/end on a fresh form — start = now (rounded to next 5min),
 		// end = start + 15min. Reads existing record values via the hidden ISO
 		// field's value so it doesn't clobber an in-progress edit.
-		if (startInput && !startInput.value) {
+		// Scope this to the scheduling tabs ONLY: other tabs (e.g. Allergies) also
+		// key their date field `startDate`, and their Onset Date must stay blank when
+		// left unspecified — not silently auto-fill to "today".
+		const isSchedulingForm = this.activeTab === 'appointments' || this.activeTab === 'encounters';
+		if (isSchedulingForm && startInput && !startInput.value) {
 			const now = new Date();
 			now.setSeconds(0, 0);
 			now.setMinutes(now.getMinutes() + (5 - (now.getMinutes() % 5 || 5)));
