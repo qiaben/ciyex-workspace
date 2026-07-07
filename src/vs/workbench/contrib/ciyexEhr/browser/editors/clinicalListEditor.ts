@@ -275,9 +275,12 @@ export interface ClinicalEditorConfig {
 	createDefaults?: Record<string, unknown>;
 	/**
 	 * Optional payload transformer: rewrites the request body before save.
-	 * Receives the merged form values and returns the final payload.
+	 * Receives the merged form values and returns the final payload. On edits,
+	 * `original` is the record being edited (null on create) so transforms can
+	 * react to state TRANSITIONS (e.g. stamp completedDate when a recall first
+	 * turns COMPLETED).
 	 */
-	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean) => Record<string, unknown>;
+	beforeSave?: (payload: Record<string, unknown>, isEdit: boolean, original?: Record<string, unknown> | null) => Record<string, unknown>;
 	/**
 	 * Called after a successful create/update with the saved record (the parsed
 	 * server response merged over the submitted payload, always carrying `id`).
@@ -2242,7 +2245,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			}
 			if (cfg.beforeSave) {
-				payload = cfg.beforeSave(payload, isEdit);
+				payload = cfg.beforeSave(payload, isEdit, this.editingItem);
 			}
 
 			saveBtn.disabled = true;

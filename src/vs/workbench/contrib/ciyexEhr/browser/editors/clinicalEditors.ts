@@ -3213,6 +3213,20 @@ export class RecallEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Completing a recall through the edit form must stamp WHEN it was
+		// completed — the form has no completedDate field, so without this the
+		// row kept a stale/empty completion date and the "Completed This Month"
+		// KPI missed recalls completed right now (QA issue 6). Only the
+		// TRANSITION to COMPLETED stamps; re-saving an already-completed recall
+		// keeps its original completion date.
+		beforeSave: (payload, _isEdit, original) => {
+			const nowCompleted = String(payload['status'] ?? '').toUpperCase() === 'COMPLETED';
+			const wasCompleted = String(original?.['status'] ?? '').toUpperCase() === 'COMPLETED';
+			if (nowCompleted && !wasCompleted) {
+				payload['completedDate'] = new Date().toISOString().slice(0, 10);
+			}
+			return payload;
+		},
 		// 8 data columns + Actions overflow a narrow pane and crush the Contact
 		// and Actions cells until they look empty/missing. A min-width lets the
 		// table scroll horizontally so every column keeps its width and stays

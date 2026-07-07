@@ -116,6 +116,10 @@ export class MessagingEditor extends EditorPane {
 	// org user (provider, nurse, patient, …) should be mentionable. Loaded once
 	// per editor from the same endpoints as the add-people picker.
 	private orgDirectory: ChannelMember[] = [];
+	/** Display names harvested from the channel list (DM counterparts, embedded
+	 *  rosters, last-message senders) — extra @mention candidates for
+	 *  {@link _renderRichContent} beyond members/senders/directory. */
+	private readonly knownMentionNames = new Set<string>();
 	private orgDirectoryLoaded = false;
 	private mentionState: {
 		node: Text;
@@ -1568,6 +1572,9 @@ export class MessagingEditor extends EditorPane {
 			const dn = (m.displayName || '').trim();
 			if (dn) { nameSet.add(dn); }
 		}
+		// DM counterparts / channel-list rosters (people mentionable without being
+		// channel members OR in the org directory — see _loadChannelDetails).
+		for (const dn of this.knownMentionNames) { nameSet.add(dn); }
 		const memberNames = Array.from(nameSet).sort((a, b) => b.length - a.length);
 		const pattern = /@(\w+)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|_(.+?)_|`(.+?)`/g;
 		let lastIndex = 0;
@@ -1679,6 +1686,27 @@ export class MessagingEditor extends EditorPane {
 			if (!res.ok) { return; }
 			const data = await res.json();
 			const list: Array<Record<string, unknown>> = data?.data || data?.content || data || [];
+			// Harvest every display name the channel list knows — DM counterpart
+			// names (channel.name for type 'dm'), embedded member rosters and last
+			// message senders. A person can be @mentioned who is neither a member
+			// of THIS channel nor in the org directory (e.g. a DM-only contact),
+			// and without their name here the mention renders clipped to its first
+			// word (QA issue: "@Beth Mooney" highlighted only "@Beth").
+			const harvested = this.knownMentionNames.size;
+			for (const c of (Array.isArray(list) ? list : [])) {
+				if (String(c.type) === 'dm' && typeof c.name === 'string' && c.name.trim()) { this.knownMentionNames.add(c.name.trim()); }
+				const lastSender = (c.lastMessage as Record<string, unknown> | undefined)?.senderName;
+				if (typeof lastSender === 'string' && lastSender.trim()) { this.knownMentionNames.add(lastSender.trim()); }
+				for (const m of (Array.isArray(c.members) ? c.members as ChannelMember[] : [])) {
+					const dn = (m.displayName || '').trim();
+					if (dn) { this.knownMentionNames.add(dn); }
+				}
+			}
+			// Names arrived after the first message render — re-parse mentions.
+			// eslint-disable-next-line no-restricted-syntax
+			if (this.knownMentionNames.size !== harvested && this.messageListEl?.querySelector('[data-msg-id]')) {
+				this._renderMessages();
+			}
 			const ch = Array.isArray(list) ? list.find(c => c.id === channelId) : undefined;
 			if (!ch) { return; }
 			// Ignore a response that arrived after the user switched channels.
