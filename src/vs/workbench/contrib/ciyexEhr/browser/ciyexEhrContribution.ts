@@ -13,6 +13,7 @@ import { ICiyexPermissionService } from './ciyexPermissionService.js';
 import { ICiyexMenuService } from './ciyexMenuService.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { ICiyexInstallationsService } from './ciyexInstallationsService.js';
+import { CONTEXT_RCM_INSTALLED, RCM_APP_SLUG } from './rcm/rcmApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../ciyexAuth/browser/ciyexAuthService.js';
 import { PatientListDataProvider } from './patientListDataProvider.js';
 import { ITreeViewDescriptor, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation, IViewDescriptorService } from '../../../common/views.js';
@@ -65,6 +66,16 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		this._ciyexConfigHome = URI.joinPath(this.environmentService.userRoamingDataHome, '.ciyex');
 		this._ensureDefaultConfigs();
+
+		// `ciyex.rcmInstalled` gates every RCM surface (Billing (RCM) sidebar,
+		// rcm commands). Kept in sync with the marketplace installations —
+		// onDidChangeInstallations fires on login load, post-checkout polling,
+		// and reset() at sign-out, so purchase/logout show/hide RCM live.
+		const rcmInstalledKey = CONTEXT_RCM_INSTALLED.bindTo(this.contextKeyService);
+		rcmInstalledKey.set(this.installationsService.isInstalled(RCM_APP_SLUG));
+		this._register(this.installationsService.onDidChangeInstallations(() => {
+			rcmInstalledKey.set(this.installationsService.isInstalled(RCM_APP_SLUG));
+		}));
 
 		// Load permissions when authenticated
 		if (this.authService.state === CiyexAuthState.Authenticated) {

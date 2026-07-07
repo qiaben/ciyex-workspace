@@ -14,6 +14,8 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
+import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -2095,6 +2097,7 @@ export class PatientChartEditor extends EditorPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
@@ -2234,6 +2237,70 @@ export class PatientChartEditor extends EditorPane {
 				}
 				return { ...cat, tabs };
 			});
+
+		this._applyRcmTabOverrides();
+	}
+
+	/**
+	 * When the org has the ciyex-rcm marketplace app installed, the chart's
+	 * revenue tabs read from the RCM service (through the app-proxy) instead
+	 * of the generic FHIR store, so the biller sees the SAME claims/charges/
+	 * ledger the RCM work queue and claim editor operate on. Orgs without the
+	 * install keep the existing FHIR-backed tabs untouched.
+	 *
+	 * Only tabs with a patient-scoped RCM endpoint are switched (claims,
+	 * billing→charges, payment→ledger); denials / ERA / statements stay on
+	 * FHIR — the RCM service exposes those org-wide, not per patient. RCM
+	 * tabs are read-only: claims are created from the fee sheet flow, not the
+	 * generic chart form (whose FHIR payload the RCM API won't accept).
+	 */
+	private _applyRcmTabOverrides(): void {
+		if (!this.installationsService.isInstalled(RCM_APP_SLUG)) { return; }
+		const RCM = '/api/app-proxy/ciyex-rcm/api/rcm';
+		const overrides = new Map<string, Partial<ChartTab>>([
+			['claims', {
+				apiPath: `${RCM}/claims/patient/{patientId}`, fhirResources: [], readOnly: true,
+				columns: [
+					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'id'] },
+					{ key: 'dateOfService', label: 'Service Date', aliases: ['dateOfService', 'serviceDate'] },
+					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerNpi'] },
+					{ key: 'payerName', label: 'Payer', aliases: ['payerName'] },
+					{ key: 'totalCharges', label: 'Charges', aliases: ['totalCharges'] },
+					{ key: 'balance', label: 'Balance', aliases: ['balance'] },
+					{ key: 'status', label: 'Status', aliases: ['claimStatus', 'status'] },
+				],
+			}],
+			['billing', {
+				apiPath: `${RCM}/charges/patient/{patientId}`, fhirResources: [], readOnly: true,
+				columns: [
+					{ key: 'dateOfService', label: 'Service Date', aliases: ['dateOfService'] },
+					{ key: 'cptCode', label: 'CPT', aliases: ['cptCode'] },
+					{ key: 'icd10Codes', label: 'Diagnosis', aliases: ['icd10Codes'] },
+					{ key: 'description', label: 'Description', aliases: ['description'] },
+					{ key: 'units', label: 'Units', aliases: ['units'] },
+					{ key: 'chargeAmount', label: 'Amount', aliases: ['chargeAmount'] },
+					{ key: 'status', label: 'Status' },
+				],
+			}],
+			['payment', {
+				apiPath: `${RCM}/patient-ledger/{patientId}`, fhirResources: [], readOnly: true,
+				columns: [
+					{ key: 'entryDate', label: 'Date', aliases: ['entryDate'] },
+					{ key: 'entryType', label: 'Type', aliases: ['entryType'] },
+					{ key: 'description', label: 'Description', aliases: ['description'] },
+					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber'] },
+					{ key: 'amount', label: 'Amount', aliases: ['amount'] },
+					{ key: 'runningBalance', label: 'Balance', aliases: ['runningBalance'] },
+					{ key: 'paymentMethod', label: 'Method', aliases: ['paymentMethod'] },
+				],
+			}],
+		]);
+		for (const cat of this.categories) {
+			cat.tabs = cat.tabs.map(t => {
+				const ov = overrides.get(t.key);
+				return ov ? { ...t, ...ov } as ChartTab : t;
+			});
+		}
 	}
 
 	private async _loadPatient(): Promise<void> {
@@ -2962,7 +3029,11 @@ export class PatientChartEditor extends EditorPane {
 		if (tab.apiPath) {
 			let url: string;
 			if (tab.apiPath.includes('{patientId}')) {
-				url = tab.apiPath.replace('{patientId}', this.patientId);
+				// RCM endpoints key records by the DB patient id (the id the fee
+				// sheet pushes charges under), not the FHIR id the chart may have
+				// been opened with — mirror _clinicalPatientId's preference.
+				const pid = tab.apiPath.startsWith('/api/app-proxy/ciyex-rcm') ? this._clinicalPatientId() : this.patientId;
+				url = tab.apiPath.replace('{patientId}', pid);
 				url += (url.includes('?') ? '&' : '?') + 'page=0&size=100';
 			} else if (this._isPatientScoped(tab)) {
 				const [base, query] = tab.apiPath.split('?');
@@ -3427,7 +3498,10 @@ export class PatientChartEditor extends EditorPane {
 		if (tab.key === 'labs' || tab.key === 'lab-results' || tab.key === 'immunizations' || tab.key === 'referrals') { return null; }
 		if (tab.apiPath) {
 			if (tab.apiPath.includes('{patientId}')) {
-				const base = tab.apiPath.replace('{patientId}', this.patientId);
+				// Keep in lockstep with _loadTabData: RCM tabs substitute the DB
+				// patient id so the badge counts the same rows the list shows.
+				const pid = tab.apiPath.startsWith('/api/app-proxy/ciyex-rcm') ? this._clinicalPatientId() : this.patientId;
+				const base = tab.apiPath.replace('{patientId}', pid);
 				return base + (base.includes('?') ? '&' : '?') + 'page=0&size=1';
 			}
 			if (this._isPatientScoped(tab)) {

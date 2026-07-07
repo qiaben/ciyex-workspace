@@ -10,6 +10,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICiyexRcmApiService } from '../rcm/rcmApiService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -91,6 +92,7 @@ export class FeeSheetEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
+		@ICiyexRcmApiService private readonly rcmApi: ICiyexRcmApiService,
 		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(FeeSheetEditor.ID, group, telemetryService, themeService, storageService);
@@ -550,7 +552,9 @@ export class FeeSheetEditor extends EditorPane {
 
 		const note = DOM.append(this.footerBar, DOM.$('span'));
 		note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		note.textContent = '"Send to Billing" posts charges to Payments and emails the patient.';
+		note.textContent = this.rcmApi.isAvailable()
+			? '"Send to Billing" posts charges to Payments and creates a draft claim in RCM.'
+			: '"Send to Billing" posts charges to Payments and emails the patient.';
 	}
 
 	private _footerButton(label: string, bg: string): HTMLButtonElement {
@@ -627,6 +631,75 @@ export class FeeSheetEditor extends EditorPane {
 			}
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Send to billing failed: ${e}` });
+		}
+		// RCM handoff (orgs with the ciyex-rcm marketplace app): push the charges
+		// into the revenue cycle and create a draft claim. Non-fatal by design —
+		// the native billing flow above must not regress when the RCM service is
+		// down or the org isn't subscribed.
+		if (this.rcmApi.isAvailable()) {
+			await this._pushToRcm();
+		}
+	}
+
+	/**
+	 * Mirror the fee sheet into ciyex-rcm: one ChargeEntry per procedure line
+	 * (CPT/HCPCS), each carrying the sheet's ICD-10 codes, then convert the
+	 * created charges into a single draft claim the biller works in the RCM
+	 * claim editor. Because fee sheets are stored locally in the app, the
+	 * pushed charges are the remote system of record — the local fee-sheet id
+	 * travels in `notes` for traceability.
+	 */
+	private async _pushToRcm(): Promise<void> {
+		const procedures = this.items.filter(it => it.type !== 'ICD10');
+		if (procedures.length === 0) { return; }
+		const icdCodes = this.items.filter(it => it.type === 'ICD10').map(it => it.code).join(',');
+		const today = new Date().toISOString().slice(0, 10);
+		try {
+			const chargeIds: string[] = [];
+			for (const it of procedures) {
+				const json = await this.rcmApi.fetchJson<{ data?: { id?: string } }>('/api/rcm/charges', {
+					method: 'POST',
+					body: JSON.stringify({
+						patientId: this.patientId && this.patientId !== '_' ? this.patientId : null,
+						cptCode: it.code,
+						icd10Codes: icdCodes || (it.justify || null),
+						modifier1: it.modifiers ? it.modifiers.split(/[,\s]+/)[0] : null,
+						modifier2: it.modifiers ? it.modifiers.split(/[,\s]+/)[1] || null : null,
+						description: it.description,
+						units: it.qty,
+						chargeAmount: it.price,
+						dateOfService: today,
+						notes: `Fee sheet ${this.feeSheetId} (Ciyex EHR)`,
+					}),
+				});
+				const id = (json?.data as { id?: string } | undefined)?.id;
+				if (id) { chargeIds.push(String(id)); }
+			}
+			if (chargeIds.length === 0) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'RCM: charges were not accepted — claim not created.' });
+				return;
+			}
+			const claimJson = await this.rcmApi.fetchJson<{ data?: { id?: string; claimNumber?: string } }>('/api/rcm/charges/convert-to-claim', {
+				method: 'POST',
+				body: JSON.stringify(chargeIds),
+			});
+			const claim = claimJson?.data;
+			if (claim?.id) {
+				this.notificationService.notify({
+					severity: Severity.Info,
+					message: `Draft claim ${claim.claimNumber || claim.id} created in RCM.`,
+					actions: {
+						primary: [{
+							id: 'ciyex.rcm.openCreatedClaim', label: 'Open Claim', tooltip: '', class: undefined, enabled: true,
+							run: () => this.commandService.executeCommand('ciyex.rcm.openClaim', String(claim.id), claim.claimNumber),
+						}],
+					},
+				});
+			} else {
+				this.notificationService.notify({ severity: Severity.Info, message: `RCM: ${chargeIds.length} charge(s) pushed; claim conversion pending.` });
+			}
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Warning, message: `RCM handoff failed (local billing unaffected): ${e instanceof Error ? e.message : e}` });
 		}
 	}
 

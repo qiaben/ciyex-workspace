@@ -36,6 +36,8 @@ import {
 	PatientSnapshotDemoEditorInput,
 	// Fee Sheet (encounter billing capture)
 	FeeSheetEditorInput,
+	// RCM (revenue cycle — gated on the ciyex-rcm marketplace install)
+	RcmDashboardEditorInput, RcmClaimEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -76,6 +78,8 @@ import { StaffTvBoardEditor, WaitingRoomEditor } from './tvDisplayEditor.js';
 import { PatientSnapshotEditor } from './patientSnapshotEditor.js';
 import { PatientSnapshotDemoEditor } from './patientSnapshotDemoEditor.js';
 import { FeeSheetEditor } from './feeSheetEditor.js';
+import { RcmDashboardEditor } from './rcmDashboardEditor.js';
+import { RcmClaimEditor } from './rcmClaimEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -118,6 +122,10 @@ reg.registerEditorPane(EditorPaneDescriptor.create(InventoryEditor, InventoryEdi
 reg.registerEditorPane(EditorPaneDescriptor.create(PaymentsEditor, PaymentsEditor.ID, localize('payments', "Payments")), [new SyncDescriptor(PaymentsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(ClaimsEditor, ClaimsEditor.ID, localize('claims', "Claims")), [new SyncDescriptor(ClaimsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(FeeSheetEditor, FeeSheetEditor.ID, localize('feeSheet', "Fee Sheet")), [new SyncDescriptor(FeeSheetEditorInput)]);
+
+// RCM editors — Billing (RCM) module, gated on the ciyex-rcm marketplace install
+reg.registerEditorPane(EditorPaneDescriptor.create(RcmDashboardEditor, RcmDashboardEditor.ID, localize('rcmDashboard', "Billing Dashboard (RCM)")), [new SyncDescriptor(RcmDashboardEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(RcmClaimEditor, RcmClaimEditor.ID, localize('rcmClaim', "RCM Claim")), [new SyncDescriptor(RcmClaimEditorInput)]);
 
 // Reports
 reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.ID, localize('report', "Report")), [new SyncDescriptor(ReportsEditorInput)]);

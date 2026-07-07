@@ -201,6 +201,49 @@ export class FeeSheetEditorInput extends EditorInput {
 	}
 }
 
+/**
+ * RCM billing dashboard (KPI cards, A/R aging, work queue summary). Backed by
+ * the ciyex-rcm microservice via the app-proxy; only reachable when the org
+ * has the ciyex-rcm marketplace app installed.
+ */
+export class RcmDashboardEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexRcmDashboard';
+	override get typeId(): string { return RcmDashboardEditorInput.ID; }
+
+	override getName(): string { return 'Billing Dashboard (RCM)'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('graph'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-rcm', path: '/dashboard' }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof RcmDashboardEditorInput;
+	}
+}
+
+/**
+ * RCM claim workup editor — one claim's header, service lines and the
+ * Validate / Scrub / Submit / Refresh Status actions against the ciyex-rcm
+ * claim lifecycle endpoints.
+ */
+export class RcmClaimEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexRcmClaim';
+	override get typeId(): string { return RcmClaimEditorInput.ID; }
+
+	constructor(
+		readonly claimId: string,
+		readonly claimLabel?: string,
+	) { super(); }
+
+	override getName(): string { return this.claimLabel ? `Claim ${this.claimLabel}` : 'RCM Claim'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('file-text'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-rcm', path: `/claim/${this.claimId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof RcmClaimEditorInput && this.claimId === other.claimId;
+	}
+}
+
 export class PatientSnapshotEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexPatientSnapshot';
 	override get typeId(): string { return PatientSnapshotEditorInput.ID; }

@@ -9,6 +9,7 @@ import { ICiyexPermissionService, CiyexPermissionService } from './ciyexPermissi
 import { ICiyexMenuService, CiyexMenuService } from './ciyexMenuService.js';
 import { ICdsHooksService, CdsHooksService } from './cdsHooksService.js';
 import { ICiyexInstallationsService, CiyexInstallationsService } from './ciyexInstallationsService.js';
+import { ICiyexRcmApiService, CiyexRcmApiService } from './rcm/rcmApiService.js';
 import { ICiyexPaymentService, CiyexPaymentService } from './ciyexPaymentService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
@@ -25,6 +26,10 @@ import './ciyexViewContainers.js';
 
 // Register EHR commands (openPatientChart, newPatient, newAppointment, openCalendar)
 import './ciyexCommands.js';
+
+// Register RCM billing commands (dashboard, claim workup, eligibility) — the
+// surfaces they open are gated on the org's ciyex-rcm marketplace install.
+import './rcm/rcmCommands.js';
 
 // Register patient search (Cmd+K)
 import './patientSearch.js';
@@ -52,6 +57,7 @@ registerSingleton(ICiyexPermissionService, CiyexPermissionService, Instantiation
 registerSingleton(ICiyexMenuService, CiyexMenuService, InstantiationType.Delayed);
 registerSingleton(ICdsHooksService, CdsHooksService, InstantiationType.Delayed);
 registerSingleton(ICiyexInstallationsService, CiyexInstallationsService, InstantiationType.Delayed);
+registerSingleton(ICiyexRcmApiService, CiyexRcmApiService, InstantiationType.Delayed);
 // Eager: payment gateway extensions activate on `onStartupFinished` and
 // call back into `ciyex.payment.registerGateway` very early. The registry
 // must be instantiated before the first such call lands.
