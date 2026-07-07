@@ -5511,6 +5511,19 @@ export class PatientChartEditor extends EditorPane {
 					}
 					continue;
 				}
+				// Catalog-sourced clinical names (CPT procedure / LOINC test
+				// descriptions) legitimately contain digits and symbols — e.g.
+				// "RADIOLOGIC EXAM CHEST 4+ VIEWS" auto-filled from the CPT search.
+				// A merged backend tab_field_config may still carry a letters-only
+				// validationPattern for these keys, which would reject the very value
+				// the code search filled in — so validate them here with the clinical
+				// pattern and OVERRIDE any stricter per-field pattern.
+				if (f.key === 'procedureName' || f.key === 'testName' || /^(procedure|test) ?name$/i.test(f.label || '')) {
+					if (v && !clinicalNamePattern.test(v)) {
+						invalid.push({ key: f.key, label: f.label, el, msg: `${/test/i.test(f.key) ? 'Test' : 'Procedure'} name may contain letters, numbers and basic punctuation` });
+					}
+					continue;
+				}
 				// Reject typed-but-invalid dates (e.g. 13/33/2000) — _buildDateInput
 				// flags these via dataset.invalid on the hidden ISO input.
 				if (f.type === 'date' && el.dataset.invalid === '1') {
@@ -6046,6 +6059,39 @@ export class PatientChartEditor extends EditorPane {
 				}
 			}
 
+			// Problems: a Resolved Date only makes sense once the problem is no
+			// longer Active — an Active problem with a (past) resolved date is
+			// contradictory (QA issue 2). Also keep the date order sane: the
+			// Resolved Date must not precede the Onset Date.
+			if (tab.key === 'problems') {
+				const statusVal = String(dialogInputs.get('clinicalStatus')?.value ?? dialogInputs.get('status')?.value ?? '').trim().toLowerCase();
+				const resolvedEl = dialogInputs.get('resolvedDate');
+				const resolvedVal = String(resolvedEl?.value ?? '').trim();
+				const onsetVal = String(dialogInputs.get('onsetDate')?.value ?? '').trim();
+				let probErr = '';
+				if (resolvedVal && statusVal === 'active') {
+					probErr = 'Resolved Date can only be set when the problem Status is not Active.';
+				} else if (resolvedVal && onsetVal && resolvedVal < onsetVal) {
+					probErr = 'Resolved Date cannot be earlier than the Onset Date.';
+				}
+				if (probErr) {
+					const cell = dialogCells.get('resolvedDate');
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = probErr;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+					const focusEl = (this._dateVisibleByKey.get('resolvedDate') ?? (resolvedEl as HTMLElement | undefined));
+					if (focusEl) {
+						focusEl.style.borderColor = '#ef4444';
+						focusEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
+					}
+					this.notificationService.warn(probErr);
+					return;
+				}
+			}
+
 			const isFhir = this._isFhirResourceTab(tab);
 			// FHIR endpoints take patientId from the URL path, not the body.
 			// apiPath endpoints (e.g. /api/cds/alerts) still need patientId in the body.
@@ -6216,6 +6262,25 @@ export class PatientChartEditor extends EditorPane {
 					if (!existingUrl) {
 						const uniq = `urn:uuid:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 						payload.url = uniq;
+					}
+					// The backend's patient-scoped DocumentReference search returns ONLY
+					// status=current documents (verified against api-dev: a doc POSTed
+					// with status "superseded" is created — 201, readable by id — but
+					// never listed, and the endpoint ignores a ?status= override). So a
+					// NEW document saved as Superseded/Entered-in-Error silently
+					// disappears from the Documents module and the dashboard widget (QA
+					// issue 3). A brand-new document is by definition the current one —
+					// coerce create-time status and tell the user.
+					const docStatus = String(payload.status ?? '').trim().toLowerCase();
+					if (docStatus && docStatus !== 'current') {
+						payload.status = 'current';
+						this.notificationService.info('New documents are saved with status "Current" — the server only lists current documents.');
+					}
+					// The by-patient search is also what links the row to this patient
+					// everywhere else (list + dashboard widget); carry the id in the
+					// body too so the linkage never depends on the URL path alone.
+					if (payload.patientId === undefined) {
+						payload.patientId = parseInt(this.patientId, 10) || this.patientId;
 					}
 				}
 				// Org-level FHIR resources (Facility / Location) skip the

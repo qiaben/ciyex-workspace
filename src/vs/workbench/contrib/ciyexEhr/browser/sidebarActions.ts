@@ -599,6 +599,15 @@ export interface IEditFieldDef {
 	/** For 'number' fields: the maximum accepted value (mirrors
 	 *  {@link FormFieldDef.maxValue}). Enforced on save. */
 	maxValue?: number;
+	/** Cross-field validation, run on save with this field's value and every
+	 *  field's current value (keyed by field key). Return an error message to
+	 *  block the save, or undefined to accept — e.g. Problems' "Resolved Date
+	 *  requires a non-Active status" rule. */
+	validate?: (value: string, all: Record<string, string>) => string | undefined;
+	/** Async validation, awaited on save after the synchronous checks pass —
+	 *  e.g. verifying a LOINC Code resolves to the entered Test Name. Keep it
+	 *  best-effort: resolve undefined when the lookup itself fails. */
+	validateAsync?: (value: string, all: Record<string, string>) => Promise<string | undefined>;
 	/** Regex source that each individual typed character must match. When set,
 	 *  keydown/paste/input guards keep invalid characters from ever landing in
 	 *  the field (mirrors {@link FormFieldDef.typingPattern}). */
@@ -1061,7 +1070,14 @@ export function withTypeaheadSearch(
 				})),
 				onSelectSearchResult: (item, all) => {
 					const code = item.details?.code || '';
-					if (code) { fillRelated(all, 'testCode', code); }
+					// Overwrite BOTH companion code keys (lab order `testCode`, lab
+					// result `loincCode`) so picking a test can't leave a stale,
+					// unrelated code behind (QA: LOINC Code / Test Name not validated
+					// against each other).
+					if (code) {
+						fillRelated(all, 'testCode', code);
+						fillRelated(all, 'loincCode', code);
+					}
 				},
 			};
 		}
@@ -1078,6 +1094,27 @@ export function withTypeaheadSearch(
 					// when the user changed the LOINC code a second time (QA).
 					const desc = item.details?.description || '';
 					if (desc) { fillRelated(all, 'testName', desc); }
+				},
+				// A LOINC code and a Test Name that don't describe the same test must
+				// not save together (QA: a lab result saved with LOINC 2345-7 /
+				// "Glucose" beside Test Name "CBC panel"). Resolve the code through
+				// the same LOINC search the pickers use and compare its description
+				// to the entered Test Name. Lookup failures (codes service down, org
+				// dataset missing) resolve undefined — best-effort, never a blocker.
+				validateAsync: async (v, all) => {
+					const code = v.trim();
+					const name = (all['testName'] ?? all['testDisplay'] ?? '').trim();
+					if (!code || !name) { return undefined; }
+					try {
+						const results = await fetchCodeSystem('LOINC', code);
+						const hit = results.find(r => String(r.details?.code || r.value || '').toLowerCase() === code.toLowerCase());
+						if (!hit) { return undefined; }
+						const desc = String(hit.details?.description || hit.description || '').trim();
+						if (desc && desc.toLowerCase() !== name.toLowerCase()) {
+							return `LOINC Code ${code} is "${desc}" — it does not match Test Name "${name}". Pick the test from the search so the two stay in sync.`;
+						}
+					} catch { /* lookup unavailable — accept */ }
+					return undefined;
 				},
 			};
 		}
@@ -1980,6 +2017,9 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 	saveBtn.addEventListener('click', async () => {
 		errorMsg.textContent = '';
 		const result: Record<string, string> = {};
+		// Snapshot of every field's current value for cross-field validators.
+		const allVals: Record<string, string> = {};
+		for (const f of opts.fields) { allVals[f.key] = inputs.get(f.key)?.value ?? ''; }
 		for (const f of opts.fields) {
 			const inputEl = inputs.get(f.key);
 			const v = inputEl?.value ?? '';
@@ -2066,7 +2106,19 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 				if (f.minValue !== undefined && n < f.minValue) { errorMsg.textContent = f.validationMessage || `${f.label} must be ${f.minValue} or greater`; return; }
 				if (f.maxValue !== undefined && n > f.maxValue) { errorMsg.textContent = f.validationMessage || `${f.label} must be ${f.maxValue} or less`; return; }
 			}
+			// Field-supplied cross-field rule (e.g. Resolved Date vs Status).
+			if (f.validate) {
+				const crossErr = f.validate(v, allVals);
+				if (crossErr) { errorMsg.textContent = crossErr; return; }
+			}
 			result[f.key] = v;
+		}
+		// Async validators (e.g. LOINC Code ↔ Test Name agreement) run after all
+		// synchronous checks pass, so we only pay the lookup for a valid form.
+		for (const f of opts.fields) {
+			if (!f.validateAsync) { continue; }
+			const asyncErr = await f.validateAsync(allVals[f.key] ?? '', allVals);
+			if (asyncErr) { errorMsg.textContent = asyncErr; return; }
 		}
 		// Generic start/end date-order guard (e.g. Care Plans) — the date input
 		// holds the ISO value, which sorts lexicographically, so a string compare
@@ -3070,6 +3122,9 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		saveBtn.addEventListener('click', async () => {
 			setError('');
 			const result: Record<string, string> = {};
+			// Snapshot of every field's current value for cross-field validators.
+			const allVals: Record<string, string> = {};
+			for (const f of opts.fields) { allVals[f.key] = inputs.get(f.key)?.value ?? ''; }
 			for (const f of opts.fields) {
 				const input = inputs.get(f.key);
 				const v = input?.value ?? '';
@@ -3142,7 +3197,19 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 					if (f.minValue !== undefined && n < f.minValue) { setError(f.validationMessage || `${f.label} must be ${f.minValue} or greater`); return; }
 					if (f.maxValue !== undefined && n > f.maxValue) { setError(f.validationMessage || `${f.label} must be ${f.maxValue} or less`); return; }
 				}
+				// Field-supplied cross-field rule (e.g. Resolved Date vs Status).
+				if (f.validate) {
+					const crossErr = f.validate(v, allVals);
+					if (crossErr) { setError(crossErr); return; }
+				}
 				result[f.key] = v;
+			}
+			// Async validators (e.g. LOINC Code ↔ Test Name agreement) run after
+			// all synchronous checks pass, so we only pay the lookup for a valid form.
+			for (const f of opts.fields) {
+				if (!f.validateAsync) { continue; }
+				const asyncErr = await f.validateAsync(allVals[f.key] ?? '', allVals);
+				if (asyncErr) { setError(asyncErr); return; }
 			}
 			// Generic start/end date-order guard (e.g. Care Plans) — ISO values in
 			// the date inputs sort lexicographically.

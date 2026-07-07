@@ -328,6 +328,16 @@ export interface ClinicalEditorConfig {
 	 */
 	statusMatchers?: Record<string, (item: Record<string, unknown>) => boolean>;
 	/**
+	 * Client-side stats derivation: computes the summary-card values from the
+	 * loaded rows (after {@link enrichItems}), so the cards always agree with
+	 * what the list/filters actually show. Receives the loaded items and the
+	 * server stats (from {@link statsPath}, or `{}` when unset) and returns the
+	 * stats to render. Fixes count/filter mismatches where the server counts a
+	 * different population than the client-side filters display (Recall Overdue /
+	 * Completed This Month, Prescriptions status cards, CDS rule cards).
+	 */
+	computeStats?: (items: Record<string, unknown>[], serverStats: Record<string, number>) => Record<string, number>;
+	/**
 	 * When true, the toolbar renders the status filter as a dropdown (using
 	 * `statusTabs` as the option list) instead of as a row of pill buttons.
 	 * Matches the web app's Labs page where Status / Priority / Result are
@@ -622,6 +632,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	protected contentEl!: HTMLElement;
 	private items: Record<string, unknown>[] = [];
 	private stats: Record<string, number> = {};
+	/** Raw stats as returned by {@link ClinicalEditorConfig.statsPath} — kept
+	 * separate so a late-arriving server response can't clobber values already
+	 * derived by {@link ClinicalEditorConfig.computeStats}. */
+	private serverStats: Record<string, number> = {};
 	private searchValue = '';
 	private statusFilter = '';
 	private priorityFilter = '';
@@ -692,8 +706,23 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	private async _loadStats(): Promise<void> {
 		try {
 			const res = await this.apiService.fetch(this.config.statsPath!);
-			if (res.ok) { this.stats = ((await res.json())?.data || {}) as Record<string, number>; }
+			if (res.ok) {
+				this.serverStats = ((await res.json())?.data || {}) as Record<string, number>;
+				this._applyStats();
+			}
 		} catch { /* */ }
+	}
+
+	/** Refresh {@link stats} from the server values, letting the config derive
+	 * client-side counts from the loaded rows when {@link ClinicalEditorConfig.computeStats}
+	 * is set. Safe against load-order races: called from both the stats fetch and
+	 * the data load, whichever finishes last wins with the same result. */
+	private _applyStats(): void {
+		try {
+			this.stats = this.config.computeStats
+				? this.config.computeStats(this.items, this.serverStats)
+				: this.serverStats;
+		} catch { this.stats = this.serverStats; }
 	}
 
 	private async _loadData(): Promise<void> {
@@ -706,6 +735,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				if (!built) {
 					this.items = [];
 					this.totalPages = 1;
+					this._applyStats();
 					this._render();
 					return;
 				}
@@ -734,6 +764,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					this.items = [];
 					this.totalPages = 1;
 				}
+				this._applyStats();
 				this._render();
 				return;
 			}
@@ -786,6 +817,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					if (Array.isArray(enriched)) { this.items = enriched; }
 				} catch { /* enrichment is best-effort */ }
 			}
+			this._applyStats();
 			this._render();
 		} catch {
 			this.items = [];
@@ -801,6 +833,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		this.searchValue = '';
 		this.priorityFilter = '';
 		this.additionalFilterValues.clear();
+		// Drop the previous view's stats: multi-view editors (Payments) swap the
+		// whole config on a view switch, and without this the Transactions cards
+		// (Month Collection / Month Count / …) stayed rendered on the Payment
+		// Plans and Ledger tabs where they mean nothing and filter nothing.
+		this.stats = {};
+		this.serverStats = {};
 		if (this.config.statsPath) { this._loadStats(); }
 		this._loadData();
 	}

@@ -492,6 +492,21 @@ export class PatientSnapshotEditor extends EditorPane {
 					dateField.validationMessage = `${dateField.label} must be within the current year`;
 				}
 			}
+			// A Resolved Date on a problem that is still Active is contradictory —
+			// the form accepted a (past) resolved date without touching the status
+			// (QA issue 2). Also keep the order sane vs the Onset Date. Mirrors the
+			// chart editor drawer's problems cross-field block.
+			const resolved = fields.find(f => f.key === 'resolvedDate');
+			if (resolved) {
+				resolved.validate = (v, all) => {
+					if (!v.trim()) { return undefined; }
+					const status = String(all['clinicalStatus'] ?? all['status'] ?? '').trim().toLowerCase();
+					if (status === 'active') { return 'Resolved Date can only be set when the problem Status is not Active.'; }
+					const onset = (all['onsetDate'] ?? '').trim();
+					if (onset && v.trim() < onset) { return 'Resolved Date cannot be earlier than the Onset Date.'; }
+					return undefined;
+				};
+			}
 		}
 		return withTypeaheadSearch(fields, this.apiService);
 	}
@@ -1122,11 +1137,40 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ status: 400, headers: { 'Content-Type': 'application/json' } }
 			);
 		}
-		return this.apiService.fetch('/api/payments/collect', {
+		const res = await this.apiService.fetch('/api/payments/collect', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
 		});
+		// The /collect POST only accepts card methods with a saved card on file,
+		// so `_buildPaymentDto(…, downgradeCards)` records them as 'other' — which
+		// made a Debit/Credit Card payment show METHOD "Other" in the Transactions
+		// list forever (QA issue 12). The transactions PUT accepts card methods
+		// verbatim, so immediately write the REAL chosen method back onto the
+		// just-created transaction. Best-effort: a failed PUT leaves the recorded
+		// payment intact ('other', the old behavior).
+		const rawMethod = String(values['paymentMethod'] ?? values['paymentMethodType'] ?? values['method'] ?? '').trim();
+		if (res.ok && (rawMethod === 'credit_card' || rawMethod === 'debit_card')) {
+			try {
+				// The response body is consumed here — hand callers a re-wrapped copy.
+				const bodyText = await res.text();
+				let createdId = '';
+				try {
+					const j = JSON.parse(bodyText);
+					const rec = (j?.data ?? j) as Record<string, unknown> | null;
+					createdId = String(rec?.['id'] ?? rec?.['transactionId'] ?? '').trim();
+				} catch { /* non-JSON body */ }
+				if (/^\d+$/.test(createdId)) {
+					await this.apiService.fetch(`/api/payments/transactions/${createdId}`, {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ ...payload, id: Number(createdId), paymentMethodType: rawMethod }),
+					});
+				}
+				return new Response(bodyText, { status: res.status, headers: { 'Content-Type': 'application/json' } });
+			} catch { /* fall through with the original (consumed) response */ }
+		}
+		return res;
 	}
 
 	/**
@@ -1228,6 +1272,71 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * canonical record; merge it over the list row so every field pre-fills. Falls
 	 * back to the list row if the id is non-numeric or the fetch fails.
 	 */
+	/** id → display-name map for the org's providers, built lazily from the same
+	 * two endpoints the provider typeahead queries. Used to show the prescriber's
+	 * NAME (not the raw practitioner id) when editing a medication. */
+	private _providerNamesById: Map<string, string> | null = null;
+
+	private async _lookupProviderName(id: string): Promise<string> {
+		if (!this._providerNamesById) {
+			const map = new Map<string, string>();
+			for (const url of ['/api/providers?page=0&size=200', '/api/fhir-resource/providers?page=0&size=200']) {
+				try {
+					const res = await this.apiService.fetch(url);
+					if (!res.ok) { continue; }
+					const data = await res.json();
+					const list = (data?.data?.content || data?.content || data?.data || []) as Array<Record<string, unknown>>;
+					for (const p of (Array.isArray(list) ? list : [])) {
+						const ident = p['identification'] as Record<string, unknown> | undefined;
+						const name = String(p['name'] || p['fullName'] || `${String(ident?.['firstName'] ?? p['firstName'] ?? '')} ${String(ident?.['lastName'] ?? p['lastName'] ?? '')}`.trim()).trim();
+						if (!name) { continue; }
+						for (const key of ['id', 'providerId', 'practitionerId', 'fhirId']) {
+							const pid = p[key];
+							if (pid !== undefined && pid !== null && String(pid).trim() && !map.has(String(pid))) {
+								map.set(String(pid), name);
+							}
+						}
+					}
+				} catch { /* endpoint unavailable — try the next */ }
+			}
+			this._providerNamesById = map;
+		}
+		return this._providerNamesById.get(id) ?? '';
+	}
+
+	/**
+	 * The stored medication carries the prescriber as a raw practitioner
+	 * reference ("Practitioner/13889" or "13889"), which the Edit Medication
+	 * form displayed verbatim (QA: "prescriber field is showing the provider
+	 * id"). Resolve it to the provider's display name for the form, remembering
+	 * the original reference so an untouched field saves back the reference —
+	 * not the display string.
+	 */
+	private _medPrescriber: { ref: string; display: string } | undefined;
+
+	private async _resolveMedicationPrescriber(row: Record<string, unknown>): Promise<Record<string, unknown>> {
+		this._medPrescriber = undefined;
+		const rawRef = String(row['prescribingDoctor'] ?? '').trim();
+		const id = rawRef.replace(/^Practitioner\//i, '').trim();
+		// Nothing stored, or already a human-readable name (has whitespace).
+		if (!id || /\s/.test(id)) { return row; }
+		const fromRow = String(row['prescriberName'] ?? row['prescribingDoctorDisplay'] ?? row['prescriberDisplay'] ?? '').trim();
+		const display = fromRow || await this._lookupProviderName(id);
+		if (!display) { return row; }
+		this._medPrescriber = { ref: rawRef, display };
+		return { ...row, prescribingDoctor: display };
+	}
+
+	/** Save-side counterpart of {@link _resolveMedicationPrescriber}: if the
+	 * Prescriber input still holds the substituted display name, put the stored
+	 * practitioner reference back on the payload. */
+	private _restoreMedPrescriber(payload: Record<string, unknown>, next: Record<string, unknown>): void {
+		const sub = this._medPrescriber;
+		if (sub && String(next['prescribingDoctor'] ?? '').trim() === sub.display) {
+			payload['prescribingDoctor'] = sub.ref;
+		}
+	}
+
 	private async _loadFullPayment(item: Record<string, unknown>): Promise<Record<string, unknown>> {
 		const id = String(item.id ?? item.transactionId ?? '').trim();
 		if (!/^\d+$/.test(id)) { return item; }
@@ -1363,7 +1472,11 @@ export class PatientSnapshotEditor extends EditorPane {
 				? (row: Record<string, unknown>) => this._loadEncounterForEdit(row)
 				: entity === 'payment'
 					? (row: Record<string, unknown>) => this._loadFullPayment(row)
-					: undefined,
+					// Medications: show the prescriber's NAME instead of the stored
+					// practitioner id (QA: "prescriber field is showing the provider id").
+					: entity === 'medications'
+						? (row: Record<string, unknown>) => this._resolveMedicationPrescriber(row)
+						: undefined,
 			saveRecord: async (next, existingId) => {
 				// Encounters need a two-step save (mirrors EncounterFormEditor):
 				//   1. POST /api/{patientId}/encounters to mint a real Encounter id
@@ -1412,11 +1525,21 @@ export class PatientSnapshotEditor extends EditorPane {
 					payload.patientId = this._currentPatientId;
 					if (existingId) { payload.id = existingId; }
 				}
+				// An untouched Prescriber (showing the resolved display name) saves
+				// back the stored practitioner reference, not the name string.
+				if (entity === 'medications') { this._restoreMedPrescriber(payload, next); }
 				// Backend `vitals` POST without recordedAt is rejected by the
 				// FhirPathMapper validation — chart editor injects this exact
 				// fallback, so mirror it here.
 				if (entity === 'vitals' && method === 'POST' && !payload.recordedAt) {
 					payload.recordedAt = new Date().toISOString();
+				}
+				// The backend's DocumentReference search lists ONLY status=current
+				// docs — a new document saved as Superseded/Entered-in-Error would
+				// silently vanish from every list (QA issue 3; see the chart editor's
+				// documents save block for the api-dev verification).
+				if (entity === 'documents' && method === 'POST' && payload.status && String(payload.status).toLowerCase() !== 'current') {
+					payload.status = 'current';
 				}
 				if ((!reg.nonFhir || PatientSnapshotEditor._isLabEntity(entity)) && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
@@ -1496,7 +1619,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		// and vitals all blank).
 		const initialItem = entity === 'encounters' ? await this._loadEncounterForEdit(item)
 			: entity === 'payment' ? this._normalizePaymentForEdit(await this._loadFullPayment(item))
-				: item;
+				// Medications: show the prescriber's NAME instead of the stored
+				// practitioner id (QA: "prescriber field is showing the provider id").
+				: entity === 'medications' ? await this._resolveMedicationPrescriber(item)
+					: item;
 		openListAndFormDialog({
 			title: reg.title,
 			themeAnchor: this.root,
@@ -1513,7 +1639,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			// the initial edit does.
 			loadEditItem: entity === 'encounters'
 				? (row: Record<string, unknown>) => this._loadEncounterForEdit(row)
-				: undefined,
+				: entity === 'medications'
+					? (row: Record<string, unknown>) => this._resolveMedicationPrescriber(row)
+					: undefined,
 			saveRecord: async (next, existingId) => {
 				if (entity === 'encounters') {
 					const res = await this._saveEncounterComposition(next, existingId);
@@ -1555,6 +1683,9 @@ export class PatientSnapshotEditor extends EditorPane {
 					const payId = existingId ?? item.id ?? item.transactionId;
 					if (payId) { payload.id = payId; }
 				}
+				// An untouched Prescriber (showing the resolved display name) saves
+				// back the stored practitioner reference, not the name string.
+				if (entity === 'medications') { this._restoreMedPrescriber(payload, next); }
 				if ((!reg.nonFhir || PatientSnapshotEditor._isLabEntity(entity)) && entity !== 'demographics') {
 					payload.patientId = this._currentPatientId;
 				}

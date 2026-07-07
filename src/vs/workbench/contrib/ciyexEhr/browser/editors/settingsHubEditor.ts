@@ -2235,6 +2235,14 @@ export class SettingsHubEditor extends EditorPane {
 				: `${field.label} must contain only letters, numbers, hyphens, or periods`;
 		}
 
+		// Payer ID — the carrier's clearinghouse identifier (e.g. "60054",
+		// "CIGNA1"). Strictly alphanumeric (hyphens allowed): the Insurance form
+		// accepted values like "4151@$%$fkgngkdfh" with no validation error.
+		if (seg === 'payerid' || looks(/payer ?id/)) {
+			return /^[A-Za-z0-9-]{2,20}$/.test(value.trim())
+				? undefined
+				: `${field.label} must be 2-20 letters, numbers or hyphens — no special characters`;
+		}
 		// Website / URL — by input type, key, segment or label (Insurance, Facility,
 		// Practice and Referral forms all carry a Website field). An uploaded image
 		// stored on a url-typed field arrives as a `data:` URL — skip those (they are

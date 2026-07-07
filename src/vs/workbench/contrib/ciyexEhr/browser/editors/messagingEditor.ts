@@ -1559,6 +1559,15 @@ export class MessagingEditor extends EditorPane {
 			const pn = (p.name || '').trim();
 			if (pn) { nameSet.add(pn); }
 		}
+		// The @-mention popup offers the whole ORG DIRECTORY (staff + patients),
+		// not just channel members — so someone mentioned from the directory who
+		// never joined or posted (e.g. a patient) was missing from the known-name
+		// set and their mention stayed clipped to its first word forever (QA
+		// issue: "@Hardik Pandya" tagged only "@Hardik"). Include the directory.
+		for (const m of this.orgDirectory) {
+			const dn = (m.displayName || '').trim();
+			if (dn) { nameSet.add(dn); }
+		}
 		const memberNames = Array.from(nameSet).sort((a, b) => b.length - a.length);
 		const pattern = /@(\w+)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|_(.+?)_|`(.+?)`/g;
 		let lastIndex = 0;
@@ -1771,6 +1780,11 @@ export class MessagingEditor extends EditorPane {
 		this.orgDirectory = [...s, ...p];
 		// If the user already has the @-popup open, fold the new names in live.
 		if (this.mentionState) { this._updateMentionAutocomplete(); }
+		// Re-parse @mentions in already-rendered messages now that the directory
+		// names are known, so a mention of a non-member (e.g. a patient) extends
+		// past its first word — mirrors the member-roster re-render above.
+		// eslint-disable-next-line no-restricted-syntax
+		if (this.messageListEl?.querySelector('[data-msg-id]')) { this._renderMessages(); }
 	}
 
 	/**

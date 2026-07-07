@@ -464,9 +464,38 @@ export class PrescriptionsEditor extends ClinicalListEditorBase {
 		},
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'On Hold', value: 'on_hold' },
+			// The form can set a prescription to Stopped, so the list must offer the
+			// matching filter — Stopped rows were visible in All with no way to
+			// filter down to them (QA issue 5).
+			{ label: 'Stopped', value: 'stopped' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Discontinued', value: 'discontinued' },
 			{ label: 'Cancelled', value: 'cancelled' },
 		],
+		// The server /api/prescriptions/stats counts a different population than
+		// the list shows (e.g. "0 On Hold" while two On-Hold rows are visible —
+		// QA issue 4). Derive the cards from the loaded rows with the SAME
+		// normalization the status filter uses, so cards, tabs and rows always
+		// agree — and clicking a card selects the matching filter.
+		computeStats: (items) => {
+			const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/[-_\s]/g, '');
+			const count = (s: string) => items.filter(i => norm(i['status']) === s).length;
+			return {
+				active: count('active'),
+				onHold: count('onhold'),
+				stopped: count('stopped'),
+				completed: count('completed'),
+				discontinued: count('discontinued'),
+				cancelled: count('cancelled'),
+			};
+		},
+		statsFilterMap: {
+			active: 'active',
+			onHold: 'on_hold',
+			stopped: 'stopped',
+			completed: 'completed',
+			discontinued: 'discontinued',
+			cancelled: 'cancelled',
+		},
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
 		],
@@ -1783,6 +1812,17 @@ export class CdsEditor extends ClinicalListEditorBase {
 			{ label: 'Active', value: 'active' },
 			{ label: 'Inactive', value: 'inactive' },
 		],
+		// The Status COLUMN renders from `isActive` (Active when true, Inactive
+		// otherwise) but the status filter compared the raw `status` STRING. A
+		// merged patient-alert row whose status is e.g. 'resolved'/'expired'
+		// displays as "Inactive" yet matched neither filter — so the Inactive tab
+		// showed "No records found" while Inactive rows sat in the All view (QA
+		// issue 9). Match the filters off the same isActive/status logic the
+		// column displays.
+		statusMatchers: {
+			active: (item) => item['isActive'] === true || String(item['status'] ?? '').toLowerCase() === 'active',
+			inactive: (item) => !(item['isActive'] === true || String(item['status'] ?? '').toLowerCase() === 'active'),
+		},
 		additionalFilters: [
 			{
 				key: 'ruleType', placeholder: 'All Types',
@@ -1800,9 +1840,15 @@ export class CdsEditor extends ClinicalListEditorBase {
 			},
 			{
 				key: 'severity', placeholder: 'All Severity',
+				// CDS rules use info/warning/critical, but merged patient-alert rows
+				// carry the chart's low/medium/high severities — the dropdown must
+				// offer every severity the table can display (QA issue 8).
 				options: [
 					{ label: 'Info', value: 'info' },
 					{ label: 'Warning', value: 'warning' },
+					{ label: 'Low', value: 'low' },
+					{ label: 'Medium', value: 'medium' },
+					{ label: 'High', value: 'high' },
 					{ label: 'Critical', value: 'critical' },
 				],
 			},
@@ -1821,7 +1867,25 @@ export class CdsEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
-		statsFilterMap: { active: 'active', inactive: 'inactive', critical: 'critical' },
+		// Only rule-population cards map to a status filter; the rest are
+		// info-only aggregates. (The old map keyed nonexistent stats keys, so no
+		// card was ever clickable.)
+		statsFilterMap: { activeRules: 'active', totalRules: '' },
+		// /api/cds/stats only counts the CDS rules store, but the list also merges
+		// the patient-chart alerts (enrichItems) — so the cards said "2 Total
+		// Rules / 0 Critical" while the table showed 10 rows with a Critical one
+		// (QA issue 10). Recount the rule/severity cards from the merged rows;
+		// keep the genuinely server-side aggregates (override rate, alerts fired
+		// today / last 7 days) from the stats endpoint.
+		computeStats: (items, serverStats) => {
+			const isActive = (i: Record<string, unknown>) => i['isActive'] === true || String(i['status'] ?? '').toLowerCase() === 'active';
+			return {
+				...serverStats,
+				activeRules: items.filter(isActive).length,
+				totalRules: items.length,
+				criticalAlerts: items.filter(i => String(i['severity'] ?? '').toLowerCase() === 'critical').length,
+			};
+		},
 		formFields: [
 			// Row 1: full-width name
 			{ key: 'name', label: 'Rule Name', type: 'text', required: true, placeholder: 'e.g., Diabetes A1C Screening', aliases: ['ruleName'], width: 'span 2' },
@@ -3071,6 +3135,22 @@ export const RECALL_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'notes', label: 'Notes', type: 'textarea' },
 ];
 
+/** A recall counts as Overdue when it is past its due date and neither
+ * completed nor cancelled — the same rule the backend's countOverdue uses.
+ * Shared by the Overdue status filter AND the Overdue KPI card computation so
+ * the card count always equals the rows the filter shows. */
+function isRecallOverdue(item: Record<string, unknown>): boolean {
+	const raw = String(item.dueDate ?? '').split('T')[0];
+	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+	if (!m) { return false; }
+	const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+	due.setHours(0, 0, 0, 0);
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	const status = String(item.status ?? '').toUpperCase();
+	return due < today && status !== 'COMPLETED' && status !== 'CANCELLED';
+}
+
 export class RecallEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexRecall';
 	protected readonly config: ClinicalEditorConfig = {
@@ -3098,17 +3178,36 @@ export class RecallEditor extends ClinicalListEditorBase {
 		// than the handful literally stamped status='OVERDUE'. Match the same rule so
 		// the filtered rows equal the card's count.
 		statusMatchers: {
-			OVERDUE: (item: Record<string, unknown>): boolean => {
-				const raw = String(item.dueDate ?? '').split('T')[0];
-				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-				if (!m) { return false; }
-				const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-				due.setHours(0, 0, 0, 0);
-				const today = new Date();
-				today.setHours(0, 0, 0, 0);
-				const status = String(item.status ?? '').toUpperCase();
-				return due < today && status !== 'COMPLETED' && status !== 'CANCELLED';
-			},
+			OVERDUE: isRecallOverdue,
+		},
+		// /api/recalls/kpis counts a different population than the client-side
+		// filters show ("9 Overdue" with an empty Overdue list; "0 Completed This
+		// Month" while a completed recall sits under the Completed filter — QA
+		// issues 6 & 7). Recompute every KPI card from the loaded rows with the
+		// SAME predicates the filters use so cards and rows always agree.
+		computeStats: (items) => {
+			const byStatus = (s: string) => items.filter(i => String(i.status ?? '').toUpperCase() === s).length;
+			// "Completed This Month": completed rows whose completion timestamp
+			// (first date-ish field available, falling back to the due date) is in
+			// the current calendar month. A completed row with no usable date still
+			// counts — better a card that matches the visible rows than a 0 beside
+			// a populated Completed filter.
+			const now = new Date();
+			const completedThisMonth = items.filter(i => {
+				if (String(i.status ?? '').toUpperCase() !== 'COMPLETED') { return false; }
+				const raw = String(i.completedAt ?? i.completedDate ?? i.completionDate ?? i.updatedAt ?? i.lastModified ?? i.modifiedAt ?? i.lastContactDate ?? i.dueDate ?? '');
+				const m = /^(\d{4})-(\d{2})/.exec(raw.trim());
+				if (!m) { return true; }
+				return Number(m[1]) === now.getFullYear() && Number(m[2]) === now.getMonth() + 1;
+			}).length;
+			return {
+				overdue: items.filter(isRecallOverdue).length,
+				completedThisMonth,
+				pendingTotal: byStatus('PENDING'),
+				contactedTotal: byStatus('CONTACTED'),
+				scheduledTotal: byStatus('SCHEDULED'),
+				cancelledTotal: byStatus('CANCELLED'),
+			};
 		},
 		searchPlaceholder: 'Search by patient name...',
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
@@ -5401,6 +5500,28 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['patientName', 'planName', 'status', 'id'],
 		editable: true,
 		refetchOnEdit: true,
+		// Plan-level summary cards derived from the loaded plans. (This view used
+		// to show the TRANSACTIONS stats left over from the previous tab — "6500
+		// Month Collection" / "2 Month Count" — which described transactions, not
+		// plans, and clicking them filtered the plan list down to nothing; QA
+		// issue 13.)
+		computeStats: (items) => {
+			const byStatus = (s: string) => items.filter(i => String(i['status'] ?? '').toLowerCase() === s).length;
+			return {
+				totalPlans: items.length,
+				active: byStatus('active'),
+				completed: byStatus('completed'),
+				defaulted: byStatus('defaulted'),
+				cancelled: byStatus('cancelled'),
+			};
+		},
+		statsFilterMap: {
+			totalPlans: '',
+			active: 'active',
+			completed: 'completed',
+			defaulted: 'defaulted',
+			cancelled: 'cancelled',
+		},
 		columns: [
 			{ key: 'patientName', label: 'Patient' },
 			{ key: 'planName', label: 'Plan Name' },
