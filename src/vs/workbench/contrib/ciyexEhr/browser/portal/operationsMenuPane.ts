@@ -20,13 +20,17 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, loadFieldOptions, formFieldsToEditFields, resolveFieldDefault, parseSavedRecord } from '../sidebarActions.js';
 import { RECALL_FORM_FIELDS, MEDICAL_CODES_FORM_FIELDS, PAYMENTS_FORM_FIELDS, INVENTORY_FORM_FIELDS, setMedicalCodeActiveOverride, applyMedicalCodeActiveOverrides } from '../editors/clinicalEditors.js';
+import { generate837P, downloadEdi, Edi837Claim, Edi837ServiceLine } from '../billing/edi837.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
 type RowActionKind =
 	| { kind: 'edit' }
 	| { kind: 'delete'; path: (r: DataRow) => string; confirm?: string }
-	| { kind: 'method'; method: 'PUT' | 'POST'; path: (r: DataRow) => string; body?: Record<string, unknown>; confirm?: string };
+	| { kind: 'method'; method: 'PUT' | 'POST'; path: (r: DataRow) => string; body?: Record<string, unknown>; confirm?: string }
+	// Basic claims tier: export an existing native claim as an 837P X12 file to
+	// submit through the practice's own clearinghouse (no ciyex-rcm needed).
+	| { kind: 'download837' };
 
 interface RowAction { symbol: string; label: string; color: string; action: RowActionKind }
 
@@ -240,6 +244,8 @@ const ITEMS: OperationsItem[] = [
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
+			// allow-any-unicode-next-line
+			{ symbol: '\u{2B07}', label: 'Download 837P (X12)', color: '#5b21b6', action: { kind: 'download837' } },
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F4CB}', label: 'Update Status', color: '#3b82f6', action: { kind: 'method', method: 'PUT', path: r => `/api/all-claims/${r.id}/status`, body: { status: 'submitted' } } },
 			// allow-any-unicode-next-line
@@ -546,6 +552,7 @@ export class OperationsMenuPane extends ViewPane {
 	private async _executeAction(item: OperationsItem, row: DataRow, a: RowAction): Promise<void> {
 		const k = a.action;
 		if (k.kind === 'edit') { await this._openEditDialog(item, row); return; }
+		if (k.kind === 'download837') { await this._downloadClaim837(row); return; }
 		if (k.kind === 'delete') {
 			if (k.confirm) {
 				const r = await this.dialogService.confirm({ message: k.confirm, type: 'warning', primaryButton: 'Delete' });
@@ -584,6 +591,82 @@ export class OperationsMenuPane extends ViewPane {
 			}
 			// Reconcile in the background so the menu stays responsive.
 			void this._loadItemData(item);
+		}
+	}
+
+	/**
+	 * Basic claims tier: export a native claim (/api/all-claims row) as an 837P
+	 * X12 file to submit through the practice's own clearinghouse — no ciyex-rcm
+	 * subscription. Service lines come from /api/all-claims/{id}/line-details;
+	 * site identifiers (submitter/receiver/billing NPI + tax id) from the
+	 * ciyex.billing.* settings.
+	 */
+	private async _downloadClaim837(row: DataRow): Promise<void> {
+		const claimId = String(row.id ?? row.fhirId ?? '');
+		if (!claimId) { this.notificationService.notify({ severity: Severity.Warning, message: 'This claim has no id to export.' }); return; }
+
+		let lineRows: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch(`/api/all-claims/${encodeURIComponent(claimId)}/line-details`);
+			if (res.ok) {
+				const j = await res.json();
+				lineRows = (j?.data ?? (Array.isArray(j) ? j : [])) as Array<Record<string, unknown>>;
+			}
+		} catch { /* fall through — a claim with no lines still exports a shell */ }
+		if (lineRows.length === 0) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'This claim has no service lines to export.' });
+			return;
+		}
+
+		const cfg = <T,>(key: string, fallback: T): T => {
+			const v = this.configurationService.getValue<T>(key);
+			return (v === undefined || v === null || (v as unknown) === '') ? fallback : v;
+		};
+		const practiceName = cfg('ciyex.billing.billingName', '') || cfg('ciyex.practice.name', '') || 'Practice';
+		const submitterId = cfg('ciyex.billing.submitterId', '');
+		const receiverId = cfg('ciyex.billing.receiverId', '');
+		const billingNpi = cfg('ciyex.billing.billingNpi', '');
+		const billingTaxId = cfg('ciyex.billing.billingTaxId', '');
+		const missing = [!submitterId && 'Submitter ID', !receiverId && 'Receiver ID', !billingNpi && 'Billing NPI', !billingTaxId && 'Billing Tax ID'].filter(Boolean);
+		if (missing.length) {
+			this.notificationService.notify({ severity: Severity.Warning, message: `837P generated with blanks for: ${missing.join(', ')}. Set these under Settings → Ciyex: Billing / EDI.` });
+		}
+
+		const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+		const lines: Edi837ServiceLine[] = lineRows.map(l => ({
+			cptCode: String(l.code ?? l.cptCode ?? ''),
+			chargeAmount: num(l.totalSubmittedAmount ?? l.amount ?? l.chargeAmount),
+			units: 1,
+			dateOfService: (l.dos as string) || (l.dateOfService as string) || undefined,
+			diagnosisPointers: [1],
+		})).filter(l => l.cptCode);
+		const total = lines.reduce((s, l) => s + l.chargeAmount, 0);
+		const nameParts = String(row.patientName ?? '').split(/\s+/).filter(Boolean);
+		const diag = row.diagnosisCode ? [String(row.diagnosisCode)] : [];
+		const today = new Date();
+
+		const claim: Edi837Claim = {
+			submitterId, submitterName: cfg('ciyex.billing.submitterName', '') || practiceName,
+			receiverId, receiverName: cfg('ciyex.billing.receiverName', '') || 'CLEARINGHOUSE',
+			usageIndicator: cfg('ciyex.billing.productionMode', false) ? 'P' : 'T',
+			billingName: practiceName, billingNpi, billingTaxId,
+			billingAddress1: cfg('ciyex.billing.billingAddress1', ''), billingCity: cfg('ciyex.billing.billingCity', ''),
+			billingState: cfg('ciyex.billing.billingState', ''), billingZip: cfg('ciyex.billing.billingZip', ''),
+			patientFirstName: nameParts[0] || '', patientLastName: nameParts.slice(1).join(' ') || nameParts[0] || 'Patient',
+			subscriberId: String(row.policyNumber ?? row.patientId ?? claimId),
+			payerName: String(row.payerName ?? 'UNKNOWN PAYER'),
+			claimNumber: String(row.claimNumber ?? claimId),
+			totalCharge: total, placeOfService: '11',
+			dateOfService: (lines[0]?.dateOfService) || today.toISOString().slice(0, 10),
+			diagnoses: diag, lines,
+		};
+
+		try {
+			const edi = generate837P(claim, today);
+			downloadEdi(DOM.getWindow(this.container), `claim-${claim.claimNumber}-837P.txt`, edi);
+			this.notificationService.notify({ severity: Severity.Info, message: `837P file downloaded for claim ${claim.claimNumber}. Upload it to your clearinghouse to submit.` });
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Could not generate the 837P file: ${e instanceof Error ? e.message : e}` });
 		}
 	}
 

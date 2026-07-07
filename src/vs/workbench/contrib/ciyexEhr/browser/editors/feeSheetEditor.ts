@@ -11,7 +11,9 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexRcmApiService } from '../rcm/rcmApiService.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { generate837P, downloadEdi, Edi837Claim, Edi837ServiceLine } from '../billing/edi837.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -93,6 +95,7 @@ export class FeeSheetEditor extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexRcmApiService private readonly rcmApi: ICiyexRcmApiService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(FeeSheetEditor.ID, group, telemetryService, themeService, storageService);
@@ -547,6 +550,16 @@ export class FeeSheetEditor extends EditorPane {
 			billBtn.disabled = false;
 		});
 
+		// Basic claims tier (every practice, no ciyex-rcm subscription needed):
+		// export this fee sheet as an 837P X12 file to submit through your own
+		// clearinghouse.
+		const ediBtn = this._footerButton('\u{2B07} Download 837P (X12)', '#5b21b6');
+		ediBtn.addEventListener('click', async () => {
+			ediBtn.disabled = true;
+			await this._downloadEdi837();
+			ediBtn.disabled = false;
+		});
+
 		const spacer = DOM.append(this.footerBar, DOM.$('div'));
 		spacer.style.flex = '1';
 
@@ -701,6 +714,148 @@ export class FeeSheetEditor extends EditorPane {
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Warning, message: `RCM handoff failed (local billing unaffected): ${e instanceof Error ? e.message : e}` });
 		}
+	}
+
+	/**
+	 * Basic claims tier: build an 837P X12 file from this fee sheet and download
+	 * it so the practice can submit through its OWN clearinghouse — no ciyex-rcm
+	 * subscription required. Diagnoses come from the sheet's ICD-10 lines and
+	 * each procedure line points at every diagnosis (a safe default the biller
+	 * can refine in the clearinghouse). Patient demographics + insurance are
+	 * pulled from the EHR; site identifiers (submitter/receiver/billing NPI +
+	 * tax id) come from the ciyex.billing.* settings.
+	 */
+	private async _downloadEdi837(): Promise<void> {
+		const procedures = this.items.filter(it => it.type !== 'ICD10');
+		if (procedures.length === 0) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Add at least one procedure (CPT/HCPCS) code before exporting a claim.' });
+			return;
+		}
+		if (!this.patientId || this.patientId === '_') {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Choose a patient before exporting a claim.' });
+			return;
+		}
+
+		// Pull demographics + first active insurance for subscriber/payer fields.
+		const patient = await this._fetchPatientForEdi();
+		const insurance = patient.insurance;
+
+		const cfg = <T,>(key: string, fallback: T): T => {
+			const v = this.configurationService.getValue<T>(key);
+			return (v === undefined || v === null || (v as unknown) === '') ? fallback : v;
+		};
+		const practiceName = cfg('ciyex.billing.billingName', '') || cfg('ciyex.practice.name', '') || 'Practice';
+		const submitterId = cfg('ciyex.billing.submitterId', '');
+		const receiverId = cfg('ciyex.billing.receiverId', '');
+		const billingNpi = cfg('ciyex.billing.billingNpi', '');
+		const billingTaxId = cfg('ciyex.billing.billingTaxId', '');
+
+		const missing: string[] = [];
+		if (!submitterId) { missing.push('Submitter ID'); }
+		if (!receiverId) { missing.push('Receiver ID'); }
+		if (!billingNpi) { missing.push('Billing NPI'); }
+		if (!billingTaxId) { missing.push('Billing Tax ID'); }
+		if (missing.length) {
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: `The 837P file was generated with blanks for: ${missing.join(', ')}. Set these under Settings → Ciyex: Billing / EDI, or fill them in your clearinghouse before submitting.`,
+			});
+		}
+
+		const diagnoses = this.items.filter(it => it.type === 'ICD10').map(it => it.code).filter(Boolean);
+		const allPointers = diagnoses.map((_, i) => i + 1);
+		const today = new Date();
+		const dos = today.toISOString().slice(0, 10);
+		const nameParts = (this.patientName || '').split(/\s+/);
+		const firstName = patient.firstName || nameParts[0] || '';
+		const lastName = patient.lastName || nameParts.slice(1).join(' ') || nameParts[0] || 'Patient';
+
+		const lines: Edi837ServiceLine[] = procedures.map(it => ({
+			cptCode: it.code,
+			modifiers: it.modifiers ? it.modifiers.split(/[,\s]+/).filter(Boolean) : [],
+			chargeAmount: it.price * it.qty,
+			units: it.qty,
+			diagnosisPointers: allPointers.length ? allPointers : [1],
+		}));
+
+		const claim: Edi837Claim = {
+			submitterId, submitterName: cfg('ciyex.billing.submitterName', '') || practiceName,
+			receiverId, receiverName: cfg('ciyex.billing.receiverName', '') || 'CLEARINGHOUSE',
+			usageIndicator: cfg('ciyex.billing.productionMode', false) ? 'P' : 'T',
+			billingName: practiceName, billingNpi, billingTaxId,
+			billingAddress1: cfg('ciyex.billing.billingAddress1', ''),
+			billingCity: cfg('ciyex.billing.billingCity', ''),
+			billingState: cfg('ciyex.billing.billingState', ''),
+			billingZip: cfg('ciyex.billing.billingZip', ''),
+			patientFirstName: firstName, patientLastName: lastName,
+			patientDob: patient.dob, patientGender: patient.gender,
+			patientAddress1: patient.address1, patientCity: patient.city, patientState: patient.state, patientZip: patient.zip,
+			subscriberId: insurance.policyNumber || patient.mrn || String(this.patientId),
+			groupNumber: insurance.groupNumber,
+			payerName: insurance.payerName || 'UNKNOWN PAYER', payerId: insurance.payerId,
+			claimNumber: this.feeSheetId ? `FS${this.feeSheetId}` : `FS${Date.now()}`,
+			totalCharge: this.items.reduce((s, it) => s + it.price * it.qty, 0),
+			placeOfService: '11',
+			dateOfService: dos,
+			renderingProviderNpi: patient.renderingNpi,
+			diagnoses,
+			lines,
+		};
+
+		try {
+			const edi = generate837P(claim, today);
+			downloadEdi(DOM.getWindow(this.root), `claim-${claim.claimNumber}-837P.txt`, edi);
+			this.notificationService.notify({ severity: Severity.Info, message: `837P claim file downloaded (${lines.length} service line${lines.length === 1 ? '' : 's'}). Upload it to your clearinghouse to submit.` });
+		} catch (e) {
+			this.notificationService.notify({ severity: Severity.Error, message: `Could not generate the 837P file: ${e instanceof Error ? e.message : e}` });
+		}
+	}
+
+	/** Best-effort demographics + first insurance + rendering NPI for the EDI. */
+	private async _fetchPatientForEdi(): Promise<{
+		firstName?: string; lastName?: string; dob?: string; gender?: string; mrn?: string;
+		address1?: string; city?: string; state?: string; zip?: string;
+		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string };
+		renderingNpi?: string;
+	}> {
+		const out = { insurance: {} as { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string } } as Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>>;
+		try {
+			const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(this.patientId)}`);
+			if (res.ok) {
+				const j = await res.json();
+				const p = (j?.data ?? j) as Record<string, unknown>;
+				out.firstName = (p.firstName as string) || undefined;
+				out.lastName = (p.lastName as string) || undefined;
+				out.dob = (p.dob as string) || (p.dateOfBirth as string) || undefined;
+				out.gender = (p.gender as string) || (p.sex as string) || undefined;
+				out.mrn = (p.mrn as string) || undefined;
+				out.address1 = (p.addressLine1 as string) || (p.address as string) || undefined;
+				out.city = (p.city as string) || undefined;
+				out.state = (p.state as string) || undefined;
+				out.zip = (p.zip as string) || (p.zipCode as string) || (p.postalCode as string) || undefined;
+				const ins = (p.insurance ?? (Array.isArray(p.insurances) ? (p.insurances as Record<string, unknown>[])[0] : undefined)) as Record<string, unknown> | undefined;
+				if (ins) {
+					out.insurance = {
+						payerName: (ins.payerName as string) || (ins.insuranceCompany as string) || (ins.companyName as string) || undefined,
+						payerId: (ins.payerId as string) || undefined,
+						policyNumber: (ins.policyNumber as string) || (ins.subscriberId as string) || (ins.memberId as string) || undefined,
+						groupNumber: (ins.groupNumber as string) || undefined,
+					};
+				}
+			}
+		} catch { /* proceed with what the fee sheet already has */ }
+		// Best-effort rendering NPI from the selected rendering provider record.
+		if (this.renderingProvider) {
+			try {
+				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(this.renderingProvider)}`);
+				if (res.ok) {
+					const j = await res.json();
+					const pr = (j?.data ?? j) as Record<string, unknown>;
+					out.renderingNpi = (pr.npi as string) || ((pr.identification as { npi?: string })?.npi) || undefined;
+				}
+			} catch { /* NPI optional — billing NPI covers the required loop */ }
+		}
+		return out;
 	}
 
 	override layout(dimension: DOM.Dimension): void {

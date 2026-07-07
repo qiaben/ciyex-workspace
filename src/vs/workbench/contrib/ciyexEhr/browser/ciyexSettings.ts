@@ -801,3 +801,30 @@ configRegistry.registerConfiguration({
 		'ciyex.prescriptions.formularySearch': { type: 'boolean', default: false, description: localize('rxFormulary', "Default to formulary search when prescribing."), scope: ConfigurationScope.WINDOW },
 	},
 });
+
+// --- Billing / EDI (Basic Claims — 837P export) ----------------------
+// Site identifiers the Fee Sheet doesn't carry, needed to render a valid
+// 837P for the BASIC claims tier (download-and-submit via your own
+// clearinghouse). Available to every practice regardless of the ciyex-rcm
+// subscription. Consumed by billing/edi837.ts via the Fee Sheet + Claims
+// "Download 837P (X12)" actions.
+
+configRegistry.registerConfiguration({
+	id: 'ciyex.billing',
+	order: 27,
+	title: localize('ciyexBilling', "Ciyex: Billing / EDI"),
+	properties: {
+		'ciyex.billing.submitterId': { type: 'string', default: '', description: localize('billSubmitterId', "EDI submitter (sender) ID assigned by your clearinghouse. Used in the 837P ISA/GS sender and 1000A loop."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.submitterName': { type: 'string', default: '', description: localize('billSubmitterName', "Submitter organization name for the 837P 1000A submitter loop. Defaults to the practice name."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.receiverId': { type: 'string', default: '', description: localize('billReceiverId', "EDI receiver ID (your clearinghouse's interchange ID) for the 837P ISA/GS receiver and 1000B loop."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.receiverName': { type: 'string', default: '', description: localize('billReceiverName', "Clearinghouse / receiver name for the 837P 1000B receiver loop."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingNpi': { type: 'string', default: '', description: localize('billNpi', "Billing provider NPI (10 digits) for the 837P 2010AA billing provider loop."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingTaxId': { type: 'string', default: '', description: localize('billTaxId', "Billing provider federal Tax ID (EIN) for the 837P billing provider REF*EI segment."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingName': { type: 'string', default: '', description: localize('billName', "Billing provider / practice legal name for the 837P 2010AA loop. Defaults to the practice name."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingAddress1': { type: 'string', default: '', description: localize('billAddr1', "Billing provider street address (837P N3)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingCity': { type: 'string', default: '', description: localize('billCity', "Billing provider city (837P N4)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingState': { type: 'string', default: '', description: localize('billState', "Billing provider state (2-letter, 837P N4)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.billingZip': { type: 'string', default: '', description: localize('billZip', "Billing provider ZIP (837P N4)."), scope: ConfigurationScope.APPLICATION },
+		'ciyex.billing.productionMode': { type: 'boolean', default: false, description: localize('billProd', "Mark generated 837P interchanges as Production (ISA15=P). Leave off to send Test (T) files while validating with your clearinghouse."), scope: ConfigurationScope.APPLICATION },
+	},
+});
