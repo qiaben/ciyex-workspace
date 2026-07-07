@@ -319,6 +319,15 @@ export interface ClinicalEditorConfig {
 	 */
 	statsFilterMap?: Record<string, string>;
 	/**
+	 * Custom matchers for specific status-filter values, keyed by the filter value
+	 * (e.g. `OVERDUE`). When the active status filter has an entry here, rows are
+	 * matched with this predicate instead of an exact `status` compare. Needed when
+	 * a stats card / status tab is a *computed* status (Recall's Overdue counts
+	 * every past-due, non-completed recall server-side, so a literal
+	 * `status === 'OVERDUE'` compare hides the rows behind the count).
+	 */
+	statusMatchers?: Record<string, (item: Record<string, unknown>) => boolean>;
+	/**
 	 * When true, the toolbar renders the status filter as a dropdown (using
 	 * `statusTabs` as the option list) instead of as a row of pill buttons.
 	 * Matches the web app's Labs page where Status / Priority / Result are
@@ -1240,9 +1249,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/[-_\s]/g, '');
 		return this.items.filter(item => {
 			if (statusF) {
-				const candidates = [item[fk], ...fallbackKeys.map(k => item[k])];
-				const match = candidates.some(c => norm(c) === statusF);
-				if (!match) { return false; }
+				// A computed status (e.g. Recall's Overdue) can supply a predicate so
+				// the filtered rows match the stats-card count instead of a literal
+				// status compare that would hide most of them.
+				const matcher = cfg.statusMatchers?.[this.statusFilter] ?? cfg.statusMatchers?.[this.statusFilter.toUpperCase()];
+				if (matcher) {
+					if (!matcher(item)) { return false; }
+				} else {
+					const candidates = [item[fk], ...fallbackKeys.map(k => item[k])];
+					const match = candidates.some(c => norm(c) === statusF);
+					if (!match) { return false; }
+				}
 			}
 			if (priF && norm(item['priority']) !== priF) { return false; }
 			// Additional dropdown filters (e.g. ruleType, severity)

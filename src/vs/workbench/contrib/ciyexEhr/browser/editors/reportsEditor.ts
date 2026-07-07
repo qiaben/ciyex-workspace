@@ -162,6 +162,14 @@ interface ReportDef {
 	 * no risk-scoring engine; this is a transparent proxy, not a clinical model.
 	 */
 	deriveRisk?: boolean;
+	/**
+	 * When set, fill each patient row's `conditions` from its problem list. There is
+	 * no bulk conditions endpoint (GenericFhirResourceController only exposes
+	 * patient-scoped routes), so this fans out one `/api/fhir-resource/conditions/patient/{id}`
+	 * request per row — batched and capped ({@link _enrichConditions}) — and degrades
+	 * to a blank cell when a tenant records no problems.
+	 */
+	enrichConditions?: boolean;
 }
 
 // FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
@@ -1127,11 +1135,16 @@ function getReportDef(key: string): ReportDef {
 		case 'risk-stratification':
 			// No backend risk engine exists, so the score/tier is a transparent
 			// utilization proxy derived from 12-month visit + ED-visit frequency
-			// (see _deriveRisk) — not a clinical model. `conditions` needs a bulk
-			// problem-list endpoint that doesn't exist and stays blank.
+			// (see _deriveRisk) — not a clinical model. `conditions` has no bulk
+			// endpoint, so it's filled per-patient from the problem list
+			// (see _enrichConditions) and stays blank where a tenant records none.
 			return {
 				apiPath: '/api/patients?page=0&size=500',
 				enrichEncounterStats: true,
+				// Stamp each patient's most-recent-visit provider so the Provider
+				// filter has real names to list (the /api/patients feed carries none).
+				enrichProvider: true,
+				enrichConditions: true,
 				deriveRisk: true,
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
@@ -1669,6 +1682,7 @@ export class ReportsEditor extends EditorPane {
 			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
 			if (this.reportDef.enrichEncounterStats) { await this._enrichEncounterStats(); }
+			if (this.reportDef.enrichConditions) { await this._enrichConditions(); }
 			if (this.reportDef.computeArAging) { this._computeArAging(); }
 			if (this.reportDef.deriveCareGaps) { this._deriveCareGaps(); }
 			if (this.reportDef.deriveRisk) { this._deriveRisk(); }
@@ -1899,6 +1913,46 @@ export class ReportsEditor extends EditorPane {
 	}
 
 	/**
+	 * Fill each patient row's `conditions` from its problem list. The FHIR resource
+	 * controller exposes conditions only per-patient, so we fan out one request per
+	 * row — batched for throughput and capped so a large practice can't fire hundreds
+	 * of calls on a single report open. Rows past the cap (and tenants that record no
+	 * problems) keep a blank cell rather than a wrong one.
+	 */
+	private async _enrichConditions(): Promise<void> {
+		const MAX_PATIENTS = 250;
+		const BATCH = 8;
+		const targets = this.items
+			.filter(i => (i.id || i.patientId || i.fhirId) && !i.conditions)
+			.slice(0, MAX_PATIENTS);
+		const label = (c: Record<string, unknown>): string => {
+			const code = c.code as Record<string, unknown> | string | undefined;
+			if (code && typeof code === 'object') {
+				const coding = (code.coding as Array<Record<string, string>> | undefined)?.[0];
+				const nested = String(code.text || coding?.display || '');
+				if (nested) { return nested; }
+			}
+			return String(c.conditionName || c.display || c.text || (typeof code === 'string' ? code : '') || c.diagnosis || '').trim();
+		};
+		for (let i = 0; i < targets.length; i += BATCH) {
+			const batch = targets.slice(i, i + BATCH);
+			await Promise.all(batch.map(async item => {
+				const pid = String(item.id || item.patientId || item.fhirId || '').replace('Patient/', '');
+				if (!pid) { return; }
+				try {
+					const res = await this.apiService.fetch(`/api/fhir-resource/conditions/patient/${pid}?page=0&size=50`);
+					if (!res.ok) { return; }
+					const json = await res.json();
+					const raw = json?.data?.content || json?.data || json?.content || json || [];
+					const rows = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [];
+					const names = [...new Set(rows.map(label).filter(Boolean))];
+					if (names.length) { item.conditions = names.join(', '); }
+				} catch { /* per-patient fetch failed — leave this cell blank */ }
+			}));
+		}
+	}
+
+	/**
 	 * Derive real "overdue for visit" care gaps from each patient's last-visit
 	 * date (stamped by {@link _enrichEncounterStats}). A patient more than a year
 	 * past their last visit — or never seen and registered over a year ago — is an
@@ -2039,9 +2093,13 @@ export class ReportsEditor extends EditorPane {
 		if (!out['active']) { out['active'] = pickFirst(out['status']); }
 
 		if (!out['patientName']) {
-			const pFirst = pickFirst(out['patientFirstName'], out['patient.firstName']);
-			const pLast = pickFirst(out['patientLastName'], out['patient.lastName']);
-			out['patientName'] = `${pFirst} ${pLast}`.trim() || pickFirst(out['patientDisplay'], out['patientRefDisplay'], out['subjectDisplay'], out['patient.name'], out['patient']);
+			// For patient-feed reports (Risk Stratification, Care Gaps) the row *is*
+			// the patient, so its name is the top-level `firstName`/`lastName` (or the
+			// backend's pre-joined `name`/`fullName`) — not a `patient*`-prefixed field.
+			// Include those here so the Patient column isn't blank on `/api/patients` rows.
+			const pFirst = pickFirst(out['patientFirstName'], out['patient.firstName'], out['firstName']);
+			const pLast = pickFirst(out['patientLastName'], out['patient.lastName'], out['lastName']);
+			out['patientName'] = `${pFirst} ${pLast}`.trim() || pickFirst(out['patientDisplay'], out['patientRefDisplay'], out['subjectDisplay'], out['patient.name'], out['patient'], out['fullName'], out['name']);
 		}
 		if (!out['patientDisplay']) { out['patientDisplay'] = pickFirst(out['patientName'], out['patientRefDisplay'], out['subjectDisplay']); }
 		if (!out['patientRefDisplay']) { out['patientRefDisplay'] = pickFirst(out['patientDisplay'], out['patientName'], out['subjectDisplay']); }

@@ -3092,6 +3092,24 @@ export class RecallEditor extends ClinicalListEditorBase {
 			declinedTotal: 'DECLINED',
 			cancelledTotal: 'CANCELLED',
 		},
+		// The Overdue stats card / status tab is computed, not a stored status: the
+		// backend counts every recall past its due date that isn't completed or
+		// cancelled (RecallService.countOverdue), which is why the card shows more
+		// than the handful literally stamped status='OVERDUE'. Match the same rule so
+		// the filtered rows equal the card's count.
+		statusMatchers: {
+			OVERDUE: (item: Record<string, unknown>): boolean => {
+				const raw = String(item.dueDate ?? '').split('T')[0];
+				const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+				if (!m) { return false; }
+				const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+				due.setHours(0, 0, 0, 0);
+				const today = new Date();
+				today.setHours(0, 0, 0, 0);
+				const status = String(item.status ?? '').toUpperCase();
+				return due < today && status !== 'COMPLETED' && status !== 'CANCELLED';
+			},
+		},
 		searchPlaceholder: 'Search by patient name...',
 		clientSideFilter: ['patientName', 'recallTypeName', 'providerName', 'status', 'priority', 'preferredContact', 'id'],
 		editable: true,
