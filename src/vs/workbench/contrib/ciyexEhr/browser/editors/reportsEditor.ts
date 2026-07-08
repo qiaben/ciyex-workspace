@@ -170,6 +170,16 @@ interface ReportDef {
 	 * to a blank cell when a tenant records no problems.
 	 */
 	enrichConditions?: boolean;
+	/**
+	 * When set, replace the loaded claim rows with one row per claim LINE, fetched
+	 * from the deployed `/api/all-claims/{claimId}/line-details` endpoint. CPT/
+	 * procedure codes live on claim line items, not on the bulk claim record, and
+	 * the practice-wide invoice-line report endpoint is unbuilt on api-dev — so the
+	 * CPT Utilization report fans out per-claim line lookups ({@link _deriveCptFromClaimLines})
+	 * to assemble cptCode/description/provider/charge/date rows from data that
+	 * actually ships. Degrades to an empty table when no claims carry line items.
+	 */
+	deriveCptFromClaimLines?: boolean;
 }
 
 // FHIR v3 ActEncounterCode class codes — the /api/encounters/report/encounterAll
@@ -740,14 +750,17 @@ function getReportDef(key: string): ReportDef {
 
 		case 'cpt-utilization':
 			return {
-				// CPT codes live on invoice line items, NOT on encounters — the old
-				// `/encounters/report/encounterAll` source carried no procedure code, so
-				// the CPT Code + Description columns were always blank. `/api/reports/
-				// cpt-utilization` flattens every invoice line in the practice into one
-				// row per procedure (cptCode / description / providerDisplay /
-				// totalAmount / startDate). (wRVU and E&M level are still unbacked — no
-				// endpoint exposes them — so those KPI/chart stay empty.)
-				apiPath: '/api/reports/cpt-utilization',
+				// CPT codes live on claim/invoice LINE items, not on encounters or the
+				// bulk claim record. The practice-wide `/api/reports/cpt-utilization`
+				// endpoint was only ever local/uncommitted backend work (not deployed
+				// to api-dev), so the report came up empty. Instead load the deployed
+				// bulk claim list and fan out to `/api/all-claims/{id}/line-details`
+				// (deriveCptFromClaimLines) to build one row per procedure line
+				// (cptCode / description / providerDisplay / totalAmount / startDate)
+				// from data that actually ships. (wRVU and E&M level stay unbacked —
+				// no endpoint exposes them — so those KPI/chart stay empty.)
+				apiPath: '/api/all-claims',
+				deriveCptFromClaimLines: true,
 				// Columns match ciyex-ehr-ui: CPT Code, Description, Volume, Total Charges, wRVU
 				columns: [
 					{ key: 'cptCode', label: 'CPT Code' },
@@ -1678,6 +1691,7 @@ export class ReportsEditor extends EditorPane {
 			const raw = json?.data?.content || json?.data || json?.content || json || [];
 			const arr = Array.isArray(raw) ? raw : [];
 			this.items = arr.map((r: Record<string, unknown>) => this._normalizeRow(r)) as Record<string, string>[];
+			if (this.reportDef.deriveCptFromClaimLines) { await this._deriveCptFromClaimLines(); }
 			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
 			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
@@ -1917,6 +1931,52 @@ export class ReportsEditor extends EditorPane {
 				item.conditionsFallback = s ? [...s.complaints].slice(0, 3).join(', ') : '';
 			}
 		} catch { /* encounters endpoint may be unavailable — leave stats blank */ }
+	}
+
+	/**
+	 * Replace the loaded claim rows with one row per claim LINE for the CPT
+	 * Utilization report. CPT/procedure codes are not on the bulk claim record, so
+	 * we fan out one deployed `/api/all-claims/{claimId}/line-details` request per
+	 * claim (batched and capped like {@link _enrichConditions}) and flatten each
+	 * ClaimLineDetailDto into the report's columns. Claims with no line items
+	 * contribute nothing; a tenant with no billed procedures yields an empty table.
+	 */
+	private async _deriveCptFromClaimLines(): Promise<void> {
+		const MAX_CLAIMS = 500;
+		const BATCH = 8;
+		const claims = this.items.slice(0, MAX_CLAIMS);
+		const lines: Record<string, string>[] = [];
+		for (let i = 0; i < claims.length; i += BATCH) {
+			const batch = claims.slice(i, i + BATCH);
+			await Promise.all(batch.map(async claim => {
+				const cid = String(claim.id || claim.claimId || claim.invoiceId || '').replace('Claim/', '').trim();
+				if (!cid) { return; }
+				try {
+					const res = await this.apiService.fetch(`/api/all-claims/${cid}/line-details`);
+					if (!res.ok) { return; }
+					const json = await res.json();
+					const raw = json?.data?.content || json?.data || json?.content || json || [];
+					const rows = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [];
+					for (const ln of rows) {
+						const code = String(ln.code ?? ln.cptCode ?? ln.cpt ?? ln.procedureCode ?? '').trim();
+						const desc = String(ln.description ?? ln.treatment ?? ln.procedureDescription ?? '').trim();
+						if (!code && !desc) { continue; }
+						const amt = ln.totalSubmittedAmount ?? ln.totalAmount ?? ln.charge ?? ln.amount;
+						const dos = String(ln.dos ?? ln.serviceDate ?? ln.startDate ?? '').trim();
+						lines.push({
+							cptCode: code,
+							description: desc,
+							providerDisplay: String(ln.provider ?? claim.provider ?? claim.providerDisplay ?? '').trim(),
+							totalAmount: amt !== undefined && amt !== null && amt !== '' ? String(amt) : '',
+							startDate: dos ? dos.split('T')[0] : '',
+							patientId: String(claim.patientId ?? ''),
+							patientName: String(claim.patientName ?? ''),
+						});
+					}
+				} catch { /* per-claim line fetch failed — skip this claim */ }
+			}));
+		}
+		this.items = lines;
 	}
 
 	/**
