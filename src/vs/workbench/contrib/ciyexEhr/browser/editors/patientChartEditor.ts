@@ -4838,6 +4838,21 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Entered in Error', value: 'entered_in_error' },
 					{ label: 'Not Done', value: 'not_done' },
 				];
+			case 'labs':
+				// Lab ORDERS filter on the order's Status field (same vocabulary as
+				// the Lab Order form's Status select) — the generic clinical default
+				// ("All Clinical Statuses": Active/Inactive/Resolved) used a
+				// different terminology than the form and never matched values like
+				// Revoked (QA: filter said Clinical Status, form said otherwise).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Draft', value: 'draft' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Pending', value: 'pending' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Cancelled', value: 'cancelled' },
+					{ label: 'Revoked', value: 'revoked' },
+				];
 			case 'lab-results':
 				// Match the Lab Result form's Status options (Pending/…/Amended) —
 				// the generic clinical default (Active/Inactive/Resolved) never
@@ -6476,6 +6491,19 @@ export class PatientChartEditor extends EditorPane {
 						}
 					}
 					if (this.activeTab === tab.key) { this._renderMain(); }
+
+					// Broadcast the save so sibling editors on the same patient (the
+					// Patient Snapshot) overlay this record immediately — their own
+					// refetch can still hit the stale FHIR search index for seconds
+					// (QA: problem created here missing from snapshot Active Problems).
+					if (!String(merged.id ?? '').startsWith('tmp-')) {
+						this.apiService.notifyClinicalRecordMutation({
+							entity: tab.key,
+							patientId: this.patientId,
+							kind: isEdit ? 'update' : 'create',
+							record: merged,
+						});
+					}
 
 					// Silent reconciliation: clear the cache once, re-render. The
 					// refreshed render hits a cold cache, fetches fresh data, then

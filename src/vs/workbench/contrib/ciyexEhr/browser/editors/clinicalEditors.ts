@@ -751,10 +751,13 @@ export class LabsEditor extends ClinicalListEditorBase {
 			{ key: 'orderDate', label: 'Date', width: '90px' },
 		],
 		// Status renders as pill tabs (like Prescriptions); Priority / Result stay as
-		// toolbar dropdowns.
+		// toolbar dropdowns. Must cover every value the form's Status select offers
+		// (LAB_ORDER_FORM_FIELDS) — Revoked orders showed in the list but had no
+		// matching filter tab (QA).
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'Pending', value: 'pending' },
 			{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+			{ label: 'Revoked', value: 'revoked' },
 		],
 		priorityOptions: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },

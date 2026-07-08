@@ -1751,8 +1751,15 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 							return;
 						}
 						{
+							// When the field keeps ONLY the display text (no relatedField /
+							// relatedFieldsMap carries an id along), two results with the
+							// same text are indistinguishable after the pick — showing both
+							// is pure noise (QA: Insurance Name dropdown listed duplicate
+							// names). Fields that fill a related id (patients, providers)
+							// must keep same-name entries: they are different records.
+							const displayOnly = !field.relatedField && !field.relatedFieldsMap;
+							const seenDisplays = new Set<string>();
 							for (const result of results.slice(0, 15)) {
-								const item = DOM.append(dropdown, DOM.$('div'));
 								// Supports dot-path notation (e.g. 'identification.firstName') for nested DTO fields.
 								const getPath = (obj: Record<string, unknown>, path: string): unknown =>
 									path.split('.').reduce<unknown>((acc, k) => (acc !== null && acc !== undefined ? (acc as Record<string, unknown>)[k] : undefined), obj);
@@ -1771,6 +1778,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 									const ln = String(getPath(result, 'lastName') ?? getPath(result, 'identification.lastName') ?? '');
 									displayText = [fn, ln].filter(Boolean).join(' ') || String(getPath(result, valueField) ?? '');
 								}
+								if (displayOnly) {
+									const norm = displayText.trim().toLowerCase();
+									if (seenDisplays.has(norm)) { continue; }
+									seenDisplays.add(norm);
+								}
+								const item = DOM.append(dropdown, DOM.$('div'));
 								item.textContent = displayText;
 								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
 								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });

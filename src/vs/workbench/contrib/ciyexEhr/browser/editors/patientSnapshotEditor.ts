@@ -13,7 +13,7 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { PatientSnapshotEditorInput, PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
-import { ICiyexApiService } from '../ciyexApiService.js';
+import { ICiyexApiService, IClinicalRecordMutation } from '../ciyexApiService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -143,6 +143,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Provider display name -> id, so an appointment provider CHANGE persists
 	 *  (the API keys off the id/reference, not the display name). */
 	private readonly _providerIdByName = new Map<string, string>();
+	/** Vitals loaded on the last render — consulted by the strict-order guard
+	 *  ({@link _missingPrepSteps}) when the user tries to jump the appointment
+	 *  status straight to Completed. */
+	private _lastLoadedVitals: Array<Record<string, unknown>> = [];
 	private static readonly PAGE_SIZE = 5;
 
 	constructor(
@@ -157,6 +161,28 @@ export class PatientSnapshotEditor extends EditorPane {
 		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
+		// Records saved in a sibling editor (the Patient Chart drawer) are
+		// overlaid here right away — the snapshot's own refetch can still hit
+		// the stale FHIR search index for seconds after the save (QA: problem
+		// created in the chart missing from the snapshot's Active Problems).
+		this._register(this.apiService.onDidMutateClinicalRecord(m => this._onExternalMutation(m)));
+	}
+
+	/** Chart tab keys whose records the snapshot dashboard also renders, mapped
+	 *  to the snapshot's own entity keys. */
+	private static readonly _EXTERNAL_ENTITY_MAP: Record<string, string> = {
+		'problems': 'problems',
+		'medications': 'medications',
+		'vitals': 'vitals',
+	};
+
+	private _onExternalMutation(m: IClinicalRecordMutation): void {
+		const entity = PatientSnapshotEditor._EXTERNAL_ENTITY_MAP[m.entity];
+		if (!entity || !this._currentPatientId) { return; }
+		const pid = String(m.patientId || m.record.patientId || '');
+		if (pid !== this._currentPatientId && String(m.record.patientId ?? '') !== this._currentPatientId) { return; }
+		this._trackCreated(entity, m.record);
+		if (this.isVisible()) { this._rerender(); }
 	}
 
 	private _openChartAt(tab: string): void {
@@ -2140,6 +2166,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// kept (the endpoint is the authority), so this only drops rows explicitly
 		// tagged for a different patient.
 		const vit = this._filterToPatient(this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals))), patientId);
+		this._lastLoadedVitals = vit;
 		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
 		// Lab ORDERS and lab RESULTS are now two distinct, clinically-backed
 		// collections (the snapshot shows each in its own card). Both come from the
@@ -2836,6 +2863,20 @@ export class PatientSnapshotEditor extends EditorPane {
 		await this._createEncounterFromAppointment(apt);
 	}
 
+	/** Visit Workflow prep steps (Check In → Assign Room → Record Vitals) still
+	 *  missing for this visit. The workflow runs strictly in order, so the
+	 *  appointment must not jump straight to Completed while these are pending —
+	 *  doing so marked steps 2-4 done by inference and advanced the strip to
+	 *  Sign & Lock without any of them ever happening (QA issue). */
+	private _missingPrepSteps(apt: Record<string, unknown>): string[] {
+		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+		const missing: string[] = [];
+		if (!['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status)) { missing.push('Check In'); }
+		if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
+		if (this._todaysVitals(this._lastLoadedVitals).length === 0) { missing.push('Record Vitals'); }
+		return missing;
+	}
+
 	/** Apply a status chosen from the inline Status dropdown. Selecting a
 	 *  completed status routes through the auto-encounter flow; everything else
 	 *  is a plain status change. */
@@ -2850,6 +2891,15 @@ export class PatientSnapshotEditor extends EditorPane {
 			const wasCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus);
 			if (wasCompleted) {
 				await this._changeApptStatus(appointmentId, status, apt);
+				return;
+			}
+			// Strict step order: Completed is step 5 — the prep steps before it
+			// must be done first, otherwise the strip would leap to Sign & Lock.
+			const missing = this._missingPrepSteps(apt);
+			if (missing.length > 0) {
+				await this.dialogService.info(
+					'Finish the visit steps in order first',
+					`Still pending: ${missing.join(' → ')}. Complete ${missing.length === 1 ? 'this step' : 'these steps'} before marking the visit Completed.`);
 				return;
 			}
 			await this._completeAppointmentWithEncounter({ ...apt, status });
@@ -3185,6 +3235,16 @@ export class PatientSnapshotEditor extends EditorPane {
 				notes: String(apt.notes || apt.note || apt.comment || ''),
 			},
 			onSave: async (next) => {
+				// Strict step order (same guard as the inline Status dropdown): the
+				// visit can only move to Completed once Check In / Assign Room /
+				// Record Vitals are done. A room picked in THIS dialog counts.
+				if (PatientSnapshotEditor._isCompletedStatus(next.status)
+					&& !PatientSnapshotEditor._isCompletedStatus(apt.status || apt.appointmentStatus)) {
+					const missing = this._missingPrepSteps({ ...apt, room: next.room || apt.room });
+					if (missing.length > 0) {
+						throw new Error(`Visit steps run in order — still pending: ${missing.join(' → ')}. Finish them before marking the visit Completed.`);
+					}
+				}
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
 				// Resolve the new duration up front so it lands in BOTH the payload and
 				// the overlay below (it was missing from the overlay, so an edited time /

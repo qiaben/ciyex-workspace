@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
@@ -10,20 +11,44 @@ import { tryHandleLocally } from './ciyexLocalApi.js';
 
 export const ICiyexApiService = createDecorator<ICiyexApiService>('ciyexApiService');
 
+/** A clinical record saved by one editor, broadcast so sibling editors showing
+ *  the same patient (e.g. the Patient Snapshot next to the Patient Chart) can
+ *  overlay it immediately instead of waiting for the server's FHIR search
+ *  index — which lags creates by seconds, so a refetch right after the save
+ *  still returns the stale list (QA: problem created in the chart not
+ *  reflected in the snapshot's Active Problems). */
+export interface IClinicalRecordMutation {
+	/** Chart tab / snapshot entity key, e.g. 'problems', 'medications'. */
+	entity: string;
+	patientId: string;
+	kind: 'create' | 'update';
+	/** The saved record — form payload merged with the server response. */
+	record: Record<string, unknown>;
+}
+
 export interface ICiyexApiService {
 	readonly _serviceBrand: undefined;
 	readonly apiUrl: string;
+	readonly onDidMutateClinicalRecord: Event<IClinicalRecordMutation>;
 	fetch(path: string, options?: RequestInit): Promise<Response>;
 	fetchJson<T>(path: string, options?: RequestInit): Promise<T>;
+	notifyClinicalRecordMutation(mutation: IClinicalRecordMutation): void;
 }
 
 export class CiyexApiService extends Disposable implements ICiyexApiService {
 	declare readonly _serviceBrand: undefined;
 
+	private readonly _onDidMutateClinicalRecord = this._register(new Emitter<IClinicalRecordMutation>());
+	readonly onDidMutateClinicalRecord = this._onDidMutateClinicalRecord.event;
+
 	constructor(
 		@ICiyexAuthService private readonly _authService: ICiyexAuthService,
 	) {
 		super();
+	}
+
+	notifyClinicalRecordMutation(mutation: IClinicalRecordMutation): void {
+		this._onDidMutateClinicalRecord.fire(mutation);
 	}
 
 	get apiUrl(): string {
