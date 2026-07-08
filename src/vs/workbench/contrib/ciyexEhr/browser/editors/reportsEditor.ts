@@ -1883,7 +1883,7 @@ export class ReportsEditor extends EditorPane {
 			const now = Date.now();
 			const DAY = 24 * 60 * 60 * 1000;
 			const YEAR = 365 * DAY;
-			const stats: Record<string, { last: number; visits12: number; ed12: number }> = {};
+			const stats: Record<string, { last: number; visits12: number; ed12: number; complaints: Set<string> }> = {};
 			for (const enc of encounters) {
 				const e = enc as Record<string, unknown>;
 				const pid = String(e.patientId || refId(e.patientRef) || refId(e.subject) || '');
@@ -1892,9 +1892,13 @@ export class ReportsEditor extends EditorPane {
 				const type = String(e.type || e.encounterType || e.class || e.visitCategory || '').toLowerCase();
 				const isED = /emer|emergency|urgent/.test(type);
 				let s = stats[pid];
-				if (!s) { s = { last: 0, visits12: 0, ed12: 0 }; stats[pid] = s; }
+				if (!s) { s = { last: 0, visits12: 0, ed12: 0, complaints: new Set<string>() }; stats[pid] = s; }
 				if (when > s.last) { s.last = when; }
 				if (when && now - when <= YEAR) { s.visits12++; if (isED) { s.ed12++; } }
+				// Collect the encounter's clinical signal (diagnosis > chief complaint >
+				// reason for visit) so reports whose formal problem list is empty can
+				// still surface what the patient was seen for. See _cleanComplaints.
+				for (const c of this._cleanComplaints(e.diagnosis, e.cc_text, e.reason)) { s.complaints.add(c); }
 			}
 			for (const item of this.items) {
 				const pid = item.id || item.patientId || item.fhirId;
@@ -1908,16 +1912,44 @@ export class ReportsEditor extends EditorPane {
 				}
 				item.visitCount12mo = String(s?.visits12 || 0);
 				item.edVisits12mo = String(s?.ed12 || 0);
+				// Stash a chief-complaint/reason fallback for the Conditions column
+				// (consumed by _enrichConditions when the problem list is empty).
+				item.conditionsFallback = s ? [...s.complaints].slice(0, 3).join(', ') : '';
 			}
 		} catch { /* encounters endpoint may be unavailable — leave stats blank */ }
+	}
+
+	/**
+	 * Normalize an encounter's free-text clinical fields (diagnosis / chief
+	 * complaint / reason-for-visit) into distinct, human-readable problem strings.
+	 * Reason values often bundle noise (`"fever | Manual encounter"`) or carry only
+	 * a visit-type token (`"AMB"`, `"Consultation"`), so we split on `|` and drop
+	 * generic scheduling/visit-type words, keeping just the presenting problems.
+	 */
+	private _cleanComplaints(...raw: unknown[]): string[] {
+		const NOISE = /^(manual encounter|amb|ambulatory|inpatient|outpatient|office( visit)?|clinic|consultation|consult|telehealth|virtual|scheduled visit|test scheduled visit|test|follow[- ]?up|new patient|established patient|routine|encounter|visit|n\/?a|none|unknown)$/i;
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const field of raw) {
+			for (const part of String(field ?? '').split('|')) {
+				const s = part.trim();
+				if (s.length < 3 || /^\d+$/.test(s) || NOISE.test(s)) { continue; }
+				const label = s.charAt(0).toUpperCase() + s.slice(1);
+				const key = label.toLowerCase();
+				if (!seen.has(key)) { seen.add(key); out.push(label); }
+			}
+		}
+		return out;
 	}
 
 	/**
 	 * Fill each patient row's `conditions` from its problem list. The FHIR resource
 	 * controller exposes conditions only per-patient, so we fan out one request per
 	 * row — batched for throughput and capped so a large practice can't fire hundreds
-	 * of calls on a single report open. Rows past the cap (and tenants that record no
-	 * problems) keep a blank cell rather than a wrong one.
+	 * of calls on a single report open. Where the problem list is empty (the tenant
+	 * records no formal conditions), fall back to the encounter-derived chief
+	 * complaint / reason stamped by {@link _enrichEncounterStats} so the column
+	 * reflects the best available clinical signal instead of a blank cell.
 	 */
 	private async _enrichConditions(): Promise<void> {
 		const MAX_PATIENTS = 250;
@@ -1949,6 +1981,14 @@ export class ReportsEditor extends EditorPane {
 					if (names.length) { item.conditions = names.join(', '); }
 				} catch { /* per-patient fetch failed — leave this cell blank */ }
 			}));
+		}
+		// Where the formal problem list yielded nothing, fall back to the
+		// encounter-derived chief complaint / reason (stamped by
+		// _enrichEncounterStats) so the Conditions column shows the best available
+		// clinical signal rather than an empty cell.
+		for (const item of this.items) {
+			if (!item.conditions && item.conditionsFallback) { item.conditions = item.conditionsFallback; }
+			delete item.conditionsFallback;
 		}
 	}
 

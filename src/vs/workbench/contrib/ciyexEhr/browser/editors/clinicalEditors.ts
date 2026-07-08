@@ -3139,18 +3139,6 @@ export const RECALL_FORM_FIELDS: FormFieldDef[] = [
  * completed nor cancelled — the same rule the backend's countOverdue uses.
  * Shared by the Overdue status filter AND the Overdue KPI card computation so
  * the card count always equals the rows the filter shows. */
-function isRecallOverdue(item: Record<string, unknown>): boolean {
-	const raw = String(item.dueDate ?? '').split('T')[0];
-	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-	if (!m) { return false; }
-	const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-	due.setHours(0, 0, 0, 0);
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-	const status = String(item.status ?? '').toUpperCase();
-	return due < today && status !== 'COMPLETED' && status !== 'CANCELLED';
-}
-
 export class RecallEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexRecall';
 	protected readonly config: ClinicalEditorConfig = {
@@ -3168,41 +3156,24 @@ export class RecallEditor extends ClinicalListEditorBase {
 			pendingTotal: 'PENDING',
 			contactedTotal: 'CONTACTED',
 			scheduledTotal: 'SCHEDULED',
-			completedThisMonth: 'COMPLETED',
+			completed: 'COMPLETED',
 			declinedTotal: 'DECLINED',
 			cancelledTotal: 'CANCELLED',
-		},
-		// The Overdue stats card / status tab is computed, not a stored status: the
-		// backend counts every recall past its due date that isn't completed or
-		// cancelled (RecallService.countOverdue), which is why the card shows more
-		// than the handful literally stamped status='OVERDUE'. Match the same rule so
-		// the filtered rows equal the card's count.
-		statusMatchers: {
-			OVERDUE: isRecallOverdue,
 		},
 		// /api/recalls/kpis counts a different population than the client-side
 		// filters show ("9 Overdue" with an empty Overdue list; "0 Completed This
 		// Month" while a completed recall sits under the Completed filter — QA
 		// issues 6 & 7). Recompute every KPI card from the loaded rows with the
-		// SAME predicates the filters use so cards and rows always agree.
+		// SAME literal-status rule the filter tabs use, so each card equals the rows
+		// it surfaces. Overdue counts rows literally stamped status='OVERDUE' (the
+		// desktop shows the stored status, so the card must match that badge rather
+		// than the backend's computed past-due population); Completed counts every
+		// completed recall (matching its Completed filter tab, not a month window).
 		computeStats: (items) => {
 			const byStatus = (s: string) => items.filter(i => String(i.status ?? '').toUpperCase() === s).length;
-			// "Completed This Month": completed rows whose completion timestamp
-			// (first date-ish field available, falling back to the due date) is in
-			// the current calendar month. A completed row with no usable date still
-			// counts — better a card that matches the visible rows than a 0 beside
-			// a populated Completed filter.
-			const now = new Date();
-			const completedThisMonth = items.filter(i => {
-				if (String(i.status ?? '').toUpperCase() !== 'COMPLETED') { return false; }
-				const raw = String(i.completedAt ?? i.completedDate ?? i.completionDate ?? i.updatedAt ?? i.lastModified ?? i.modifiedAt ?? i.lastContactDate ?? i.dueDate ?? '');
-				const m = /^(\d{4})-(\d{2})/.exec(raw.trim());
-				if (!m) { return true; }
-				return Number(m[1]) === now.getFullYear() && Number(m[2]) === now.getMonth() + 1;
-			}).length;
 			return {
-				overdue: items.filter(isRecallOverdue).length,
-				completedThisMonth,
+				overdue: byStatus('OVERDUE'),
+				completed: byStatus('COMPLETED'),
 				pendingTotal: byStatus('PENDING'),
 				contactedTotal: byStatus('CONTACTED'),
 				scheduledTotal: byStatus('SCHEDULED'),
