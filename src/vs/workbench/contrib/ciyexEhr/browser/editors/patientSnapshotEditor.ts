@@ -3057,6 +3057,25 @@ export class PatientSnapshotEditor extends EditorPane {
 		} catch { return ''; }
 	}
 
+	/** Encounter-step click while the appointment carries no encounter link yet.
+	 *  READ-ONLY: re-resolves the link via GET /appointments/{id}/encounter (the
+	 *  appointment list record lags the link set at completion) and opens the
+	 *  encounter it finds. Never POSTs — the encounter is created exclusively by
+	 *  the Completed transition, so this click can never mint a duplicate. */
+	private async _reresolveEncounterLink(apt: Record<string, unknown>, appointmentId: string): Promise<void> {
+		if (!appointmentId) { return; }
+		const found = await this._resolveAppointmentEncounterId(appointmentId);
+		if (found) {
+			apt.encounterId = found;
+			this._rerender();
+			void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, found, this._currentPatientName, 'Encounter', 'edit');
+			return;
+		}
+		await this.dialogService.info(
+			'No encounter for this visit yet',
+			'The encounter is created automatically when the visit is marked Completed — finish the earlier steps and mark the visit Completed to create it.');
+	}
+
 	/** Create a FHIR encounter from the appointment (or reuse the existing one),
 	 *  open it, then refresh. Idempotent: the backend's POST
 	 *  `/api/appointments/{id}/encounter` creates a NEW encounter on every call
@@ -3571,7 +3590,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const legend = DOM.append(card, DOM.$('div'));
 		legend.textContent = currentIdx >= stages.length
 			? 'All steps complete — this visit is fully processed.'
-			: `Step ${currentIdx + 1} of ${stages.length}: ${stages[currentIdx].label}. Steps run in order — finish the highlighted one to unlock the next.`;
+			: `Step ${currentIdx + 1} of ${stages.length}: ${stages[currentIdx].label}. Steps run in order — click the highlighted step to do it and unlock the next.`;
 		legend.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin:2px 0 10px;';
 
 		const row = DOM.append(card, DOM.$('div'));
@@ -3582,17 +3601,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			// is what guarantees a later step can never render done before an
 			// earlier one, no matter what stray same-day/patient-level data exists.
 			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
-			// Only COMPLETED steps are clickable — the user can revisit any step the
-			// visit has already passed (open its appointment / encounter / fee sheet /
-			// payment). The current "next" step and every locked future step are inert:
-			// the next action is driven from the workflow banner above, and a step the
-			// visit hasn't reached yet must not be openable. So a step like Sign & Lock
-			// becomes clickable only after it is signed, and Fee Sheet only after the
-			// fee sheet is created — exactly when each turns green/done.
-			const clickable = state === 'done' && !!s.action;
+			// Two kinds of clickable step: a DONE step re-opens what it produced
+			// (appointment / encounter / fee sheet / payment) for review, and the one
+			// current "next" step PERFORMS its action — the exact same handler the
+			// banner button runs, so the strip and banner can never act differently.
+			// Every locked future step stays inert: strict order means a step the
+			// visit hasn't reached yet must not be runnable early, so Sign & Lock is
+			// only actionable once it IS the current step, never before.
+			const clickable = (state === 'done' || state === 'next') && !!s.action;
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 			tile.disabled = !clickable;
-			tile.title = clickable ? `${s.label} — open` : s.label;
+			tile.title = !clickable ? s.label : state === 'done' ? `${s.label} — open` : `${s.label} — ${s.sub}`;
 			tile.style.cssText = [
 				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
@@ -3611,9 +3630,13 @@ export class PatientSnapshotEditor extends EditorPane {
 			subEl.textContent = state === 'done' ? s.doneSub : s.sub;
 			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
 			if (clickable) {
-				// clickable is only ever true for a done (green) step.
-				tile.addEventListener('mouseenter', () => { tile.style.background = 'rgba(34,197,94,0.22)'; });
-				tile.addEventListener('mouseleave', () => { tile.style.background = 'rgba(34,197,94,0.10)'; });
+				if (state === 'done') {
+					tile.addEventListener('mouseenter', () => { tile.style.background = 'rgba(34,197,94,0.22)'; });
+					tile.addEventListener('mouseleave', () => { tile.style.background = 'rgba(34,197,94,0.10)'; });
+				} else {
+					tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
+					tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-button-background,#0e639c)'; });
+				}
 				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
 			}
 		});
@@ -3710,7 +3733,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			{
 				key: 'encounter', label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter,
 				sub: 'Auto on complete', doneSub: 'Created',
-				action: openEncounter('edit'),
+				// The encounter is created ONLY by the Completed transition — a click
+				// must never POST one (the backend create has no dedupe, so a click-to-
+				// create would mint duplicates). Linked → open it; not linked yet →
+				// re-resolve the link read-only (the list record lags the link).
+				action: encId ? openEncounter('edit') : () => void this._reresolveEncounterLink(apt, appointmentId),
 			},
 			{
 				key: 'sign', label: 'Sign & Lock', role: 'Provider', icon: 'verified', done: signed,
