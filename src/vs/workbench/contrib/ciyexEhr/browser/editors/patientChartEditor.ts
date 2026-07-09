@@ -933,7 +933,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					},
 					{ key: 'manufacturer', label: 'Manufacturer', type: 'text', placeholder: 'Pfizer' },
 					{ key: 'expirationDate', label: 'Expiration Date', type: 'date' },
-					{ key: 'administeredBy', label: 'Administered By', type: 'text', placeholder: 'Provider name', aliases: ['provider', 'administeredByName', 'providerName'] },
+					// Searchable like the clinical Immunizations page's Administered By —
+					// QA: a plain text box gave no way to look up the provider.
+					// storeLabelAsValue: administeredBy is a NAME column in the flat
+					// immunization DTO, so persist the picked display name, not the id.
+					{ key: 'administeredBy', label: 'Administered By', type: 'search', placeholder: 'Search provider…', apiPath: '/api/providers', relatedDisplayFields: ['firstName', 'lastName'], storeLabelAsValue: true, aliases: ['provider', 'administeredByName', 'providerName'] },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Completed', value: 'completed' },
@@ -2298,7 +2302,7 @@ export class PatientChartEditor extends EditorPane {
 		for (const cat of this.categories) {
 			cat.tabs = cat.tabs.map(t => {
 				const ov = overrides.get(t.key);
-				return ov ? { ...t, ...ov } as ChartTab : t;
+				return ov ? { ...t, ...ov } : t;
 			});
 		}
 	}
@@ -2943,6 +2947,9 @@ export class PatientChartEditor extends EditorPane {
 										apiPath: f.apiPath || ov.apiPath,
 										relatedDisplayFields: f.relatedDisplayFields || ov.relatedDisplayFields,
 										relatedField: f.relatedField || ov.relatedField,
+										// Name-column search fields (e.g. immunization Administered By)
+										// must persist the picked display name, not the row id.
+										storeLabelAsValue: f.storeLabelAsValue ?? ov.storeLabelAsValue,
 										validationPattern: f.validationPattern || ov.validationPattern,
 										validationMessage: f.validationMessage || ov.validationMessage,
 										defaultValue: f.defaultValue ?? ov.defaultValue,
@@ -4955,6 +4962,16 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Inactive', value: 'inactive' },
 					{ label: 'Resolved', value: 'resolved' },
 					{ label: 'Entered in Error', value: 'entered-in-error' },
+				];
+			case 'insurance':
+				// Match the Insurance form's Status options (Active / Inactive) —
+				// the generic clinical default offered a 'Resolved' choice no
+				// Coverage row or form value ever uses (QA: filter had an extra
+				// Resolved option the create/edit form doesn't).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
 				];
 			default:
 				return [
