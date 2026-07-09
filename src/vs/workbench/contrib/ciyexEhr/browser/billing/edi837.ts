@@ -68,9 +68,14 @@ export interface Edi837ServiceLine {
 
 /** Everything needed to render one 837P professional claim. */
 export interface Edi837Claim {
-	// Submitter / receiver (from ciyex.billing.* settings)
+	// Submitter / receiver. Interchange IDs (submitterId/receiverId) are
+	// clearinghouse-assigned and come from the ciyex.billing.* settings; the
+	// names/contact come from the practice record.
 	submitterId: string;
 	submitterName: string;
+	submitterContactName?: string;
+	submitterPhone?: string;
+	submitterEmail?: string;
 	receiverId: string;
 	receiverName: string;
 	usageIndicator?: 'P' | 'T';
@@ -108,6 +113,10 @@ export interface Edi837Claim {
 	dateOfService?: string;
 	authorizationNumber?: string;
 	renderingProviderNpi?: string;
+	renderingProviderFirstName?: string;
+	renderingProviderLastName?: string;
+	/** Provider taxonomy code (PXC) for the rendering provider PRV segment. */
+	renderingProviderTaxonomy?: string;
 	referringProviderNpi?: string;
 
 	/** ICD-10 diagnosis codes, ordered (first = principal). */
@@ -167,7 +176,12 @@ export function generate837P(claim: Edi837Claim, now: Date): string {
 
 	// 1000A Submitter / 1000B Receiver
 	b.add('NM1', '41', '2', claim.submitterName, '', '', '', '', '46', claim.submitterId);
-	b.add('PER', 'IC', claim.submitterName);
+	// PER - Submitter contact: name + phone (TE) + email (EM) when known.
+	const contact = ['PER', 'IC', claim.submitterContactName || claim.submitterName];
+	const phone = (claim.submitterPhone || '').replace(/[^0-9]/g, '');
+	if (phone) { contact.push('TE', phone); }
+	if (claim.submitterEmail) { contact.push('EM', claim.submitterEmail); }
+	b.add(...contact);
 	b.add('NM1', '40', '2', claim.receiverName, '', '', '', '', '46', claim.receiverId);
 
 	// 2000A Billing Provider HL
@@ -212,7 +226,13 @@ export function generate837P(claim: Edi837Claim, now: Date): string {
 
 	// Referring / rendering provider (claim level)
 	if (claim.referringProviderNpi) { b.add('NM1', 'DN', '1', '', '', '', '', '', 'XX', claim.referringProviderNpi); }
-	if (claim.renderingProviderNpi) { b.add('NM1', '82', '1', '', '', '', '', '', 'XX', claim.renderingProviderNpi); }
+	if (claim.renderingProviderNpi || claim.renderingProviderLastName) {
+		// 2310B Rendering Provider — name + NPI (XX qualifier when NPI present).
+		b.add('NM1', '82', '1', claim.renderingProviderLastName || '', claim.renderingProviderFirstName || '',
+			'', '', '', claim.renderingProviderNpi ? 'XX' : '', claim.renderingProviderNpi || '');
+		// PRV*PE - Rendering provider taxonomy (specialty).
+		if (claim.renderingProviderTaxonomy) { b.add('PRV', 'PE', 'PXC', claim.renderingProviderTaxonomy); }
+	}
 
 	// 2400 Service Lines
 	claim.lines.forEach((line, idx) => {

@@ -736,29 +736,38 @@ export class FeeSheetEditor extends EditorPane {
 			return;
 		}
 
-		// Pull demographics + first active insurance for subscriber/payer fields.
-		const patient = await this._fetchPatientForEdi();
+		// Pull the real data: patient + coverage + rendering provider, and the
+		// practice/billing-provider record. Run them together — independent calls.
+		const [patient, practice] = await Promise.all([this._fetchPatientForEdi(), this._fetchPractice()]);
 		const insurance = patient.insurance;
 
-		const cfg = <T,>(key: string, fallback: T): T => {
-			const v = this.configurationService.getValue<T>(key);
-			return (v === undefined || v === null || (v as unknown) === '') ? fallback : v;
+		// ciyex.billing.* settings override the fetched backend values (a practice
+		// may bill under a different entity or a clearinghouse-specific name).
+		const cfg = (key: string): string => {
+			const v = this.configurationService.getValue<string>(key);
+			return (v === undefined || v === null) ? '' : String(v);
 		};
-		const practiceName = cfg('ciyex.billing.billingName', '') || cfg('ciyex.practice.name', '') || 'Practice';
-		const submitterId = cfg('ciyex.billing.submitterId', '');
-		const receiverId = cfg('ciyex.billing.receiverId', '');
-		const billingNpi = cfg('ciyex.billing.billingNpi', '');
-		const billingTaxId = cfg('ciyex.billing.billingTaxId', '');
+		const pick = (setting: string, fetched?: string, fallback = ''): string => cfg(setting) || fetched || fallback;
+
+		const billingName = pick('ciyex.billing.billingName', practice.name) || cfg('ciyex.practice.name') || 'Practice';
+		const billingNpi = pick('ciyex.billing.billingNpi', practice.npi);
+		const billingTaxId = pick('ciyex.billing.billingTaxId', practice.taxId);
+		// Interchange IDs are clearinghouse-assigned — settings only (not in the
+		// practice record). These are the one thing a practice must configure.
+		const submitterId = cfg('ciyex.billing.submitterId');
+		const receiverId = cfg('ciyex.billing.receiverId');
 
 		const missing: string[] = [];
 		if (!submitterId) { missing.push('Submitter ID'); }
 		if (!receiverId) { missing.push('Receiver ID'); }
 		if (!billingNpi) { missing.push('Billing NPI'); }
 		if (!billingTaxId) { missing.push('Billing Tax ID'); }
+		if (!insurance.payerName) { missing.push("patient's insurance (no coverage on file)"); }
+		if (this.items.reduce((s, it) => s + it.price * it.qty, 0) === 0) { missing.push('charge amounts (all $0)'); }
 		if (missing.length) {
 			this.notificationService.notify({
 				severity: Severity.Warning,
-				message: `The 837P file was generated with blanks for: ${missing.join(', ')}. Set these under Settings → Ciyex: Billing / EDI, or fill them in your clearinghouse before submitting.`,
+				message: `837P generated, but these are missing/blank: ${missing.join('; ')}. Submitter/Receiver IDs come from Settings → Ciyex: Billing / EDI; NPI/Tax ID/payer/charges come from the practice, patient coverage and fee-sheet prices.`,
 			});
 		}
 
@@ -779,14 +788,15 @@ export class FeeSheetEditor extends EditorPane {
 		}));
 
 		const claim: Edi837Claim = {
-			submitterId, submitterName: cfg('ciyex.billing.submitterName', '') || practiceName,
-			receiverId, receiverName: cfg('ciyex.billing.receiverName', '') || 'CLEARINGHOUSE',
-			usageIndicator: cfg('ciyex.billing.productionMode', false) ? 'P' : 'T',
-			billingName: practiceName, billingNpi, billingTaxId,
-			billingAddress1: cfg('ciyex.billing.billingAddress1', ''),
-			billingCity: cfg('ciyex.billing.billingCity', ''),
-			billingState: cfg('ciyex.billing.billingState', ''),
-			billingZip: cfg('ciyex.billing.billingZip', ''),
+			submitterId, submitterName: pick('ciyex.billing.submitterName', practice.name, billingName),
+			submitterContactName: practice.name, submitterPhone: practice.phone, submitterEmail: practice.email,
+			receiverId, receiverName: cfg('ciyex.billing.receiverName') || 'CLEARINGHOUSE',
+			usageIndicator: this.configurationService.getValue<boolean>('ciyex.billing.productionMode') ? 'P' : 'T',
+			billingName, billingNpi, billingTaxId,
+			billingAddress1: pick('ciyex.billing.billingAddress1', practice.address1),
+			billingCity: pick('ciyex.billing.billingCity', practice.city),
+			billingState: pick('ciyex.billing.billingState', practice.state),
+			billingZip: pick('ciyex.billing.billingZip', practice.zip),
 			patientFirstName: firstName, patientLastName: lastName,
 			patientDob: patient.dob, patientGender: patient.gender,
 			patientAddress1: patient.address1, patientCity: patient.city, patientState: patient.state, patientZip: patient.zip,
@@ -798,6 +808,9 @@ export class FeeSheetEditor extends EditorPane {
 			placeOfService: '11',
 			dateOfService: dos,
 			renderingProviderNpi: patient.renderingNpi,
+			renderingProviderFirstName: patient.renderingFirstName,
+			renderingProviderLastName: patient.renderingLastName,
+			renderingProviderTaxonomy: patient.renderingTaxonomy,
 			diagnoses,
 			lines,
 		};
@@ -811,51 +824,119 @@ export class FeeSheetEditor extends EditorPane {
 		}
 	}
 
-	/** Best-effort demographics + first insurance + rendering NPI for the EDI. */
+	/**
+	 * Pull the REAL data the 837P needs from the backend (not placeholders):
+	 *  - patient demographics + address (/api/patients)
+	 *  - active insurance coverage → payer name, member/policy #, group
+	 *    (/api/fhir-resource/insurance-coverage), then resolve the electronic
+	 *    payer id from the payer directory (/api/insurance-companies)
+	 *  - rendering provider name + NPI + taxonomy (/api/providers)
+	 * Each source is independent and fails soft so a missing one never blocks
+	 * the export — the field just stays blank (which the clearinghouse flags).
+	 */
 	private async _fetchPatientForEdi(): Promise<{
 		firstName?: string; lastName?: string; dob?: string; gender?: string; mrn?: string;
 		address1?: string; city?: string; state?: string; zip?: string;
-		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string };
-		renderingNpi?: string;
+		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string; subscriberAddress?: string };
+		renderingNpi?: string; renderingFirstName?: string; renderingLastName?: string; renderingTaxonomy?: string;
 	}> {
-		const out = { insurance: {} as { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string } } as Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>>;
-		try {
-			const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(this.patientId)}`);
-			if (res.ok) {
-				const j = await res.json();
-				const p = (j?.data ?? j) as Record<string, unknown>;
-				out.firstName = (p.firstName as string) || undefined;
-				out.lastName = (p.lastName as string) || undefined;
-				out.dob = (p.dob as string) || (p.dateOfBirth as string) || undefined;
-				out.gender = (p.gender as string) || (p.sex as string) || undefined;
-				out.mrn = (p.mrn as string) || undefined;
-				out.address1 = (p.addressLine1 as string) || (p.address as string) || undefined;
-				out.city = (p.city as string) || undefined;
-				out.state = (p.state as string) || undefined;
-				out.zip = (p.zip as string) || (p.zipCode as string) || (p.postalCode as string) || undefined;
-				const ins = (p.insurance ?? (Array.isArray(p.insurances) ? (p.insurances as Record<string, unknown>[])[0] : undefined)) as Record<string, unknown> | undefined;
-				if (ins) {
-					out.insurance = {
-						payerName: (ins.payerName as string) || (ins.insuranceCompany as string) || (ins.companyName as string) || undefined,
-						payerId: (ins.payerId as string) || undefined,
-						policyNumber: (ins.policyNumber as string) || (ins.subscriberId as string) || (ins.memberId as string) || undefined,
-						groupNumber: (ins.groupNumber as string) || undefined,
-					};
-				}
+		const out = { insurance: {} as { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string; subscriberAddress?: string } } as Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>>;
+		const getJson = async (path: string): Promise<Record<string, unknown> | null> => {
+			try { const r = await this.apiService.fetch(path); return r.ok ? await r.json() : null; } catch { return null; }
+		};
+		const listOf = (j: Record<string, unknown> | null): Record<string, unknown>[] => {
+			const d = j?.data as { content?: unknown[] } | unknown[] | undefined;
+			if (Array.isArray(d)) { return d as Record<string, unknown>[]; }
+			const nested = (d as { content?: unknown[] } | undefined)?.content ?? (j?.content as unknown[] | undefined);
+			return Array.isArray(nested) ? nested as Record<string, unknown>[] : [];
+		};
+
+		// Patient demographics.
+		const pj = await getJson(`/api/patients/${encodeURIComponent(this.patientId)}`);
+		if (pj) {
+			const p = (pj.data ?? pj) as Record<string, unknown>;
+			out.firstName = (p.firstName as string) || undefined;
+			out.lastName = (p.lastName as string) || undefined;
+			out.dob = (p.dob as string) || (p.dateOfBirth as string) || undefined;
+			out.gender = (p.gender as string) || (p.sex as string) || undefined;
+			out.mrn = (p.mrn as string) || undefined;
+			out.address1 = (p.addressLine1 as string) || (p.address as string) || undefined;
+			out.city = (p.city as string) || undefined;
+			out.state = (p.state as string) || undefined;
+			out.zip = (p.zip as string) || (p.zipCode as string) || (p.postalCode as string) || undefined;
+		}
+
+		// Active insurance coverage (FHIR Coverage) — the real payer + member id.
+		const covJson = await getJson(`/api/fhir-resource/insurance-coverage/patient/${encodeURIComponent(this.patientId)}?page=0&size=10`);
+		const coverages = listOf(covJson);
+		const active = coverages.find(c => /active/i.test(String(c.status ?? ''))) || coverages[0];
+		if (active) {
+			const payerName = (active.payerName as string) || (active.insuranceCompany as string) || (active.companyName as string) || undefined;
+			out.insurance = {
+				payerName,
+				payerId: (active.payerId as string) || undefined,
+				policyNumber: (active.policyNumber as string) || (active.subscriberId as string) || (active.memberId as string) || undefined,
+				groupNumber: (active.groupNumber as string) || undefined,
+				subscriberAddress: (active.subscriberAddress as string) || undefined,
+			};
+			// Resolve the ELECTRONIC payer id from the payer directory by name —
+			// clearinghouses key NM1*PR on this id, and Coverage rarely carries it.
+			if (payerName && !out.insurance.payerId) {
+				const dir = listOf(await getJson(`/api/insurance-companies?page=0&size=50&search=${encodeURIComponent(payerName)}`));
+				const match = dir.find(d => String(d.name ?? '').trim().toLowerCase() === payerName.trim().toLowerCase()) || dir[0];
+				if (match?.payerId) { out.insurance.payerId = String(match.payerId); }
 			}
-		} catch { /* proceed with what the fee sheet already has */ }
-		// Best-effort rendering NPI from the selected rendering provider record.
+		}
+
+		// Rendering provider — name + NPI + taxonomy for the 2310B loop.
 		if (this.renderingProvider) {
-			try {
-				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(this.renderingProvider)}`);
-				if (res.ok) {
-					const j = await res.json();
-					const pr = (j?.data ?? j) as Record<string, unknown>;
-					out.renderingNpi = (pr.npi as string) || ((pr.identification as { npi?: string })?.npi) || undefined;
-				}
-			} catch { /* NPI optional — billing NPI covers the required loop */ }
+			const prj = await getJson(`/api/providers/${encodeURIComponent(this.renderingProvider)}`);
+			if (prj) {
+				const pr = (prj.data ?? prj) as Record<string, unknown>;
+				const ident = (pr.identification as { firstName?: string; lastName?: string }) || {};
+				out.renderingFirstName = ident.firstName || undefined;
+				out.renderingLastName = ident.lastName || undefined;
+				// The `npi` field occasionally holds non-NPI data in dev; only emit
+				// a clean 10-digit NPI so we never ship a phone number as an NPI.
+				const npiRaw = String((pr.npi as string) || '').replace(/[^0-9]/g, '');
+				out.renderingNpi = npiRaw.length === 10 ? npiRaw : undefined;
+				const prof = (pr.professionalDetails as { taxonomy?: string }) || {};
+				out.renderingTaxonomy = prof.taxonomy || undefined;
+			}
 		}
 		return out;
+	}
+
+	/**
+	 * The practice / billing-provider record for the current org: legal name,
+	 * NPI, tax id (EIN), address, phone, email. Sourced from /api/practices so
+	 * the 837P billing loop carries real identifiers instead of "Practice"
+	 * placeholders. The ciyex.billing.* settings still override these when set
+	 * (e.g. a practice that bills under a different entity).
+	 */
+	private async _fetchPractice(): Promise<{
+		name?: string; npi?: string; taxId?: string; phone?: string; email?: string;
+		address1?: string; city?: string; state?: string; zip?: string;
+	}> {
+		try {
+			const res = await this.apiService.fetch('/api/practices?page=0&size=1');
+			if (!res.ok) { return {}; }
+			const j = await res.json();
+			const list = (j?.data?.content ?? j?.content ?? j?.data ?? []) as Record<string, unknown>[];
+			const p = Array.isArray(list) ? list[0] : (j?.data ?? j) as Record<string, unknown>;
+			if (!p) { return {}; }
+			const addr = (p.address as { line1?: string; city?: string; state?: string; zip?: string }) || {};
+			const npi = String((p.npi as string) || '').replace(/[^0-9]/g, '');
+			return {
+				name: (p.name as string) || undefined,
+				npi: npi.length === 10 ? npi : undefined,
+				taxId: (p.taxId as string) || undefined,
+				phone: (p.phone as string) || undefined,
+				email: (p.email as string) || undefined,
+				address1: addr.line1 || undefined, city: addr.city || undefined,
+				state: addr.state || undefined, zip: addr.zip || undefined,
+			};
+		} catch { return {}; }
 	}
 
 	override layout(dimension: DOM.Dimension): void {
