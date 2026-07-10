@@ -2181,6 +2181,18 @@ export class PatientSnapshotEditor extends EditorPane {
 		const vit = this._filterToPatient(this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals))), patientId);
 		this._lastLoadedVitals = vit;
 		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
+		// The encounters LIST can lag a just-created / just-signed encounter (FHIR
+		// indexing), so right after Sign & Lock the workflow read the visit as
+		// unsigned — or, before the strict linked-only scoping, a stray same-day
+		// encounter. When the appointment's linked encounter record is missing
+		// from the list, fetch it directly (the by-id GET is authoritative) and
+		// surface it to the workflow and the history card.
+		const wfLinkedId = String(apt?.encounterId ?? '').trim();
+		if (wfLinkedId && !encs.some(e => String(e.id ?? e.fhirId ?? '') === wfLinkedId)) {
+			const encRaw = await this._fetch(`/api/${patientId}/encounters/${encodeURIComponent(wfLinkedId)}`);
+			const rec = (encRaw?.data ?? encRaw) as Record<string, unknown> | null;
+			if (rec && (rec.id !== undefined || rec.fhirId !== undefined)) { encs.unshift(rec); }
+		}
 		// Lab ORDERS and lab RESULTS are now two distinct, clinically-backed
 		// collections (the snapshot shows each in its own card). Both come from the
 		// SAME stores the clinical Labs page uses — /api/lab-order/search and
@@ -2201,7 +2213,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		// same-day encounter) and load its fee sheet so the Visit Pipeline card can
 		// show how far along the revenue cycle this visit is.
 		const todayEnc = this._todayEncounter(apt, encs);
-		const todayEncId = todayEnc ? String(todayEnc.id ?? todayEnc.fhirId ?? '') : String(apt?.encounterId ?? '');
+		// Revenue-cycle key (fee-sheet lookup + payment stamping): when viewing an
+		// appointment this is its LINKED encounter id ONLY — the id works even
+		// when the encounter record itself isn't in the fetched list, and a stray
+		// same-day encounter must never key the visit's fee sheet. The
+		// today-encounter fallback applies only without an appointment context.
+		const todayEncId = apt ? String(apt.encounterId ?? '').trim() : (todayEnc ? String(todayEnc.id ?? todayEnc.fhirId ?? '') : '');
 		let feeSheet: Record<string, unknown> | null = null;
 		// Vitals recorded in the viewed visit's encounter form (mapped to the card's
 		// shape) — shown when there are no today FHIR vitals so the encounter's vitals
@@ -2262,8 +2279,13 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _todayEncounter(apt: Record<string, unknown> | null, encs: Record<string, unknown>[]): Record<string, unknown> | null {
 		const linkedId = String(apt?.encounterId ?? '');
 		if (linkedId) {
-			const byId = encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedId);
-			if (byId) { return byId; }
+			// The appointment names its encounter — resolve THAT record or nothing.
+			// Falling back to "any same-day encounter" here handed the pipeline a
+			// stray encounter (e.g. a manually created one) whenever the linked
+			// record wasn't in the fetched list, which keyed the fee-sheet lookup
+			// to the wrong encounter and left Fee Sheet reading "Add charges" on a
+			// signed visit whose fee sheet existed.
+			return encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedId) ?? null;
 		}
 		return encs.find(e => this._isToday(e.encounterDate || e.startDate || e.start || e.date || e.periodStart)) ?? null;
 	}
