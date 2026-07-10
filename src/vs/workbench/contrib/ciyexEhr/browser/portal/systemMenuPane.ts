@@ -234,7 +234,11 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		],
 	},
 	{
-		// Document Scanning: \u{270F} Edit + Re-OCR + Delete (systemEditors.ts:445)
+		// Document Scanning: Re-OCR + Delete only. NO Edit: the backend
+		// DocumentScanningController has no update endpoint (only list /
+		// upload / {id}/ocr / delete), so the generic edit dialog's PUT always
+		// failed with "Update failed (500)" (QA). Scanned-document metadata is
+		// immutable — delete and re-upload to change it.
 		id: 'docscan',
 		// allow-any-unicode-next-line
 		icon: '\u{1F4F7}',
@@ -247,8 +251,6 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		titleField: ['patientName', 'description'],
 		subtitleField: ['category', 'status'],
 		actions: [
-			// allow-any-unicode-next-line
-			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
 			// allow-any-unicode-next-line
 			{ symbol: '\u{1F504}', label: 'Re-OCR', color: '#3b82f6', action: { kind: 'method', method: 'POST', path: r => `/api/document-scanning/${r.id}/ocr` } },
 			// allow-any-unicode-next-line
@@ -680,6 +682,9 @@ export class SystemMenuPane extends ViewPane {
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				const saved = await parseSavedRecord(res) ?? payload;
 				this._applyOptimistic(item, saved as DataRow, 'update');
+				// Broadcast so an already-open module editor reloads instead of
+				// keeping the pre-edit row.
+				this.apiService.notifyClinicalRecordMutation({ entity: basePath, patientId: String((saved as Record<string, unknown>)['patientId'] ?? ''), kind: 'update', record: saved as Record<string, unknown> });
 			},
 		});
 	}

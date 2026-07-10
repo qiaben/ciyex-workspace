@@ -4953,14 +4953,14 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
 			case 'clinical-alerts':
-				// Match the Clinical Alert form's Status options — the alert can be
-				// "Entered in Error" but that value was missing from the generic
-				// clinical default below, so such alerts never matched a filter (QA).
+				// Match the Clinical Alert form's Status options EXACTLY (Active /
+				// Inactive / Entered in Error) — the filter previously also offered
+				// 'Resolved', which the form never sets, so the two vocabularies
+				// disagreed (QA: form vs filter status mismatch).
 				return [
 					{ label: 'All Clinical Statuses', value: '' },
 					{ label: 'Active', value: 'active' },
 					{ label: 'Inactive', value: 'inactive' },
-					{ label: 'Resolved', value: 'resolved' },
 					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
 			case 'insurance':
@@ -6161,6 +6161,33 @@ export class PatientChartEditor extends EditorPane {
 						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
 					}
 					this.notificationService.warn(alertErr);
+					return;
+				}
+			}
+
+			// Immunizations: a vaccine that expired BEFORE it was administered is a
+			// documentation error — block the save (QA: an expired vaccine saved
+			// without any validation). Expiry on/after the administration date is
+			// allowed so historical records (long-past lots) stay editable.
+			if (tab.key === 'immunizations') {
+				const adminVal = String(dialogInputs.get('administrationDate')?.value ?? '').trim();
+				const expEl = dialogInputs.get('expirationDate');
+				const expVal = String(expEl?.value ?? '').trim();
+				if (adminVal && expVal && expVal < adminVal) {
+					const immErr = 'Expiration Date is before the Date Administered — an expired vaccine cannot be administered.';
+					const cell = dialogCells.get('expirationDate');
+					if (cell) {
+						const errMsg = DOM.append(cell, DOM.$('div.field-error'));
+						errMsg.textContent = immErr;
+						errMsg.style.cssText = 'color:#ef4444;font-size:11px;margin-top:3px;';
+					}
+					const focusEl = (this._dateVisibleByKey.get('expirationDate') ?? (expEl as HTMLElement | undefined));
+					if (focusEl) {
+						focusEl.style.borderColor = '#ef4444';
+						focusEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						if (typeof focusEl.focus === 'function') { focusEl.focus(); }
+					}
+					this.notificationService.warn(immErr);
 					return;
 				}
 			}

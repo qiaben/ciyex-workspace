@@ -366,14 +366,26 @@ export class CalendarEditor extends EditorPane {
 			// can toggle multiple selections without re-fetching.
 			const loadAppts = async () => {
 				const { startDate, endDate } = this._getDateRange();
+				// provider/location ids MUST be coerced to trimmed strings: the
+				// backend DTO mixes number and string ids across rows (e.g.
+				// locationId 1431 vs '1431'), and the filter dropdown matches them
+				// against a Set<string> of location ids — a numeric id never
+				// matched, so selecting a location silently hid its appointments
+				// (QA: selected location not displayed in the calendar view).
+				const asId = (v: unknown, ref: unknown, prefix: string): string =>
+					(v !== undefined && v !== null && String(v).trim() !== '')
+						? String(v).trim()
+						: (typeof ref === 'string' ? ref.replace(prefix, '').trim() : '');
 				const normalize = (raw: Record<string, unknown>[]) => raw.map((a: Record<string, unknown>) => ({
 					...a,
 					patientName: a.patientName || a.patientDisplay || '',
 					providerName: a.providerName || a.providerDisplay || '',
 					practitionerName: a.practitionerName || a.providerDisplay || '',
-					providerId: a.providerId || (typeof a.provider === 'string' ? (a.provider as string).replace('Practitioner/', '') : ''),
-					locationId: a.locationId || (typeof a.location === 'string' ? (a.location as string).replace('Location/', '') : ''),
-					locationName: a.locationName || a.locationDisplay || '',
+					providerId: asId(a.providerId, a.provider, 'Practitioner/'),
+					locationId: asId(a.locationId, a.location, 'Location/'),
+					// Location names can carry stray whitespace ('Japan ') — trim so
+					// name-based matching and display stay consistent.
+					locationName: String(a.locationName || a.locationDisplay || '').trim(),
 					status: a.status || 'Scheduled',
 				})) as Appointment[];
 
@@ -466,7 +478,10 @@ export class CalendarEditor extends EditorPane {
 							const data = await res.json();
 							const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : []);
 							if (list.length > 0) {
-								this.locations = list.map((l: Record<string, string>) => ({ id: l.id || '', name: l.name || l.id || '' })).filter((l: { id: string; name: string }) => l.name);
+								// String-coerce ids and trim names — the filter matches
+								// these ids against appointment locationIds, and the
+								// backend can return numeric ids / padded names.
+								this.locations = list.map((l: Record<string, unknown>) => ({ id: String(l.id ?? '').trim(), name: String(l.name ?? l.id ?? '').trim() })).filter((l: { id: string; name: string }) => l.name);
 								break;
 							}
 						}

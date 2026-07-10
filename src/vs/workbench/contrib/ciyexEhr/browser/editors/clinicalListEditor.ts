@@ -135,6 +135,14 @@ export interface FormFieldDef {
 	 */
 	fallbackOptions?: Array<Record<string, string>>;
 	/**
+	 * For 'search' type: when the primary search returns nothing, also offer the
+	 * selected patient's EXISTING insurance names (from the form's `patientId`
+	 * companion field via the insurance-coverage endpoint). Used by the Prior
+	 * Auth Insurance Name search: the patient's snapshot insurance must be
+	 * findable even when the org's insurance-companies catalog is empty.
+	 */
+	patientCoverageFallback?: boolean;
+	/**
 	 * For 'search' type: map of additional form-field keys to fill from a selected result.
 	 * Key is the form field to fill, value is the property key on the result object.
 	 * Example: { patientLastName: 'lastName', patientPhone: 'phone' }
@@ -670,6 +678,18 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		@IDialogService protected readonly dialogService: IDialogService,
 	) {
 		super(id, group, telemetryService, themeService, storageService);
+		// Reload when the SAME resource is mutated elsewhere (e.g. the Clinical
+		// sidebar's "..." edit dialog): the sidebar save persisted, but this
+		// open editor kept showing the pre-edit rows until a manual reload
+		// (QA: prescription status edited in the sidebar never updated in the
+		// open Prescriptions list). `this.config` is a subclass property, so
+		// read it lazily inside the handler — events only fire after init.
+		this._register(this.apiService.onDidMutateClinicalRecord(m => {
+			const base = this.config?.apiPath?.split('?')[0].replace(/\/$/, '');
+			if (base && m.entity === base && this.root) {
+				void this._loadData();
+			}
+		}));
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -1733,6 +1753,31 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 							}
 						} catch {
 							serviceError = true;
+						}
+						// Patient-coverage fallback: when the master catalog search has no
+						// match, surface the selected patient's EXISTING insurance names
+						// (QA: the patient's snapshot insurance "XYZ" existed but the
+						// Prior Auth Insurance Name search said "No results found"
+						// because the org's insurance-companies catalog was empty).
+						if (results.length === 0 && field.patientCoverageFallback) {
+							const pid = inputs.get('patientId')?.value.trim();
+							if (pid) {
+								try {
+									const covRes = await this.apiService.fetch(`/api/fhir-resource/insurance-coverage/patient/${encodeURIComponent(pid)}?page=0&size=25`);
+									if (covRes.ok) {
+										const covData = await covRes.json();
+										const covWrapper = covData?.data || covData;
+										const covRows: Record<string, unknown>[] = covWrapper?.content || (Array.isArray(covWrapper) ? covWrapper : []);
+										const lq = query.toLowerCase();
+										const seenNames = new Set<string>();
+										results = covRows
+											.map(c => String(c['payerName'] ?? c['insuranceName'] ?? c['insuranceCompanyName'] ?? '').trim())
+											.filter(n => n && n.toLowerCase().includes(lq))
+											.filter(n => { const k = n.toLowerCase(); if (seenNames.has(k)) { return false; } seenNames.add(k); return true; })
+											.map(n => ({ name: n }));
+									}
+								} catch { /* fall through to the normal empty state */ }
+							}
 						}
 						// Client-side fallback when API returns empty/fails (e.g. CVX codes
 						// when ciyex-codes has no CVX data loaded).

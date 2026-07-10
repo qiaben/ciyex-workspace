@@ -775,6 +775,9 @@ export class OperationsMenuPane extends ViewPane {
 					(saved as Record<string, unknown>).active = next.active === true;
 				}
 				this._applyOptimistic(item, saved as DataRow, 'update');
+				// Broadcast so an already-open module editor (e.g. Patient Recall
+				// list) reloads instead of keeping the pre-edit row.
+				this.apiService.notifyClinicalRecordMutation({ entity: basePath, patientId: String((saved as Record<string, unknown>)['patientId'] ?? ''), kind: 'update', record: saved as Record<string, unknown> });
 			},
 		});
 	}

@@ -617,6 +617,9 @@ export class ClinicalMenuPane extends ViewPane {
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
 				const saved = await parseSavedRecord(res) ?? { ...next };
 				this._applyOptimistic(item, saved as DataRow, 'create');
+				// Broadcast so an open module editor (e.g. Clinical > Prescriptions
+				// list) reloads and shows the new record immediately.
+				this.apiService.notifyClinicalRecordMutation({ entity: basePath, patientId: String((saved as Record<string, unknown>)['patientId'] ?? ''), kind: 'create', record: saved as Record<string, unknown> });
 			},
 		});
 	}
@@ -656,6 +659,11 @@ export class ClinicalMenuPane extends ViewPane {
 				if (!res.ok) { throw new Error(`Update failed (${res.status})`); }
 				const saved = await parseSavedRecord(res) ?? payload;
 				this._applyOptimistic(item, saved as DataRow, 'update');
+				// Broadcast so an already-open module editor reloads: a status
+				// edited through this sidebar dialog persisted server-side but the
+				// open Prescriptions editor kept showing the OLD status until a
+				// manual reload (QA: prescription status not updated after editing).
+				this.apiService.notifyClinicalRecordMutation({ entity: basePath, patientId: String((saved as Record<string, unknown>)['patientId'] ?? ''), kind: 'update', record: saved as Record<string, unknown> });
 			},
 		});
 	}

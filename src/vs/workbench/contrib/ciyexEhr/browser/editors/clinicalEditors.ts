@@ -1814,6 +1814,10 @@ export class CdsEditor extends ClinicalListEditorBase {
 		statusTabs: [
 			{ label: 'Active', value: 'active' },
 			{ label: 'Inactive', value: 'inactive' },
+			// Merged patient-chart alert rows can carry 'entered_in_error' — the
+			// filter must offer every status the table can display (QA: alerts
+			// with that status existed but no filter matched them).
+			{ label: 'Entered in Error', value: 'entered-in-error' },
 		],
 		// The Status COLUMN renders from `isActive` (Active when true, Inactive
 		// otherwise) but the status filter compared the raw `status` STRING. A
@@ -1821,10 +1825,15 @@ export class CdsEditor extends ClinicalListEditorBase {
 		// displays as "Inactive" yet matched neither filter — so the Inactive tab
 		// showed "No records found" while Inactive rows sat in the All view (QA
 		// issue 9). Match the filters off the same isActive/status logic the
-		// column displays.
+		// column displays. Entered-in-Error rows get their own tab and are kept
+		// out of Inactive so the tabs stay disjoint.
 		statusMatchers: {
 			active: (item) => item['isActive'] === true || String(item['status'] ?? '').toLowerCase() === 'active',
-			inactive: (item) => !(item['isActive'] === true || String(item['status'] ?? '').toLowerCase() === 'active'),
+			inactive: (item) => {
+				const s = String(item['status'] ?? '').toLowerCase().replace(/[-_\s]/g, '');
+				return !(item['isActive'] === true || s === 'active') && s !== 'enteredinerror';
+			},
+			'entered-in-error': (item) => String(item['status'] ?? '').toLowerCase().replace(/[-_\s]/g, '') === 'enteredinerror',
 		},
 		additionalFilters: [
 			{
@@ -1995,7 +2004,11 @@ export const AUTHORIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 	{ key: 'providerName', label: 'Provider', type: 'search', placeholder: 'Search provider...', apiPath: '/api/providers', relatedField: 'providerId', relatedDisplayFields: ['firstName', 'lastName'] },
-	{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name' },
+	// patientCoverageFallback: the patient's EXISTING insurance (snapshot
+	// coverage) must be offerable even when the org's insurance-companies
+	// catalog has no matching entry (QA: typed name showed "No results found"
+	// though the insurance existed on the patient).
+	{ key: 'insuranceName', label: 'Insurance Name', type: 'search', required: true, placeholder: 'Search insurance...', apiPath: '/api/insurance-companies', searchDisplayField: 'name', patientCoverageFallback: true },
 	{ key: 'memberId', label: 'Member ID', type: 'text' },
 	{ key: 'authNumber', label: 'Authorization Number', type: 'text', placeholder: 'Auth reference number' },
 	// Issue #12: the first field is the CODE search (CPT) and the second field
@@ -3176,10 +3189,15 @@ export class RecallEditor extends ClinicalListEditorBase {
 			const byStatus = (s: string) => items.filter(i => String(i.status ?? '').toUpperCase() === s).length;
 			return {
 				overdue: byStatus('OVERDUE'),
+				// Due/Declined are in the status filter AND the form, so the card
+				// strip must surface them too — Due was missing from the summary
+				// cards while DUE rows sat in the list (QA issue 8).
+				dueTotal: byStatus('DUE'),
 				completed: byStatus('COMPLETED'),
 				pendingTotal: byStatus('PENDING'),
 				contactedTotal: byStatus('CONTACTED'),
 				scheduledTotal: byStatus('SCHEDULED'),
+				declinedTotal: byStatus('DECLINED'),
 				cancelledTotal: byStatus('CANCELLED'),
 			};
 		},
