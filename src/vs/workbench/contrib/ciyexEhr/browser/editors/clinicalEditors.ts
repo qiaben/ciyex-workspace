@@ -2685,7 +2685,10 @@ export class EducationEditor extends ClinicalListEditorBase {
 						item.textContent = `${fn} ${ln}`.trim() + dob;
 						item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 						item.addEventListener('mouseleave', () => { item.style.background = ''; });
-						item.addEventListener('click', () => {
+						// MOUSEDOWN, not click: the input blur hides the dropdown after
+						// 150ms, swallowing slower clicks — picking took two clicks (QA).
+						item.addEventListener('mousedown', (e) => {
+							e.preventDefault();
 							this._eduAssignPatientId = typeof p['id'] === 'number' ? p['id'] : parseInt(String(p['id'] || '0'), 10);
 							this._eduAssignPatientName = `${fn} ${ln}`.trim();
 							searchInput.value = this._eduAssignPatientName;

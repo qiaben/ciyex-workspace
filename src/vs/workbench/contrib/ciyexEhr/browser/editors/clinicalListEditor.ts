@@ -1838,7 +1838,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 								item.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
 								item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground)'; });
 								item.addEventListener('mouseleave', () => { item.style.background = ''; });
-								item.addEventListener('click', () => {
+								// MOUSEDOWN, not click: the input's blur (fired by the row's
+								// mousedown) hides this dropdown 200ms later, so a press longer
+								// than that swallowed the click and picking took TWO clicks
+								// (QA: dropdown options select only on double click).
+								item.addEventListener('mousedown', (e) => {
+									e.preventDefault();
 									// When `selectDisplayField` is set, the input shows only that
 									// field (e.g. the description) while the dropdown still shows the
 									// fuller `displayText` (code + description). Otherwise fall back to

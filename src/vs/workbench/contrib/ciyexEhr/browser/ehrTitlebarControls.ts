@@ -273,7 +273,11 @@ export class EhrTitlebarControls extends Disposable {
 
 				const patientName = `${p.firstName} ${p.lastName}`.trim();
 				const patientId = String(p.id || p.fhirId || '');
-				this._register(DOM.addDisposableListener(item, 'click', () => {
+				// MOUSEDOWN, not click: the search input's blur (fired by the
+				// row's mousedown) hides this dropdown 150ms later, so slower
+				// presses swallowed the click — picking took TWO clicks (QA).
+				this._register(DOM.addDisposableListener(item, 'mousedown', (e: MouseEvent) => {
+					e.preventDefault();
 					this.searchDropdown.style.display = 'none';
 					this.searchInput.value = '';
 					// Redirect to the patient's chart/snapshot (QA issue 29:
@@ -303,7 +307,9 @@ export class EhrTitlebarControls extends Disposable {
 				const subEl = DOM.append(item, DOM.$('.ehr-search-dob'));
 				subEl.textContent = 'View appointments';
 
-				this._register(DOM.addDisposableListener(item, 'click', () => {
+				// MOUSEDOWN, not click — see the patient rows above (blur-hide race).
+				this._register(DOM.addDisposableListener(item, 'mousedown', (e: MouseEvent) => {
+					e.preventDefault();
 					this.searchDropdown.style.display = 'none';
 					this.searchInput.value = display;
 					this.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -704,7 +710,9 @@ export class EhrTitlebarControls extends Disposable {
 						nameEl.textContent = `${p.firstName} ${p.lastName}`;
 						const dobEl = DOM.append(item, DOM.$('.ehr-search-dob'));
 						dobEl.textContent = p.dateOfBirth ? `DOB: ${this._formatDisplayDate(p.dateOfBirth)}` : '';
-						this._register(DOM.addDisposableListener(item, 'click', () => {
+						// MOUSEDOWN, not click — see the search rows above (blur-hide race).
+						this._register(DOM.addDisposableListener(item, 'mousedown', (e: MouseEvent) => {
+							e.preventDefault();
 							selectedPatientId = p.fhirId || p.id;
 							patientSearchInput.value = `${p.firstName} ${p.lastName}`;
 							patientDropdown.style.display = 'none';

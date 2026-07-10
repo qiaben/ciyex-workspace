@@ -2179,14 +2179,20 @@ export class CalendarEditor extends EditorPane {
 				return;
 			}
 
-			// Patient matches — derive from appointments (name+id pairs)
+			// Patient matches — derive from appointments. Dedupe by NORMALIZED
+			// NAME, not patientId: the backend mixes id shapes across rows
+			// ('1462' vs 'Patient/1462' vs missing), so the same patient got two
+			// map keys and showed twice in the dropdown (QA: name displayed 2
+			// times). The row's action only uses the name (name filter), so the
+			// name IS the identity here.
 			const patientMap = new Map<string, { id: string; name: string }>();
 			for (const a of this.appointments) {
 				const name = (a.patientName || `${a.patientFirstName || ''} ${a.patientLastName || ''}`).trim();
 				if (!name) { continue; }
 				if (!name.toLowerCase().includes(q)) { continue; }
-				const id = (a as unknown as { patientId?: string }).patientId || name;
-				if (!patientMap.has(id)) { patientMap.set(id, { id, name }); }
+				const nameKey = name.toLowerCase().replace(/\s+/g, ' ');
+				const id = String((a as unknown as { patientId?: string }).patientId ?? '').replace('Patient/', '') || name;
+				if (!patientMap.has(nameKey)) { patientMap.set(nameKey, { id, name }); }
 			}
 			const patients = Array.from(patientMap.values()).slice(0, 8);
 

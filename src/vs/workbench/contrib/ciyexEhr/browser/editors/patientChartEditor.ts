@@ -7496,7 +7496,14 @@ export class PatientChartEditor extends EditorPane {
 							rows.push(row);
 							const idx = rows.length - 1;
 							row.addEventListener('mouseenter', () => setHighlight(idx));
-							row.addEventListener('click', () => {
+							// Select on MOUSEDOWN, not click: mousedown on the row blurs
+							// the input, whose blur handler hides this dropdown 150ms
+							// later — any press longer than that swallowed the click, so
+							// picking an option took TWO clicks (QA issue: dropdown
+							// options select only on double click). preventDefault keeps
+							// the input focused.
+							row.addEventListener('mousedown', (e) => {
+								e.preventDefault();
 								if (isCodeSearch) {
 									input.value = `${it.code} - ${it.label}`;
 									hidden.value = it.code;

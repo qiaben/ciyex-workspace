@@ -2284,6 +2284,26 @@ export class SettingsHubEditor extends EditorPane {
 		if (nameSegs.has(seg) || /^(first|last|middle) ?name$/.test(label)) {
 			return isPersonName(value) ? undefined : `${field.label} must contain only letters, spaces, hyphens, or apostrophes`;
 		}
+		// License Expiry Date — an already-expired license must not be saved
+		// (QA: the Providers create/edit form accepted past expiry dates).
+		if (seg === 'licenseexpirydate' || seg === 'licenseexpiry' || looks(/licen[cs]e ?expiry/)) {
+			const d = new Date(value.trim());
+			if (!isNaN(d.getTime())) {
+				const today = new Date(); today.setHours(0, 0, 0, 0);
+				if (d < today) { return `${field.label} cannot be in the past — the license is already expired`; }
+			}
+			return undefined;
+		}
+		// Date of Birth — a future DOB is invalid (QA: the Providers form
+		// accepted e.g. 2029).
+		if (seg === 'dateofbirth' || seg === 'dob' || seg === 'birthdate' || looks(/date ?of ?birth|\bdob\b/)) {
+			const d = new Date(value.trim());
+			if (!isNaN(d.getTime())) {
+				const now = new Date();
+				if (d.getTime() > now.getTime()) { return `${field.label} cannot be in the future`; }
+			}
+			return undefined;
+		}
 		// License NUMBER only — exactly 5 alphanumeric characters. Scoped strictly
 		// to the license-number field: the previous broad `seg.includes('license')`
 		// also matched "License State" (e.g. "Iowa") and "License Expiry Date",

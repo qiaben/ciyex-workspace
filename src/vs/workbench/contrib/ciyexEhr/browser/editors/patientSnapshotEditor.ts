@@ -3640,19 +3640,16 @@ export class PatientSnapshotEditor extends EditorPane {
 			// is what guarantees a later step can never render done before an
 			// earlier one, no matter what stray same-day/patient-level data exists.
 			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
-			// Two kinds of clickable step: a DONE step re-opens what it produced
-			// (appointment / encounter / fee sheet / payment) for review, and the one
-			// current "next" step PERFORMS its action — the exact same handler the
-			// banner button runs, so the strip and banner can never act differently.
-			// Every locked future step stays inert: strict order means a step the
-			// visit hasn't reached yet must not be runnable early, so Sign & Lock is
-			// only actionable once it IS the current step, never before.
-			const clickable = (state === 'done' || state === 'next') && !!s.action;
+			// The strip is a STATUS INDICATOR only — no step is clickable (QA:
+			// workflow tiles were clickable/openable; change to non-clickable).
+			// The one actionable step still runs from the "next action" banner
+			// button above (same handler), so no capability is lost — the strip
+			// reads as pure progress.
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
-			tile.disabled = !clickable;
-			tile.title = !clickable ? s.label : state === 'done' ? `${s.label} — open` : `${s.label} — ${s.sub}`;
+			tile.disabled = true;
+			tile.title = s.label;
 			tile.style.cssText = [
-				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
+				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:default;transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
 					? 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.45);color:#22c55e;'
 					: state === 'next'
@@ -3668,16 +3665,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			const subEl = DOM.append(tile, DOM.$('div'));
 			subEl.textContent = state === 'done' ? s.doneSub : s.sub;
 			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
-			if (clickable) {
-				if (state === 'done') {
-					tile.addEventListener('mouseenter', () => { tile.style.background = 'rgba(34,197,94,0.22)'; });
-					tile.addEventListener('mouseleave', () => { tile.style.background = 'rgba(34,197,94,0.10)'; });
-				} else {
-					tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
-					tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-button-background,#0e639c)'; });
-				}
-				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
-			}
 		});
 	}
 
