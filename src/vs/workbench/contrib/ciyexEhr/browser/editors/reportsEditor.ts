@@ -77,6 +77,14 @@ interface ReportDef {
 	charts: ChartDef[];
 	pageSize?: number;
 	/**
+	 * Message shown in the table body when the report loads zero rows (as opposed to
+	 * the user's filters excluding everything). Reports that legitimately compute an
+	 * empty result set — e.g. derived Care Gaps when no patient is overdue — set this
+	 * so the table reads as an intentional "nothing due" state rather than looking
+	 * broken. When unset, the generic "No records match the current filters" is used.
+	 */
+	emptyMessage?: string;
+	/**
 	 * When true, after the main fetch we enrich each patient row with its insurance/payer name
 	 * by loading coverage data (the `/api/patients` endpoint does not include insurance). This
 	 * mirrors ciyex-ehr-ui's patient-demographics report which joins coverage data.
@@ -1030,6 +1038,7 @@ function getReportDef(key: string): ReportDef {
 				enrichProvider: true,
 				enrichEncounterStats: true,
 				deriveCareGaps: true,
+				emptyMessage: 'No open care gaps — every patient has been seen within the last 12 months.',
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'gapType', label: 'Gap Type' },
@@ -2557,7 +2566,12 @@ export class ReportsEditor extends EditorPane {
 		if (pageItems.length === 0) {
 			const empty = DOM.append(tbl, DOM.$('div'));
 			empty.style.cssText = 'padding:30px;text-align:center;color:var(--vscode-descriptionForeground);';
-			empty.textContent = 'No records match the current filters';
+			// Distinguish "the report itself produced no rows" (show the report's own
+			// intentional-empty message, e.g. no care gaps due) from "the user's
+			// filters excluded everything" (the generic message).
+			empty.textContent = this.items.length === 0 && this.reportDef.emptyMessage
+				? this.reportDef.emptyMessage
+				: 'No records match the current filters';
 		}
 		for (const item of pageItems) {
 			const r = DOM.append(tbl, DOM.$('div'));
