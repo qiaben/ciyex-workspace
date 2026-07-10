@@ -1150,9 +1150,22 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * payment form keys (paymentMethod / amount / reference / …) onto the
 	 * collect endpoint's transaction shape.
 	 */
+	/** The viewed visit's encounter/fee-sheet ids, captured at render time, so a
+	 *  payment collected from the snapshot is tied to the visit being worked. */
+	private _visitPaymentRef: { encounterId: string; feeSheetId: string } | null = null;
+
 	private async _savePayment(values: Record<string, string>): Promise<Response> {
 		const payload = this._buildPaymentDto(values, /* downgradeCards */ true);
 		payload.patientId = this._currentPatientId;
+		// Tie the payment to the visit being worked (same fields the Payments
+		// dashboard collect sends) so the Visit Workflow's Payment step completes
+		// from THIS visit's payment — not any same-day patient payment. The
+		// description fallback covers backends that drop the link fields.
+		if (this._visitPaymentRef?.encounterId) {
+			payload.encounterId = this._visitPaymentRef.encounterId;
+			if (this._visitPaymentRef.feeSheetId) { payload.feeSheetId = this._visitPaymentRef.feeSheetId; }
+			if (!payload.description) { payload.description = `Encounter ${this._visitPaymentRef.encounterId}`; }
+		}
 		// The RCM-style New Payment form has no plain "amount" field — it captures
 		// Paid / Allowed amounts. `_buildPaymentDto` falls back through them; if it
 		// still resolves to 0 the backend rejects with "A valid payment amount is
@@ -2234,6 +2247,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		if (this._currentPatientId !== patientId) { return; }
 
 		const pipeline: VisitPipelineState = { encounter: todayEnc, feeSheet, statement: stmtList[0] ?? null, payments: payList };
+		// Remember the viewed visit's encounter/fee-sheet ids so a payment collected
+		// from this page is stamped with them — that link is what lets the Visit
+		// Workflow's Payment step turn green from THIS visit's payment only.
+		this._visitPaymentRef = todayEncId ? { encounterId: todayEncId, feeSheetId: String(feeSheet?.id ?? '').trim() } : null;
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
@@ -3682,12 +3699,33 @@ export class PatientSnapshotEditor extends EditorPane {
 		const vitalsRecorded = this._todaysVitals(vit).length > 0;
 		const vitalsDone = vitalsRecorded || completed;
 		const hasFeeSheet = !!st.feeSheet;
-		// Billing/payment only count once THIS visit has a fee sheet — a stray
-		// patient-level statement must not light up the last steps before any
-		// charges were captured for the encounter.
-		const billed = hasFeeSheet && (!!st.feeSheet?.billed || String(st.feeSheet?.status ?? '').toLowerCase().includes('bill') || !!st.statement);
-		const balance = Number(st.statement?.balance ?? st.statement?.outstandingBalance ?? st.statement?.amountDue ?? NaN);
-		const paid = billed && ((!Number.isNaN(balance) && balance <= 0) || st.payments.some(p => this._isToday(p.date || p.paidAt || p.createdAt || p.transactionDate)));
+		// Billing turns done ONLY when THIS visit's fee sheet was actually sent to
+		// billing — the fee-sheet "Send to Billing" action sets billingStatus
+		// 'Unbilled' → 'Billed' (→ 'Paid' once cleared). It previously keyed off
+		// `feeSheet.billed`/`feeSheet.status` (fields that don't exist on the
+		// record) and fell back to ANY patient-level statement, so Billing and
+		// Payment lit green the moment the encounter was signed (QA).
+		const fsBillingStatus = String(st.feeSheet?.billingStatus ?? '').toLowerCase();
+		const billed = hasFeeSheet && (fsBillingStatus === 'billed' || fsBillingStatus === 'paid');
+		// Payment turns done ONLY from THIS visit's money: the fee sheet marked
+		// Paid / fully covered, or a non-failed payment transaction tied to this
+		// encounter or fee sheet (the Payments dashboard and the snapshot collect
+		// stamp encounterId/feeSheetId; description carries "Encounter {id}" as a
+		// fallback for backends that drop the link fields). Never from a stray
+		// same-day patient payment or a patient-level statement balance.
+		const feeSheetId = String(st.feeSheet?.id ?? '').trim();
+		const fsTotal = Number(st.feeSheet?.total ?? NaN);
+		const fsTotalPaid = Number(st.feeSheet?.totalPaid ?? NaN);
+		const fsPaymentStatus = String(st.feeSheet?.paymentStatus ?? '').toLowerCase();
+		const visitPayment = st.payments.some(p => {
+			const pStatus = String(p.status ?? '').toLowerCase();
+			if (['failed', 'refunded', 'cancelled', 'voided'].includes(pStatus)) { return false; }
+			if (encId && String(p.encounterId ?? '') === encId) { return true; }
+			if (feeSheetId && String(p.feeSheetId ?? '') === feeSheetId) { return true; }
+			const text = `${p.description ?? ''} ${p.notes ?? ''}`;
+			return !!encId && new RegExp(`Encounter\\s+${encId}(?:\\D|$)`).test(text);
+		});
+		const paid = billed && (fsPaymentStatus === 'paid' || (fsTotal > 0 && fsTotalPaid >= fsTotal) || visitPayment);
 
 		const startRaw = String(apt.start || apt.startTime || '');
 		let whenStr = 'Booked';
