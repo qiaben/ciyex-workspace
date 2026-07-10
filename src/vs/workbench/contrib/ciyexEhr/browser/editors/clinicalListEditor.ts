@@ -1754,12 +1754,13 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						} catch {
 							serviceError = true;
 						}
-						// Patient-coverage fallback: when the master catalog search has no
-						// match, surface the selected patient's EXISTING insurance names
-						// (QA: the patient's snapshot insurance "XYZ" existed but the
-						// Prior Auth Insurance Name search said "No results found"
-						// because the org's insurance-companies catalog was empty).
-						if (results.length === 0 && field.patientCoverageFallback) {
+						// Patient-coverage merge: the selected patient's EXISTING insurance
+						// names must be offerable alongside (and ahead of) the org's
+						// insurance-companies catalog — the catalog can be empty OR return
+						// unrelated rows for the query, and either way the patient's
+						// snapshot insurance ("XYZ") was unfindable, blocking the Prior
+						// Auth (QA: typed name showed "No results found" / wrong entries).
+						if (field.patientCoverageFallback) {
 							const pid = inputs.get('patientId')?.value.trim();
 							if (pid) {
 								try {
@@ -1770,13 +1771,17 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 										const covRows: Record<string, unknown>[] = covWrapper?.content || (Array.isArray(covWrapper) ? covWrapper : []);
 										const lq = query.toLowerCase();
 										const seenNames = new Set<string>();
-										results = covRows
+										const covMatches = covRows
 											.map(c => String(c['payerName'] ?? c['insuranceName'] ?? c['insuranceCompanyName'] ?? '').trim())
 											.filter(n => n && n.toLowerCase().includes(lq))
 											.filter(n => { const k = n.toLowerCase(); if (seenNames.has(k)) { return false; } seenNames.add(k); return true; })
 											.map(n => ({ name: n }));
+										// Patient coverage first — it is the most likely pick for a
+										// prior auth; the display-text dedupe below drops catalog
+										// rows that repeat the same name.
+										results = [...covMatches, ...results];
 									}
-								} catch { /* fall through to the normal empty state */ }
+								} catch { /* keep the catalog results */ }
 							}
 						}
 						// Client-side fallback when API returns empty/fails (e.g. CVX codes
