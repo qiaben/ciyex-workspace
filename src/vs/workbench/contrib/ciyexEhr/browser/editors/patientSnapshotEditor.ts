@@ -3273,7 +3273,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			fields: [
 				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
 				{ key: 'appointmentTime', label: 'Start Time', kind: 'time', widthPct: 50 },
-				{ key: 'duration', label: 'Duration (15-min steps)', kind: 'number', minValue: 15, widthPct: 50 },
+				// Appointments are fixed 15-minute slots — Duration is shown read-only
+				// (non-editable) so staff can't lengthen a visit here (QA report
+				// 2026-07-11, issue 4).
+				{ key: 'duration', label: 'Duration (min)', kind: 'number', readonly: true, widthPct: 50 },
 				{ key: 'appointmentType', label: 'Visit Type', kind: 'select', widthPct: 50, options: typeOptions },
 				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: statusOptions },
 				{ key: 'providerName', label: 'Provider', kind: 'select', widthPct: 50, options: providerOptions },
@@ -3284,7 +3287,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			values: {
 				appointmentDate: initialDate,
 				appointmentTime: initialTime,
-				duration: (() => { const d = this._apptDurationMin(apt); return d > 0 ? String(d) : ''; })(),
+				duration: '15',
 				appointmentType: currentType === '—' ? '' : currentType,
 				status: currentStatus,
 				providerName: currentProvider,
@@ -3303,18 +3306,11 @@ export class PatientSnapshotEditor extends EditorPane {
 						throw new Error(`Visit steps run in order — still pending: ${missing.join(' → ')}. Finish them before marking the visit Completed.`);
 					}
 				}
-				// Duration (min) stays editable but only in 15-minute increments — a
-				// value that isn't a positive multiple of 15 (blank, 0, negative,
-				// fractional, or e.g. 20) would persist an off-grid / zero-length
-				// appointment that doesn't line up with the 15-minute calendar slots
-				// (QA report 2026-07-11, issue 4). Reject it here; a blank keeps the
-				// current duration untouched via the fallback below.
-				if (next.duration !== undefined && String(next.duration).trim() !== '') {
-					const dur = Number(next.duration);
-					if (!Number.isFinite(dur) || dur <= 0 || !Number.isInteger(dur) || dur % 15 !== 0) {
-						throw new Error('Duration (min) must be a positive multiple of 15 minutes (15, 30, 45, …).');
-					}
-				}
+				// Appointments are fixed 15-minute slots and the Duration field is
+				// read-only, so always persist 15 — this guards against any stale or
+				// injected value and keeps the visit aligned to the calendar grid
+				// (QA report 2026-07-11, issue 4).
+				next.duration = 15;
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
 				// Resolve the new duration up front so it lands in BOTH the payload and
 				// the overlay below (it was missing from the overlay, so an edited time /
