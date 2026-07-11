@@ -383,13 +383,17 @@ function showSummaryPrintPreview(themeService: IThemeService, doc: Document, sou
  *  values from it, keeping `/summary` only for the encounter meta header. */
 async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<boolean> {
 	try {
-		const [summaryData, formComp] = await Promise.all([
+		const [summaryData, formComp, encResource] = await Promise.all([
 			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
 				.then(async r => (r.ok ? await r.json() : null))
 				.then(j => (j?.success ? (j.data ?? null) : (j?.data ?? j ?? null)))
 				.catch(() => null),
 			loadEncounterFormComposition(deps, patientId, encounterId).catch(() => null),
+			deps.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`)
+				.then(async r => (r.ok ? (((await r.json())?.data ?? null) as Record<string, unknown> | null) : null))
+				.catch(() => null),
 		]);
+		await sanitizeSummaryFacility(deps, summaryData as VisitSummaryDTO | null, encResource);
 		loading.remove();
 
 		// Prefer the encounter-form Composition for the clinical sections — it's
@@ -412,6 +416,56 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 		loading.style.color = summaryColors(deps.themeService).error;
 		return false;
 	}
+}
+
+/**
+ * The backend's /summary DTO sometimes puts a raw FHIR reference into
+ * `meta.facility` — QA saw "Practitioner/13892" rendered as the Facility, which
+ * is not even a location. Discard reference-shaped / empty values and re-derive
+ * the facility from the Encounter resource's location fields; a bare
+ * `Location/{id}` (or numeric location id) is resolved to its display name via
+ * the org's /api/locations list. When nothing resolves, the field is left empty
+ * so the row is simply omitted (better than showing a wrong value).
+ */
+async function sanitizeSummaryFacility(deps: IVisitSummaryDeps, summaryData: VisitSummaryDTO | null, enc: Record<string, unknown> | null): Promise<void> {
+	const meta = summaryData?.meta;
+	if (!meta) { return; }
+	const isRef = (s: string) => /^[A-Za-z]+\/[A-Za-z0-9-]+$/.test(s.trim());
+	const asText = (v: unknown): string => {
+		if (!v) { return ''; }
+		if (typeof v === 'string') { return v.trim(); }
+		if (Array.isArray(v)) { return v.map(asText).filter(Boolean)[0] || ''; }
+		if (typeof v === 'object') {
+			const o = v as Record<string, unknown>;
+			return asText(o.display) || asText(o.name) || asText(o.text) || asText(o.location) || asText(o.reference);
+		}
+		return '';
+	};
+	const current = String(meta.facility ?? '').trim();
+	// A plain facility NAME is fine — only reference shapes / blanks are re-derived.
+	if (current && !isRef(current)) { return; }
+	let candidate = '';
+	if (enc) {
+		candidate = asText(enc.locationName) || asText(enc.facilityName) || asText(enc.facility)
+			|| asText(enc.location) || asText(enc.serviceProviderName) || asText(enc.serviceProvider);
+		// Practitioner/Patient references are never facilities.
+		if (/^(Practitioner|Patient|PractitionerRole|RelatedPerson)\//i.test(candidate)) { candidate = ''; }
+	}
+	if (!candidate && current && !/^Location\//i.test(current)) { candidate = ''; }
+	// Resolve Location/{id} (or a bare numeric id) to the org location's name.
+	const locIdMatch = /^Location\/([A-Za-z0-9-]+)$/i.exec(candidate) || /^Location\/([A-Za-z0-9-]+)$/i.exec(current) || (/^\d+$/.test(candidate) ? [candidate, candidate] : null);
+	if (locIdMatch) {
+		try {
+			const r = await deps.apiService.fetch('/api/locations');
+			if (r.ok) {
+				const j = await r.json().catch(() => null);
+				const list = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
+				const hit = Array.isArray(list) ? list.find(l => String(l.id) === String(locIdMatch[1])) : undefined;
+				if (hit) { candidate = String(hit.name || hit.locationName || candidate); }
+			}
+		} catch { /* keep whatever we have */ }
+	}
+	meta.facility = candidate && !isRef(candidate) ? candidate : undefined;
 }
 
 /** Loads the encounter-form Composition for an encounter and returns the most

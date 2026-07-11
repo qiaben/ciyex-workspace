@@ -151,7 +151,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._mergeProceduresSection(sections);
+					this.formSections = EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections));
 					return;
 				}
 			}
@@ -165,7 +165,7 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._mergeProceduresSection(json.sections);
+				this.formSections = EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections));
 				return;
 			}
 		} catch { /* fall through */ }
@@ -211,6 +211,40 @@ export class EncounterFormEditor extends EditorPane {
 		// Backend didn't ship a Procedures section at all → append the local one
 		// so users still get the CPT/HCPCS search experience.
 		if (!replaced) { out.push(localProcedures); }
+		return out;
+	}
+
+	/**
+	 * Union-merge the backend tab_field_config sections with the local default
+	 * section spec. The backend's encounter-form config ships TRIMMED sections
+	 * (e.g. Past Medical / Surgical History with only 2 of 4 fields, Plan with
+	 * only 3 of 7) while the snapshot's flat Edit-Encounter drawer renders the
+	 * full local field list — QA flagged the two surfaces as inconsistent
+	 * (missing Allergies / Current Medications / Medications Prescribed /
+	 * Labs-Imaging / Referrals / Patient Education fields in the dedicated
+	 * editor). Backend fields keep their position and label; local default
+	 * fields missing from the matched backend section are appended; default
+	 * sections absent from the backend entirely are appended whole. Matching is
+	 * tolerant (normalised key OR title OR any shared field key) because the
+	 * backend config sometimes invents its own keys.
+	 */
+	private static _mergeWithDefaultFields(sections: FieldSection[]): FieldSection[] {
+		const norm = (s: string | undefined) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+		const out = sections.map(s => ({ ...s, fields: [...(s.fields || [])] }));
+		for (const def of EncounterFormEditor._defaultSections()) {
+			const target = out.find(s =>
+				norm(s.key) === norm(def.key) ||
+				norm(s.title) === norm(def.title) ||
+				(s.fields || []).some(f => (def.fields || []).some(df => norm(df.key) === norm(f.key))));
+			if (!target) { out.push({ ...def, fields: [...(def.fields || [])] }); continue; }
+			const haveKeys = new Set((target.fields || []).map(f => norm(f.key)));
+			const haveLabels = new Set((target.fields || []).map(f => norm(f.label)));
+			for (const df of def.fields || []) {
+				if (haveKeys.has(norm(df.key))) { continue; }
+				if (df.label && haveLabels.has(norm(df.label))) { continue; }
+				target.fields.push(df);
+			}
+		}
 		return out;
 	}
 
@@ -370,6 +404,31 @@ export class EncounterFormEditor extends EditorPane {
 		const [fhir, ehr, form] = await Promise.all(loads);
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
 		this.encounterData = { ...fhir, ...ehr, ...form };
+		// The form's Chief Complaint field is keyed `chiefComplaint`, but an
+		// encounter created from an appointment carries the complaint on the
+		// Encounter resource's `reasonForVisit`/`reason` (possibly a FHIR
+		// CodeableConcept) with NO composition yet — so the editor opened with a
+		// blank Chief Complaint even though the Snapshot's Encounter History
+		// showed it (QA issue). Backfill from the reason shapes, skipping the
+		// generic "Manual encounter" placeholder.
+		if (!String(this.encounterData['chiefComplaint'] ?? '').trim()) {
+			const ccText = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v; }
+				if (Array.isArray(v)) { return v.map(ccText).filter(Boolean).join(', '); }
+				if (typeof v === 'object') {
+					const o = v as Record<string, unknown>;
+					const coding = Array.isArray(o.coding) ? (o.coding[0] as Record<string, unknown> | undefined) : undefined;
+					return String(o.text || o.display || coding?.display || '');
+				}
+				return '';
+			};
+			const cc = ccText(this.encounterData['reasonForVisit']) || ccText(this.encounterData['reason'])
+				|| ccText(this.encounterData['reasonText']) || ccText(this.encounterData['reasonCode']);
+			if (cc && !/^(manual encounter|scheduled telehealth visit)$/i.test(cc.trim())) {
+				this.encounterData['chiefComplaint'] = cc;
+			}
+		}
 		this._serviceDate = this._extractServiceDate(this.encounterData);
 		// Vitals are DATE-scoped, never "most recent across all dates". The Snapshot,
 		// this Encounter and the Patient Chart all read/write the ONE FHIR Observation
@@ -756,10 +815,19 @@ export class EncounterFormEditor extends EditorPane {
 				}
 			}
 
-			// Also save to encounter resource
+			// Also save to encounter resource. The Snapshot's Encounter History
+			// reads the complaint from the Encounter resource's
+			// `reasonForVisit`/`reason` fields — the composition alone is not
+			// enough. Map the form's chiefComplaint onto those keys so a signed
+			// encounter's Chief Complaint shows up in the history (QA: history
+			// showed "—" after Sign & Lock).
+			const ccOut = String(formData['chiefComplaint'] ?? '').trim();
 			await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
 				method: 'PUT',
-				body: JSON.stringify({ ...formData, patientId, id: encounterId }),
+				body: JSON.stringify({
+					...formData, patientId, id: encounterId,
+					...(ccOut ? { reasonForVisit: ccOut, reason: ccOut } : {}),
+				}),
 			}).catch(() => { /* secondary save, ignore errors */ });
 
 			if (compRes.ok) {
@@ -1595,7 +1663,24 @@ export class EncounterFormEditor extends EditorPane {
 
 	/** Plan items: simple add/remove list */
 	private _renderPlanItems(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
-		const items = (this.encounterData[dataKey] || []) as string[];
+		// Normalise to a real array: the snapshot's flat Edit-Encounter drawer (and
+		// some backend rows) store plan_items as a newline-joined STRING — calling
+		// .push() on that threw, so "+ Add Plan Item" silently did nothing (QA
+		// issue). Also write the array back onto encounterData and register it in
+		// _complexFields: previously a fresh [] stayed orphaned and typed items
+		// were dropped on save (the DOM walk skips these rows; only
+		// _complexFields entries are merged into the payload).
+		const raw = this.encounterData[dataKey];
+		let items: string[];
+		if (Array.isArray(raw)) {
+			items = raw as string[];
+		} else if (typeof raw === 'string' && raw.trim()) {
+			items = raw.split('\n').map(s => s.replace(/^\d+\.\s*/, '').trim()).filter(Boolean);
+		} else {
+			items = [];
+		}
+		this.encounterData[dataKey] = items;
+		this._complexFields.set(dataKey, items);
 		const listEl = DOM.append(parent, DOM.$('div'));
 
 		const renderList = () => {
@@ -1620,7 +1705,7 @@ export class EncounterFormEditor extends EditorPane {
 					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 					removeBtn.textContent = '\u2715';
 					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
-					removeBtn.addEventListener('click', () => { items.splice(i, 1); renderList(); });
+					removeBtn.addEventListener('click', () => { items.splice(i, 1); this._isDirty = true; renderList(); });
 				}
 			}
 		};
@@ -1630,7 +1715,15 @@ export class EncounterFormEditor extends EditorPane {
 			const addBtn = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 			addBtn.textContent = '+ Add Plan Item';
 			addBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
-			addBtn.addEventListener('click', () => { items.push(''); renderList(); });
+			addBtn.addEventListener('click', () => {
+				items.push('');
+				this._isDirty = true;
+				renderList();
+				// Focus the freshly-added row's input (last row, second child after the bullet).
+				const lastRow = listEl.lastElementChild;
+				const inp = lastRow ? Array.from(lastRow.children).find(c => c.tagName === 'INPUT') as HTMLInputElement | undefined : undefined;
+				inp?.focus();
+			});
 		}
 	}
 

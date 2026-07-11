@@ -1018,7 +1018,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				key: 'proc', title: 'Procedure', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'procedureName', label: 'Procedure Name', type: 'text', required: true, placeholder: 'Procedure name' },
 					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT code', lookupConfig: { system: 'CPT' }, relatedField: 'procedureName' },
-					{ key: 'performedDateTime', label: 'Date Performed', type: 'date', required: true }, // key matches backend so overlay promotes datetime→date (auto-closing picker) — issue 10
+					// key matches backend so overlay promotes datetime→date (auto-closing picker) — issue 10.
+					// minDate: QA flagged back-dated procedures saving silently — Date
+					// Performed may not be earlier than today.
+					{ key: 'performedDateTime', label: 'Date Performed', type: 'date', required: true, minDate: 'today', validationMessage: 'Date Performed cannot be in the past' },
 					{ key: 'performerId', label: 'Performer', type: 'practitioner-search', placeholder: 'Search Performer' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
@@ -3080,6 +3083,31 @@ export class PatientChartEditor extends EditorPane {
 				console.error(`[patientChart] ${tab.key} GET ${url} threw:`, e);
 			}
 		}
+		// Encounters fallback: the FHIR patient-scoped search can return nothing
+		// for a patient whose encounters were created through the clinical
+		// endpoint (subject indexed under the DB id while the chart holds the
+		// FHIR id, or plain index lag) — QA saw "No encounters records" on the
+		// chart while the Encounters side list showed the same patient's SIGNED
+		// encounters. The side list reads the org-wide /api/encounters store and
+		// filters client-side; do the same here when the FHIR search comes back
+		// empty, matching rows against every id we know for this patient.
+		if (tab.key === 'encounters' && data.length === 0) {
+			try {
+				const res = await this.apiService.fetch('/api/encounters?status=ALL&page=0&size=200');
+				if (res.ok) {
+					const json = await res.json();
+					const rows = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+					const ids = this._patientIdSet();
+					const mine = (Array.isArray(rows) ? rows : []).filter(r =>
+						ids.has(String(r.patientId ?? r.patient ?? r.subjectId ?? '').trim()) ||
+						ids.has(String((r.subject as Record<string, unknown> | undefined)?.reference ?? '').replace(/^Patient\//i, '').trim()));
+					if (mine.length > 0) {
+						console.log(`[patientChart] encounters fallback via /api/encounters matched ${mine.length} record(s)`);
+						data = data.concat(mine);
+					}
+				}
+			} catch { /* fallback only — FHIR result (empty) stands */ }
+		}
 		// Documents uploaded through System → Document Scanning & OCR live in the
 		// separate /api/document-scanning store, not as FHIR DocumentReferences —
 		// so a scan tagged to this patient never appeared on the chart's Documents
@@ -4796,6 +4824,10 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Unsigned', value: 'unsigned' },
 					{ label: 'Signed', value: 'signed' },
 					{ label: 'Amended', value: 'amended' },
+					// A note replaced by an amendment renders as "Superseded" —
+					// the filter must offer every status a row can display (QA:
+					// Superseded rows existed but the dropdown had no such option).
+					{ label: 'Superseded', value: 'superseded' },
 					{ label: 'Entered in Error', value: 'entered-in-error' },
 				];
 			case 'documents':
@@ -5644,6 +5676,21 @@ export class PatientChartEditor extends EditorPane {
 					const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
 					if (!isNaN(d.getTime()) && d.getTime() > endOfToday.getTime()) {
 						invalid.push({ key: f.key, label: f.label, el, msg: 'Date of birth cannot be in the future' });
+						continue;
+					}
+				}
+				// Enforce the config's declared `minDate` floor (e.g. Procedures
+				// "Date Performed" must not be back-dated — QA flagged past dates
+				// saving with no validation). The list editors already honor
+				// minDate; this dialog previously declared it in FieldDef but
+				// never enforced it.
+				if (f.type === 'date' && v && f.minDate) {
+					const min = f.minDate === 'today'
+						? new Date(new Date().setHours(0, 0, 0, 0))
+						: f.minDate === 'year-start' ? new Date(new Date().getFullYear(), 0, 1) : new Date(f.minDate);
+					const d = new Date(v);
+					if (!isNaN(d.getTime()) && !isNaN(min.getTime()) && d.getTime() < min.getTime()) {
+						invalid.push({ key: f.key, label: f.label, el, msg: f.validationMessage || `${f.label} cannot be earlier than ${min.toLocaleDateString('en-US')}` });
 						continue;
 					}
 				}

@@ -365,7 +365,18 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ key: 'startDate', label: 'Date', width: '120px', format: (v, r) => { const raw = v || r.start || r.periodStart || r.encounterDate; return raw ? new Date(String(raw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; } },
 				{ key: 'type', label: 'Type', width: '120px' },
 				{ key: 'reason', label: 'Reason', width: '2fr' },
-				{ key: 'status', label: 'Status', width: '110px' },
+				// Show the SAME two-state vocabulary as the snapshot's Encounter
+				// History card — QA flagged this popup showing raw FHIR codes
+				// ("finished" / "in-progress") while the history showed
+				// Signed / Unsigned for the very same encounters. Mirrors
+				// _normalizeEncounterStatus (inlined: a static initializer must not
+				// self-reference the decorated class — esbuild #3823 workaround rule).
+				{
+					key: 'status', label: 'Status', width: '110px', format: (v) => {
+						const s = String(v ?? '').toLowerCase();
+						return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet')) ? 'Signed' : 'Unsigned';
+					}
+				},
 			],
 			listPath: (pid) => `/api/fhir-resource/encounters/patient/${pid}?page=0&size=50`,
 		},
@@ -682,14 +693,18 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ key: 'plan_notes', label: 'Plan Notes', kind: 'textarea', placeholder: 'Additional plan details...', widthPct: 100 },
 
 			// --- Provider Notes ---
-			{ key: 'provider_narrative', label: 'Provider Narrative', kind: 'textarea', placeholder: 'Free-text provider notes...', widthPct: 100 },
+			// Labeled "Provider Notes" to match the dedicated Encounter editor's
+			// label — QA flagged "Provider Narrative" here vs "Provider Notes"
+			// there as inconsistent.
+			{ key: 'provider_narrative', label: 'Provider Notes', kind: 'textarea', placeholder: 'Free-text provider notes...', widthPct: 100 },
 
 			// --- Procedures ---
 			{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', kind: 'textarea', placeholder: 'One procedure per line: e.g. 99213 — Office visit, established patient', widthPct: 100 },
 			{ key: 'procedures_notes', label: 'Procedure Notes', kind: 'textarea', placeholder: 'Procedure details and notes...', widthPct: 100 },
-
-			// --- Reason (kept for parity with the simple FHIR Encounter resource) ---
-			{ key: 'reason', label: 'Reason for Visit', placeholder: 'Reason summary', widthPct: 100 },
+			// NOTE: the standalone "Reason for Visit" field was removed — the
+			// dedicated Encounter editor has no such field under Procedures &
+			// Coding (QA flagged the mismatch). The FHIR Encounter's reason stays
+			// in sync via the Chief Complaint mapping on save.
 		];
 	}
 
@@ -3391,7 +3406,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		// today's), so only say "TODAY'S" when it really is today.
 		tLbl.textContent = this._isToday(apt.start || apt.startTime) ? 'TODAY\'S APPOINTMENT' : 'APPOINTMENT';
 		tLbl.style.cssText = 'font-size:13px;font-weight:800;letter-spacing:0.09em;';
-		const hasEnc0 = !!(apt.encounterId);
+		// The header pill mirrors the workflow's strict step order: an encounter
+		// only counts once the visit is Completed (see _buildVisitStages) — some
+		// backends link one at check-in, which showed "Encounter Created" while
+		// Assign Room was still pending (QA).
+		const hasEnc0 = !!(apt.encounterId) && PatientSnapshotEditor._isCompletedStatus(String(apt.status || apt.appointmentStatus || '').toLowerCase());
 		const encPill = DOM.append(titleBar, DOM.$('span'));
 		encPill.style.cssText = `margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,0.18);`;
 		const epIco = DOM.append(encPill, DOM.$('span.codicon.codicon-' + (hasEnc0 ? 'link' : 'link-external')));
@@ -3692,18 +3711,24 @@ export class PatientSnapshotEditor extends EditorPane {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 
+		const completed = PatientSnapshotEditor._isCompletedStatus(apptStatus);
 		// The encounter belongs to this visit ONLY when it is linked to the
 		// appointment (apt.encounterId) — set when the visit is marked Completed
 		// and the encounter is auto-created. We never fall back to "any same-day
 		// encounter": that cross-contamination is exactly what showed Sign & Lock /
 		// Fee Sheet as done for a visit that had not reached them.
-		const linkedEncId = String(apt.encounterId ?? '').trim();
+		//
+		// STRICT ORDER: the workflow only acknowledges the link once the visit is
+		// Completed. Some backends attach/create an encounter as early as
+		// check-in, which made step 6 show "Created" while step 3 (Assign Room)
+		// was still the next action (QA). Steps run in order — before Completed,
+		// the Encounter step must read as pending regardless of backend links.
+		const linkedEncId = completed ? String(apt.encounterId ?? '').trim() : '';
 		const enc = linkedEncId ? (encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedEncId) ?? st.encounter) : null;
 		const encId = linkedEncId;
 		const encStatus = String(enc?.status ?? '').toLowerCase();
 		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
 
-		const completed = PatientSnapshotEditor._isCompletedStatus(apptStatus);
 		const hasEncounter = !!linkedEncId;
 		const signed = ['signed', 'finished', 'complete', 'completed', 'locked'].includes(encStatus);
 		// Front-desk prep steps. A completed visit is by definition past this phase,
@@ -4762,7 +4787,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			const statusRaw = String(a.status || a.appointmentStatus || '').trim();
 			const status = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : 'Unknown';
 			const sColor = PatientSnapshotEditor._statusColor(status);
-			const encId = String(a.encounterId || '');
+			// "Linked" mirrors the workflow's strict order: the encounter is only
+			// acknowledged once the visit is Completed (QA: history showed
+			// "Linked" while the visit was merely Checked-in).
+			const encId = PatientSnapshotEditor._isCompletedStatus(statusRaw.toLowerCase()) ? String(a.encounterId || '') : '';
 			const cells: Array<{ txt: string; kind?: 'status' | 'enc' }> = [
 				{ txt: dateStr },
 				{ txt: prov ? `${type} · ${prov}` : type },

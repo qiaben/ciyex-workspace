@@ -704,10 +704,12 @@ export class CalendarEditor extends EditorPane {
 			return btn;
 		};
 
-		// + New Appointment
+		// + New Appointment — no slot context, so the form opens with EMPTY
+		// date/time fields for the user to pick (QA: the form auto-populated
+		// today + 9:00 AM without user input). Clicking a calendar slot still
+		// prefills that slot's date/time (see the grid cell click handlers).
 		iconBtn(actionsGroup, '+', 'New Appointment', true, async () => {
-			const today = localDateStr(this.currentDate);
-			await this._createAppointment(today, '09:00');
+			await this._createAppointment();
 		});
 
 		// Refresh / TV / List icon buttons — subtle, theme-driven styling. The old
@@ -1313,12 +1315,17 @@ export class CalendarEditor extends EditorPane {
 		this._renderGrid();
 	}
 
-	private async _createAppointment(date: string, time: string, providerId?: string): Promise<void> {
-		// Calculate end time (default 15 min)
-		const [h, m] = time.split(':').map(Number);
-		const endH = m + 15 >= 60 ? h + 1 : h;
-		const endM = (m + 15) % 60;
-		const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+	private async _createAppointment(date: string = '', time: string = '', providerId?: string): Promise<void> {
+		// Calculate end time (default 15 min after the slot's start). When the
+		// form is opened WITHOUT a slot (toolbar "+"), date/time stay EMPTY so
+		// the user picks them explicitly (QA: auto-populated date/time).
+		let endTime = '';
+		if (time) {
+			const [h, m] = time.split(':').map(Number);
+			const endH = m + 15 >= 60 ? h + 1 : h;
+			const endM = (m + 15) % 60;
+			endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+		}
 
 		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern
 		// so every create/edit dialog across the EHR uses the same shape.
@@ -1535,15 +1542,26 @@ export class CalendarEditor extends EditorPane {
 		};
 
 		let searchTimer: ReturnType<typeof setTimeout> | undefined;
-		// Show dropdown immediately on focus
-		patInput.addEventListener('focus', () => {
-			if (searchTimer) { clearTimeout(searchTimer); }
-			searchTimer = setTimeout(() => _searchPatients(patInput.value), 150);
-		});
+		// Results open only after the user TYPES at least 2 characters. The old
+		// focus handler searched with an empty query the moment the form opened,
+		// so a full-patient dropdown expanded over the Start Date / Start Time
+		// fields before any input (QA: patient dropdown auto-expands and hides
+		// the date/time fields).
 		patInput.addEventListener('input', () => {
 			if (searchTimer) { clearTimeout(searchTimer); }
-			const q = patInput.value;
+			const q = patInput.value.trim();
+			if (q.length < 2) {
+				patResults.style.display = 'none';
+				DOM.clearNode(patResults);
+				return;
+			}
 			searchTimer = setTimeout(() => _searchPatients(q), 250);
+		});
+		// Clicking back into a field that already has results re-shows them.
+		patInput.addEventListener('focus', () => {
+			if (patInput.value.trim().length >= 2 && patResults.children.length > 0) {
+				patResults.style.display = 'block';
+			}
 		});
 
 		// Visit Type

@@ -1985,6 +1985,40 @@ export class SettingsHubEditor extends EditorPane {
 			e.textContent = error;
 			e.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;';
 		}
+
+		// LIVE inline validation: run the same format rules the Save handler uses
+		// as soon as the field loses focus / a picker value is chosen, so invalid
+		// values (e.g. an already-expired License Expiry Date, a future DOB) show
+		// a warning IMMEDIATELY instead of only after clicking Save (QA: the
+		// Providers form "accepts and displays an expired date without any
+		// validation or warning").
+		if (!isView) {
+			// Walk the cell for its input/textarea without CSS selectors (hygiene
+			// rule: no querySelector) — every branch above appends at most one.
+			const findInput = (el: Element): HTMLInputElement | HTMLTextAreaElement | null => {
+				for (const child of Array.from(el.children)) {
+					if (child.tagName === 'INPUT' || child.tagName === 'TEXTAREA') { return child as HTMLInputElement | HTMLTextAreaElement; }
+					const nested = findInput(child);
+					if (nested) { return nested; }
+				}
+				return null;
+			};
+			const inputEl = findInput(cell);
+			if (inputEl && !inputEl.readOnly) {
+				const liveErr = DOM.append(cell, DOM.$('div'));
+				liveErr.style.cssText = 'font-size:11px;color:var(--vscode-errorForeground,#f48771);margin-top:4px;display:none;';
+				const runLive = () => {
+					const v = String(this.formData[field.key] ?? '').trim();
+					const msg = v ? this._validateFieldFormat(field, v) : undefined;
+					liveErr.textContent = msg || '';
+					liveErr.style.display = msg ? 'block' : 'none';
+					inputEl.style.borderColor = msg ? 'var(--vscode-errorForeground,#f48771)' : 'var(--vscode-input-border,#3c3c3c)';
+					if (msg) { this.validationErrors[field.key] = msg; } else { delete this.validationErrors[field.key]; }
+				};
+				inputEl.addEventListener('blur', runLive);
+				inputEl.addEventListener('change', runLive);
+			}
+		}
 	}
 
 	/**
