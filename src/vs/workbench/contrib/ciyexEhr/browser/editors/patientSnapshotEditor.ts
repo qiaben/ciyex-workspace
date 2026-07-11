@@ -3273,7 +3273,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			fields: [
 				{ key: 'appointmentDate', label: 'Date', kind: 'date', required: true, widthPct: 50 },
 				{ key: 'appointmentTime', label: 'Start Time', kind: 'time', widthPct: 50 },
-				{ key: 'duration', label: 'Duration (min)', kind: 'number', widthPct: 50 },
+				{ key: 'duration', label: 'Duration (15-min steps)', kind: 'number', minValue: 15, widthPct: 50 },
 				{ key: 'appointmentType', label: 'Visit Type', kind: 'select', widthPct: 50, options: typeOptions },
 				{ key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: statusOptions },
 				{ key: 'providerName', label: 'Provider', kind: 'select', widthPct: 50, options: providerOptions },
@@ -3303,15 +3303,16 @@ export class PatientSnapshotEditor extends EditorPane {
 						throw new Error(`Visit steps run in order — still pending: ${missing.join(' → ')}. Finish them before marking the visit Completed.`);
 					}
 				}
-				// Duration (min) is freely editable, but an empty-string, zero, negative,
-				// or fractional value would persist a zero-length / backwards appointment
-				// and made the card compute a nonsense length (QA report 2026-07-10,
-				// issue 4). Reject an invalid entry here; a blank keeps the current
-				// duration untouched via the fallback below.
+				// Duration (min) stays editable but only in 15-minute increments — a
+				// value that isn't a positive multiple of 15 (blank, 0, negative,
+				// fractional, or e.g. 20) would persist an off-grid / zero-length
+				// appointment that doesn't line up with the 15-minute calendar slots
+				// (QA report 2026-07-11, issue 4). Reject it here; a blank keeps the
+				// current duration untouched via the fallback below.
 				if (next.duration !== undefined && String(next.duration).trim() !== '') {
 					const dur = Number(next.duration);
-					if (!Number.isFinite(dur) || dur <= 0 || !Number.isInteger(dur)) {
-						throw new Error('Duration (min) must be a whole number of minutes greater than 0.');
+					if (!Number.isFinite(dur) || dur <= 0 || !Number.isInteger(dur) || dur % 15 !== 0) {
+						throw new Error('Duration (min) must be a positive multiple of 15 minutes (15, 30, 45, …).');
 					}
 				}
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;

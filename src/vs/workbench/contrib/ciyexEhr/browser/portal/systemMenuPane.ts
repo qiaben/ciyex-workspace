@@ -21,7 +21,7 @@ import { localize } from '../../../../../nls.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, parseSavedRecord } from '../sidebarActions.js';
-import { FAX_FORM_FIELDS } from '../editors/systemEditors.js';
+import { FAX_FORM_FIELDS, CONSENTS_FORM_FIELDS } from '../editors/systemEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -47,6 +47,12 @@ interface SystemItem {
 	actions: RowAction[];
 	/** Explicit edit-drawer schema mirroring the full editor formFields. */
 	editFields?: IEditFieldDef[];
+	/**
+	 * Transform the create payload before POST, mirroring the matching editor
+	 * config's `beforeSave` so the sidebar `+` drawer produces the same record
+	 * shape as the editor (e.g. Clinical Alerts maps status -> isActive).
+	 */
+	beforeSave?: (payload: Record<string, unknown>) => Record<string, unknown>;
 	/**
 	 * When false, the row's "+" create button is hidden. Use for read-only /
 	 * system-generated lists where manually creating a record makes no sense
@@ -122,11 +128,28 @@ const SYSTEM_ITEMS: SystemItem[] = [
 					{ value: 'nurse', label: 'Nurse' }, { value: 'ma', label: 'Medical Assistant' },
 				]
 			},
+			// Status mirrors the CdsEditor "New Clinical Alert" form so the sidebar `+`
+			// drawer shows the same fields (QA report 2026-07-11). The item's
+			// beforeSave mirrors this string onto the boolean `isActive` the backend
+			// reads (entered-in-error/inactive -> false), matching the editor.
+			{
+				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
+					{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' },
+					{ value: 'entered_in_error', label: 'Entered in Error' },
+				]
+			},
 			{ key: 'message', label: 'Alert Message', kind: 'textarea', required: true, placeholder: 'Message shown to the provider when this rule fires...', widthPct: 100 },
 			{ key: 'recommendation', label: 'Recommendation', kind: 'textarea', placeholder: 'Recommended action for the provider...', widthPct: 100 },
 			{ key: 'referenceUrl', label: 'Reference URL', placeholder: 'https://...', widthPct: 50 },
 			{ key: 'snoozeDays', label: 'Snooze (days)', kind: 'number', placeholder: 'Leave empty for no snooze', widthPct: 50 },
 		],
+		// Mirror CdsEditor.beforeSave: the backend reads the boolean `isActive`, so
+		// derive it from the Status string (active -> true; inactive / entered in
+		// error -> false) and default a blank status to active.
+		beforeSave: (p) => {
+			const status = String(p['status'] ?? '').trim() || 'active';
+			return { ...p, status, isActive: status === 'active' };
+		},
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -149,29 +172,9 @@ const SYSTEM_ITEMS: SystemItem[] = [
 		apiPath: '/api/consents?page=0&size=10',
 		titleField: ['patientName'],
 		subtitleField: ['category', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', required: true, placeholder: 'Auto-filled', widthPct: 50 },
-			{
-				key: 'consentType', label: 'Consent Type', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'hipaa_privacy', label: 'HIPAA Privacy' },
-					{ value: 'treatment', label: 'Treatment' },
-					{ value: 'release_of_info', label: 'Release of Info' },
-					{ value: 'telehealth', label: 'Telehealth' },
-					{ value: 'research', label: 'Research' },
-					{ value: 'financial', label: 'Financial' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'pending', label: 'Pending' }, { value: 'signed', label: 'Signed' },
-					{ value: 'expired', label: 'Expired' }, { value: 'revoked', label: 'Revoked' },
-				]
-			},
-			{ key: 'expiryDate', label: 'Expiry Date', kind: 'date', widthPct: 50 },
-			{ key: 'version', label: 'Version', placeholder: '1.0', widthPct: 50 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
+		// Single source: the sidebar `+` drawer derives the exact same fields as the
+		// "New Consent" editor form so they can never drift (QA report 2026-07-11).
+		editFields: formFieldsToEditFields(CONSENTS_FORM_FIELDS),
 		actions: [
 			// allow-any-unicode-next-line
 			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
@@ -643,9 +646,10 @@ export class SystemMenuPane extends ViewPane {
 			values: initialValues,
 			primaryLabel: 'Create',
 			onSave: async (next) => {
-				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(next) });
+				const body = item.beforeSave ? item.beforeSave(next) : next;
+				const res = await this.apiService.fetch(basePath, { method: 'POST', body: JSON.stringify(body) });
 				if (!res.ok) { throw new Error(`Create failed (${res.status})`); }
-				const saved = await parseSavedRecord(res) ?? { ...next };
+				const saved = await parseSavedRecord(res) ?? { ...body };
 				this._applyOptimistic(item, saved as DataRow, 'create');
 			},
 		});

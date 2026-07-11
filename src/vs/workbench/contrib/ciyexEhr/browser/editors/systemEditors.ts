@@ -207,6 +207,42 @@ export class PatientApprovalEditor extends ClinicalListEditorBase {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Consent create/edit fields. Exported as the SINGLE SOURCE so the sidebar
+ * `+` quick-create drawer (systemMenuPane.ts) derives the exact same form as
+ * this editor's "New Consent" — the two must never drift (QA report 2026-07-11).
+ */
+export const CONSENTS_FORM_FIELDS: FormFieldDef[] = [
+	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{
+		key: 'consentType', label: 'Consent Type', type: 'select', required: true, options: [
+			{ label: 'HIPAA Privacy', value: 'hipaa_privacy' },
+			{ label: 'Treatment', value: 'treatment' },
+			{ label: 'Release of Info', value: 'release_of_info' },
+			{ label: 'Telehealth', value: 'telehealth' },
+			{ label: 'Research', value: 'research' },
+			{ label: 'Financial', value: 'financial' },
+		]
+	},
+	{
+		key: 'status', label: 'Status', type: 'select', options: [
+			{ label: 'Pending', value: 'pending' },
+			{ label: 'Signed', value: 'signed' },
+			{ label: 'Expired', value: 'expired' },
+			{ label: 'Revoked', value: 'revoked' },
+		], defaultValue: 'pending'
+	},
+	// Signed Date / Signed By mirror the list columns (QA report 2026-07-10,
+	// issue 8) — the New Consent form previously had no way to record who
+	// signed the consent or when, so those columns stayed blank.
+	{ key: 'signedDate', label: 'Signed Date', type: 'date' },
+	{ key: 'signedBy', label: 'Signed By', type: 'text', placeholder: 'Patient or guardian name' },
+	{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
+	{ key: 'version', label: 'Version', type: 'text', placeholder: '1.0' },
+	{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
+];
+
+/**
  * Consents Editor — HIPAA, treatment, research consent management.
  * CRUD with sign/revoke workflows.
  */
@@ -233,36 +269,7 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 			{ label: 'Expired', value: 'expired' },
 			{ label: 'Revoked', value: 'revoked' },
 		],
-		formFields: [
-			{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient...', apiPath: '/api/patients', searchDisplayField: 'name', searchValueField: 'id', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
-			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-			{
-				key: 'consentType', label: 'Consent Type', type: 'select', required: true, options: [
-					{ label: 'HIPAA Privacy', value: 'hipaa_privacy' },
-					{ label: 'Treatment', value: 'treatment' },
-					{ label: 'Release of Info', value: 'release_of_info' },
-					{ label: 'Telehealth', value: 'telehealth' },
-					{ label: 'Research', value: 'research' },
-					{ label: 'Financial', value: 'financial' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', type: 'select', options: [
-					{ label: 'Pending', value: 'pending' },
-					{ label: 'Signed', value: 'signed' },
-					{ label: 'Expired', value: 'expired' },
-					{ label: 'Revoked', value: 'revoked' },
-				], defaultValue: 'pending'
-			},
-			// Signed Date / Signed By mirror the list columns (QA report 2026-07-10,
-			// issue 8) — the New Consent form previously had no way to record who
-			// signed the consent or when, so those columns stayed blank.
-			{ key: 'signedDate', label: 'Signed Date', type: 'date' },
-			{ key: 'signedBy', label: 'Signed By', type: 'text', placeholder: 'Patient or guardian name' },
-			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
-			{ key: 'version', label: 'Version', type: 'text', placeholder: '1.0' },
-			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },
-		],
+		formFields: CONSENTS_FORM_FIELDS,
 		cellRenderer: (key, value) => {
 			if (key === 'consentType' && typeof value === 'string') {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
