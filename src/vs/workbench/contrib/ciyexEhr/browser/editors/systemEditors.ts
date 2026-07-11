@@ -254,6 +254,11 @@ export class ConsentsEditor extends ClinicalListEditorBase {
 					{ label: 'Revoked', value: 'revoked' },
 				], defaultValue: 'pending'
 			},
+			// Signed Date / Signed By mirror the list columns (QA report 2026-07-10,
+			// issue 8) — the New Consent form previously had no way to record who
+			// signed the consent or when, so those columns stayed blank.
+			{ key: 'signedDate', label: 'Signed Date', type: 'date' },
+			{ key: 'signedBy', label: 'Signed By', type: 'text', placeholder: 'Patient or guardian name' },
 			{ key: 'expiryDate', label: 'Expiry Date', type: 'date' },
 			{ key: 'version', label: 'Version', type: 'text', placeholder: '1.0' },
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes...' },

@@ -3303,6 +3303,17 @@ export class PatientSnapshotEditor extends EditorPane {
 						throw new Error(`Visit steps run in order — still pending: ${missing.join(' → ')}. Finish them before marking the visit Completed.`);
 					}
 				}
+				// Duration (min) is freely editable, but an empty-string, zero, negative,
+				// or fractional value would persist a zero-length / backwards appointment
+				// and made the card compute a nonsense length (QA report 2026-07-10,
+				// issue 4). Reject an invalid entry here; a blank keeps the current
+				// duration untouched via the fallback below.
+				if (next.duration !== undefined && String(next.duration).trim() !== '') {
+					const dur = Number(next.duration);
+					if (!Number.isFinite(dur) || dur <= 0 || !Number.isInteger(dur)) {
+						throw new Error('Duration (min) must be a whole number of minutes greater than 0.');
+					}
+				}
 				const startTime = next.appointmentTime ? `${next.appointmentDate}T${next.appointmentTime}:00` : startIso;
 				// Resolve the new duration up front so it lands in BOTH the payload and
 				// the overlay below (it was missing from the overlay, so an edited time /

@@ -423,7 +423,7 @@ export const PRESCRIPTIONS_FORM_FIELDS: FormFieldDef[] = [
 		key: 'status', label: 'Status', type: 'select', options: [
 			{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
 			{ label: 'Stopped', value: 'stopped' }, { label: 'Cancelled', value: 'cancelled' },
-			{ label: 'On Hold', value: 'on-hold' },
+			{ label: 'On Hold', value: 'on-hold' }, { label: 'Discontinued', value: 'discontinued' },
 		], defaultValue: 'active'
 	},
 	{ key: 'startDate', label: 'Start Date', type: 'date' },
@@ -1970,17 +1970,19 @@ export class CdsEditor extends ClinicalListEditorBase {
 				],
 				defaultValue: 'all',
 			},
-			// Status (Active/Inactive) — the main page and its Active/Inactive tabs
-			// let a rule be deactivated, but the edit form had no way to set it (QA
-			// issue 4). Backed by the boolean `isActive` (options are exactly
-			// true/false, so the base editor coerces the value to a real boolean);
-			// `beforeSave` mirrors it onto the string `status` the backend also
-			// reads. On edit the record's boolean isActive seeds the select directly.
+			// Status — the main page and its Active/Inactive tabs let a rule be
+			// deactivated, but the edit form had no way to set it (QA issue 4).
+			// Backed by the string `status` the backend reads; `beforeSave` mirrors
+			// it onto the boolean `isActive` (entered-in-error/inactive → false).
+			// The "Entered in Error" state marks a rule created by mistake without
+			// deleting it (QA report 2026-07-10, issue 7). On edit the record's
+			// status string seeds the select directly.
 			{
-				key: 'isActive', label: 'Status', type: 'select', options: [
-					{ label: 'Active', value: 'true' },
-					{ label: 'Inactive', value: 'false' },
-				], defaultValue: 'true',
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+					{ label: 'Entered in Error', value: 'entered_in_error' },
+				], defaultValue: 'active',
 			},
 			// Row 6: full-width alert message (required)
 			{ key: 'message', label: 'Alert Message', type: 'textarea', required: true, placeholder: 'Message shown to the provider when this rule fires...', width: 'span 2' },
@@ -4787,6 +4789,9 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 			{ label: 'Pending', value: 'pending' },
 			{ label: 'Processing', value: 'processing' },
 			{ label: 'Completed', value: 'completed' },
+			{ label: 'Failed', value: 'failed' },
+			{ label: 'Refunded', value: 'refunded' },
+			{ label: 'Voided', value: 'voided' },
 		], defaultValue: 'completed'
 	},
 ];
@@ -5566,6 +5571,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'installments', label: 'Number of Installments', type: 'number', required: true, placeholder: '6' },
 			{ key: 'startDate', label: 'Start Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
 			{ key: 'nextDueDate', label: 'Next Due Date', type: 'date' },
+			// Status dropdown mirrors the list tabs (QA report 2026-07-10, issue 3) —
+			// the New Payment Plan form had no Status field, so plans could only ever
+			// start "active" with no way to record another state.
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'active' },
+					{ label: 'Completed', value: 'completed' },
+					{ label: 'Defaulted', value: 'defaulted' },
+					{ label: 'Cancelled', value: 'cancelled' },
+				], defaultValue: 'active'
+			},
 			{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Plan notes...' },
 		],
 		// The backend `payment_plan.installment_amount` column is NOT NULL but the
@@ -5621,6 +5637,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
 			}
 			if (key === 'patientName' && !value) {
+				// The ledger is always scoped to the selected patient, so fall back to
+				// that patient's name rather than the raw "Patient #<id>" (QA report
+				// 2026-07-10, issue 5). Only if the name is somehow unknown do we show
+				// the id as a last resort.
+				if (this._payPatientName) { return this._payPatientName; }
 				return item?.['patientId'] ? `Patient #${item['patientId']}` : '';
 			}
 			if (key === 'entryType' && typeof value === 'string') {

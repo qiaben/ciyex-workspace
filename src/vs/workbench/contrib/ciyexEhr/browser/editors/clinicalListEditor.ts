@@ -2103,6 +2103,21 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				}
 			}
 
+			// Standard editing shortcuts (paste/copy/cut/select-all/undo/redo) must
+			// reach the focused field's native handler. The form is mounted inside the
+			// workbench, whose keybinding service otherwise intercepts Ctrl/Cmd+V on
+			// keydown before the input sees it — so pasting into a field (e.g. a
+			// Medical Code's Full Description) silently did nothing (QA report
+			// 2026-07-10, issue 6). Stop propagation so the browser handles them here.
+			(inputEl as HTMLElement).addEventListener('keydown', (e: KeyboardEvent) => {
+				if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+					const k = e.key.toLowerCase();
+					if (k === 'v' || k === 'c' || k === 'x' || k === 'a' || k === 'z' || k === 'y') {
+						e.stopPropagation();
+					}
+				}
+			});
+
 			inputs.set(field.key, inputEl);
 		}
 
