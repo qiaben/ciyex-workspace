@@ -4796,10 +4796,50 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 	},
 ];
 
+/**
+ * EOB insurance-payment posting form — the standard 7-column payment-posting
+ * model (billed / allowed / paid / copay / deductible / coinsurance /
+ * adjustment). Write-off (billed - allowed) and patient responsibility
+ * (copay + deductible + coinsurance) are derived at save time. Works without
+ * the RCM app subscription: the posting is stored as a regular payment
+ * transaction on the main API with the EOB breakdown encoded in the
+ * description so it round-trips through list views.
+ */
+export const INSURANCE_POSTING_FORM_FIELDS: FormFieldDef[] = [
+	{
+		key: 'patientName', label: 'Patient', type: 'search', required: true,
+		placeholder: 'Search patient...', apiPath: '/api/patients',
+		relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
+	},
+	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
+	{ key: 'claimRef', label: 'Claim / Bill #', type: 'text', placeholder: 'Claim or fee-sheet reference' },
+	{ key: 'payerName', label: 'Insurance / Payer', type: 'text', placeholder: 'e.g. Medicare, BCBS' },
+	{ key: 'checkNumber', label: 'Check / EFT #', type: 'text', required: true, placeholder: 'Check number from EOB' },
+	{ key: 'billedAmount', label: 'Billed ($)', type: 'number', required: true, placeholder: '0.00' },
+	{ key: 'allowedAmount', label: 'Allowed ($)', type: 'number', required: true, placeholder: '0.00' },
+	{ key: 'paidAmount', label: 'Insurance Paid ($)', type: 'number', required: true, placeholder: '0.00' },
+	{ key: 'copay', label: 'Copay ($)', type: 'number', placeholder: '0.00' },
+	{ key: 'deductible', label: 'Deductible ($)', type: 'number', placeholder: '0.00' },
+	{ key: 'coinsurance', label: 'Coinsurance ($)', type: 'number', placeholder: '0.00' },
+	{
+		key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
+			{ label: 'Check', value: 'check' },
+			{ label: 'ACH / EFT', value: 'ach' },
+			{ label: 'Other', value: 'other' },
+		], defaultValue: 'check'
+	},
+];
+
+/** Parse an EOB breakdown value (e.g. `billed=185.00`) out of a posting description. */
+function parseEobField(description: string, field: string): number | undefined {
+	const m = description.match(new RegExp(`${field}=(-?\\d+(?:\\.\\d+)?)`));
+	return m ? Number(m[1]) : undefined;
+}
+
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
-	private payView: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'encounter-billing';
+	private payView: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'encounter-billing';
 	// Methods + Plans + Ledger are patient-scoped on the backend (no global list
 	// route), so those views require a selected patient (matches ciyex-ehr-ui).
 	private _payPatientId = '';
@@ -5040,6 +5080,147 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				// allow-any-unicode-next-line
 				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
 					const r = await dlg.confirm({ message: 'Delete this transaction?', type: 'warning', primaryButton: 'Delete' });
+					if (r.confirmed) {
+						await api.fetch(`/api/payments/transactions/${item.id}`, { method: 'DELETE' });
+						reload();
+					}
+				}
+			},
+		],
+	};
+
+	// Insurance payment posting (EOB) — 7-column model without the RCM app.
+	// Postings are payment transactions with transactionType 'insurance_payment';
+	// the EOB breakdown is encoded into the description (`billed=…; allowed=…`)
+	// so the grid can render Billed/Allowed/Write-off columns after a round-trip
+	// through the main API, which only persists the standard transaction fields.
+	private readonly _insurancePostingConfig: ClinicalEditorConfig = {
+		title: 'Insurance Posting', apiPath: '/api/payments/transactions',
+		searchPlaceholder: 'Search postings by patient, claim, check #...',
+		buildCreateUrl: () => '/api/payments/collect',
+		buildItemUrl: (item) => `/api/payments/transactions/${item.id}`,
+		clientSideFilter: ['patientName', 'patientId', 'description', 'status', 'claimRef', 'checkNumber'],
+		createLabel: '+ Post Insurance Payment (EOB)',
+		creatable: true,
+		editable: true,
+		mergeOnEdit: true,
+		columns: [
+			{ key: 'patientName', label: 'Patient' },
+			{ key: 'claimRef', label: 'Claim #', width: '90px' },
+			{ key: 'billedAmount', label: 'Billed', width: '80px' },
+			{ key: 'allowedAmount', label: 'Allowed', width: '80px' },
+			{ key: 'amount', label: 'Ins Paid', width: '80px' },
+			{ key: 'patientResp', label: 'Patient Resp', width: '95px' },
+			{ key: 'writeOff', label: 'Write-off', width: '85px' },
+			{ key: 'checkNumber', label: 'Check #', width: '90px' },
+			{ key: 'collectedAt', label: 'Date', width: '100px' },
+		],
+		formFields: INSURANCE_POSTING_FORM_FIELDS,
+		createDefaults: { transactionType: 'insurance_payment', status: 'completed' },
+		// Keep only insurance postings and hydrate the EOB columns (and the edit
+		// form fields) from the encoded description breakdown.
+		enrichItems: async (items) => {
+			const postings = items.filter(it => String(it['transactionType'] ?? '') === 'insurance_payment');
+			for (const it of postings) {
+				const desc = String(it['description'] ?? '');
+				it['billedAmount'] = parseEobField(desc, 'billed');
+				it['allowedAmount'] = parseEobField(desc, 'allowed');
+				it['paidAmount'] = parseEobField(desc, 'paid') ?? it['amount'];
+				it['copay'] = parseEobField(desc, 'copay');
+				it['deductible'] = parseEobField(desc, 'deductible');
+				it['coinsurance'] = parseEobField(desc, 'coinsurance');
+				it['writeOff'] = parseEobField(desc, 'writeoff');
+				it['patientResp'] = parseEobField(desc, 'resp');
+				const claim = desc.match(/claim=([^;|]+)/);
+				it['claimRef'] = claim ? claim[1].trim() : '';
+				const check = desc.match(/check=([^;|]+)/);
+				it['checkNumber'] = check ? check[1].trim() : String(it['notes'] ?? '');
+				const payer = desc.match(/payer=([^;|]+)/);
+				it['payerName'] = payer ? payer[1].trim() : '';
+			}
+			return postings;
+		},
+		// EOB math at save time: write-off = billed - allowed; patient
+		// responsibility = copay + deductible + coinsurance. The transaction
+		// amount is the insurance-paid figure; the full breakdown is encoded
+		// into the description for round-tripping.
+		beforeSave: (payload) => {
+			const num = (k: string): number => { const v = Number(payload[k]); return Number.isFinite(v) ? v : 0; };
+			const billed = num('billedAmount');
+			const allowed = num('allowedAmount');
+			const paid = num('paidAmount');
+			const copay = num('copay');
+			const deductible = num('deductible');
+			const coinsurance = num('coinsurance');
+			const writeOff = Math.max(Math.round((billed - allowed) * 100) / 100, 0);
+			const resp = Math.round((copay + deductible + coinsurance) * 100) / 100;
+			const balanced = Math.abs(allowed - (paid + resp)) <= 0.01;
+			payload['amount'] = paid;
+			payload['transactionType'] = 'insurance_payment';
+			if (!payload['status']) { payload['status'] = 'completed'; }
+			payload['notes'] = String(payload['checkNumber'] ?? '');
+			payload['description'] =
+				`EOB posting | payer=${String(payload['payerName'] ?? '').trim()}; claim=${String(payload['claimRef'] ?? '').trim()}; ` +
+				`check=${String(payload['checkNumber'] ?? '').trim()}; billed=${billed.toFixed(2)}; allowed=${allowed.toFixed(2)}; ` +
+				`paid=${paid.toFixed(2)}; copay=${copay.toFixed(2)}; deductible=${deductible.toFixed(2)}; ` +
+				`coinsurance=${coinsurance.toFixed(2)}; writeoff=${writeOff.toFixed(2)}; resp=${resp.toFixed(2)}` +
+				(balanced ? '' : ' | WARN: allowed != paid + patient responsibility');
+			return payload;
+		},
+		// Summary cards: totals across the loaded postings (dollar figures).
+		computeStats: (items) => {
+			const sum = (k: string) => Math.round(items.reduce((s, it) => s + (Number(it[k]) || 0), 0) * 100) / 100;
+			return {
+				postings: items.length,
+				insurancePaid: sum('amount'),
+				patientResponsibility: sum('patientResp'),
+				writeOffs: sum('writeOff'),
+			};
+		},
+		cellRenderer: (key, value, item) => {
+			if ((key === 'amount' || key === 'billedAmount' || key === 'allowedAmount'
+				|| key === 'patientResp' || key === 'writeOff')) {
+				const n = Number(value);
+				return Number.isFinite(n) && value !== undefined && value !== null && value !== '' ? `$${n.toFixed(2)}` : '—';
+			}
+			if (key === 'collectedAt' && typeof value === 'string') {
+				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
+			}
+			if (key === 'patientName' && !value) {
+				const pid = item['patientId'];
+				return pid !== undefined && pid !== null && pid !== '' ? `Patient #${pid}` : '';
+			}
+			return String(value ?? '');
+		},
+		actions: [
+			{
+				// allow-any-unicode-next-line
+				label: 'View', icon: '\u{1F441}', handler: async (item) => {
+					const money = (k: string): string => { const n = Number(item[k]); return Number.isFinite(n) ? `$${n.toFixed(2)}` : '—'; };
+					await showThemedDetails({
+						title: 'Insurance Payment Posting',
+						subtitle: String(item.patientName || (item.patientId ? `Patient #${item.patientId}` : '')),
+						anchor: this.root,
+						rows: [
+							{ label: 'Payer', value: String(item.payerName || '—') },
+							{ label: 'Claim #', value: String(item.claimRef || '—') },
+							{ label: 'Check #', value: String(item.checkNumber || '—') },
+							{ label: 'Billed', value: money('billedAmount') },
+							{ label: 'Allowed', value: money('allowedAmount') },
+							{ label: 'Insurance Paid', value: money('amount'), emphasis: true },
+							{ label: 'Copay', value: money('copay') },
+							{ label: 'Deductible', value: money('deductible') },
+							{ label: 'Coinsurance', value: money('coinsurance') },
+							{ label: 'Patient Responsibility', value: money('patientResp'), accent: '#f59e0b' },
+							{ label: 'Write-off (Billed - Allowed)', value: money('writeOff') },
+						],
+					});
+				}
+			},
+			{
+				// allow-any-unicode-next-line
+				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: 'Delete this insurance posting?', type: 'warning', primaryButton: 'Delete' });
 					if (r.confirmed) {
 						await api.fetch(`/api/payments/transactions/${item.id}`, { method: 'DELETE' });
 						reload();
@@ -5649,6 +5830,39 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			}
 			return String(value ?? '');
 		},
+		// MedOffice-style balance split: how much of the outstanding balance is
+		// due FROM THE PATIENT vs still pending WITH INSURANCE. Patient
+		// responsibility accrues from EOB postings (the `resp=` breakdown in
+		// insurance-posting descriptions) and is paid down by patient payments
+		// (negative non-EOB entries); the remainder of the balance is insurance.
+		computeStats: (items) => {
+			const round = (n: number) => Math.round(n * 100) / 100;
+			let respAccrued = 0;
+			let patientPaid = 0;
+			let totalBalance = 0;
+			let haveBalance = false;
+			for (const it of items) {
+				const desc = String(it['description'] ?? '');
+				const resp = parseEobField(desc, 'resp');
+				if (resp !== undefined) { respAccrued += resp; }
+				const amount = Number(it['amount']);
+				if (Number.isFinite(amount) && amount < 0 && resp === undefined && !desc.startsWith('EOB')) {
+					patientPaid += Math.abs(amount);
+				}
+				// Entries arrive newest-first; the first finite running balance is current.
+				if (!haveBalance) {
+					const rb = Number(it['runningBalance']);
+					if (Number.isFinite(rb)) { totalBalance = rb; haveBalance = true; }
+				}
+			}
+			const patientPortion = round(Math.max(Math.min(respAccrued - patientPaid, Math.max(totalBalance, 0)), 0));
+			const insurancePortion = round(Math.max(totalBalance - patientPortion, 0));
+			return {
+				totalBalance: round(totalBalance),
+				patientPortion,
+				insurancePortion,
+			};
+		},
 		actions: [],
 	};
 
@@ -5699,6 +5913,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			case 'invoices': return this._invoicesConfig;
 			case 'plans': return this._plansConfig;
 			case 'ledger': return this._ledgerConfig;
+			case 'insurance-posting': return this._insurancePostingConfig;
 			default: return this._transactionsConfig;
 		}
 	}
@@ -5726,9 +5941,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
-		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
+		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
 			{ view: 'encounter-billing', label: 'Encounter Billing' },
 			{ view: 'transactions', label: 'Transactions' },
+			{ view: 'insurance-posting', label: 'Insurance Posting' },
 			{ view: 'methods', label: 'Payment Methods' },
 			{ view: 'plans', label: 'Payment Plans' },
 			{ view: 'ledger', label: 'Ledger' },
