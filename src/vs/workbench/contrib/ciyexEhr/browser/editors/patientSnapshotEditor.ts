@@ -1044,7 +1044,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *     clinical fields (CC, HPI, ROS, vitals, PE, PMH, FH, SH, assessment,
 	 *     plan, provider narrative, procedures).
 	 */
-	private async _saveEncounterComposition(values: Record<string, string>, existingId: string | undefined): Promise<Response> {
+	private async _saveEncounterComposition(values: Record<string, string>, existingId: string | undefined): Promise<{ res: Response; encounterId: string }> {
 		const pid = this._currentPatientId;
 		let encounterId = existingId || '';
 		// The Status dropdown is two-state (Signed/Unsigned); the patient-scoped
@@ -1071,7 +1071,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					reasonForVisit: reason,
 				}),
 			});
-			if (!createRes.ok) { return createRes; }
+			if (!createRes.ok) { return { res: createRes, encounterId: '' }; }
 			const created = await createRes.json().catch(() => null);
 			encounterId = String(created?.data?.id || created?.id || '');
 			if (!encounterId) { throw new Error('Encounter created but server returned no id'); }
@@ -1143,7 +1143,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// -history card surfaces on the Snapshot vitals card and the Encounter form.
 		const compRes = await this._saveEncounterCompositionDoc(createUrl, headers, body, pid, encounterId, existingId);
 		await this._upsertEncounterVitals(values, values['startDate']);
-		return compRes;
+		return { res: compRes, encounterId };
 	}
 
 	/** Write just the encounter-form Composition document (no vitals side-effect).
@@ -1564,15 +1564,24 @@ export class PatientSnapshotEditor extends EditorPane {
 				// Without step 1, the composition references "Encounter/new" and
 				// HAPI rejects with HAPI-1094 "Resource Encounter/new not found".
 				if (entity === 'encounters') {
-					const res = await this._saveEncounterComposition(next, existingId);
+					const { res, encounterId } = await this._saveEncounterComposition(next, existingId);
 					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
-					let saved: Record<string, unknown> | null = null;
-					try {
-						const j = await res.json();
-						const cand = (j?.data ?? j) as Record<string, unknown> | null;
-						if (cand && typeof cand === 'object' && !Array.isArray(cand)) { saved = cand; }
-					} catch { /* */ }
-					if (!existingId && saved) { this._trackCreated(entity, { ...next, ...saved }); }
+					// The save response body is the encounter-form COMPOSITION, whose id is
+					// the composition id, NOT the Encounter id, so tracking the overlay
+					// under it meant `_mergePending` could not match/insert the encounter row
+					// and the newly created encounter did not appear in the list until the
+					// FHIR search index caught up (the "created but not shown" report).
+					// Pin the overlay to the real Encounter id and map the form values onto
+					// the keys the encounters list reads so it shows up immediately.
+					const encId = String(encounterId || existingId || '');
+					if (encId) {
+						const overlay: Record<string, unknown> = { ...next, id: encId, fhirId: encId };
+						const startVal = String(next['startDate'] || next['date'] || new Date().toISOString());
+						for (const k of ['encounterDate', 'startDate', 'start', 'date', 'periodStart', 'dateOfService']) { overlay[k] = startVal; }
+						overlay.status = next['status'] || 'UNSIGNED';
+						overlay.reason = String(next['chiefComplaint'] || next['reason'] || '');
+						this._trackCreated(entity, overlay);
+					}
 					this.notificationService.notify({ severity: Severity.Info, message: `Encounter ${existingId ? 'updated' : 'created'}.` });
 					this._rerender();
 					return;
@@ -1723,7 +1732,7 @@ export class PatientSnapshotEditor extends EditorPane {
 					: undefined,
 			saveRecord: async (next, existingId) => {
 				if (entity === 'encounters') {
-					const res = await this._saveEncounterComposition(next, existingId);
+					const { res } = await this._saveEncounterComposition(next, existingId);
 					if (!res.ok) { throw new Error(`Save failed (${res.status})`); }
 					// The save response is the encounter-form COMPOSITION, whose id is the
 					// composition id — NOT the Encounter id. Tracking the overlay under the
