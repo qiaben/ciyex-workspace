@@ -12,7 +12,10 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -4828,6 +4831,19 @@ export const INSURANCE_POSTING_FORM_FIELDS: FormFieldDef[] = [
 			{ label: 'Other', value: 'other' },
 		], defaultValue: 'check'
 	},
+	// RCM-lite denial tracking: a zero-pay posting with a reason is flagged
+	// DENIAL in the grid so non-RCM orgs still get a denial work list.
+	{ key: 'denialReason', label: 'Denial / Adjustment Reason', type: 'text', placeholder: 'Only for denials — e.g. CO-97 bundled service' },
+	// RCM-lite COB tracking: mark the EOB's "forwarded to additional payer"
+	// indication so the posting shows as Awaiting Secondary until the
+	// secondary EOB is posted.
+	{
+		key: 'forwardedToSecondary', label: 'Forwarded to Secondary (COB)', type: 'select', options: [
+			{ label: 'No', value: 'no' },
+			{ label: 'Yes — awaiting secondary EOB', value: 'yes' },
+		], defaultValue: 'no'
+	},
+	{ key: 'secondaryPayer', label: 'Secondary Payer', type: 'text', placeholder: 'e.g. BCBS (when forwarded)' },
 ];
 
 /** Parse an EOB breakdown value (e.g. `billed=185.00`) out of a posting description. */
@@ -4845,6 +4861,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _payPatientId = '';
 	private _payPatientName = '';
 	private _payPatientBar: HTMLElement | null = null;
+	/** "Download Statement" button in the patient bar — Ledger view only. */
+	private _stmtBtn: HTMLButtonElement | null = null;
 	// allow-any-unicode-next-line
 	// ── Credit-card grid state ──────────────────────────────────────────────
 	private _cards: CreditCardRecord[] = [];
@@ -5113,19 +5131,27 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'patientResp', label: 'Patient Resp', width: '95px' },
 			{ key: 'writeOff', label: 'Write-off', width: '85px' },
 			{ key: 'checkNumber', label: 'Check #', width: '90px' },
+			{ key: 'postingStatus', label: 'Status', width: '110px' },
 			{ key: 'collectedAt', label: 'Date', width: '100px' },
 		],
 		formFields: INSURANCE_POSTING_FORM_FIELDS,
 		createDefaults: { transactionType: 'insurance_payment', status: 'completed' },
 		// Keep only insurance postings and hydrate the EOB columns (and the edit
-		// form fields) from the encoded description breakdown.
+		// form fields) from the encoded description breakdown. Some backends
+		// coerce unknown transactionType values to 'payment' (stage does), so the
+		// EOB description marker is the reliable discriminator, not the type.
 		enrichItems: async (items) => {
-			const postings = items.filter(it => String(it['transactionType'] ?? '') === 'insurance_payment');
+			const postings = items.filter(it => String(it['transactionType'] ?? '') === 'insurance_payment'
+				|| String(it['description'] ?? '').startsWith('EOB posting'));
 			for (const it of postings) {
 				const desc = String(it['description'] ?? '');
 				it['billedAmount'] = parseEobField(desc, 'billed');
 				it['allowedAmount'] = parseEobField(desc, 'allowed');
 				it['paidAmount'] = parseEobField(desc, 'paid') ?? it['amount'];
+				// The encoded paid figure is authoritative: zero-pay denials are stored
+				// with a placeholder cent (the backend rejects amount <= 0 on create,
+				// corrected to 0 via PUT after save) — display the EOB's paid amount.
+				if (it['paidAmount'] !== undefined) { it['amount'] = it['paidAmount']; }
 				it['copay'] = parseEobField(desc, 'copay');
 				it['deductible'] = parseEobField(desc, 'deductible');
 				it['coinsurance'] = parseEobField(desc, 'coinsurance');
@@ -5137,8 +5163,39 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				it['checkNumber'] = check ? check[1].trim() : String(it['notes'] ?? '');
 				const payer = desc.match(/payer=([^;|]+)/);
 				it['payerName'] = payer ? payer[1].trim() : '';
+				const denial = desc.match(/denial=([^;|]+)/);
+				it['denialReason'] = denial ? denial[1].trim() : '';
+				const payer2 = desc.match(/payer2=([^;|]+)/);
+				it['secondaryPayer'] = payer2 ? payer2[1].trim() : '';
+				const fwd = /fwd=1/.test(desc);
+				it['forwardedToSecondary'] = fwd ? 'yes' : 'no';
+				// RCM-lite posting status: zero-pay with a write-off/denial reason is a
+				// DENIAL; a crossover-forwarded EOB is AWAITING_SECONDARY until the
+				// secondary payment posts; everything else is POSTED.
+				const paidNum = Number(it['amount']) || 0;
+				if (it['denialReason'] || (paidNum === 0 && (Number(it['writeOff']) || 0) > 0)) {
+					it['postingStatus'] = 'DENIAL';
+				} else if (fwd) {
+					it['postingStatus'] = 'AWAITING_SECONDARY';
+				} else {
+					it['postingStatus'] = 'POSTED';
+				}
 			}
 			return postings;
+		},
+		statusTabs: [
+			{ label: 'Posted', value: 'POSTED' },
+			{ label: 'Denials', value: 'DENIAL' },
+			{ label: 'Awaiting Secondary', value: 'AWAITING_SECONDARY' },
+		],
+		statusMatchers: {
+			POSTED: (item) => item['postingStatus'] === 'POSTED',
+			DENIAL: (item) => item['postingStatus'] === 'DENIAL',
+			AWAITING_SECONDARY: (item) => item['postingStatus'] === 'AWAITING_SECONDARY',
+		},
+		statsFilterMap: {
+			denials: 'DENIAL',
+			awaitingSecondary: 'AWAITING_SECONDARY',
 		},
 		// EOB math at save time: write-off = billed - allowed; patient
 		// responsibility = copay + deductible + coinsurance. The transaction
@@ -5155,19 +5212,41 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const writeOff = Math.max(Math.round((billed - allowed) * 100) / 100, 0);
 			const resp = Math.round((copay + deductible + coinsurance) * 100) / 100;
 			const balanced = Math.abs(allowed - (paid + resp)) <= 0.01;
-			payload['amount'] = paid;
+			// The backend rejects amount <= 0 on create ("A valid payment amount is
+			// required"), but a zero-pay denial EOB is a legitimate posting — create
+			// with a placeholder cent and let afterSave PUT the amount back to 0
+			// (PUT has no such validation). The description carries paid=0.00, which
+			// the grid treats as authoritative.
+			payload['amount'] = paid > 0 ? paid : 0.01;
 			payload['transactionType'] = 'insurance_payment';
 			if (!payload['status']) { payload['status'] = 'completed'; }
 			payload['notes'] = String(payload['checkNumber'] ?? '');
+			const denialReason = String(payload['denialReason'] ?? '').trim();
+			const forwarded = String(payload['forwardedToSecondary'] ?? 'no') === 'yes';
+			const secondaryPayer = String(payload['secondaryPayer'] ?? '').trim();
 			payload['description'] =
 				`EOB posting | payer=${String(payload['payerName'] ?? '').trim()}; claim=${String(payload['claimRef'] ?? '').trim()}; ` +
 				`check=${String(payload['checkNumber'] ?? '').trim()}; billed=${billed.toFixed(2)}; allowed=${allowed.toFixed(2)}; ` +
 				`paid=${paid.toFixed(2)}; copay=${copay.toFixed(2)}; deductible=${deductible.toFixed(2)}; ` +
 				`coinsurance=${coinsurance.toFixed(2)}; writeoff=${writeOff.toFixed(2)}; resp=${resp.toFixed(2)}` +
+				(denialReason ? `; denial=${denialReason}` : '') +
+				(forwarded ? `; fwd=1; payer2=${secondaryPayer}` : '') +
 				(balanced ? '' : ' | WARN: allowed != paid + patient responsibility');
 			return payload;
 		},
-		// Summary cards: totals across the loaded postings (dollar figures).
+		// Zero-pay denial: correct the placeholder cent (see beforeSave) back to $0.
+		afterSave: (saved) => {
+			const paid = parseEobField(String(saved['description'] ?? ''), 'paid');
+			if (paid === 0 && saved['id'] !== undefined && Number(saved['amount']) !== 0) {
+				this.apiService.fetch(`/api/payments/transactions/${saved['id']}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ amount: 0 }),
+				}).catch(() => { /* display already shows the parsed $0 */ });
+			}
+		},
+		// Summary cards: totals across the loaded postings (dollar figures) plus
+		// clickable denial / awaiting-secondary work-list counts (statsFilterMap).
 		computeStats: (items) => {
 			const sum = (k: string) => Math.round(items.reduce((s, it) => s + (Number(it[k]) || 0), 0) * 100) / 100;
 			return {
@@ -5175,6 +5254,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				insurancePaid: sum('amount'),
 				patientResponsibility: sum('patientResp'),
 				writeOffs: sum('writeOff'),
+				denials: items.filter(it => it['postingStatus'] === 'DENIAL').length,
+				awaitingSecondary: items.filter(it => it['postingStatus'] === 'AWAITING_SECONDARY').length,
 			};
 		},
 		cellRenderer: (key, value, item) => {
@@ -5182,6 +5263,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				|| key === 'patientResp' || key === 'writeOff')) {
 				const n = Number(value);
 				return Number.isFinite(n) && value !== undefined && value !== null && value !== '' ? `$${n.toFixed(2)}` : '—';
+			}
+			if (key === 'postingStatus') {
+				if (value === 'DENIAL') { return 'Denial'; }
+				if (value === 'AWAITING_SECONDARY') { return 'Awaiting Secondary'; }
+				return 'Posted';
 			}
 			if (key === 'collectedAt' && typeof value === 'string') {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
@@ -5213,6 +5299,15 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 							{ label: 'Coinsurance', value: money('coinsurance') },
 							{ label: 'Patient Responsibility', value: money('patientResp'), accent: '#f59e0b' },
 							{ label: 'Write-off (Billed - Allowed)', value: money('writeOff') },
+							{
+								label: 'Status',
+								value: item.postingStatus === 'DENIAL' ? 'Denial'
+									: item.postingStatus === 'AWAITING_SECONDARY' ? 'Awaiting Secondary' : 'Posted',
+								accent: item.postingStatus === 'DENIAL' ? '#ef4444'
+									: item.postingStatus === 'AWAITING_SECONDARY' ? '#f59e0b' : '#22c55e'
+							},
+							...(item.denialReason ? [{ label: 'Denial Reason', value: String(item.denialReason), wide: true }] : []),
+							...(item.secondaryPayer ? [{ label: 'Forwarded To', value: String(item.secondaryPayer) }] : []),
 						],
 					});
 				}
@@ -5857,10 +5952,44 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			}
 			const patientPortion = round(Math.max(Math.min(respAccrued - patientPaid, Math.max(totalBalance, 0)), 0));
 			const insurancePortion = round(Math.max(totalBalance - patientPortion, 0));
+
+			// RCM-lite A/R aging: FIFO — payments/credits retire the OLDEST charges
+			// first, then the remaining open charge amounts are bucketed by age.
+			const charges: Array<{ date: number; amt: number }> = [];
+			let credits = 0;
+			for (let i = items.length - 1; i >= 0; i--) { // oldest → newest
+				const amount = Number(items[i]['amount']);
+				if (!Number.isFinite(amount) || amount === 0) { continue; }
+				const when = new Date(String(items[i]['createdAt'] ?? items[i]['entryDate'] ?? '')).getTime();
+				if (amount > 0) { charges.push({ date: when, amt: amount }); }
+				else { credits += Math.abs(amount); }
+			}
+			for (const c of charges) {
+				if (credits <= 0) { break; }
+				const applied = Math.min(c.amt, credits);
+				c.amt -= applied;
+				credits -= applied;
+			}
+			const now = Date.now();
+			const dayMs = 86400000;
+			let a30 = 0; let a60 = 0; let a90 = 0; let a90plus = 0;
+			for (const c of charges) {
+				if (c.amt <= 0) { continue; }
+				const days = Number.isFinite(c.date) ? (now - c.date) / dayMs : 0;
+				if (days <= 30) { a30 += c.amt; }
+				else if (days <= 60) { a60 += c.amt; }
+				else if (days <= 90) { a90 += c.amt; }
+				else { a90plus += c.amt; }
+			}
+
 			return {
 				totalBalance: round(totalBalance),
 				patientPortion,
 				insurancePortion,
+				aging0to30: round(a30),
+				aging31to60: round(a60),
+				aging61to90: round(a90),
+				aging90plus: round(a90plus),
 			};
 		},
 		actions: [],
@@ -6039,6 +6168,16 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		});
 		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 200); });
 
+		// RCM-lite patient statement: renders the selected patient's ledger into a
+		// downloadable HTML statement (charges/payments, patient vs insurance
+		// portion, amount due) — statement generation without the RCM app.
+		const stmtBtn = doc.createElement('button') as HTMLButtonElement;
+		stmtBtn.textContent = 'Download Statement';
+		stmtBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;display:none;';
+		stmtBtn.addEventListener('click', () => { this._downloadPatientStatement(); });
+		bar.appendChild(stmtBtn);
+		this._stmtBtn = stmtBtn;
+
 		parent.appendChild(bar);
 		this._payPatientBar = bar;
 	}
@@ -6049,6 +6188,101 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// /api/credit-cards/patient/{id}), so it shares the patient picker.
 			this._payPatientBar.style.display =
 				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
+		}
+		if (this._stmtBtn) {
+			this._stmtBtn.style.display = this.payView === 'ledger' ? 'inline-block' : 'none';
+		}
+	}
+
+	/**
+	 * Build and download an HTML patient statement from the ledger (RCM-lite:
+	 * statement generation for orgs without the RCM app). Amount due = the
+	 * patient portion; insurance-pending amounts are listed as informational.
+	 */
+	private async _downloadPatientStatement(): Promise<void> {
+		if (!this._payPatientId) {
+			this.dialogService.info('Select a patient first to generate their statement.');
+			return;
+		}
+		let entries: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch(`/api/payments/ledger/patient/${this._payPatientId}`);
+			if (res.ok) {
+				const data = await res.json();
+				const w = data?.data ?? data;
+				entries = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>;
+			}
+		} catch { /* fall through to empty statement */ }
+
+		const esc = (v: unknown): string => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const money = (n: number): string => `$${n.toFixed(2)}`;
+
+		let respAccrued = 0;
+		let patientPaid = 0;
+		let totalBalance = 0;
+		let haveBalance = false;
+		const rows: string[] = [];
+		for (const it of entries) {
+			const desc = String(it['description'] ?? '');
+			const resp = parseEobField(desc, 'resp');
+			if (resp !== undefined) { respAccrued += resp; }
+			const amount = Number(it['amount']);
+			if (Number.isFinite(amount) && amount < 0 && resp === undefined && !desc.startsWith('EOB')) {
+				patientPaid += Math.abs(amount);
+			}
+			if (!haveBalance) {
+				const rb = Number(it['runningBalance']);
+				if (Number.isFinite(rb)) { totalBalance = rb; haveBalance = true; }
+			}
+			const when = String(it['createdAt'] ?? it['entryDate'] ?? '');
+			let dateStr = when;
+			try { dateStr = when ? new Date(when).toLocaleDateString() : ''; } catch { /* keep raw */ }
+			const type = String(it['entryType'] ?? '').replace(/_/g, ' ');
+			const debit = Number.isFinite(amount) && amount > 0 ? money(amount) : '';
+			const credit = Number.isFinite(amount) && amount < 0 ? money(Math.abs(amount)) : '';
+			const rb = Number(it['runningBalance']);
+			rows.push(`<tr><td>${esc(dateStr)}</td><td>${esc(type)}</td><td>${esc(desc)}</td>` +
+				`<td class="amt">${debit}</td><td class="amt">${credit}</td>` +
+				`<td class="amt">${Number.isFinite(rb) ? money(rb) : ''}</td></tr>`);
+		}
+		const patientPortion = Math.max(Math.min(respAccrued - patientPaid, Math.max(totalBalance, 0)), 0);
+		const insurancePortion = Math.max(totalBalance - patientPortion, 0);
+		const today = new Date().toLocaleDateString();
+
+		const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Patient Statement</title><style>
+body{font-family:Arial,sans-serif;color:#222;margin:24px;}
+h1{font-size:20px;} .summary{margin:16px 0;} .summary b{font-size:16px;}
+table{border-collapse:collapse;width:100%;font-size:12px;}
+th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}
+th{background:#f0f4f8;} .amt{text-align:right;}
+.due{margin-top:16px;padding:12px;background:#fff7e6;border:1px solid #f0c36d;}
+</style></head><body>
+<h1>Patient Statement</h1>
+<div class="summary">
+Patient: <b>${esc(this._payPatientName || this._payPatientId)}</b><br/>
+Statement date: ${esc(today)}<br/>
+Amount due from you: <b>${money(patientPortion)}</b> &nbsp;&nbsp; Pending with insurance: ${money(insurancePortion)}<br/>
+Total account balance: ${money(totalBalance)}
+</div>
+<table>
+<tr><th>Date</th><th>Type</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+${rows.join('\n')}
+</table>
+<div class="due">Please pay <b>${money(patientPortion)}</b>. Amounts pending with your insurance are not due yet and may change after processing.</div>
+</body></html>`;
+
+		const fileName = `statement-${(this._payPatientName || this._payPatientId).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.html`;
+		// Write via the file service instead of an <a download> anchor — the
+		// anchor path pops Electron's native Save dialog, which is unusable in
+		// remote/headless sessions and skippable here since we can save directly.
+		try {
+			const defaultDir = await this.fileDialogService.defaultFilePath();
+			const target = URI.joinPath(defaultDir, fileName);
+			await this.fileService.writeFile(target, VSBuffer.fromString(html));
+			this.dialogService.info('Statement saved', target.fsPath);
+		} catch (e) {
+			this.dialogService.error('Could not save the statement', String(e));
 		}
 	}
 
@@ -6645,7 +6879,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		});
 	}
 
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {
