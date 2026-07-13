@@ -197,10 +197,38 @@ function summaryColors(themeService: IThemeService): SummaryColors {
 	};
 }
 
+/** Full display names for the FHIR v3-ActCode encounter class codes the backend
+ *  stores in `meta.type` / `Encounter.type` — QA flagged the raw "AMB" as not
+ *  being the full form. Unknown values pass through unchanged. */
+const ENCOUNTER_TYPE_FULL_FORMS: Record<string, string> = {
+	AMB: 'Ambulatory',
+	IMP: 'Inpatient',
+	ACUTE: 'Inpatient Acute',
+	NONAC: 'Inpatient Non-Acute',
+	EMER: 'Emergency',
+	VR: 'Virtual',
+	HH: 'Home Health',
+	FLD: 'Field',
+	OBSENC: 'Observation Encounter',
+	PRENC: 'Pre-Admission',
+	SS: 'Short Stay',
+};
+
+/** Expand a short encounter class code ("AMB") to its full form ("Ambulatory"). */
+function expandEncounterType(raw: string | undefined): string | undefined {
+	if (!raw) { return raw; }
+	const key = raw.trim().toUpperCase();
+	return ENCOUNTER_TYPE_FULL_FORMS[key] || raw;
+}
+
 /** Builds the Visit Summary slide-over (panel + backdrop) and loads its data.
  *  Read-only — it deliberately does NOT redirect to the encounter editor or
- *  patient chart. Shared by the appointments editor and the encounter sidebar. */
-export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string, encounterId: string, patientName: string): void {
+ *  patient chart. Shared by the appointments editor and the encounter sidebar.
+ *  `facilityHint` is the visit's location name when the caller already knows it
+ *  (e.g. the appointment row's location — the provider's location for the
+ *  visit); it backfills the Facility field because the Encounter resource
+ *  itself carries no location. */
+export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string, encounterId: string, patientName: string, facilityHint?: string): void {
 	const doc = DOM.getActiveWindow().document;
 	const col = summaryColors(deps.themeService);
 
@@ -289,7 +317,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	pdfBtn.addEventListener('click', openPreview);
 	printBtn.addEventListener('click', openPreview);
 
-	void loadVisitSummary(deps, patientId, encounterId, body, loading).then(ok => { summaryLoaded = ok; });
+	void loadVisitSummary(deps, patientId, encounterId, body, loading, facilityHint).then(ok => { summaryLoaded = ok; });
 }
 
 /** Shows a visible print-preview of the visit summary and lets the user invoke
@@ -381,7 +409,7 @@ function showSummaryPrintPreview(themeService: IThemeService, doc: Document, sou
  *  data (QA: "the data I entered isn't in the visit summary"). We therefore
  *  load the encounter-form Composition too and render the actual entered
  *  values from it, keeping `/summary` only for the encounter meta header. */
-async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement): Promise<boolean> {
+async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement, facilityHint?: string): Promise<boolean> {
 	try {
 		const [summaryData, formComp, encResource] = await Promise.all([
 			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
@@ -393,12 +421,26 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 				.then(async r => (r.ok ? (((await r.json())?.data ?? null) as Record<string, unknown> | null) : null))
 				.catch(() => null),
 		]);
-		await sanitizeSummaryFacility(deps, summaryData as VisitSummaryDTO | null, encResource);
+		await sanitizeSummaryMeta(deps, summaryData as VisitSummaryDTO | null, encResource, facilityHint);
 		loading.remove();
+
+		// The encounter-form Composition endpoint is PATIENT-scoped. Different
+		// surfaces can hand this panel different ids for the same person (the
+		// appointment's patient id vs the Encounter subject's id), so when the
+		// lookup under the caller's id finds nothing, retry under the patient id
+		// the Encounter resource itself points at — otherwise data charted from
+		// the appointment drawer never shows in a summary opened elsewhere.
+		let comp = formComp;
+		if (!comp && encResource) {
+			const encPatient = String(encResource.patientId ?? encResource.patientRef ?? '').replace(/^Patient\//i, '').trim();
+			if (encPatient && encPatient !== patientId) {
+				comp = await loadEncounterFormComposition(deps, encPatient, encounterId).catch(() => null);
+			}
+		}
 
 		// Prefer the encounter-form Composition for the clinical sections — it's
 		// the source of truth for what the provider actually entered.
-		const renderedForm = formComp ? renderEncounterFormSections(deps, body, formComp, summaryData) : false;
+		const renderedForm = comp ? renderEncounterFormSections(deps, body, comp, summaryData) : false;
 
 		if (!renderedForm) {
 			// No form Composition yet — fall back to the /summary DTO rendering.
@@ -419,17 +461,25 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 }
 
 /**
- * The backend's /summary DTO sometimes puts a raw FHIR reference into
- * `meta.facility` — QA saw "Practitioner/13892" rendered as the Facility, which
- * is not even a location. Discard reference-shaped / empty values and re-derive
- * the facility from the Encounter resource's location fields; a bare
- * `Location/{id}` (or numeric location id) is resolved to its display name via
- * the org's /api/locations list. When nothing resolves, the field is left empty
- * so the row is simply omitted (better than showing a wrong value).
+ * Cleans up the /summary DTO's meta block before rendering:
+ *
+ * - `meta.type` arrives as the short FHIR class code ("AMB") — expand it to its
+ *   full form ("Ambulatory") so the header reads like the EHR-UI.
+ * - The backend sometimes puts a raw FHIR reference into `meta.facility` — QA
+ *   saw "Practitioner/13892" rendered as the Facility, which is not even a
+ *   location. Discard reference-shaped / empty values and re-derive the
+ *   facility from the Encounter resource's location fields; a bare
+ *   `Location/{id}` (or numeric location id) is resolved to its display name
+ *   via the org's /api/locations list. The Encounter resource itself carries no
+ *   location on this backend, so `facilityHint` (the appointment's location —
+ *   the provider's location for the visit) backfills the field when the
+ *   encounter yields nothing. When nothing at all resolves, the field is left
+ *   empty so the row is simply omitted (better than showing a wrong value).
  */
-async function sanitizeSummaryFacility(deps: IVisitSummaryDeps, summaryData: VisitSummaryDTO | null, enc: Record<string, unknown> | null): Promise<void> {
+async function sanitizeSummaryMeta(deps: IVisitSummaryDeps, summaryData: VisitSummaryDTO | null, enc: Record<string, unknown> | null, facilityHint?: string): Promise<void> {
 	const meta = summaryData?.meta;
 	if (!meta) { return; }
+	meta.type = expandEncounterType(meta.type);
 	const isRef = (s: string) => /^[A-Za-z]+\/[A-Za-z0-9-]+$/.test(s.trim());
 	const asText = (v: unknown): string => {
 		if (!v) { return ''; }
@@ -464,6 +514,12 @@ async function sanitizeSummaryFacility(deps: IVisitSummaryDeps, summaryData: Vis
 				if (hit) { candidate = String(hit.name || hit.locationName || candidate); }
 			}
 		} catch { /* keep whatever we have */ }
+	}
+	// The Encounter resource carries no location on this backend — fall back to
+	// the visit location the caller passed (the appointment's location, i.e. the
+	// provider's location for this visit).
+	if ((!candidate || isRef(candidate)) && facilityHint && facilityHint.trim() && !isRef(facilityHint.trim())) {
+		candidate = facilityHint.trim();
 	}
 	meta.facility = candidate && !isRef(candidate) ? candidate : undefined;
 }
@@ -581,7 +637,15 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 					const o = it as Record<string, unknown>;
 					const code = o.code ?? o.cpt4 ?? o.cpt ?? o.icd ?? o.icd10 ?? '';
 					const desc = o.description ?? o.text ?? o.name ?? o.label ?? '';
-					const joined = [code, desc].filter(Boolean).join(' - ');
+					let joined = [code, desc].filter(Boolean).join(' - ');
+					// Structured plan items carry { type, description, notes } —
+					// surface the type as a prefix and the notes as a suffix.
+					const typ = String(o.type ?? '').trim();
+					if (joined && typ && typ.toLowerCase() !== 'other') {
+						joined = `[${typ.charAt(0).toUpperCase()}${typ.slice(1)}] ${joined}`;
+					}
+					const notes = String(o.notes ?? '').trim();
+					if (joined && notes) { joined += ` — ${notes}`; }
 					return joined || JSON.stringify(o);
 				}
 				return String(it);

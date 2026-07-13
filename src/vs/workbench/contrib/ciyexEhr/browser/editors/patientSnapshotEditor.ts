@@ -813,7 +813,20 @@ export class PatientSnapshotEditor extends EditorPane {
 			}
 			case 'plan_items': {
 				if (!Array.isArray(value)) { return ''; }
-				return value.map(i => typeof i === 'string' ? i.trim() : clean((i as Record<string, unknown>)?.text ?? (i as Record<string, unknown>)?.item)).filter(Boolean).join('\n');
+				// The dedicated Encounter editor stores structured rows
+				// ({ type, description, notes }); render each as
+				// "[Type] description — notes" so the flat textarea round-trips
+				// through _textToEncounterField without losing the type/notes.
+				return value.map(i => {
+					if (typeof i === 'string') { return i.trim(); }
+					const o = (i ?? {}) as Record<string, unknown>;
+					const desc = clean(o.description ?? o.text ?? o.item);
+					if (!desc && !clean(o.notes)) { return ''; }
+					const type = clean(o.type).toLowerCase();
+					const prefix = type && type !== 'other' ? `[${type}] ` : '';
+					const notes = clean(o.notes);
+					return `${prefix}${desc}${notes ? ` — ${notes}` : ''}`;
+				}).filter(Boolean).join('\n');
 			}
 			case 'ros_data':
 			case 'pe_data': {
@@ -853,7 +866,19 @@ export class PatientSnapshotEditor extends EditorPane {
 				});
 			}
 			case 'plan_items':
-				return lines;
+				// Parse back into the structured rows the dedicated Encounter editor
+				// stores: an optional "[type]" prefix and an optional " — notes" tail
+				// around the description (inverse of _encounterFieldToText above).
+				return lines.map(line => {
+					let type = 'other';
+					let rest = line;
+					const tm = /^\[([^\]]+)\]\s*(.*)$/.exec(rest);
+					if (tm) { type = tm[1].trim().toLowerCase(); rest = tm[2]; }
+					let notes = '';
+					const nm = /^(.*?)\s+—\s+(.*)$/.exec(rest);
+					if (nm) { rest = nm[1]; notes = nm[2]; }
+					return { type, description: rest.trim(), notes: notes.trim() };
+				});
 			case 'ros_data':
 			case 'pe_data': {
 				const obj: Record<string, string> = {};
@@ -1836,7 +1861,20 @@ export class PatientSnapshotEditor extends EditorPane {
 		// returned the envelope (no clinical fields), so the edit modal came up with
 		// only the encounter's primary diagnosis and dropped the rest (QA: 3 codes
 		// captured, only 2 shown). Mirrors EncounterFormEditor._loadEncounterData.
-		const { comp: formData, compId } = this._extractEncounterComposition(form);
+		let { comp: formData, compId } = this._extractEncounterComposition(form);
+		// The composition endpoint is PATIENT-scoped, and the encounter may have
+		// been charted under a different id for the same person (e.g. the
+		// appointments drawer passes the appointment's patient id). When nothing
+		// is found under the snapshot's id, retry under the Encounter subject's
+		// own patient id so drawer-charted data still loads here (QA issue).
+		if (!compId) {
+			const encPid = String(detailData['patientId'] ?? detailData['patientRef'] ?? '').replace(/^Patient\//i, '').trim();
+			if (encPid && encPid !== pid) {
+				const altForm = await this._fetch(`/api/fhir-resource/encounter-form/patient/${encPid}?encounterRef=${encId}`);
+				const alt = this._extractEncounterComposition(altForm);
+				if (alt.compId) { formData = alt.comp; compId = alt.compId; }
+			}
+		}
 		this._encounterCompositionRef = { encId, compId };
 		// Composition wins over the enriched EHR encounter, which wins over the bare
 		// FHIR resource, which wins over the list row.

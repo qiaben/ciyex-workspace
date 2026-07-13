@@ -1750,9 +1750,13 @@ export class AppointmentsEditor extends EditorPane {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'No encounter is linked to this appointment yet.' });
 			return;
 		}
+		// Pass the appointment's location as the Facility — the Encounter resource
+		// carries no location, so the summary's Facility row was empty (QA asked
+		// for the provider's location for the visit to be shown there).
 		showVisitSummaryPanel(
 			{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService },
-			resolved.patientId, resolved.encounterId, row.patientName || 'Patient');
+			resolved.patientId, resolved.encounterId, row.patientName || 'Patient',
+			row.locationName || row.locationDisplay || '');
 	}
 
 	override layout(dimension: DOM.Dimension): void {

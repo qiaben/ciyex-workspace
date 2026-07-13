@@ -21,9 +21,12 @@ import { EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown } from '../customDropdown.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 
 interface FieldSection { key: string; title: string; columns: number; visible: boolean; collapsible?: boolean; collapsed?: boolean; fields: FieldDef[] }
 interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string }>; validation?: Record<string, unknown> }
+/** One structured Plan row (matches the EHR-UI `PlanItems` component shape). */
+interface PlanItemRow { type: string; description: string; notes: string }
 
 export class EncounterFormEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexEncounterForm';
@@ -43,6 +46,16 @@ export class EncounterFormEditor extends EditorPane {
 	private _autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	private _isDirty = false;
 	private _compositionId = '';
+	// Patient id the encounter-form Composition lives under. The Composition
+	// endpoints are PATIENT-scoped, and different surfaces can open the same
+	// encounter with different ids for the same person (the appointment's
+	// patient id vs the Encounter subject's id) — so the id the Composition was
+	// actually FOUND (or first created) under is remembered and used for every
+	// subsequent read/write, keeping all surfaces on the one Composition.
+	private _compositionPatientId = '';
+	// Distinguishes this editor instance in the cross-editor save broadcast so
+	// an instance never reloads in response to its own save.
+	private readonly _editorInstanceId = generateUuid();
 	// Id of the shared FHIR vitals Observation for this visit's DATE — the SAME
 	// record the Snapshot and Patient Chart editor read/write. Resolved on load by
 	// date so the three pages share one vitals reading instead of divergent copies.
@@ -65,6 +78,23 @@ export class EncounterFormEditor extends EditorPane {
 	) {
 		super(EncounterFormEditor.ID, group, telemetryService, themeService, storageService);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
+		// Reload when ANOTHER editor instance saves this same encounter — e.g.
+		// data charted in the appointment page's slide-over drawer must show up
+		// in an already-open Encounters-page / Snapshot encounter tab, which the
+		// workbench reveals WITHOUT calling setInput again (QA: "data added from
+		// the appointment encounter is not reflected in the encounters page /
+		// snapshot encounter").
+		this._register(this.apiService.onDidMutateClinicalRecord(m => {
+			if (m.entity !== 'encounter-form') { return; }
+			if (String(m.record.encounterId ?? '') !== this.encounterId || !this.encounterId) { return; }
+			if (String(m.record.sourceId ?? '') === this._editorInstanceId) { return; }
+			// Don't clobber the user's unsaved edits in this instance.
+			if (this._isDirty) { return; }
+			void this._loadEncounterData().then(() => {
+				this._renderHeader();
+				this._renderForm();
+			}).catch(() => { /* keep current view */ });
+		}));
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -94,6 +124,7 @@ export class EncounterFormEditor extends EditorPane {
 		this.encounterId = input.encounterId;
 		this.patientName = input.patientName;
 		this._compositionId = '';
+		this._compositionPatientId = '';
 		this._vitalsObsId = '';
 		this._encounterStatus = '';
 
@@ -379,29 +410,24 @@ export class EncounterFormEditor extends EditorPane {
 			this.patientId
 				? this.apiService.fetch(`/api/encounters/${this.patientId}/${this.encounterId}`).then(async r => r.ok ? (await r.json())?.data || {} : {}).catch(() => ({}))
 				: Promise.resolve({}),
-			this.patientId
-				? this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${this.patientId}?encounterRef=${this.encounterId}`).then(async r => {
-					if (r.ok) {
-						const d = await r.json();
-						const dd = (d?.data ?? {}) as Record<string, unknown>;
-						// The endpoint wraps the composition(s) in a paginated
-						// envelope ({ content, page, size, … }). Pick the most
-						// recently updated composition so saved data — including the
-						// assessment_diagnoses / procedures_data code arrays — is
-						// loaded back. Older responses returned the bare object, so
-						// fall back to `dd` when there is no content array.
-						const content = Array.isArray(dd.content) ? dd.content as Array<Record<string, unknown>> : null;
-						const comp = content && content.length
-							? [...content].sort((a, b) => String(b._lastUpdated ?? '').localeCompare(String(a._lastUpdated ?? '')))[0]
-							: dd;
-						if (comp && comp.id) { this._compositionId = String(comp.id); }
-						return comp ?? {};
-					}
-					return {};
-				}).catch(() => ({}))
-				: Promise.resolve({}),
+			this.patientId ? this._fetchFormComposition(this.patientId) : Promise.resolve({}),
 		];
-		const [fhir, ehr, form] = await Promise.all(loads);
+		const [fhir, ehr, form0] = await Promise.all(loads);
+		let form = form0 as Record<string, unknown>;
+		// The Composition endpoint is PATIENT-scoped, and the id this editor was
+		// opened with is not always the id the Composition was saved under (the
+		// appointments drawer passes the appointment's patient id; the Encounters
+		// list passes the Encounter subject's id — same person, different ids on
+		// some backends). When the lookup under our id finds nothing, retry under
+		// the patient id the Encounter resource itself points at — otherwise data
+		// charted on one surface never shows on the others (QA issue).
+		if (!form.id) {
+			const encPid = String((fhir as Record<string, unknown>).patientId ?? (fhir as Record<string, unknown>).patientRef ?? '').replace(/^Patient\//i, '').trim();
+			if (encPid && encPid !== this.patientId) {
+				const alt = await this._fetchFormComposition(encPid);
+				if (alt.id) { form = alt; this._compositionPatientId = encPid; }
+			}
+		}
 		this._encounterStatus = String((ehr as Record<string, unknown>).status || (fhir as Record<string, unknown>).status || 'UNSIGNED');
 		this.encounterData = { ...fhir, ...ehr, ...form };
 		// The form's Chief Complaint field is keyed `chiefComplaint`, but an
@@ -457,6 +483,30 @@ export class EncounterFormEditor extends EditorPane {
 					}
 				}
 			} catch { /* no vitals for this date — leave the section blank */ }
+		}
+	}
+
+	/** Fetch the encounter-form Composition for this encounter under the given
+	 *  patient scope. The endpoint wraps the composition(s) in a paginated
+	 *  envelope ({ content, page, size, … }) — pick the most recently updated one
+	 *  so saved data (including the assessment_diagnoses / procedures_data code
+	 *  arrays) is loaded back. Older responses returned the bare object, so fall
+	 *  back to it when there is no content array. Remembers the composition id
+	 *  when one is found; returns {} when none exists. */
+	private async _fetchFormComposition(patientId: string): Promise<Record<string, unknown>> {
+		try {
+			const r = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${this.encounterId}`);
+			if (!r.ok) { return {}; }
+			const d = await r.json();
+			const dd = (d?.data ?? {}) as Record<string, unknown>;
+			const content = Array.isArray(dd.content) ? dd.content as Array<Record<string, unknown>> : null;
+			const comp = content && content.length
+				? [...content].sort((a, b) => String(b._lastUpdated ?? '').localeCompare(String(a._lastUpdated ?? '')))[0]
+				: dd;
+			if (comp && comp.id) { this._compositionId = String(comp.id); }
+			return comp ?? {};
+		} catch {
+			return {};
 		}
 	}
 
@@ -797,15 +847,20 @@ export class EncounterFormEditor extends EditorPane {
 					}
 				} catch { /* best-effort vitals sync */ }
 			}
-			// Save to encounter-form composition (primary - matches EHR UI)
+			// Save to encounter-form composition (primary - matches EHR UI).
+			// Write under the patient scope the Composition was FOUND under —
+			// which can differ from this editor's own patient id (see
+			// _loadEncounterData) — so the update lands on the one Composition
+			// every surface reads instead of forking a second copy.
+			const compPatientId = this._compositionPatientId || patientId;
 			let compRes: Response;
 			if (this._compositionId) {
-				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}/${this._compositionId}`, {
+				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${compPatientId}/${this._compositionId}`, {
 					method: 'PUT',
 					body: JSON.stringify(formData),
 				});
 			} else {
-				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encounterId}`, {
+				compRes = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${compPatientId}?encounterRef=${encounterId}`, {
 					method: 'POST',
 					body: JSON.stringify(formData),
 				});
@@ -844,6 +899,13 @@ export class EncounterFormEditor extends EditorPane {
 				// Notify the encounters list so a newly created/saved encounter appears
 				// without requiring a manual reload (issue 6).
 				this.commandService.executeCommand('ciyex.refreshEncounters').catch(() => { /* list may not be open */ });
+				// Broadcast the save so any OTHER open editor on this encounter (the
+				// appointments drawer vs an Encounters-page / Snapshot tab) reloads
+				// and shows the just-charted data immediately.
+				this.apiService.notifyClinicalRecordMutation({
+					entity: 'encounter-form', patientId, kind: 'update',
+					record: { encounterId, sourceId: this._editorInstanceId },
+				});
 				return true;
 			} else {
 				const err = await compRes.text().catch(() => 'Unknown error');
@@ -1073,14 +1135,17 @@ export class EncounterFormEditor extends EditorPane {
 
 		const formData = this._collectFormData();
 		try {
+			// Same patient-scope rule as _saveEncounter: write under the id the
+			// Composition was found under so all surfaces share one Composition.
+			const compPatientId = this._compositionPatientId || patientId;
 			let res: Response;
 			if (this._compositionId) {
-				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}/${this._compositionId}`, {
+				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${compPatientId}/${this._compositionId}`, {
 					method: 'PUT',
 					body: JSON.stringify(formData),
 				});
 			} else {
-				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encounterId}`, {
+				res = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${compPatientId}?encounterRef=${encounterId}`, {
 					method: 'POST',
 					body: JSON.stringify(formData),
 				});
@@ -1092,6 +1157,12 @@ export class EncounterFormEditor extends EditorPane {
 			if (res.ok) {
 				this._isDirty = false;
 				this._updateAutoSaveIndicator('Auto-saved');
+				// Same cross-editor broadcast as the explicit Save, so a sibling
+				// editor on this encounter reflects auto-saved data too.
+				this.apiService.notifyClinicalRecordMutation({
+					entity: 'encounter-form', patientId, kind: 'update',
+					record: { encounterId, sourceId: this._editorInstanceId },
+				});
 			} else {
 				this._updateAutoSaveIndicator('Auto-save failed');
 			}
@@ -1661,24 +1732,43 @@ export class EncounterFormEditor extends EditorPane {
 		});
 	}
 
-	/** Plan items: simple add/remove list */
+	/** Plan items: structured add/remove list mirroring the EHR-UI `PlanItems`
+	 *  component \u2014 each row is `{ type, description, notes }` with a type dropdown
+	 *  (Medication / Procedure / Lab Order / Referral / Follow-up / Other), a
+	 *  description input and an optional notes input. Legacy values (newline-joined
+	 *  string or string[] rows written by older builds / the snapshot drawer) are
+	 *  upgraded to the object shape so existing compositions still load and re-save. */
 	private _renderPlanItems(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
-		// Normalise to a real array: the snapshot's flat Edit-Encounter drawer (and
-		// some backend rows) store plan_items as a newline-joined STRING — calling
-		// .push() on that threw, so "+ Add Plan Item" silently did nothing (QA
-		// issue). Also write the array back onto encounterData and register it in
-		// _complexFields: previously a fresh [] stayed orphaned and typed items
-		// were dropped on save (the DOM walk skips these rows; only
-		// _complexFields entries are merged into the payload).
+		const typeOptions: Array<{ value: string; label: string }> = [
+			{ value: 'medication', label: 'Medication' },
+			{ value: 'procedure', label: 'Procedure' },
+			{ value: 'lab', label: 'Lab Order' },
+			{ value: 'referral', label: 'Referral' },
+			{ value: 'follow-up', label: 'Follow-up' },
+			{ value: 'other', label: 'Other' },
+		];
+		const toItem = (v: unknown): PlanItemRow | null => {
+			if (typeof v === 'string') {
+				const s = v.replace(/^\d+\.\s*/, '').trim();
+				return s ? { type: 'other', description: s, notes: '' } : null;
+			}
+			if (v && typeof v === 'object') {
+				const o = v as Record<string, unknown>;
+				const description = String(o.description ?? o.text ?? o.item ?? '').trim();
+				const type = String(o.type ?? 'other').trim().toLowerCase() || 'other';
+				const notes = String(o.notes ?? '').trim();
+				return (description || notes) ? { type, description, notes } : null;
+			}
+			return null;
+		};
+		// Normalise to a real array of plan-item objects, write it back onto
+		// encounterData and register it in _complexFields \u2014 only _complexFields
+		// entries are merged into the save payload (the DOM walk skips these rows).
 		const raw = this.encounterData[dataKey];
-		let items: string[];
-		if (Array.isArray(raw)) {
-			items = raw as string[];
-		} else if (typeof raw === 'string' && raw.trim()) {
-			items = raw.split('\n').map(s => s.replace(/^\d+\.\s*/, '').trim()).filter(Boolean);
-		} else {
-			items = [];
-		}
+		const rawList: unknown[] = Array.isArray(raw)
+			? raw
+			: (typeof raw === 'string' && raw.trim() ? raw.split('\n') : []);
+		const items: PlanItemRow[] = rawList.map(toItem).filter((i): i is PlanItemRow => !!i);
 		this.encounterData[dataKey] = items;
 		this._complexFields.set(dataKey, items);
 		const listEl = DOM.append(parent, DOM.$('div'));
@@ -1686,25 +1776,53 @@ export class EncounterFormEditor extends EditorPane {
 		const renderList = () => {
 			DOM.clearNode(listEl);
 			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
 				const row = DOM.append(listEl, DOM.$('div'));
-				row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;';
+				row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:6px 8px;margin-bottom:6px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background:var(--vscode-editorWidget-background,rgba(128,128,128,0.06));';
 
-				const bullet = DOM.append(row, DOM.$('span'));
-				bullet.textContent = `${i + 1}.`;
-				bullet.style.cssText = 'font-size:12px;font-weight:600;color:var(--vscode-descriptionForeground);width:20px;';
+				const typeSel = DOM.append(row, DOM.$('select')) as HTMLSelectElement;
+				typeSel.style.cssText = 'min-width:110px;padding:4px 6px;font-size:12px;background:var(--vscode-dropdown-background,var(--vscode-input-background));border:1px solid var(--vscode-dropdown-border,var(--vscode-input-border,#3c3c3c));border-radius:3px;color:var(--vscode-dropdown-foreground,var(--vscode-input-foreground));';
+				for (const opt of typeOptions) {
+					const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
+					o.value = opt.value;
+					o.textContent = opt.label;
+				}
+				// Preserve a type value outside the known list instead of silently
+				// snapping it to the first option.
+				if (!typeOptions.some(o => o.value === item.type)) {
+					const o = DOM.append(typeSel, DOM.$('option')) as HTMLOptionElement;
+					o.value = item.type;
+					o.textContent = item.type;
+				}
+				typeSel.value = item.type;
+				typeSel.disabled = readOnly;
+				typeSel.addEventListener('change', () => { item.type = typeSel.value; });
 
-				const inp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-				inp.type = 'text';
-				inp.value = items[i];
-				inp.dataset.key = `plan_item_${i}`;
-				inp.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
-				if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
-				inp.addEventListener('change', () => { items[i] = inp.value; });
+				const fieldCol = DOM.append(row, DOM.$('div'));
+				fieldCol.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;';
 
-				if (!readOnly) {
+				const descInp = DOM.append(fieldCol, DOM.$('input')) as HTMLInputElement;
+				descInp.type = 'text';
+				descInp.value = item.description;
+				descInp.placeholder = 'Description...';
+				descInp.style.cssText = 'width:100%;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);box-sizing:border-box;';
+				descInp.addEventListener('input', () => { item.description = descInp.value; });
+
+				const notesInp = DOM.append(fieldCol, DOM.$('input')) as HTMLInputElement;
+				notesInp.type = 'text';
+				notesInp.value = item.notes;
+				notesInp.placeholder = 'Notes (optional)...';
+				notesInp.style.cssText = 'width:100%;padding:3px 8px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);opacity:0.9;box-sizing:border-box;';
+				notesInp.addEventListener('input', () => { item.notes = notesInp.value; });
+
+				if (readOnly) {
+					descInp.readOnly = true; descInp.style.opacity = '0.7';
+					notesInp.readOnly = true; notesInp.style.opacity = '0.6';
+				} else {
 					const removeBtn = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 					removeBtn.textContent = '\u2715';
-					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;';
+					removeBtn.title = 'Remove plan item';
+					removeBtn.style.cssText = 'padding:2px 6px;background:none;border:none;color:#ef4444;cursor:pointer;font-size:12px;flex-shrink:0;';
 					removeBtn.addEventListener('click', () => { items.splice(i, 1); this._isDirty = true; renderList(); });
 				}
 			}
@@ -1716,12 +1834,13 @@ export class EncounterFormEditor extends EditorPane {
 			addBtn.textContent = '+ Add Plan Item';
 			addBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
 			addBtn.addEventListener('click', () => {
-				items.push('');
+				items.push({ type: 'other', description: '', notes: '' });
 				this._isDirty = true;
 				renderList();
-				// Focus the freshly-added row's input (last row, second child after the bullet).
+				// Focus the freshly-added row's description input.
 				const lastRow = listEl.lastElementChild;
-				const inp = lastRow ? Array.from(lastRow.children).find(c => c.tagName === 'INPUT') as HTMLInputElement | undefined : undefined;
+				const col = lastRow ? Array.from(lastRow.children).find(c => c.tagName === 'DIV') : undefined;
+				const inp = col ? Array.from(col.children).find(c => c.tagName === 'INPUT') as HTMLInputElement | undefined : undefined;
 				inp?.focus();
 			});
 		}
