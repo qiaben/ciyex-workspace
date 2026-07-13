@@ -1342,6 +1342,10 @@ export class ReportsEditor extends EditorPane {
 	private sortKey = '';
 	private sortDir: 'asc' | 'desc' = 'desc';
 	private providerSelect: HTMLSelectElement | null = null;
+	/** Full provider roster (display names) for the current practice, fetched once
+	 *  from the authoritative endpoint so the Provider filter lists every provider,
+	 *  not just the ones that happen to appear in the loaded report rows. */
+	private _providerRoster: string[] = [];
 
 	constructor(
 		group: IEditorGroup,
@@ -1416,7 +1420,7 @@ export class ReportsEditor extends EditorPane {
 		// Table
 		this.tableEl = DOM.append(this.contentEl, DOM.$('div'));
 
-		await this._loadData();
+		await Promise.all([this._loadData(), this._loadProviderRoster()]);
 		this._populateProviderFilter();
 		this._render();
 	}
@@ -1524,6 +1528,36 @@ export class ReportsEditor extends EditorPane {
 		// No "Generate" button: changing any filter dropdown re-renders immediately.
 	}
 
+	/** Fetch the authoritative provider roster for the current practice so the
+	 *  Provider filter can list every provider, even those with no rows in the
+	 *  current report. Mirrors the calendar's org-scoped roster lookup: lead with
+	 *  the org endpoint and fall back to the flat/FHIR lists, merging by name. */
+	private async _loadProviderRoster(): Promise<void> {
+		const urls = ['/api/providers/organization?page=0&size=200', '/api/providers?page=0&size=200', '/api/fhir-resource/providers?size=200'];
+		const names = new Set<string>();
+		for (const url of urls) {
+			try {
+				const res = await this.apiService.fetch(url);
+				if (!res.ok) { continue; }
+				const data = await res.json();
+				const list = data?.data?.content || data?.content || (Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+				for (const raw of list as Record<string, unknown>[]) {
+					const p = raw as Record<string, string> & { identification?: { firstName?: string; lastName?: string } };
+					// Build "First Last" (no prefix) to match the provider display used in
+					// report rows (e.g. "Geetha K"), so selecting a roster provider that has
+					// rows filters correctly rather than mismatching on a "Dr." prefix.
+					const first = p.identification?.firstName || p['identification.firstName'] || p.firstName || '';
+					const last = p.identification?.lastName || p['identification.lastName'] || p.lastName || '';
+					const full = `${first} ${last}`.trim();
+					const name = full || p.name || p.fullName || p.displayName || '';
+					if (name && name.trim().length > 0) { names.add(name.trim()); }
+				}
+				if (names.size > 0) { break; }
+			} catch { /* try next endpoint */ }
+		}
+		this._providerRoster = Array.from(names);
+	}
+
 	private _populateProviderFilter(): void {
 		const sel = this.providerSelect;
 		if (!sel) { return; }
@@ -1583,6 +1617,11 @@ export class ReportsEditor extends EditorPane {
 		for (const i of this.items) {
 			const v = accessor(i);
 			if (v) { set.add(v); }
+		}
+		// Provider filters list the full practice roster, not just providers that
+		// appear in the loaded rows, so a provider with no records is still selectable.
+		if (sourceKey === 'provider') {
+			for (const name of this._providerRoster) { set.add(name); }
 		}
 		const out: Array<{ value: string; label: string }> = Array.from(set).sort().map(v => ({ value: v, label: v }));
 		return out;

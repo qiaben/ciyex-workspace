@@ -10,7 +10,6 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexAuthService, CiyexAuthState } from '../../../ciyexAuth/browser/ciyexAuthService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -178,7 +177,6 @@ export class CalendarEditor extends EditorPane {
 		@IStorageService private readonly _storageService: IStorageService,
 		@IConfigurationService private readonly configService: IConfigurationService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 	) {
@@ -968,11 +966,13 @@ export class CalendarEditor extends EditorPane {
 						const statusText = statusLabel(apt.status);
 
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:pointer;z-index:1;font-size:11px;line-height:1.35;`;
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${typeColor}20;border-left:3px solid ${typeColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:default;z-index:1;font-size:11px;line-height:1.35;`;
 						block.title = [apt.patientName, visitType, statusText, provDisplay].filter(Boolean).join(' \u00B7 ');
 						block.addEventListener('mouseenter', () => { block.style.background = `${typeColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${typeColor}20`; });
-						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
+						// Existing appointments are read-only from the timeline: swallow the
+						// click so it neither opens a menu nor bubbles to the slot's create handler.
+						block.addEventListener('click', (e) => e.stopPropagation());
 
 						const nameEl = DOM.append(block, DOM.$('div'));
 						nameEl.textContent = apt.patientName || `${apt.patientFirstName || ''} ${apt.patientLastName || ''}`.trim();
@@ -1146,11 +1146,13 @@ export class CalendarEditor extends EditorPane {
 						const statusText = statusLabel(apt.status);
 
 						const block = DOM.append(cell, DOM.$('.apt-block'));
-						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:pointer;z-index:1;font-size:11px;line-height:1.35;`;
+						block.style.cssText = `position:absolute;left:calc(${leftPct}% + 2px);right:calc(${rightPct}% + 2px);top:${topOffset}px;height:${pixelH}px;background:${provColor}20;border-left:3px solid ${provColor};border-radius:3px;padding:3px 5px;overflow:hidden;cursor:default;z-index:1;font-size:11px;line-height:1.35;`;
 						block.title = [apt.patientName, visitType, statusText].filter(Boolean).join(' · ');
 						block.addEventListener('mouseenter', () => { block.style.background = `${provColor}35`; });
 						block.addEventListener('mouseleave', () => { block.style.background = `${provColor}20`; });
-						block.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
+						// Existing appointments are read-only from the timeline: swallow the
+						// click so it neither opens a menu nor bubbles to the slot's create handler.
+						block.addEventListener('click', (e) => e.stopPropagation());
 
 						const nameEl = DOM.append(block, DOM.$('div'));
 						nameEl.textContent = apt.patientName || '';
@@ -1258,7 +1260,7 @@ export class CalendarEditor extends EditorPane {
 				for (const apt of dayAppts.slice(0, 3)) {
 					const aptEl = DOM.append(cell, DOM.$('div'));
 					const provColor = providerColorFor(apt);
-					aptEl.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;margin-bottom:1px;background:${provColor}25;border-left:2px solid ${provColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;line-height:1.4;`;
+					aptEl.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;margin-bottom:1px;background:${provColor}25;border-left:2px solid ${provColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;line-height:1.4;`;
 					const parsedTime = this._parseAptDate(apt);
 					const provName = this._resolveProviderName(apt);
 					const parts: string[] = [];
@@ -1269,7 +1271,8 @@ export class CalendarEditor extends EditorPane {
 					if (apt.patientName) { parts.push(apt.patientName); }
 					aptEl.textContent = parts.join(' · ') || (apt.patientName || '');
 					aptEl.title = aptEl.textContent;
-					aptEl.addEventListener('click', (e) => { e.stopPropagation(); this._editAppointment(apt); });
+					// Read-only chip: swallow the click so it doesn't switch the cell to day view.
+					aptEl.addEventListener('click', (e) => e.stopPropagation());
 				}
 				if (dayAppts.length > 3) {
 					const more = DOM.append(cell, DOM.$('div'));
@@ -1918,127 +1921,6 @@ export class CalendarEditor extends EditorPane {
 
 		// Focus patient search
 		patInput.focus();
-	}
-
-	private async _editAppointment(apt: Appointment): Promise<void> {
-		// A "Completed" appointment is finalized (its encounter has been created)
-		// — the status-mutating actions (Change Status, Cancel, Mark No-Show) are
-		// withheld so the visit can no longer move out of the Completed state.
-		const isCompleted = (apt.status || '').toLowerCase() === 'completed';
-		const items = [
-			...(isCompleted ? [] : [{ label: 'Change Status', description: `Current: ${apt.status}` }]),
-			{ label: 'Send Reminder', description: 'Email/SMS reminder to patient' },
-			{ label: 'Reschedule', description: 'Move to a different time' },
-			{ label: 'Create Series', description: 'Recurring appointments (e.g., 6 weekly PT)' },
-			{ label: 'Add to Waitlist', description: 'Add patient to cancellation waitlist' },
-			{ label: 'Edit Details' },
-			...(isCompleted ? [] : [{ label: 'Cancel Appointment' }, { label: 'Mark No-Show' }]),
-		];
-		const pick = await this.quickInputService.pick(items, { placeHolder: `${apt.patientName} — ${getAppointmentType(apt)}` });
-		if (!pick) { return; }
-
-		if (pick.label === 'Change Status') {
-			const statuses = ['scheduled', 'confirmed', 'arrived', 'checked-in', 'in-room', 'with-provider', 'fulfilled'];
-			const statusPick = await this.quickInputService.pick(
-				statuses.map(s => ({ label: s, description: s === apt.status ? '(current)' : '' })),
-				{ placeHolder: 'Select new status' }
-			);
-			if (statusPick) {
-				try {
-					await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: statusPick.label }) });
-					this.notificationService.notify({ severity: Severity.Info, message: `Status updated to ${statusPick.label}` });
-					await this._refresh();
-				} catch { /* */ }
-			}
-		} else if (pick.label === 'Send Reminder') {
-			const channels = await this.quickInputService.pick(
-				[{ label: 'Email' }, { label: 'SMS' }, { label: 'Both' }],
-				{ placeHolder: 'Send reminder via' }
-			);
-			if (channels) {
-				try {
-					await this.apiService.fetch(`/api/appointments/${apt.id}/reminder`, { method: 'POST', body: JSON.stringify({ channel: channels.label.toLowerCase() }) });
-					this.notificationService.notify({ severity: Severity.Info, message: `Reminder sent via ${channels.label}` });
-				} catch {
-					this.notificationService.notify({ severity: Severity.Warning, message: 'Reminder API not available' });
-				}
-			}
-		} else if (pick.label === 'Reschedule') {
-			const newDate = await this.quickInputService.input({ prompt: 'New date (YYYY-MM-DD)', value: localDateStr(new Date()) });
-			if (!newDate) { return; }
-			const newTime = await this.quickInputService.input({ prompt: 'New time (HH:MM)', value: '09:00' });
-			if (!newTime) { return; }
-			try {
-				await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, startTime: `${newDate}T${newTime}:00` }) });
-				this.notificationService.notify({ severity: Severity.Info, message: 'Appointment rescheduled' });
-				this.currentDate = new Date(newDate + 'T00:00:00');
-				await this._refresh();
-			} catch {
-				this.notificationService.notify({ severity: Severity.Error, message: 'Failed to reschedule' });
-			}
-		} else if (pick.label === 'Cancel Appointment') {
-			try {
-				await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
-				this.notificationService.notify({ severity: Severity.Info, message: 'Appointment cancelled' });
-				await this._refresh();
-			} catch { /* */ }
-		} else if (pick.label === 'Mark No-Show') {
-			try {
-				await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'noshow' }) });
-				this.notificationService.notify({ severity: Severity.Info, message: 'Marked as no-show' });
-				await this._refresh();
-			} catch { /* */ }
-		} else if (pick.label === 'Create Series') {
-			const count = await this.quickInputService.input({ prompt: 'Number of appointments in series', value: '6' });
-			if (!count) { return; }
-			const frequency = await this.quickInputService.pick(
-				[{ label: 'Weekly' }, { label: 'Bi-weekly' }, { label: 'Monthly' }],
-				{ placeHolder: 'Recurrence frequency' }
-			);
-			if (!frequency) { return; }
-
-			const n = parseInt(count);
-			const intervalDays = frequency.label === 'Weekly' ? 7 : frequency.label === 'Bi-weekly' ? 14 : 30;
-
-			try {
-				const baseDate = this._parseAptDate(apt) || new Date();
-				for (let i = 1; i <= n; i++) {
-					const newDate = new Date(baseDate);
-					newDate.setDate(baseDate.getDate() + i * intervalDays);
-					await this.apiService.fetch('/api/appointments', {
-						method: 'POST',
-						body: JSON.stringify({
-							patientName: apt.patientName,
-							appointmentType: getAppointmentType(apt),
-							startTime: newDate.toISOString(),
-							status: 'scheduled',
-							duration: apt.duration || 30,
-							providerId: apt.providerId,
-							locationId: apt.locationId,
-						}),
-					});
-				}
-				this.notificationService.notify({ severity: Severity.Info, message: `Created ${n} ${frequency.label.toLowerCase()} appointments` });
-				await this._refresh();
-			} catch (err) {
-				this.notificationService.notify({ severity: Severity.Error, message: `Failed to create series: ${err}` });
-			}
-		} else if (pick.label === 'Add to Waitlist') {
-			try {
-				await this.apiService.fetch('/api/waitlist', {
-					method: 'POST',
-					body: JSON.stringify({
-						patientName: apt.patientName,
-						requestedType: getAppointmentType(apt),
-						requestedDate: apt.startTime,
-						priority: 1,
-					}),
-				});
-				this.notificationService.notify({ severity: Severity.Info, message: `${apt.patientName} added to waitlist` });
-			} catch {
-				this.notificationService.notify({ severity: Severity.Warning, message: 'Waitlist API not available' });
-			}
-		}
 	}
 	/** Date picker with calendar grid popup — replaces the prev/date/next arrow
 	 *  nav. Clicking the trigger button opens a month grid; selecting a day
