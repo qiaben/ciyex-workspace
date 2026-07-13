@@ -1863,6 +1863,7 @@ export class CalendarEditor extends EditorPane {
 							// from-appointment fails (video_sessions.provider_id null).
 							provider: provId ? `Practitioner/${provId}` : undefined,
 							location: locId ? `Location/${locId}` : undefined,
+							patient: patId ? `Patient/${patId}` : undefined,
 							duration,
 							participant: [
 								patId ? { actor: { reference: `Patient/${patId}` }, required: 'required', status: 'accepted' } : null,
