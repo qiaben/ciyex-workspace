@@ -14,8 +14,10 @@ import { IEditorGroup } from '../../../../services/editor/common/editorGroupsSer
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { generate837P, Edi837Claim, Edi837ServiceLine } from '../billing/edi837.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -6319,6 +6321,13 @@ ${rows.join('\n')}
 			billedMode: String(d.billedMode ?? 'cash'),
 			paymentStatus: String(d.paymentStatus ?? (totalPaid <= 0 ? 'None' : totalPaid >= totalFee ? 'Paid' : 'Partial')),
 			comments: String(d.comments ?? ''),
+			// Raw fee-sheet items kept for the RCM-lite X12 837 export.
+			rawItems: items,
+			// Filled by _applyInsurancePostings from EOB postings matched to this row.
+			insurancePaid: 0,
+			writeOff: 0,
+			respAssigned: 0,
+			patientPortion: 0,
 		};
 	}
 
@@ -6335,11 +6344,68 @@ ${rows.join('\n')}
 			} else {
 				this._billingRows = [];
 			}
+			await this._applyInsurancePostings();
 		} catch {
 			this._billingRows = [];
 		}
 		this._billingLoading = false;
 		this._renderEncounterBilling();
+	}
+
+	/**
+	 * RCM-lite adjudication reflection: match Insurance Posting (EOB)
+	 * transactions to encounter-billing rows by claim reference — the X12
+	 * export uses claim number `FS{feeSheetId}`, so postings entered against
+	 * that reference (or the raw fee-sheet/encounter id) flow back here. The
+	 * insurance payment and contractual write-off reduce the row balance and
+	 * the EOB's copay/deductible/coinsurance becomes the PATIENT PORTION that
+	 * the front desk collects (also pre-filled into Pay Amount).
+	 */
+	private async _applyInsurancePostings(): Promise<void> {
+		if (this._billingRows.length === 0) { return; }
+		let txns: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch('/api/payments/transactions');
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const w = data?.data ?? data;
+			txns = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+		} catch { return; }
+
+		const byRef = new Map<string, Record<string, unknown>>();
+		for (const row of this._billingRows) {
+			if (row.id) { byRef.set(`fs${row.id}`, row); byRef.set(String(row.id), row); }
+			if (row.encounterId) { byRef.set(String(row.encounterId), row); }
+		}
+
+		for (const txn of txns) {
+			const desc = String(txn['description'] ?? '');
+			if (!desc.startsWith('EOB posting')) { continue; }
+			const refMatch = desc.match(/claim=([^;|]+)/);
+			const ref = refMatch ? refMatch[1].trim().toLowerCase() : '';
+			if (!ref) { continue; }
+			const row = byRef.get(ref) || byRef.get(ref.replace(/^fs-?/, ''));
+			if (!row) { continue; }
+			row.insurancePaid = Number(row.insurancePaid || 0) + (parseEobField(desc, 'paid') ?? Number(txn['amount']) ?? 0);
+			row.writeOff = Number(row.writeOff || 0) + (parseEobField(desc, 'writeoff') ?? 0);
+			row.respAssigned = Number(row.respAssigned || 0) + (parseEobField(desc, 'resp') ?? 0);
+		}
+
+		for (const row of this._billingRows) {
+			const insurancePaid = Number(row.insurancePaid || 0);
+			const writeOff = Number(row.writeOff || 0);
+			if (insurancePaid <= 0 && writeOff <= 0) { continue; }
+			const totalFee = Number(row.totalFee || 0);
+			const collected = Number(row.totalPaid || 0) + insurancePaid;
+			const balance = Math.max(0, totalFee - collected - writeOff);
+			row.balance = balance;
+			// The patient owes at most their EOB-assigned responsibility, capped by
+			// what actually remains open on the encounter.
+			row.patientPortion = Math.min(Math.max(Number(row.respAssigned || 0), 0), balance);
+			row.paymentStatus = balance <= 0 ? 'Paid' : (collected > 0 ? 'Partial' : String(row.paymentStatus || 'None'));
+			if (balance <= 0) { row.billingStatus = 'Paid'; }
+			else if (String(row.billingStatus) === 'Unbilled') { row.billingStatus = 'Billed'; }
+		}
 	}
 
 	private _renderEncounterBilling(): void {
@@ -6359,6 +6425,8 @@ ${rows.join('\n')}
 		// Summary cards.
 		const totalCharges = this._billingRows.reduce((s, r) => s + Number(r.totalFee || 0), 0);
 		const totalPaid = this._billingRows.reduce((s, r) => s + Number(r.totalPaid || 0), 0);
+		const totalInsurance = this._billingRows.reduce((s, r) => s + Number(r.insurancePaid || 0), 0);
+		const totalPatientPortion = this._billingRows.reduce((s, r) => s + Number(r.patientPortion || 0), 0);
 		const cards = DOM.append(this.contentEl, DOM.$('div'));
 		cards.style.cssText = 'display:flex;gap:16px;margin-bottom:16px;';
 		const card = (label: string, value: string, color: string): void => {
@@ -6371,14 +6439,16 @@ ${rows.join('\n')}
 		};
 		card('Total Charges', `$${totalCharges.toFixed(2)}`, 'var(--vscode-foreground)');
 		card('Total Paid', `$${totalPaid.toFixed(2)}`, '#22c55e');
+		card('Insurance Paid', `$${totalInsurance.toFixed(2)}`, '#3b9edd');
+		card('Patient Portion', `$${totalPatientPortion.toFixed(2)}`, '#f59e0b');
 
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
 		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
 
-		const COLS = 'minmax(120px,1.2fr) minmax(110px,1fr) 110px 90px 110px 90px 90px 90px 120px 100px 110px minmax(120px,1fr) 150px';
+		const COLS = 'minmax(120px,1.2fr) minmax(110px,1fr) 110px 90px 110px 90px 90px 90px 100px 120px 100px 110px minmax(120px,1fr) 170px';
 		const header = DOM.append(scroll, DOM.$('div'));
 		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
-		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Codes', 'Pay Amount', 'Total Fee', 'Total Paid', 'Balance', 'Billing Status', 'Billed Mode', 'Pay Status', 'Comments', 'Action']) {
+		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Codes', 'Pay Amount', 'Total Fee', 'Total Paid', 'Balance', 'Patient Portion', 'Billing Status', 'Billed Mode', 'Pay Status', 'Comments', 'Action']) {
 			DOM.append(header, DOM.$('span')).textContent = h;
 		}
 
@@ -6405,12 +6475,27 @@ ${rows.join('\n')}
 			DOM.append(r, DOM.$('span')).textContent = String(row.encounterDate || '—');
 			const codesEl = DOM.append(r, DOM.$('span')); codesEl.textContent = String(row.codes || '—'); codesEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; codesEl.title = String(row.codes || '');
 
+			// After an EOB posts, the front desk collects the PATIENT PORTION, not
+			// the full balance — pre-fill Pay Amount with it when assigned.
+			const patientPortion = Number(row.patientPortion || 0);
 			const payInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
-			payInp.type = 'number'; payInp.step = '0.01'; payInp.value = Number(row.balance || 0).toFixed(2); payInp.style.cssText = inputStyle;
+			payInp.type = 'number'; payInp.step = '0.01';
+			payInp.value = (patientPortion > 0 ? patientPortion : Number(row.balance || 0)).toFixed(2);
+			payInp.style.cssText = inputStyle;
 
 			DOM.append(r, DOM.$('span')).textContent = `$${Number(row.totalFee || 0).toFixed(2)}`;
-			const paidEl = DOM.append(r, DOM.$('span')); paidEl.textContent = `$${Number(row.totalPaid || 0).toFixed(2)}`; paidEl.style.color = '#22c55e';
+			const insurancePaid = Number(row.insurancePaid || 0);
+			const collectedTotal = Number(row.totalPaid || 0) + insurancePaid;
+			const paidEl = DOM.append(r, DOM.$('span')); paidEl.textContent = `$${collectedTotal.toFixed(2)}`; paidEl.style.color = '#22c55e';
+			if (insurancePaid > 0 || Number(row.writeOff || 0) > 0) {
+				paidEl.title = `Patient/front desk $${Number(row.totalPaid || 0).toFixed(2)} + Insurance $${insurancePaid.toFixed(2)}`
+					+ (Number(row.writeOff || 0) > 0 ? ` (write-off $${Number(row.writeOff || 0).toFixed(2)})` : '');
+			}
 			const balEl = DOM.append(r, DOM.$('span')); balEl.textContent = `$${Number(row.balance || 0).toFixed(2)}`; balEl.style.color = Number(row.balance || 0) > 0 ? '#ef4444' : 'var(--vscode-descriptionForeground)';
+			const portionEl = DOM.append(r, DOM.$('span'));
+			portionEl.textContent = patientPortion > 0 ? `$${patientPortion.toFixed(2)}` : '—';
+			portionEl.style.color = patientPortion > 0 ? '#f59e0b' : 'var(--vscode-descriptionForeground)';
+			if (patientPortion > 0) { portionEl.title = 'Copay + deductible + coinsurance assigned by the insurance EOB — collect this from the patient.'; }
 
 			const billSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
 			billSel.style.cssText = inputStyle;
@@ -6451,6 +6536,7 @@ ${rows.join('\n')}
 			};
 			actBtn('\u270F\uFE0F', 'Edit fee sheet', 'var(--vscode-textLink-foreground)', () => this._editBillingRow(row));
 			actBtn('\u2705', 'Collect payment', '#22c55e', () => this._completeBillingRow(row, Number(payInp.value) || 0, modeSel.value));
+			actBtn('\u{1F4E4}', `Download X12 837 claim file (claim # FS${row.id}) for clearinghouse submission`, 'var(--vscode-textLink-foreground)', () => this._download837ForRow(row));
 			actBtn('\u{1F9FE}', 'Generate invoice, show PDF & email patient', 'var(--vscode-textLink-foreground)', () => this._invoiceBillingRow(row));
 			actBtn('\u{1F4D2}', 'Open ledger', 'var(--vscode-descriptionForeground)', () => this._openLedgerForRow(row));
 		}
@@ -6460,6 +6546,135 @@ ${rows.join('\n')}
 		// Re-open the fee sheet editor for this encounter to adjust charges.
 		this.commandService.executeCommand('ciyex.openFeeSheet', String(row.encounterId || ''), String(row.patientId || ''), String(row.patientName || ''), `Encounter ${row.encounterId}`)
 			.then(undefined, () => { /* command may be unavailable */ });
+	}
+
+	/**
+	 * RCM-lite claim submission: render this encounter's fee sheet as an X12
+	 * 837P file and save it so a non-RCM org can upload it to their own
+	 * clearinghouse. Uses the same real data sources as the Fee Sheet editor's
+	 * export (patient demographics, active coverage + payer directory,
+	 * practice identifiers, ciyex.billing.* settings) and the claim number
+	 * `FS{feeSheetId}` — post the payer's EOB against that reference in the
+	 * Insurance Posting tab and the balance flows back to this row's
+	 * Patient Portion.
+	 */
+	private async _download837ForRow(row: Record<string, unknown>): Promise<void> {
+		const getJson = async (path: string): Promise<Record<string, unknown> | null> => {
+			try {
+				const res = await this.apiService.fetch(path);
+				return res.ok ? await res.json() : null;
+			} catch { return null; }
+		};
+		const listOf = (j: Record<string, unknown> | null): Record<string, unknown>[] => {
+			const w = (j?.data ?? j) as Record<string, unknown> | Record<string, unknown>[] | null;
+			if (Array.isArray(w)) { return w; }
+			return ((w?.content as Record<string, unknown>[]) || []) as Record<string, unknown>[];
+		};
+		const cfg = (key: string): string => String(this.configurationService.getValue<string>(key) ?? '').trim();
+
+		// Patient demographics + coverage (fails soft — blanks flag at the clearinghouse).
+		const patientId = String(row.patientId || '');
+		let patient: Record<string, unknown> = {};
+		if (patientId) {
+			const pj = await getJson(`/api/patients/${encodeURIComponent(patientId)}`);
+			patient = ((pj?.data ?? pj) as Record<string, unknown>) || {};
+		}
+		let payerName = '';
+		let payerId = '';
+		let policyNumber = '';
+		let groupNumber = '';
+		if (patientId) {
+			const coverages = listOf(await getJson(`/api/fhir-resource/insurance-coverage/patient/${encodeURIComponent(patientId)}?page=0&size=10`));
+			const active = coverages.find(c => /active/i.test(String(c.status ?? ''))) || coverages[0];
+			if (active) {
+				payerName = String(active.payerName ?? active.insuranceCompany ?? active.companyName ?? '');
+				payerId = String(active.payerId ?? '');
+				policyNumber = String(active.policyNumber ?? active.subscriberId ?? active.memberId ?? '');
+				groupNumber = String(active.groupNumber ?? '');
+				if (payerName && !payerId) {
+					const dir = listOf(await getJson(`/api/insurance-companies?page=0&size=50&search=${encodeURIComponent(payerName)}`));
+					const match = dir.find(d => String(d.name ?? '').trim().toLowerCase() === payerName.trim().toLowerCase()) || dir[0];
+					if (match?.payerId) { payerId = String(match.payerId); }
+				}
+			}
+		}
+
+		// Practice / billing provider identifiers (settings override the record).
+		const practiceList = listOf(await getJson('/api/practices?page=0&size=1'));
+		const practice = practiceList[0] || {};
+		const pAddr = (practice.address as { line1?: string; city?: string; state?: string; zip?: string }) || {};
+		const pick = (key: string, ...fallbacks: Array<unknown>): string => {
+			const v = cfg(key);
+			if (v) { return v; }
+			for (const f of fallbacks) { if (f) { return String(f); } }
+			return '';
+		};
+
+		const items = (row.rawItems as Array<Record<string, unknown>>) || [];
+		const diagnoses = items.filter(it => String(it.type ?? '') === 'ICD10').map(it => String(it.code ?? '')).filter(Boolean);
+		const procedures = items.filter(it => String(it.type ?? '') !== 'ICD10' && it.code);
+		const allPointers = diagnoses.map((_, i) => i + 1);
+		const lines: Edi837ServiceLine[] = procedures.map(it => ({
+			cptCode: String(it.code),
+			modifiers: it.modifiers ? String(it.modifiers).split(/[,\s]+/).filter(Boolean) : [],
+			chargeAmount: Number(it.price ?? 0) * Number(it.qty ?? 1),
+			units: Number(it.qty ?? 1),
+			diagnosisPointers: allPointers.length ? allPointers : [1],
+		}));
+		if (lines.length === 0) {
+			await this.dialogService.info('This fee sheet has no billable procedure lines to export.');
+			return;
+		}
+
+		const nameParts = String(row.patientName || '').split(/\s+/);
+		const claimNumber = `FS${row.id}`;
+		const claim: Edi837Claim = {
+			submitterId: cfg('ciyex.billing.submitterId'),
+			submitterName: pick('ciyex.billing.submitterName', practice.name),
+			submitterContactName: String(practice.name ?? ''),
+			submitterPhone: String(practice.phone ?? ''),
+			submitterEmail: String(practice.email ?? ''),
+			receiverId: cfg('ciyex.billing.receiverId'),
+			receiverName: cfg('ciyex.billing.receiverName') || 'CLEARINGHOUSE',
+			usageIndicator: this.configurationService.getValue<boolean>('ciyex.billing.productionMode') ? 'P' : 'T',
+			billingName: pick('ciyex.billing.billingName', practice.name),
+			billingNpi: pick('ciyex.billing.billingNpi', practice.npi),
+			billingTaxId: pick('ciyex.billing.billingTaxId', practice.taxId, practice.ein),
+			billingAddress1: pick('ciyex.billing.billingAddress1', pAddr.line1, practice.address1),
+			billingCity: pick('ciyex.billing.billingCity', pAddr.city, practice.city),
+			billingState: pick('ciyex.billing.billingState', pAddr.state, practice.state),
+			billingZip: pick('ciyex.billing.billingZip', pAddr.zip, practice.zip),
+			patientFirstName: String(patient.firstName ?? nameParts[0] ?? ''),
+			patientLastName: String(patient.lastName ?? nameParts.slice(1).join(' ') ?? 'Patient'),
+			patientDob: String(patient.dateOfBirth ?? patient.dob ?? ''),
+			patientGender: String(patient.gender ?? ''),
+			patientAddress1: String(patient.address1 ?? (patient.address as Record<string, unknown>)?.line1 ?? ''),
+			patientCity: String(patient.city ?? (patient.address as Record<string, unknown>)?.city ?? ''),
+			patientState: String(patient.state ?? (patient.address as Record<string, unknown>)?.state ?? ''),
+			patientZip: String(patient.zip ?? (patient.address as Record<string, unknown>)?.zip ?? ''),
+			subscriberId: policyNumber || String(patient.mrn ?? patientId),
+			groupNumber,
+			payerName: payerName || 'UNKNOWN PAYER',
+			payerId,
+			claimNumber,
+			totalCharge: lines.reduce((s, l) => s + l.chargeAmount, 0),
+			placeOfService: '11',
+			dateOfService: String(row.encounterDate || new Date().toISOString().slice(0, 10)),
+			diagnoses,
+			lines,
+		};
+
+		try {
+			const edi = generate837P(claim, new Date());
+			const fileName = `claim-${claimNumber}-837P.txt`;
+			const defaultDir = await this.fileDialogService.defaultFilePath();
+			const target = URI.joinPath(defaultDir, fileName);
+			await this.fileService.writeFile(target, VSBuffer.fromString(edi));
+			await this.dialogService.info(`837P claim file saved (claim # ${claimNumber}).`,
+				`${target.fsPath}\n\nUpload it to your clearinghouse. When the payer's EOB arrives, post it in the Insurance Posting tab with Claim/Bill # "${claimNumber}" — the balance and patient portion on this row update automatically.`);
+		} catch (e) {
+			await this.dialogService.error('Could not generate the 837P file', String(e));
+		}
 	}
 
 	private async _completeBillingRow(row: Record<string, unknown>, payAmount: number, method: string): Promise<void> {
@@ -6879,7 +7094,7 @@ ${rows.join('\n')}
 		});
 	}
 
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService, @IConfigurationService private readonly configurationService: IConfigurationService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {
