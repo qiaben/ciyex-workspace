@@ -1857,6 +1857,12 @@ export class CalendarEditor extends EditorPane {
 							providerId: provId || undefined,
 							providerName: provName || undefined,
 							locationId: locId || undefined,
+							// Also send the form-config keys as full references: the
+							// backend's FHIR mapper only writes practitioner/location
+							// participants from these, and without them telehealth
+							// from-appointment fails (video_sessions.provider_id null).
+							provider: provId ? `Practitioner/${provId}` : undefined,
+							location: locId ? `Location/${locId}` : undefined,
 							duration,
 							participant: [
 								patId ? { actor: { reference: `Patient/${patId}` }, required: 'required', status: 'accepted' } : null,
