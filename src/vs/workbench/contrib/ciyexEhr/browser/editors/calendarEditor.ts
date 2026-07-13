@@ -585,6 +585,26 @@ export class CalendarEditor extends EditorPane {
 		return filtered;
 	}
 
+	/** After a patient/provider search narrows the grid to a few appointments,
+	 *  bring the first remaining appointment into view. A patient's only visit may
+	 *  sit late in the day (e.g. 10 PM), far below the grid's default top-of-day
+	 *  scroll position, so the filtered result looked empty — the appointment was
+	 *  rendered but off-screen ("clicked a patient but no appointment shows"). Runs
+	 *  on the next frame so the just-re-rendered grid has laid out. */
+	private _scrollToFirstAppointment(): void {
+		const win = DOM.getActiveWindow();
+		win.requestAnimationFrame(() => {
+			// eslint-disable-next-line no-restricted-syntax
+			const block = this.gridContainer.querySelector('.apt-block') as HTMLElement | null;
+			if (!block) { return; }
+			const blockRect = block.getBoundingClientRect();
+			const contRect = this.gridContainer.getBoundingClientRect();
+			// Position the appointment a little below the grid's top edge for context.
+			const target = this.gridContainer.scrollTop + (blockRect.top - contRect.top) - 60;
+			this.gridContainer.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+		});
+	}
+
 	private _getDateRange(): { startDate: string; endDate: string } {
 		const d = new Date(this.currentDate);
 		if (this.viewMode === 'day') {
@@ -2145,6 +2165,7 @@ export class CalendarEditor extends EditorPane {
 						panel.style.display = 'none';
 						this._updateHeaderCount();
 						this._renderGrid();
+						this._scrollToFirstAppointment();
 					});
 				}
 			}
