@@ -111,6 +111,19 @@ export interface IExtension {
 	readonly missingFromGallery?: boolean;
 }
 
+/**
+ * Ciyex marketplace apps (payment gateways, telehealth, eRx, RCM, etc.) ship
+ * bundled as BUILT-IN extensions, so VS Code's stock "Installed" list - which
+ * filters out built-ins - never shows them (they only appear under `@builtin`).
+ * Treat any
+ * `ciyex`-published extension as a first-class installed app so it surfaces in the
+ * Installed section like the user expects, while genuine core built-ins (publisher
+ * `vscode`/`ms-*`) stay under Built-in.
+ */
+export function isCiyexMarketplaceExtension(extension: IExtension): boolean {
+	return extension.publisher === 'ciyex';
+}
+
 export const IExtensionsWorkbenchService = createDecorator<IExtensionsWorkbenchService>('extensionsWorkbenchService');
 
 export interface InstallExtensionOptions extends InstallOptions {
