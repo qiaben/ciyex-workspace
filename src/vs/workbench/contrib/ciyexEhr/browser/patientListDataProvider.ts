@@ -86,7 +86,7 @@ export class PatientListDataProvider extends Disposable implements ITreeViewData
 
 		return {
 			handle: `patient:${patient.fhirId || patient.id}`,
-			label: { label: `${patient.lastName}, ${patient.firstName}` },
+			label: { label: `${patient.firstName} ${patient.lastName}` },
 			description: `${genderLabel} ${age}y | ${patient.status}`,
 			tooltip: `${patient.firstName} ${patient.lastName}\nDOB: ${patient.dateOfBirth}\nGender: ${patient.gender}\nPhone: ${patient.phoneNumber || 'N/A'}\nEmail: ${patient.email || 'N/A'}`,
 			collapsibleState: TreeItemCollapsibleState.None,

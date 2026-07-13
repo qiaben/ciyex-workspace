@@ -386,7 +386,7 @@ export class PatientListPane extends ViewPane {
 			const nameEl = document.createElement('span');
 			nameEl.style.flex = '1';
 			nameEl.style.color = 'var(--vscode-foreground)';
-			nameEl.textContent = `${patient.lastName}, ${patient.firstName}`;
+			nameEl.textContent = `${patient.firstName} ${patient.lastName}`.trim();
 			row.appendChild(nameEl);
 
 			// DOB + Age + Gender
