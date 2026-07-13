@@ -52,6 +52,7 @@ const GATEWAY_ID = 'stripe';
 const CHECKOUT_COMMAND = 'ciyex-payment-stripe.checkout';
 const CONFIGURE_COMMAND = 'ciyex-payment-stripe.configure';
 const REGISTER_COMMAND = 'ciyex.payment.registerGateway';
+const STATUS_VIEW_ID = 'ciyexPaymentStripe.status';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	context.subscriptions.push(
@@ -64,6 +65,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}),
 		vscode.commands.registerCommand(CONFIGURE_COMMAND, () => {
 			vscode.commands.executeCommand('workbench.action.openSettings', 'ciyex.payment.stripe');
+		}),
+	);
+
+	// Contribute a left activity-bar view so the gateway has a visible home while
+	// the extension is enabled (VS Code hides the whole container automatically
+	// when the extension is disabled). The view lists the gateway's current
+	// status and offers a one-click Configure action.
+	const statusProvider = new StripeStatusProvider();
+	context.subscriptions.push(
+		vscode.window.registerTreeDataProvider(STATUS_VIEW_ID, statusProvider),
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('ciyex.payment.stripe')) { statusProvider.refresh(); }
 		}),
 	);
 
@@ -98,6 +111,44 @@ async function registerWithWorkbench(): Promise<void> {
 }
 
 export function deactivate(): void { /* no-op */ }
+
+/** A single read-only status row in the Stripe Gateway sidebar view. */
+class StatusItem extends vscode.TreeItem {
+	constructor(label: string, description: string, icon: string) {
+		super(label, vscode.TreeItemCollapsibleState.None);
+		this.description = description;
+		this.iconPath = new vscode.ThemeIcon(icon);
+	}
+}
+
+/**
+ * Backs the "Stripe Gateway" activity-bar view. Shows the live gateway
+ * configuration (mode, publishable-key presence) plus a Configure shortcut, and
+ * refreshes whenever the `ciyex.payment.stripe` settings change.
+ */
+class StripeStatusProvider implements vscode.TreeDataProvider<StatusItem> {
+	private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
+	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+	refresh(): void { this._onDidChangeTreeData.fire(); }
+
+	getTreeItem(item: StatusItem): vscode.TreeItem { return item; }
+
+	getChildren(): StatusItem[] {
+		const cfg = vscode.workspace.getConfiguration('ciyex.payment.stripe');
+		const mode = cfg.get<'TEST' | 'LIVE'>('mode') ?? 'TEST';
+		const hasKey = (cfg.get<string>('publishableKey') || '').trim().length > 0;
+		const items = [
+			new StatusItem('Gateway', 'Stripe', 'plug'),
+			new StatusItem('Mode', mode, mode === 'LIVE' ? 'broadcast' : 'beaker'),
+			new StatusItem('Publishable key', hasKey ? 'Configured' : 'Not set', hasKey ? 'pass-filled' : 'warning'),
+		];
+		const configure = new StatusItem('Configure gateway...', '', 'gear');
+		configure.command = { command: CONFIGURE_COMMAND, title: 'Configure' };
+		items.push(configure);
+		return items;
+	}
+}
 
 /**
  * Open a webview panel and run the Stripe checkout flow inside it. The

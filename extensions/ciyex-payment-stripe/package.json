@@ -52,6 +52,30 @@
 					"command": "ciyex-payment-stripe.configure",
 					"when": "true"
 				}
+			],
+			"view/title": [
+				{
+					"command": "ciyex-payment-stripe.configure",
+					"when": "view == ciyexPaymentStripe.status",
+					"group": "navigation"
+				}
+			]
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "ciyexPaymentStripe",
+					"title": "Payments (Stripe)",
+					"icon": "media/payments.svg"
+				}
+			]
+		},
+		"views": {
+			"ciyexPaymentStripe": [
+				{
+					"id": "ciyexPaymentStripe.status",
+					"name": "Stripe Gateway"
+				}
 			]
 		},
 		"configuration": {
