@@ -2232,7 +2232,10 @@ export class PatientChartEditor extends EditorPane {
 		// the workspace test report (12.05.26) calls out parity with the EHR
 		// Web UI Clinical sidebar. Any extras shipped via user chart-layout
 		// or backend layout overrides are dropped here so they can't sneak in.
-		const CLINICAL_TAB_WHITELIST = ['clinical-alerts', 'medications', 'labs', 'lab-results', 'immunizations', 'procedures', 'history'];
+		// Clinical Alerts is intentionally omitted — the test team doesn't want it on
+		// the patient chart (13.07.26 report); the tab config stays (visible:false) so
+		// the FHIR Flag mapping/columns remain available elsewhere.
+		const CLINICAL_TAB_WHITELIST = ['medications', 'labs', 'lab-results', 'immunizations', 'procedures', 'history'];
 
 		this.categories = Array.from(byKey.values())
 			.sort((a, b) => a.position - b.position)

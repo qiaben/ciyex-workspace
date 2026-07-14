@@ -624,7 +624,7 @@ export class AppointmentsSidebarPane extends ViewPane {
 			if (isTele) {
 				items.push({ symbol: '\u{1F4F9}', label: 'Join Video Visit', onClick: () => this._joinTelehealth(apt) });
 			}
-			items.push({ symbol: '\u{1F5C2}', label: 'Open Chart', onClick: () => this._openChart(apt) });
+			items.push({ symbol: '\u{1F5C2}', label: 'Open Encounter', onClick: () => this._openChart(apt) });
 			items.push({ symbol: '\u{1F4DD}', label: 'Edit Appointment', onClick: () => this._openEditDialog(apt) });
 			if (!isTele) {
 				items.push({ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this._recordVitals(apt) });

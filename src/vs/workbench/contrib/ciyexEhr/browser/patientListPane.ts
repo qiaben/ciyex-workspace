@@ -336,6 +336,18 @@ export class PatientListPane extends ViewPane {
 		} catch { /* silent — local filter still works */ }
 	}
 
+	/** Leave search mode once a patient is opened — otherwise the query lingers and
+	 *  the roster stays filtered on return (QA). Called from every open-chart path
+	 *  (row click + the "View Chart" overflow action). No-op when nothing is set. */
+	private _clearSearch(): void {
+		if (!this._searchQuery && !(this._searchInput && this._searchInput.value)) { return; }
+		if (this._searchTimer !== undefined) { clearTimeout(this._searchTimer); }
+		this._searchQuery = '';
+		this._page = 0;
+		if (this._searchInput) { this._searchInput.value = ''; }
+		this._renderList();
+	}
+
 	private _renderList(): void {
 		if (!this._listEl) {
 			return;
@@ -410,7 +422,7 @@ export class PatientListPane extends ViewPane {
 			actions.style.cssText = 'display:flex;gap:2px;align-items:center;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
 
 			createOverflowMenuButton(actions, (): IOverflowMenuItem[] => [
-				{ symbol: '\u{1F5C2}', label: 'View Chart', onClick: () => this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName) },
+				{ symbol: '\u{1F5C2}', label: 'View Chart', onClick: () => { this._clearSearch(); this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName); } },
 				{ symbol: '\u{1F4DD}', label: 'Edit Patient', onClick: () => this._openEditDialog(patient) },
 				{ separator: true },
 				{
@@ -430,15 +442,7 @@ export class PatientListPane extends ViewPane {
 			});
 			row.addEventListener('click', (e) => {
 				if (actions.contains(e.target as Node)) { return; }
-				// Leave search mode once a patient is opened — otherwise the
-				// query lingers and the roster stays filtered on return (QA).
-				if (this._searchQuery) {
-					if (this._searchTimer !== undefined) { clearTimeout(this._searchTimer); }
-					this._searchQuery = '';
-					this._page = 0;
-					if (this._searchInput) { this._searchInput.value = ''; }
-					this._renderList();
-				}
+				this._clearSearch();
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
 

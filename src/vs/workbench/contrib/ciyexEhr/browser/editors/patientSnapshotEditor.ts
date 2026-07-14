@@ -216,7 +216,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			columns: [
 				{ key: 'recordedAt', label: 'Recorded', width: '140px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
 				{ key: 'bpSystolic', label: 'BP', width: '90px', format: (_v, r) => (r.bpSystolic && r.bpDiastolic) ? `${r.bpSystolic}/${r.bpDiastolic}` : '—' },
-				{ key: 'pulse', label: 'Pulse', width: '60px' },
+				{ key: 'pulse', label: 'Heart Rate', width: '70px' },
 				{ key: 'temperatureC', label: 'Temp', width: '60px' },
 				{ key: 'oxygenSaturation', label: 'O2 %', width: '60px' },
 			],
@@ -4163,16 +4163,22 @@ export class PatientSnapshotEditor extends EditorPane {
 	// FHIR vitals resource exactly (verified against the chart editor's
 	// DEFAULT_FIELD_CONFIGS['vitals']). 'bp' is split into systolic/diastolic
 	// on save.
+	// Field order + labels mirror the encounter form's Vitals section
+	// (EncounterFormEditor: BP Systolic, BP Diastolic, Heart Rate, Temperature,
+	// SpO2, Respiratory Rate, Weight, Height) so the Snapshot's vitals flow matches
+	// the encounter page. 'pulse' is labelled "Heart Rate" (the encounter/web-app
+	// name) — it's the same value the encounter's vitals_heart_rate maps to via
+	// _VITALS_FIELD_MAP, so the two surfaces no longer read as a mismatch.
 	private static readonly _VITAL_INPUTS: Array<{ key: string; label: string; unit: string; step?: string }> = [
-		{ key: 'heightCm', label: 'Height', unit: 'cm', step: '0.1' },
-		{ key: 'weightKg', label: 'Weight', unit: 'kg', step: '0.1' },
 		{ key: 'bpSystolic', label: 'BP Systolic', unit: 'mmHg' },
 		{ key: 'bpDiastolic', label: 'BP Diastolic', unit: 'mmHg' },
-		{ key: 'pulse', label: 'Pulse', unit: '/min' },
-		{ key: 'respiration', label: 'Respiration', unit: '/min' },
+		{ key: 'pulse', label: 'Heart Rate', unit: '/min' },
 		// allow-any-unicode-next-line
 		{ key: 'temperatureC', label: 'Temperature', unit: '°F', step: '0.1' },
 		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
+		{ key: 'respiration', label: 'Respiratory Rate', unit: '/min' },
+		{ key: 'weightKg', label: 'Weight', unit: 'kg', step: '0.1' },
+		{ key: 'heightCm', label: 'Height', unit: 'cm', step: '0.1' },
 	];
 
 	/** BMI = weight(kg) / height(m)^2. Returns a 1-decimal string, or '' when
@@ -4237,17 +4243,21 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		const bpVal = (latest.bpSystolic && latest.bpDiastolic) ? `${latest.bpSystolic}/${latest.bpDiastolic}` : '';
 		const bmiVal = PatientSnapshotEditor._computeBmi(latest.heightCm, latest.weightKg);
+		// Order + labels mirror the encounter form's Vitals section so the Snapshot's
+		// Today's Vitals card reads like the encounter page (BP, Heart Rate,
+		// Temperature, SpO2, Respiratory Rate, Weight, Height, BMI). 'Pulse' shows as
+		// "Heart Rate" — same value, unified naming (see _VITAL_INPUTS).
 		const vitalRows: Array<[string, unknown, string?]> = [
-			['Height', latest.heightCm, 'cm'],
-			['Weight', latest.weightKg, 'kg'],
-			// allow-any-unicode-next-line
-			['BMI', bmiVal, bmiVal ? 'kg/m²' : ''],
 			['BP', bpVal, 'mmHg'],
-			['Pulse', latest.pulse, '/min'],
-			['Respiration', latest.respiration, '/min'],
+			['Heart Rate', latest.pulse, '/min'],
 			// allow-any-unicode-next-line
 			['Temperature', latest.temperatureC, '°F'],
 			['SpO2', latest.oxygenSaturation, '%'],
+			['Respiratory Rate', latest.respiration, '/min'],
+			['Weight', latest.weightKg, 'kg'],
+			['Height', latest.heightCm, 'cm'],
+			// allow-any-unicode-next-line
+			['BMI', bmiVal, bmiVal ? 'kg/m²' : ''],
 		];
 
 		const grid2 = DOM.append(body, DOM.$('div'));
