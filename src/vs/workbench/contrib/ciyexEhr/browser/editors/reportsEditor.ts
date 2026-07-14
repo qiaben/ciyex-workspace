@@ -158,10 +158,14 @@ interface ReportDef {
 	 */
 	enrichEncounterStats?: boolean;
 	/**
-	 * When set, derive real "overdue for visit" care gaps from each patient's last
-	 * visit (needs {@link enrichEncounterStats}). Rows without an open gap are
-	 * dropped so the table lists only actionable gaps — the backend has no
-	 * care-gap engine, so this is the honest, computable substitute.
+	 * When set, derive real, actionable care gaps per patient from data that ships:
+	 * an overdue wellness visit (>180d since last visit, or never seen), a chronic-
+	 * condition follow-up lapse (>90d with a chronic problem/complaint on record) and
+	 * a missing immunization (needs {@link enrichEncounterStats}; the immunization gap
+	 * also needs {@link enrichImmunizations}). A patient can surface more than one gap
+	 * — each is its own row. Patients with no open gap are dropped so the table lists
+	 * only actionable items — the backend has no care-gap engine, so this is the
+	 * honest, computable substitute ({@link _deriveCareGaps}).
 	 */
 	deriveCareGaps?: boolean;
 	/**
@@ -178,6 +182,13 @@ interface ReportDef {
 	 * to a blank cell when a tenant records no problems.
 	 */
 	enrichConditions?: boolean;
+	/**
+	 * When set, join the practice immunization feed (`/api/immunizations`) by patient
+	 * id and stamp each row's `hasImmunization` flag ({@link _enrichImmunizations}).
+	 * Powers the Care Gaps "Immunization" gap type (a patient with no immunization on
+	 * record is an open gap). Degrades to "no gap" when the feed is empty/unavailable.
+	 */
+	enrichImmunizations?: boolean;
 	/**
 	 * When set, replace the loaded claim rows with one row per claim LINE, fetched
 	 * from the deployed `/api/all-claims/{claimId}/line-details` endpoint. CPT/
@@ -1029,16 +1040,18 @@ function getReportDef(key: string): ReportDef {
 
 		case 'care-gaps':
 		case 'care-gaps-analysis':
-			// No backend care-gap engine exists, so gaps are derived from real visit
-			// history: a patient over a year past their last visit (or never seen and
-			// registered over a year ago) is an open "Annual Visit" gap. Provider +
-			// visit stats are joined from the encounter list.
+			// No backend care-gap engine exists, so gaps are derived from real data:
+			// an overdue preventive visit (>180d or never seen), a chronic-condition
+			// follow-up lapse (>90d with a chronic problem on record) and a missing
+			// immunization. Provider + visit stats are joined from the encounter list
+			// and immunizations from the immunization feed. See _deriveCareGaps.
 			return {
 				apiPath: '/api/patients?page=0&size=500',
 				enrichProvider: true,
 				enrichEncounterStats: true,
+				enrichImmunizations: true,
 				deriveCareGaps: true,
-				emptyMessage: 'No open care gaps — every patient has been seen within the last 12 months.',
+				emptyMessage: 'No open care gaps — every patient is current on preventive visits, chronic-care follow-ups and immunizations.',
 				columns: [
 					{ key: 'patientName', label: 'Patient' },
 					{ key: 'gapType', label: 'Gap Type' },
@@ -1744,6 +1757,7 @@ export class ReportsEditor extends EditorPane {
 			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
 			if (this.reportDef.enrichEncounterStats) { await this._enrichEncounterStats(); }
+			if (this.reportDef.enrichImmunizations) { await this._enrichImmunizations(); }
 			if (this.reportDef.enrichConditions) { await this._enrichConditions(); }
 			if (this.reportDef.computeArAging) { this._computeArAging(); }
 			if (this.reportDef.deriveCareGaps) { this._deriveCareGaps(); }
@@ -1977,8 +1991,49 @@ export class ReportsEditor extends EditorPane {
 				// Stash a chief-complaint/reason fallback for the Conditions column
 				// (consumed by _enrichConditions when the problem list is empty).
 				item.conditionsFallback = s ? [...s.complaints].slice(0, 3).join(', ') : '';
+				// Full lowercase complaint text (not capped) so _deriveCareGaps can scan
+				// for chronic-condition keywords across the whole visit history.
+				item.complaintsAll = s ? [...s.complaints].join(' | ').toLowerCase() : '';
 			}
 		} catch { /* encounters endpoint may be unavailable — leave stats blank */ }
+	}
+
+	/**
+	 * Join the practice immunization feed once (`/api/immunizations`) and stamp each
+	 * patient row with `hasImmunization` = whether the patient has any immunization on
+	 * record. The Care Gaps report uses this to flag patients with no recorded
+	 * immunizations. Degrades to "no immunizations known" (all rows left unflagged)
+	 * when the feed is empty or unavailable, so the gap simply doesn't fire.
+	 */
+	private async _enrichImmunizations(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch('/api/immunizations?page=0&size=2000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const rows = Array.isArray(raw) ? raw : [];
+			const refId = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v.includes('/') ? v.substring(v.lastIndexOf('/') + 1) : v; }
+				const o = v as Record<string, unknown>;
+				const r = o.reference;
+				return typeof r === 'string' ? (r.includes('/') ? r.substring(r.lastIndexOf('/') + 1) : r) : '';
+			};
+			const vaccinated = new Set<string>();
+			for (const row of rows) {
+				const r = row as Record<string, unknown>;
+				const pid = String(r.patientId || refId(r.patientRef) || refId(r.patient) || refId(r.subject) || '');
+				if (pid) { vaccinated.add(pid); }
+			}
+			// No immunization data at all → we can't distinguish "no record" from "feed
+			// empty", so leave every row unflagged (the immunization gap won't fire).
+			if (vaccinated.size === 0) { return; }
+			for (const item of this.items) {
+				const pid = item.id || item.patientId || item.fhirId;
+				item.hasImmunization = pid && vaccinated.has(pid) ? '1' : '';
+				item.immunizationsKnown = '1';
+			}
+		} catch { /* immunization endpoint may be unavailable — leave rows unflagged */ }
 	}
 
 	/**
@@ -2108,32 +2163,62 @@ export class ReportsEditor extends EditorPane {
 	 * The backend has no care-gap engine, so this is the honest computable stand-in.
 	 */
 	private _deriveCareGaps(): void {
-		const GAP_DAYS = 365;
+		// Thresholds (days) after which each gap becomes "open". A wellness visit is
+		// expected yearly, but a 365-day window means an active practice — where most
+		// patients were seen recently — shows an empty report, which reads as broken.
+		// A 180-day window surfaces patients genuinely due for a preventive visit while
+		// still being clinically meaningful; chronic patients are held to a tighter
+		// 90-day follow-up cadence.
+		const WELLNESS_DAYS = 180;
+		const CHRONIC_DAYS = 90;
 		const now = Date.now();
 		const DAY = 24 * 60 * 60 * 1000;
+		// Keywords that mark a chronic condition needing regular follow-up. Matched
+		// against the patient's problem list / chief-complaint history (complaintsAll).
+		const CHRONIC = /\b(diabet|a1c|hypertens|htn|high blood pressure|copd|asthma|chf|heart failure|cardiac|coronary|ckd|kidney disease|renal|hyperlipid|cholesterol|depress|anxiety|thyroid|hypothyroid|obes|cancer|oncolog|hiv|hepatitis|arthritis|seizure|epilep)\b/;
 		const gaps: Record<string, string>[] = [];
+		const push = (item: Record<string, string>, gapType: string, description: string, dueTs: number, overdue: number): void => {
+			gaps.push({
+				...item,
+				gapType,
+				description,
+				dueDate: new Date(dueTs).toISOString().slice(0, 10),
+				daysOverdue: String(Math.max(0, Math.round(overdue))),
+				status: 'open',
+			});
+		};
 		for (const item of this.items) {
 			const hasVisit = !!item.lastVisit;
-			let overdue: number;
-			let dueTs: number;
+			const daysSince = Number(item.daysSinceVisit || 0);
+			const lastTs = hasVisit ? (Date.parse(item.lastVisit) || 0) : 0;
+			const regTs = Date.parse(item.createdAt || item.registrationDate || '') || 0;
+
+			// 1) Overdue wellness / preventive visit.
 			if (hasVisit) {
-				const days = Number(item.daysSinceVisit || 0);
-				if (days <= GAP_DAYS) { continue; }
-				overdue = days - GAP_DAYS;
-				dueTs = Date.parse(item.lastVisit) + GAP_DAYS * DAY;
-			} else {
-				// Never seen — judge against registration date; skip if we can't.
-				const reg = Date.parse(item.createdAt || item.registrationDate || '') || 0;
-				if (!reg || now - reg <= GAP_DAYS * DAY) { continue; }
-				dueTs = reg + GAP_DAYS * DAY;
-				overdue = Math.floor((now - dueTs) / DAY);
+				if (daysSince > WELLNESS_DAYS && lastTs) {
+					push(item, 'Wellness Visit', 'Overdue for preventive visit', lastTs + WELLNESS_DAYS * DAY, daysSince - WELLNESS_DAYS);
+				}
+			} else if (regTs && now - regTs > WELLNESS_DAYS * DAY) {
+				// Never seen but registered long enough ago to be due.
+				const dueTs = regTs + WELLNESS_DAYS * DAY;
+				push(item, 'Wellness Visit', 'No visit on record', dueTs, (now - dueTs) / DAY);
 			}
-			item.gapType = 'Annual Visit';
-			item.description = hasVisit ? 'Overdue for annual visit' : 'No visit on record';
-			item.dueDate = new Date(dueTs).toISOString().slice(0, 10);
-			item.daysOverdue = String(overdue);
-			item.status = 'open';
-			gaps.push(item);
+
+			// 2) Chronic-condition follow-up lapse — tighter cadence than wellness.
+			if (hasVisit && lastTs && daysSince > CHRONIC_DAYS && CHRONIC.test(item.complaintsAll || '')) {
+				push(item, 'Chronic Care Follow-up', 'Chronic condition without recent follow-up', lastTs + CHRONIC_DAYS * DAY, daysSince - CHRONIC_DAYS);
+			}
+
+			// 3) Missing immunization — only when the feed is known (see
+			// _enrichImmunizations); otherwise we can't tell "none" from "unknown".
+			if (item.immunizationsKnown && !item.hasImmunization) {
+				const dueTs = regTs || lastTs || now;
+				push(item, 'Immunization', 'No immunization on record', dueTs, (now - dueTs) / DAY);
+			}
+		}
+		// Drop the per-patient scratch fields the derived gap rows don't display.
+		for (const g of gaps) {
+			delete g.complaintsAll; delete g.immunizationsKnown; delete g.hasImmunization; delete g.conditionsFallback;
 		}
 		this.items = gaps;
 	}
@@ -2774,11 +2859,14 @@ export class ReportsEditor extends EditorPane {
 				bar.title = `${label}: ${value}`;
 				const valEl = DOM.append(col, DOM.$('div'));
 				valEl.textContent = String(value);
-				valEl.style.cssText = 'font-size:10px;font-weight:600;';
+				valEl.style.cssText = 'font-size:10px;font-weight:600;line-height:12px;height:12px;';
 				const lblEl = DOM.append(col, DOM.$('div'));
-				// allow-any-unicode-next-line
-				lblEl.textContent = label.length > 12 ? label.substring(0, 12) + '…' : label;
-				lblEl.style.cssText = 'font-size:8px;color:var(--vscode-descriptionForeground);text-align:center;max-width:100%;overflow:hidden;';
+				lblEl.textContent = label;
+				lblEl.title = label;
+				// Fixed single-line label height so a longer condition name can't wrap to
+				// two lines and push its bar/value up (the columns are bottom-aligned) —
+				// keeping every bar and value number on a shared baseline across the chart.
+				lblEl.style.cssText = 'font-size:8px;color:var(--vscode-descriptionForeground);text-align:center;width:100%;height:11px;line-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
 			}
 		} else if (chart.type === 'line' || chart.type === 'area') {
 			// Time-series: render as area-fill polygon over horizontally-laid points.
