@@ -1713,6 +1713,19 @@ export class CarePlansEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CarePlansEditor.ID, group, t, th, s, a, d); }
 }
 
+// Single source of truth for Clinical Alert severities, shared by the list filter
+// and the edit form so they can't drift (QA: the edit form previously offered only
+// Info/Warning/Critical while the filter listed all six). CDS rules use
+// info/warning/critical; merged patient-alert rows add the chart's low/medium/high.
+export const CDS_SEVERITY_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+	{ label: 'Info', value: 'info' },
+	{ label: 'Warning', value: 'warning' },
+	{ label: 'Low', value: 'low' },
+	{ label: 'Medium', value: 'medium' },
+	{ label: 'High', value: 'high' },
+	{ label: 'Critical', value: 'critical' },
+];
+
 export class CdsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexCds';
 	protected readonly config: ClinicalEditorConfig = {
@@ -1860,17 +1873,8 @@ export class CdsEditor extends ClinicalListEditorBase {
 			},
 			{
 				key: 'severity', placeholder: 'All Severity',
-				// CDS rules use info/warning/critical, but merged patient-alert rows
-				// carry the chart's low/medium/high severities — the dropdown must
-				// offer every severity the table can display (QA issue 8).
-				options: [
-					{ label: 'Info', value: 'info' },
-					{ label: 'Warning', value: 'warning' },
-					{ label: 'Low', value: 'low' },
-					{ label: 'Medium', value: 'medium' },
-					{ label: 'High', value: 'high' },
-					{ label: 'Critical', value: 'critical' },
-				],
+				// Every severity the table can display (QA issue 8) — see CDS_SEVERITY_OPTIONS.
+				options: [...CDS_SEVERITY_OPTIONS],
 			},
 		],
 		// Cell renderer — show isActive as Active/Inactive badge, show ruleType readable.
@@ -1961,11 +1965,8 @@ export class CdsEditor extends ClinicalListEditorBase {
 			// Row 5: severity + appliesTo
 			{
 				key: 'severity', label: 'Severity', type: 'select', required: true,
-				options: [
-					{ label: 'Info', value: 'info' },
-					{ label: 'Warning', value: 'warning' },
-					{ label: 'Critical', value: 'critical' },
-				],
+				// Same six severities as the list filter — see CDS_SEVERITY_OPTIONS.
+				options: [...CDS_SEVERITY_OPTIONS],
 				defaultValue: 'warning',
 			},
 			{

@@ -22,6 +22,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { createActionIconButton, createOverflowMenuButton, createRowActionsContainer, openRecordEditDialog, renderShowMoreFooter, SIDEBAR_INITIAL_PAGE_SIZE, IEditFieldDef, withTypeaheadSearch, formFieldsToEditFields, parseSavedRecord } from '../sidebarActions.js';
 import { FAX_FORM_FIELDS, CONSENTS_FORM_FIELDS } from '../editors/systemEditors.js';
+import { CDS_SEVERITY_OPTIONS } from '../editors/clinicalEditors.js';
 
 type DataRow = Record<string, unknown> & { id?: string; fhirId?: string };
 
@@ -117,10 +118,9 @@ const SYSTEM_ITEMS: SystemItem[] = [
 				]
 			},
 			{
-				key: 'severity', label: 'Severity', kind: 'select', required: true, widthPct: 50, options: [
-					{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' },
-					{ value: 'critical', label: 'Critical' },
-				]
+				// Shares CDS_SEVERITY_OPTIONS with the CdsEditor list filter + edit form so
+				// all three severity dropdowns stay in sync (was Info/Warning/Critical only).
+				key: 'severity', label: 'Severity', kind: 'select', required: true, widthPct: 50, options: [...CDS_SEVERITY_OPTIONS]
 			},
 			{
 				key: 'appliesTo', label: 'Applies To', kind: 'select', widthPct: 50, options: [
