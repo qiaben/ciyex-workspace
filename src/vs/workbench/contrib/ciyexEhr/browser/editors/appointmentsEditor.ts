@@ -1495,11 +1495,11 @@ export class AppointmentsEditor extends EditorPane {
 				iconBtn('device-camera-video', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
 				if (isCompleted) {
 					// allow-any-unicode-next-line
-					iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
+					iconBtn('📋', 'Open Encounter', '#3b82f6', () => this._openVisitChart(row));
 				}
 			} else if (isCompleted) {
 				// allow-any-unicode-next-line
-				iconBtn('📋', 'Open Chart', '#3b82f6', () => this._openVisitChart(row));
+				iconBtn('📋', 'Open Encounter', '#3b82f6', () => this._openVisitChart(row));
 				// allow-any-unicode-next-line
 				iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
 				// allow-any-unicode-next-line

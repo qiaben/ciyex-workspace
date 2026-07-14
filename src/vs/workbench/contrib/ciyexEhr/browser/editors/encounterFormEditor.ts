@@ -557,7 +557,8 @@ export class EncounterFormEditor extends EditorPane {
 			// silently dropped on save from the encounter).
 			pulse: num('vitals_heart_rate', 'vitals_hr'),
 			temperatureC: num('vitals_temperature', 'vitals_temp'),
-			oxygenSaturation: num('vitals_spo2'),
+			// SpO2's backend short key is `vitals_spo` (no trailing 2).
+			oxygenSaturation: num('vitals_spo2', 'vitals_spo'),
 			respiration: num('vitals_respiratory_rate', 'vitals_rr'),
 			weightKg: num('vitals_weight'),
 			heightCm: num('vitals_height'),
@@ -662,6 +663,8 @@ export class EncounterFormEditor extends EditorPane {
 		if (out.vitals_heart_rate !== undefined) { out.vitals_hr = out.vitals_heart_rate; }
 		if (out.vitals_temperature !== undefined) { out.vitals_temp = out.vitals_temperature; }
 		if (out.vitals_respiratory_rate !== undefined) { out.vitals_rr = out.vitals_respiratory_rate; }
+		// SpO2's backend short key is `vitals_spo` (no trailing 2) — mirror it too.
+		if (out.vitals_spo2 !== undefined) { out.vitals_spo = out.vitals_spo2; }
 		// Drop undefined keys so they don't shadow other sources with `undefined`.
 		for (const k of Object.keys(out)) {
 			if (out[k] === undefined) { delete out[k]; }

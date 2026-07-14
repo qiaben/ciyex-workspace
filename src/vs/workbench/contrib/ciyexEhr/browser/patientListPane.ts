@@ -43,6 +43,7 @@ export class PatientListPane extends ViewPane {
 	private static readonly PAGE_SIZE = 20;
 	private _page = 0;
 	private _searchTimer: ReturnType<typeof setTimeout> | undefined;
+	private _searchInput: HTMLInputElement | undefined;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -120,6 +121,7 @@ export class PatientListPane extends ViewPane {
 				this._searchTimer = setTimeout(() => this._searchPatients(this._searchQuery), 300);
 			}
 		});
+		this._searchInput = searchInput;
 		filterBar.appendChild(searchInput);
 
 		const filterRow = document.createElement('div');
@@ -428,6 +430,15 @@ export class PatientListPane extends ViewPane {
 			});
 			row.addEventListener('click', (e) => {
 				if (actions.contains(e.target as Node)) { return; }
+				// Leave search mode once a patient is opened — otherwise the
+				// query lingers and the roster stays filtered on return (QA).
+				if (this._searchQuery) {
+					if (this._searchTimer !== undefined) { clearTimeout(this._searchTimer); }
+					this._searchQuery = '';
+					this._page = 0;
+					if (this._searchInput) { this._searchInput.value = ''; }
+					this._renderList();
+				}
 				this.commandService.executeCommand('ciyex.openPatientChart', patient.id, fullName);
 			});
 

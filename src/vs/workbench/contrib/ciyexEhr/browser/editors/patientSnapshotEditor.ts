@@ -2410,6 +2410,21 @@ export class PatientSnapshotEditor extends EditorPane {
 		['bmi', 'vitals_bmi'],
 	];
 
+	/** Alternate spellings of the encounter-form vitals keys: the BACKEND
+	 *  encounter-form field config keys Heart Rate / Temperature / Respiratory
+	 *  Rate as `vitals_hr` / `vitals_temp` / `vitals_rr` while the Snapshot and
+	 *  the local configs use the long keys (mirrors
+	 *  EncounterFormEditor._mapLatestVitals). Both conventions are read and
+	 *  written so an encounter saved under the short keys still surfaces as the
+	 *  Snapshot's Pulse — QA saw the Encounter's Heart Rate diverge from the
+	 *  Snapshot's Pulse because compositions carrying `vitals_hr` were skipped. */
+	private static readonly _VITALS_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+		vitals_heart_rate: ['vitals_hr'],
+		vitals_temperature: ['vitals_temp'],
+		vitals_respiratory_rate: ['vitals_rr'],
+		vitals_spo2: ['vitals_spo'],
+	};
+
 	/**
 	 * Map an encounter-form Composition's `vitals_*` fields onto the FHIR-vitals
 	 * record shape the Today's Vitals card reads (heightCm/weightKg/bpSystolic/…).
@@ -2426,7 +2441,13 @@ export class PatientSnapshotEditor extends EditorPane {
 		};
 		const out: Record<string, unknown> = {};
 		for (const [target, src] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
-			const n = num(src);
+			let n = num(src);
+			if (n === undefined) {
+				for (const alias of PatientSnapshotEditor._VITALS_KEY_ALIASES[src] ?? []) {
+					n = num(alias);
+					if (n !== undefined) { break; }
+				}
+			}
 			if (n !== undefined) { out[target] = n; }
 		}
 		if (Object.keys(out).length === 0) { return null; }
@@ -2471,7 +2492,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		const out: Record<string, unknown> = {};
 		for (const [fhirKey, formKey] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
 			const v = obs[fhirKey];
-			if (v !== undefined && v !== null && String(v).trim() !== '') { out[formKey] = v; }
+			if (v !== undefined && v !== null && String(v).trim() !== '') {
+				out[formKey] = v;
+				// Mirror onto the backend config's short spellings so a form keyed
+				// vitals_hr / vitals_temp / vitals_rr pre-fills too.
+				for (const alias of PatientSnapshotEditor._VITALS_KEY_ALIASES[formKey] ?? []) { out[alias] = v; }
+			}
 		}
 		// Notes is a free-text field outside the numeric map — surface it too so an
 		// edit form pre-fills the saved vitals note.
@@ -2491,7 +2517,15 @@ export class PatientSnapshotEditor extends EditorPane {
 		const fhir: Record<string, unknown> = {};
 		for (const [fhirKey, formKey] of PatientSnapshotEditor._VITALS_FIELD_MAP) {
 			if (fhirKey === 'bmi') { continue; } // derived below from height/weight
-			const raw = values[formKey];
+			let raw = values[formKey];
+			if (raw === undefined || String(raw).trim() === '') {
+				// Fall back to the backend config's short spellings (vitals_hr / …)
+				// so a form keyed that way still writes to the shared store.
+				for (const alias of PatientSnapshotEditor._VITALS_KEY_ALIASES[formKey] ?? []) {
+					const av = values[alias];
+					if (av !== undefined && String(av).trim() !== '') { raw = av; break; }
+				}
+			}
 			if (raw === undefined || String(raw).trim() === '') { continue; }
 			const n = Number(raw);
 			if (Number.isFinite(n)) { fhir[fhirKey] = n; }

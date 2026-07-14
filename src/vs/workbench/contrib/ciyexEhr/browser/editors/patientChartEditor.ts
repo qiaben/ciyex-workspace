@@ -202,7 +202,10 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// /api/fhir-resource/clinical-alerts/patient/{id} — Flag resource
 			// supports POST + PUT + DELETE for the test team's update/delete ask.
 			{
-				key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Flag'],
+				// Hidden from the patient chart nav — the test team doesn't want
+				// Clinical Alerts on the chart page (13.07.26 report). The tab config
+				// is kept so the FHIR Flag mapping/columns stay available elsewhere.
+				key: 'clinical-alerts', label: 'Clinical Alerts', icon: 'Bell', emoji: '\u{1F514}', position: 0, visible: false, display: 'list', panel: 'main', fhirResources: ['Flag'],
 				columns: [
 					{ key: 'alertName', label: 'Alert', aliases: ['alertName', 'alert', 'name', 'title', 'code'] },
 					{ key: 'status', label: 'Status' },
@@ -1380,6 +1383,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 	// being appended as localOnly duplicates next to backend's start/end/
 	// minutesDuration, producing the "duplicate start time and end time"
 	// complaint.
+	// Field set, order, labels and option lists mirror the calendar's
+	// "Schedule Appointment" panel (calendarEditor) EXACTLY — the test team
+	// wants the chart's New Appointment drawer to carry the same fields only
+	// (no room / notes / cancellation-reason extras).
 	appointments: {
 		tabKey: 'appointments',
 		sections: [
@@ -1388,40 +1395,42 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{
 						key: 'appointmentType', label: 'Visit Type', type: 'select', required: true, options: [
 							{ label: 'Consultation', value: 'Consultation' },
+							{ label: 'Follow-Up', value: 'Follow-Up' },
 							{ label: 'New Patient', value: 'New Patient' },
-							{ label: 'Follow-Up', value: 'Follow-up' },
+							{ label: 'Urgent', value: 'Urgent' },
+							{ label: 'Routine', value: 'Routine' },
 							{ label: 'Annual Physical', value: 'Annual Physical' },
-							{ label: 'Sick Visit', value: 'Sick Visit' },
 							{ label: 'Telehealth', value: 'Telehealth' },
-							{ label: 'Procedure', value: 'Procedure' },
 							{ label: 'Lab Work', value: 'Lab Work' },
-						]
-					},
-					{
-						key: 'priority', label: 'Priority', type: 'select', options: [
-							{ label: 'Routine', value: 'routine' },
-							{ label: 'Urgent', value: 'urgent' },
-							{ label: 'ASAP', value: 'asap' },
-							{ label: 'STAT', value: 'stat' },
+							{ label: 'Procedure', value: 'Procedure' },
+							{ label: 'Referral', value: 'Referral' },
 						]
 					},
 					{ key: 'start', label: 'Start Date/Time', type: 'datetime', required: true },
 					{ key: 'end', label: 'End Date/Time', type: 'datetime', required: true },
 					{ key: 'minutesDuration', label: 'Duration (min)', type: 'number', placeholder: 'Auto-calculated from start/end' },
+					{
+						key: 'priority', label: 'Priority', type: 'select', options: [
+							{ label: 'Routine', value: 'routine' },
+							{ label: 'Urgent', value: 'urgent' },
+						]
+					},
 					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
 					{ key: 'location', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
-							{ label: 'Scheduled', value: 'booked' },
-							{ label: 'Confirmed', value: 'pending' },
+							{ label: 'Scheduled', value: 'scheduled' },
+							{ label: 'Confirmed', value: 'confirmed' },
 							{ label: 'Arrived', value: 'arrived' },
 							{ label: 'Checked In', value: 'checked-in' },
+							{ label: 'In Room', value: 'in-room' },
+							{ label: 'With Provider', value: 'with-provider' },
 							{ label: 'Fulfilled', value: 'fulfilled' },
 							{ label: 'Cancelled', value: 'cancelled' },
 							{ label: 'No Show', value: 'noshow' },
 						]
 					},
-					{ key: 'reason', label: 'Reason / Chief Complaint', type: 'textarea', colSpan: 2, placeholder: 'e.g., chest discomfort for 2 days' },
+					{ key: 'reason', label: 'Reason / Notes', type: 'textarea', colSpan: 2, placeholder: 'Reason for visit or scheduling notes…' },
 				],
 			},
 		],
@@ -2994,6 +3003,46 @@ export class PatientChartEditor extends EditorPane {
 								if (target) { target.fields = [...target.fields, ...extras]; }
 								else { sections.push({ ...sec, fields: extras }); }
 							}
+						}
+						// Schedule Appointment parity: the chart's New Appointment drawer must
+						// carry EXACTLY the calendar "Schedule Appointment" form's fields — the
+						// backend tab_field_config extras (room, notes, description,
+						// cancellation reason, ...) are dropped, the survivors are reordered to
+						// the calendar form's sequence, and the select fields take the
+						// calendar's labels + option lists so the two forms never drift.
+						if (tab.key === 'appointments') {
+							const patientLikeKeys = new Set(['patient', 'patientId', 'subject', 'patientRef', 'patientReference', 'patientSearch', 'patientName', 'patient_id']);
+							const canon = (f: FieldDef): string => patientLikeKeys.has(f.key) ? 'patient' : f.key;
+							const parityOrder = ['patient', 'appointmentType', 'start', 'end', 'minutesDuration', 'priority', 'provider', 'location', 'status', 'reason'];
+							const rank = new Map(parityOrder.map((k, i) => [k, i]));
+							const picked = new Map<string, FieldDef>();
+							for (const sec of sections) {
+								for (const f of sec.fields) {
+									const k = canon(f);
+									if (rank.has(k) && !picked.has(k)) { picked.set(k, f); }
+								}
+							}
+							// Backfill anything the backend row doesn't ship from the local
+							// config so the field set always matches the calendar form.
+							const localAppt = DEFAULT_FIELD_CONFIGS['appointments'];
+							const localByKey = new Map<string, FieldDef>();
+							for (const sec of localAppt?.sections ?? []) {
+								for (const f of sec.fields) { localByKey.set(f.key, f); }
+							}
+							for (const [k, f] of localByKey) {
+								if (rank.has(k) && !picked.has(k)) { picked.set(k, { ...f }); }
+							}
+							const parityFields = [...picked.values()]
+								.sort((a, b) => (rank.get(canon(a)) ?? 99) - (rank.get(canon(b)) ?? 99))
+								.map(f => {
+									const ov = localByKey.get(canon(f));
+									// Local (calendar-matching) label + options win here — the
+									// generic merge above prefers backend options, which is
+									// exactly the drift this parity pass removes.
+									return ov ? { ...f, label: ov.label, options: ov.options ?? f.options, placeholder: ov.placeholder ?? f.placeholder } : f;
+								});
+							const baseSection = sections[0] ?? { key: 'appt', title: 'Appointment Details', columns: 2, visible: true, collapsible: false, fields: [] };
+							sections = [{ ...baseSection, fields: parityFields }];
 						}
 						config = { tabKey: tab.key, sections };
 					}
