@@ -123,6 +123,9 @@ export class CiyexAuthGate extends Disposable {
 	private _forgotSent = false;
 	private _countdown = 120;
 	private _countdownInterval: number | null = null;
+	// The Chrome-style "Save password?" bubble shown after a successful
+	// sign-in. Lives on document.body (it must outlive the auth overlay).
+	private _saveCredPopup: HTMLElement | undefined;
 
 	constructor(
 		private readonly _parent: HTMLElement,
@@ -150,8 +153,126 @@ export class CiyexAuthGate extends Disposable {
 			this._email = this._authService.userEmail || '';
 			this._show();
 		} else if (this._authService.state !== CiyexAuthState.Authenticated) {
+			// Pre-fill the email of the last successful sign-in (saved-credentials
+			// UX — the password itself is only pre-filled once the user reaches
+			// the password step, and only if they chose "Save" on the popup).
+			try { this._email = localStorage.getItem(CiyexAuthGate._LAST_EMAIL_KEY) || ''; } catch { /* storage unavailable */ }
 			this._show();
 		}
+	}
+
+	// -- Saved sign-in credentials (Chrome/Google-style "Save password?") ----
+	// Stored in localStorage: a small map of email → obfuscated password plus a
+	// "never save for this account" list. Populated only when the user accepts
+	// the save-password popup shown after a successful sign-in.
+	private static readonly _SAVED_LOGINS_KEY = 'ciyex_saved_logins';
+	private static readonly _NEVER_SAVE_KEY = 'ciyex_saved_logins_never';
+	private static readonly _LAST_EMAIL_KEY = 'ciyex_last_login_email';
+
+	private _savedLogins(): Record<string, string> {
+		try {
+			const raw = localStorage.getItem(CiyexAuthGate._SAVED_LOGINS_KEY);
+			const parsed = raw ? JSON.parse(raw) : {};
+			return parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {};
+		} catch { return {}; }
+	}
+
+	private _savedPasswordFor(email: string): string {
+		const enc = this._savedLogins()[email.trim().toLowerCase()];
+		if (!enc) { return ''; }
+		try { return decodeURIComponent(escape(atob(enc))); } catch { return ''; }
+	}
+
+	private _storeLogin(email: string, password: string): void {
+		try {
+			const map = this._savedLogins();
+			map[email.trim().toLowerCase()] = btoa(unescape(encodeURIComponent(password)));
+			localStorage.setItem(CiyexAuthGate._SAVED_LOGINS_KEY, JSON.stringify(map));
+		} catch { /* storage unavailable */ }
+	}
+
+	private _neverSaveList(): string[] {
+		try {
+			const raw = localStorage.getItem(CiyexAuthGate._NEVER_SAVE_KEY);
+			const parsed = raw ? JSON.parse(raw) : [];
+			return Array.isArray(parsed) ? parsed.map(String) : [];
+		} catch { return []; }
+	}
+
+	private _markNeverSave(email: string): void {
+		try {
+			const key = email.trim().toLowerCase();
+			const list = this._neverSaveList();
+			if (!list.includes(key)) { list.push(key); }
+			localStorage.setItem(CiyexAuthGate._NEVER_SAVE_KEY, JSON.stringify(list));
+			// Also drop any previously saved password for the account.
+			const map = this._savedLogins();
+			if (map[key]) { delete map[key]; localStorage.setItem(CiyexAuthGate._SAVED_LOGINS_KEY, JSON.stringify(map)); }
+		} catch { /* storage unavailable */ }
+	}
+
+	/**
+	 * After a successful sign-in, offer to remember the credentials — a small
+	 * dismissable bubble in the top-right corner, the same interaction Chrome
+	 * uses. Rendered on document.body so it outlives the auth overlay (which
+	 * hides as soon as the auth state flips to Authenticated).
+	 */
+	private _offerSaveCredentials(email: string, password: string): void {
+		const key = email.trim().toLowerCase();
+		if (!key || !password) { return; }
+		if (this._neverSaveList().includes(key)) { return; }
+		const existing = this._savedPasswordFor(email);
+		if (existing === password) { return; }
+
+		this._saveCredPopup?.remove();
+		const dark = this._isDark();
+		const popup = h('div', {
+			position: 'fixed', top: '44px', right: '16px', zIndex: '2147483647',
+			width: '320px', padding: '16px', borderRadius: '10px',
+			background: dark ? '#252526' : '#ffffff',
+			border: `1px solid ${dark ? '#3c3c3c' : '#E5E7EB'}`,
+			boxShadow: '0 8px 28px rgba(0,0,0,0.35)',
+			fontFamily: 'inherit',
+		});
+		popup.id = 'ciyex-save-cred-popup';
+
+		const title = h('div', { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: '700', color: dark ? '#F9FAFB' : '#111827', marginBottom: '6px' });
+		// allow-any-unicode-next-line
+		title.appendChild(text(h('span', { fontSize: '15px' }), '🔑'));
+		title.appendChild(text(h('span', {}), existing ? 'Update password?' : 'Save password?'));
+		popup.appendChild(title);
+
+		const body = h('p', { fontSize: '12px', color: dark ? '#9CA3AF' : '#6B7280', margin: '0 0 12px', lineHeight: '1.5' });
+		body.textContent = existing
+			? `Update the saved password for ${email}? It will be pre-filled the next time you sign in.`
+			: `Save your password for ${email} on this device? It will be pre-filled the next time you sign in.`;
+		popup.appendChild(body);
+
+		const row = h('div', { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+		const mkBtn = (id: string, label: string, primary: boolean): HTMLButtonElement => {
+			const b = document.createElement('button');
+			b.id = id; b.textContent = label;
+			Object.assign(b.style, {
+				padding: '7px 14px', fontSize: '12px', fontWeight: '600', borderRadius: '6px', cursor: 'pointer',
+				background: primary ? '#4F6AF0' : 'none',
+				color: primary ? '#fff' : (dark ? '#9CA3AF' : '#6B7280'),
+				border: primary ? 'none' : `1px solid ${dark ? '#3c3c3c' : '#D1D5DB'}`,
+			});
+			row.appendChild(b);
+			return b;
+		};
+		const neverBtn = mkBtn('ciyex-save-cred-never', 'Never', false);
+		const laterBtn = mkBtn('ciyex-save-cred-later', 'Not now', false);
+		const saveBtn = mkBtn('ciyex-save-cred-save', existing ? 'Update' : 'Save', true);
+		popup.appendChild(row);
+
+		const dismiss = (): void => { clearTimeout(timer); popup.remove(); };
+		const timer = setTimeout(dismiss, 25000);
+		saveBtn.addEventListener('click', () => { this._storeLogin(email, password); dismiss(); });
+		neverBtn.addEventListener('click', () => { this._markNeverSave(email); dismiss(); });
+		laterBtn.addEventListener('click', dismiss);
+		mainWindow.document.body.appendChild(popup);
+		this._saveCredPopup = popup;
 	}
 
 	/**
@@ -907,6 +1028,13 @@ export class CiyexAuthGate extends Disposable {
 
 	private _buildAuthenticate(_c: ReturnType<typeof this._colors>): HTMLElement {
 		const dark = this._isDark();
+		// Saved-credentials pre-fill: if the user accepted the save-password
+		// popup for this account, the password arrives already typed (the user
+		// just hits Sign In) — same UX as a browser password manager.
+		if (!this._password) {
+			const saved = this._savedPasswordFor(this._email);
+			if (saved) { this._password = saved; }
+		}
 		const { wrapper, card } = this._buildTwoPanel(
 			'Welcome back',
 			this._discoverResult?.orgName ? `${this._email} · ${this._discoverResult.orgName}` : this._email
@@ -1112,6 +1240,12 @@ export class CiyexAuthGate extends Disposable {
 	}
 
 	private _buildLocked(_c: ReturnType<typeof this._colors>): HTMLElement {
+		// Saved-credentials pre-fill (see _buildAuthenticate) — unlocking a
+		// locked session re-uses the same saved password.
+		if (!this._password) {
+			const saved = this._savedPasswordFor(this._email);
+			if (saved) { this._password = saved; }
+		}
 		const subtitle = this._email
 			? `Session locked · ${this._email}`
 			: 'Your session has expired. Sign in again.';
@@ -1509,7 +1643,10 @@ export class CiyexAuthGate extends Disposable {
 		this._loading = false;
 
 		if (result.success) {
-			// Auth service flips state to Authenticated which hides the gate.
+			// Remember the account and offer to save the password (Chrome-style
+			// popup). The gate itself hides via the Authenticated state change.
+			try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			this._offerSaveCredentials(this._email, this._password);
 			return;
 		}
 		if (result.requiresPasswordChange) {
@@ -1554,6 +1691,10 @@ export class CiyexAuthGate extends Disposable {
 		this._loading = false;
 
 		if (result.success) {
+			// Same save-password offer as a normal sign-in, but with the freshly
+			// set permanent password.
+			try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			this._offerSaveCredentials(this._email, this._newPassword);
 			this._password = '';
 			this._newPassword = '';
 			this._confirmPassword = '';

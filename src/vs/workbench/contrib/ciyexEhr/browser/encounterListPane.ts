@@ -344,7 +344,10 @@ export class EncounterListPane extends ViewPane {
 			if (dateStr) {
 				try { secondaryParts.push(new Date(String(dateStr)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })); } catch { secondaryParts.push(String(dateStr).substring(0, 10)); }
 			}
-			const reason = String(item.reason || item.reasonCode || '');
+			// cc_text: chief complaint saved through the encounter form — the save
+			// flattens form fields onto the Encounter, and an encounter opened via
+			// the appointments page carries its complaint ONLY there (no reason).
+			const reason = String(item.reason || item.reasonForVisit || item.cc_text || item.reasonCode || '');
 			if (reason) { secondaryParts.push(reason); }
 			if (provName) { secondaryParts.push(provName); }
 			if (secondaryParts.length > 0) {

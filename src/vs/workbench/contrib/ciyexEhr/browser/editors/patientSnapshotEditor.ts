@@ -753,6 +753,36 @@ export class PatientSnapshotEditor extends EditorPane {
 			: 'UNSIGNED';
 	}
 
+	/**
+	 * Drop repeated rows from a record list (QA: Encounter History showed the
+	 * same encounter twice). The same record can arrive under both its EHR id
+	 * and its FHIR id — a session-pending overlay keyed one way, the server
+	 * list the other — so a row counts as a duplicate when ANY of its ids has
+	 * already been seen. Rows with no id at all are kept as-is.
+	 */
+	private static _dedupeByAnyId(items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+		const seen = new Set<string>();
+		const seenFp = new Set<string>();
+		const out: Array<Record<string, unknown>> = [];
+		for (const r of items) {
+			const ids = [r.id, r.fhirId, r.encounterId].map(v => String(v ?? '').trim()).filter(v => v && v !== 'undefined' && v !== 'null');
+			if (ids.some(id => seen.has(id))) { continue; }
+			// Content fingerprint: the backend can double-create an encounter for a
+			// single action (two resources, different ids, identical patient +
+			// start/end timestamps — observed with telehealth visit encounters).
+			// Two encounters that match to the second on start AND end are the same
+			// visit, so only the first survives. Rows without a start date never
+			// fingerprint-match.
+			const start = String(r.startDate ?? r.encounterDate ?? r.start ?? '').trim();
+			const fp = start ? [String(r.patientRef ?? r.patientId ?? ''), start, String(r.endDate ?? r.end ?? ''), String(r.type ?? ''), String(r.reason ?? '')].join('|') : '';
+			if (fp && seenFp.has(fp)) { continue; }
+			for (const id of ids) { seen.add(id); }
+			if (fp) { seenFp.add(fp); }
+			out.push(r);
+		}
+		return out;
+	}
+
 	/** True when an encounter status means signed / finalized / locked — such an
 	 *  encounter is read-only (the backend rejects edits), so the snapshot hides its
 	 *  edit option and shows a lock instead. */
@@ -2242,7 +2272,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// tagged for a different patient.
 		const vit = this._filterToPatient(this._mergePending('vitals', this._filterDeleted('vitals', this._list(vitals))), patientId);
 		this._lastLoadedVitals = vit;
-		const encs = this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId);
+		const encs = PatientSnapshotEditor._dedupeByAnyId(this._filterToPatient(this._mergePending('encounters', this._filterDeleted('encounters', this._list(encounters))), patientId));
 		// The encounters LIST can lag a just-created / just-signed encounter (FHIR
 		// indexing), so right after Sign & Lock the workflow read the visit as
 		// unsigned — or, before the strict linked-only scoping, a stray same-day
@@ -3981,7 +4011,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const t = raw ? new Date(String(raw)).getTime() : NaN;
 			return isNaN(t) ? -Infinity : t;
 		};
-		const encs = [...encsInput].sort((a, b) => encDateMs(b) - encDateMs(a));
+		const encs = PatientSnapshotEditor._dedupeByAnyId(encsInput).sort((a, b) => encDateMs(b) - encDateMs(a));
 		if (encs.length === 0) {
 			const empty = DOM.append(card, DOM.$('div'));
 			empty.textContent = 'No encounters found';
@@ -4018,7 +4048,12 @@ export class PatientSnapshotEditor extends EditorPane {
 				}
 				return '';
 			};
-			const cc = ccText(enc.chiefComplaint) || ccText(enc.reasonForVisit) || ccText(enc.reason)
+			// `cc_text` is the encounter-form field key — saving the form ALSO flattens
+			// the form data onto the Encounter resource, so an encounter opened from
+			// the appointments page ("Open Encounter") carries its chief complaint
+			// only under cc_text (no reason/reasonCode is written). Without it the
+			// history column showed "—" for exactly those encounters (QA issue).
+			const cc = ccText(enc.chiefComplaint) || ccText(enc.cc_text) || ccText(enc.reasonForVisit) || ccText(enc.reason)
 				|| ccText(enc.reasonText) || ccText(enc.reasonDisplay) || ccText(enc.reasonCode);
 			const dx = enc.diagnosis || enc.primaryDiagnosis || enc.icdCode || '';
 			const detail = [cc, dx].filter(Boolean).map(String).join(' · ') || enc.notes || '—';
@@ -4107,9 +4142,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/**
-	 * Append hover-reveal Edit + Delete icons to a dashboard card row, and
-	 * wire row-click to the edit modal. Keeps the row compact in its idle
-	 * state and only surfaces actions when the user hovers/focuses.
+	 * Append hover-reveal Edit + Delete icons to a dashboard card row. Keeps
+	 * the row compact in its idle state and only surfaces actions when the
+	 * user hovers/focuses.
 	 */
 	private _attachRowActions(rowEl: HTMLElement, entity: string, item: Record<string, unknown>, opts?: { canEdit?: boolean; lockReason?: string }): void {
 		const locked = opts?.canEdit === false;
@@ -4143,7 +4178,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
 
-		rowEl.style.cursor = locked ? 'default' : 'pointer';
+		// Rows are deliberately NOT click-to-edit: the edit modal must only open
+		// from the explicit pencil button (tester request — clicking a Problems/
+		// Medications record used to jump straight into the edit drawer). This
+		// also matches the other snapshot cards (labs, encounters, visits),
+		// which are button-only.
+		rowEl.style.cursor = 'default';
 		rowEl.addEventListener('mouseenter', () => {
 			actions.style.opacity = '1';
 			rowEl.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.08))';
@@ -4151,11 +4191,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		rowEl.addEventListener('mouseleave', () => {
 			actions.style.opacity = '0';
 			rowEl.style.background = '';
-		});
-		rowEl.addEventListener('click', (e) => {
-			if ((e.target as HTMLElement).closest('button')) { return; }
-			if (locked) { return; }
-			void this._openEditModal(entity, item);
 		});
 	}
 

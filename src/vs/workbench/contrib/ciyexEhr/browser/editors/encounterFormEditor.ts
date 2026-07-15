@@ -716,16 +716,15 @@ export class EncounterFormEditor extends EditorPane {
 			patient.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		}
 
-		// Status badge
-		const rawStatus = this._encounterStatus || 'draft';
-		const statusMap: Record<string, string> = {
-			'arrived': 'Arrived', 'in-progress': 'In Progress', 'finished': 'Completed',
-			'cancelled': 'Cancelled', 'entered-in-error': 'Error', 'planned': 'Planned',
-			'onleave': 'On Leave', 'unknown': 'Draft', 'draft': 'Draft',
-			'SIGNED': 'Signed', 'UNSIGNED': 'Unsigned', 'INCOMPLETE': 'Incomplete',
-		};
-		const status = statusMap[rawStatus] || rawStatus;
-		const statusColor = ['Completed', 'Signed', 'finished'].includes(status) ? '#22c55e' : ['Unsigned', 'Error', 'Cancelled', 'entered-in-error'].includes(status) ? '#ef4444' : ['In Progress', 'Arrived', 'Incomplete'].includes(status) ? '#f59e0b' : '#3b82f6';
+		// Status badge — the test team wants exactly two encounter states surfaced
+		// everywhere: Signed or Unsigned. Raw FHIR/EHR statuses (in-progress,
+		// arrived, planned, INCOMPLETE, ...) all collapse to Unsigned; only a
+		// signed/finished/completed encounter shows Signed. This mirrors the
+		// normalization already used by the encounters sidebar, snapshot and chart.
+		const s = String(this._encounterStatus || '').toLowerCase();
+		const isSignedish = (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'));
+		const status = isSignedish ? 'Signed' : 'Unsigned';
+		const statusColor = isSignedish ? '#22c55e' : '#f59e0b';
 		this._statusBadge = DOM.append(this.headerBar, DOM.$('span'));
 		this._statusBadge.textContent = status;
 		this._statusBadge.style.cssText = `font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}18;color:${statusColor};font-weight:500;`;
