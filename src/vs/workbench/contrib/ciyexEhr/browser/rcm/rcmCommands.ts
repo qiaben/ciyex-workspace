@@ -9,7 +9,7 @@ import { localize2 } from '../../../../../nls.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { ICommandService, CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { ICiyexRcmApiService, CONTEXT_RCM_INSTALLED, RCM_APP_SLUG } from './rcmApiService.js';
@@ -143,4 +143,24 @@ registerAction2(class extends Action2 {
 			notifications.notify({ severity: Severity.Error, message: `Eligibility check failed: ${e instanceof Error ? e.message : e}` });
 		}
 	}
+});
+
+/**
+ * Subscription toggle driven by the bundled `ciyex-rcm` extension.
+ *
+ * The extension's activate() calls `ciyex.rcm.registerSubscription` and its
+ * deactivate() calls `ciyex.rcm.unregisterSubscription`, mirroring how the
+ * payment-gateway extensions announce themselves via `ciyex.payment.registerGateway`.
+ * Enabling the extension in the Extensions view therefore switches the org into
+ * RCM subscription mode (Billing (RCM) sidebar, claims, denials, ERA posting),
+ * and disabling it drops back to the non-subscription "lite" billing that ships
+ * in the Payments editor. These commands are internal (f1:false) — users toggle
+ * RCM by enabling/disabling the extension, not by running a command.
+ */
+CommandsRegistry.registerCommand('ciyex.rcm.registerSubscription', (accessor: ServicesAccessor) => {
+	accessor.get(ICiyexInstallationsService).setExtensionEnabled(RCM_APP_SLUG, true);
+});
+
+CommandsRegistry.registerCommand('ciyex.rcm.unregisterSubscription', (accessor: ServicesAccessor) => {
+	accessor.get(ICiyexInstallationsService).setExtensionEnabled(RCM_APP_SLUG, false);
 });

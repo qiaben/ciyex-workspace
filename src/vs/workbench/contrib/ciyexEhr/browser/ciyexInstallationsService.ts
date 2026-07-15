@@ -33,10 +33,23 @@ export interface ICiyexInstallationsService {
 	readonly onDidChangeInstallations: Event<void>;
 	readonly installations: readonly InstalledApp[];
 	readonly loaded: boolean;
-	/** True if the appSlug has an active installation for the current org. */
+	/**
+	 * True if the app is available to the org — either an active marketplace
+	 * installation exists, OR the app's bundled workbench extension is enabled
+	 * (see {@link setExtensionEnabled}). The extension path lets a feature like
+	 * RCM be toggled on/off straight from the Extensions view, exactly like
+	 * telehealth and the payment gateways, without a marketplace round-trip.
+	 */
 	isInstalled(appSlug: string): boolean;
 	getInstallation(appSlug: string): InstalledApp | undefined;
 	loadInstallations(): Promise<void>;
+	/**
+	 * Record whether the app's workbench extension is currently enabled. Called
+	 * by the extension's activate()/deactivate() (via a workbench command) so
+	 * enabling/disabling it in the Extensions view flips the feature live. Fires
+	 * {@link onDidChangeInstallations} so context keys and gated UI update.
+	 */
+	setExtensionEnabled(appSlug: string, enabled: boolean): void;
 	reset(): void;
 }
 
@@ -54,6 +67,8 @@ export class CiyexInstallationsService extends Disposable implements ICiyexInsta
 
 	private _installations: InstalledApp[] = [];
 	private _loaded = false;
+	/** appSlugs whose bundled workbench extension is currently enabled. */
+	private readonly _extensionEnabled = new Set<string>();
 
 	constructor(@ICiyexApiService private readonly apiService: ICiyexApiService) {
 		super();
@@ -63,7 +78,14 @@ export class CiyexInstallationsService extends Disposable implements ICiyexInsta
 	get loaded(): boolean { return this._loaded; }
 
 	isInstalled(appSlug: string): boolean {
+		if (this._extensionEnabled.has(appSlug)) { return true; }
 		return this._installations.some(p => p.appSlug === appSlug && p.status === 'active');
+	}
+
+	setExtensionEnabled(appSlug: string, enabled: boolean): void {
+		const changed = enabled ? !this._extensionEnabled.has(appSlug) : this._extensionEnabled.has(appSlug);
+		if (enabled) { this._extensionEnabled.add(appSlug); } else { this._extensionEnabled.delete(appSlug); }
+		if (changed) { this._onDidChangeInstallations.fire(); }
 	}
 
 	getInstallation(appSlug: string): InstalledApp | undefined {
