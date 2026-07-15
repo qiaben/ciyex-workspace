@@ -2408,8 +2408,15 @@ export class PatientSnapshotEditor extends EditorPane {
 
 	/** Vitals recorded during today's visit only — the redesign deliberately
 	 *  hides older imported readings from the "Today's Vitals" card. */
-	private _todaysVitals(vit: Record<string, unknown>[]): Record<string, unknown>[] {
-		return vit.filter(v => this._isToday(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date));
+	/** Vitals recorded for the given visit date (falls back to today when the
+	 *  date is missing/unparsable). The inline vitals save stamps readings with
+	 *  the VIEWED APPOINTMENT'S date — so every consumer (workflow strip, prep
+	 *  guard, vitals card, history split) must scope by that same date. A
+	 *  today-only filter left the Record Vitals step grey after saving vitals
+	 *  for a visit on any other day (QA, stage: future-dated appointment). */
+	private _vitalsOnDate(vit: Record<string, unknown>[], dateRaw: string): Record<string, unknown>[] {
+		const dateRef = dateRaw && !isNaN(new Date(dateRaw).getTime()) ? dateRaw : new Date();
+		return vit.filter(v => this._isSameDay(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date, dateRef));
 	}
 
 	/** Best-effort recency timestamp (ms) for a vitals reading — used to pick the
@@ -2459,7 +2466,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * Map an encounter-form Composition's `vitals_*` fields onto the FHIR-vitals
 	 * record shape the Today's Vitals card reads (heightCm/weightKg/bpSystolic/…).
 	 * This is the inverse of EncounterFormEditor._mapLatestVitals. Stamps the
-	 * record with the encounter date so `_todaysVitals` keeps it when it is today's.
+	 * record with the encounter date so `_vitalsOnDate` keeps it with that visit's readings.
 	 * Returns null when the composition carries no vitals at all.
 	 */
 	private _compositionVitalsRecord(comp: Record<string, unknown>, encDate: unknown): Record<string, unknown> | null {
@@ -3038,7 +3045,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const missing: string[] = [];
 		if (!['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status)) { missing.push('Check In'); }
 		if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
-		if (this._todaysVitals(this._lastLoadedVitals).length === 0) { missing.push('Record Vitals'); }
+		if (this._vitalsOnDate(this._lastLoadedVitals, String(apt.start || apt.startTime || '')).length === 0) { missing.push('Record Vitals'); }
 		return missing;
 	}
 
@@ -3557,7 +3564,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		const location = this._apptLocationName(apt);
 		const room = String(apt.room || apt.roomName || '').trim();
 		const provider = String(apt.providerName || apt.practitionerName || '').trim();
-		const hasEncounter = !!(apt.encounterId);
+		// Mirrors the header pill's strict-order gate (hasEnc0): some backends
+		// attach an encounter id at booking/check-in, but the visit's encounter
+		// only exists for the workflow once the visit is Completed — an ungated
+		// check here showed "Encounter: Created" on a just-booked visit (QA, stage).
+		const hasEncounter = hasEnc0;
 		const statusRaw = String(apt.status || apt.appointmentStatus || '').trim();
 		const statusStr = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : '—';
 
@@ -3834,6 +3845,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	private _buildVisitStages(apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): { stages: VisitStage[]; currentIdx: number } {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
+		const startRaw = String(apt.start || apt.startTime || '');
 
 		const completed = PatientSnapshotEditor._isCompletedStatus(apptStatus);
 		// The encounter belongs to this visit ONLY when it is linked to the
@@ -3862,7 +3874,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const checkedIn = ['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider', 'completed', 'fulfilled', 'finished'].includes(apptStatus) || completed;
 		const room = String(apt.room || apt.roomName || '').trim();
 		const roomAssigned = !!room || completed;
-		const vitalsRecorded = this._todaysVitals(vit).length > 0;
+		const vitalsRecorded = this._vitalsOnDate(vit, startRaw).length > 0;
 		const vitalsDone = vitalsRecorded || completed;
 		const hasFeeSheet = !!st.feeSheet;
 		// Billing turns done ONLY when THIS visit's fee sheet was actually sent to
@@ -3893,7 +3905,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		});
 		const paid = billed && (fsPaymentStatus === 'paid' || (fsTotal > 0 && fsTotalPaid >= fsTotal) || visitPayment);
 
-		const startRaw = String(apt.start || apt.startTime || '');
 		let whenStr = 'Booked';
 		if (startRaw) { try { whenStr = new Date(startRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { /* keep default */ } }
 
@@ -4257,8 +4268,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// for that date shows; if nothing was recorded for the date, the card stays
 		// blank (so a future appointment with no visit yet shows no vitals). With no
 		// appointment date, fall back to today.
-		const dateRef = apptDateRaw && !isNaN(new Date(apptDateRaw).getTime()) ? apptDateRaw : new Date();
-		const dateVitals = vit.filter(v => this._isSameDay(v.recordedAt || v.effectiveDateTime || v.recordedDate || v.dateRecorded || v.date, dateRef));
+		const dateVitals = this._vitalsOnDate(vit, apptDateRaw ?? '');
 		const candidates = [...dateVitals, ...(visitVitals ? [visitVitals] : [])];
 		candidates.sort((a, b) => this._vitalTime(b) - this._vitalTime(a));
 		const latest = (candidates[0] ?? undefined) as Record<string, unknown> | undefined;
@@ -4465,8 +4475,8 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** "View historical vitals" link — older readings live in a popup so they
 	 *  don't clutter the today's-visit view. */
 	private _renderVitalsHistoryLink(body: HTMLElement, vit: Record<string, unknown>[]): void {
-		const todaysIds = new Set(this._todaysVitals(vit).map(v => String(v.id ?? v.fhirId ?? '')));
-		const history = vit.filter(v => !todaysIds.has(String(v.id ?? v.fhirId ?? '')));
+		const visitIds = new Set(this._vitalsOnDate(vit, this._currentApptDateRaw).map(v => String(v.id ?? v.fhirId ?? '')));
+		const history = vit.filter(v => !visitIds.has(String(v.id ?? v.fhirId ?? '')));
 		if (history.length === 0) { return; }
 		const link = DOM.append(body, DOM.$('button')) as HTMLButtonElement;
 		link.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:12px;padding:6px 0;background:transparent;border:none;color:var(--vscode-textLink-foreground,#3b9edd);font-size:12px;font-weight:600;cursor:pointer;';
