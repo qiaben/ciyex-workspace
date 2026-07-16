@@ -182,7 +182,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections));
+					this.formSections = EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections)));
 					return;
 				}
 			}
@@ -196,13 +196,26 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections));
+				this.formSections = EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections)));
 				return;
 			}
 		} catch { /* fall through */ }
 
 		// 3) Hardcoded default
 		this.formSections = EncounterFormEditor._defaultSections();
+	}
+
+	/**
+	 * Drop every Pain Level field regardless of which config shipped it — the
+	 * local defaults no longer carry one, but the backend tab_field_config (and
+	 * legacy local encounter.json files) may still ship `vitals_pain_level` /
+	 * "Pain Level" variants. Product decision: the encounter form does not
+	 * capture a pain score.
+	 */
+	private static _stripPainLevel(sections: FieldSection[]): FieldSection[] {
+		const isPain = (f: { key?: string; label?: string }): boolean =>
+			/pain/i.test(f.key || '') || /\bpain\b/i.test(f.label || '');
+		return sections.map(s => ({ ...s, fields: (s.fields || []).filter(f => !isPain(f)) }));
 	}
 
 	/**
@@ -322,7 +335,9 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'vitals_weight', label: 'Weight (kg)', type: 'number', placeholder: 'kg' },
 					{ key: 'vitals_height', label: 'Height (cm)', type: 'number', placeholder: 'cm' },
 					{ key: 'vitals_bmi', label: 'BMI', type: 'number', placeholder: 'Auto-calculated' },
-					{ key: 'vitals_pain_level', label: 'Pain Level', type: 'number', placeholder: '0-10' },
+					// Pain Level intentionally omitted (product decision — mirrors the
+					// snapshot's Edit Encounter drawer). _stripPainLevel also drops any
+					// copy the backend tab_field_config ships.
 					{ key: 'vitals_notes', label: 'Notes', type: 'text', colSpan: 2, placeholder: 'Additional notes...' },
 				]
 			},
@@ -680,6 +695,28 @@ export class EncounterFormEditor extends EditorPane {
 		'procedures': '\u2702\uFE0F', 'billing': '\u{1F4B3}', 'fee-schedule': '\u{1F4B0}',
 		'assigned-providers': '\u{1F468}\u200D\u2695\uFE0F', 'signoff': '\u2705', 'signature': '\u{1F58A}\uFE0F',
 	};
+
+	/** Same icon set keyed by normalised section TITLE - the backend
+	 *  tab_field_config invents its own section keys (so the key lookup above
+	 *  misses), which is why Physical Exam / Family History etc. rendered
+	 *  without icons in the TOC (QA ask: every section carries an icon). */
+	private static SECTION_TITLE_ICONS: Record<string, string> = {
+		'chiefcomplaint': '\u{1F6A8}', 'historyofpresentillness': '\u{1F4DD}', 'reviewofsystems': '\u{1F4CB}',
+		'pastmedicalsurgicalhistory': '\u{1F4DA}', 'pastmedicalhistory': '\u{1F4DA}', 'familyhistory': '\u{1F465}',
+		'socialhistory': '\u{1F3E0}', 'vitals': '\u2764\uFE0F', 'physicalexam': '\u{1F52C}',
+		'assessmentdiagnosis': '\u{1F9E0}', 'assessment': '\u{1F9E0}', 'plan': '\u{1F4C4}',
+		'providernotes': '\u270D\uFE0F', 'procedurescoding': '\u2702\uFE0F', 'procedures': '\u2702\uFE0F',
+		'billing': '\u{1F4B3}', 'feeschedule': '\u{1F4B0}', 'signoff': '\u2705', 'signature': '\u{1F58A}\uFE0F',
+	};
+
+	/** Icon for a section: key lookup, then normalised-title lookup, then a
+	 *  generic document fallback, so every TOC row and section header carries one. */
+	private static _sectionIcon(sec: FieldSection): string {
+		const byKey = EncounterFormEditor.SECTION_ICONS[sec.key];
+		if (byKey) { return byKey; }
+		const t = (sec.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+		return EncounterFormEditor.SECTION_TITLE_ICONS[t] || '\u{1F4C4}';
+	}
 
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
 	private sectionCards = new Map<string, HTMLElement>();
@@ -1194,7 +1231,7 @@ export class EncounterFormEditor extends EditorPane {
 
 		for (const sec of this.formSections) {
 			if (sec.visible === false) { continue; }
-			const secIcon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
+			const secIcon = EncounterFormEditor._sectionIcon(sec);
 
 			const item = DOM.append(this.tocNav, DOM.$('div'));
 			item.setAttribute('data-toc', sec.key);
@@ -1329,7 +1366,7 @@ export class EncounterFormEditor extends EditorPane {
 			const chevron = DOM.append(header, DOM.$('span'));
 			chevron.style.cssText = 'font-size:10px;transition:transform 0.15s;';
 
-			const secIcon = EncounterFormEditor.SECTION_ICONS[sec.key] || '';
+			const secIcon = EncounterFormEditor._sectionIcon(sec);
 			if (secIcon) {
 				const iconEl = DOM.append(header, DOM.$('span'));
 				iconEl.textContent = secIcon;

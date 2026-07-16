@@ -243,9 +243,35 @@ abstract class TvDisplayEditorBase extends EditorPane {
 		// schedule mixed together.
 		this._renderLocationFilter(actions);
 
-		// Refresh-now
+		// Refresh-now. The reload is fast enough that a silent click looked like
+		// a dead button (QA) — spin the icon, swap the label to "Refreshing..."
+		// and disable the button while the data reloads so the action is visible,
+		// then repaint the board with the fresh schedule.
 		const refreshBtn = this._makeIconButton(actions, 'Refresh', 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5', 'Refresh');
-		refreshBtn.addEventListener('click', () => { void this._loadAppointments(); });
+		refreshBtn.addEventListener('click', async () => {
+			if (refreshBtn.disabled) { return; }
+			refreshBtn.disabled = true;
+			refreshBtn.style.opacity = '0.6';
+			refreshBtn.style.cursor = 'default';
+			// _makeIconButton appends exactly [svg, label span] — grab them directly.
+			const iconEl = refreshBtn.firstElementChild as SVGSVGElement | null;
+			const labelEl = refreshBtn.lastElementChild as HTMLElement | null;
+			if (labelEl && labelEl !== iconEl) { labelEl.textContent = 'Refreshing...'; }
+			const spin = iconEl?.animate(
+				[{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }],
+				{ duration: 800, iterations: Infinity },
+			);
+			try {
+				await Promise.all([this._loadReferenceData(), this._loadAppointments()]);
+				this._renderMain();
+			} finally {
+				spin?.cancel();
+				refreshBtn.disabled = false;
+				refreshBtn.style.opacity = '1';
+				refreshBtn.style.cursor = 'pointer';
+				if (labelEl && labelEl !== iconEl) { labelEl.textContent = 'Refresh'; }
+			}
+		});
 
 		// Fullscreen toggle — label reflects the current state.
 		const fsLabel = this._cssFullscreen ? 'Exit Fullscreen' : 'Fullscreen';

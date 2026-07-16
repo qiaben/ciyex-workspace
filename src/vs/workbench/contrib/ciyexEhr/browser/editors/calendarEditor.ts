@@ -1681,7 +1681,7 @@ export class CalendarEditor extends EditorPane {
 		]) as HTMLSelectElement;
 
 		// Notes
-		const notesEl = field('Reason / Notes', 'notes', 'textarea', '', false) as HTMLTextAreaElement;
+		const notesEl = field('Reason / Chief Complaint', 'notes', 'textarea', '', false) as HTMLTextAreaElement;
 
 		// Buttons — pinned to the bottom of the scrollable form so Cancel /
 		// Schedule Appointment stay visible and reachable no matter how far the

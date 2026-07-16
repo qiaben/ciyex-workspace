@@ -643,41 +643,45 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ key: 'fh_notes', label: 'FH: Additional Notes', kind: 'textarea', widthPct: 100 },
 
 			// --- Social History ---
+			// Each field carries a descriptive placeholder (QA: the drawer's
+			// Social History inputs all rendered blank / with a bare "-"). For the
+			// selects the empty option doubles as the placeholder row, mirroring
+			// how the calendar dropdowns surface their placeholder as a clear row.
 			{
-				key: 'sh_smoking', label: 'SH: Smoking', kind: 'select', widthPct: 33, options: [
-					{ value: '', label: '-' },
+				key: 'sh_smoking', label: 'SH: Smoking', kind: 'select', placeholder: 'Select smoking status...', widthPct: 33, options: [
+					{ value: '', label: 'Select smoking status...' },
 					{ value: 'never', label: 'Never' },
 					{ value: 'former', label: 'Former' },
 					{ value: 'current', label: 'Current' },
 				]
 			},
 			{
-				key: 'sh_alcohol', label: 'SH: Alcohol', kind: 'select', widthPct: 33, options: [
-					{ value: '', label: '-' },
+				key: 'sh_alcohol', label: 'SH: Alcohol', kind: 'select', placeholder: 'Select alcohol use...', widthPct: 33, options: [
+					{ value: '', label: 'Select alcohol use...' },
 					{ value: 'none', label: 'None' },
 					{ value: 'social', label: 'Social' },
 					{ value: 'daily', label: 'Daily' },
 				]
 			},
 			{
-				key: 'sh_exercise', label: 'SH: Exercise', kind: 'select', widthPct: 33, options: [
-					{ value: '', label: '-' },
+				key: 'sh_exercise', label: 'SH: Exercise', kind: 'select', placeholder: 'Select exercise frequency...', widthPct: 33, options: [
+					{ value: '', label: 'Select exercise frequency...' },
 					{ value: 'none', label: 'None' },
 					{ value: '1-2', label: '1-2x/week' },
 					{ value: '3-5', label: '3-5x/week' },
 					{ value: 'daily', label: 'Daily' },
 				]
 			},
-			{ key: 'sh_occupation', label: 'SH: Occupation', widthPct: 50 },
+			{ key: 'sh_occupation', label: 'SH: Occupation', placeholder: 'e.g., Teacher, Software Engineer...', widthPct: 50 },
 			{
-				key: 'sh_drugs', label: 'SH: Recreational Drugs', kind: 'select', widthPct: 50, options: [
-					{ value: '', label: '-' },
+				key: 'sh_drugs', label: 'SH: Recreational Drugs', kind: 'select', placeholder: 'Select drug use...', widthPct: 50, options: [
+					{ value: '', label: 'Select drug use...' },
 					{ value: 'none', label: 'None' },
 					{ value: 'past', label: 'Past' },
 					{ value: 'current', label: 'Current' },
 				]
 			},
-			{ key: 'sh_notes', label: 'SH: Additional Notes', kind: 'textarea', widthPct: 100 },
+			{ key: 'sh_notes', label: 'SH: Additional Notes', kind: 'textarea', placeholder: 'Additional social history notes...', widthPct: 100 },
 
 			// --- Assessment & Diagnosis ---
 			{ key: 'assessment_diagnoses', label: 'Diagnoses (ICD-10)', kind: 'textarea', placeholder: 'One diagnosis per line: e.g. E11.9 — Type 2 Diabetes', widthPct: 100 },

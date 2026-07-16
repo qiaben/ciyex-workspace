@@ -1418,19 +1418,22 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'provider', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider', required: true },
 					{ key: 'location', label: 'Location', type: 'lookup', placeholder: 'Search Location', required: true, lookupConfig: { endpoint: '/api/locations', searchable: true } },
 					{
+						// Trimmed to the SAME 7 statuses the calendar grid's Add
+						// Appointment dialog and the Appointments page workflow use
+						// (backend /api/appointments/status-options) — the test team
+						// flagged the extra FHIR states (Arrived / In Room / With
+						// Provider / Fulfilled) as unwanted here.
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Scheduled', value: 'scheduled' },
 							{ label: 'Confirmed', value: 'confirmed' },
-							{ label: 'Arrived', value: 'arrived' },
-							{ label: 'Checked In', value: 'checked-in' },
-							{ label: 'In Room', value: 'in-room' },
-							{ label: 'With Provider', value: 'with-provider' },
-							{ label: 'Fulfilled', value: 'fulfilled' },
-							{ label: 'Cancelled', value: 'cancelled' },
+							{ label: 'Checked-in', value: 'checked-in' },
+							{ label: 'Completed', value: 'fulfilled' },
+							{ label: 'Re-Scheduled', value: 'Re-Scheduled' },
 							{ label: 'No Show', value: 'noshow' },
+							{ label: 'Cancelled', value: 'cancelled' },
 						]
 					},
-					{ key: 'reason', label: 'Reason / Notes', type: 'textarea', colSpan: 2, placeholder: 'Reason for visit or scheduling notes…' },
+					{ key: 'reason', label: 'Reason / Chief Complaint', type: 'textarea', colSpan: 2, placeholder: 'Reason for visit or scheduling notes…' },
 				],
 			},
 		],
@@ -2669,6 +2672,20 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	/**
+	 * Expand a short FHIR v3-ActCode encounter class code ("AMB") to its full
+	 * form ("Ambulatory") — QA flagged the dashboard feed showing the raw short
+	 * form. Unknown values pass through unchanged.
+	 */
+	private static _encounterClassLabel(raw: string): string {
+		const full: Record<string, string> = {
+			AMB: 'Ambulatory', IMP: 'Inpatient', ACUTE: 'Inpatient Acute', NONAC: 'Inpatient Non-Acute',
+			EMER: 'Emergency', VR: 'Virtual', HH: 'Home Health', FLD: 'Field',
+			OBSENC: 'Observation', PRENC: 'Pre-Admission', SS: 'Short Stay',
+		};
+		return full[(raw || '').trim().toUpperCase()] || raw;
+	}
+
+	/**
 	 * The patient id to write to the clinical lab stores (/api/lab-order,
 	 * /api/lab-results) so a chart-created record carries the SAME patientId the
 	 * clinical Labs page and the snapshot use (the patient's DB id) — without it
@@ -3897,11 +3914,15 @@ export class PatientChartEditor extends EditorPane {
 				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F4CB}',
 				build: (e) => ({
-					title: `Encounter: ${this._displayText(e.visitType) || this._displayText(e.type) || 'Visit'}`,
+					// Expand the short v3-ActCode class code ("AMB") to its full form
+					// ("Ambulatory") and show the signing-workflow state (Signed /
+					// Unsigned) instead of the raw FHIR status ("in-progress") — the
+					// same vocabulary the Encounters tab and the snapshot use.
+					title: `Encounter: ${PatientChartEditor._encounterClassLabel(this._displayText(e.visitType) || this._displayText(e.type)) || 'Visit'}`,
 					description: this._displayText(e.providerName) || this._displayText(e.practitionerName) || '',
 					timestamp: this._formatDate(e.startDate || e.start) || '',
 					sortKey: this._toEpoch(e.startDate || e.start),
-					status: String(e.status || ''),
+					status: PatientChartEditor._encounterSignedLabel(e.status),
 					emoji: '\u{1F4CB}',
 				}),
 			},
@@ -8176,19 +8197,20 @@ export class PatientChartEditor extends EditorPane {
 
 			// Encounters are auto-created when an appointment is marked "Completed"
 			// (Appointments page) — they are never added or edited through the chart's
-			// generic inline dialog. Their actions expose "Open Chart" (the editable
+			// generic inline dialog. Their actions expose "Open Encounter" (the editable
 			// SOAP encounter form, which enforces Save / Sign & Lock — once signed the
-			// form is read-only) and "Visit Summary" (the read-only summary slide-over).
+			// form is read-only), "Record Vitals" (the same form, scrolled to the
+			// Vitals section) and "Visit Summary" (the read-only summary slide-over).
 			// The generic edit and delete actions are suppressed so the column
-			// shows exactly Open Chart + Visit Summary.
+			// shows exactly Open Encounter + Record Vitals + Visit Summary.
 			if (tab.key === 'encounters') {
 				const encId = (recordId || '').split('/').pop() || '';
 				onClick = undefined;
 				onDelete = undefined;
-				const openChart = (): void => {
+				const openEncounter = (section: string): void => {
 					if (!encId) { this._navigate('encounters'); return; }
 					this.editorService.openEditor(
-						new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter'),
+						new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter', section),
 						{},
 						SIDE_GROUP,
 					);
@@ -8202,7 +8224,9 @@ export class PatientChartEditor extends EditorPane {
 				};
 				extraActions = [
 					// allow-any-unicode-next-line
-					{ icon: '📋', title: 'Open Chart', color: '#3b82f6', onClick: openChart },
+					{ icon: '📋', title: 'Open Encounter', color: '#3b82f6', onClick: () => openEncounter('cc') },
+					// allow-any-unicode-next-line
+					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openEncounter('vitals') },
 					// allow-any-unicode-next-line
 					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: openSummary },
 				];
