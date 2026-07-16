@@ -230,6 +230,16 @@ export interface ClinicalEditorConfig {
 	searchPlaceholder?: string;
 	/** Form fields for create/edit dialog. If not set, no create/edit button is shown. */
 	formFields?: FormFieldDef[];
+	/**
+	 * Alternate edit-form schema for rows merged in from a foreign store (marked
+	 * `__readonly` by enrichItems). When set, those rows become editable through
+	 * this schema instead of the main `formFields` — e.g. the CDS module merges
+	 * patient-chart FHIR Flag alerts and edits them with Flag-shaped fields
+	 * (alertName/severity/notes) while CDS rules keep the rule schema. Pair with a
+	 * `buildItemUrl`/`beforeSave` that branch on `item['__readonly']` to target the
+	 * foreign store's endpoint and payload shape.
+	 */
+	readonlyEditFields?: FormFieldDef[];
 	/** Label for the create button. Default: "+ New" */
 	createLabel?: string;
 	/**
@@ -1226,8 +1236,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				acts.style.cssText = 'display:flex;gap:2px;';
 
 				// Rows merged from a foreign store (marked __readonly by enrichItems)
-				// can't be edited through this editor's form/PUT endpoint.
-				if (cfg.editable && cfg.formFields && item['__readonly'] !== true) {
+				// can't be edited through this editor's own form/PUT endpoint — but if
+				// the config supplies `readonlyEditFields`, they get their own edit form
+				// (routed to the foreign store via buildItemUrl/beforeSave).
+				const rowEditFields = item['__readonly'] === true ? cfg.readonlyEditFields : cfg.formFields;
+				if (cfg.editable && rowEditFields && rowEditFields.length > 0) {
 					const editBtn = DOM.append(acts, DOM.$('button'));
 					// allow-any-unicode-next-line
 					editBtn.textContent = '✏️';
@@ -1353,7 +1366,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	// ─── Form Dialog ───
 
 	protected async _openForm(item: Record<string, unknown> | null): Promise<void> {
-		if (!this.config.formFields) { return; }
+		if (!this.config.formFields && !this.config.readonlyEditFields) { return; }
 		// Optionally refetch full record by ID so the edit form has all relational fields.
 		if (item && this.config.refetchOnEdit && item.id !== undefined && item.id !== null) {
 			try {
@@ -1418,7 +1431,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		}
 
 		const cfg = this.config;
-		const fields = cfg.formFields!;
+		// Merged foreign-store rows (marked __readonly) edit through readonlyEditFields
+		// when supplied; everything else uses the main formFields schema.
+		const fields = (this.editingItem?.['__readonly'] === true && cfg.readonlyEditFields)
+			? cfg.readonlyEditFields
+			: cfg.formFields!;
 		const isEdit = this.editingItem !== null;
 
 		// Right-side slide-in form panel — matches the Tasks "+ New Task" pattern

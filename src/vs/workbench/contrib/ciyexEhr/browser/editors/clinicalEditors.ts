@@ -1751,18 +1751,38 @@ export class CdsEditor extends ClinicalListEditorBase {
 			const json = await res.json();
 			const flags = (json?.data?.content || json?.content || []) as Record<string, unknown>[];
 			if (!Array.isArray(flags) || flags.length === 0) { return; }
-			const flagRows = flags.map(f => ({
-				id: `flag-${f['id'] ?? f['fhirId'] ?? ''}`,
-				name: String(f['alertName'] || f['alert'] || 'Patient alert'),
-				ruleType: 'patient_alert',
-				triggerEvent: 'patient_chart',
-				actionType: 'alert',
-				severity: String(f['severity'] || ''),
-				status: String(f['status'] || ''),
-				isActive: String(f['status'] || '').toLowerCase() === 'active',
-				description: String(f['notes'] || ''),
-				__readonly: true,
-			}));
+			// The patient reference can arrive as a bare id, a "Patient/123" string,
+			// or a nested { reference } / { id } object — normalise to the raw id the
+			// patient-scoped Flag endpoint expects.
+			const pickPatientId = (f: Record<string, unknown>): string => {
+				const raw = f['patientId'] ?? f['patient'] ?? f['subject'] ?? f['patientRef'] ?? f['subjectReference'] ?? '';
+				const s = (raw && typeof raw === 'object')
+					? String((raw as Record<string, unknown>)['reference'] ?? (raw as Record<string, unknown>)['id'] ?? '')
+					: String(raw ?? '');
+				return s.replace(/^Patient\//, '').trim();
+			};
+			const flagRows = flags.map(f => {
+				const alertName = String(f['alertName'] || f['alert'] || 'Patient alert');
+				const notes = String(f['notes'] || '');
+				return {
+					id: `flag-${f['id'] ?? f['fhirId'] ?? ''}`,
+					name: alertName,
+					ruleType: 'patient_alert',
+					triggerEvent: 'patient_chart',
+					actionType: 'alert',
+					severity: String(f['severity'] || ''),
+					status: String(f['status'] || ''),
+					isActive: String(f['status'] || '').toLowerCase() === 'active',
+					description: notes,
+					// Flag-native keys the readonlyEditFields form seeds/saves from, plus
+					// the identifiers its patient-scoped GET/PUT/DELETE endpoint needs.
+					alertName,
+					notes,
+					__readonly: true,
+					__patientId: pickPatientId(f),
+					__recordId: String(f['id'] ?? f['fhirId'] ?? ''),
+				};
+			});
 			return items.concat(flagRows);
 		},
 		createDefaults: {
@@ -1773,7 +1793,41 @@ export class CdsEditor extends ClinicalListEditorBase {
 			conditions: [],
 			snoozeDays: 0,
 		},
-		beforeSave: (payload, _isEdit) => {
+		// GET-by-id / PUT / (via the Delete action) route merged patient-alert rows
+		// to the patient-scoped FHIR Flag endpoint; CDS rules keep /api/cds/rules/{id}.
+		buildItemUrl: (item) => item['__readonly'] === true
+			? `/api/fhir-resource/clinical-alerts/patient/${item['__patientId']}/${item['__recordId']}`
+			: `/api/cds/rules/${item['id']}`,
+		editTitle: (item) => item['__readonly'] === true ? 'Edit Patient Alert' : 'Edit Clinical Alert',
+		// Flag-shaped edit form for the merged patient-chart alert rows (they can't
+		// use the CDS-rule schema/endpoint). Mirrors the patient chart's Clinical
+		// Alerts fields so the same Flag resource is edited consistently.
+		readonlyEditFields: [
+			{ key: 'alertName', label: 'Alert', type: 'text', required: true, placeholder: 'Alert summary', width: 'span 2' },
+			// Shares CDS_SEVERITY_OPTIONS with the rest of the module.
+			{ key: 'severity', label: 'Severity', type: 'select', required: true, options: [...CDS_SEVERITY_OPTIONS] },
+			{
+				key: 'status', label: 'Status', type: 'select', options: [
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+					{ label: 'Entered in Error', value: 'entered-in-error' },
+				],
+			},
+			{ key: 'notes', label: 'Description', type: 'textarea', placeholder: 'Detailed description', width: 'span 2' },
+		],
+		beforeSave: (payload, _isEdit, editingItem) => {
+			// Merged patient-alert rows save as FHIR Flags, not CDS rules — return a
+			// clean Flag payload (the GET-by-id merge left CDS-rule + internal keys on
+			// the record that the Flag resource must not receive).
+			if (editingItem && editingItem['__readonly'] === true) {
+				const flag: Record<string, unknown> = { ...payload };
+				for (const k of ['__readonly', '__patientId', '__recordId', 'ruleType', 'triggerEvent', 'actionType', 'isActive', 'conditions', 'snoozeDays', 'appliesTo', 'type', 'name', 'description']) {
+					delete flag[k];
+				}
+				// The row id is the synthetic "flag-<id>"; the Flag PUT wants the real id.
+				flag['id'] = editingItem['__recordId'];
+				return flag;
+			}
 			const out: Record<string, unknown> = {};
 			for (const [k, v] of Object.entries(payload)) {
 				if (v === '' || v === null || v === undefined) { continue; }
@@ -2004,8 +2058,23 @@ export class CdsEditor extends ClinicalListEditorBase {
 		actions: [
 			// Issue #13: the Active/Inactive toggle now lives in the Status column
 			// (above), so the actions column only keeps Edit (editable) + Delete.
-			// allow-any-unicode-next-line
-			{ label: 'Delete', icon: '🗑️', visible: item => item['__readonly'] !== true, handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' }); if (r.confirmed) { await api.fetch(`/api/cds/rules/${item.id}`, { method: 'DELETE' }); reload(); } } },
+			// Delete works for CDS rules (/api/cds/rules) AND merged patient-alert
+			// rows (the patient-scoped FHIR Flag endpoint). Patient-alert rows only
+			// offer it when their patient reference resolved, so the URL is valid.
+			{
+				// allow-any-unicode-next-line
+				label: 'Delete', icon: '🗑️',
+				visible: item => item['__readonly'] !== true || !!item['__patientId'],
+				handler: async (item, api, reload, dlg) => {
+					const r = await dlg.confirm({ message: `Delete "${item.name}"?`, type: 'warning', primaryButton: 'Delete' });
+					if (!r.confirmed) { return; }
+					const url = item['__readonly'] === true
+						? `/api/fhir-resource/clinical-alerts/patient/${item['__patientId']}/${item['__recordId']}`
+						: `/api/cds/rules/${item.id}`;
+					await api.fetch(url, { method: 'DELETE' });
+					reload();
+				},
+			},
 		],
 	};
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(CdsEditor.ID, group, t, th, s, a, d); }
