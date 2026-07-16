@@ -9,7 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -590,7 +590,7 @@ export class DocScanningEditor extends EditorPane {
 				? await fetch(fileUrl)
 				: await this.apiService.fetch(fileUrl);
 			if (!res.ok) {
-				this.notificationService.error('Failed to download document');
+				this._notifyDownloadFailed(doc, await this._describeDownloadError(res));
 				return;
 			}
 			const blob = await res.blob();
@@ -601,9 +601,51 @@ export class DocScanningEditor extends EditorPane {
 			mainWindow.document.body.appendChild(a);
 			a.click();
 			setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
-		} catch {
-			this.notificationService.error('Failed to download document');
+		} catch (err) {
+			// Network/blob failures (offline, CORS, aborted) land here — surface the
+			// underlying message when we have one so the error isn't opaque.
+			this._notifyDownloadFailed(doc, err instanceof Error ? err.message : undefined);
 		}
+	}
+
+	/**
+	 * Derive a human-readable reason from a failed download response. The files
+	 * proxy returns a JSON error body ({message|error|detail}) on failure, so we
+	 * surface that (or a status-specific hint) instead of a bare "Failed to
+	 * download" — most stage failures are the stored file no longer being present
+	 * on the server, which the user needs to be told.
+	 */
+	private async _describeDownloadError(res: Response): Promise<string> {
+		if (res.status === 404) { return 'The file was not found on the server — it may have been moved or deleted.'; }
+		if (res.status === 401 || res.status === 403) { return 'You are not authorized to download this file.'; }
+		try {
+			if ((res.headers.get('content-type') || '').includes('application/json')) {
+				const body = await res.json() as Record<string, unknown>;
+				const msg = body?.['message'] ?? body?.['error'] ?? body?.['detail'];
+				if (msg) { return String(msg); }
+			}
+		} catch { /* fall through to the generic status message */ }
+		return `The server returned an error (HTTP ${res.status}). The file may no longer be available.`;
+	}
+
+	/**
+	 * Show a clear download-failure notification with a Retry action, so the user
+	 * can re-attempt in place (e.g. after a transient server error) without
+	 * re-navigating to the document.
+	 */
+	private _notifyDownloadFailed(doc: ScannedDocument, detail?: string): void {
+		const name = doc.originalFileName || doc.fileName || 'document';
+		const reason = detail ? ` ${detail}` : ' The file may no longer be available on the server.';
+		this.notificationService.notify({
+			severity: Severity.Error,
+			message: `Couldn't download "${name}".${reason}`,
+			actions: {
+				primary: [{
+					id: 'ciyex.docScanning.retryDownload', label: 'Retry', tooltip: '', class: undefined, enabled: true,
+					run: () => { void this._download(doc); },
+				}],
+			},
+		});
 	}
 
 	private async _delete(doc: ScannedDocument): Promise<void> {
