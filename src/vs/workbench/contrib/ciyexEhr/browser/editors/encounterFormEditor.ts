@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
+import { SH_SMOKING_OPTIONS, SH_ALCOHOL_OPTIONS, SH_EXERCISE_OPTIONS, SH_DRUGS_OPTIONS } from './socialHistoryOptions.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -365,25 +366,17 @@ export class EncounterFormEditor extends EditorPane {
 			{
 				key: 'sh', title: 'Social History', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
 					{
-						key: 'sh_smoking', label: 'Smoking', type: 'select', options: [
-							{ label: 'Never', value: 'never' }, { label: 'Former', value: 'former' }, { label: 'Current', value: 'current' },
-						]
+						key: 'sh_smoking', label: 'Smoking', type: 'select', options: [...SH_SMOKING_OPTIONS]
 					},
 					{
-						key: 'sh_alcohol', label: 'Alcohol', type: 'select', options: [
-							{ label: 'None', value: 'none' }, { label: 'Social', value: 'social' }, { label: 'Daily', value: 'daily' },
-						]
+						key: 'sh_alcohol', label: 'Alcohol', type: 'select', options: [...SH_ALCOHOL_OPTIONS]
 					},
 					{
-						key: 'sh_exercise', label: 'Exercise', type: 'select', options: [
-							{ label: 'None', value: 'none' }, { label: '1-2x/week', value: '1-2' }, { label: '3-5x/week', value: '3-5' }, { label: 'Daily', value: 'daily' },
-						]
+						key: 'sh_exercise', label: 'Exercise', type: 'select', options: [...SH_EXERCISE_OPTIONS]
 					},
 					{ key: 'sh_occupation', label: 'Occupation', type: 'text' },
 					{
-						key: 'sh_drugs', label: 'Recreational Drugs', type: 'select', options: [
-							{ label: 'None', value: 'none' }, { label: 'Past', value: 'past' }, { label: 'Current', value: 'current' },
-						]
+						key: 'sh_drugs', label: 'Recreational Drugs', type: 'select', options: [...SH_DRUGS_OPTIONS]
 					},
 					{ key: 'sh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 3 },
 				]
