@@ -549,6 +549,78 @@ export { DocScanningEditor } from './documentScanningEditor.js';
 
 
 /**
+ * True when the row's `createdAt` timestamp falls within the last `hours`.
+ * Rows with a missing/unparseable timestamp are excluded so a date-window
+ * filter never surfaces undated entries.
+ */
+function auditRowWithinHours(item: Record<string, unknown>, hours: number): boolean {
+	const raw = item['createdAt'];
+	if (!raw) { return false; }
+	const t = new Date(String(raw)).getTime();
+	if (isNaN(t)) { return false; }
+	return t >= Date.now() - hours * 60 * 60 * 1000;
+}
+
+/** Past-tense verb for each audit action code, for human-readable details. */
+const AUDIT_ACTION_VERBS: Record<string, string> = {
+	VIEW: 'Viewed', CREATE: 'Created', UPDATE: 'Updated', DELETE: 'Deleted',
+	SIGN: 'Signed', PRINT: 'Printed', EXPORT: 'Exported',
+};
+
+/**
+ * Turns a raw audit `details` value (a JSON string/object of method + endpoint +
+ * path-variable ids) together with the row's action/resourceType into a
+ * human-readable sentence like "Updated CarePlan ID 6". Falls back progressively
+ * so a sparse row still renders something meaningful, and only shows the raw text
+ * as a last resort.
+ */
+function formatAuditDetails(value: unknown, item: Record<string, unknown>): string {
+	// Parse `details` into an object when possible (it is usually a JSON string).
+	let d: Record<string, unknown> | undefined;
+	if (value && typeof value === 'object') {
+		d = value as Record<string, unknown>;
+	} else if (typeof value === 'string' && value.trim().startsWith('{')) {
+		try { d = JSON.parse(value); } catch { d = undefined; }
+	}
+
+	const action = String(item['action'] || '').toUpperCase();
+	const verb = AUDIT_ACTION_VERBS[action] || (action ? action.charAt(0) + action.slice(1).toLowerCase() : '');
+	const resource = String(item['resourceType'] || '').trim();
+
+	// Resolve an id: explicit id-like keys in details, else the row's resourceId,
+	// else a trailing numeric segment of the endpoint (e.g. ".../care-plans/6").
+	let id = '';
+	if (d) {
+		for (const k of Object.keys(d)) {
+			if (/id$/i.test(k)) {
+				const v = d[k];
+				if (typeof v === 'string' || typeof v === 'number') { id = String(v); break; }
+			}
+		}
+	}
+	if (!id) {
+		const rid = item['resourceId'];
+		if (rid !== undefined && rid !== null && String(rid).trim() && String(rid) !== 'null') { id = String(rid); }
+	}
+	if (!id && d && typeof d['endpoint'] === 'string') {
+		const m = (d['endpoint'] as string).match(/\/(\d+)\/?$/);
+		if (m) { id = m[1]; }
+	}
+
+	// Compose the friendly sentence when we have at least a verb + resource.
+	if (verb && resource) {
+		return id ? `${verb} ${resource} ID ${id}` : `${verb} ${resource}`;
+	}
+	// Progressive fallbacks so the column is never a raw JSON blob when avoidable.
+	if (verb && d && typeof d['method'] === 'string') { return `${verb} (${d['method']})`; }
+	if (verb) { return verb; }
+	if (d && typeof d['method'] === 'string') { return String(d['method']); }
+	if (!value) { return '—'; }
+	const s = typeof value === 'string' ? value : JSON.stringify(value);
+	return s.length > 60 ? s.slice(0, 60) + '…' : s;
+}
+
+/**
  * Audit Log Editor — System activity and compliance audit trail.
  * Read-only view with filtering.
  */
@@ -563,6 +635,23 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 		clientSideFilter: ['action', 'resourceType', 'resourceName', 'userName', 'userRole', 'patientName', 'ipAddress', 'id'],
 		editable: false,
 		filterKey: 'action',
+		// The stats endpoint (/api/audit-log/stats) returns three numeric totals —
+		// total24h / total7d / total30d — which render as clickable KPI cards. These
+		// are DATE-RANGE aggregates, not `action` values, so without an explicit map
+		// the generic card handler would set the status filter to e.g. 'total7d' and
+		// match it against the `action` column (which never equals 'total7d'),
+		// emptying the list so the card appears to do nothing. Map each total to a
+		// synthetic filter value backed by a date-window matcher below.
+		statsFilterMap: {
+			total24h: 'LAST_24H',
+			total7d: 'LAST_7D',
+			total30d: 'LAST_30D',
+		},
+		statusMatchers: {
+			LAST_24H: item => auditRowWithinHours(item, 24),
+			LAST_7D: item => auditRowWithinHours(item, 24 * 7),
+			LAST_30D: item => auditRowWithinHours(item, 24 * 30),
+		},
 		// Columns ordered to match ciyex-ehr-ui: Timestamp, User, Role, Action, Resource Type, Resource, Patient, IP, Details
 		columns: [
 			{ key: 'createdAt', label: 'Timestamp', width: '130px' },
@@ -619,12 +708,10 @@ export class AuditLogEditor extends ClinicalListEditorBase {
 				return value.toUpperCase();
 			}
 			if (key === 'details') {
-				if (!value) { return '—'; }
-				if (typeof value === 'object') {
-					try { return JSON.stringify(value).slice(0, 60); } catch { return '—'; }
-				}
-				const s = String(value);
-				return s.length > 60 ? s.slice(0, 60) + '…' : s;
+				// Raw audit details are a JSON blob ({"method":...,"endpoint":...}) that
+				// is unreadable in the table; render a human-readable summary instead
+				// (e.g. "Updated CarePlan ID 6").
+				return formatAuditDetails(value, item);
 			}
 			return String(value ?? '');
 		},
