@@ -93,17 +93,32 @@ export class CiyexInstallationsService extends Disposable implements ICiyexInsta
 	}
 
 	async loadInstallations(): Promise<void> {
-		try {
-			interface InstallationsEnvelope {
-				success?: boolean;
-				data?: InstalledApp[];
+		interface InstallationsEnvelope {
+			success?: boolean;
+			data?: InstalledApp[];
+		}
+		// This is called once per session from the auth flow. A single transient
+		// failure (Cloudflare challenge, network blip, cold backend) previously
+		// left installations empty for the whole session with no recovery — which
+		// silently disabled paid features like RCM and telehealth even for orgs
+		// that own them. Retry a few times with backoff before giving up.
+		const attempts = 4;
+		for (let i = 0; i < attempts; i++) {
+			try {
+				const raw = await this.apiService.fetchJson<InstallationsEnvelope | InstalledApp[]>('/api/app-installations');
+				const list = Array.isArray(raw) ? raw : (raw.data || []);
+				this._installations = list;
+				this._loaded = true;
+				this._onDidChangeInstallations.fire();
+				return;
+			} catch (err) {
+				if (i === attempts - 1) {
+					console.warn('[CiyexInstallations] Failed to load installations after retries:', err);
+					this._installations = [];
+				} else {
+					await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+				}
 			}
-			const raw = await this.apiService.fetchJson<InstallationsEnvelope | InstalledApp[]>('/api/app-installations');
-			const list = Array.isArray(raw) ? raw : (raw.data || []);
-			this._installations = list;
-		} catch (err) {
-			console.warn('[CiyexInstallations] Failed to load installations:', err);
-			this._installations = [];
 		}
 		this._loaded = true;
 		this._onDidChangeInstallations.fire();
