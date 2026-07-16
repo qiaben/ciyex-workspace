@@ -1839,12 +1839,18 @@ export class CdsEditor extends ClinicalListEditorBase {
 			delete out['type'];
 			// snoozeDays must be a number.
 			if (out['snoozeDays'] !== undefined) { out['snoozeDays'] = Number(out['snoozeDays']) || 0; }
-			// Mirror isActive ↔ status.
-			if (out['isActive'] !== undefined) {
-				// isActive was set by the toggle field — derive status from it.
+			// Mirror status ↔ isActive. The edit form exposes `status`
+			// (active/inactive/entered_in_error) as the user's explicit choice, so it
+			// MUST take precedence: `mergeOnEdit` also merges the record's existing
+			// `isActive` into the payload, and deriving status FROM that stale isActive
+			// silently reverted an Active→Inactive edit back to Active (QA: status
+			// change never reflected in the table after save). Derive isActive from
+			// the submitted status; only fall back to the reverse when no status field
+			// was submitted (e.g. an isActive-only payload).
+			if (typeof out['status'] === 'string' && out['status'] !== '') {
+				out['isActive'] = out['status'] === 'active';
+			} else if (out['isActive'] !== undefined) {
 				out['status'] = out['isActive'] ? 'active' : 'inactive';
-			} else if (typeof out['status'] === 'string') {
-				out['isActive'] = (out['status'] as string) === 'active';
 			}
 			// conditions must always be present.
 			if (out['conditions'] === undefined) { out['conditions'] = []; }
