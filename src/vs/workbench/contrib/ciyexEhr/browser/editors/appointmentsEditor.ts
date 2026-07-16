@@ -1481,30 +1481,25 @@ export class AppointmentsEditor extends EditorPane {
 				return b;
 			};
 
-			// The chart actions (Open Chart, Record Vitals, Visit Summary) all
-			// operate on the appointment's encounter, which only exists once the
-			// visit is marked "Completed" — the status that triggers encounter
-			// creation (see `_updateStatus`). Before then there is nothing to
-			// chart, so these icons stay hidden until the appointment is completed.
-			const isCompleted = (row.status || '').toLowerCase() === 'completed';
-
-			// Telehealth visits always keep their join control so the user can
-			// enter the live video session; the chart actions still wait for the
-			// completed encounter just like in-person visits.
+			// Telehealth visits keep a Join control so the user can enter the live
+			// video session. It sits first, ahead of the chart actions.
 			if ((row.visitType || '').toLowerCase() === 'telehealth') {
 				iconBtn('device-camera-video', 'Join Video Visit', '#10b981', () => this._joinTelehealth(row));
-				if (isCompleted) {
-					// allow-any-unicode-next-line
-					iconBtn('📋', 'Open Encounter', '#3b82f6', () => this._openVisitChart(row));
-				}
-			} else if (isCompleted) {
-				// allow-any-unicode-next-line
-				iconBtn('📋', 'Open Encounter', '#3b82f6', () => this._openVisitChart(row));
-				// allow-any-unicode-next-line
-				iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
-				// allow-any-unicode-next-line
-				iconBtn('🗒', 'Visit Summary', '#f59e0b', () => this._openVisitSummary(row));
 			}
+
+			// Chart actions mirror the web EHR-UI, which shows them for EVERY
+			// appointment regardless of status. The handlers create the encounter on
+			// demand (see `_resolveAppointmentEncounter`, which POSTs one when the
+			// appointment has none) rather than waiting for the visit to be marked
+			// "Completed", so they must stay visible for Scheduled/Booked rows too.
+			// Gating them behind an isCompleted check left the Actions column empty
+			// for every not-yet-completed appointment.
+			// allow-any-unicode-next-line
+			iconBtn('📋', 'Open Encounter', '#3b82f6', () => this._openVisitChart(row));
+			// allow-any-unicode-next-line
+			iconBtn('❤', 'Record Vitals', '#a855f7', () => this._openVitalsForRow(row));
+			// allow-any-unicode-next-line
+			iconBtn('🗒', 'Visit Summary', '#f59e0b', () => this._openVisitSummary(row));
 		}
 	}
 
