@@ -254,8 +254,8 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			refreshBtn.style.opacity = '0.6';
 			refreshBtn.style.cursor = 'default';
 			// _makeIconButton appends exactly [svg, label span] — grab them directly.
-			const iconEl = refreshBtn.firstElementChild as SVGSVGElement | null;
-			const labelEl = refreshBtn.lastElementChild as HTMLElement | null;
+			const iconEl = refreshBtn.firstElementChild;
+			const labelEl = refreshBtn.lastElementChild;
 			if (labelEl && labelEl !== iconEl) { labelEl.textContent = 'Refreshing...'; }
 			const spin = iconEl?.animate(
 				[{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }],
