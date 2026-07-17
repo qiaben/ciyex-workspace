@@ -217,7 +217,7 @@ const ENCOUNTER_TYPE_FULL_FORMS: Record<string, string> = {
 };
 
 /** Expand a short encounter class code ("AMB") to its full form ("Ambulatory"). */
-function expandEncounterType(raw: string | undefined): string | undefined {
+export function expandEncounterType(raw: string | undefined): string | undefined {
 	if (!raw) { return raw; }
 	const key = raw.trim().toUpperCase();
 	return ENCOUNTER_TYPE_FULL_FORMS[key] || raw;

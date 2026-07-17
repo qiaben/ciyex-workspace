@@ -19,8 +19,7 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { INativeHostService } from '../../../../../platform/native/common/native.js';
-import { showVisitSummaryPanel } from './visitSummaryPanel.js';
+import { expandEncounterType } from './visitSummaryPanel.js';
 import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
@@ -162,7 +161,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@ICommandService private readonly commandService: ICommandService,
-		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 		// Records saved in a sibling editor (the Patient Chart drawer) are
@@ -4012,11 +4010,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		// Columns: Date · Visit Type · View. QA asked to drop the chief-complaint /
-		// diagnosis column and the signed/lock status badge, leaving a single View
-		// action that opens the visit-summary (with its Download PDF button) for
-		// the encounter.
-		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 64px;gap:0;';
+		// Columns: Date · Visit Type · Action. The action reflects edit-ability — a
+		// signed/locked encounter shows a lock + View (read-only), an unsigned one
+		// shows Edit — so the column is sized to content.
+		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr auto;gap:0;';
 		for (const lbl of ['Date', 'Visit Type', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
@@ -4039,9 +4036,13 @@ export class PatientSnapshotEditor extends EditorPane {
 		for (const enc of page) {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			const visitType = typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
+			const rawVisitType = typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
 				|| typeText(enc.serviceType) || typeText(enc.encounterType) || typeText(enc.visitCategory) || typeText(enc.class) || 'Encounter';
+			// Expand short FHIR class codes ("AMB"/"VR") to their full form
+			// ("Ambulatory"/"Virtual"); already-full values pass through unchanged.
+			const visitType = expandEncounterType(rawVisitType) || rawVisitType;
 			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
+			const isSigned = PatientSnapshotEditor._normalizeEncounterStatus(enc.status) === 'SIGNED';
 
 			const dateCell = DOM.append(table, DOM.$('div'));
 			dateCell.textContent = dateStr;
@@ -4051,28 +4052,35 @@ export class PatientSnapshotEditor extends EditorPane {
 			typeCell.textContent = String(visitType).slice(0, 120);
 			typeCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
-			// View → opens the visit-summary slide-over (which carries its own
-			// Download PDF / Print actions) for this encounter.
+			// Action reflects whether the encounter can still be edited. A SIGNED
+			// (finalized / locked) encounter is read-only: show a lock indicator plus
+			// a "View" action. An UNSIGNED encounter is still open: show an "Edit"
+			// action. Both route through `ciyex.openEncounter`, which renders the
+			// encounter form read-only or editable based on the encounter's own
+			// status — so the user only ever sees the form, editable when allowed.
 			const actionCell = DOM.append(table, DOM.$('div'));
-			actionCell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;';
-			const viewBtn = DOM.append(actionCell, DOM.$('button')) as HTMLButtonElement;
-			viewBtn.title = 'View visit summary';
-			viewBtn.setAttribute('aria-label', 'View visit summary');
-			viewBtn.disabled = !encRowId;
-			viewBtn.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:${encRowId ? 'pointer' : 'default'};color:var(--vscode-foreground);font-size:11px;opacity:${encRowId ? '1' : '0.5'};`;
-			const viewIco = DOM.append(viewBtn, DOM.$('span.codicon.codicon-eye'));
-			(viewIco as HTMLElement).style.cssText = 'font-size:12px;';
-			const viewLbl = DOM.append(viewBtn, DOM.$('span'));
-			viewLbl.textContent = 'View';
+			actionCell.style.cssText = 'padding:4px 0 4px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:6px;';
+			if (isSigned) {
+				const lockIco = DOM.append(actionCell, DOM.$('span.codicon.codicon-lock')) as HTMLElement;
+				lockIco.title = 'Signed & locked';
+				lockIco.setAttribute('aria-label', 'Signed and locked');
+				lockIco.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+			}
+			const actBtn = DOM.append(actionCell, DOM.$('button')) as HTMLButtonElement;
+			actBtn.title = isSigned ? 'View encounter (read-only)' : 'Edit encounter';
+			actBtn.setAttribute('aria-label', actBtn.title);
+			actBtn.disabled = !encRowId;
+			actBtn.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:${encRowId ? 'pointer' : 'default'};color:var(--vscode-foreground);font-size:11px;opacity:${encRowId ? '1' : '0.5'};`;
+			const actIco = DOM.append(actBtn, DOM.$(isSigned ? 'span.codicon.codicon-eye' : 'span.codicon.codicon-edit')) as HTMLElement;
+			actIco.style.cssText = 'font-size:12px;';
+			const actLbl = DOM.append(actBtn, DOM.$('span'));
+			actLbl.textContent = isSigned ? 'View' : 'Edit';
 			if (encRowId) {
-				viewBtn.addEventListener('mouseenter', () => { viewBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; });
-				viewBtn.addEventListener('mouseleave', () => { viewBtn.style.background = 'transparent'; });
-				viewBtn.addEventListener('click', (e) => {
+				actBtn.addEventListener('mouseenter', () => { actBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; });
+				actBtn.addEventListener('mouseleave', () => { actBtn.style.background = 'transparent'; });
+				actBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
-					const facilityHint = typeText(enc.locationName) || typeText(enc.facilityName) || typeText(enc.location) || '';
-					showVisitSummaryPanel(
-						{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService },
-						this._currentPatientId, encRowId, this._currentPatientName || 'Patient', facilityHint);
+					void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encRowId, this._currentPatientName || 'Patient', `Encounter ${dateStr}`);
 				});
 			}
 		}
