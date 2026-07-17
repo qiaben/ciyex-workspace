@@ -28,6 +28,7 @@ import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
+import { SH_SMOKING_OPTIONS, SH_ALCOHOL_OPTIONS, SH_EXERCISE_OPTIONS } from './socialHistoryOptions.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -287,12 +288,17 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			// (Clinical sub-pages must include History after Procedures).
 			{
 				key: 'history', label: 'History', icon: 'History', emoji: '\u{1F4DA}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['FamilyMemberHistory', 'Observation'],
+				// Columns mirror the QuestionnaireResponse history record the backend
+				// actually returns (past/family/social groups + recorded date) — the
+				// old FamilyMemberHistory columns (relationship/condition/onset) never
+				// matched the rows and rendered blank.
 				columns: [
-					{ key: 'relationship', label: 'Relationship' },
-					{ key: 'condition', label: 'Condition' },
-					{ key: 'ageOfOnset', label: 'Age of Onset' },
-					{ key: 'status', label: 'Status' },
-					{ key: 'notes', label: 'Notes' },
+					{ key: '_lastUpdated', label: 'Date', aliases: ['_lastUpdated', 'recordedAt', 'authored'] },
+					{ key: 'pastMedicalHistoryNotes', label: 'Past Medical', aliases: ['pastMedicalHistoryNotes'] },
+					{ key: 'fatherHistory', label: 'Family (Father)', aliases: ['fatherHistory'] },
+					{ key: 'smokingStatus', label: 'Smoking Status' },
+					{ key: 'alcoholUse', label: 'Alcohol Use' },
+					{ key: 'exerciseFrequency', label: 'Exercise', aliases: ['exerciseFrequency', 'exercise'] },
 				],
 			},
 		],
@@ -673,6 +679,41 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'startDate', label: 'Onset Date', type: 'date' },
 					{ key: 'endDate', label: 'End Date', type: 'date' },
 					{ key: 'comments', label: 'Notes', type: 'textarea', placeholder: 'Notes', colSpan: 3 },
+				],
+			},
+		],
+	},
+	// History create/edit form — QA asked for a complete redesign with THREE
+	// history groups (Past, Family, Social) carrying the SAME fields as the
+	// encounter form's Past Medical/Surgical, Family and Social History
+	// sections, so history charted on either surface round-trips to the other.
+	// Field keys MUST stay the backend history tab_field_config keys (the
+	// QuestionnaireResponse linkId mappings) — anything else is silently dropped
+	// by the generic FHIR save. The encounter form maps its pmh_/fh_/sh_ keys
+	// onto these (EncounterFormEditor.CHART_HISTORY_FIELD_MAP).
+	history: {
+		tabKey: 'history',
+		sections: [
+			{
+				key: 'past-history', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: false, fields: [
+					{ key: 'pastMedicalHistoryNotes', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
+					{ key: 'pastSurgicalHistoryNotes', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
+				],
+			},
+			{
+				key: 'family-history', title: 'Family History', columns: 2, visible: true, collapsible: false, fields: [
+					{ key: 'fatherHistory', label: 'Father', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'motherHistory', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'siblingsHistory', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'offspringHistory', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
+				],
+			},
+			{
+				key: 'social-history', title: 'Social History', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'smokingStatus', label: 'Smoking', type: 'select', options: [...SH_SMOKING_OPTIONS] },
+					{ key: 'alcoholUse', label: 'Alcohol', type: 'select', options: [...SH_ALCOHOL_OPTIONS] },
+					{ key: 'exerciseFrequency', label: 'Exercise', type: 'select', options: [...SH_EXERCISE_OPTIONS] },
+					{ key: 'additionalHistory', label: 'Additional Notes', type: 'textarea', colSpan: 3, placeholder: 'Occupation, lifestyle, other history...' },
 				],
 			},
 		],
@@ -2122,6 +2163,15 @@ export class PatientChartEditor extends EditorPane {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
 		this.sidebarCollapsed = this.storageSvc.getBoolean(SIDEBAR_COLLAPSED_KEY, StorageScope.PROFILE, false);
+		// History saved from the encounter form lands in the same chart History
+		// store this editor renders — drop the cached tab (and re-render it when
+		// it's on screen) so the just-charted history shows without a reload.
+		this._register(this.apiService.onDidMutateClinicalRecord(m => {
+			if (m.entity !== 'history' || !this.patientId) { return; }
+			if (String(m.patientId || m.record.patientId || '') !== this.patientId) { return; }
+			this._tabDataCache.delete('history');
+			if (this.activeTab === 'history') { this._renderMain(); }
+		}));
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -2786,6 +2836,12 @@ export class PatientChartEditor extends EditorPane {
 			// required-field validation blocks submission with
 			// "Issue Name is required" until it's filled.
 			'issues',
+			// History: the backend row renders as a flat wall of "Notes" fields
+			// with the Family History section collapsed out of sight. The local
+			// config redesigns the dialog into the three history groups (Past /
+			// Family / Social) with the same fields the encounter form carries
+			// (QA request), while keeping the backend's persistable field keys.
+			'history',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
@@ -6021,10 +6077,14 @@ export class PatientChartEditor extends EditorPane {
 				// the first section. Demographics is the one exception — its 11
 				// sub-sections (Personal, Contact, Emergency, Guardian, etc.) stay
 				// separate because collapsing them into one card would be unwieldy.
+				// History is the other exception — QA wants its dialog split into
+				// the three history groups (Past / Family / Social), mirroring the
+				// encounter form's sections.
 				// In the right-side slide-in panel (~560px), 3+ columns cram fields too
 				// tightly. Cap at 2 columns to keep inputs readable.
 				const capCols = (s: FieldSection): FieldSection => ({ ...s, columns: Math.min(s.columns ?? 2, 2) });
-				const sectionsToRender = tab.key !== 'demographics' && config.sections.length > 1
+				const keepSections = tab.key === 'demographics' || tab.key === 'history';
+				const sectionsToRender = !keepSections && config.sections.length > 1
 					? [capCols({
 						...config.sections[0],
 						collapsible: false,

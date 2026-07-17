@@ -4073,13 +4073,20 @@ export class PatientSnapshotEditor extends EditorPane {
 			sb.textContent = normStatus === 'SIGNED' ? 'Signed' : 'Unsigned';
 			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
 
-			// Encounter History rows are Encounters — edit/delete must target the
+			// Encounter History rows are Encounters — edit must target the
 			// encounters entity (not visit-notes), so the pencil opens the
 			// Encounter edit form (QA issue 7). A SIGNED/finalized encounter is
-			// read-only (the backend rejects edits) — hide its edit pencil and show a
-			// lock instead, so the only way to change it is to re-open (amend) it.
+			// read-only (the backend rejects edits) — its pencil becomes a lock plus
+			// a View action that opens the encounter to read it. Delete is never
+			// offered here (QA: encounters must not be deletable from the history).
 			const isSigned = PatientSnapshotEditor._isEncounterSigned(status);
-			this._renderGridRowActions(table, 'encounters', enc, isSigned ? { canEdit: false, lockReason: 'Signed — locked, read only' } : undefined);
+			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
+			this._renderGridRowActions(table, 'encounters', enc, isSigned
+				? {
+					canEdit: false, lockReason: 'Signed — locked, read only', hideDelete: true,
+					onView: encRowId ? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encRowId, this._currentPatientName) : undefined
+				}
+				: { hideDelete: true });
 		}
 		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}
@@ -4885,8 +4892,8 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/** Visit History rows — the patient's APPOINTMENTS (not encounters). Each row
-	 *  shows the visit date, type/provider, location and appointment status, plus
-	 *  whether an encounter is linked. The action opens that visit's encounter when
+	 *  shows the visit date, type and appointment status, plus whether an
+	 *  encounter is linked. The action opens that visit's encounter when
 	 *  one exists, otherwise re-opens the snapshot focused on that appointment. */
 	private _renderAppointmentHistoryRows(card: HTMLElement, appts: Record<string, unknown>[]): void {
 		if (appts.length === 0) {
@@ -4904,8 +4911,8 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 140px 90px 78px 56px;gap:0;';
-		for (const lbl of ['Date', 'Type / Provider', 'Location', 'Status', 'Encounter', '']) {
+		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 90px 78px 56px;gap:0;';
+		for (const lbl of ['Date', 'Type', 'Status', 'Encounter', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
@@ -4915,8 +4922,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			const dateRaw = a.start || a.startTime || a.appointmentStartDate || a.date || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 			const type = this._apptTypeStr(a);
-			const prov = String(a.providerName || a.practitionerName || a.providerDisplay || '').trim();
-			const loc = this._apptLocationName(a) || '—';
 			const statusRaw = String(a.status || a.appointmentStatus || '').trim();
 			const status = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : 'Unknown';
 			const sColor = PatientSnapshotEditor._statusColor(status);
@@ -4926,8 +4931,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			const encId = PatientSnapshotEditor._isCompletedStatus(statusRaw.toLowerCase()) ? String(a.encounterId || '') : '';
 			const cells: Array<{ txt: string; kind?: 'status' | 'enc' }> = [
 				{ txt: dateStr },
-				{ txt: prov ? `${type} · ${prov}` : type },
-				{ txt: String(loc) },
+				{ txt: type },
 				{ txt: status, kind: 'status' },
 				{ txt: encId ? 'Linked' : '—', kind: 'enc' },
 			];
@@ -4972,7 +4976,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 * encounter / lab tables on the snapshot dashboard so users can edit or
 	 * delete records inline without leaving the page.
 	 */
-	private _renderGridRowActions(table: HTMLElement, entity: string, item: Record<string, unknown>, opts?: { canEdit?: boolean; lockReason?: string }): void {
+	private _renderGridRowActions(table: HTMLElement, entity: string, item: Record<string, unknown>, opts?: { canEdit?: boolean; lockReason?: string; hideDelete?: boolean; onView?: () => void }): void {
 		const cell = DOM.append(table, DOM.$('div'));
 		cell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:2px;';
 
@@ -4991,15 +4995,21 @@ export class PatientSnapshotEditor extends EditorPane {
 
 		// Read-only rows (e.g. a signed/locked encounter) show a lock glyph in place
 		// of the edit pencil — the backend rejects edits, so offering one only leads
-		// to a failed save. Delete is still offered for correcting a mistaken row.
+		// to a failed save. A signed encounter still offers View so the record can
+		// be read; delete is suppressed entirely where the caller asks for it.
 		if (opts && opts.canEdit === false) {
 			const lock = DOM.append(cell, DOM.$('span.codicon.codicon-lock'));
 			(lock as HTMLElement).style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);width:22px;height:22px;display:flex;align-items:center;justify-content:center;';
 			(lock as HTMLElement).title = opts.lockReason || 'Locked — read only';
+			if (opts.onView) {
+				mkBtn('eye', 'View', opts.onView);
+			}
 		} else {
 			mkBtn('edit', 'Edit', () => void this._openEditModal(entity, item));
 		}
-		mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
+		if (!opts?.hideDelete) {
+			mkBtn('trash', 'Delete', () => { void this._deleteItem(entity, item); });
+		}
 	}
 
 	private _renderLabOrderRows(card: HTMLElement, orders: Record<string, unknown>[]): void {

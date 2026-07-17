@@ -61,6 +61,10 @@ export class EncounterFormEditor extends EditorPane {
 	// record the Snapshot and Patient Chart editor read/write. Resolved on load by
 	// date so the three pages share one vitals reading instead of divergent copies.
 	private _vitalsObsId = '';
+	// Id of the patient-chart History record (QuestionnaireResponse) this
+	// encounter's Past/Family/Social sections were pre-filled from — save upserts
+	// the SAME record so history stays one shared store across surfaces.
+	private _chartHistoryId = '';
 	private _encounterStatus = '';
 	private _serviceDate = '';
 	private _statusBadge: HTMLElement | undefined;
@@ -127,6 +131,7 @@ export class EncounterFormEditor extends EditorPane {
 		this._compositionId = '';
 		this._compositionPatientId = '';
 		this._vitalsObsId = '';
+		this._chartHistoryId = '';
 		this._encounterStatus = '';
 
 		await Promise.all([this._loadFormSchema(), this._loadEncounterData()]);
@@ -183,7 +188,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections)));
+					this.formSections = EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections))));
 					return;
 				}
 			}
@@ -197,7 +202,7 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections)));
+				this.formSections = EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections))));
 				return;
 			}
 		} catch { /* fall through */ }
@@ -217,6 +222,26 @@ export class EncounterFormEditor extends EditorPane {
 		const isPain = (f: { key?: string; label?: string }): boolean =>
 			/pain/i.test(f.key || '') || /\bpain\b/i.test(f.label || '');
 		return sections.map(s => ({ ...s, fields: (s.fields || []).filter(f => !isPain(f)) }));
+	}
+
+	/**
+	 * Guarantee the Physical Exam section carries a free-text Exam Notes field
+	 * below the per-system grid (QA request: providers need somewhere for
+	 * overall exam remarks that don't belong to a single system). Applied after
+	 * every config merge so a backend/legacy config that ships only the exam
+	 * grid still gets the notes field.
+	 */
+	private static _ensurePeNotes(sections: FieldSection[]): FieldSection[] {
+		return sections.map(s => {
+			const isPe = s.key === 'pe' || /physical\s*exam/i.test(s.title || '');
+			if (!isPe) { return s; }
+			const fields = s.fields || [];
+			if (fields.some(f => f.key === 'pe_notes')) { return s; }
+			return {
+				...s,
+				fields: [...fields, { key: 'pe_notes', label: 'Exam Notes', type: 'textarea', placeholder: 'Additional physical exam notes...' }],
+			};
+		});
 	}
 
 	/**
@@ -345,6 +370,7 @@ export class EncounterFormEditor extends EditorPane {
 			{
 				key: 'pe', title: 'Physical Exam', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pe_data', label: 'Physical Exam', type: 'exam-grid' },
+					{ key: 'pe_notes', label: 'Exam Notes', type: 'textarea', placeholder: 'Additional physical exam notes...' },
 				]
 			},
 			{
@@ -491,6 +517,102 @@ export class EncounterFormEditor extends EditorPane {
 					}
 				}
 			} catch { /* no vitals for this date — leave the section blank */ }
+		}
+		// Past / Family / Social history: pre-fill from the patient chart's History
+		// store, DATE-wise — the record that was current on the visit's date (QA:
+		// history added on the chart must flow into an encounter created for that
+		// date). Values already saved on THIS encounter's composition win; only
+		// blank fields are filled.
+		if (this.patientId) {
+			try {
+				const hist = await this._findChartHistoryForDate(encDateRaw ? String(encDateRaw) : '');
+				if (hist) {
+					this._chartHistoryId = hist.id;
+					for (const [k, v] of Object.entries(hist.fields)) {
+						const cur = String(this.encounterData[k] ?? '').trim();
+						if (!cur && v !== undefined && v !== null && String(v).trim() !== '') { this.encounterData[k] = v; }
+					}
+				}
+			} catch { /* no chart history — leave the sections blank */ }
+		}
+	}
+
+	/** Patient-chart History (QuestionnaireResponse) key → encounter-form field
+	 *  key. Both surfaces chart the same Past / Family / Social history; the
+	 *  chart store's keys are fixed by the backend history tab_field_config. */
+	private static readonly CHART_HISTORY_FIELD_MAP: ReadonlyArray<[chartKey: string, formKey: string]> = [
+		['pastMedicalHistoryNotes', 'pmh_conditions'],
+		['pastSurgicalHistoryNotes', 'pmh_surgeries'],
+		['fatherHistory', 'fh_father'],
+		['motherHistory', 'fh_mother'],
+		['siblingsHistory', 'fh_siblings'],
+		['smokingStatus', 'sh_smoking'],
+		['alcoholUse', 'sh_alcohol'],
+		['exerciseFrequency', 'sh_exercise'],
+		['additionalHistory', 'sh_notes'],
+	];
+
+	/** Find the chart History record that was current ON the given visit date —
+	 *  the most recent record dated on-or-before the end of that day. With no
+	 *  usable visit date the latest record wins. Returns the record id plus its
+	 *  values mapped onto the encounter form's pmh_/fh_/sh_ keys, or null when
+	 *  the patient has no history charted yet. */
+	private async _findChartHistoryForDate(dateRaw: string): Promise<{ id: string; fields: Record<string, unknown> } | null> {
+		const r = await this.apiService.fetch(`/api/fhir-resource/history/patient/${this.patientId}?page=0&size=50`);
+		if (!r.ok) { return null; }
+		const arr = ((await r.json())?.data?.content ?? []) as Array<Record<string, unknown>>;
+		if (!Array.isArray(arr) || arr.length === 0) { return null; }
+		const ts = (row: Record<string, unknown>): number => {
+			const t = new Date(String(row._lastUpdated ?? row.recordedAt ?? row.authored ?? '')).getTime();
+			return isNaN(t) ? 0 : t;
+		};
+		const sorted = [...arr].sort((a, b) => ts(b) - ts(a));
+		let pick: Record<string, unknown> | undefined = sorted[0];
+		const ref = dateRaw ? new Date(dateRaw) : null;
+		if (ref && !isNaN(ref.getTime())) {
+			const endOfDay = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate() + 1).getTime();
+			pick = sorted.find(rw => ts(rw) < endOfDay) ?? sorted[0];
+		}
+		if (!pick) { return null; }
+		const fields: Record<string, unknown> = {};
+		for (const [chartKey, formKey] of EncounterFormEditor.CHART_HISTORY_FIELD_MAP) {
+			fields[formKey] = pick[chartKey];
+		}
+		return { id: String(pick.id ?? pick.fhirId ?? ''), fields };
+	}
+
+	/** Push the encounter form's Past/Family/Social values into the patient
+	 *  chart's History store so history charted here shows on the chart's
+	 *  History page too. Upserts the record the form was pre-filled from (or
+	 *  creates the patient's first one). Best-effort — never blocks the save. */
+	private async _syncChartHistory(patientId: string, formData: Record<string, unknown>): Promise<void> {
+		const payload: Record<string, unknown> = {};
+		let any = false;
+		for (const [chartKey, formKey] of EncounterFormEditor.CHART_HISTORY_FIELD_MAP) {
+			const v = String(formData[formKey] ?? '').trim();
+			if (!v) { continue; }
+			payload[chartKey] = v;
+			any = true;
+		}
+		if (!any) { return; }
+		const body = JSON.stringify({ ...payload, patientId });
+		let res = this._chartHistoryId
+			? await this.apiService.fetch(`/api/fhir-resource/history/patient/${patientId}/${this._chartHistoryId}`, { method: 'PUT', body })
+			: await this.apiService.fetch(`/api/fhir-resource/history/patient/${patientId}`, { method: 'POST', body });
+		// A stale id (record deleted) 404s on PUT — fall back to create.
+		if (this._chartHistoryId && res.status === 404) {
+			res = await this.apiService.fetch(`/api/fhir-resource/history/patient/${patientId}`, { method: 'POST', body });
+		}
+		if (res.ok) {
+			const j = await res.json().catch(() => null);
+			const newId = String(j?.data?.id ?? j?.id ?? this._chartHistoryId ?? '');
+			if (newId) { this._chartHistoryId = newId; }
+			// Let an open Patient Chart drop its cached History tab so the
+			// just-charted history shows there without a manual reload.
+			this.apiService.notifyClinicalRecordMutation({
+				entity: 'history', patientId, kind: this._chartHistoryId ? 'update' : 'create',
+				record: { id: this._chartHistoryId, sourceId: this._editorInstanceId },
+			});
 		}
 	}
 
@@ -879,6 +1001,10 @@ export class EncounterFormEditor extends EditorPane {
 					}
 				} catch { /* best-effort vitals sync */ }
 			}
+			// Sync the Past/Family/Social history sections to the patient chart's
+			// History store — the chart's History page reads that store, so history
+			// charted in the encounter shows up there and vice-versa (QA request).
+			await this._syncChartHistory(patientId, formData).catch(() => { /* best-effort history sync */ });
 			// Save to encounter-form composition (primary - matches EHR UI).
 			// Write under the patient scope the Composition was FOUND under —
 			// which can differ from this editor's own patient id (see

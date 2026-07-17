@@ -545,20 +545,96 @@ async function loadEncounterFormComposition(deps: IVisitSummaryDeps, patientId: 
 /** Section groups for the encounter-form Composition, keyed by the field-name
  *  prefix the form uses (cc_*, hpi_*, vitals_*, …). Mirrors the encounter form's
  *  own section order so the summary reads top-to-bottom like the chart. */
-const FORM_SECTION_GROUPS: Array<{ prefix: string; title: string }> = [
-	{ prefix: 'cc', title: 'Chief Complaint' },
-	{ prefix: 'hpi', title: 'History of Present Illness' },
-	{ prefix: 'ros', title: 'Review of Systems' },
-	{ prefix: 'vitals', title: 'Vitals' },
-	{ prefix: 'pe', title: 'Physical Exam' },
-	{ prefix: 'pmh', title: 'Past Medical / Surgical History' },
-	{ prefix: 'fh', title: 'Family History' },
-	{ prefix: 'sh', title: 'Social History' },
-	{ prefix: 'assessment', title: 'Assessment & Diagnosis' },
-	{ prefix: 'plan', title: 'Plan' },
-	{ prefix: 'provider', title: 'Provider Notes' },
-	{ prefix: 'procedures', title: 'Procedures & Coding' },
+const FORM_SECTION_GROUPS: Array<{ prefix: string; title: string; icon: string }> = [
+	// allow-any-unicode-next-line
+	{ prefix: 'cc', title: 'Chief Complaint', icon: '🩺' },
+	// allow-any-unicode-next-line
+	{ prefix: 'hpi', title: 'History of Present Illness', icon: '📖' },
+	// allow-any-unicode-next-line
+	{ prefix: 'ros', title: 'Review of Systems', icon: '🔍' },
+	// allow-any-unicode-next-line
+	{ prefix: 'vitals', title: 'Vitals', icon: '❤️' },
+	// allow-any-unicode-next-line
+	{ prefix: 'pe', title: 'Physical Exam', icon: '🧍' },
+	// allow-any-unicode-next-line
+	{ prefix: 'pmh', title: 'Past Medical / Surgical History', icon: '📋' },
+	// allow-any-unicode-next-line
+	{ prefix: 'fh', title: 'Family History', icon: '👪' },
+	// allow-any-unicode-next-line
+	{ prefix: 'sh', title: 'Social History', icon: '🏠' },
+	// allow-any-unicode-next-line
+	{ prefix: 'assessment', title: 'Assessment & Diagnosis', icon: '🧠' },
+	// allow-any-unicode-next-line
+	{ prefix: 'plan', title: 'Plan', icon: '📝' },
+	// allow-any-unicode-next-line
+	{ prefix: 'provider', title: 'Provider Notes', icon: '🖊️' },
+	// allow-any-unicode-next-line
+	{ prefix: 'procedures', title: 'Procedures & Coding', icon: '⚕️' },
 ];
+
+/** Titled section card with an accented header band. Returns the body element
+ *  the caller appends rows into. QA asked for the summary to read as clean,
+ *  aligned rows instead of dense "Label: value" prose — every section shares
+ *  this card + the striped `summaryKvRow` layout below. */
+function summarySectionCard(body: HTMLElement, col: SummaryColors, title: string, icon?: string): HTMLElement {
+	const card = DOM.append(body, DOM.$('div'));
+	card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};margin-bottom:12px;overflow:hidden;`;
+	const head = DOM.append(card, DOM.$('div'));
+	head.style.cssText = `display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid ${col.border};border-left:3px solid ${col.link};background:rgba(128,128,128,0.06);`;
+	if (icon) {
+		const ic = DOM.append(head, DOM.$('span'));
+		ic.textContent = icon;
+		ic.style.cssText = 'font-size:13px;line-height:1;';
+	}
+	const t = DOM.append(head, DOM.$('span'));
+	t.textContent = title;
+	t.style.cssText = `font-size:13px;font-weight:700;color:${col.fg};letter-spacing:0.02em;`;
+	return DOM.append(card, DOM.$('div'));
+}
+
+/** One aligned label / value row inside a section card. Rows zebra-stripe so
+ *  long sections stay scannable. */
+function summaryKvRow(table: HTMLElement, col: SummaryColors, label: string, value: string): void {
+	const idx = table.childElementCount;
+	const row = DOM.append(table, DOM.$('div'));
+	row.style.cssText = `display:grid;grid-template-columns:190px 1fr;gap:12px;padding:7px 14px;align-items:start;${idx % 2 === 0 ? 'background:rgba(128,128,128,0.045);' : ''}`;
+	const l = DOM.append(row, DOM.$('span'));
+	l.textContent = label;
+	l.style.cssText = `font-size:12px;font-weight:600;color:${col.desc};padding-top:1px;`;
+	const v = DOM.append(row, DOM.$('span'));
+	v.textContent = value;
+	v.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
+}
+
+/** Full-width free-text row (used for single-value sections like the chief
+ *  complaint, where a label column would only repeat the section title). */
+function summaryTextRow(table: HTMLElement, col: SummaryColors, text: string): void {
+	const row = DOM.append(table, DOM.$('div'));
+	row.textContent = text;
+	row.style.cssText = `padding:9px 14px;font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
+}
+
+/** The "Encounter Summary" meta header card, shared by both render paths. */
+function renderSummaryMetaCard(body: HTMLElement, col: SummaryColors, meta: VisitSummaryMeta): void {
+	// allow-any-unicode-next-line
+	const table = summarySectionCard(body, col, 'Encounter Summary', '📄');
+	const metaFields: Array<[string, string | undefined]> = [
+		['Visit Category', meta.visitCategory],
+		['Type', meta.type],
+		['Facility', meta.facility],
+		['Date of Service', meta.dateOfService],
+		['Reason for Visit', meta.reasonForVisit],
+	];
+	let anyMeta = false;
+	for (const [label, value] of metaFields) {
+		if (!value) { continue; }
+		anyMeta = true;
+		summaryKvRow(table, col, label, String(value));
+	}
+	if (!anyMeta) {
+		summaryTextRow(table, col, 'No encounter details recorded.');
+	}
+}
 
 /** Default "normal" Physical Exam text per system, mirroring
  *  EncounterFormEditor.PE_SYSTEMS. The exam grid pre-fills every system with
@@ -596,35 +672,7 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 
 	// --- Encounter Summary (meta) header, reusing the /summary meta when present.
 	const meta = (summaryData && typeof summaryData === 'object' ? (summaryData as VisitSummaryDTO).meta : undefined) || {};
-	const metaCard = DOM.append(body, DOM.$('div'));
-	metaCard.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;margin-bottom:14px;`;
-	const cardTitle = DOM.append(metaCard, DOM.$('div'));
-	cardTitle.textContent = 'Encounter Summary';
-	cardTitle.style.cssText = `font-size:16px;font-weight:700;color:${col.link};border-bottom:2px solid ${col.border};padding-bottom:8px;margin-bottom:14px;`;
-	const grid = DOM.append(metaCard, DOM.$('div'));
-	grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;';
-	const metaFields: Array<[string, string | undefined]> = [
-		['Visit Category', meta.visitCategory], ['Type', meta.type], ['Facility', meta.facility],
-		['Date of Service', meta.dateOfService], ['Reason for Visit', meta.reasonForVisit],
-	];
-	let anyMeta = false;
-	for (const [label, value] of metaFields) {
-		if (!value) { continue; }
-		anyMeta = true;
-		const fieldRow = DOM.append(grid, DOM.$('div'));
-		fieldRow.style.cssText = 'display:flex;font-size:13px;';
-		const lbl = DOM.append(fieldRow, DOM.$('span'));
-		lbl.textContent = `${label}:`;
-		lbl.style.cssText = `font-weight:600;color:${col.desc};min-width:140px;`;
-		const val = DOM.append(fieldRow, DOM.$('span'));
-		val.textContent = String(value);
-		val.style.cssText = `color:${col.fg};`;
-	}
-	if (!anyMeta) {
-		const none = DOM.append(grid, DOM.$('div'));
-		none.textContent = 'No encounter details recorded.';
-		none.style.cssText = `font-size:13px;color:${col.desc};`;
-	}
+	renderSummaryMetaCard(body, col, meta);
 
 	// Format a single field value for display; returns '' to skip the field.
 	const fmtValue = (key: string, raw: unknown): string => {
@@ -688,26 +736,13 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 		}
 		if (!rows.length) { continue; }
 		renderedAny = true;
-		const card = DOM.append(body, DOM.$('div'));
-		card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:16px;margin-bottom:14px;`;
-		const t = DOM.append(card, DOM.$('div'));
-		t.textContent = grp.title;
-		t.style.cssText = `font-weight:600;color:${col.fg};margin-bottom:10px;font-size:14px;`;
+		const table = summarySectionCard(body, col, grp.title, grp.icon);
 		// Chief complaint is a single free-text value — show it without a label.
 		if (grp.prefix === 'cc' && rows.length === 1) {
-			const p = DOM.append(card, DOM.$('div'));
-			p.textContent = rows[0][1];
-			p.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;`;
+			summaryTextRow(table, col, rows[0][1]);
 		} else {
 			for (const [label, value] of rows) {
-				const row = DOM.append(card, DOM.$('div'));
-				row.style.cssText = 'font-size:13px;margin-bottom:4px;';
-				const b = DOM.append(row, DOM.$('span'));
-				b.textContent = `${label}: `;
-				b.style.cssText = `font-weight:600;color:${col.desc};`;
-				const val = DOM.append(row, DOM.$('span'));
-				val.textContent = value;
-				val.style.cssText = `color:${col.fg};white-space:pre-wrap;`;
+				summaryKvRow(table, col, label, value);
 			}
 		}
 	}
@@ -726,68 +761,22 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: VisitSummaryDTO): void {
 	const col = summaryColors(deps.themeService);
 
-	// A titled card the section renderers append their content into.
-	const section = (title: string): HTMLElement => {
-		const card = DOM.append(body, DOM.$('div'));
-		card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:16px;margin-bottom:14px;`;
-		const t = DOM.append(card, DOM.$('div'));
-		t.textContent = title;
-		t.style.cssText = `font-weight:600;color:${col.fg};margin-bottom:10px;font-size:14px;`;
-		return card;
-	};
-	// A "label: value" line; skipped entirely when the value is empty.
+	// A titled card the section renderers append their content into (shared
+	// accented-header + striped-row layout — QA asked for row-wise data).
+	const section = (title: string, icon?: string): HTMLElement => summarySectionCard(body, col, title, icon);
+	// A "label / value" row; skipped entirely when the value is empty.
 	const line = (parent: HTMLElement, label: string, value: unknown): void => {
 		if (value === undefined || value === null || value === '') { return; }
-		const row = DOM.append(parent, DOM.$('div'));
-		row.style.cssText = 'font-size:13px;margin-bottom:4px;';
-		const b = DOM.append(row, DOM.$('span'));
-		b.textContent = `${label}: `;
-		b.style.cssText = `font-weight:600;color:${col.desc};`;
-		const v = DOM.append(row, DOM.$('span'));
-		v.textContent = String(value);
-		v.style.cssText = `color:${col.fg};white-space:pre-wrap;`;
+		summaryKvRow(parent, col, label, String(value));
 	};
 	// A simple bulleted line of text.
 	const bullet = (parent: HTMLElement, text: string): void => {
-		const li = DOM.append(parent, DOM.$('div'));
-		li.textContent = `• ${text}`;
-		li.style.cssText = `font-size:13px;color:${col.fg};margin-bottom:4px;white-space:pre-wrap;`;
+		// allow-any-unicode-next-line
+		summaryTextRow(parent, col, `• ${text}`);
 	};
 
 	// --- Encounter Summary (meta) card ---
-	const meta = data.meta || {};
-	const metaCard = DOM.append(body, DOM.$('div'));
-	metaCard.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;margin-bottom:14px;`;
-	const cardTitle = DOM.append(metaCard, DOM.$('div'));
-	cardTitle.textContent = 'Encounter Summary';
-	cardTitle.style.cssText = `font-size:16px;font-weight:700;color:${col.link};border-bottom:2px solid ${col.border};padding-bottom:8px;margin-bottom:14px;`;
-	const grid = DOM.append(metaCard, DOM.$('div'));
-	grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;';
-	const metaFields: Array<[string, string | undefined]> = [
-		['Visit Category', meta.visitCategory],
-		['Type', meta.type],
-		['Facility', meta.facility],
-		['Date of Service', meta.dateOfService],
-		['Reason for Visit', meta.reasonForVisit],
-	];
-	let anyMeta = false;
-	for (const [label, value] of metaFields) {
-		if (!value) { continue; }
-		anyMeta = true;
-		const fieldRow = DOM.append(grid, DOM.$('div'));
-		fieldRow.style.cssText = 'display:flex;font-size:13px;';
-		const lbl = DOM.append(fieldRow, DOM.$('span'));
-		lbl.textContent = `${label}:`;
-		lbl.style.cssText = `font-weight:600;color:${col.desc};min-width:140px;`;
-		const val = DOM.append(fieldRow, DOM.$('span'));
-		val.textContent = String(value);
-		val.style.cssText = `color:${col.fg};`;
-	}
-	if (!anyMeta) {
-		const none = DOM.append(grid, DOM.$('div'));
-		none.textContent = 'No encounter details recorded.';
-		none.style.cssText = `font-size:13px;color:${col.desc};`;
-	}
+	renderSummaryMetaCard(body, col, data.meta || {});
 
 	let renderedAny = false;
 
@@ -809,18 +798,11 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	// --- Chief Complaint ---
 	if (data.chiefComplaints?.length) {
 		renderedAny = true;
-		const card = section('Chief Complaint');
+		// allow-any-unicode-next-line
+		const card = section('Chief Complaint', '🩺');
 		for (const cc of data.chiefComplaints) {
-			const item = DOM.append(card, DOM.$('div'));
-			item.style.cssText = 'font-size:13px;margin-bottom:6px;';
-			const t = DOM.append(item, DOM.$('div'));
-			t.textContent = cc.title || cc.complaint || 'Chief Complaint';
-			t.style.cssText = `font-weight:500;color:${col.fg};`;
-			if (cc.notes) {
-				const n = DOM.append(item, DOM.$('div'));
-				n.textContent = cc.notes;
-				n.style.cssText = `color:${col.desc};white-space:pre-wrap;`;
-			}
+			const title = cc.title || cc.complaint || 'Chief Complaint';
+			summaryTextRow(card, col, cc.notes ? `${title}\n${cc.notes}` : title);
 		}
 	}
 
@@ -837,7 +819,7 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('SOAP');
 		for (const n of data.providerNotes) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;padding:10px;margin-bottom:8px;`;
+			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
 			line(block, 'S', n.subjective);
 			line(block, 'O', n.objective);
 			line(block, 'A', n.assessment);
@@ -893,9 +875,9 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 			const card = section('Review of Systems (ROS)');
 			for (const r of visible) {
 				const row = DOM.append(card, DOM.$('div'));
-				row.style.cssText = 'font-size:13px;margin-bottom:6px;';
+				row.style.cssText = 'font-size:13px;';
 				const head = DOM.append(row, DOM.$('div'));
-				head.style.cssText = `color:${col.fg};font-weight:600;`;
+				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 14px 0;`;
 				head.textContent = `${r.systemName || 'System'}:${(r.findings && r.findings.length) ? '' : ' All Negative'}`;
 				if (r.findings?.length) { for (const f of r.findings) { bullet(row, f); } }
 				if (r.notes) { line(row, 'Note', r.notes); }
@@ -909,20 +891,19 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('Vitals');
 		for (const v of data.vitals) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;padding:10px;margin-bottom:8px;`;
-			const vg = DOM.append(block, DOM.$('div'));
-			vg.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;';
-			if (v.bpSystolic && v.bpDiastolic) { line(vg, 'BP', `${v.bpSystolic}/${v.bpDiastolic} mmHg`); }
-			if (v.pulse) { line(vg, 'Pulse', `${v.pulse} bpm`); }
-			if (v.temperatureC) { line(vg, 'Temp', `${v.temperatureC} \u00B0C`); }
-			if (v.temperatureF) { line(vg, 'Temp', `${v.temperatureF} \u00B0F`); }
-			if (v.respiration) { line(vg, 'Respiration', `${v.respiration} /min`); }
-			if (v.oxygenSaturation) { line(vg, 'O2 Sat', `${v.oxygenSaturation}%`); }
-			if (v.weightKg) { line(vg, 'Weight', `${v.weightKg} kg`); }
-			if (v.weightLbs) { line(vg, 'Weight', `${v.weightLbs} lbs`); }
-			if (v.heightCm) { line(vg, 'Height', `${v.heightCm} cm`); }
-			if (v.heightIn) { line(vg, 'Height', `${v.heightIn} in`); }
-			if (v.bmi) { line(vg, 'BMI', v.bmi); }
+			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
+			// One measurement per row \u2014 QA wants the summary data row-wise.
+			if (v.bpSystolic && v.bpDiastolic) { line(block, 'BP', `${v.bpSystolic}/${v.bpDiastolic} mmHg`); }
+			if (v.pulse) { line(block, 'Pulse', `${v.pulse} bpm`); }
+			if (v.temperatureC) { line(block, 'Temp', `${v.temperatureC} \u00B0C`); }
+			if (v.temperatureF) { line(block, 'Temp', `${v.temperatureF} \u00B0F`); }
+			if (v.respiration) { line(block, 'Respiration', `${v.respiration} /min`); }
+			if (v.oxygenSaturation) { line(block, 'O2 Sat', `${v.oxygenSaturation}%`); }
+			if (v.weightKg) { line(block, 'Weight', `${v.weightKg} kg`); }
+			if (v.weightLbs) { line(block, 'Weight', `${v.weightLbs} lbs`); }
+			if (v.heightCm) { line(block, 'Height', `${v.heightCm} cm`); }
+			if (v.heightIn) { line(block, 'Height', `${v.heightIn} in`); }
+			if (v.bmi) { line(block, 'BMI', v.bmi); }
 			if (v.notes) { line(block, 'Notes', v.notes); }
 			if (v.recordedAt) { line(block, 'Recorded', v.recordedAt); }
 		}
@@ -934,11 +915,11 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('Physical Exam');
 		for (const p of data.physicalExam) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;padding:10px;margin-bottom:8px;`;
+			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
 			if (p.summary) { line(block, 'Summary', p.summary); }
 			for (const s of p.sections || []) {
 				const head = DOM.append(block, DOM.$('div'));
-				head.style.cssText = `color:${col.fg};font-weight:600;margin-top:4px;`;
+				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 14px 0;`;
 				head.textContent = s.sectionKey || 'Section';
 				if (s.allNormal) { line(block, 'All normal', 'Yes'); }
 				if (s.normalText) { line(block, 'Normal', s.normalText); }
@@ -979,7 +960,7 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('Plan');
 		for (const p of data.plan) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;padding:10px;margin-bottom:8px;`;
+			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
 			line(block, 'Diagnostic Plan', p.diagnosticPlan);
 			line(block, 'Plan', p.plan);
 			line(block, 'Notes', p.notes);

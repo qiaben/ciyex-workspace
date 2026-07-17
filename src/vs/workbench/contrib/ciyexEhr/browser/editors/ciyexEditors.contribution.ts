@@ -23,6 +23,7 @@ import {
 	RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput,
 	// System
 	ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput,
+	NotificationHistoryEditorInput,
 	// Developer Portal
 	DeveloperPortalEditorInput,
 	// Practice / Layout settings (API-driven)
@@ -70,6 +71,7 @@ import {
 	DocumentReviewEditor, FormSubmissionEditor, PatientApprovalEditor,
 } from './systemEditors.js';
 import { NotificationsEditor } from './notificationsEditor.js';
+import { NotificationHistoryEditor } from './notificationHistoryEditor.js';
 import { KioskEditor } from './kioskEditor.js';
 import { ReportsEditor } from './reportsEditor.js';
 import { DeveloperPortalEditor } from './developerPortalEditor.js';
@@ -147,6 +149,7 @@ reg.registerEditorPane(EditorPaneDescriptor.create(PatientSnapshotDemoEditor, Pa
 // System editors
 reg.registerEditorPane(EditorPaneDescriptor.create(ConsentsEditor, ConsentsEditor.ID, localize('consents', "Consents")), [new SyncDescriptor(ConsentsEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(NotificationsEditor, NotificationsEditor.ID, localize('notifications', "Notifications")), [new SyncDescriptor(NotificationsEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(NotificationHistoryEditor, NotificationHistoryEditor.ID, localize('notificationHistory', "Notification History")), [new SyncDescriptor(NotificationHistoryEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(FaxEditor, FaxEditor.ID, localize('fax', "Fax")), [new SyncDescriptor(FaxEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(DocScanningEditor, DocScanningEditor.ID, localize('docScanning', "Document Scanning")), [new SyncDescriptor(DocScanningEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(KioskEditor, KioskEditor.ID, localize('kiosk', "Check-in Kiosk")), [new SyncDescriptor(KioskEditorInput)]);

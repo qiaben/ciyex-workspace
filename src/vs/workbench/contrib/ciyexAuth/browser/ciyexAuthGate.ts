@@ -188,6 +188,9 @@ export class CiyexAuthGate extends Disposable {
 			const map = this._savedLogins();
 			map[email.trim().toLowerCase()] = btoa(unescape(encodeURIComponent(password)));
 			localStorage.setItem(CiyexAuthGate._SAVED_LOGINS_KEY, JSON.stringify(map));
+			// Saving credentials means BOTH halves: remember the email too so the
+			// next sign-in pre-fills email and password together.
+			localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, email.trim());
 		} catch { /* storage unavailable */ }
 	}
 
@@ -205,9 +208,12 @@ export class CiyexAuthGate extends Disposable {
 			const list = this._neverSaveList();
 			if (!list.includes(key)) { list.push(key); }
 			localStorage.setItem(CiyexAuthGate._NEVER_SAVE_KEY, JSON.stringify(list));
-			// Also drop any previously saved password for the account.
+			// Also drop any previously saved password for the account, and stop
+			// pre-filling its email — "Never" opts the account out of both halves.
 			const map = this._savedLogins();
 			if (map[key]) { delete map[key]; localStorage.setItem(CiyexAuthGate._SAVED_LOGINS_KEY, JSON.stringify(map)); }
+			const last = (localStorage.getItem(CiyexAuthGate._LAST_EMAIL_KEY) || '').trim().toLowerCase();
+			if (last === key) { localStorage.removeItem(CiyexAuthGate._LAST_EMAIL_KEY); }
 		} catch { /* storage unavailable */ }
 	}
 
@@ -239,13 +245,13 @@ export class CiyexAuthGate extends Disposable {
 		const title = h('div', { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: '700', color: dark ? '#F9FAFB' : '#111827', marginBottom: '6px' });
 		// allow-any-unicode-next-line
 		title.appendChild(text(h('span', { fontSize: '15px' }), '🔑'));
-		title.appendChild(text(h('span', {}), existing ? 'Update password?' : 'Save password?'));
+		title.appendChild(text(h('span', {}), existing ? 'Update credentials?' : 'Save credentials?'));
 		popup.appendChild(title);
 
 		const body = h('p', { fontSize: '12px', color: dark ? '#9CA3AF' : '#6B7280', margin: '0 0 12px', lineHeight: '1.5' });
 		body.textContent = existing
-			? `Update the saved password for ${email}? It will be pre-filled the next time you sign in.`
-			: `Save your password for ${email} on this device? It will be pre-filled the next time you sign in.`;
+			? `Update the saved credentials for ${email}? Email and password will be pre-filled the next time you sign in.`
+			: `Save your email and password for ${email} on this device? Both will be pre-filled the next time you sign in.`;
 		popup.appendChild(body);
 
 		const row = h('div', { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
@@ -296,7 +302,11 @@ export class CiyexAuthGate extends Disposable {
 				break;
 			case CiyexAuthState.NotAuthenticated:
 				this._step = 'email';
+				// Keep the saved-credentials UX working across sign-outs: pre-fill
+				// the last signed-in email instead of blanking it (QA: after Save
+				// only the password came back — the email was lost on re-login).
 				this._email = '';
+				try { this._email = localStorage.getItem(CiyexAuthGate._LAST_EMAIL_KEY) || ''; } catch { /* storage unavailable */ }
 				this._password = '';
 				this._error = '';
 				this._discoverResult = null;
@@ -1643,9 +1653,12 @@ export class CiyexAuthGate extends Disposable {
 		this._loading = false;
 
 		if (result.success) {
-			// Remember the account and offer to save the password (Chrome-style
+			// Remember the account and offer to save the credentials (Chrome-style
 			// popup). The gate itself hides via the Authenticated state change.
-			try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			// Accounts opted out via "Never" are not remembered at all.
+			if (!this._neverSaveList().includes(this._email.trim().toLowerCase())) {
+				try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			}
 			this._offerSaveCredentials(this._email, this._password);
 			return;
 		}
@@ -1691,9 +1704,11 @@ export class CiyexAuthGate extends Disposable {
 		this._loading = false;
 
 		if (result.success) {
-			// Same save-password offer as a normal sign-in, but with the freshly
+			// Same save-credentials offer as a normal sign-in, but with the freshly
 			// set permanent password.
-			try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			if (!this._neverSaveList().includes(this._email.trim().toLowerCase())) {
+				try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+			}
 			this._offerSaveCredentials(this._email, this._newPassword);
 			this._password = '';
 			this._newPassword = '';

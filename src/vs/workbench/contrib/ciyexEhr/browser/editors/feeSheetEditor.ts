@@ -49,6 +49,12 @@ const CODE_TYPES: Array<{ key: string; label: string; searchPath: string }> = [
 	{ key: 'ICD10', label: 'ICD-10 Diagnosis', searchPath: 'ICD10_CM' },
 ];
 
+// The fee sheet is split into a diagnosis half and a procedure half (QA
+// request): each half gets its own search (with only its own code systems)
+// and its own selected-codes table.
+const ICD_CODE_TYPES = CODE_TYPES.filter(ct => ct.key === 'ICD10');
+const CPT_CODE_TYPES = CODE_TYPES.filter(ct => ct.key !== 'ICD10');
+
 /**
  * Fee Sheet editor — captures the billable charges for a signed encounter and
  * pushes them to billing/payment. Mirrors the OpenEMR Fee Sheet:
@@ -84,8 +90,14 @@ export class FeeSheetEditor extends EditorPane {
 	private supervisingProvider = '';
 	private items: FeeItem[] = [];
 
-	private itemsTableHost!: HTMLElement;
+	private icdTableHost!: HTMLElement;
+	private cptTableHost!: HTMLElement;
 	private totalsHost!: HTMLElement;
+	// Footer workflow gate (QA): the fee-sheet data must be SAVED first — only
+	// then do "Send to Billing" and "Download 837P" unlock.
+	private _saved = false;
+	private billBtn: HTMLButtonElement | undefined;
+	private ediBtn: HTMLButtonElement | undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -126,6 +138,7 @@ export class FeeSheetEditor extends EditorPane {
 		this.selectedPriceLevel = '';
 		this.renderingProvider = '';
 		this.supervisingProvider = '';
+		this._saved = false;
 
 		await this._loadData();
 		if (token.isCancellationRequested) { return; }
@@ -212,6 +225,9 @@ export class FeeSheetEditor extends EditorPane {
 
 	private _applyExistingFeeSheet(fs: Record<string, unknown>): void {
 		this.feeSheetId = fs.id !== undefined && fs.id !== null ? String(fs.id) : null;
+		// An already-persisted sheet has its data saved — the follow-up actions
+		// (Send to Billing / Download 837P) are available right away.
+		this._saved = !!this.feeSheetId;
 		if (fs.priceLevel) { this.selectedPriceLevel = String(fs.priceLevel); }
 		if (fs.renderingProvider) { this.renderingProvider = String(fs.renderingProvider); }
 		if (fs.supervisingProvider) { this.supervisingProvider = String(fs.supervisingProvider); }
@@ -264,29 +280,39 @@ export class FeeSheetEditor extends EditorPane {
 			this._renderPatientPicker(this.scrollArea);
 		}
 
-		// 1) Set Price Level
+		// 1) Set Price Level — practices without configured price levels bill at
+		// the standard price, so the dropdown says exactly that instead of the
+		// dead-end "No price levels configured" (QA request).
 		this._sectionTitle(this.scrollArea, 'Set Price Level');
 		const plWrap = DOM.append(this.scrollArea, DOM.$('div'));
 		plWrap.style.cssText = 'max-width:320px;';
+		if (!this.priceLevels.length && !this.selectedPriceLevel) { this.selectedPriceLevel = 'standard'; }
 		createCustomDropdown({
 			parent: plWrap,
-			options: this.priceLevels.length ? this.priceLevels : [{ value: '', label: 'No price levels configured' }],
+			options: this.priceLevels.length ? this.priceLevels : [{ value: 'standard', label: 'Standard Price' }],
 			initialValue: this.selectedPriceLevel,
 			placeholder: 'Select price level…',
 			onChange: v => { this.selectedPriceLevel = v; },
 		});
 
-		// 2) Search for Additional Codes
-		this._sectionTitle(this.scrollArea, 'Search for Additional Codes');
-		this._renderCodeSearch(this.scrollArea);
+		// 2) ICD half — diagnosis search + selected ICD codes table (QA: the fee
+		// sheet is split into an ICD half and a CPT half, each with its own
+		// search and table).
+		this._sectionTitle(this.scrollArea, 'Search for ICD Codes');
+		this._renderCodeSearch(this.scrollArea, ICD_CODE_TYPES);
+		this._sectionTitle(this.scrollArea, 'Selected Fee Sheet ICD Codes');
+		this.icdTableHost = DOM.append(this.scrollArea, DOM.$('div'));
+		this.icdTableHost.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 
-		// 3) Selected Fee Sheet Codes
-		this._sectionTitle(this.scrollArea, 'Selected Fee Sheet Codes and Charges');
-		this.itemsTableHost = DOM.append(this.scrollArea, DOM.$('div'));
-		this.itemsTableHost.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
+		// 3) CPT half — CPT/HCPCS search + selected charges table.
+		this._sectionTitle(this.scrollArea, 'Search for CPT Codes');
+		this._renderCodeSearch(this.scrollArea, CPT_CODE_TYPES);
+		this._sectionTitle(this.scrollArea, 'Selected Fee Sheet CPT Codes and Charges');
+		this.cptTableHost = DOM.append(this.scrollArea, DOM.$('div'));
+		this.cptTableHost.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;';
 		this.totalsHost = DOM.append(this.scrollArea, DOM.$('div'));
 		this.totalsHost.style.cssText = 'display:flex;justify-content:flex-end;gap:24px;padding:10px 4px;font-size:13px;';
-		this._renderItemsTable();
+		this._renderItemsTables();
 
 		// 4) Select Providers
 		this._sectionTitle(this.scrollArea, 'Select Providers');
@@ -369,22 +395,21 @@ export class FeeSheetEditor extends EditorPane {
 		setTimeout(() => input.focus(), 0);
 	}
 
-	private _renderCodeSearch(parent: HTMLElement): void {
-		let activeType = CODE_TYPES[0].key;
+	private _renderCodeSearch(parent: HTMLElement, codeTypes: Array<{ key: string; label: string; searchPath: string }>): void {
+		let activeType = codeTypes[0].key;
 
 		const radioRow = DOM.append(parent, DOM.$('div'));
 		radioRow.style.cssText = 'display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap;';
-		const radioEls: HTMLInputElement[] = [];
-		for (const ct of CODE_TYPES) {
+		for (const ct of codeTypes) {
 			const lbl = DOM.append(radioRow, DOM.$('label'));
 			lbl.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;';
 			const r = DOM.append(lbl, DOM.$('input')) as HTMLInputElement;
 			r.type = 'radio';
-			r.name = 'feesheet-codetype';
+			// Each search half is its own radio group (ICD vs CPT/HCPCS).
+			r.name = `feesheet-codetype-${codeTypes[0].key}`;
 			r.value = ct.key;
 			r.checked = ct.key === activeType;
 			r.addEventListener('change', () => { if (r.checked) { activeType = ct.key; } });
-			radioEls.push(r);
 			const span = DOM.append(lbl, DOM.$('span'));
 			span.textContent = ct.label;
 		}
@@ -452,29 +477,46 @@ export class FeeSheetEditor extends EditorPane {
 		// is already on the sheet bumps its quantity instead of duplicating it.
 		const existing = this.items.find(i => i.type === item.type && i.code === item.code);
 		if (existing) { existing.qty += 1; } else { this.items.push(item); }
-		this._renderItemsTable();
+		this._renderItemsTables();
 	}
 
-	private _renderItemsTable(): void {
-		const COLS = '70px 90px minmax(180px,1.6fr) 110px 90px 60px 90px minmax(120px,1fr) 50px 40px';
-		DOM.clearNode(this.itemsTableHost);
+	/** Render both halves of the split fee sheet: diagnosis lines (ICD-10) in
+	 *  the ICD table, procedure lines (CPT/HCPCS) in the charges table. */
+	private _renderItemsTables(): void {
+		this._renderItemsTable(this.icdTableHost, this.items.filter(it => it.type === 'ICD10'),
+			'No ICD codes selected. Search above to add ICD-10 diagnosis codes.', true);
+		this._renderItemsTable(this.cptTableHost, this.items.filter(it => it.type !== 'ICD10'),
+			'No CPT codes selected. Search above to add CPT or HCPCS codes.', false);
+		this._renderTotals();
+	}
 
-		const header = DOM.append(this.itemsTableHost, DOM.$('div'));
+	private _renderItemsTable(host: HTMLElement, items: FeeItem[], emptyText: string, icdOnly: boolean): void {
+		// Diagnosis lines carry no charge data — the ICD table drops the
+		// Modifier / Price / Qty / Justify columns (QA request).
+		const COLS = icdOnly
+			? '70px 90px minmax(220px,2fr) minmax(160px,1fr) 50px 40px'
+			: '70px 90px minmax(180px,1.6fr) 110px 90px 60px 90px minmax(120px,1fr) 50px 40px';
+		DOM.clearNode(host);
+
+		const header = DOM.append(host, DOM.$('div'));
 		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;padding:8px 10px;background:rgba(0,122,204,0.05);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);`;
-		for (const h of ['Type', 'Code', 'Description', 'Modifiers', 'Price', 'Qty', 'Justify', 'Note', 'Auth', '']) {
+		const headings = icdOnly
+			? ['Type', 'Code', 'Description', 'Notes', 'Auth', '']
+			: ['Type', 'Code', 'Description', 'Modifier', 'Price', 'Qty', 'Justify', 'Notes', 'Auth', ''];
+		for (const h of headings) {
 			DOM.append(header, DOM.$('span')).textContent = h;
 		}
 
-		if (this.items.length === 0) {
-			const empty = DOM.append(this.itemsTableHost, DOM.$('div'));
-			empty.textContent = 'No codes selected. Search above to add CPT, HCPCS or ICD-10 codes.';
+		if (items.length === 0) {
+			const empty = DOM.append(host, DOM.$('div'));
+			empty.textContent = emptyText;
 			empty.style.cssText = 'padding:16px 10px;color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
 		}
 
 		const inputStyle = 'width:100%;box-sizing:border-box;padding:4px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 
-		this.items.forEach((it, i) => {
-			const row = DOM.append(this.itemsTableHost, DOM.$('div'));
+		for (const it of items) {
+			const row = DOM.append(host, DOM.$('div'));
 			row.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;align-items:center;padding:6px 10px;border-top:1px solid rgba(128,128,128,0.08);`;
 
 			DOM.append(row, DOM.$('span')).textContent = it.type;
@@ -486,21 +528,23 @@ export class FeeSheetEditor extends EditorPane {
 			descEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			descEl.title = it.description;
 
-			const modInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-			modInp.value = it.modifiers; modInp.style.cssText = inputStyle;
-			modInp.addEventListener('input', () => { it.modifiers = modInp.value; });
+			if (!icdOnly) {
+				const modInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				modInp.value = it.modifiers; modInp.style.cssText = inputStyle;
+				modInp.addEventListener('input', () => { it.modifiers = modInp.value; });
 
-			const priceInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-			priceInp.type = 'number'; priceInp.step = '0.01'; priceInp.value = String(it.price); priceInp.style.cssText = inputStyle;
-			priceInp.addEventListener('input', () => { it.price = parseFloat(priceInp.value) || 0; this._renderTotals(); });
+				const priceInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				priceInp.type = 'number'; priceInp.step = '0.01'; priceInp.value = String(it.price); priceInp.style.cssText = inputStyle;
+				priceInp.addEventListener('input', () => { it.price = parseFloat(priceInp.value) || 0; this._renderTotals(); });
 
-			const qtyInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-			qtyInp.type = 'number'; qtyInp.value = String(it.qty); qtyInp.style.cssText = inputStyle;
-			qtyInp.addEventListener('input', () => { it.qty = parseInt(qtyInp.value, 10) || 0; this._renderTotals(); });
+				const qtyInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				qtyInp.type = 'number'; qtyInp.value = String(it.qty); qtyInp.style.cssText = inputStyle;
+				qtyInp.addEventListener('input', () => { it.qty = parseInt(qtyInp.value, 10) || 0; this._renderTotals(); });
 
-			const justInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-			justInp.value = it.justify; justInp.placeholder = 'ICD'; justInp.style.cssText = inputStyle;
-			justInp.addEventListener('input', () => { it.justify = justInp.value; });
+				const justInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
+				justInp.value = it.justify; justInp.placeholder = 'ICD'; justInp.style.cssText = inputStyle;
+				justInp.addEventListener('input', () => { it.justify = justInp.value; });
+			}
 
 			const noteInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			noteInp.value = it.note; noteInp.style.cssText = inputStyle;
@@ -514,10 +558,12 @@ export class FeeSheetEditor extends EditorPane {
 
 			const rm = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 			rm.textContent = '\u{1F5D1}'; rm.title = 'Remove'; rm.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:13px;';
-			rm.addEventListener('click', () => { this.items.splice(i, 1); this._renderItemsTable(); });
-		});
-
-		this._renderTotals();
+			rm.addEventListener('click', () => {
+				const idx = this.items.indexOf(it);
+				if (idx >= 0) { this.items.splice(idx, 1); }
+				this._renderItemsTables();
+			});
+		}
 	}
 
 	private _renderTotals(): void {
@@ -535,30 +581,39 @@ export class FeeSheetEditor extends EditorPane {
 	private _renderFooter(): void {
 		DOM.clearNode(this.footerBar);
 
-		const saveBtn = this._footerButton('✓ Save', '#0e639c');
+		// Workflow order (QA): the data is SAVED first — "Send to Billing" and
+		// "Download 837P" stay locked until the save succeeds.
+		const saveBtn = this._footerButton('✓ Save Fee Sheet', '#0e639c');
 		saveBtn.addEventListener('click', async () => {
 			saveBtn.disabled = true;
 			const ok = await this._save();
 			saveBtn.disabled = false;
-			if (ok) { this.notificationService.notify({ severity: Severity.Info, message: 'Fee sheet saved.' }); }
+			if (ok) {
+				this._saved = true;
+				this._updateFooterGates();
+				this.notificationService.notify({ severity: Severity.Info, message: 'Fee sheet saved. You can now send it to billing or download the 837P file.' });
+			}
 		});
 
-		const billBtn = this._footerButton('\u{1F4E4} Send to Billing', '#2e7d32');
+		const billBtn = this.billBtn = this._footerButton('\u{1F4E4} Send to Billing', '#2e7d32');
 		billBtn.addEventListener('click', async () => {
 			billBtn.disabled = true;
 			await this._sendToBilling();
 			billBtn.disabled = false;
+			this._updateFooterGates();
 		});
 
 		// Basic claims tier (every practice, no ciyex-rcm subscription needed):
 		// export this fee sheet as an 837P X12 file to submit through your own
 		// clearinghouse.
-		const ediBtn = this._footerButton('\u{2B07} Download 837P (X12)', '#5b21b6');
+		const ediBtn = this.ediBtn = this._footerButton('\u{2B07} Download 837P (X12)', '#5b21b6');
 		ediBtn.addEventListener('click', async () => {
 			ediBtn.disabled = true;
 			await this._downloadEdi837();
 			ediBtn.disabled = false;
+			this._updateFooterGates();
 		});
+		this._updateFooterGates();
 
 		const spacer = DOM.append(this.footerBar, DOM.$('div'));
 		spacer.style.flex = '1';
@@ -575,6 +630,17 @@ export class FeeSheetEditor extends EditorPane {
 		b.textContent = label;
 		b.style.cssText = `padding:7px 16px;background:${bg};color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:13px;font-weight:500;`;
 		return b;
+	}
+
+	/** Apply the save-first workflow gate to the footer actions. */
+	private _updateFooterGates(): void {
+		for (const b of [this.billBtn, this.ediBtn]) {
+			if (!b) { continue; }
+			b.disabled = !this._saved;
+			b.style.opacity = this._saved ? '1' : '0.45';
+			b.style.cursor = this._saved ? 'pointer' : 'not-allowed';
+			b.title = this._saved ? '' : 'Save the fee sheet first';
+		}
 	}
 
 	private _buildPayload(): Record<string, unknown> {
@@ -762,7 +828,7 @@ export class FeeSheetEditor extends EditorPane {
 		if (!receiverId) { missing.push('Receiver ID'); }
 		if (!billingNpi) { missing.push('Billing NPI'); }
 		if (!billingTaxId) { missing.push('Billing Tax ID'); }
-		if (!insurance.payerName) { missing.push("patient's insurance (no coverage on file)"); }
+		if (!insurance.payerName) { missing.push('patient\'s insurance (no coverage on file)'); }
 		if (this.items.reduce((s, it) => s + it.price * it.qty, 0) === 0) { missing.push('charge amounts (all $0)'); }
 		if (missing.length) {
 			this.notificationService.notify({
@@ -840,7 +906,7 @@ export class FeeSheetEditor extends EditorPane {
 		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string; subscriberAddress?: string };
 		renderingNpi?: string; renderingFirstName?: string; renderingLastName?: string; renderingTaxonomy?: string;
 	}> {
-		const out = { insurance: {} as { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string; subscriberAddress?: string } } as Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>>;
+		const out: Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>> = { insurance: {} };
 		const getJson = async (path: string): Promise<Record<string, unknown> | null> => {
 			try { const r = await this.apiService.fetch(path); return r.ok ? await r.json() : null; } catch { return null; }
 		};

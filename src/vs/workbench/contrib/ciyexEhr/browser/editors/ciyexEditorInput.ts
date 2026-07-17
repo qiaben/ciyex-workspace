@@ -455,6 +455,16 @@ export class RolesEditorInput2 extends EditorInput {
 	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof RolesEditorInput2; }
 }
 
+export class NotificationHistoryEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexNotificationHistory';
+	override get typeId(): string { return NotificationHistoryEditorInput.ID; }
+	constructor() { super(); }
+	override getName(): string { return 'Notification History'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('bell'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-settings', path: '/notification-history' }); }
+	override matches(other: EditorInput | IUntypedEditorInput): boolean { return other instanceof NotificationHistoryEditorInput; }
+}
+
 export class TasksEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexTasks';
 	override get typeId(): string { return TasksEditorInput.ID; }

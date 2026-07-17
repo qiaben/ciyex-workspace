@@ -17,7 +17,7 @@ import { IQuickInputService } from '../../../../platform/quickinput/common/quick
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IEditorService, ACTIVE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput, PatientSnapshotDemoEditorInput, FeeSheetEditorInput } from './editors/ciyexEditorInput.js';
+import { CalendarEditorInput, PatientChartEditorInput, EncounterFormEditorInput, MessagingEditorInput, PortalSettingsEditorInput, RolesEditorInput2, TasksEditorInput, PrescriptionsEditorInput, ImmunizationsEditorInput, ReferralsEditorInput, CarePlansEditorInput, CdsEditorInput, AuthorizationsEditorInput, AppointmentsEditorInput, LabsEditorInput, EducationEditorInput, RecallEditorInput, CodesEditorInput, InventoryEditorInput, PaymentsEditorInput, ClaimsEditorInput, ConsentsEditorInput, NotificationsEditorInput, NotificationHistoryEditorInput, FaxEditorInput, DocScanningEditorInput, KioskEditorInput, AuditLogEditorInput, DeveloperPortalEditorInput, PracticeSettingsEditorInput, LayoutSettingsEditorInput, SettingsHubEditorInput, LayoutHubEditorInput, DocumentReviewEditorInput, FormSubmissionEditorInput, PatientApprovalEditorInput, PatientSnapshotEditorInput, PatientSnapshotDemoEditorInput, FeeSheetEditorInput } from './editors/ciyexEditorInput.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 
@@ -881,6 +881,10 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openNotifications', title: localize2('openNotifications', "Open Notifications"), f1: true }); }
 	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new NotificationsEditorInput(), { pinned: true }); }
+});
+registerAction2(class extends Action2 {
+	constructor() { super({ id: 'ciyex.openNotificationHistory', title: localize2('openNotificationHistory', "Open Notification History"), f1: true }); }
+	async run(accessor: ServicesAccessor): Promise<void> { await accessor.get(IEditorService).openEditor(new NotificationHistoryEditorInput(), { pinned: true }); }
 });
 registerAction2(class extends Action2 {
 	constructor() { super({ id: 'ciyex.openFax', title: localize2('openFax', "Open Fax"), f1: true }); }

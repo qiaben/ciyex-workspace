@@ -33,6 +33,8 @@ import { AccessibilitySignal, IAccessibilitySignalService } from '../../../../pl
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { DEFAULT_CUSTOM_TITLEBAR_HEIGHT } from '../../../../platform/window/common/window.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 export class NotificationsCenter extends Themable implements INotificationsCenterController {
 
@@ -67,7 +69,8 @@ export class NotificationsCenter extends Themable implements INotificationsCente
 		@IAccessibilitySignalService private readonly accessibilitySignalService: IAccessibilitySignalService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@IMenuService private readonly menuService: IMenuService
+		@IMenuService private readonly menuService: IMenuService,
+		@ICommandService private readonly commandService: ICommandService
 	) {
 		super(themeService);
 
@@ -279,6 +282,19 @@ export class NotificationsCenter extends Themable implements INotificationsCente
 				return createActionViewItem(this.instantiationService, action, options);
 			}
 		}));
+
+		// Ciyex: expand the notification center into a full editor tab showing
+		// the 30-day notification history (all actions, grouped by day).
+		const expandToTabAction = toAction({
+			id: 'ciyex.notifications.expandToTab',
+			label: localize('openNotificationHistoryTab', "Open Full History in New Tab"),
+			class: ThemeIcon.asClassName(Codicon.linkExternal),
+			run: async () => {
+				this.hide();
+				await this.commandService.executeCommand('ciyex.openNotificationHistory');
+			}
+		});
+		notificationsToolBar.push(expandToTabAction, { icon: true, label: false });
 
 		this.clearAllAction = this._register(this.instantiationService.createInstance(ClearAllNotificationsAction, ClearAllNotificationsAction.ID, ClearAllNotificationsAction.LABEL));
 		notificationsToolBar.push(this.clearAllAction, { icon: true, label: false, keybinding: this.getKeybindingLabel(this.clearAllAction) });

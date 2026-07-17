@@ -30,6 +30,9 @@ import { IPaneCompositePartService } from '../../../services/panecomposite/brows
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { EditorsOrder } from '../../../common/editor.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { INotificationsModel, NotificationChangeType } from '../../../common/notifications.js';
+import { recordNotification } from './notificationHistoryLog.js';
 
 /**
  * Main EHR workbench contribution.
@@ -58,6 +61,7 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super();
 
@@ -108,6 +112,31 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 
 		// Auto-close native time/date pickers across every create & edit form.
 		this._installTimePickerAutoClose();
+
+		// Record every workbench notification into the 30-day action log that
+		// backs the notification center's "Open Full History" tab.
+		this._installNotificationHistoryRecorder();
+	}
+
+	/**
+	 * Persist every notification shown in this workspace (saves, signs,
+	 * billing, downloads, errors…) into the local 30-day history log. The
+	 * notification center's expand-to-tab action renders this log day-by-day;
+	 * entries older than 30 days are pruned automatically by the store.
+	 */
+	private _installNotificationHistoryRecorder(): void {
+		const model = (this.notificationService as unknown as { model?: INotificationsModel }).model;
+		if (!model?.onDidChangeNotification) { return; }
+		this._register(model.onDidChangeNotification(e => {
+			if (e.kind !== NotificationChangeType.ADD || !e.item) { return; }
+			const severity = e.item.severity === Severity.Error ? 'error' : e.item.severity === Severity.Warning ? 'warning' : 'info';
+			recordNotification({
+				ts: Date.now(),
+				severity,
+				message: e.item.message.raw,
+				source: e.item.source || undefined,
+			});
+		}));
 	}
 
 	/**
