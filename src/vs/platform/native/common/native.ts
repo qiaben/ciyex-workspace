@@ -196,6 +196,13 @@ export interface ICommonNativeHostService {
 	// Screenshots
 	getScreenshot(rect?: IRectangle): Promise<VSBuffer | undefined>;
 
+	// Render the active window's content to a PDF (honours @media print CSS) and
+	// save it into the OS Downloads folder under `fileName`. Returns the full saved
+	// path, or `undefined` if nothing could be rendered. A renderer-side `blob:`
+	// download anchor does not produce a file in the `vscode-file://` workbench, so
+	// the PDF must be written from the main process instead.
+	savePdfToDownloads(fileName: string): Promise<string | undefined>;
+
 	// Process
 	getProcessId(): Promise<number | undefined>;
 	killProcess(pid: number, code: string): Promise<void>;

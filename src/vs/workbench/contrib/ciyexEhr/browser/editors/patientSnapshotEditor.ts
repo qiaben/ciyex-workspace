@@ -19,6 +19,8 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
+import { showVisitSummaryPanel } from './visitSummaryPanel.js';
 import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
@@ -160,6 +162,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@ICommandService private readonly commandService: ICommandService,
+		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 		// Records saved in a sibling editor (the Patient Chart drawer) are
@@ -765,13 +768,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			out.push(r);
 		}
 		return out;
-	}
-
-	/** True when an encounter status means signed / finalized / locked — such an
-	 *  encounter is read-only (the backend rejects edits), so the snapshot hides its
-	 *  edit option and shows a lock instead. */
-	private static _isEncounterSigned(status: unknown): boolean {
-		return PatientSnapshotEditor._normalizeEncounterStatus(status) === 'SIGNED';
 	}
 
 	/**
@@ -4016,77 +4012,69 @@ export class PatientSnapshotEditor extends EditorPane {
 		const wrap = DOM.append(card, DOM.$('div'));
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
-		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 80px 56px;gap:0;';
-		for (const lbl of ['Date', 'Chief Complaint / Diagnosis', 'Status', '']) {
+		// Columns: Date · Visit Type · View. QA asked to drop the chief-complaint /
+		// diagnosis column and the signed/lock status badge, leaving a single View
+		// action that opens the visit-summary (with its Download PDF button) for
+		// the encounter.
+		table.style.cssText = 'display:grid;grid-template-columns:110px 1fr 64px;gap:0;';
+		for (const lbl of ['Date', 'Visit Type', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';
 		}
+		// Coerce a visit-type value (a string or a FHIR CodeableConcept) to its
+		// display text.
+		const typeText = (v: unknown): string => {
+			if (!v) { return ''; }
+			if (typeof v === 'string') { return v; }
+			if (Array.isArray(v)) { return v.map(typeText).filter(Boolean).join(', '); }
+			if (typeof v === 'object') {
+				const o = v as Record<string, unknown>;
+				const coding = Array.isArray(o.coding) ? (o.coding[0] as Record<string, unknown> | undefined) : undefined;
+				return String(o.text || o.display || coding?.display || coding?.code || '');
+			}
+			return '';
+		};
 		const { page, pageIdx, pageCount, total } = this._paginate('encounter-clinical', encs);
 		for (const enc of page) {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			// The chief complaint entered in the encounter form is persisted on the
-			// Encounter resource as `reasonForVisit` (and may also arrive as a FHIR
-			// `reasonCode` CodeableConcept). The history column previously only read
-			// `chiefComplaint`/`reason`, so it rendered blank for saved encounters
-			// (QA: chief complaint not showing). Pull from every known shape and
-			// coerce CodeableConcept objects to their display text.
-			const ccText = (v: unknown): string => {
-				if (!v) { return ''; }
-				if (typeof v === 'string') { return v; }
-				if (Array.isArray(v)) { return v.map(ccText).filter(Boolean).join(', '); }
-				if (typeof v === 'object') {
-					const o = v as Record<string, unknown>;
-					const coding = Array.isArray(o.coding) ? (o.coding[0] as Record<string, unknown> | undefined) : undefined;
-					return String(o.text || o.display || coding?.display || coding?.code || '');
-				}
-				return '';
-			};
-			// `cc_text` is the encounter-form field key — saving the form ALSO flattens
-			// the form data onto the Encounter resource, so an encounter opened from
-			// the appointments page ("Open Encounter") carries its chief complaint
-			// only under cc_text (no reason/reasonCode is written). Without it the
-			// history column showed "—" for exactly those encounters (QA issue).
-			const cc = ccText(enc.chiefComplaint) || ccText(enc.cc_text) || ccText(enc.reasonForVisit) || ccText(enc.reason)
-				|| ccText(enc.reasonText) || ccText(enc.reasonDisplay) || ccText(enc.reasonCode);
-			const dx = enc.diagnosis || enc.primaryDiagnosis || enc.icdCode || '';
-			const detail = [cc, dx].filter(Boolean).map(String).join(' · ') || enc.notes || '—';
-			const status = enc.status || 'Unknown';
-			// Collapse every encounter status onto the two states the workspace tracks
-			// (SIGNED / UNSIGNED) — the column must never show raw FHIR codes like
-			// "in-progress" / "scheduled" / "finished".
-			const normStatus = PatientSnapshotEditor._normalizeEncounterStatus(status);
-			const sColor = normStatus === 'SIGNED' ? '#22c55e' : '#f59e0b';
+			const visitType = typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
+				|| typeText(enc.serviceType) || typeText(enc.encounterType) || typeText(enc.visitCategory) || typeText(enc.class) || 'Encounter';
+			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
 
 			const dateCell = DOM.append(table, DOM.$('div'));
 			dateCell.textContent = dateStr;
 			dateCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);white-space:nowrap;';
 
-			const detailCell = DOM.append(table, DOM.$('div'));
-			detailCell.textContent = String(detail).slice(0, 120);
-			detailCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			const typeCell = DOM.append(table, DOM.$('div'));
+			typeCell.textContent = String(visitType).slice(0, 120);
+			typeCell.style.cssText = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);font-size:12px;color:var(--vscode-editor-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
-			const statusCell = DOM.append(table, DOM.$('div'));
-			statusCell.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--vscode-editorWidget-border);';
-			const sb = DOM.append(statusCell, DOM.$('span'));
-			sb.textContent = normStatus === 'SIGNED' ? 'Signed' : 'Unsigned';
-			sb.style.cssText = `font-size:10px;padding:2px 6px;border-radius:8px;background:${sColor}20;color:${sColor};font-weight:700;`;
-
-			// Encounter History rows are Encounters — edit must target the
-			// encounters entity (not visit-notes), so the pencil opens the
-			// Encounter edit form (QA issue 7). A SIGNED/finalized encounter is
-			// read-only (the backend rejects edits) — its pencil becomes a lock plus
-			// a View action that opens the encounter to read it. Delete is never
-			// offered here (QA: encounters must not be deletable from the history).
-			const isSigned = PatientSnapshotEditor._isEncounterSigned(status);
-			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
-			this._renderGridRowActions(table, 'encounters', enc, isSigned
-				? {
-					canEdit: false, lockReason: 'Signed — locked, read only', hideDelete: true,
-					onView: encRowId ? () => void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encRowId, this._currentPatientName) : undefined
-				}
-				: { hideDelete: true });
+			// View → opens the visit-summary slide-over (which carries its own
+			// Download PDF / Print actions) for this encounter.
+			const actionCell = DOM.append(table, DOM.$('div'));
+			actionCell.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;';
+			const viewBtn = DOM.append(actionCell, DOM.$('button')) as HTMLButtonElement;
+			viewBtn.title = 'View visit summary';
+			viewBtn.setAttribute('aria-label', 'View visit summary');
+			viewBtn.disabled = !encRowId;
+			viewBtn.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:${encRowId ? 'pointer' : 'default'};color:var(--vscode-foreground);font-size:11px;opacity:${encRowId ? '1' : '0.5'};`;
+			const viewIco = DOM.append(viewBtn, DOM.$('span.codicon.codicon-eye'));
+			(viewIco as HTMLElement).style.cssText = 'font-size:12px;';
+			const viewLbl = DOM.append(viewBtn, DOM.$('span'));
+			viewLbl.textContent = 'View';
+			if (encRowId) {
+				viewBtn.addEventListener('mouseenter', () => { viewBtn.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; });
+				viewBtn.addEventListener('mouseleave', () => { viewBtn.style.background = 'transparent'; });
+				viewBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					const facilityHint = typeText(enc.locationName) || typeText(enc.facilityName) || typeText(enc.location) || '';
+					showVisitSummaryPanel(
+						{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService },
+						this._currentPatientId, encRowId, this._currentPatientName || 'Patient', facilityHint);
+				});
+			}
 		}
 		this._renderPagerFooter(card, 'encounter-clinical', pageIdx, pageCount, total);
 	}

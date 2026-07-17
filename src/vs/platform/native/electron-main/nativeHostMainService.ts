@@ -863,6 +863,20 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return buf && VSBuffer.wrap(buf);
 	}
 
+	async savePdfToDownloads(windowId: number | undefined, fileName: string, options?: INativeHostOptions): Promise<string | undefined> {
+		const window = this.windowById(options?.targetWindowId, windowId);
+		// `printBackground` keeps the summary's section styling; the renderer's
+		// `@media print` rules already isolate the summary and force it to legible
+		// black-on-white, so the resulting PDF matches the on-screen preview.
+		const data = await window?.win?.webContents.printToPDF({ printBackground: true });
+		if (!data) {
+			return undefined;
+		}
+		const filePath = join(app.getPath('downloads'), fileName);
+		await Promises.writeFile(filePath, data);
+		return filePath;
+	}
+
 	//#endregion
 
 

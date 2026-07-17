@@ -12,6 +12,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
@@ -291,14 +292,19 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 				// Columns mirror the QuestionnaireResponse history record the backend
 				// actually returns (past/family/social groups + recorded date) — the
 				// old FamilyMemberHistory columns (relationship/condition/onset) never
-				// matched the rows and rendered blank.
+				// matched the rows and rendered blank. QA (issue 6) asked the list to
+				// preview every history group entered in the "New History" form, so the
+				// Past/Surgical notes and each Family member (Father/Mother/Siblings/
+				// Offspring) get their own column alongside the recorded date.
 				columns: [
 					{ key: '_lastUpdated', label: 'Date', aliases: ['_lastUpdated', 'recordedAt', 'authored'] },
-					{ key: 'pastMedicalHistoryNotes', label: 'Past Medical', aliases: ['pastMedicalHistoryNotes'] },
-					{ key: 'fatherHistory', label: 'Family (Father)', aliases: ['fatherHistory'] },
-					{ key: 'smokingStatus', label: 'Smoking Status' },
-					{ key: 'alcoholUse', label: 'Alcohol Use' },
-					{ key: 'exerciseFrequency', label: 'Exercise', aliases: ['exerciseFrequency', 'exercise'] },
+					{ key: 'pastMedicalHistoryNotes', label: 'Medical History', aliases: ['pastMedicalHistoryNotes'] },
+					{ key: 'pastSurgicalHistoryNotes', label: 'Surgical', aliases: ['pastSurgicalHistoryNotes'] },
+					{ key: 'fatherHistory', label: 'Father', aliases: ['fatherHistory'] },
+					{ key: 'motherHistory', label: 'Mother', aliases: ['motherHistory'] },
+					{ key: 'siblingsHistory', label: 'Siblings', aliases: ['siblingsHistory'] },
+					{ key: 'offspringHistory', label: 'Offspring', aliases: ['offspringHistory'] },
+					{ key: 'smokingStatus', label: 'Smoking', aliases: ['smokingStatus'] },
 				],
 			},
 		],
@@ -696,7 +702,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'past-history', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: false, fields: [
-					{ key: 'pastMedicalHistoryNotes', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
+					{ key: 'pastMedicalHistoryNotes', label: 'Medical History', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pastSurgicalHistoryNotes', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
 				],
 			},
@@ -2159,6 +2165,7 @@ export class PatientChartEditor extends EditorPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICommandService private readonly commandService: ICommandService,
+		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
@@ -4545,9 +4552,18 @@ export class PatientChartEditor extends EditorPane {
 			// from the Appointments page ("Completed" status), never added here.
 			if (!tab.readOnly && tab.key !== 'encounters') {
 				const addBtn = DOM.append(actionSlot, DOM.$('button'));
-				addBtn.textContent = '+ Add';
+				// History is a SINGLE evolving record (Past / Family / Social) shared
+				// with the encounter form's history section. Editing the latest record
+				// — instead of creating a fresh one every time — prefills the form with
+				// what's already charted and upserts in place, so the patient list and
+				// the encounter page always show the same details (QA issue 5). When no
+				// history exists yet, fall back to the normal create flow.
+				const historyLatest = tab.key === 'history' ? this._latestHistoryRecord(data) : null;
+				addBtn.textContent = historyLatest ? 'Edit History' : '+ Add';
 				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
-				addBtn.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+				addBtn.addEventListener('click', () => historyLatest
+					? this._openRecordDialog(tab, config, historyLatest)
+					: this._openAddRecordDialog(tab, config));
 			}
 
 			// Issue #9: Vitals renders as a flowsheet (measurements as rows ×
@@ -6005,6 +6021,22 @@ export class PatientChartEditor extends EditorPane {
 
 	private _openAddRecordDialog(tab: ChartTab, config: FieldConfig | null, prefill?: Record<string, unknown>): void {
 		this._openRecordDialog(tab, config, null, prefill);
+	}
+
+	/** The most recently recorded History (QuestionnaireResponse) record from the
+	 *  loaded tab data, or null when the patient has no history yet. The History
+	 *  tab treats this single record as the canonical Past/Family/Social history
+	 *  (shared with the encounter form), so "+ Add" edits it in place instead of
+	 *  creating duplicates (QA issue 5). */
+	private _latestHistoryRecord(data: Record<string, unknown>[]): Record<string, unknown> | null {
+		if (!Array.isArray(data) || data.length === 0) { return null; }
+		const ts = (row: Record<string, unknown>): number => {
+			const t = new Date(String(row._lastUpdated ?? row.recordedAt ?? row.authored ?? '')).getTime();
+			return isNaN(t) ? 0 : t;
+		};
+		let latest = data[0];
+		for (const row of data) { if (ts(row) >= ts(latest)) { latest = row; } }
+		return latest && String(latest.id ?? latest.fhirId ?? '') ? latest : null;
 	}
 
 	private _openRecordDialog(tab: ChartTab, config: FieldConfig | null, existing: Record<string, unknown> | null, prefill?: Record<string, unknown>): void {
@@ -8280,7 +8312,7 @@ export class PatientChartEditor extends EditorPane {
 				const openSummary = (): void => {
 					if (!encId) { return; }
 					showVisitSummaryPanel(
-						{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService },
+						{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService },
 						this.patientId, encId, this.patientName,
 					);
 				};

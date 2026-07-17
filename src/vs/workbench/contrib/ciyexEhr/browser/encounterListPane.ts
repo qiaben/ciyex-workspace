@@ -15,6 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { ICiyexApiService } from './ciyexApiService.js';
 import { enablePickerClick, usToIsoDate } from './ciyexDateMask.js';
 import { showVisitSummaryPanel } from './editors/visitSummaryPanel.js';
@@ -61,6 +62,7 @@ export class EncounterListPane extends ViewPane {
 		@ICiyexApiService private readonly apiService: ICiyexApiService,
 		@ICiyexAuthService private readonly authService: ICiyexAuthService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -376,7 +378,7 @@ export class EncounterListPane extends ViewPane {
 				{ symbol: '\u{1F4DD}', label: 'Open Encounter', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `${provName}`) },
 				...(isSigned ? [] : [{ symbol: '\u{270F}', label: 'Edit Encounter', onClick: () => this._openEditDialog(item, encId, patName) }]),
 				{ symbol: '\u{1FA7A}', label: 'Record Vitals', onClick: () => this.commandService.executeCommand('ciyex.openEncounter', patientId, encId, patName, `Vitals — ${patName}`, 'vitals') },
-				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => showVisitSummaryPanel({ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService }, patientId, encId, patName) },
+				{ symbol: '\u{1F5C2}', label: 'Visit Summary', onClick: () => showVisitSummaryPanel({ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService }, patientId, encId, patName) },
 			]);
 
 			row.addEventListener('mouseenter', () => {

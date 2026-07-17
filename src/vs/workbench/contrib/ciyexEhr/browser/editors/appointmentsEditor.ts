@@ -19,6 +19,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { EncounterFormEditor } from './encounterFormEditor.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { editorBackground, editorForeground, editorWidgetBackground, editorWidgetBorder } from '../../../../../platform/theme/common/colors/editorColors.js';
 import { descriptionForeground, errorForeground, textLinkForeground } from '../../../../../platform/theme/common/colors/baseColors.js';
 import * as DOM from '../../../../../base/browser/dom.js';
@@ -331,6 +332,7 @@ export class AppointmentsEditor extends EditorPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(AppointmentsEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -1749,7 +1751,7 @@ export class AppointmentsEditor extends EditorPane {
 		// carries no location, so the summary's Facility row was empty (QA asked
 		// for the provider's location for the visit to be shown there).
 		showVisitSummaryPanel(
-			{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService },
+			{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService },
 			resolved.patientId, resolved.encounterId, row.patientName || 'Patient',
 			row.locationName || row.locationDisplay || '');
 	}

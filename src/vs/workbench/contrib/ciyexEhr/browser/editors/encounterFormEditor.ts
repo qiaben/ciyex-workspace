@@ -374,6 +374,16 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
+				// Read-only reference: the patient's charted Allergies and Medications
+				// pulled from their chart so the provider sees them while documenting
+				// the encounter (QA issue 7). Not a form input — nothing here is saved
+				// back on the Encounter.
+				key: 'allergies_meds', title: 'Allergies & Medications', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
+					{ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' },
+					{ key: 'chart_medications', label: 'Medications', type: 'medication-list' },
+				]
+			},
+			{
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pmh_conditions', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
@@ -386,6 +396,7 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'fh_father', label: 'Father', type: 'text', placeholder: 'Health conditions...' },
 					{ key: 'fh_mother', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
 					{ key: 'fh_siblings', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
+					{ key: 'fh_offspring', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
 					{ key: 'fh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 2 },
 				]
 			},
@@ -546,6 +557,7 @@ export class EncounterFormEditor extends EditorPane {
 		['fatherHistory', 'fh_father'],
 		['motherHistory', 'fh_mother'],
 		['siblingsHistory', 'fh_siblings'],
+		['offspringHistory', 'fh_offspring'],
 		['smokingStatus', 'sh_smoking'],
 		['alcoholUse', 'sh_alcohol'],
 		['exerciseFrequency', 'sh_exercise'],
@@ -1529,6 +1541,8 @@ export class EncounterFormEditor extends EditorPane {
 				if (f.type === 'diagnosis-list') { this._renderDiagnosisList(cell, f.key, readOnly); continue; }
 				if (f.type === 'plan-items') { this._renderPlanItems(cell, f.key, readOnly); continue; }
 				if (f.type === 'procedure-list') { this._renderProcedureList(cell, f.key, readOnly); continue; }
+				if (f.type === 'allergy-list') { void this._renderChartAllergyList(cell); continue; }
+				if (f.type === 'medication-list') { void this._renderChartMedicationList(cell); continue; }
 
 				// Standard field label
 				const lbl = DOM.append(cell, DOM.$('label'));
@@ -1772,6 +1786,106 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	/** Diagnosis list with ICD-10 search */
+	/** Coerce a value (string / FHIR CodeableConcept / clinicalStatus object) to
+	 *  its display text. */
+	private static _codeText(v: unknown): string {
+		if (!v) { return ''; }
+		if (typeof v === 'string') { return v.trim(); }
+		if (Array.isArray(v)) { return v.map(x => EncounterFormEditor._codeText(x)).filter(Boolean).join(', '); }
+		if (typeof v === 'object') {
+			const o = v as Record<string, unknown>;
+			const coding = Array.isArray(o.coding) ? (o.coding[0] as Record<string, unknown> | undefined) : undefined;
+			return String(o.text || o.display || o.name || coding?.display || coding?.code || '').trim();
+		}
+		return '';
+	}
+
+	/** Collapse any allergy / medication status onto the two states QA asked for:
+	 *  "Active" or "Inactive". Only an explicit active/current status counts as
+	 *  Active; resolved / inactive / stopped / completed / cancelled all read as
+	 *  Inactive. */
+	private static _activeInactive(v: unknown): 'Active' | 'Inactive' {
+		const s = EncounterFormEditor._codeText(v).toLowerCase();
+		return (s === 'active' || s === 'current') ? 'Active' : 'Inactive';
+	}
+
+	/** Small pill showing an Active / Inactive status. */
+	private static _statusPill(parent: HTMLElement, status: 'Active' | 'Inactive'): void {
+		const color = status === 'Active' ? '#22c55e' : '#9ca3af';
+		const pill = DOM.append(parent, DOM.$('span'));
+		pill.textContent = status;
+		pill.style.cssText = `font-size:10px;padding:2px 8px;border-radius:8px;background:${color}22;color:${color};font-weight:700;flex-shrink:0;`;
+	}
+
+	/** Read-only display of the patient's charted Allergies (allergen name +
+	 *  Active/Inactive status) in the encounter form — the same AllergyIntolerance
+	 *  store the chart's Allergies tab reads (QA issue 7). */
+	private async _renderChartAllergyList(parent: HTMLElement): Promise<void> {
+		const loading = DOM.append(parent, DOM.$('div'));
+		loading.textContent = 'Loading allergies…';
+		loading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		let rows: Array<Record<string, unknown>> = [];
+		try {
+			const r = await this.apiService.fetch(`/api/fhir-resource/allergies/patient/${this.patientId}?page=0&size=100`);
+			if (r.ok) {
+				const j = await r.json().catch(() => null);
+				rows = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
+			}
+		} catch { /* leave rows empty */ }
+		loading.remove();
+		if (!Array.isArray(rows) || rows.length === 0) {
+			const none = DOM.append(parent, DOM.$('div'));
+			none.textContent = 'No allergies recorded.';
+			none.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+			return;
+		}
+		for (const a of rows) {
+			const name = EncounterFormEditor._codeText(a.allergyName) || EncounterFormEditor._codeText(a.name)
+				|| EncounterFormEditor._codeText(a.code) || EncounterFormEditor._codeText(a.substance) || 'Unknown allergen';
+			const row = DOM.append(parent, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(128,128,128,0.12);';
+			const nameEl = DOM.append(row, DOM.$('span'));
+			nameEl.textContent = name;
+			nameEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);flex:1;';
+			EncounterFormEditor._statusPill(row, EncounterFormEditor._activeInactive(a.status ?? a.clinicalStatus));
+		}
+	}
+
+	/** Read-only display of the patient's charted Medications (name + dosage +
+	 *  Active/Inactive status) in the encounter form — the same MedicationRequest
+	 *  store the chart's Medications tab reads (QA issue 7). */
+	private async _renderChartMedicationList(parent: HTMLElement): Promise<void> {
+		const loading = DOM.append(parent, DOM.$('div'));
+		loading.textContent = 'Loading medications…';
+		loading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+		let rows: Array<Record<string, unknown>> = [];
+		try {
+			const r = await this.apiService.fetch(`/api/fhir-resource/medications/patient/${this.patientId}?page=0&size=100`);
+			if (r.ok) {
+				const j = await r.json().catch(() => null);
+				rows = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
+			}
+		} catch { /* leave rows empty */ }
+		loading.remove();
+		if (!Array.isArray(rows) || rows.length === 0) {
+			const none = DOM.append(parent, DOM.$('div'));
+			none.textContent = 'No medications recorded.';
+			none.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
+			return;
+		}
+		for (const m of rows) {
+			const name = EncounterFormEditor._codeText(m.medicationName) || EncounterFormEditor._codeText(m.name)
+				|| EncounterFormEditor._codeText(m.medication) || EncounterFormEditor._codeText(m.code) || 'Unknown medication';
+			const dosage = EncounterFormEditor._codeText(m.dosage) || EncounterFormEditor._codeText(m.dose) || EncounterFormEditor._codeText(m.dosageInstruction);
+			const row = DOM.append(parent, DOM.$('div'));
+			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(128,128,128,0.12);';
+			const nameEl = DOM.append(row, DOM.$('span'));
+			nameEl.textContent = dosage ? `${name} — ${dosage}` : name;
+			nameEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);flex:1;';
+			EncounterFormEditor._statusPill(row, EncounterFormEditor._activeInactive(m.status));
+		}
+	}
+
 	private _renderDiagnosisList(parent: HTMLElement, dataKey: string, readOnly: boolean): void {
 		const diagnoses = (this.encounterData[dataKey] || []) as Array<{ code: string; description: string }>;
 		// Register the live array so edits persist on save (issue #1).
