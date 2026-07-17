@@ -8,7 +8,7 @@ import { ITelemetryService } from '../../../../../platform/telemetry/common/tele
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
-import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -8269,10 +8269,12 @@ export class PatientChartEditor extends EditorPane {
 				onDelete = undefined;
 				const openEncounter = (section: string): void => {
 					if (!encId) { this._navigate('encounters'); return; }
+					// Open full-width in the active group (matches the Encounter command
+					// path). Previously opened in SIDE_GROUP, which split the editor area
+					// so the SOAP form only got half the width and appeared cut off.
 					this.editorService.openEditor(
 						new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter', section),
-						{},
-						SIDE_GROUP,
+						{ pinned: true },
 					);
 				};
 				const openSummary = (): void => {
@@ -8288,7 +8290,7 @@ export class PatientChartEditor extends EditorPane {
 					// allow-any-unicode-next-line
 					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openEncounter('vitals') },
 					// allow-any-unicode-next-line
-					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: openSummary },
+					{ icon: '👁️', title: 'View Visit Summary', color: '#10b981', onClick: openSummary },
 				];
 				return { cells, onClick, onDelete, extraActions };
 			}
@@ -8307,8 +8309,7 @@ export class PatientChartEditor extends EditorPane {
 					if (encId) {
 						this.editorService.openEditor(
 							new EncounterFormEditorInput(this.patientId, encId, this.patientName, 'Encounter', section),
-							{},
-							SIDE_GROUP,
+							{ pinned: true },
 						);
 					} else {
 						this._navigate('encounters');
@@ -8326,7 +8327,7 @@ export class PatientChartEditor extends EditorPane {
 					// allow-any-unicode-next-line
 					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openSection('vitals') },
 					// allow-any-unicode-next-line
-					{ icon: '📝', title: 'Visit Summary', color: '#10b981', onClick: () => openSection('plan') },
+					{ icon: '👁️', title: 'View Visit Summary', color: '#10b981', onClick: () => openSection('plan') },
 				];
 			}
 
