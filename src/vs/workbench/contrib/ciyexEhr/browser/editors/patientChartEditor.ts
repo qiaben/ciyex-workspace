@@ -292,19 +292,14 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 				// Columns mirror the QuestionnaireResponse history record the backend
 				// actually returns (past/family/social groups + recorded date) — the
 				// old FamilyMemberHistory columns (relationship/condition/onset) never
-				// matched the rows and rendered blank. QA (issue 6) asked the list to
-				// preview every history group entered in the "New History" form, so the
-				// Past/Surgical notes and each Family member (Father/Mother/Siblings/
-				// Offspring) get their own column alongside the recorded date.
+				// matched the rows and rendered blank.
 				columns: [
 					{ key: '_lastUpdated', label: 'Date', aliases: ['_lastUpdated', 'recordedAt', 'authored'] },
-					{ key: 'pastMedicalHistoryNotes', label: 'Medical History', aliases: ['pastMedicalHistoryNotes'] },
-					{ key: 'pastSurgicalHistoryNotes', label: 'Surgical', aliases: ['pastSurgicalHistoryNotes'] },
-					{ key: 'fatherHistory', label: 'Father', aliases: ['fatherHistory'] },
-					{ key: 'motherHistory', label: 'Mother', aliases: ['motherHistory'] },
-					{ key: 'siblingsHistory', label: 'Siblings', aliases: ['siblingsHistory'] },
-					{ key: 'offspringHistory', label: 'Offspring', aliases: ['offspringHistory'] },
-					{ key: 'smokingStatus', label: 'Smoking', aliases: ['smokingStatus'] },
+					{ key: 'pastMedicalHistoryNotes', label: 'Past Medical', aliases: ['pastMedicalHistoryNotes'] },
+					{ key: 'fatherHistory', label: 'Family (Father)', aliases: ['fatherHistory'] },
+					{ key: 'smokingStatus', label: 'Smoking Status' },
+					{ key: 'alcoholUse', label: 'Alcohol Use' },
+					{ key: 'exerciseFrequency', label: 'Exercise', aliases: ['exerciseFrequency', 'exercise'] },
 				],
 			},
 		],

@@ -21,14 +21,6 @@ interface VisitSummaryMeta {
 	facility?: string;
 	dateOfService?: string;
 	reasonForVisit?: string;
-	/** Rendering-provider name for this encounter. */
-	providerName?: string;
-	/** The encounter's own id (shown in the summary header). */
-	encounterId?: string;
-	/** Patient's formatted date of birth. */
-	patientDateOfBirth?: string;
-	/** Patient's "{age} · {gender}" summary. */
-	patientAgeGender?: string;
 }
 interface VisitSummaryChiefComplaint {
 	title?: string;
@@ -385,7 +377,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
  *  values from it, keeping `/summary` only for the encounter meta header. */
 async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement, facilityHint?: string): Promise<boolean> {
 	try {
-		const [summaryData, formComp, encResource, patientResource] = await Promise.all([
+		const [summaryData, formComp, encResource] = await Promise.all([
 			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
 				.then(async r => (r.ok ? await r.json() : null))
 				.then(j => (j?.success ? (j.data ?? null) : (j?.data ?? j ?? null)))
@@ -394,19 +386,8 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 			deps.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`)
 				.then(async r => (r.ok ? (((await r.json())?.data ?? null) as Record<string, unknown> | null) : null))
 				.catch(() => null),
-			// Patient demographics (DOB / gender / age) for the summary header.
-			deps.apiService.fetch(`/api/patients/${patientId}`)
-				.then(async r => (r.ok ? await r.json() : null))
-				.then(j => ((j?.data ?? j ?? null) as Record<string, unknown> | null))
-				.catch(() => null),
 		]);
-		// Always render the meta header from a real summary object with a `meta`
-		// block — even when the /summary endpoint returned nothing, the form
-		// Composition path still shows the enriched Encounter Summary header.
-		const summary = (summaryData && typeof summaryData === 'object' ? summaryData : {}) as VisitSummaryDTO;
-		if (!summary.meta) { summary.meta = {}; }
-		await sanitizeSummaryMeta(deps, summary, encResource, facilityHint);
-		await enrichSummaryMeta(deps, summary.meta, encounterId, encResource, patientResource, summary);
+		await sanitizeSummaryMeta(deps, summaryData as VisitSummaryDTO | null, encResource, facilityHint);
 		loading.remove();
 
 		// The encounter-form Composition endpoint is PATIENT-scoped. Different
@@ -425,7 +406,7 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 
 		// Prefer the encounter-form Composition for the clinical sections — it's
 		// the source of truth for what the provider actually entered.
-		const renderedForm = comp ? renderEncounterFormSections(deps, body, comp, summary) : false;
+		const renderedForm = comp ? renderEncounterFormSections(deps, body, comp, summaryData) : false;
 
 		if (!renderedForm) {
 			// No form Composition yet — fall back to the /summary DTO rendering.
@@ -435,90 +416,13 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 				errMsg.style.cssText = `font-size:13px;color:${summaryColors(deps.themeService).error};`;
 				return false;
 			}
-			renderVisitSummary(deps, body, summary);
+			renderVisitSummary(deps, body, summaryData as VisitSummaryDTO);
 		}
 		return true;
 	} catch (err) {
 		loading.textContent = `Failed to load encounter summary: ${String(err)}`;
 		loading.style.color = summaryColors(deps.themeService).error;
 		return false;
-	}
-}
-
-/** Adds the provider, encounter-id and patient-demographic fields to the meta
- *  header (QA: the Encounter Summary must show date of service, provider name,
- *  encounter id, DOB and age/gender). Only fills fields that are still empty so
- *  a value already provided by the /summary DTO wins. */
-async function enrichSummaryMeta(deps: IVisitSummaryDeps, meta: VisitSummaryMeta, encounterId: string, enc: Record<string, unknown> | null, patient: Record<string, unknown> | null, summary: VisitSummaryDTO): Promise<void> {
-	const asText = (v: unknown): string => {
-		if (!v) { return ''; }
-		if (typeof v === 'string') { return v.trim(); }
-		if (Array.isArray(v)) { return v.map(asText).filter(Boolean)[0] || ''; }
-		if (typeof v === 'object') { const o = v as Record<string, unknown>; return String(o.display || o.name || o.providerName || o.text || '').trim(); }
-		return '';
-	};
-	const fmtDate = (d: unknown): string => {
-		if (!d) { return ''; }
-		try { return new Date(String(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return String(d); }
-	};
-
-	// Encounter id — prefer the resource's own id, fall back to the caller's.
-	if (!meta.encounterId) {
-		meta.encounterId = String((enc && (enc.id ?? enc.encounterId ?? enc.fhirId)) || encounterId || '').trim() || undefined;
-	}
-	// Provider — the first assigned provider, else the encounter's practitioner.
-	if (!meta.providerName) {
-		const prov = summary.assignedProviders?.find(p => p.providerName || p.name);
-		meta.providerName = (prov?.providerName || prov?.name
-			|| asText(enc?.practitionerName) || asText(enc?.providerName) || asText(enc?.practitioner) || asText(enc?.provider)) || undefined;
-	}
-	// The Encounter resource often carries only a bare `Practitioner/{id}`
-	// reference (no display name), which reads as an id in the header. Resolve it
-	// to the provider's name via the org's /api/providers list so the summary
-	// shows a real name (QA: "provider name will be added").
-	if (meta.providerName) {
-		const trimmed = meta.providerName.trim();
-		const refMatch = /^Practitioner\/(\d+)$/i.exec(trimmed);
-		const providerId = refMatch ? refMatch[1] : (/^\d+$/.test(trimmed) ? trimmed : '');
-		if (providerId) {
-			try {
-				const r = await deps.apiService.fetch('/api/providers');
-				if (r.ok) {
-					const j = await r.json().catch(() => null);
-					const list = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
-					const hit = Array.isArray(list) ? list.find(p => String(p.id) === String(providerId)) : undefined;
-					if (hit) {
-						const nm = [hit.firstName, hit.lastName].filter(Boolean).map(String).join(' ').trim() || asText(hit.name) || asText(hit.displayName) || asText(hit.providerName);
-						if (nm) { meta.providerName = nm; }
-					}
-				}
-			} catch { /* keep the reference when the lookup fails */ }
-		}
-	}
-	// Date of service — backfill from the encounter when /summary omitted it.
-	if (!meta.dateOfService && enc) {
-		meta.dateOfService = fmtDate(enc.periodStart ?? enc.start ?? enc.date ?? enc.encounterDate ?? enc.startDate) || undefined;
-	}
-	// Patient demographics — DOB and a combined "{age} · {Gender}".
-	if (patient) {
-		const dobRaw = patient.dateOfBirth ?? patient.birthDate ?? patient.dob ?? '';
-		const gender = String(patient.gender ?? patient.sex ?? '').trim();
-		if (dobRaw && !meta.patientDateOfBirth) { meta.patientDateOfBirth = fmtDate(dobRaw) || undefined; }
-		if (!meta.patientAgeGender) {
-			let age = '';
-			if (dobRaw) {
-				try {
-					const d = new Date(String(dobRaw));
-					const now = new Date();
-					let y = now.getFullYear() - d.getFullYear();
-					const m = now.getMonth() - d.getMonth();
-					if (m < 0 || (m === 0 && now.getDate() < d.getDate())) { y--; }
-					if (y >= 0 && y < 200) { age = `${y} yrs`; }
-				} catch { /* age stays empty */ }
-			}
-			const g = gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : '';
-			meta.patientAgeGender = [age, g].filter(Boolean).join(' · ') || undefined;
-		}
 	}
 }
 
@@ -683,12 +587,8 @@ function renderSummaryMetaCard(body: HTMLElement, col: SummaryColors, meta: Visi
 	const metaFields: Array<[string, string | undefined]> = [
 		['Visit Category', meta.visitCategory],
 		['Type', meta.type],
-		['Date of Service', meta.dateOfService],
-		['Provider', meta.providerName],
-		['Encounter ID', meta.encounterId],
-		['Date of Birth', meta.patientDateOfBirth],
-		['Age / Gender', meta.patientAgeGender],
 		['Facility', meta.facility],
+		['Date of Service', meta.dateOfService],
 		['Reason for Visit', meta.reasonForVisit],
 	];
 	let anyMeta = false;
@@ -778,6 +678,7 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 
 	const allKeys = Object.keys(comp).filter(k => !isMetaKey(k));
 	const usedKeys = new Set<string>();
+	const renderedTitles = new Set<string>();
 	let renderedAny = false;
 
 	for (const grp of FORM_SECTION_GROUPS) {
@@ -800,6 +701,15 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 				const v = fmtValue(hitKey, raw);
 				if (v) { rows.push([spec.label, spec.unit ? `${v} ${spec.unit}` : v]); }
 			}
+			// Then append ANY other vitals the encounter carries that are not in the
+			// canonical list (e.g. legacy `vitals_pain_level`, or a nested `vitals`
+			// object) so nothing charted is dropped — the ordered list above is an
+			// enhancement, not a whitelist that hides extra fields.
+			for (const k of keys) {
+				if (usedKeys.has(k)) { continue; }
+				const v = fmtValue(k, comp[k]);
+				if (v) { rows.push([humanizeFieldKey(k, grp.prefix), v]); usedKeys.add(k); }
+			}
 		} else {
 			for (const k of keys) {
 				// Physical Exam: skip the per-system "Normal" checkbox scaffolding and
@@ -816,6 +726,7 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 		}
 		if (!rows.length) { continue; }
 		renderedAny = true;
+		renderedTitles.add(grp.title);
 		const table = summarySectionCard(body, col, grp.title, grp.icon);
 		// Chief complaint is a single free-text value — show it without a label.
 		if (grp.prefix === 'cc' && rows.length === 1) {
@@ -827,12 +738,102 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 		}
 	}
 
+	// Fall back to the /summary DTO for prominent sections the Composition didn't
+	// carry. Vitals in particular are often charted on the Vitals page (they land
+	// in the shared FHIR store the /summary reads, NOT the encounter form), so an
+	// encounter whose Composition has no vitals must still show them (QA: vitals /
+	// other fields missing from the summary). Chief Complaint and HPI get the same
+	// treatment for the same reason.
+	if (summaryData && typeof summaryData === 'object') {
+		renderedAny = renderMissingDtoSections(deps, body, summaryData as VisitSummaryDTO, renderedTitles) || renderedAny;
+	}
+
 	if (!renderedAny) {
 		const none = DOM.append(body, DOM.$('div'));
 		none.textContent = 'No clinical sections recorded for this encounter yet.';
 		none.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;text-align:center;font-size:13px;color:${col.desc};`;
 	}
 	return true;
+}
+
+/** Vitals rows (label + value with unit) built from a /summary DTO vitals entry,
+ *  in the same order and units as the Composition-path vitals. */
+function vitalsRowsFromDto(v: VisitSummaryVitals): Array<[string, string]> {
+	const rows: Array<[string, string]> = [];
+	const push = (label: string, val: unknown, unit: string): void => {
+		if (val === undefined || val === null || val === '') { return; }
+		rows.push([label, unit ? `${val} ${unit}` : String(val)]);
+	};
+	push('BP Systolic', v.bpSystolic, 'mmHg');
+	push('BP Diastolic', v.bpDiastolic, 'mmHg');
+	push('Heart Rate', v.pulse, 'bpm');
+	// allow-any-unicode-next-line
+	if (v.temperatureF !== undefined && v.temperatureF !== null) { push('Temperature', v.temperatureF, '°F'); } else { push('Temperature', v.temperatureC, '°C'); }
+	push('SpO2', v.oxygenSaturation, '%');
+	push('Respiratory Rate', v.respiration, '/min');
+	if (v.weightKg !== undefined && v.weightKg !== null) { push('Weight', v.weightKg, 'kg'); } else { push('Weight', v.weightLbs, 'lbs'); }
+	if (v.heightCm !== undefined && v.heightCm !== null) { push('Height', v.heightCm, 'cm'); } else { push('Height', v.heightIn, 'in'); }
+	push('BMI', v.bmi, '');
+	return rows;
+}
+
+/** Renders the prominent clinical sections (Vitals, Chief Complaint, HPI,
+ *  Review of Systems) from the /summary DTO when the encounter-form Composition
+ *  did NOT already provide them, so a sparse Composition doesn't hide data that
+ *  exists in the shared store. Returns true when at least one fallback section
+ *  was rendered. */
+function renderMissingDtoSections(deps: IVisitSummaryDeps, body: HTMLElement, dto: VisitSummaryDTO, rendered: Set<string>): boolean {
+	const col = summaryColors(deps.themeService);
+	let any = false;
+
+	// --- Vitals ---
+	if (!rendered.has('Vitals')) {
+		const v0 = Array.isArray(dto.vitals) ? dto.vitals.find(Boolean) : undefined;
+		const rows = v0 ? vitalsRowsFromDto(v0) : [];
+		if (rows.length) {
+			// allow-any-unicode-next-line
+			const table = summarySectionCard(body, col, 'Vitals', '❤️');
+			for (const [label, value] of rows) { summaryKvRow(table, col, label, value); }
+			any = true;
+		}
+	}
+	// --- Chief Complaint ---
+	if (!rendered.has('Chief Complaint')) {
+		const texts = (Array.isArray(dto.chiefComplaints) ? dto.chiefComplaints : [])
+			.map(c => [c.title || c.complaint || '', c.notes || ''].filter(Boolean).join('\n')).filter(Boolean);
+		if (texts.length) {
+			// allow-any-unicode-next-line
+			const table = summarySectionCard(body, col, 'Chief Complaint', '🩺');
+			for (const t of texts) { summaryTextRow(table, col, t); }
+			any = true;
+		}
+	}
+	// --- History of Present Illness ---
+	if (!rendered.has('History of Present Illness')) {
+		const texts = (Array.isArray(dto.hpi) ? dto.hpi : [])
+			.map(h => h.description || h.text || h.notes || '').filter(Boolean);
+		if (texts.length) {
+			// allow-any-unicode-next-line
+			const table = summarySectionCard(body, col, 'History of Present Illness', '📖');
+			for (const t of texts) { summaryTextRow(table, col, t); }
+			any = true;
+		}
+	}
+	// --- Review of Systems ---
+	if (!rendered.has('Review of Systems')) {
+		const rosVisible = (Array.isArray(dto.ros) ? dto.ros : [])
+			.filter(r => (r.findings && r.findings.length > 0) || !r.isNegative);
+		if (rosVisible.length) {
+			// allow-any-unicode-next-line
+			const table = summarySectionCard(body, col, 'Review of Systems', '🔍');
+			for (const r of rosVisible) {
+				const detail = (r.findings && r.findings.length) ? r.findings.join(', ') : 'All Negative';
+				summaryKvRow(table, col, r.systemName || 'System', r.notes ? `${detail} — ${r.notes}` : detail);
+			}
+			any = true;
+		}
+	}
+	return any;
 }
 
 /** Renders the full Encounter Summary (meta + every recorded section) from the
@@ -972,17 +973,22 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		for (const v of data.vitals) {
 			const block = DOM.append(card, DOM.$('div'));
 			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
-			// One measurement per row \u2014 QA wants the summary data row-wise.
-			if (v.bpSystolic && v.bpDiastolic) { line(block, 'BP', `${v.bpSystolic}/${v.bpDiastolic} mmHg`); }
-			if (v.pulse) { line(block, 'Pulse', `${v.pulse} bpm`); }
-			if (v.temperatureC) { line(block, 'Temp', `${v.temperatureC} \u00B0C`); }
-			if (v.temperatureF) { line(block, 'Temp', `${v.temperatureF} \u00B0F`); }
-			if (v.respiration) { line(block, 'Respiration', `${v.respiration} /min`); }
-			if (v.oxygenSaturation) { line(block, 'O2 Sat', `${v.oxygenSaturation}%`); }
+			// One measurement per row, in the SAME order / labels / units as the
+			// encounter page and the Composition render path (QA issue 3), so the
+			// summary reads identically no matter which path produced it. Temperature
+			// is charted in \u00B0F on this workspace (the form maps vitals_temperature \u2192
+			// temperatureC), so show \u00B0F rather than the raw field's misleading \u00B0C.
+			if (v.bpSystolic) { line(block, 'BP Systolic', `${v.bpSystolic} mmHg`); }
+			if (v.bpDiastolic) { line(block, 'BP Diastolic', `${v.bpDiastolic} mmHg`); }
+			if (v.pulse) { line(block, 'Heart Rate', `${v.pulse} bpm`); }
+			const tempVal = v.temperatureF ?? v.temperatureC;
+			if (tempVal) { line(block, 'Temperature', `${tempVal} \u00B0F`); }
+			if (v.oxygenSaturation) { line(block, 'SpO2', `${v.oxygenSaturation} %`); }
+			if (v.respiration) { line(block, 'Respiratory Rate', `${v.respiration} /min`); }
 			if (v.weightKg) { line(block, 'Weight', `${v.weightKg} kg`); }
-			if (v.weightLbs) { line(block, 'Weight', `${v.weightLbs} lbs`); }
+			else if (v.weightLbs) { line(block, 'Weight', `${v.weightLbs} lbs`); }
 			if (v.heightCm) { line(block, 'Height', `${v.heightCm} cm`); }
-			if (v.heightIn) { line(block, 'Height', `${v.heightIn} in`); }
+			else if (v.heightIn) { line(block, 'Height', `${v.heightIn} in`); }
 			if (v.bmi) { line(block, 'BMI', v.bmi); }
 			if (v.notes) { line(block, 'Notes', v.notes); }
 			if (v.recordedAt) { line(block, 'Recorded', v.recordedAt); }
