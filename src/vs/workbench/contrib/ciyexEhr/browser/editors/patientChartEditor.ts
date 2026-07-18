@@ -4457,8 +4457,20 @@ export class PatientChartEditor extends EditorPane {
 				const controls = content.querySelectorAll('input, select, textarea');
 				for (const node of Array.from(controls) as Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
 					node.disabled = readOnly;
-					node.style.opacity = readOnly ? '0.75' : '1';
-					node.style.cursor = readOnly ? 'not-allowed' : '';
+					// The date field's native calendar picker is an INVISIBLE overlay
+					// (opacity:0) sitting over the visible mm/dd/yyyy text + custom
+					// calendar codicon. Dimming it like the other controls (0.75, or 1
+					// when editable) un-hides its native calendar indicator, which then
+					// shows as a duplicate calendar icon next to the codicon. Keep the
+					// overlay fully transparent in both modes; the visible text input
+					// beside it still receives the read-only dimming.
+					if (DOM.isHTMLInputElement(node) && node.type === 'date') {
+						node.style.opacity = '0';
+						node.style.cursor = readOnly ? 'not-allowed' : 'pointer';
+					} else {
+						node.style.opacity = readOnly ? '0.75' : '1';
+						node.style.cursor = readOnly ? 'not-allowed' : '';
+					}
 				}
 			};
 

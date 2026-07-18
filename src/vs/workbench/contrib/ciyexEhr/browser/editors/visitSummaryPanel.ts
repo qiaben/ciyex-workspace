@@ -340,6 +340,10 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 				return;
 			}
 			deps.notificationService.notify({ severity: Severity.Info, message: `Visit summary saved to ${savedPath}` });
+			// The PDF is already captured (printToPDF resolved above), so it is safe to
+			// close the panel now — the download is done and the user expects the
+			// summary to dismiss once the file has been saved.
+			dismiss();
 		} catch (err) {
 			deps.notificationService.notify({ severity: Severity.Error, message: `Could not save the visit summary PDF: ${err instanceof Error ? err.message : String(err)}` });
 		} finally {
