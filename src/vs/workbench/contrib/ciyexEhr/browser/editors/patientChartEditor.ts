@@ -4918,8 +4918,16 @@ export class PatientChartEditor extends EditorPane {
 			signedTd0.textContent = 'Signed';
 			signedTd0.style.cssText = firstColCss;
 			const isSigned = (rec: Record<string, unknown>): boolean => {
-				const s = get(rec, ['signed', 'signedAt', 'isSigned']);
-				return s === true || s === 'true' || s === 'final' || (typeof s === 'string' && s.length > 4);
+				// A vitals recording is Signed ONLY when it carries an explicit positive
+				// sign marker. The Sign action persists `signed: 'final'` and Unsign
+				// persists `signed: false`, so a missing field, `false`/`'false'`, or a
+				// server-side `signedAt` timestamp all mean Unsigned. The previous
+				// heuristic counted ANY string longer than 4 chars as signed, so the
+				// reconciliation refetch fired when a second recording is added re-read
+				// the first record's server fields (e.g. a `signedAt`/date string) and
+				// auto-flipped it to Signed with no user action.
+				const s = get(rec, ['signed', 'isSigned']);
+				return s === true || s === 'true' || s === 'final' || s === 'signed';
 			};
 			for (const rec of recs) {
 				const td = DOM.append(signedTr, DOM.$('td'));
