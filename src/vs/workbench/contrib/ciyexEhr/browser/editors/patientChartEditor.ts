@@ -8256,6 +8256,12 @@ export class PatientChartEditor extends EditorPane {
 					}
 				}
 			}
+			// Lab Results special-case: the LOINC code is folded into the Test Name
+			// column ("name (code)"), so drop the standalone LOINC Code column to
+			// avoid showing the code twice.
+			if (tab.key === 'lab-results') {
+				picked = picked.filter(c => !/^(loincCode|loinc_code|loinc|testCode)$/i.test(c.key) && !/^loinc\s*code$/i.test(c.label || ''));
+			}
 			return { keys: picked.map(c => c.key), labels: picked.map(c => c.label) };
 		})();
 
@@ -8353,6 +8359,25 @@ export class PatientChartEditor extends EditorPane {
 						v = candidate;
 						break;
 					}
+				}
+				// Lab Results: the Test column shows the descriptive test name AND its
+				// LOINC code together (e.g. "Hematocrit [Vol Fraction] (4544-3)"), so a
+				// result picked from the LOINC search reads with both the word and the
+				// code rather than just one (QA: the list showed only the code). The
+				// LOINC pick stores the name in `testName` (relatedField) and the code
+				// in `loincCode`; here they are recombined for display. Rows without a
+				// code show just the name (no empty parens).
+				if (tab.key === 'lab-results' && k === 'testName') {
+					const name = String(v ?? '').trim();
+					const codeRaw = String(item.loincCode ?? item.testCode ?? '').trim();
+					// Only fold in a genuine LOINC code — numeric, optionally with the
+					// check-digit suffix (e.g. "788-0", "4544-3", "23456"). Free-typed
+					// non-code text (what the LOINC search leaves behind when it can't
+					// resolve a match) is NOT appended, so the Test column never reads
+					// like an invalid name such as "ppp (hematocrit)".
+					const code = /^\d[\d.-]*$/.test(codeRaw) ? codeRaw : '';
+					if (name && code && !name.includes(code)) { return `${name} (${code})`; }
+					return name || codeRaw;
 				}
 				// Encounters: show the signing-workflow state (Signed / Unsigned)
 				// the patient snapshot shows, not the raw FHIR status ("Finished")
