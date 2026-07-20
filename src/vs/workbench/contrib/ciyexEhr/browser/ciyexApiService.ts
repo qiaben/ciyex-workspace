@@ -7,7 +7,6 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ICiyexAuthService } from '../../ciyexAuth/browser/ciyexAuthService.js';
-import { tryHandleLocally } from './ciyexLocalApi.js';
 
 export const ICiyexApiService = createDecorator<ICiyexApiService>('ciyexApiService');
 
@@ -77,14 +76,6 @@ export class CiyexApiService extends Disposable implements ICiyexApiService {
 	}
 
 	async fetch(path: string, options?: RequestInit): Promise<Response> {
-		// Price Level and Fee Sheet are implemented entirely in-app: served from
-		// the local store with no dependency on the remote `ciyex` backend.
-		// Handled before the token check so they work standalone.
-		const local = tryHandleLocally(path, options);
-		if (local) {
-			return local;
-		}
-
 		// Block API calls without token — prevents hung connections before login
 		if (!this._token && !path.includes('/auth/')) {
 			throw new Error('Not authenticated');
