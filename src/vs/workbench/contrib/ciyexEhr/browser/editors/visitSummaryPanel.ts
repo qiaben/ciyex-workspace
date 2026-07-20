@@ -274,7 +274,21 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// Keep the body scrollable (content can be long) but hide the visible
 	// scrollbar — matches the rest of the app's chrome-less look.
 	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
-	const loading = DOM.append(body, DOM.$('div'));
+
+	// Print/PDF structure: the content lives in a <table> whose <thead> carries the
+	// practice/patient letterhead. Chromium (both window.print() and the main
+	// process printToPDF) REPEATS a table-header-group on every page and reserves
+	// its height, so the letterhead prints atop each page with no overlap — the one
+	// reliable cross-page repeating-header technique. On screen the thead is hidden
+	// and the table/cells collapse to blocks (see the screen stylesheet below) so
+	// the panel looks exactly as before.
+	const printTable = DOM.append(body, DOM.$('table.ciyex-summary-table'));
+	printTable.style.cssText = 'width:100%;border-collapse:collapse;';
+	const runHead = DOM.append(printTable, DOM.$('thead.ciyex-summary-runhead'));
+	const headCell = DOM.append(DOM.append(runHead, DOM.$('tr')), DOM.$('td')) as HTMLElement;
+	const content = DOM.append(DOM.append(DOM.append(printTable, DOM.$('tbody')), DOM.$('tr')), DOM.$('td.ciyex-summary-content')) as HTMLElement;
+	content.style.cssText = 'padding:0;vertical-align:top;';
+	const loading = DOM.append(content, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
 
@@ -302,8 +316,16 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the backdrop dimmer so only the summary content — forced to legible
 	// black-on-white — lands on the page / in the saved file, regardless of the
 	// active light/dark theme.
+	//
+	// The letterhead lives in the content table's <thead> (.ciyex-summary-runhead).
+	// On screen that thead is hidden and the table/cells collapse to blocks so the
+	// panel is visually unchanged; in print the table displays as a real table so
+	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
+		// Screen: hide the run-head, flatten the print table to plain blocks.
+		'.ciyex-summary-runhead{display:none;}',
+		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
 		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
 		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
@@ -311,7 +333,18 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
 		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
 		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		'  @page{margin:14mm;}',
+		// Print: restore real table semantics so the letterhead repeats per page.
+		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
+		'  .ciyex-summary-runhead{display:table-header-group !important;}',
+		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
+		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
+		'  .ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
+		// The repeating letterhead needs a little breathing room under it each page.
+		'  .ciyex-summary-runhead td{padding-bottom:10px !important;}',
+		// The letterhead rules are deliberately bold black — override the generic
+		// light-grey border rule above (higher specificity beats it).
+		'  .ciyex-summary-runhead .vs-hdr-rule{border-bottom:2px solid #222 !important;}',
+		'  @page{margin:12mm;}',
 		'}',
 	].join('');
 	doc.head.appendChild(printStyle);
@@ -373,7 +406,215 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	pdfBtn.addEventListener('click', () => void downloadPdf());
 	printBtn.addEventListener('click', () => printSummary());
 
-	void loadVisitSummary(deps, patientId, encounterId, body, loading, facilityHint).then(ok => { summaryLoaded = ok; });
+	void loadVisitSummary(deps, patientId, encounterId, content, loading, facilityHint, patientName, headCell).then(ok => { summaryLoaded = ok; });
+}
+
+/** Data the repeating print letterhead shows. Any empty field is omitted. */
+interface LetterheadData {
+	patientName: string;
+	dob?: string;
+	age?: string;
+	phone?: string;
+	visitDate?: string;
+	practiceName?: string;
+	practiceAddress?: string;
+	practicePhone?: string;
+	practiceFax?: string;
+	providerName?: string;
+	referringProvider?: string;
+}
+
+/** Coerce a possibly-nested API value (string / {display,name,text} / array) to
+ *  a trimmed display string. Module-level twin of the local helper used by
+ *  sanitizeSummaryMeta, reused by the letterhead assembly. */
+function asText(v: unknown): string {
+	if (v === null || v === undefined) { return ''; }
+	if (typeof v === 'string') { return v.trim(); }
+	if (typeof v === 'number') { return String(v); }
+	if (Array.isArray(v)) { return v.map(asText).filter(Boolean)[0] || ''; }
+	if (typeof v === 'object') {
+		const o = v as Record<string, unknown>;
+		return asText(o.display) || asText(o.name) || asText(o.text) || asText(o.value);
+	}
+	return '';
+}
+
+/** Format a date-of-birth (ISO string or `[y,m,d]`) as `YYYY-MM-DD`. */
+function fmtDob(raw: unknown): string {
+	if (!raw) { return ''; }
+	if (Array.isArray(raw)) {
+		const [y, m, d] = raw as number[];
+		if (!y) { return ''; }
+		return `${y}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
+	}
+	const s = String(raw);
+	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+	return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
+}
+
+/** Whole-year age from a date-of-birth, formatted `N yrs`. Empty when unparseable. */
+function ageFromDob(raw: unknown): string {
+	if (!raw) { return ''; }
+	let d: Date;
+	if (Array.isArray(raw)) { const [y, m, day] = raw as number[]; d = new Date(y, (m || 1) - 1, day || 1); }
+	else { d = new Date(String(raw)); }
+	if (isNaN(d.getTime())) { return ''; }
+	const now = new Date();
+	let age = now.getFullYear() - d.getFullYear();
+	const mo = now.getMonth() - d.getMonth();
+	if (mo < 0 || (mo === 0 && now.getDate() < d.getDate())) { age--; }
+	if (age < 0 || age > 150) { return ''; }
+	return `${age} yrs`;
+}
+
+/** Format a US phone number as `XXX-XXX-XXXX`; passes through anything else. */
+function fmtPhone(raw: unknown): string {
+	if (!raw) { return ''; }
+	const digits = String(raw).replace(/\D/g, '');
+	if (digits.length === 10) { return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`; }
+	if (digits.length === 11 && digits[0] === '1') { return `${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`; }
+	return String(raw).trim();
+}
+
+/** Format a service date/time as `MM/DD/YYYY hh:mm AM` (date only when no time). */
+function fmtDateTime(raw: unknown): string {
+	if (!raw) { return ''; }
+	const s = String(raw);
+	const d = new Date(s);
+	if (isNaN(d.getTime())) { return s; }
+	const mm = String(d.getMonth() + 1).padStart(2, '0');
+	const dd = String(d.getDate()).padStart(2, '0');
+	const date = `${mm}/${dd}/${d.getFullYear()}`;
+	if (!/[T ]\d{1,2}:\d{2}/.test(s)) { return date; }
+	let h = d.getHours();
+	const min = String(d.getMinutes()).padStart(2, '0');
+	const ap = h >= 12 ? 'PM' : 'AM';
+	h = h % 12; if (h === 0) { h = 12; }
+	return `${date} ${String(h).padStart(2, '0')}:${min} ${ap}`;
+}
+
+/** Build a one-line practice street address from the practice profile fields. */
+function practiceAddress(p: Record<string, unknown> | null | undefined): string {
+	if (!p) { return ''; }
+	const cityState = [asText(p.city), [asText(p.state), asText(p.zip)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+	return [asText(p.addressLine1), asText(p.addressLine2), cityState].filter(Boolean).join(', ');
+}
+
+/** GET the patient record (name / DOB / phone) for the letterhead banner. */
+async function loadPatientDemographics(deps: IVisitSummaryDeps, patientId: string): Promise<Record<string, unknown> | null> {
+	const r = await deps.apiService.fetch(`/api/patients/${patientId}`);
+	if (!r.ok) { return null; }
+	const j = await r.json().catch(() => null);
+	return (j?.data ?? j ?? null) as Record<string, unknown> | null;
+}
+
+/** GET the practice profile (name / address / phone / fax) for the letterhead. */
+async function loadPracticeInfo(deps: IVisitSummaryDeps): Promise<Record<string, unknown> | null> {
+	const r = await deps.apiService.fetch('/api/fhir-resource/practice?page=0&size=1');
+	if (!r.ok) { return null; }
+	const j = await r.json().catch(() => null);
+	const data = (j?.data ?? j) as Record<string, unknown> | undefined;
+	const list = (data?.content ?? data ?? []) as Array<Record<string, unknown>>;
+	if (Array.isArray(list)) { return list[0] ?? null; }
+	return (data ?? null) as Record<string, unknown> | null;
+}
+
+/** Resolve the patient's referring provider — a property of the Referral
+ *  resource, not the encounter. Uses the patient's most-recent referral. */
+async function loadReferringProvider(deps: IVisitSummaryDeps, patientId: string): Promise<string> {
+	const r = await deps.apiService.fetch('/api/referrals');
+	if (!r.ok) { return ''; }
+	const j = await r.json().catch(() => null);
+	const data = (j?.data ?? j) as Record<string, unknown> | undefined;
+	const list = (data?.content ?? data ?? []) as Array<Record<string, unknown>>;
+	if (!Array.isArray(list) || !list.length) { return ''; }
+	const forPatient = list.filter(x => String(x.patientId ?? '').replace(/^Patient\//i, '') === String(patientId));
+	if (!forPatient.length) { return ''; }
+	forPatient.sort((a, b) => new Date(String(b.referralDate ?? '')).getTime() - new Date(String(a.referralDate ?? '')).getTime());
+	const ref = forPatient[0];
+	return asText(ref.referringProvider) || asText(ref.referringProviderName) || asText(ref.referringPrescriber);
+}
+
+/** Renders the repeating Visit Note letterhead into the print table's <thead>
+ *  cell: a patient banner (NAME • DOB • Age • Phone • Visit Date) over a
+ *  practice block (practice name / address / Phone • Fax on the left, and
+ *  Patient / Provider / Visit Date / Referring Provider on the right), each
+ *  underlined with a bold rule. Hidden on screen; repeats on every printed page. */
+function renderLetterhead(headCell: HTMLElement, d: LetterheadData): void {
+	headCell.textContent = '';
+	headCell.style.cssText = 'font-family:var(--vscode-font-family);color:#222;';
+
+	// --- Patient banner: NAME • DOB • Age • Phone • Visit Date ---
+	const banner = DOM.append(headCell, DOM.$('div.vs-hdr-rule'));
+	banner.style.cssText = 'display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;padding:0 0 7px;border-bottom:2px solid #222;margin-bottom:11px;';
+	const name = DOM.append(banner, DOM.$('span'));
+	name.textContent = (d.patientName || 'Patient').toUpperCase();
+	name.style.cssText = 'font-size:13px;font-weight:700;';
+	const bannerSeg = (label: string, value?: string): void => {
+		if (!value) { return; }
+		const wrap = DOM.append(banner, DOM.$('span'));
+		wrap.style.cssText = 'font-size:12px;';
+		const l = DOM.append(wrap, DOM.$('span'));
+		l.textContent = `${label}: `;
+		l.style.cssText = 'font-weight:700;';
+		const v = DOM.append(wrap, DOM.$('span'));
+		v.textContent = value;
+	};
+	bannerSeg('DOB', d.dob);
+	bannerSeg('Age', d.age);
+	bannerSeg('Phone', d.phone);
+	bannerSeg('Visit Date', d.visitDate);
+
+	// --- Practice block: practice details (left) + visit meta (right) ---
+	const grid = DOM.append(headCell, DOM.$('div.vs-hdr-rule'));
+	grid.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:0 0 8px;border-bottom:2px solid #222;';
+
+	const left = DOM.append(grid, DOM.$('div'));
+	left.style.cssText = 'flex:1;min-width:0;';
+	if (d.practiceName) {
+		const pn = DOM.append(left, DOM.$('div'));
+		pn.textContent = d.practiceName;
+		pn.style.cssText = 'font-size:16px;font-weight:700;margin-bottom:6px;';
+	}
+	if (d.practiceAddress) {
+		const a = DOM.append(left, DOM.$('div'));
+		a.textContent = d.practiceAddress;
+		a.style.cssText = 'font-size:12px;margin-bottom:6px;';
+	}
+	const contact = DOM.append(left, DOM.$('div'));
+	contact.style.cssText = 'font-size:12px;';
+	const contactSeg = (label: string, value?: string): void => {
+		if (!value) { return; }
+		if (contact.childElementCount) {
+			const sep = DOM.append(contact, DOM.$('span'));
+			// allow-any-unicode-next-line
+			sep.textContent = '   •   ';
+		}
+		const l = DOM.append(contact, DOM.$('span'));
+		l.textContent = `${label}: `;
+		l.style.cssText = 'font-weight:700;';
+		const v = DOM.append(contact, DOM.$('span'));
+		v.textContent = value;
+	};
+	contactSeg('Phone', d.practicePhone);
+	contactSeg('Fax', d.practiceFax);
+
+	const right = DOM.append(grid, DOM.$('div'));
+	right.style.cssText = 'text-align:right;font-size:12px;flex-shrink:0;max-width:45%;';
+	const rightLine = (label: string, value?: string): void => {
+		if (!value) { return; }
+		const row = DOM.append(right, DOM.$('div'));
+		row.style.cssText = 'margin-bottom:2px;';
+		const l = DOM.append(row, DOM.$('span'));
+		l.textContent = `${label}: `;
+		l.style.cssText = 'font-weight:700;';
+		const v = DOM.append(row, DOM.$('span'));
+		v.textContent = value;
+	};
+	rightLine('Patient', d.patientName);
+	rightLine('Provider', d.providerName);
+	rightLine('Visit Date', d.visitDate);
+	rightLine('Referring Provider', d.referringProvider);
 }
 
 /** Fetches the encounter summary and renders it into the panel body.
@@ -385,9 +626,9 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
  *  data (QA: "the data I entered isn't in the visit summary"). We therefore
  *  load the encounter-form Composition too and render the actual entered
  *  values from it, keeping `/summary` only for the encounter meta header. */
-async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement, facilityHint?: string): Promise<boolean> {
+async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, encounterId: string, body: HTMLElement, loading: HTMLElement, facilityHint?: string, patientName?: string, headCell?: HTMLElement): Promise<boolean> {
 	try {
-		const [summaryData, formComp, encResource] = await Promise.all([
+		const [summaryData, formComp, encResource, patient, practice, referring] = await Promise.all([
 			deps.apiService.fetch(`/api/encounters/${patientId}/${encounterId}/summary`)
 				.then(async r => (r.ok ? await r.json() : null))
 				.then(j => (j?.success ? (j.data ?? null) : (j?.data ?? j ?? null)))
@@ -396,6 +637,9 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 			deps.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`)
 				.then(async r => (r.ok ? (((await r.json())?.data ?? null) as Record<string, unknown> | null) : null))
 				.catch(() => null),
+			loadPatientDemographics(deps, patientId).catch(() => null),
+			loadPracticeInfo(deps).catch(() => null),
+			loadReferringProvider(deps, patientId).catch(() => ''),
 		]);
 		// Always render through a DTO that HAS a meta object, so the Encounter
 		// Summary header can be enriched (provider / encounter id / demographics)
@@ -406,18 +650,54 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 		await enrichSummaryMeta(deps, dto, encResource, patientId, encounterId);
 		loading.remove();
 
+		// Build the letterhead that repeats on every printed / PDF page (the panel's
+		// content table <thead>). Assembled from the patient record, the practice
+		// profile, the encounter meta (visit date / provider) and the patient's
+		// most-recent referral (referring provider). Best-effort — any block with no
+		// data is simply omitted.
+		if (headCell) {
+			const meta = dto.meta;
+			const prov = dto.assignedProviders?.find(p => (p.providerName || p.name));
+			const providerName = (prov?.providerName || prov?.name || asText(encResource?.encounterProvider) || asText(encResource?.providerDisplay) || asText(encResource?.providerName) || '').trim();
+			const visitDate = fmtDateTime(meta?.dateOfService || encounterDateFromResource(encResource));
+			renderLetterhead(headCell, {
+				patientName: patientName || asText(patient?.firstName) + (patient?.lastName ? ' ' + asText(patient?.lastName) : '') || 'Patient',
+				dob: fmtDob(patient?.dateOfBirth),
+				age: ageFromDob(patient?.dateOfBirth),
+				phone: fmtPhone(patient?.phoneNumber ?? patient?.phone ?? patient?.homePhone),
+				visitDate,
+				practiceName: asText(practice?.name) || asText(practice?.dba),
+				practiceAddress: practiceAddress(practice),
+				practicePhone: fmtPhone(practice?.phone),
+				practiceFax: fmtPhone(practice?.fax),
+				providerName,
+				referringProvider: referring,
+			});
+		}
+
 		// The encounter-form Composition endpoint is PATIENT-scoped. Different
 		// surfaces can hand this panel different ids for the same person (the
 		// appointment's patient id vs the Encounter subject's id), so when the
 		// lookup under the caller's id finds nothing, retry under the patient id
 		// the Encounter resource itself points at — otherwise data charted from
 		// the appointment drawer never shows in a summary opened elsewhere.
+		const encPatientId = encResource ? String(encResource.patientId ?? encResource.patientRef ?? '').replace(/^Patient\//i, '').trim() : '';
 		let comp = formComp;
-		if (!comp && encResource) {
-			const encPatient = String(encResource.patientId ?? encResource.patientRef ?? '').replace(/^Patient\//i, '').trim();
-			if (encPatient && encPatient !== patientId) {
-				comp = await loadEncounterFormComposition(deps, encPatient, encounterId).catch(() => null);
-			}
+		if (!comp && encPatientId && encPatientId !== patientId) {
+			comp = await loadEncounterFormComposition(deps, encPatientId, encounterId).catch(() => null);
+		}
+
+		// Vitals are frequently charted on the Vitals page, which writes to the
+		// shared FHIR vitals store — NOT the encounter-form Composition or the
+		// /summary DTO — so an encounter can have vitals neither source returns
+		// (QA: vitals missing from the visit summary). When the /summary DTO carries
+		// no vitals, pull the reading recorded on the encounter's date from the
+		// shared store and feed it through the SAME row-wise Vitals renderer, so
+		// vitals show as aligned rows just like on the encounter page.
+		if (!dto.vitals?.length) {
+			const encDate = dto.meta?.dateOfService || encounterDateFromResource(encResource);
+			const shared = await loadSharedVitals(deps, encPatientId || patientId, encDate).catch(() => null);
+			if (shared) { dto.vitals = [shared]; }
 		}
 
 		// Prefer the encounter-form Composition for the clinical sections — it's
@@ -599,6 +879,76 @@ async function loadEncounterFormComposition(deps: IVisitSummaryDeps, patientId: 
 	return comps[0];
 }
 
+/** Extract the encounter's service date from the raw FHIR Encounter resource.
+ *  The shared vitals store keys one reading per visit date, so vitals are matched
+ *  to the encounter by day. Returns '' when no date field is present. */
+function encounterDateFromResource(enc: Record<string, unknown> | null): string {
+	if (!enc) { return ''; }
+	const period = enc.period as Record<string, unknown> | undefined;
+	const cand = enc.encounterDate ?? enc.startDate ?? enc.start ?? enc.dateOfService ?? enc.date ?? enc.periodStart ?? period?.start ?? period?.end;
+	return cand ? String(cand) : '';
+}
+
+/** Loads the shared FHIR vitals store for the patient and returns the reading
+ *  recorded on the encounter's date, mapped to the panel's vitals shape. Vitals
+ *  charted on the Vitals page land here — NOT in the encounter-form Composition
+ *  or the /summary DTO — so this is the source of truth when those carry none.
+ *  Falls back to the most-recent reading when no reading matches the day. */
+async function loadSharedVitals(deps: IVisitSummaryDeps, patientId: string, encDateRaw: string): Promise<VisitSummaryVitals | null> {
+	try {
+		const r = await deps.apiService.fetch(`/api/fhir-resource/vitals/patient/${patientId}?page=0&size=50`);
+		if (!r.ok) { return null; }
+		const j = await r.json().catch(() => null);
+		const inner = (j?.data ?? j) as Record<string, unknown> | undefined;
+		const arr = (inner?.content || inner?.list || inner?.items || (Array.isArray(inner) ? inner : (Array.isArray(j) ? j : []))) as Array<Record<string, unknown>>;
+		if (!Array.isArray(arr) || !arr.length) { return null; }
+		const timeOf = (v: Record<string, unknown>): number => {
+			const d = new Date(String(v.recordedAt ?? v.effectiveDateTime ?? v.recordedDate ?? v.date ?? ''));
+			return isNaN(d.getTime()) ? 0 : d.getTime();
+		};
+		const ref = encDateRaw ? new Date(encDateRaw) : null;
+		let pool = arr;
+		if (ref && !isNaN(ref.getTime())) {
+			const sameDay = arr.filter(v => {
+				const d = new Date(String(v.recordedAt ?? v.effectiveDateTime ?? v.recordedDate ?? v.date ?? ''));
+				return !isNaN(d.getTime()) && d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth() && d.getDate() === ref.getDate();
+			});
+			if (sameDay.length) { pool = sameDay; }
+		}
+		const v = pool.slice().sort((a, b) => timeOf(b) - timeOf(a))[0];
+		if (!v) { return null; }
+		const num = (x: unknown): number | undefined => {
+			if (x === undefined || x === null || x === '') { return undefined; }
+			const n = Number(x);
+			return Number.isFinite(n) ? n : undefined;
+		};
+		const mapped: VisitSummaryVitals = {
+			bpSystolic: num(v.bpSystolic),
+			bpDiastolic: num(v.bpDiastolic),
+			pulse: num(v.pulse),
+			// The Vitals store field is named temperatureC but holds the value in
+			// Fahrenheit on this workspace (the form maps vitals_temperature to
+			// temperatureC), so surface it as temperatureF to render it in F,
+			// matching the encounter page.
+			temperatureF: num(v.temperatureF ?? v.temperatureC),
+			oxygenSaturation: num(v.oxygenSaturation),
+			respiration: num(v.respiration),
+			weightKg: num(v.weightKg),
+			weightLbs: num(v.weightLbs),
+			heightCm: num(v.heightCm),
+			heightIn: num(v.heightIn),
+			bmi: num(v.bmi),
+			notes: typeof v.notes === 'string' && v.notes.trim() ? v.notes.trim() : undefined,
+			recordedAt: v.recordedAt ? String(v.recordedAt) : (v.effectiveDateTime ? String(v.effectiveDateTime) : undefined),
+		};
+		// Nothing meaningful was recorded → treat as no vitals.
+		const hasAny = [mapped.bpSystolic, mapped.bpDiastolic, mapped.pulse, mapped.temperatureF, mapped.oxygenSaturation, mapped.respiration, mapped.weightKg, mapped.heightCm, mapped.bmi].some(x => x !== undefined);
+		return hasAny ? mapped : null;
+	} catch {
+		return null;
+	}
+}
+
 /** Section groups for the encounter-form Composition, keyed by the field-name
  *  prefix the form uses (cc_*, hpi_*, vitals_*, …). Mirrors the encounter form's
  *  own section order so the summary reads top-to-bottom like the chart. */
@@ -661,6 +1011,39 @@ function summaryKvRow(table: HTMLElement, col: SummaryColors, label: string, val
 	const v = DOM.append(row, DOM.$('span'));
 	v.textContent = value;
 	v.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
+}
+
+/** Renders vitals as a TWO-COLUMN grid — two label/value pairs per visual row —
+ *  so the compact numeric readings read like the encounter page's vitals grid
+ *  instead of one measurement per full-width row (QA: vitals should be 2-column).
+ *  Long / free-text entries (Notes, Recorded) span the full width below the grid.
+ *  Rows zebra-stripe by visual row so paired cells share one background band. */
+function renderVitalsGrid(table: HTMLElement, col: SummaryColors, rows: Array<[string, string]>): void {
+	const isWide = ([label, value]: [string, string]): boolean => label === 'Notes' || label === 'Recorded' || value.length > 32;
+	const pairs = rows.filter(r => !isWide(r));
+	const wide = rows.filter(isWide);
+	const stripe = (rowIdx: number): string => (rowIdx % 2 === 0 ? 'background:rgba(128,128,128,0.045);' : '');
+	if (pairs.length) {
+		const grid = DOM.append(table, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;';
+		pairs.forEach(([label, value], i) => {
+			const cell = DOM.append(grid, DOM.$('div'));
+			cell.style.cssText = `display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:start;padding:7px 14px;${stripe(Math.floor(i / 2))}`;
+			const l = DOM.append(cell, DOM.$('span'));
+			l.textContent = label;
+			l.style.cssText = `font-size:12px;font-weight:600;color:${col.desc};padding-top:1px;`;
+			const v = DOM.append(cell, DOM.$('span'));
+			v.textContent = value;
+			v.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
+		});
+		// Odd pair count leaves a gap in the last row — add a filler cell so the
+		// zebra band spans the full width.
+		if (pairs.length % 2 === 1) {
+			const filler = DOM.append(grid, DOM.$('div'));
+			filler.style.cssText = `padding:7px 14px;${stripe(Math.floor(pairs.length / 2))}`;
+		}
+	}
+	for (const [label, value] of wide) { summaryKvRow(table, col, label, value); }
 }
 
 /** Full-width free-text row (used for single-value sections like the chief
@@ -826,6 +1209,9 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 		// Chief complaint is a single free-text value — show it without a label.
 		if (grp.prefix === 'cc' && rows.length === 1) {
 			summaryTextRow(table, col, rows[0][1]);
+		} else if (grp.prefix === 'vitals') {
+			// Vitals render as a two-column grid of measurement pairs.
+			renderVitalsGrid(table, col, rows);
 		} else {
 			for (const [label, value] of rows) {
 				summaryKvRow(table, col, label, value);
@@ -888,7 +1274,7 @@ function renderMissingDtoSections(deps: IVisitSummaryDeps, body: HTMLElement, dt
 		if (rows.length) {
 			// allow-any-unicode-next-line
 			const table = summarySectionCard(body, col, 'Vitals', '❤️');
-			for (const [label, value] of rows) { summaryKvRow(table, col, label, value); }
+			renderVitalsGrid(table, col, rows);
 			any = true;
 		}
 	}
@@ -1065,28 +1451,16 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	if (data.vitals?.length) {
 		renderedAny = true;
 		const card = section('Vitals');
+		// Two-column grid of measurement pairs, in the SAME order / labels / units as
+		// the encounter page and the other render paths (QA: vitals 2-column), so the
+		// summary reads identically no matter which path produced it. Temperature is
+		// charted in \u00B0F on this workspace (the form maps vitals_temperature \u2192
+		// temperatureC), which vitalsRowsFromDto already surfaces as \u00B0F.
 		for (const v of data.vitals) {
-			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
-			// One measurement per row, in the SAME order / labels / units as the
-			// encounter page and the Composition render path (QA issue 3), so the
-			// summary reads identically no matter which path produced it. Temperature
-			// is charted in \u00B0F on this workspace (the form maps vitals_temperature \u2192
-			// temperatureC), so show \u00B0F rather than the raw field's misleading \u00B0C.
-			if (v.bpSystolic) { line(block, 'BP Systolic', `${v.bpSystolic} mmHg`); }
-			if (v.bpDiastolic) { line(block, 'BP Diastolic', `${v.bpDiastolic} mmHg`); }
-			if (v.pulse) { line(block, 'Heart Rate', `${v.pulse} bpm`); }
-			const tempVal = v.temperatureF ?? v.temperatureC;
-			if (tempVal) { line(block, 'Temperature', `${tempVal} \u00B0F`); }
-			if (v.oxygenSaturation) { line(block, 'SpO2', `${v.oxygenSaturation} %`); }
-			if (v.respiration) { line(block, 'Respiratory Rate', `${v.respiration} /min`); }
-			if (v.weightKg) { line(block, 'Weight', `${v.weightKg} kg`); }
-			else if (v.weightLbs) { line(block, 'Weight', `${v.weightLbs} lbs`); }
-			if (v.heightCm) { line(block, 'Height', `${v.heightCm} cm`); }
-			else if (v.heightIn) { line(block, 'Height', `${v.heightIn} in`); }
-			if (v.bmi) { line(block, 'BMI', v.bmi); }
-			if (v.notes) { line(block, 'Notes', v.notes); }
-			if (v.recordedAt) { line(block, 'Recorded', v.recordedAt); }
+			const rows = vitalsRowsFromDto(v);
+			if (v.notes) { rows.push(['Notes', String(v.notes)]); }
+			if (v.recordedAt) { rows.push(['Recorded', String(v.recordedAt)]); }
+			renderVitalsGrid(card, col, rows);
 		}
 	}
 
