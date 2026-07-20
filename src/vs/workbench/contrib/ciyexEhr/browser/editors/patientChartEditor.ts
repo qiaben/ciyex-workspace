@@ -22,6 +22,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { PatientChartEditorInput, EncounterFormEditorInput } from './ciyexEditorInput.js';
 import { showVisitSummaryPanel } from './visitSummaryPanel.js';
+import { friendlyBackendError } from './clinicalListEditor.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -898,7 +899,12 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 			{
 				key: 'result', title: 'Lab Result', columns: 2, visible: true, collapsible: false, fields: [
 					{ key: 'testName', label: 'Test Name', type: 'text', required: true, placeholder: 'e.g. CBC, Glucose' },
-					{ key: 'loincCode', label: 'LOINC Code', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' } },
+					// Picking a LOINC code fills the descriptive test name into `testName`
+					// (relatedField) — mirrors the lab-order form's testCode→testDisplay.
+					// Without it, selecting a LOINC stored only the bare code and the list's
+					// Test Name column came back empty, so the row read as just the code
+					// (QA: Lab Results table shows the LOINC code, loses the test name).
+					{ key: 'loincCode', label: 'LOINC Code', type: 'code-search', placeholder: 'Search LOINC codes', lookupConfig: { system: 'LOINC' }, relatedField: 'testName' },
 					{
 						key: 'status', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Pending', value: 'pending' }, { label: 'Preliminary', value: 'preliminary' },
@@ -6888,13 +6894,19 @@ export class PatientChartEditor extends EditorPane {
 					void this._loadQuickInfo();
 					void this._refreshTabCounts();
 				} else {
-					const err = await res.text().catch(() => 'Unknown error');
-					this.notificationService.error(`Save failed: ${err.substring(0, 200)}`);
+					// The backend returns { data: null, message: "..." }; pull out the
+					// message and pass it through friendlyBackendError so a raw SQL /
+					// JPA statement dump never reaches the user (QA: "column
+					// delivery_method ... does not exist" shown verbatim on save).
+					const rawBody = await res.text().catch(() => '');
+					let backendMsg = rawBody;
+					try { const j = JSON.parse(rawBody); backendMsg = String((j && (j.message || j.error)) || rawBody); } catch { /* not JSON — keep raw */ }
+					this.notificationService.error(friendlyBackendError(backendMsg));
 					saveBtn.disabled = false;
 					saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
 				}
 			} catch (e) {
-				this.notificationService.error(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+				this.notificationService.error(friendlyBackendError(e instanceof Error ? e.message : String(e)));
 				saveBtn.disabled = false;
 				saveBtn.textContent = isEdit ? 'Save Changes' : 'Create';
 			}

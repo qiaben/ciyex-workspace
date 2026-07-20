@@ -44,6 +44,23 @@ export function resolveMaxDate(max: string): string {
 	return max;
 }
 
+/**
+ * Turn a raw backend error string into something safe to show a clinician.
+ * Genuine, human-readable validation messages (e.g. "Order number already
+ * exists") pass through unchanged, but low-level persistence/SQL dumps — which
+ * leak schema detail and are meaningless to the user (e.g. `could not execute
+ * statement [ERROR: column "delivery_method" ... does not exist] [insert into
+ * ...]`) — are replaced with a generic, friendly message.
+ */
+export function friendlyBackendError(raw: string | null | undefined, fallback = 'Something went wrong while saving. Please try again, or contact support if the problem continues.'): string {
+	const msg = String(raw ?? '').trim();
+	if (!msg) { return fallback; }
+	// Strong, unambiguous signals that the message is a raw SQL / JPA dump
+	// rather than a curated validation message.
+	const looksLikeSqlDump = /could not execute statement|could not extract resultset|\bcould not commit\b|[a-z]+(?:sql|jdbc)exception|(?:^|[\s[])error:\s|(?:column|relation|table)\s+"[^"]+"[^\n]*does not exist|violates[^\n]*constraint|\binsert into\b|\bupdate\b[^\n]*\bset\b|\bselect\b[^\n]*\bfrom\b/i;
+	return looksLikeSqlDump.test(msg) ? fallback : msg;
+}
+
 interface ColumnDef { key: string; label: string; width?: string; aliases?: string[]; onClick?: (item: Record<string, unknown>, api: ICiyexApiService, reload: () => void, dlg: IDialogService) => void; emptyLabel?: string }
 interface StatusTab { label: string; value: string }
 interface ActionDef {
@@ -2408,7 +2425,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						|| (errData?.['error'] as string)
 						|| (Array.isArray(errData?.['errors']) ? (errData!['errors'] as string[]).join('; ') : '')
 						|| `Error: ${res.status}`;
-					errorEl.textContent = String(msg);
+					errorEl.textContent = friendlyBackendError(String(msg));
 					errorEl.style.display = 'block';
 				}
 			} catch (err) {
