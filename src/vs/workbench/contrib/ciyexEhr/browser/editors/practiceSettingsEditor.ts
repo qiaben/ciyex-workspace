@@ -10,6 +10,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { formatUsPhone } from '../sidebarActions.js';
+import { lookupZipCityState } from './settingsHubEditor.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -80,6 +81,9 @@ export class PracticeSettingsEditor extends EditorPane {
 	private root!: HTMLElement;
 	private contentEl!: HTMLElement;
 	private practice: PracticeData = {};
+	/** Address-grid City / State inputs, targeted by the ZIP auto-fill. */
+	private _cityInput: HTMLInputElement | undefined;
+	private _stateInput: HTMLInputElement | undefined;
 	private logoData: string | null = null;
 	private _saving = false;
 
@@ -374,12 +378,25 @@ export class PracticeSettingsEditor extends EditorPane {
 			input.maxLength = 16;
 			if (input.value) { input.value = formatUsPhone(input.value); }
 		}
+		// The address grid keeps live references to City / State so a completed
+		// ZIP can auto-fill both (QA: "fill the zip code → auto-fill state & city").
+		if (key === 'city') { this._cityInput = input; }
+		if (key === 'state') { this._stateInput = input; }
 		input.addEventListener('input', () => {
 			if (type === 'tel') {
 				const masked = formatUsPhone(input.value);
 				if (input.value !== masked) { input.value = masked; }
 			}
 			(this.practice as Record<string, unknown>)[key as string] = input.value;
+			if (key === 'zip' && /^\d{5}$/.test(input.value.trim())) {
+				void lookupZipCityState(input.value.trim()).then(hit => {
+					if (!hit) { return; }
+					this.practice.city = hit.city;
+					this.practice.state = hit.state;
+					if (this._cityInput?.isConnected) { this._cityInput.value = hit.city; }
+					if (this._stateInput?.isConnected) { this._stateInput.value = hit.state; }
+				});
+			}
 		});
 	}
 

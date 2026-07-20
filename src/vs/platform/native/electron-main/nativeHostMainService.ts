@@ -870,11 +870,21 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		// black-on-white, so the resulting PDF matches the on-screen preview.
 		const data = await window?.win?.webContents.printToPDF({ printBackground: true });
 		if (!data) {
+			throw new Error('Failed to render the window to PDF');
+		}
+		// Ask WHERE to save (defaulting to Downloads) instead of writing into
+		// Downloads silently — users reported the silent write as "the PDF was
+		// never saved to my system". Returns undefined when the user cancels.
+		const result = await this.dialogMainService.showSaveDialog({
+			title: 'Save PDF',
+			defaultPath: join(app.getPath('downloads'), fileName),
+			filters: [{ name: 'PDF', extensions: ['pdf'] }],
+		}, window?.win ?? undefined);
+		if (result.canceled || !result.filePath) {
 			return undefined;
 		}
-		const filePath = join(app.getPath('downloads'), fileName);
-		await Promises.writeFile(filePath, data);
-		return filePath;
+		await Promises.writeFile(result.filePath, data);
+		return result.filePath;
 	}
 
 	//#endregion

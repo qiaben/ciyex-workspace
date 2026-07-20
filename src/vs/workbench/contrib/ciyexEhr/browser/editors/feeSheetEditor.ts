@@ -225,9 +225,10 @@ export class FeeSheetEditor extends EditorPane {
 
 	private _applyExistingFeeSheet(fs: Record<string, unknown>): void {
 		this.feeSheetId = fs.id !== undefined && fs.id !== null ? String(fs.id) : null;
-		// An already-persisted sheet has its data saved — the follow-up actions
-		// (Send to Billing / Download 837P) are available right away.
-		this._saved = !!this.feeSheetId;
+		// Even an already-persisted sheet must be explicitly saved THIS session
+		// before Send to Billing / Download 837P unlock (QA: the follow-up
+		// actions worked without saving — and without providers selected).
+		this._saved = false;
 		if (fs.priceLevel) { this.selectedPriceLevel = String(fs.priceLevel); }
 		if (fs.renderingProvider) { this.renderingProvider = String(fs.renderingProvider); }
 		if (fs.supervisingProvider) { this.supervisingProvider = String(fs.supervisingProvider); }
@@ -335,8 +336,8 @@ export class FeeSheetEditor extends EditorPane {
 				onChange,
 			});
 		};
-		renderProvField('Rendering', this.renderingProvider, v => { this.renderingProvider = v; });
-		renderProvField('Supervising', this.supervisingProvider, v => { this.supervisingProvider = v; });
+		renderProvField('Rendering', this.renderingProvider, v => { this.renderingProvider = v; this._markDirty(); });
+		renderProvField('Supervising', this.supervisingProvider, v => { this.supervisingProvider = v; this._markDirty(); });
 	}
 
 	/**
@@ -477,6 +478,7 @@ export class FeeSheetEditor extends EditorPane {
 		// is already on the sheet bumps its quantity instead of duplicating it.
 		const existing = this.items.find(i => i.type === item.type && i.code === item.code);
 		if (existing) { existing.qty += 1; } else { this.items.push(item); }
+		this._markDirty();
 		this._renderItemsTables();
 	}
 
@@ -531,36 +533,37 @@ export class FeeSheetEditor extends EditorPane {
 			if (!icdOnly) {
 				const modInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				modInp.value = it.modifiers; modInp.style.cssText = inputStyle;
-				modInp.addEventListener('input', () => { it.modifiers = modInp.value; });
+				modInp.addEventListener('input', () => { it.modifiers = modInp.value; this._markDirty(); });
 
 				const priceInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				priceInp.type = 'number'; priceInp.step = '0.01'; priceInp.value = String(it.price); priceInp.style.cssText = inputStyle;
-				priceInp.addEventListener('input', () => { it.price = parseFloat(priceInp.value) || 0; this._renderTotals(); });
+				priceInp.addEventListener('input', () => { it.price = parseFloat(priceInp.value) || 0; this._markDirty(); this._renderTotals(); });
 
 				const qtyInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				qtyInp.type = 'number'; qtyInp.value = String(it.qty); qtyInp.style.cssText = inputStyle;
-				qtyInp.addEventListener('input', () => { it.qty = parseInt(qtyInp.value, 10) || 0; this._renderTotals(); });
+				qtyInp.addEventListener('input', () => { it.qty = parseInt(qtyInp.value, 10) || 0; this._markDirty(); this._renderTotals(); });
 
 				const justInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 				justInp.value = it.justify; justInp.placeholder = 'ICD'; justInp.style.cssText = inputStyle;
-				justInp.addEventListener('input', () => { it.justify = justInp.value; });
+				justInp.addEventListener('input', () => { it.justify = justInp.value; this._markDirty(); });
 			}
 
 			const noteInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			noteInp.value = it.note; noteInp.style.cssText = inputStyle;
-			noteInp.addEventListener('input', () => { it.note = noteInp.value; });
+			noteInp.addEventListener('input', () => { it.note = noteInp.value; this._markDirty(); });
 
 			const authWrap = DOM.append(row, DOM.$('div'));
 			authWrap.style.cssText = 'display:flex;justify-content:center;';
 			const authInp = DOM.append(authWrap, DOM.$('input')) as HTMLInputElement;
 			authInp.type = 'checkbox'; authInp.checked = it.auth; authInp.style.cssText = 'cursor:pointer;';
-			authInp.addEventListener('change', () => { it.auth = authInp.checked; });
+			authInp.addEventListener('change', () => { it.auth = authInp.checked; this._markDirty(); });
 
 			const rm = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 			rm.textContent = '\u{1F5D1}'; rm.title = 'Remove'; rm.style.cssText = 'background:transparent;border:none;color:var(--vscode-errorForeground,#f48771);cursor:pointer;font-size:13px;';
 			rm.addEventListener('click', () => {
 				const idx = this.items.indexOf(it);
 				if (idx >= 0) { this.items.splice(idx, 1); }
+				this._markDirty();
 				this._renderItemsTables();
 			});
 		}
@@ -583,7 +586,7 @@ export class FeeSheetEditor extends EditorPane {
 
 		// Workflow order (QA): the data is SAVED first — "Send to Billing" and
 		// "Download 837P" stay locked until the save succeeds.
-		const saveBtn = this._footerButton('✓ Save Fee Sheet', '#0e639c');
+		const saveBtn = this._footerButton('✓ Save Current', '#0e639c');
 		saveBtn.addEventListener('click', async () => {
 			saveBtn.disabled = true;
 			const ok = await this._save();
@@ -632,6 +635,14 @@ export class FeeSheetEditor extends EditorPane {
 		return b;
 	}
 
+	/** Any edit after a save re-locks Send to Billing / Download 837P until the
+	 *  sheet is saved again — the exported/billed data must match what's on
+	 *  screen. */
+	private _markDirty(): void {
+		this._saved = false;
+		this._updateFooterGates();
+	}
+
 	/** Apply the save-first workflow gate to the footer actions. */
 	private _updateFooterGates(): void {
 		for (const b of [this.billBtn, this.ediBtn]) {
@@ -665,6 +676,12 @@ export class FeeSheetEditor extends EditorPane {
 		}
 		if (this.items.length === 0) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Add at least one code before saving.' });
+			return false;
+		}
+		// Providers are part of the billable record — a fee sheet without its
+		// rendering provider must not reach billing / 837P export (QA).
+		if (!this.renderingProvider) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Select a rendering provider before saving the fee sheet.' });
 			return false;
 		}
 		const payload = this._buildPayload();

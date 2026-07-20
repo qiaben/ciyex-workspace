@@ -24,7 +24,8 @@ import { IEnvironmentService } from '../../../../platform/environment/common/env
 import { URI } from '../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ICommandService, CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
@@ -62,8 +63,14 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		@IEditorService private readonly editorService: IEditorService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super();
+
+		// Practice switcher — the status bar practice badge opens a picker of the
+		// practices the account can use; choosing another one signs out to the
+		// login page so the user authenticates into that practice.
+		this._register(CommandsRegistry.registerCommand('ciyex.switchPractice', () => this._openPracticeSwitcher()));
 
 		// Hide the bottom panel (Terminal/Problems/Output) — not needed in the EHR app
 		this.layoutService.setPartHidden(true, Parts.PANEL_PART);
@@ -480,14 +487,16 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			}, 'ciyex.user', StatusbarAlignment.RIGHT, 100));
 		}
 
-		// Practice/tenant
+		// Practice/tenant — clicking it opens the practice switcher (QA: "how to
+		// switch from one practice to another").
 		const tenant = this._getTenant();
 		if (tenant) {
 			this._statusBarEntries.push(this.statusbarService.addEntry({
 				name: 'Ciyex Practice',
 				text: `$(organization) ${tenant}`,
-				tooltip: `Practice: ${tenant}`,
+				tooltip: `Practice: ${tenant} — click to switch practice`,
 				ariaLabel: `Practice: ${tenant}`,
+				command: 'ciyex.switchPractice',
 			}, 'ciyex.practice', StatusbarAlignment.RIGHT, 99));
 		}
 
@@ -526,6 +535,76 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			ariaLabel: 'Zoom Out',
 			command: 'workbench.action.zoomOut',
 		}, 'ciyex.zoomOut', StatusbarAlignment.RIGHT, 93));
+	}
+
+	/**
+	 * Practice switcher (status bar → practice badge). Lists every practice the
+	 * signed-in account can use — the organizations in the JWT `organization`
+	 * claim plus the org's practice records — and, when a DIFFERENT practice is
+	 * chosen, stores it as the preferred tenant and signs out so the user
+	 * authenticates into that practice from the login page.
+	 */
+	private async _openPracticeSwitcher(): Promise<void> {
+		const current = this._getTenant();
+		const slug = (s: string): string => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+		// Organizations from the JWT claim — these are the real switchable tenants.
+		const aliases: string[] = [];
+		try {
+			const token = localStorage.getItem('ciyex_token');
+			const payload = token ? JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) : null;
+			const org = payload?.organization;
+			for (const o of Array.isArray(org) ? org : (org ? [org] : [])) {
+				if (o && !aliases.includes(String(o))) { aliases.push(String(o)); }
+			}
+		} catch { /* claim unreadable — fall through to the practice records */ }
+
+		// Practice records of the current org (Settings → General → Practice).
+		const practices: Array<{ name: string; alias: string }> = [];
+		try {
+			const res = await this.apiService.fetch('/api/practices');
+			if (res.ok) {
+				const j = await res.json().catch(() => null);
+				const list = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
+				for (const p of Array.isArray(list) ? list : []) {
+					const name = String(p.practiceName ?? p.name ?? '').trim();
+					if (name) { practices.push({ name, alias: slug(name) }); }
+				}
+			}
+		} catch { /* practices list is optional */ }
+
+		type PracticePick = IQuickPickItem & { alias: string };
+		const picks: PracticePick[] = [];
+		const seen = new Set<string>();
+		const add = (alias: string, label: string) => {
+			if (!alias || seen.has(alias)) { return; }
+			seen.add(alias);
+			picks.push({
+				label: `$(organization) ${label}`,
+				description: alias === current ? 'Current practice' : alias,
+				alias,
+			});
+		};
+		for (const p of practices) { add(p.alias, p.name); }
+		for (const a of aliases) { add(a, a); }
+		add(current, current);
+		// Current practice first, then alphabetical.
+		picks.sort((a, b) => (a.alias === current ? -1 : b.alias === current ? 1 : a.label.localeCompare(b.label)));
+
+		const chosen = await this.quickInputService.pick(picks, {
+			title: 'Switch Practice',
+			placeHolder: 'Select the practice to sign in to',
+		});
+		if (!chosen || chosen.alias === current) { return; }
+
+		// Remember the choice for the next login, then sign out to the login
+		// page — the user authenticates into the selected practice there.
+		try { localStorage.setItem('ciyex_preferred_tenant', chosen.alias); } catch { /* */ }
+		this.notificationService.notify({
+			severity: Severity.Info,
+			message: `Sign in again to continue in ${chosen.label.replace('$(organization) ', '')}.`,
+		});
+		this.authService.signOut();
 	}
 
 	private _unreadEntry: { dispose(): void } | null = null;

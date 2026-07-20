@@ -125,6 +125,30 @@ function normalizeSeg(key: string): string {
 	return (key.split('.').pop() || key).replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
+/** ZIP → { city, state } lookups already resolved this session, so retyping a
+ *  ZIP fills instantly and offline. */
+const zipLookupCache = new Map<string, { city: string; state: string } | null>();
+
+/** Resolves a 5-digit US ZIP to its city + state via the free Zippopotam
+ *  service. Returns null (and caches the miss) when the ZIP is unknown or the
+ *  lookup fails — auto-fill is best-effort and never blocks typing. Shared
+ *  with the Practice Settings editor's address grid. */
+export async function lookupZipCityState(zip: string): Promise<{ city: string; state: string } | null> {
+	if (zipLookupCache.has(zip)) { return zipLookupCache.get(zip)!; }
+	try {
+		const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
+		if (!res.ok) { zipLookupCache.set(zip, null); return null; }
+		const j = await res.json().catch(() => null) as { places?: Array<Record<string, string>> } | null;
+		const place = j?.places?.[0];
+		const hit = place ? { city: place['place name'] || '', state: place['state'] || '' } : null;
+		const result = hit && hit.city ? hit : null;
+		zipLookupCache.set(zip, result);
+		return result;
+	} catch {
+		return null;
+	}
+}
+
 interface FieldDef {
 	key: string;
 	label: string;
@@ -301,6 +325,9 @@ export class SettingsHubEditor extends EditorPane {
 	private currentFieldConfig: FieldConfig | null = null;
 	private records: Record<string, unknown>[] = [];
 	private formData: Record<string, unknown> = {};
+	/** Text inputs of the form currently on screen, keyed by field key — lets
+	 *  the ZIP auto-fill write into the sibling City / State inputs. */
+	private _formTextInputs = new Map<string, HTMLInputElement>();
 	private selectedRecord: Record<string, unknown> | null = null;
 	private page: number = 0;
 	private pageSize: number = 25;
@@ -1088,6 +1115,7 @@ export class SettingsHubEditor extends EditorPane {
 	// ----------- Form rendering -----------
 
 	private _renderFormBody(root: HTMLElement): void {
+		this._formTextInputs.clear();
 		const wrap = DOM.append(root, DOM.$('div'));
 		wrap.style.cssText = 'background:var(--vscode-editor-background);';
 
@@ -1966,6 +1994,9 @@ export class SettingsHubEditor extends EditorPane {
 			const isFax = seg.includes('fax') || labelSeg.includes('fax');
 			const isPhone = !isFax && (t === 'tel' || t === 'phone' || /phone|mobile|cell/.test(seg) || /phone|mobile|cell/.test(labelSeg));
 			const isZip = seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || /zip|postal/.test(labelSeg);
+			// Registered so a completed ZIP can auto-fill the sibling City / State
+			// inputs of the same form (QA: "fill the zip code → auto-fill state & city").
+			if (!isView && !field.readOnly) { this._formTextInputs.set(field.key, inp); }
 			inp.addEventListener('input', () => {
 				if (isPhone) {
 					inp.value = formatUsPhone(inp.value);
@@ -1975,6 +2006,7 @@ export class SettingsHubEditor extends EditorPane {
 				} else if (isZip) {
 					// ZIP: digits only, exactly 5 (extra digits / letters stripped as typed).
 					inp.value = inp.value.replace(/\D/g, '').slice(0, 5);
+					if (inp.value.length === 5) { void this._autoFillCityStateFromZip(field.key, inp.value); }
 				}
 				this.formData[field.key] = inp.value;
 			});
@@ -2019,6 +2051,36 @@ export class SettingsHubEditor extends EditorPane {
 				inputEl.addEventListener('change', runLive);
 			}
 		}
+	}
+
+	/**
+	 * When a 5-digit ZIP is completed, resolve its city + state and fill the
+	 * City / State inputs that belong to the same address group (same key
+	 * prefix — `address.zip` fills `address.city`/`address.state`; a bare `zip`
+	 * falls back to any city/state field on the form). Applies across every
+	 * Settings module form (Practice, Facilities, Providers, Insurance,
+	 * Referral Practices, Referral Providers, …) since they all render here.
+	 */
+	private async _autoFillCityStateFromZip(zipKey: string, zip: string): Promise<void> {
+		const hit = await lookupZipCityState(zip);
+		if (!hit) { return; }
+		const prefix = zipKey.includes('.') ? zipKey.slice(0, zipKey.lastIndexOf('.') + 1) : '';
+		const findTarget = (segs: string[]): { key: string; inp: HTMLInputElement } | null => {
+			let fallback: { key: string; inp: HTMLInputElement } | null = null;
+			for (const [key, inp] of this._formTextInputs) {
+				if (!segs.includes(normalizeSeg(key))) { continue; }
+				if (prefix ? key.startsWith(prefix) : !key.includes('.')) { return { key, inp }; }
+				if (!fallback) { fallback = { key, inp }; }
+			}
+			return fallback;
+		};
+		const apply = (target: { key: string; inp: HTMLInputElement } | null, value: string): void => {
+			if (!target || !value || !target.inp.isConnected) { return; }
+			target.inp.value = value;
+			this.formData[target.key] = value;
+		};
+		apply(findTarget(['city', 'town']), hit.city);
+		apply(findTarget(['state', 'province', 'stateprovince']), hit.state);
 	}
 
 	/**

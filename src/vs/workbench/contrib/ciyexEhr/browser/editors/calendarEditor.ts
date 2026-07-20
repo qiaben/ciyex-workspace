@@ -2319,6 +2319,11 @@ export class CalendarEditor extends EditorPane {
 					if (selected.has(it.id)) { selected.delete(it.id); }
 					else { selected.add(it.id); }
 					cb.checked = selected.has(it.id);
+					// Keep the "All <label>" row in sync: it is checked ONLY while no
+					// individual item is selected. Without this the All checkbox stayed
+					// ticked next to the individually-ticked rows (QA: "all providers
+					// check box … not working properly").
+					allCb.checked = selected.size === 0;
 					labelEl.textContent = describe();
 					setPillState();
 					onChange();

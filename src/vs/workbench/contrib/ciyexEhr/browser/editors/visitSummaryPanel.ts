@@ -21,6 +21,12 @@ interface VisitSummaryMeta {
 	facility?: string;
 	dateOfService?: string;
 	reasonForVisit?: string;
+	// Enriched client-side (enrichSummaryMeta) — QA asked the Encounter Summary
+	// header to also carry the provider, encounter id and patient demographics.
+	providerName?: string;
+	encounterId?: string;
+	dateOfBirth?: string;
+	ageGender?: string;
 }
 interface VisitSummaryChiefComplaint {
 	title?: string;
@@ -336,7 +342,7 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		try {
 			const savedPath = await deps.nativeHostService.savePdfToDownloads(`encounter-${encounterId}-summary.pdf`);
 			if (!savedPath) {
-				deps.notificationService.notify({ severity: Severity.Error, message: 'Could not generate the visit summary PDF. Please try again.' });
+				// The user cancelled the Save dialog — keep the panel open, no error.
 				return;
 			}
 			deps.notificationService.notify({ severity: Severity.Info, message: `Visit summary saved to ${savedPath}` });
@@ -391,7 +397,13 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 				.then(async r => (r.ok ? (((await r.json())?.data ?? null) as Record<string, unknown> | null) : null))
 				.catch(() => null),
 		]);
-		await sanitizeSummaryMeta(deps, summaryData as VisitSummaryDTO | null, encResource, facilityHint);
+		// Always render through a DTO that HAS a meta object, so the Encounter
+		// Summary header can be enriched (provider / encounter id / demographics)
+		// even when the /summary endpoint returned nothing.
+		const dto = (summaryData && typeof summaryData === 'object' ? summaryData : {}) as VisitSummaryDTO;
+		if (!dto.meta) { dto.meta = {}; }
+		await sanitizeSummaryMeta(deps, dto, encResource, facilityHint);
+		await enrichSummaryMeta(deps, dto, encResource, patientId, encounterId);
 		loading.remove();
 
 		// The encounter-form Composition endpoint is PATIENT-scoped. Different
@@ -410,7 +422,7 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 
 		// Prefer the encounter-form Composition for the clinical sections — it's
 		// the source of truth for what the provider actually entered.
-		const renderedForm = comp ? renderEncounterFormSections(deps, body, comp, summaryData) : false;
+		const renderedForm = comp ? renderEncounterFormSections(deps, body, comp, dto) : false;
 
 		if (!renderedForm) {
 			// No form Composition yet — fall back to the /summary DTO rendering.
@@ -420,7 +432,7 @@ async function loadVisitSummary(deps: IVisitSummaryDeps, patientId: string, enco
 				errMsg.style.cssText = `font-size:13px;color:${summaryColors(deps.themeService).error};`;
 				return false;
 			}
-			renderVisitSummary(deps, body, summaryData as VisitSummaryDTO);
+			renderVisitSummary(deps, body, dto);
 		}
 		return true;
 	} catch (err) {
@@ -492,6 +504,81 @@ async function sanitizeSummaryMeta(deps: IVisitSummaryDeps, summaryData: VisitSu
 		candidate = facilityHint.trim();
 	}
 	meta.facility = candidate && !isRef(candidate) ? candidate : undefined;
+}
+
+/** Formats an ISO-ish date string as MM/DD/YYYY (the app-wide date standard).
+ *  Date-only strings are re-arranged textually so no timezone shift creeps in. */
+function fmtSummaryDate(raw: unknown): string | undefined {
+	const s = String(raw ?? '').trim();
+	if (!s) { return undefined; }
+	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+	if (m) { return `${m[2]}/${m[3]}/${m[1]}`; }
+	const d = new Date(s);
+	if (isNaN(d.getTime())) { return s; }
+	return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
+/** Fills the Encounter Summary header fields QA asked for beyond what the
+ *  /summary DTO carries: date of service (from the Encounter resource when the
+ *  DTO omits it), provider name, encounter id, and the patient's date of birth
+ *  and age/gender (from /api/patients). Every lookup is best-effort — a failed
+ *  fetch simply leaves that row out. */
+async function enrichSummaryMeta(deps: IVisitSummaryDeps, dto: VisitSummaryDTO, enc: Record<string, unknown> | null, patientId: string, encounterId: string): Promise<void> {
+	const meta = dto.meta!;
+	const text = (v: unknown): string => (v === null || v === undefined) ? '' : String(v).trim();
+	meta.encounterId = meta.encounterId || encounterId;
+
+	if (!meta.dateOfService && enc) {
+		const period = enc.period as Record<string, unknown> | undefined;
+		meta.dateOfService = text(enc.startDate) || text(enc.encounterDate) || text(enc.date) || text(period?.start) || text(enc.createdAt) || undefined;
+	}
+	meta.dateOfService = fmtSummaryDate(meta.dateOfService);
+
+	if (!meta.providerName) {
+		const assigned = (dto.assignedProviders || []).map(p => text(p.providerName) || text(p.name)).find(Boolean);
+		let name = assigned || (enc ? (text(enc.providerName) || text(enc.practitionerName) || text(enc.providerDisplay)) : '');
+		if (/^(Practitioner|PractitionerRole)\//i.test(name)) { name = ''; }
+		if (!name && enc) {
+			const provId = (text(enc.providerId) || text(enc.practitionerId)).replace(/^Practitioner\//i, '');
+			if (provId) {
+				try {
+					const r = await deps.apiService.fetch(`/api/providers/${encodeURIComponent(provId)}`);
+					if (r.ok) {
+						const j = await r.json().catch(() => null);
+						const p = (j?.data ?? j) as Record<string, unknown> | null;
+						if (p) { name = `${text(p.firstName)} ${text(p.lastName)}`.trim() || text(p.name) || text(p.providerName); }
+					}
+				} catch { /* provider row omitted */ }
+			}
+		}
+		meta.providerName = name || undefined;
+	}
+
+	const pid = text(enc?.patientId).replace(/^Patient\//i, '') || patientId;
+	try {
+		const r = await deps.apiService.fetch(`/api/patients/${encodeURIComponent(pid)}`);
+		if (r.ok) {
+			const j = await r.json().catch(() => null);
+			const p = (j?.data ?? j) as Record<string, unknown> | null;
+			if (p) {
+				const dobRaw = text(p.dateOfBirth) || text(p.birthDate) || text(p.dob);
+				let agePart = '';
+				if (dobRaw) {
+					meta.dateOfBirth = fmtSummaryDate(dobRaw);
+					const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dobRaw);
+					if (m) {
+						const now = new Date();
+						let age = now.getFullYear() - Number(m[1]);
+						if ((now.getMonth() + 1) < Number(m[2]) || ((now.getMonth() + 1) === Number(m[2]) && now.getDate() < Number(m[3]))) { age--; }
+						if (age >= 0 && age < 150) { agePart = `${age} yrs`; }
+					}
+				}
+				const genderRaw = text(p.gender) || text(p.sex);
+				const genderPart = genderRaw ? genderRaw.charAt(0).toUpperCase() + genderRaw.slice(1).toLowerCase() : '';
+				meta.ageGender = [agePart, genderPart].filter(Boolean).join(' / ') || undefined;
+			}
+		}
+	} catch { /* demographics rows omitted */ }
 }
 
 /** Loads the encounter-form Composition for an encounter and returns the most
@@ -593,6 +680,10 @@ function renderSummaryMetaCard(body: HTMLElement, col: SummaryColors, meta: Visi
 		['Type', meta.type],
 		['Facility', meta.facility],
 		['Date of Service', meta.dateOfService],
+		['Provider', meta.providerName],
+		['Encounter ID', meta.encounterId],
+		['Date of Birth', meta.dateOfBirth],
+		['Age / Gender', meta.ageGender],
 		['Reason for Visit', meta.reasonForVisit],
 	];
 	let anyMeta = false;

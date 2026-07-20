@@ -4578,6 +4578,11 @@ export class PatientChartEditor extends EditorPane {
 			// instead of the generic one-row-per-recording list.
 			if (tab.key === 'vitals') {
 				this._renderVitalsFlowsheet(content, data);
+			} else if (tab.key === 'history') {
+				// History renders as grouped section cards (Past / Family / Social)
+				// instead of the generic one-row table whose truncated columns QA
+				// flagged as "not good looking".
+				this._renderHistoryCards(content, tab, config, data);
 			} else {
 				this._renderListWithFilters(content, tab, config, data);
 			}
@@ -5636,6 +5641,110 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	// List tab render: search + clinical-status filter + table, all applied client-side.
+	/** History tab body — the patient's Past / Family / Social history rendered
+	 *  as grouped section cards with full (untruncated) text, replacing the
+	 *  generic one-row table QA flagged as "not good looking". One card per
+	 *  history record, newest first (there is normally exactly one — the
+	 *  canonical record the encounter form shares). */
+	private _renderHistoryCards(container: HTMLElement, tab: ChartTab, config: FieldConfig | null, data: Record<string, unknown>[]): void {
+		if (!Array.isArray(data) || data.length === 0) {
+			const empty = DOM.append(container, DOM.$('div'));
+			empty.style.cssText = 'padding:48px 16px;text-align:center;color:var(--vscode-descriptionForeground);';
+			const ei = DOM.append(empty, DOM.$('div')); ei.textContent = '\u{1F4DA}'; ei.style.cssText = 'font-size:32px;margin-bottom:8px;opacity:0.7;';
+			const em = DOM.append(empty, DOM.$('div')); em.textContent = 'No history recorded'; em.style.cssText = 'font-size:13px;font-weight:600;color:var(--vscode-foreground);margin-bottom:6px;';
+			const link = DOM.append(empty, DOM.$('a'));
+			link.textContent = 'Record patient history';
+			link.style.cssText = 'color:var(--vscode-textLink-foreground);cursor:pointer;text-decoration:none;font-size:12px;';
+			link.addEventListener('click', () => this._openAddRecordDialog(tab, config));
+			return;
+		}
+
+		const val = (rec: Record<string, unknown>, keys: string[]): string => {
+			for (const k of keys) {
+				const v = rec[k];
+				if (v !== null && v !== undefined && String(v).trim() !== '') { return String(v).trim(); }
+			}
+			return '';
+		};
+		const fmtDate = (raw: string): string => {
+			if (!raw) { return ''; }
+			const d = new Date(raw);
+			return isNaN(d.getTime()) ? raw.slice(0, 10) : d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+		};
+
+		// Newest first — mirrors _latestHistoryRecord's timestamp rule.
+		const sorted = [...data].sort((a, b) =>
+			new Date(String(b._lastUpdated ?? b.recordedAt ?? b.authored ?? '')).getTime() -
+			new Date(String(a._lastUpdated ?? a.recordedAt ?? a.authored ?? '')).getTime());
+
+		for (const rec of sorted) {
+			const card = DOM.append(container, DOM.$('div'));
+			card.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;overflow:hidden;margin-bottom:14px;background:var(--vscode-editorWidget-background,rgba(128,128,128,0.03));';
+
+			// Card header: title + recorded date + edit action.
+			const head = DOM.append(card, DOM.$('div'));
+			head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(0,122,204,0.06);border-bottom:1px solid var(--vscode-editorWidget-border);border-left:3px solid var(--vscode-textLink-foreground,#3794ff);';
+			const hIcon = DOM.append(head, DOM.$('span')); hIcon.textContent = '\u{1F4DA}'; hIcon.style.fontSize = '14px';
+			const hTitle = DOM.append(head, DOM.$('span')); hTitle.textContent = 'Patient History'; hTitle.style.cssText = 'font-size:13px;font-weight:700;';
+			const recDate = fmtDate(val(rec, ['_lastUpdated', 'recordedAt', 'authored']));
+			if (recDate) {
+				const badge = DOM.append(head, DOM.$('span'));
+				badge.textContent = `Recorded ${recDate}`;
+				badge.style.cssText = 'font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
+			}
+			const spacer = DOM.append(head, DOM.$('span')); spacer.style.flex = '1';
+			const editBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+			editBtn.title = 'Edit history';
+			editBtn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:transparent;color:var(--vscode-foreground);cursor:pointer;font-size:11px;';
+			DOM.append(editBtn, DOM.$('span.codicon.codicon-edit')).style.fontSize = '12px';
+			DOM.append(editBtn, DOM.$('span')).textContent = 'Edit';
+			editBtn.addEventListener('mouseenter', () => { editBtn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
+			editBtn.addEventListener('mouseleave', () => { editBtn.style.background = 'transparent'; });
+			editBtn.addEventListener('click', () => this._openRecordDialog(tab, config, rec));
+
+			const section = (title: string, icon: string): HTMLElement => {
+				const sec = DOM.append(card, DOM.$('div'));
+				sec.style.cssText = 'padding:10px 14px;border-bottom:1px solid rgba(128,128,128,0.12);';
+				const st = DOM.append(sec, DOM.$('div'));
+				st.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--vscode-descriptionForeground);margin-bottom:8px;';
+				const si = DOM.append(st, DOM.$('span')); si.textContent = icon; si.style.fontSize = '12px';
+				DOM.append(st, DOM.$('span')).textContent = title;
+				const bodyEl = DOM.append(sec, DOM.$('div'));
+				bodyEl.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;';
+				return bodyEl;
+			};
+			const tile = (parent: HTMLElement, label: string, value: string): void => {
+				const t = DOM.append(parent, DOM.$('div'));
+				t.style.cssText = 'border:1px solid rgba(128,128,128,0.16);border-radius:6px;padding:8px 11px;background:rgba(128,128,128,0.045);';
+				const tl = DOM.append(t, DOM.$('div'));
+				tl.textContent = label;
+				tl.style.cssText = 'font-size:10.5px;font-weight:600;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+				const tv = DOM.append(t, DOM.$('div'));
+				tv.textContent = value || '—';
+				tv.style.cssText = `font-size:12.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;${value ? '' : 'color:var(--vscode-descriptionForeground);'}`;
+			};
+
+			const pastBody = section('Past Medical / Surgical History', '\u{1F4CB}');
+			tile(pastBody, 'Past Medical History', val(rec, ['pastMedicalHistoryNotes', 'pastMedicalHistory']));
+			tile(pastBody, 'Past Surgical History', val(rec, ['pastSurgicalHistoryNotes', 'pastSurgicalHistory']));
+
+			const famBody = section('Family History', '\u{1F46A}');
+			tile(famBody, 'Father', val(rec, ['fatherHistory', 'father']));
+			tile(famBody, 'Mother', val(rec, ['motherHistory', 'mother']));
+			tile(famBody, 'Siblings', val(rec, ['siblingsHistory', 'siblings']));
+			tile(famBody, 'Offspring', val(rec, ['offspringHistory', 'offspring']));
+
+			const socBody = section('Social History', '\u{1F3E0}');
+			tile(socBody, 'Smoking Status', val(rec, ['smokingStatus', 'smoking']));
+			tile(socBody, 'Alcohol Use', val(rec, ['alcoholUse', 'alcohol']));
+			tile(socBody, 'Exercise', val(rec, ['exerciseFrequency', 'exercise']));
+			tile(socBody, 'Additional Notes', val(rec, ['additionalHistory', 'additionalNotes']));
+
+			// Drop the divider under the last section so the card closes cleanly.
+			(card.lastElementChild as HTMLElement).style.borderBottom = 'none';
+		}
+	}
+
 	private _renderListWithFilters(container: HTMLElement, tab: ChartTab, config: FieldConfig | null, data: Record<string, unknown>[]): void {
 		const inputStyle = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:5px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
 

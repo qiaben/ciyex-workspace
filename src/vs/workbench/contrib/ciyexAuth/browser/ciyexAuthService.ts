@@ -754,11 +754,20 @@ export class CiyexAuthService extends Disposable implements ICiyexAuthService {
 		// organization claim embedded in the JWT. This ensures login(), changePassword(),
 		// and keycloakLogin() all scope API requests to the correct practice, not just signup().
 		try {
-			const alias = data.orgAlias || (() => {
+			// The practice switcher (status bar) records the practice the user
+			// asked to switch to before signing out. Honor it on the next login
+			// when the new token actually grants that organization; the hint is
+			// one-shot either way.
+			const orgClaim = (() => {
 				const payload = decodeJwt(data.token);
 				const org = payload?.organization;
-				return Array.isArray(org) ? org[0] : (org || '');
+				return Array.isArray(org) ? org : (org ? [org] : []);
 			})();
+			const preferred = localStorage.getItem('ciyex_preferred_tenant') || '';
+			localStorage.removeItem('ciyex_preferred_tenant');
+			const alias = (preferred && orgClaim.includes(preferred))
+				? preferred
+				: (data.orgAlias || orgClaim[0] || '');
 			if (alias) {
 				localStorage.setItem('ciyex_selected_tenant', alias);
 			} else {
