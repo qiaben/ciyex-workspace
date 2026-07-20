@@ -868,7 +868,20 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		// `printBackground` keeps the summary's section styling; the renderer's
 		// `@media print` rules already isolate the summary and force it to legible
 		// black-on-white, so the resulting PDF matches the on-screen preview.
-		const data = await window?.win?.webContents.printToPDF({ printBackground: true });
+		//
+		// `displayHeaderFooter` + `footerTemplate` stamp an "X / Y" page number in
+		// the bottom-right of every page (Chromium fills the `.pageNumber` /
+		// `.totalPages` spans). Margins (~13mm, in inches) leave room for that footer
+		// and sit just outside the renderer's fixed page-frame border, so the frame
+		// draws inside the printable area on every page. An empty header keeps the
+		// top clean (the repeating letterhead is part of the document body).
+		const data = await window?.win?.webContents.printToPDF({
+			printBackground: true,
+			margins: { top: 0.47, bottom: 0.47, left: 0.47, right: 0.47 },
+			displayHeaderFooter: true,
+			headerTemplate: '<span></span>',
+			footerTemplate: '<div style="width:100%;font-size:8px;color:#666;padding:0 9mm 0 0;text-align:right;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+		});
 		if (!data) {
 			throw new Error('Failed to render the window to PDF');
 		}

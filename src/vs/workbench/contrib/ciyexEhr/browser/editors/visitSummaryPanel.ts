@@ -244,6 +244,14 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-summary-backdrop'));
 	backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;display:flex;justify-content:flex-end;';
 
+	// Print-only page frame — a thin border rectangle drawn on EVERY printed page.
+	// A position:fixed element repeats on each page in Chromium's print path, so it
+	// gives the document the boxed look of the reference letterhead. It's inset
+	// inside the printToPDF margins so the content sits within the frame and the
+	// page-number footer prints just below it. All of its styling (position/border)
+	// lives in the print stylesheet; on screen it stays display:none.
+	DOM.append(backdrop, DOM.$('div.ciyex-summary-pageframe'));
+
 	// Right-anchored slide-over sheet.
 	const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-sheet'));
 	sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(720px,65vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family);`;
@@ -323,12 +331,20 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		// Screen: hide the run-head, flatten the print table to plain blocks.
+		// Screen: hide the run-head + the print-only page frame, flatten the print
+		// table to plain blocks.
 		'.ciyex-summary-runhead{display:none;}',
+		'.ciyex-summary-pageframe{display:none;}',
 		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
 		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
 		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+		// The page frame: a border box repeated on every printed page. In print a
+		// position:fixed element is laid out against the page CONTENT box (inside the
+		// margins) and painted on each page, so `inset:0` traces the content box edge
+		// — i.e. the border sits just inside the paper margin. The content cells get
+		// their own padding below so text never touches this border.
+		'  .ciyex-summary-pageframe{display:block !important;position:fixed !important;inset:0 !important;border:1px solid #9aa0a6 !important;border-radius:2px;pointer-events:none;z-index:0;background:transparent !important;}',
 		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
 		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
@@ -339,11 +355,27 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
 		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
 		'  .ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
-		// The repeating letterhead needs a little breathing room under it each page.
-		'  .ciyex-summary-runhead td{padding-bottom:10px !important;}',
+		// Inset the printed content from the page-frame border so nothing (letterhead
+		// or section boxes) touches the box drawn at the content-box edge. The
+		// letterhead cell repeats every page, so its top/side padding keeps the
+		// letterhead clear of the frame on every page.
+		'  .ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
+		'  .ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
 		// The letterhead rules are deliberately bold black — override the generic
 		// light-grey border rule above (higher specificity beats it).
 		'  .ciyex-summary-runhead .vs-hdr-rule{border-bottom:2px solid #222 !important;}',
+		// Keep each section box intact — a section (e.g. Vitals) must not split with
+		// half its rows on one page and half on the next. break-inside:avoid moves
+		// the whole card to the next page when it would otherwise straddle the break
+		// (a card taller than a full page still breaks — unavoidable). This is the
+		// QA ask: sections should print together on a single page.
+		'  .vs-card{break-inside:avoid !important;page-break-inside:avoid !important;}',
+		// The signature line stays a firm dark rule (beats the generic light-grey
+		// border override above).
+		'  .vs-sig-rule{border-color:#222 !important;}',
+		// Page margins: the printToPDF path sets matching margins (and the page-number
+		// footer) — this @page rule governs the browser Print dialog path so the frame
+		// and content sit the same distance from the paper edge there too.
 		'  @page{margin:12mm;}',
 		'}',
 	].join('');
@@ -983,8 +1015,47 @@ const FORM_SECTION_GROUPS: Array<{ prefix: string; title: string; icon: string }
  *  the caller appends rows into. QA asked for the summary to read as clean,
  *  aligned rows instead of dense "Label: value" prose — every section shares
  *  this card + the striped `summaryKvRow` layout below. */
+/** Format a timestamp as `MM/DD/YYYY h:mm AM/PM` for the signature block. */
+function formatPrintDateTime(d: Date): string {
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	let h = d.getHours();
+	const ampm = h >= 12 ? 'PM' : 'AM';
+	h = h % 12; if (h === 0) { h = 12; }
+	return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${h}:${pad(d.getMinutes())} ${ampm}`;
+}
+
+/** Sign-off block mirroring the reference letterhead: a signature line with the
+ *  provider's typed name, "Signed off By", and the print date/time. Rendered at
+ *  the end of the summary (both the DTO and the encounter-form render paths call
+ *  this) whenever a provider is known. */
+function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, providerName: string, status?: string, signedAt?: string): void {
+	const col = summaryColors(deps.themeService);
+	const name = (providerName || '').trim();
+	const card = summarySectionCard(body, col, 'Provider Signature');
+	if (status) { summaryKvRow(card, col, 'Status', status); }
+	if (signedAt) { summaryKvRow(card, col, 'Signed at', signedAt); }
+	const block = DOM.append(card, DOM.$('div'));
+	block.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding:16px 16px 12px;';
+	const provLabel = DOM.append(block, DOM.$('div'));
+	provLabel.textContent = 'Provider';
+	provLabel.style.cssText = `font-size:12px;font-weight:700;color:${col.desc};margin-bottom:20px;`;
+	const rule = DOM.append(block, DOM.$('div.vs-sig-rule'));
+	rule.style.cssText = `width:230px;border-top:1px solid ${col.fg};`;
+	const sigNameEl = DOM.append(block, DOM.$('div'));
+	sigNameEl.textContent = name || '—';
+	sigNameEl.style.cssText = `font-size:13px;font-weight:600;color:${col.fg};`;
+	const signedBy = DOM.append(block, DOM.$('div'));
+	signedBy.textContent = `Signed off By: ${name || '—'}`;
+	signedBy.style.cssText = `font-size:12px;color:${col.desc};margin-top:4px;`;
+	const printedAt = DOM.append(block, DOM.$('div'));
+	printedAt.textContent = `Print Date and Time: ${formatPrintDateTime(new Date())}`;
+	printedAt.style.cssText = `font-size:11px;color:${col.desc};`;
+}
+
 function summarySectionCard(body: HTMLElement, col: SummaryColors, title: string, icon?: string): HTMLElement {
-	const card = DOM.append(body, DOM.$('div'));
+	// `vs-card` lets the print stylesheet keep each section box on a single page
+	// (break-inside:avoid) so a section never splits across two pages.
+	const card = DOM.append(body, DOM.$('div.vs-card'));
 	card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};margin-bottom:12px;overflow:hidden;`;
 	const head = DOM.append(card, DOM.$('div'));
 	head.style.cssText = `display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid ${col.border};border-left:3px solid ${col.link};background:rgba(128,128,128,0.06);`;
@@ -1227,6 +1298,12 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 	// treatment for the same reason.
 	if (summaryData && typeof summaryData === 'object') {
 		renderedAny = renderMissingDtoSections(deps, body, summaryData as VisitSummaryDTO, renderedTitles) || renderedAny;
+	}
+
+	// Sign-off block — the reference letterhead always closes with a provider
+	// signature. Rendered when the encounter has content and a known provider.
+	if (renderedAny && meta.providerName) {
+		renderSignatureBlock(deps, body, meta.providerName);
 	}
 
 	if (!renderedAny) {
@@ -1525,12 +1602,15 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	}
 
 	// --- Provider Signature ---
-	if (data.providerSignature && (data.providerSignature.signedBy || data.providerSignature.signedAt || data.providerSignature.status)) {
+	// A sign-off block mirroring the reference letterhead: the DTO status / signed-at
+	// (when present), then a signature line with the provider's typed name, "Signed
+	// off By", and the print date/time. Rendered whenever a provider is known so the
+	// summary always carries a signature area.
+	const sig = data.providerSignature;
+	const sigName = (sig?.signedBy || data.meta?.providerName || '').trim();
+	if (sigName || sig) {
 		renderedAny = true;
-		const card = section('Provider Signature');
-		line(card, 'Signed by', data.providerSignature.signedBy || '—');
-		line(card, 'Signed at', data.providerSignature.signedAt);
-		line(card, 'Status', data.providerSignature.status);
+		renderSignatureBlock(deps, body, sigName, sig?.status, sig?.signedAt);
 	}
 
 	// --- Date/Time Finalized ---
