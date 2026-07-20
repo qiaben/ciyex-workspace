@@ -892,7 +892,17 @@ export class LabsEditor extends ClinicalListEditorBase {
 				],
 			},
 		],
-		cellRenderer: (key, value) => {
+		cellRenderer: (key, value, item) => {
+			// TEST column: show the descriptive name together with its LOINC code so
+			// the code isn't lost from the table (QA: the New Lab Result form captures
+			// both Test Name + LOINC Code but the list showed only the name). Mirrors
+			// the Lab Orders "Test" column which renders "name (code)".
+			if (key === 'testName') {
+				const name = String(item.testName || '').trim();
+				const code = String(item.loincCode || item.testCode || '').trim();
+				const combined = name && code && !name.includes(code) ? `${name} (${code})` : (name || code);
+				return combined || String(value ?? '');
+			}
 			if ((key === 'collectedDate' || key === 'signedAt') && typeof value === 'string' && value) {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
 			}
