@@ -1724,8 +1724,17 @@ export class CiyexAuthGate extends Disposable {
 		if (this._loading) {
 			return;
 		}
-		if (!this._signupFirstName.trim() || !this._signupLastName.trim() || !this._signupEmail.trim() || !this._signupPassword) {
+		if (!this._signupFirstName.trim() || !this._signupLastName.trim() || !this._signupEmail.trim()) {
 			this._error = 'Please fill in all required fields.';
+			this._render();
+			return;
+		}
+		// Empty password / confirm must read as "Password is required" — NOT
+		// "Passwords do not match". Enter-to-submit bypasses the disabled button,
+		// so an empty confirm could otherwise trip the mismatch check with
+		// nothing typed (QA: mismatch error shown before any password entered).
+		if (!this._signupPassword || !this._signupConfirmPassword) {
+			this._error = 'Password is required.';
 			this._render();
 			return;
 		}

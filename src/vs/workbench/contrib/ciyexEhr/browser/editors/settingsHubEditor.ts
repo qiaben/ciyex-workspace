@@ -9,7 +9,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { createTimeDropdown } from '../customDropdown.js';
+import { createTimeDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick } from '../ciyexDateMask.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -1588,7 +1588,18 @@ export class SettingsHubEditor extends EditorPane {
 		if (label === 'city') { return 'City'; }
 		if (label === 'state' || label.includes('province')) { return 'State / Province'; }
 		if (label.includes('zip') || label.includes('postal')) { return 'ZIP / Postal code'; }
-		return '';
+		// Generic fallback so every field shows a hint instead of a blank box
+		// (QA: the Services form fields had no placeholders). Selects get a
+		// "Select <label>" prompt (used as the blank first option's text);
+		// controls that carry no free-text (date / boolean) keep no placeholder.
+		const cleanLabel = (field.label || '').replace(/\s*\*$/, '').trim();
+		if (!cleanLabel) { return ''; }
+		const t = (field.type || '').toLowerCase();
+		if (t === 'date' || t === 'boolean' || t === 'checkbox' || t === 'switch') { return ''; }
+		if (t === 'select' || t === 'enum' || (Array.isArray(field.options) && field.options.length > 0)) {
+			return `Select ${cleanLabel}`;
+		}
+		return `Enter ${cleanLabel}`;
 	}
 
 	private _renderField(parent: HTMLElement, field: FieldDef, isView: boolean): void {
@@ -1950,6 +1961,13 @@ export class SettingsHubEditor extends EditorPane {
 				else { opt.value = o.value; opt.textContent = o.label; }
 				if (String(value || '') === opt.value) { opt.selected = true; }
 			}
+			// In create mode never inherit a stray default (e.g. the field
+			// config's first option) — force the blank placeholder so the user
+			// makes an explicit choice (QA: Referral Provider "Specialty"
+			// defaulted to "Cardiology").
+			if (this.mode === 'create' && !isView && (value === undefined || value === null || value === '')) {
+				sel.value = '';
+			}
 			sel.addEventListener('change', () => { this.formData[field.key] = sel.value; });
 		} else if (t === 'boolean' || t === 'checkbox' || t === 'switch') {
 			const wrap = DOM.append(cell, DOM.$('label'));
@@ -2116,7 +2134,16 @@ export class SettingsHubEditor extends EditorPane {
 		// Position is recomputed each time the dropdown opens, and flips
 		// upward if there isn't enough room below the input.
 		const dropdown = DOM.append(mainWindow.document.body, DOM.$('div'));
-		dropdown.style.cssText = 'position:fixed;background:#ffffff;border:1px solid #0e639c;border-radius:6px;max-height:280px;overflow-y:auto;z-index:100000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);color:#1a1a2e;';
+		// Theme-aware surface — the dropdown previously hardcoded a white
+		// background + dark text, which read as a jarring light-coloured box on
+		// the dark EHR theme (QA: Referral Provider organization dropdown UI is
+		// light-coloured). It's mounted on document.body (to escape the form's
+		// overflow clipping), where the workbench's `--vscode-*` theme variables
+		// don't cascade — so copy the workbench root's class onto it, exactly like
+		// the intake-form overlay does, so those tokens resolve here too.
+		const wbRoot = findWorkbenchRoot(mainWindow.document.body, mainWindow.document);
+		dropdown.className = wbRoot.classList.contains('monaco-workbench') ? wbRoot.className : 'monaco-workbench';
+		dropdown.style.cssText = 'position:fixed;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background,#252526));border:1px solid var(--vscode-focusBorder,#0e639c);border-radius:6px;max-height:280px;overflow-y:auto;z-index:100000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);color:var(--vscode-dropdown-foreground,var(--vscode-foreground,#cccccc));';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();
 			const viewportH = mainWindow.innerHeight;
@@ -2177,17 +2204,17 @@ export class SettingsHubEditor extends EditorPane {
 				const phone = flatRow['phone'] ?? (row as Record<string, unknown>)['phone'];
 				if (phone) { subBits.push(String(phone)); }
 
-				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #e5e7eb;color:#1a1a2e;background:#ffffff;';
+				item.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--vscode-editorWidget-border);color:var(--vscode-dropdown-foreground,var(--vscode-foreground));background:transparent;';
 				const nameEl = DOM.append(item, DOM.$('div'));
 				nameEl.textContent = display ? String(display) : '(no name)';
-				nameEl.style.cssText = 'font-weight:600;color:#0f172a;';
+				nameEl.style.cssText = 'font-weight:600;color:var(--vscode-foreground);';
 				if (subBits.length > 0) {
 					const subEl = DOM.append(item, DOM.$('div'));
 					subEl.textContent = subBits.join(' · ');
-					subEl.style.cssText = 'font-size:11px;color:#64748b;margin-top:1px;';
+					subEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px;';
 				}
-				item.addEventListener('mouseenter', () => { item.style.background = '#eff6ff'; });
-				item.addEventListener('mouseleave', () => { item.style.background = '#ffffff'; });
+				item.addEventListener('mouseenter', () => { item.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.15))'; });
+				item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
 				item.addEventListener('mousedown', e => {
 					e.preventDefault();
 					const valField = cfg.valueField || displayField;
@@ -2325,10 +2352,20 @@ export class SettingsHubEditor extends EditorPane {
 		// NOT be force-validated as a strict NPI/phone/name. Match the
 		// reference renderer's `isProviderIdentifier` allow-list and only
 		// require a sane alphanumeric shape.
-		if (/^(upin|taxonomy|taxonomycode|taxid|medicareid|medicaidid|medicarebeneficiaryid|deanumber|billingnpi)$/.test(seg)) {
+		if (/^(upin|taxonomy|taxonomycode|medicareid|medicaidid|medicarebeneficiaryid|deanumber|billingnpi)$/.test(seg)) {
 			return /^[A-Za-z0-9\s\-./]+$/.test(value.trim())
 				? undefined
 				: `${field.label} must contain only letters, numbers, hyphens, or periods`;
+		}
+
+		// Tax ID / EIN — a US Employer Identification Number is exactly 9 digits
+		// (written XX-XXXXXXX). Previously taxId sat in the alphanumeric
+		// identifier allow-list above, so a non-9-digit value (letters, too few /
+		// too many digits) saved with no error (QA: EIN negative test cases were
+		// accepted). Enforce a strict 9-digit shape here instead.
+		if (seg === 'taxid' || seg === 'ein' || seg === 'employeridentificationnumber' || looks(/tax ?id|\bein\b|employer ?identification/)) {
+			const digits = value.replace(/\D/g, '');
+			return digits.length === 9 ? undefined : `${field.label} must be a 9-digit number (EIN, e.g. 12-3456789)`;
 		}
 
 		// Payer ID — the carrier's clearinghouse identifier (e.g. "60054",
@@ -4512,8 +4549,8 @@ export class SettingsHubEditor extends EditorPane {
 
 					const actionsTd = DOM.append(row, DOM.$('td'));
 					actionsTd.style.cssText = 'padding:10px 12px;white-space:nowrap;';
-					this._tableAction(actionsTd, '\u{1F441}', 'View', () => this._openCodeModal('view', code, load));
-					this._tableAction(actionsTd, '\u270F', 'Edit', () => this._openCodeModal('edit', code, load));
+					this._tableAction(actionsTd, '\u{1F441}', 'View', () => this._openCodeModal('view', code));
+					this._tableAction(actionsTd, '\u270F', 'Edit', () => this._openCodeModal('edit', code));
 					this._tableAction(actionsTd, '\u{1F5D1}', 'Delete', () => this._deleteCode(code, load), 'danger');
 				}
 			} catch (e) {
@@ -4521,7 +4558,7 @@ export class SettingsHubEditor extends EditorPane {
 			}
 		};
 
-		addBtn.addEventListener('click', () => this._openCodeModal('create', null, load));
+		addBtn.addEventListener('click', () => this._openCodeModal('create', null));
 		searchBtn.addEventListener('click', () => { void load(); });
 		searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { void load(); } });
 		typeSelect.addEventListener('change', () => { void load(); });
@@ -4529,29 +4566,32 @@ export class SettingsHubEditor extends EditorPane {
 		void load();
 	}
 
-	/** Opens a modal to view/edit/create a global code record. */
-	private _openCodeModal(mode: 'view' | 'edit' | 'create', code: Record<string, unknown> | null, reload: () => Promise<void>): void {
-		const overlay = DOM.append(this.contentEl, DOM.$('div'));
-		overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;';
+	/** Renders the view/edit/create global-code form in-page (not a popup). */
+	private _openCodeModal(mode: 'view' | 'edit' | 'create', code: Record<string, unknown> | null): void {
+		// Render the form IN-PAGE (replacing the Codes list), matching how the
+		// Providers / Facilities settings pages open their add-new form \u2014 the
+		// Codes page previously opened this as a floating modal while every other
+		// settings page opens inline (QA: make the Codes add-new page consistent).
+		DOM.clearNode(this.contentEl);
+		const root = DOM.append(this.contentEl, DOM.$('div'));
+		root.style.cssText = 'padding:24px;max-width:900px;margin:0 auto;';
 
-		const modal = DOM.append(overlay, DOM.$('div'));
-		// Flex column with a sticky header / footer and only the field grid
-		// scrolling \u2014 gives the dialog a clean, structured look (QA issue 27:
-		// "add new page ui is not looking good").
-		modal.style.cssText = 'background:var(--vscode-editor-background);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;width:680px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 36px rgba(0,0,0,0.45);';
+		// Return to the Codes list. `_renderContent` re-runs `_renderCodes`, which
+		// reloads the list fresh so a just-saved record shows up.
+		const goBack = (): void => { this._renderContent(); };
 
-		const head = DOM.append(modal, DOM.$('div'));
-		head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
-		const ht = DOM.append(head, DOM.$('h3'));
+		const head = DOM.append(root, DOM.$('div'));
+		head.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:20px;';
+		const backBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		backBtn.textContent = '\u2190 Back to Codes';
+		backBtn.style.cssText = 'align-self:flex-start;background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:12px;padding:0;';
+		backBtn.addEventListener('click', goBack);
+		const ht = DOM.append(head, DOM.$('h1'));
 		ht.textContent = mode === 'create' ? 'Create Code' : mode === 'edit' ? 'Edit Code' : 'View Code';
-		ht.style.cssText = 'margin:0;font-size:16px;font-weight:600;';
-		const closeBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
-		closeBtn.textContent = '\u2715';
-		closeBtn.style.cssText = 'background:none;border:none;font-size:16px;color:var(--vscode-descriptionForeground);cursor:pointer;padding:4px 8px;border-radius:4px;';
-		closeBtn.addEventListener('click', () => overlay.remove());
+		ht.style.cssText = 'margin:0;font-size:22px;font-weight:600;';
 
-		const grid = DOM.append(modal, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;padding:20px;overflow-y:auto;flex:1;align-content:start;';
+		const grid = DOM.append(root, DOM.$('div'));
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;';
 
 		const form: Record<string, unknown> = code ? { ...code } : { active: true };
 		const isView = mode === 'view';
@@ -4633,13 +4673,13 @@ export class SettingsHubEditor extends EditorPane {
 		// Reporting checkboxes. Adding it here brings the form to 1:1 parity.
 		mkField('serviceReporting', 'Service Reporting', { type: 'checkbox' });
 
-		const actions = DOM.append(modal, DOM.$('div'));
-		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--vscode-editorWidget-border);flex-shrink:0;';
+		const actions = DOM.append(root, DOM.$('div'));
+		actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:24px;padding-top:16px;border-top:1px solid var(--vscode-editorWidget-border);';
 
 		const cancelBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
 		cancelBtn.textContent = isView ? 'Close' : 'Cancel';
 		cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
-		cancelBtn.addEventListener('click', () => overlay.remove());
+		cancelBtn.addEventListener('click', goBack);
 
 		if (!isView) {
 			const saveBtn = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
@@ -4658,8 +4698,7 @@ export class SettingsHubEditor extends EditorPane {
 					const url = id ? `/api/global_codes/${id}` : '/api/global_codes';
 					const res = await this.apiService.fetch(url, { method, body: JSON.stringify(form) });
 					if (res.ok) {
-						overlay.remove();
-						await reload();
+						goBack();
 						this.notificationService.notify({ severity: Severity.Info, message: 'Saved successfully.' });
 					} else {
 						const txt = await res.text().catch(() => '');
@@ -4674,8 +4713,6 @@ export class SettingsHubEditor extends EditorPane {
 				}
 			});
 		}
-
-		overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); } });
 	}
 
 	private async _deleteCode(code: Record<string, unknown>, reload: () => Promise<void>): Promise<void> {

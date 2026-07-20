@@ -54,6 +54,16 @@ const PRACTICE_TYPES: Array<[string, string]> = [
 	['other', 'Other'],
 ];
 
+/**
+ * Format a raw Tax ID / EIN as `XX-XXXXXXX`. A US Employer Identification Number
+ * is exactly 9 digits — non-digits are stripped and anything past 9 digits is
+ * dropped as the user types, so the field can never hold an out-of-shape value.
+ */
+function formatEin(raw: string): string {
+	const d = raw.replace(/\D/g, '').slice(0, 9);
+	return d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
+}
+
 export class PracticeSettingsEditor extends EditorPane {
 	static readonly ID = 'workbench.editor.ciyexPracticeSettings';
 
@@ -378,6 +388,14 @@ export class PracticeSettingsEditor extends EditorPane {
 			input.maxLength = 16;
 			if (input.value) { input.value = formatUsPhone(input.value); }
 		}
+		// Tax ID (EIN): exactly 9 digits, masked live as `XX-XXXXXXX` so letters
+		// and any digit past the ninth are stripped as the user types — the field
+		// can never carry an invalid EIN (QA: negative Tax ID cases were accepted).
+		if (key === 'taxId') {
+			input.setAttribute('inputmode', 'numeric');
+			input.maxLength = 10;
+			if (input.value) { input.value = formatEin(input.value); }
+		}
 		// The address grid keeps live references to City / State so a completed
 		// ZIP can auto-fill both (QA: "fill the zip code → auto-fill state & city").
 		if (key === 'city') { this._cityInput = input; }
@@ -385,6 +403,10 @@ export class PracticeSettingsEditor extends EditorPane {
 		input.addEventListener('input', () => {
 			if (type === 'tel') {
 				const masked = formatUsPhone(input.value);
+				if (input.value !== masked) { input.value = masked; }
+			}
+			if (key === 'taxId') {
+				const masked = formatEin(input.value);
 				if (input.value !== masked) { input.value = masked; }
 			}
 			(this.practice as Record<string, unknown>)[key as string] = input.value;
@@ -424,6 +446,12 @@ export class PracticeSettingsEditor extends EditorPane {
 		if (this._saving) { return; }
 		if (!this.practice.name) {
 			this.notificationService.notify({ severity: Severity.Warning, message: 'Practice name is required.' });
+			return;
+		}
+		// Tax ID (EIN), when supplied, must be a complete 9-digit number.
+		const einDigits = (this.practice.taxId || '').replace(/\D/g, '');
+		if (this.practice.taxId && einDigits.length !== 9) {
+			this.notificationService.notify({ severity: Severity.Warning, message: 'Tax ID (EIN) must be a 9-digit number (e.g. 12-3456789).' });
 			return;
 		}
 		this._saving = true;
