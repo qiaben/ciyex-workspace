@@ -19,7 +19,8 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { expandEncounterType } from './visitSummaryPanel.js';
+import { expandEncounterType, showVisitSummaryPanel } from './visitSummaryPanel.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
@@ -161,6 +162,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@ICommandService private readonly commandService: ICommandService,
+		@INativeHostService private readonly nativeHostService: INativeHostService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 		// Records saved in a sibling editor (the Patient Chart drawer) are
@@ -4054,10 +4056,10 @@ export class PatientSnapshotEditor extends EditorPane {
 
 			// Action reflects whether the encounter can still be edited. A SIGNED
 			// (finalized / locked) encounter is read-only: show a lock indicator plus
-			// a "View" action. An UNSIGNED encounter is still open: show an "Edit"
-			// action. Both route through `ciyex.openEncounter`, which renders the
-			// encounter form read-only or editable based on the encounter's own
-			// status — so the user only ever sees the form, editable when allowed.
+			// a "View" action that opens the read-only Visit Summary slide-over
+			// (with Download PDF / Print), matching the appointment "Visit Summary"
+			// action — not the encounter editor. An UNSIGNED encounter is still open:
+			// show an "Edit" action routed through `ciyex.openEncounter`.
 			const actionCell = DOM.append(table, DOM.$('div'));
 			actionCell.style.cssText = 'padding:4px 0 4px 8px;border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;align-items:center;justify-content:flex-end;gap:6px;';
 			if (isSigned) {
@@ -4067,7 +4069,7 @@ export class PatientSnapshotEditor extends EditorPane {
 				lockIco.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 			}
 			const actBtn = DOM.append(actionCell, DOM.$('button')) as HTMLButtonElement;
-			actBtn.title = isSigned ? 'View encounter (read-only)' : 'Edit encounter';
+			actBtn.title = isSigned ? 'View visit summary' : 'Edit encounter';
 			actBtn.setAttribute('aria-label', actBtn.title);
 			actBtn.disabled = !encRowId;
 			actBtn.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:${encRowId ? 'pointer' : 'default'};color:var(--vscode-foreground);font-size:11px;opacity:${encRowId ? '1' : '0.5'};`;
@@ -4080,6 +4082,14 @@ export class PatientSnapshotEditor extends EditorPane {
 				actBtn.addEventListener('mouseleave', () => { actBtn.style.background = 'transparent'; });
 				actBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
+					if (isSigned) {
+						// Signed & locked → open the read-only Visit Summary panel
+						// (Download PDF / Print), same as the appointment action.
+						showVisitSummaryPanel(
+							{ apiService: this.apiService, themeService: this.themeService, notificationService: this.notificationService, nativeHostService: this.nativeHostService },
+							this._currentPatientId, encRowId, this._currentPatientName || 'Patient');
+						return;
+					}
 					void this.commandService.executeCommand('ciyex.openEncounter', this._currentPatientId, encRowId, this._currentPatientName || 'Patient', `Encounter ${dateStr}`);
 				});
 			}
