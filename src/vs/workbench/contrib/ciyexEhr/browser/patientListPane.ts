@@ -295,14 +295,14 @@ export class PatientListPane extends ViewPane {
 		super.layoutBody(height, width);
 	}
 
-	private async _loadPatients(): Promise<void> {
+	private async _loadPatients(attempt = 0): Promise<void> {
 		if (this._loaded) {
 			return;
 		}
 		try {
 			const response = await this.apiService.fetch('/api/patients?page=0&size=500&sort=lastName,asc');
 			if (!response.ok) {
-				this._showMessage('Failed to load patients');
+				this._showLoadError('Failed to load patients', attempt);
 				return;
 			}
 			const data = await response.json();
@@ -311,7 +311,33 @@ export class PatientListPane extends ViewPane {
 			this._loaded = true;
 			this._renderList();
 		} catch {
-			this._showMessage('Unable to connect to server');
+			this._showLoadError('Unable to connect to server', attempt);
+		}
+	}
+
+	/** The startup fetch can race the auth token (or hit a transient server
+	 *  failure), which used to leave the pane on "Failed to load patients"
+	 *  forever — nothing retried until a sign-out/sign-in or a search. Retry
+	 *  quietly a few times, and leave the message clickable as a manual retry. */
+	private _showLoadError(msg: string, attempt: number): void {
+		if (!this._listEl) {
+			return;
+		}
+		while (this._listEl.firstChild) {
+			this._listEl.removeChild(this._listEl.firstChild);
+		}
+		const el = document.createElement('div');
+		el.style.cssText = 'padding:12px 16px;color:var(--vscode-descriptionForeground);font-size:12px;cursor:pointer;text-decoration:underline;';
+		el.textContent = `${msg} — click to retry`;
+		el.addEventListener('click', () => { void this._loadPatients(); });
+		this._listEl.appendChild(el);
+		if (attempt < 3) {
+			const timer = setTimeout(() => {
+				if (!this._loaded) {
+					void this._loadPatients(attempt + 1);
+				}
+			}, 1500 * (attempt + 1));
+			this._register({ dispose: () => clearTimeout(timer) });
 		}
 	}
 
