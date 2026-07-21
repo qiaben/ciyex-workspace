@@ -120,6 +120,17 @@ function formatUsPhone(raw: string): string {
 	return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+/**
+ * Format a raw Tax ID / EIN as `XX-XXXXXXX` (2 digits, hyphen, 7 digits) as the
+ * user types: non-digits are stripped and anything past the ninth digit is
+ * dropped, so the field can never hold an out-of-shape EIN. Mirrors the mask in
+ * the Practice settings page so both entry points behave identically.
+ */
+function formatEin(raw: string): string {
+	const d = (raw || '').replace(/\D/g, '').slice(0, 9);
+	return d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
+}
+
 /** Normalize a field key/label down to bare alphanumerics for matching (last dot-segment). */
 function normalizeSeg(key: string): string {
 	return (key.split('.').pop() || key).replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -1955,10 +1966,18 @@ export class SettingsHubEditor extends EditorPane {
 			const placeholder = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 			placeholder.value = '';
 			placeholder.textContent = ph || '\u2014 Select \u2014';
+			// The blank option renders in the normal dropdown text colour, which
+			// looked darker than the muted `::placeholder` colour of the text inputs
+			// beside it (QA: Referral Provider "Specialty" placeholder too dark).
+			// Colour the placeholder option muted and toggle the select's own colour
+			// (see syncSelColor below) so the collapsed control shows the placeholder
+			// in the same muted tone as the inputs, while real values stay full colour.
+			placeholder.style.color = 'var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground))';
 			for (const o of field.options || []) {
 				const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
 				if (typeof o === 'string') { opt.value = o; opt.textContent = o; }
 				else { opt.value = o.value; opt.textContent = o.label; }
+				opt.style.color = 'var(--vscode-input-foreground)';
 				if (String(value || '') === opt.value) { opt.selected = true; }
 			}
 			// In create mode never inherit a stray default (e.g. the field
@@ -1968,7 +1987,15 @@ export class SettingsHubEditor extends EditorPane {
 			if (this.mode === 'create' && !isView && (value === undefined || value === null || value === '')) {
 				sel.value = '';
 			}
-			sel.addEventListener('change', () => { this.formData[field.key] = sel.value; });
+			// Muted colour while the blank placeholder is selected; full foreground
+			// once the user picks a real value — matches the text-input placeholders.
+			const syncSelColor = (): void => {
+				sel.style.color = sel.value === ''
+					? 'var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground))'
+					: 'var(--vscode-input-foreground)';
+			};
+			syncSelColor();
+			sel.addEventListener('change', () => { this.formData[field.key] = sel.value; syncSelColor(); });
 		} else if (t === 'boolean' || t === 'checkbox' || t === 'switch') {
 			const wrap = DOM.append(cell, DOM.$('label'));
 			wrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;';
@@ -2011,6 +2038,12 @@ export class SettingsHubEditor extends EditorPane {
 			const isFax = seg.includes('fax') || labelSeg.includes('fax');
 			const isPhone = !isFax && (t === 'tel' || t === 'phone' || /phone|mobile|cell/.test(seg) || /phone|mobile|cell/.test(labelSeg));
 			const isZip = seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || /zip|postal/.test(labelSeg);
+			// Tax ID / EIN — same detection as the Save-path validator (_validateFieldFormat)
+			// so the field is masked to XX-XXXXXXX as the user types. Excludes taxonomy
+			// (a provider identifier that also starts with "tax") so it is not masked.
+			const isTaxId = seg !== 'taxonomy' && seg !== 'taxonomycode'
+				&& (seg === 'taxid' || seg === 'ein' || seg === 'employeridentificationnumber'
+					|| /tax ?id|\bein\b|employer ?identification/.test(seg) || /tax ?id|\bein\b|employer ?identification/.test(labelSeg));
 			// The ZIP placeholder always advertises the auto-fill (QA: "add the
 			// placeholder in zip code field — enter the zipcode, state & city auto
 			// reflect"), even when a backend field config carries its own hint.
@@ -2018,8 +2051,17 @@ export class SettingsHubEditor extends EditorPane {
 			// Registered so a completed ZIP can auto-fill the sibling City / State
 			// inputs of the same form (QA: "fill the zip code → auto-fill state & city").
 			if (!isView && !field.readOnly) { this._formTextInputs.set(field.key, inp); }
+			// EIN is exactly 9 digits (10 chars with the hyphen); mask the initial
+			// value and cap the length so the field can never carry an invalid EIN.
+			if (isTaxId && !inp.readOnly) {
+				inp.setAttribute('inputmode', 'numeric');
+				inp.maxLength = 10;
+				if (inp.value) { inp.value = formatEin(inp.value); }
+			}
 			inp.addEventListener('input', () => {
-				if (isPhone) {
+				if (isTaxId) {
+					inp.value = formatEin(inp.value);
+				} else if (isPhone) {
 					inp.value = formatUsPhone(inp.value);
 				} else if (isFax) {
 					// Fax: digits only (US standard formatting applied for readability).
