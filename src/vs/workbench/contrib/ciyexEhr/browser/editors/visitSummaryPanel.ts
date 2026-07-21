@@ -1060,12 +1060,15 @@ function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, provid
 }
 
 function summarySectionCard(body: HTMLElement, col: SummaryColors, title: string, icon?: string): HTMLElement {
-	// `vs-card` lets the print stylesheet keep each section box on a single page
-	// (break-inside:avoid) so a section never splits across two pages.
-	const card = DOM.append(body, DOM.$('div.vs-card'));
-	card.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};margin-bottom:12px;overflow:hidden;`;
-	const head = DOM.append(card, DOM.$('div'));
-	head.style.cssText = `display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid ${col.border};border-left:3px solid ${col.link};background:rgba(128,128,128,0.06);`;
+	// A borderless section (design feedback: no boxed card per section): a bold
+	// uppercase heading underlined with a thin rule, then the section's rows
+	// flush below it — reads like a formal clinical note. `vs-card` still keeps
+	// each section on a single page in print (break-inside:avoid) so a section
+	// never splits across two pages.
+	const section = DOM.append(body, DOM.$('div.vs-card'));
+	section.style.cssText = 'margin-bottom:18px;';
+	const head = DOM.append(section, DOM.$('div'));
+	head.style.cssText = `display:flex;align-items:center;gap:7px;padding:0 0 5px;border-bottom:1px solid ${col.border};margin-bottom:5px;`;
 	if (icon) {
 		const ic = DOM.append(head, DOM.$('span'));
 		ic.textContent = icon;
@@ -1073,16 +1076,15 @@ function summarySectionCard(body: HTMLElement, col: SummaryColors, title: string
 	}
 	const t = DOM.append(head, DOM.$('span'));
 	t.textContent = title;
-	t.style.cssText = `font-size:13px;font-weight:700;color:${col.fg};letter-spacing:0.02em;`;
-	return DOM.append(card, DOM.$('div'));
+	t.style.cssText = `font-size:12px;font-weight:700;color:${col.fg};letter-spacing:0.05em;text-transform:uppercase;`;
+	return DOM.append(section, DOM.$('div'));
 }
 
 /** One aligned label / value row inside a section card. Rows zebra-stripe so
  *  long sections stay scannable. */
 function summaryKvRow(table: HTMLElement, col: SummaryColors, label: string, value: string): void {
-	const idx = table.childElementCount;
 	const row = DOM.append(table, DOM.$('div'));
-	row.style.cssText = `display:grid;grid-template-columns:190px 1fr;gap:12px;padding:7px 14px;align-items:start;${idx % 2 === 0 ? 'background:rgba(128,128,128,0.045);' : ''}`;
+	row.style.cssText = `display:grid;grid-template-columns:190px 1fr;gap:12px;padding:4px 2px;align-items:start;`;
 	const l = DOM.append(row, DOM.$('span'));
 	l.textContent = label;
 	l.style.cssText = `font-size:12px;font-weight:600;color:${col.desc};padding-top:1px;`;
@@ -1100,13 +1102,12 @@ function renderVitalsGrid(table: HTMLElement, col: SummaryColors, rows: Array<[s
 	const isWide = ([label, value]: [string, string]): boolean => label === 'Notes' || label === 'Recorded' || value.length > 32;
 	const pairs = rows.filter(r => !isWide(r));
 	const wide = rows.filter(isWide);
-	const stripe = (rowIdx: number): string => (rowIdx % 2 === 0 ? 'background:rgba(128,128,128,0.045);' : '');
 	if (pairs.length) {
 		const grid = DOM.append(table, DOM.$('div'));
-		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;';
-		pairs.forEach(([label, value], i) => {
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;column-gap:24px;';
+		pairs.forEach(([label, value]) => {
 			const cell = DOM.append(grid, DOM.$('div'));
-			cell.style.cssText = `display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:start;padding:7px 14px;${stripe(Math.floor(i / 2))}`;
+			cell.style.cssText = `display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:start;padding:4px 2px;`;
 			const l = DOM.append(cell, DOM.$('span'));
 			l.textContent = label;
 			l.style.cssText = `font-size:12px;font-weight:600;color:${col.desc};padding-top:1px;`;
@@ -1114,12 +1115,6 @@ function renderVitalsGrid(table: HTMLElement, col: SummaryColors, rows: Array<[s
 			v.textContent = value;
 			v.style.cssText = `font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
 		});
-		// Odd pair count leaves a gap in the last row — add a filler cell so the
-		// zebra band spans the full width.
-		if (pairs.length % 2 === 1) {
-			const filler = DOM.append(grid, DOM.$('div'));
-			filler.style.cssText = `padding:7px 14px;${stripe(Math.floor(pairs.length / 2))}`;
-		}
 	}
 	for (const [label, value] of wide) { summaryKvRow(table, col, label, value); }
 }
@@ -1129,7 +1124,7 @@ function renderVitalsGrid(table: HTMLElement, col: SummaryColors, rows: Array<[s
 function summaryTextRow(table: HTMLElement, col: SummaryColors, text: string): void {
 	const row = DOM.append(table, DOM.$('div'));
 	row.textContent = text;
-	row.style.cssText = `padding:9px 14px;font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
+	row.style.cssText = `padding:4px 2px;font-size:13px;color:${col.fg};white-space:pre-wrap;word-break:break-word;`;
 }
 
 /** The "Encounter Summary" meta header card, shared by both render paths. */
@@ -1316,7 +1311,7 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 	if (!renderedAny) {
 		const none = DOM.append(body, DOM.$('div'));
 		none.textContent = 'No clinical sections recorded for this encounter yet.';
-		none.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;text-align:center;font-size:13px;color:${col.desc};`;
+		none.style.cssText = `padding:10px 2px;font-size:13px;color:${col.desc};font-style:italic;`;
 	}
 	return true;
 }
@@ -1465,7 +1460,7 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('SOAP');
 		for (const n of data.providerNotes) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
+			block.style.cssText = `border-left:2px solid ${col.border};padding-left:10px;margin:4px 0 12px;`;
 			line(block, 'S', n.subjective);
 			line(block, 'O', n.objective);
 			line(block, 'A', n.assessment);
@@ -1523,7 +1518,7 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 				const row = DOM.append(card, DOM.$('div'));
 				row.style.cssText = 'font-size:13px;';
 				const head = DOM.append(row, DOM.$('div'));
-				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 14px 0;`;
+				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 2px 0;`;
 				head.textContent = `${r.systemName || 'System'}:${(r.findings && r.findings.length) ? '' : ' All Negative'}`;
 				if (r.findings?.length) { for (const f of r.findings) { bullet(row, f); } }
 				if (r.notes) { line(row, 'Note', r.notes); }
@@ -1554,11 +1549,11 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('Physical Exam');
 		for (const p of data.physicalExam) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
+			block.style.cssText = `border-left:2px solid ${col.border};padding-left:10px;margin:4px 0 12px;`;
 			if (p.summary) { line(block, 'Summary', p.summary); }
 			for (const s of p.sections || []) {
 				const head = DOM.append(block, DOM.$('div'));
-				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 14px 0;`;
+				head.style.cssText = `color:${col.fg};font-weight:600;padding:6px 2px 0;`;
 				head.textContent = s.sectionKey || 'Section';
 				if (s.allNormal) { line(block, 'All normal', 'Yes'); }
 				if (s.normalText) { line(block, 'Normal', s.normalText); }
@@ -1599,7 +1594,7 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 		const card = section('Plan');
 		for (const p of data.plan) {
 			const block = DOM.append(card, DOM.$('div'));
-			block.style.cssText = `border:1px solid ${col.border};border-radius:6px;margin:8px 14px;overflow:hidden;`;
+			block.style.cssText = `border-left:2px solid ${col.border};padding-left:10px;margin:4px 0 12px;`;
 			line(block, 'Diagnostic Plan', p.diagnosticPlan);
 			line(block, 'Plan', p.plan);
 			line(block, 'Notes', p.notes);
@@ -1631,6 +1626,6 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	if (!renderedAny) {
 		const none = DOM.append(body, DOM.$('div'));
 		none.textContent = 'No additional sections recorded for this encounter yet.';
-		none.style.cssText = `border:1px solid ${col.border};border-radius:8px;background:${col.widgetBg};padding:18px;text-align:center;font-size:13px;color:${col.desc};`;
+		none.style.cssText = `padding:10px 2px;font-size:13px;color:${col.desc};font-style:italic;`;
 	}
 }
