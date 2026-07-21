@@ -422,21 +422,28 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 	};
 
-	// "Print" ONLY hands the summary to the OS Print dialog. `document.title`
-	// becomes the default filename if the user picks "Save as PDF" there.
-	const printSummary = () => {
+	// "Print" renders the summary to a PDF in the main process and opens it in the
+	// OS default PDF viewer, which gives a real print preview to review and print
+	// from. A bare renderer-side `window.print()` under `vscode-file://` (Electron)
+	// jumps straight to the OS print dialog with NO document preview — the reported
+	// bug — so we route printing through the native host instead.
+	const printSummary = async () => {
 		if (!summaryLoaded) {
 			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
 			return;
 		}
-		const prevTitle = doc.title;
-		doc.title = `encounter-${encounterId}-summary`;
-		DOM.getActiveWindow().print();
-		doc.title = prevTitle;
+		printBtn.disabled = true;
+		try {
+			await deps.nativeHostService.printPdfPreview(`encounter-${encounterId}-summary.pdf`);
+		} catch (err) {
+			deps.notificationService.notify({ severity: Severity.Error, message: `Could not open the print preview: ${err instanceof Error ? err.message : String(err)}` });
+		} finally {
+			printBtn.disabled = false;
+		}
 	};
 
 	pdfBtn.addEventListener('click', () => void downloadPdf());
-	printBtn.addEventListener('click', () => printSummary());
+	printBtn.addEventListener('click', () => void printSummary());
 
 	void loadVisitSummary(deps, patientId, encounterId, content, loading, facilityHint, patientName, headCell).then(ok => { summaryLoaded = ok; });
 }

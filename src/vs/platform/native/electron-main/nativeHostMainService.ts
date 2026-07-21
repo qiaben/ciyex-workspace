@@ -900,6 +900,36 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return result.filePath;
 	}
 
+	async printPdfPreview(windowId: number | undefined, fileName: string, options?: INativeHostOptions): Promise<boolean> {
+		const window = this.windowById(options?.targetWindowId, windowId);
+		// Render the active window to a PDF exactly like `savePdfToDownloads` (same
+		// print options so the preview matches the downloaded file), but write it to
+		// a temp file and open it in the OS default PDF viewer. A renderer-side
+		// `window.print()` under `vscode-file://` (Electron) jumps straight to the OS
+		// print dialog with NO document preview; opening the rendered PDF instead
+		// gives the user a real preview they can review and print from.
+		const data = await window?.win?.webContents.printToPDF({
+			printBackground: true,
+			margins: { top: 0.47, bottom: 0.47, left: 0.47, right: 0.47 },
+			displayHeaderFooter: true,
+			headerTemplate: '<span></span>',
+			footerTemplate: '<div style="width:100%;font-size:8px;color:#666;padding:0 9mm 0 0;text-align:right;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+		});
+		if (!data) {
+			throw new Error('Failed to render the window to PDF');
+		}
+		// Write to the OS temp dir under a clean, stable filename so the viewer's
+		// title shows the document name rather than a random hash.
+		const safeName = fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+		const filePath = join(this.environmentMainService.tmpDir.fsPath, safeName);
+		await Promises.writeFile(filePath, data);
+		const openError = await shell.openPath(filePath);
+		if (openError) {
+			throw new Error(openError);
+		}
+		return true;
+	}
+
 	//#endregion
 
 

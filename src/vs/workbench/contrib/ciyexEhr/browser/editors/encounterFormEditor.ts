@@ -858,7 +858,24 @@ export class EncounterFormEditor extends EditorPane {
 	private _complexFields = new Map<string, unknown>();
 
 	private get _isSigned(): boolean {
-		return this._encounterStatus.toUpperCase() === 'SIGNED';
+		// A signed encounter is permanently locked, and that lock must survive a
+		// close/reopen. The in-session sign path sets the status to 'SIGNED'
+		// optimistically, but the backend persists a signed encounter as FHIR
+		// status 'finished' (see /sign -> EncounterStatus.FINISHED). A strict
+		// '=== SIGNED' check therefore passed in-session but failed after reload,
+		// leaving a signed encounter editable again. Normalize every signed-ish
+		// variant the same way the status badge does so both stay in agreement.
+		return this._isSignedishStatus(this._encounterStatus);
+	}
+
+	/**
+	 * Collapse the many raw encounter statuses (SIGNED, finished, completed, ...)
+	 * down to the single "is this encounter signed & locked?" question. Used for
+	 * both the read-only gating and the header status badge so they never diverge.
+	 */
+	private _isSignedishStatus(raw: string | undefined): boolean {
+		const s = String(raw || '').toLowerCase();
+		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'));
 	}
 
 	private _renderHeader(): void {
@@ -885,8 +902,7 @@ export class EncounterFormEditor extends EditorPane {
 		// arrived, planned, INCOMPLETE, ...) all collapse to Unsigned; only a
 		// signed/finished/completed encounter shows Signed. This mirrors the
 		// normalization already used by the encounters sidebar, snapshot and chart.
-		const s = String(this._encounterStatus || '').toLowerCase();
-		const isSignedish = (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'));
+		const isSignedish = this._isSignedishStatus(this._encounterStatus);
 		const status = isSignedish ? 'Signed' : 'Unsigned';
 		const statusColor = isSignedish ? '#22c55e' : '#f59e0b';
 		this._statusBadge = DOM.append(this.headerBar, DOM.$('span'));
