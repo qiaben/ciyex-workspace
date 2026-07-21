@@ -607,6 +607,17 @@ export class EncounterFormEditor extends EditorPane {
 			any = true;
 		}
 		if (!any) { return; }
+		// History is ONE evolving record per patient — always upsert the LATEST
+		// existing record, resolved fresh at save time. The prefill's date-scoped
+		// id can be stale (another surface may have saved meanwhile) or missing
+		// (prefill raced/failed), and POSTing in either case forks a second
+		// history row that the chart then shows alongside the first (QA:
+		// "update through the encounter shows one more history — replace the
+		// existing one and always show the latest").
+		try {
+			const latest = await this._findChartHistoryForDate('');
+			if (latest?.id) { this._chartHistoryId = latest.id; }
+		} catch { /* lookup failed — fall back to the prefilled id / create */ }
 		const body = JSON.stringify({ ...payload, patientId });
 		let res = this._chartHistoryId
 			? await this.apiService.fetch(`/api/fhir-resource/history/patient/${patientId}/${this._chartHistoryId}`, { method: 'PUT', body })

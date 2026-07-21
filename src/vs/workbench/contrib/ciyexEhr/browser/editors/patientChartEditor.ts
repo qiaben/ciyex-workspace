@@ -3289,6 +3289,19 @@ export class PatientChartEditor extends EditorPane {
 			const ids = this._patientIdSet();
 			data = data.filter(r => ids.has(String(r.patientId ?? r.patient ?? '')));
 		}
+		// History is a SINGLE evolving record: chart edits and encounter-page
+		// saves both upsert the latest record, but older duplicates can exist
+		// (created before that model, or by a prefill race). Keep ONLY the
+		// newest one so the page always shows the latest updated history —
+		// never a stack of stale copies (QA: "replace the existing one and
+		// always show the latest data").
+		if (tab.key === 'history' && data.length > 1) {
+			const ts = (r: Record<string, unknown>): number => {
+				const t = new Date(String(r._lastUpdated ?? r.recordedAt ?? r.authored ?? '')).getTime();
+				return isNaN(t) ? 0 : t;
+			};
+			data = [[...data].sort((a, b) => ts(b) - ts(a))[0]];
+		}
 		data = this._mergePendingCreates(tab.key, data);
 		const result = { config, data };
 		this._tabDataCache.set(tab.key, result);
@@ -3341,14 +3354,14 @@ export class PatientChartEditor extends EditorPane {
 			const el = this._quickInfoValEls.get(key);
 			if (el) { el.textContent = value; }
 		};
-		const run = (key: keyof QuickInfo, url: string, listKey: string | undefined, empty: string): void => {
+		const run = (key: keyof QuickInfo, url: string, listKey: string | undefined, empty: string, cap?: number): void => {
 			void (async () => {
 				try {
 					const res = await this.apiService.fetch(url);
 					if (!res.ok) { update(key, '—'); return; }
 					const json = await res.json();
 					const n = extractCount(json, listKey);
-					update(key, n === null ? '—' : n === 0 ? empty : String(n));
+					update(key, n === null ? '—' : n === 0 ? empty : String(cap ? Math.min(n, cap) : n));
 				} catch { update(key, '—'); }
 			})();
 		};
@@ -3357,7 +3370,9 @@ export class PatientChartEditor extends EditorPane {
 		// test team flagged as inconsistent for an identical "nothing on file" state.
 		run('allergies', `/api/allergy-intolerances/${this.patientId}`, 'allergiesList', 'No records');
 		run('problems', `/api/medical-problems/${this.patientId}`, 'problemsList', 'No records');
-		run('history', `/api/fhir-resource/history/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
+		// History renders as ONE evolving record — cap the count so stale
+		// duplicate rows in the store can't show "History: 2".
+		run('history', `/api/fhir-resource/history/patient/${this.patientId}?page=0&size=1`, undefined, 'No records', 1);
 		run('vitals', `/api/fhir-resource/vitals/patient/${this.patientId}?page=0&size=1`, undefined, 'No records');
 	}
 
