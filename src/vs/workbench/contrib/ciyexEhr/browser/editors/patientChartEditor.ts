@@ -5873,9 +5873,11 @@ export class PatientChartEditor extends EditorPane {
 		const titlePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&]*$/;
 		// Catalog-sourced clinical names (CPT procedure / LOINC test descriptions)
 		// legitimately contain digits and symbols — e.g. "RADIOLOGIC EXAM CHEST
-		// 4+ VIEWS", "Hemoglobin A1c" — so the letters-only namePattern rejected
-		// the very value the code search auto-filled (QA issue 5).
-		const clinicalNamePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&+%:;]*$/;
+		// 4+ VIEWS", "Hemoglobin A1c", "MCV [Entitic Vol]" — so the letters-only
+		// namePattern rejected the very value the code search auto-filled (QA
+		// issue 5). LOINC display names carry [bracketed] unit qualifiers and
+		// "^" challenge markers, so those must pass too.
+		const clinicalNamePattern = /^[A-Za-z0-9][A-Za-z0-9\s\-'.,()/&+%:;#^[\]]*$/;
 		// Lot numbers: 5-10 letters and numbers only (e.g. FR8912, GJ8539).
 		const lotPattern = /^[A-Za-z0-9]{5,10}$/;
 		// Dose: positive number, optional unit suffix (e.g. "1.5" or "0.5 mL").

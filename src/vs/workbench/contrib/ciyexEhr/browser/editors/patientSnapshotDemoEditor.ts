@@ -399,7 +399,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			{ key: 'pe_data', label: 'Physical Exam', kind: 'textarea', placeholder: 'General, head/eyes/ears/nose/throat, neck, chest, cardiovascular, abdomen, extremities, neurological, skin, psychiatric...', widthPct: 100 },
 
 			// --- Past Medical / Surgical History ---
-			{ key: 'pmh_conditions', label: 'PMH: Medical Conditions', kind: 'textarea', placeholder: 'List past medical conditions...', widthPct: 50 },
+			{ key: 'pmh_conditions', label: 'PMH: Medical History', kind: 'textarea', placeholder: 'List past medical conditions...', widthPct: 50 },
 			{ key: 'pmh_surgeries', label: 'PMH: Surgical History', kind: 'textarea', placeholder: 'List past surgeries...', widthPct: 50 },
 			{ key: 'pmh_allergies', label: 'PMH: Allergies', kind: 'textarea', placeholder: 'List known allergies...', widthPct: 50 },
 			{ key: 'pmh_medications', label: 'PMH: Current Medications', kind: 'textarea', placeholder: 'List current medications...', widthPct: 50 },

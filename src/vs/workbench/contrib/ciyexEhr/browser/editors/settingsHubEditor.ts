@@ -2001,7 +2001,6 @@ export class SettingsHubEditor extends EditorPane {
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 			inp.type = t === 'email' ? 'email' : t === 'phone' || t === 'tel' ? 'tel' : t === 'url' ? 'url' : 'text';
 			inp.value = (value === null || value === undefined) ? '' : String(value);
-			inp.placeholder = ph;
 			inp.readOnly = isView || !!field.readOnly;
 			inp.style.cssText = inputStyle;
 			// Live input masking for phone/fax/zip fields (matched by normalized
@@ -2012,6 +2011,10 @@ export class SettingsHubEditor extends EditorPane {
 			const isFax = seg.includes('fax') || labelSeg.includes('fax');
 			const isPhone = !isFax && (t === 'tel' || t === 'phone' || /phone|mobile|cell/.test(seg) || /phone|mobile|cell/.test(labelSeg));
 			const isZip = seg === 'zip' || seg === 'zipcode' || seg === 'postalcode' || /zip|postal/.test(labelSeg);
+			// The ZIP placeholder always advertises the auto-fill (QA: "add the
+			// placeholder in zip code field — enter the zipcode, state & city auto
+			// reflect"), even when a backend field config carries its own hint.
+			inp.placeholder = isZip && !inp.readOnly ? 'Enter ZIP — city & state auto-fill' : ph;
 			// Registered so a completed ZIP can auto-fill the sibling City / State
 			// inputs of the same form (QA: "fill the zip code → auto-fill state & city").
 			if (!isView && !field.readOnly) { this._formTextInputs.set(field.key, inp); }
@@ -2024,7 +2027,13 @@ export class SettingsHubEditor extends EditorPane {
 				} else if (isZip) {
 					// ZIP: digits only, exactly 5 (extra digits / letters stripped as typed).
 					inp.value = inp.value.replace(/\D/g, '').slice(0, 5);
-					if (inp.value.length === 5) { void this._autoFillCityStateFromZip(field.key, inp.value); }
+					if (inp.value.length === 5) {
+						void this._autoFillCityStateFromZip(field.key, inp.value);
+					} else {
+						// ZIP no longer complete — release the City/State inputs the
+						// last lookup froze so they are hand-editable again.
+						this._unfreezeZipAutoFilled();
+					}
 				}
 				this.formData[field.key] = inp.value;
 			});
@@ -2096,9 +2105,26 @@ export class SettingsHubEditor extends EditorPane {
 			if (!target || !value || !target.inp.isConnected) { return; }
 			target.inp.value = value;
 			this.formData[target.key] = value;
+			// Freeze the auto-filled input (QA: "once fetch make it freeze") — the
+			// ZIP stays the single source of truth; editing/clearing the ZIP
+			// releases the freeze again via _unfreezeZipAutoFilled().
+			target.inp.readOnly = true;
+			target.inp.dataset.zipAutoFilled = '1';
+			target.inp.style.opacity = '0.75';
 		};
 		apply(findTarget(['city', 'town']), hit.city);
 		apply(findTarget(['state', 'province', 'stateprovince']), hit.state);
+	}
+
+	/** Release City/State inputs a previous ZIP lookup froze. */
+	private _unfreezeZipAutoFilled(): void {
+		for (const [, inp] of this._formTextInputs) {
+			if (inp.dataset.zipAutoFilled === '1' && inp.isConnected) {
+				inp.readOnly = false;
+				inp.style.opacity = '';
+				delete inp.dataset.zipAutoFilled;
+			}
+		}
 	}
 
 	/**

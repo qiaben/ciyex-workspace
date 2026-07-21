@@ -362,7 +362,7 @@ export class PracticeSettingsEditor extends EditorPane {
 		this._gridField(grid, 'addressLine2', 'Address Line 2', this.practice.addressLine2 || '', 'text', 4, 'Suite, unit, building (optional)');
 		this._gridField(grid, 'city', 'City', this.practice.city || '', 'text', 2, 'City');
 		this._gridField(grid, 'state', 'State', this.practice.state || '', 'text', 1, 'State');
-		this._gridField(grid, 'zip', 'ZIP', this.practice.zip || '', 'text', 1, 'ZIP code');
+		this._gridField(grid, 'zip', 'ZIP', this.practice.zip || '', 'text', 1, 'Enter ZIP — city & state auto-fill');
 
 		return grid;
 	}
@@ -410,14 +410,30 @@ export class PracticeSettingsEditor extends EditorPane {
 				if (input.value !== masked) { input.value = masked; }
 			}
 			(this.practice as Record<string, unknown>)[key as string] = input.value;
-			if (key === 'zip' && /^\d{5}$/.test(input.value.trim())) {
-				void lookupZipCityState(input.value.trim()).then(hit => {
-					if (!hit) { return; }
-					this.practice.city = hit.city;
-					this.practice.state = hit.state;
-					if (this._cityInput?.isConnected) { this._cityInput.value = hit.city; }
-					if (this._stateInput?.isConnected) { this._stateInput.value = hit.state; }
-				});
+			if (key === 'zip') {
+				// Auto-filled City / State freeze while a complete ZIP drives them
+				// (QA: "once fetch make it freeze"); clearing/editing the ZIP
+				// releases them for manual entry again.
+				const setFrozen = (frozen: boolean): void => {
+					for (const el of [this._cityInput, this._stateInput]) {
+						if (el?.isConnected) {
+							el.readOnly = frozen;
+							el.style.opacity = frozen ? '0.75' : '';
+						}
+					}
+				};
+				if (/^\d{5}$/.test(input.value.trim())) {
+					void lookupZipCityState(input.value.trim()).then(hit => {
+						if (!hit) { return; }
+						this.practice.city = hit.city;
+						this.practice.state = hit.state;
+						if (this._cityInput?.isConnected) { this._cityInput.value = hit.city; }
+						if (this._stateInput?.isConnected) { this._stateInput.value = hit.state; }
+						setFrozen(true);
+					});
+				} else {
+					setFrozen(false);
+				}
 			}
 		});
 	}

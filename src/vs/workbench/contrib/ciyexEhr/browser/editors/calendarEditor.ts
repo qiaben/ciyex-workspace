@@ -1850,6 +1850,9 @@ export class CalendarEditor extends EditorPane {
 			const duration = endMins > startMins ? endMins - startMins : 30;
 
 			const provName = this.providers.find(p => p.id === provId)?.name || '';
+			// Display name for the confirmation email/notification — the backend
+			// template only knows {{location_name}}, it never looks the id up.
+			const locName = this.locations.find(l => l.id === locId)?.name || '';
 
 			try {
 				// Try FHIR-style endpoint first, fallback to simple
@@ -1880,6 +1883,7 @@ export class CalendarEditor extends EditorPane {
 							providerId: provId || undefined,
 							providerName: provName || undefined,
 							locationId: locId || undefined,
+							locationName: locName || undefined,
 							// Also send the form-config keys as full references: the
 							// backend's FHIR mapper only writes practitioner/location
 							// participants from these, and without them telehealth

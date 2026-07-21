@@ -385,7 +385,7 @@ export class EncounterFormEditor extends EditorPane {
 			},
 			{
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'pmh_conditions', label: 'Medical Conditions', type: 'textarea', placeholder: 'List past medical conditions...' },
+					{ key: 'pmh_conditions', label: 'Medical History', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
 					{ key: 'pmh_allergies', label: 'Allergies', type: 'textarea', placeholder: 'List known allergies...' },
 					{ key: 'pmh_medications', label: 'Current Medications', type: 'textarea', placeholder: 'List current medications...' },

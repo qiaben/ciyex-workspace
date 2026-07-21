@@ -488,8 +488,9 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 		}
 
 		// Practice/tenant — clicking it opens the practice switcher (QA: "how to
-		// switch from one practice to another").
-		const tenant = this._getTenant();
+		// switch from one practice to another"). Shows the same-org practice
+		// record the switcher selected, falling back to the tenant alias.
+		const tenant = this._getSelectedPractice() || this._getTenant();
 		if (tenant) {
 			this._statusBarEntries.push(this.statusbarService.addEntry({
 				name: 'Ciyex Practice',
@@ -540,12 +541,19 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 	/**
 	 * Practice switcher (status bar → practice badge). Lists every practice the
 	 * signed-in account can use — the organizations in the JWT `organization`
-	 * claim plus the org's practice records — and, when a DIFFERENT practice is
-	 * chosen, stores it as the preferred tenant and signs out so the user
-	 * authenticates into that practice from the login page.
+	 * claim plus the org's practice records — and switches IN PLACE whenever the
+	 * signed-in credentials already cover the chosen practice (QA: "we don't
+	 * want login … don't redirect login page"):
+	 * - chosen org is in the JWT claim → swap the tenant and reload the window
+	 *   (the stored token stays valid, so no login page);
+	 * - chosen practice is a practice record of the CURRENT org → same tenant,
+	 *   same credentials — just remember the selection and refresh the badge;
+	 * - only an org the token does NOT grant still signs out to the login page,
+	 *   because that practice genuinely needs different credentials.
 	 */
 	private async _openPracticeSwitcher(): Promise<void> {
-		const current = this._getTenant();
+		const tenant = this._getTenant();
+		const current = this._getSelectedPractice() || tenant;
 		const slug = (s: string): string => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 		// Organizations from the JWT claim — these are the real switchable tenants.
@@ -596,15 +604,56 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			placeHolder: 'Select the practice to sign in to',
 		});
 		if (!chosen || chosen.alias === current) { return; }
+		const chosenLabel = chosen.label.replace('$(organization) ', '');
 
-		// Remember the choice for the next login, then sign out to the login
-		// page — the user authenticates into the selected practice there.
+		// The signed-in token already grants the chosen organization — switch the
+		// tenant in place and reload the window so every open surface re-scopes.
+		// The stored token survives the reload, so the user never sees the login page.
+		if (aliases.includes(chosen.alias)) {
+			try {
+				localStorage.setItem('ciyex_selected_tenant', chosen.alias);
+				localStorage.removeItem('ciyex_selected_practice');
+			} catch { /* */ }
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: `Switched to ${chosenLabel}.`,
+			});
+			await this.commandService.executeCommand('workbench.action.reloadWindow');
+			return;
+		}
+
+		// A practice record of the CURRENT organization (Settings → Practice) —
+		// same tenant, same credentials. Remember the selection and refresh the
+		// status bar badge; no reload and no re-login needed.
+		if (practices.some(p => p.alias === chosen.alias)) {
+			try { localStorage.setItem('ciyex_selected_practice', chosen.alias); } catch { /* */ }
+			for (const entry of this._statusBarEntries) { entry.dispose(); }
+			this._statusBarEntries = [];
+			this._registerStatusBarItems();
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: `Switched to ${chosenLabel}.`,
+			});
+			return;
+		}
+
+		// An organization the token does not grant — different credentials are
+		// required, so remember the choice and sign out to the login page.
 		try { localStorage.setItem('ciyex_preferred_tenant', chosen.alias); } catch { /* */ }
 		this.notificationService.notify({
 			severity: Severity.Info,
-			message: `Sign in again to continue in ${chosen.label.replace('$(organization) ', '')}.`,
+			message: `Sign in again to continue in ${chosenLabel}.`,
 		});
 		this.authService.signOut();
+	}
+
+	/** Practice record (same-org) selection made by the practice switcher. */
+	private _getSelectedPractice(): string {
+		try {
+			return localStorage.getItem('ciyex_selected_practice') || '';
+		} catch {
+			return '';
+		}
 	}
 
 	private _unreadEntry: { dispose(): void } | null = null;
