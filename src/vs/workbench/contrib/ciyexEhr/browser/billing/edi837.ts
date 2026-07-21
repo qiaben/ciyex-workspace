@@ -255,6 +255,30 @@ export function generate837P(claim: Edi837Claim, now: Date): string {
 	return b.build();
 }
 
+/**
+ * Claim number for a fee sheet. Derived from the auto-increment fee-sheet id,
+ * so claim numbers are themselves auto-incrementing (CLM-0001, CLM-0002, …)
+ * without a separate claim registry — in the RCM-lite flow the billed fee
+ * sheet IS the claim.
+ */
+export function claimNumberForFeeSheet(feeSheetId: string | number): string {
+	const raw = String(feeSheetId ?? '').trim();
+	const digits = raw.replace(/\D/g, '');
+	return digits ? `CLM-${digits.padStart(4, '0')}` : `CLM-${raw}`;
+}
+
+/**
+ * Canonical form of a claim reference for matching EOB postings to fee
+ * sheets: `CLM-0012`, `clm12`, `FS12` and `12` all normalize to `12` (older
+ * postings used `FS{id}` claim numbers). Non-numeric refs (e.g. encounter
+ * UUIDs) normalize to their lowercased alphanumeric form.
+ */
+export function normalizeClaimRef(ref: string | number): string {
+	const s = String(ref ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+	const m = s.match(/^(?:clm|fs)?0*(?<id>\d+)$/);
+	return m?.groups?.id ?? s;
+}
+
 /** Trigger a browser download of the EDI text as a .837 file. */
 export function downloadEdi(targetWindow: Window, filename: string, content: string): void {
 	const blob = new Blob([content], { type: 'application/edi-x12' });

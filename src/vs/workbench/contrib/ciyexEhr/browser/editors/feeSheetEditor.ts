@@ -13,7 +13,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexRcmApiService } from '../rcm/rcmApiService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { generate837P, downloadEdi, Edi837Claim, Edi837ServiceLine } from '../billing/edi837.js';
+import { generate837P, downloadEdi, Edi837Claim, Edi837ServiceLine, claimNumberForFeeSheet } from '../billing/edi837.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -719,7 +719,11 @@ export class FeeSheetEditor extends EditorPane {
 				body: JSON.stringify({ sendEmail: true, patientId: this.patientId }),
 			});
 			if (res.ok) {
-				this.notificationService.notify({ severity: Severity.Info, message: 'Charges sent to billing and statement emailed to the patient.' });
+				// Billing the fee sheet creates the claim — the claim number is derived
+				// from the fee-sheet id, so it auto-increments across claims. The claim
+				// now appears in Payments → Insurance Posting as "Awaiting EOB".
+				const claimNo = claimNumberForFeeSheet(this.feeSheetId);
+				this.notificationService.notify({ severity: Severity.Info, message: `Charges sent to billing — claim ${claimNo} created. Post the payer's EOB against it in Payments → Insurance Posting.` });
 				// Surface the new charge in the Payments dashboard.
 				this.commandService.executeCommand('ciyex.openPayments').then(undefined, () => { });
 			} else {
@@ -886,7 +890,7 @@ export class FeeSheetEditor extends EditorPane {
 			subscriberId: insurance.policyNumber || patient.mrn || String(this.patientId),
 			groupNumber: insurance.groupNumber,
 			payerName: insurance.payerName || 'UNKNOWN PAYER', payerId: insurance.payerId,
-			claimNumber: this.feeSheetId ? `FS${this.feeSheetId}` : `FS${Date.now()}`,
+			claimNumber: this.feeSheetId ? claimNumberForFeeSheet(this.feeSheetId) : `CLM-${Date.now()}`,
 			totalCharge: this.items.reduce((s, it) => s + it.price * it.qty, 0),
 			placeOfService: '11',
 			dateOfService: dos,

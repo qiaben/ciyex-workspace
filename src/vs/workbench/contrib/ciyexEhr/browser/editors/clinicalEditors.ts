@@ -17,7 +17,8 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
-import { generate837P, Edi837Claim, Edi837ServiceLine } from '../billing/edi837.js';
+import { generate837P, Edi837Claim, Edi837ServiceLine, claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
+import { showEobPostingForm, EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -4814,6 +4815,33 @@ export class InventoryEditor extends ClinicalListEditorBase {
 	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService) { super(InventoryEditor.ID, group, t, th, s, a, d); }
 }
 
+/**
+ * A row in the custom Insurance Posting grid: either a billed claim awaiting an
+ * EOB, or an existing EOB posting. `lines` carries the per-CPT figures the
+ * biller edits inline when the row is expanded.
+ */
+interface InsurancePostingRow {
+	/** Existing transaction id (posted rows); empty for an awaiting claim. */
+	txnId: string;
+	claimRef: string;
+	feeSheetId: string;
+	patientId: string;
+	patientName: string;
+	serviceDate: string;
+	payerName: string;
+	checkNumber: string;
+	paymentMethodType: string;
+	/** Per-CPT service lines with billed / allowed / paid. */
+	lines: EobLine[];
+	copay: number;
+	deductible: number;
+	coinsurance: number;
+	denialReason: string;
+	forwardedToSecondary: boolean;
+	secondaryPayer: string;
+	status: 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY';
+}
+
 interface CreditCardRecord {
 	id: number;
 	patientId?: number;
@@ -4890,57 +4918,30 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 	},
 ];
 
-/**
- * EOB insurance-payment posting form — the standard 7-column payment-posting
- * model (billed / allowed / paid / copay / deductible / coinsurance /
- * adjustment). Write-off (billed - allowed) and patient responsibility
- * (copay + deductible + coinsurance) are derived at save time. Works without
- * the RCM app subscription: the posting is stored as a regular payment
- * transaction on the main API with the EOB breakdown encoded in the
- * description so it round-trips through list views.
- */
-export const INSURANCE_POSTING_FORM_FIELDS: FormFieldDef[] = [
-	{
-		key: 'patientName', label: 'Patient', type: 'search', required: true,
-		placeholder: 'Search patient...', apiPath: '/api/patients',
-		relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'],
-	},
-	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
-	{ key: 'claimRef', label: 'Claim / Bill #', type: 'text', placeholder: 'Claim or fee-sheet reference' },
-	{ key: 'payerName', label: 'Insurance / Payer', type: 'text', placeholder: 'e.g. Medicare, BCBS' },
-	{ key: 'checkNumber', label: 'Check / EFT #', type: 'text', required: true, placeholder: 'Check number from EOB' },
-	{ key: 'billedAmount', label: 'Billed ($)', type: 'number', required: true, placeholder: '0.00' },
-	{ key: 'allowedAmount', label: 'Allowed ($)', type: 'number', required: true, placeholder: '0.00' },
-	{ key: 'paidAmount', label: 'Insurance Paid ($)', type: 'number', required: true, placeholder: '0.00' },
-	{ key: 'copay', label: 'Copay ($)', type: 'number', placeholder: '0.00' },
-	{ key: 'deductible', label: 'Deductible ($)', type: 'number', placeholder: '0.00' },
-	{ key: 'coinsurance', label: 'Coinsurance ($)', type: 'number', placeholder: '0.00' },
-	{
-		key: 'paymentMethodType', label: 'Method', type: 'select', required: true, options: [
-			{ label: 'Check', value: 'check' },
-			{ label: 'ACH / EFT', value: 'ach' },
-			{ label: 'Other', value: 'other' },
-		], defaultValue: 'check'
-	},
-	// RCM-lite denial tracking: a zero-pay posting with a reason is flagged
-	// DENIAL in the grid so non-RCM orgs still get a denial work list.
-	{ key: 'denialReason', label: 'Denial / Adjustment Reason', type: 'text', placeholder: 'Only for denials — e.g. CO-97 bundled service' },
-	// RCM-lite COB tracking: mark the EOB's "forwarded to additional payer"
-	// indication so the posting shows as Awaiting Secondary until the
-	// secondary EOB is posted.
-	{
-		key: 'forwardedToSecondary', label: 'Forwarded to Secondary (COB)', type: 'select', options: [
-			{ label: 'No', value: 'no' },
-			{ label: 'Yes — awaiting secondary EOB', value: 'yes' },
-		], defaultValue: 'no'
-	},
-	{ key: 'secondaryPayer', label: 'Secondary Payer', type: 'text', placeholder: 'e.g. BCBS (when forwarded)' },
-];
-
 /** Parse an EOB breakdown value (e.g. `billed=185.00`) out of a posting description. */
 function parseEobField(description: string, field: string): number | undefined {
 	const m = description.match(new RegExp(`${field}=(-?\\d+(?:\\.\\d+)?)`));
 	return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * Parse the per-CPT EOB breakdown out of a posting's notes. Line-level
+ * postings store `lines=CODE~billed~allowed~paid;CODE~…` in the TEXT notes
+ * column (the description column is too small to carry per-line detail).
+ */
+function parseEobLines(notes: string): EobLine[] {
+	const m = String(notes ?? '').match(/lines=([^|]+)/);
+	if (!m) { return []; }
+	const out: EobLine[] = [];
+	for (const part of m[1].split(';')) {
+		const [code, billed, allowed, paid] = part.split('~');
+		if (!code || !code.trim()) { continue; }
+		out.push({
+			code: code.trim(), description: '',
+			billed: Number(billed) || 0, allowed: Number(allowed) || 0, paid: Number(paid) || 0,
+		});
+	}
+	return out;
 }
 
 export class PaymentsEditor extends ClinicalListEditorBase {
@@ -4969,6 +4970,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private readonly _patientNameCache = new Map<string, string>();
 	private _invoiceFormOverlay: HTMLElement | null = null;
 	private _invoiceFormBackdrop: HTMLElement | null = null;
+	/** Billed fee sheets (= claims) loaded by the Insurance Posting enrich pass;
+	 *  reused by the line-level EOB form's claim picker and code lookups. */
+	private _billedClaims: EobClaimOption[] = [];
+	// allow-any-unicode-next-line
+	// ── Insurance Posting (custom expandable grid) state ───────────────────
+	/** One entry per claim/posting row shown in the Insurance Posting grid. */
+	private _insRows: InsurancePostingRow[] = [];
+	private _insLoading = false;
+	/** claimRef (normalized) of the rows currently expanded to per-CPT inputs. */
+	private readonly _insExpanded = new Set<string>();
+	private _insSearch = '';
+	private _insStatusFilter: '' | 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY' = '';
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
@@ -5198,223 +5211,573 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		],
 	};
 
-	// Insurance payment posting (EOB) — 7-column model without the RCM app.
-	// Postings are payment transactions with transactionType 'insurance_payment';
-	// the EOB breakdown is encoded into the description (`billed=…; allowed=…`)
-	// so the grid can render Billed/Allowed/Write-off columns after a round-trip
-	// through the main API, which only persists the standard transaction fields.
+	// Insurance payment posting (EOB) — CUSTOM expandable grid (not the generic
+	// list base). Each billed claim is one collapsed row; clicking it expands
+	// inline to one row PER CPT code with editable Billed / Allowed / Ins Paid
+	// inputs, plus claim-level Copay / Deductible / Coinsurance and Check # /
+	// Payer, and a Post/Save button. Rendered by _loadAndRenderInsurancePosting().
 	private readonly _insurancePostingConfig: ClinicalEditorConfig = {
 		title: 'Insurance Posting', apiPath: '/api/payments/transactions',
-		searchPlaceholder: 'Search postings by patient, claim, check #...',
-		buildCreateUrl: () => '/api/payments/collect',
-		buildItemUrl: (item) => `/api/payments/transactions/${item.id}`,
-		clientSideFilter: ['patientName', 'patientId', 'description', 'status', 'claimRef', 'checkNumber'],
-		createLabel: '+ Post Insurance Payment (EOB)',
-		creatable: true,
-		editable: true,
-		mergeOnEdit: true,
-		columns: [
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'claimRef', label: 'Claim #', width: '90px' },
-			{ key: 'billedAmount', label: 'Billed', width: '80px' },
-			{ key: 'allowedAmount', label: 'Allowed', width: '80px' },
-			{ key: 'amount', label: 'Ins Paid', width: '80px' },
-			{ key: 'patientResp', label: 'Patient Resp', width: '95px' },
-			{ key: 'writeOff', label: 'Write-off', width: '85px' },
-			{ key: 'checkNumber', label: 'Check #', width: '90px' },
-			{ key: 'postingStatus', label: 'Status', width: '110px' },
-			{ key: 'collectedAt', label: 'Date', width: '100px' },
-		],
-		formFields: INSURANCE_POSTING_FORM_FIELDS,
-		createDefaults: { transactionType: 'insurance_payment', status: 'completed' },
-		// Keep only insurance postings and hydrate the EOB columns (and the edit
-		// form fields) from the encoded description breakdown. Some backends
-		// coerce unknown transactionType values to 'payment' (stage does), so the
-		// EOB description marker is the reliable discriminator, not the type.
-		enrichItems: async (items) => {
-			const postings = items.filter(it => String(it['transactionType'] ?? '') === 'insurance_payment'
-				|| String(it['description'] ?? '').startsWith('EOB posting'));
-			for (const it of postings) {
-				const desc = String(it['description'] ?? '');
-				it['billedAmount'] = parseEobField(desc, 'billed');
-				it['allowedAmount'] = parseEobField(desc, 'allowed');
-				it['paidAmount'] = parseEobField(desc, 'paid') ?? it['amount'];
-				// The encoded paid figure is authoritative: zero-pay denials are stored
-				// with a placeholder cent (the backend rejects amount <= 0 on create,
-				// corrected to 0 via PUT after save) — display the EOB's paid amount.
-				if (it['paidAmount'] !== undefined) { it['amount'] = it['paidAmount']; }
-				it['copay'] = parseEobField(desc, 'copay');
-				it['deductible'] = parseEobField(desc, 'deductible');
-				it['coinsurance'] = parseEobField(desc, 'coinsurance');
-				it['writeOff'] = parseEobField(desc, 'writeoff');
-				it['patientResp'] = parseEobField(desc, 'resp');
-				const claim = desc.match(/claim=([^;|]+)/);
-				it['claimRef'] = claim ? claim[1].trim() : '';
-				const check = desc.match(/check=([^;|]+)/);
-				it['checkNumber'] = check ? check[1].trim() : String(it['notes'] ?? '');
-				const payer = desc.match(/payer=([^;|]+)/);
-				it['payerName'] = payer ? payer[1].trim() : '';
-				const denial = desc.match(/denial=([^;|]+)/);
-				it['denialReason'] = denial ? denial[1].trim() : '';
-				const payer2 = desc.match(/payer2=([^;|]+)/);
-				it['secondaryPayer'] = payer2 ? payer2[1].trim() : '';
-				const fwd = /fwd=1/.test(desc);
-				it['forwardedToSecondary'] = fwd ? 'yes' : 'no';
-				// RCM-lite posting status: zero-pay with a write-off/denial reason is a
-				// DENIAL; a crossover-forwarded EOB is AWAITING_SECONDARY until the
-				// secondary payment posts; everything else is POSTED.
-				const paidNum = Number(it['amount']) || 0;
-				if (it['denialReason'] || (paidNum === 0 && (Number(it['writeOff']) || 0) > 0)) {
-					it['postingStatus'] = 'DENIAL';
-				} else if (fwd) {
-					it['postingStatus'] = 'AWAITING_SECONDARY';
-				} else {
-					it['postingStatus'] = 'POSTED';
-				}
-			}
-			return postings;
-		},
-		statusTabs: [
-			{ label: 'Posted', value: 'POSTED' },
-			{ label: 'Denials', value: 'DENIAL' },
-			{ label: 'Awaiting Secondary', value: 'AWAITING_SECONDARY' },
-		],
-		statusMatchers: {
-			POSTED: (item) => item['postingStatus'] === 'POSTED',
-			DENIAL: (item) => item['postingStatus'] === 'DENIAL',
-			AWAITING_SECONDARY: (item) => item['postingStatus'] === 'AWAITING_SECONDARY',
-		},
-		statsFilterMap: {
-			denials: 'DENIAL',
-			awaitingSecondary: 'AWAITING_SECONDARY',
-		},
-		// EOB math at save time: write-off = billed - allowed; patient
-		// responsibility = copay + deductible + coinsurance. The transaction
-		// amount is the insurance-paid figure; the full breakdown is encoded
-		// into the description for round-tripping.
-		beforeSave: (payload) => {
-			const num = (k: string): number => { const v = Number(payload[k]); return Number.isFinite(v) ? v : 0; };
-			const billed = num('billedAmount');
-			const allowed = num('allowedAmount');
-			const paid = num('paidAmount');
-			const copay = num('copay');
-			const deductible = num('deductible');
-			const coinsurance = num('coinsurance');
-			const writeOff = Math.max(Math.round((billed - allowed) * 100) / 100, 0);
-			const resp = Math.round((copay + deductible + coinsurance) * 100) / 100;
-			const balanced = Math.abs(allowed - (paid + resp)) <= 0.01;
-			// The backend rejects amount <= 0 on create ("A valid payment amount is
-			// required"), but a zero-pay denial EOB is a legitimate posting — create
-			// with a placeholder cent and let afterSave PUT the amount back to 0
-			// (PUT has no such validation). The description carries paid=0.00, which
-			// the grid treats as authoritative.
-			payload['amount'] = paid > 0 ? paid : 0.01;
-			payload['transactionType'] = 'insurance_payment';
-			if (!payload['status']) { payload['status'] = 'completed'; }
-			payload['notes'] = String(payload['checkNumber'] ?? '');
-			const denialReason = String(payload['denialReason'] ?? '').trim();
-			const forwarded = String(payload['forwardedToSecondary'] ?? 'no') === 'yes';
-			const secondaryPayer = String(payload['secondaryPayer'] ?? '').trim();
-			payload['description'] =
-				`EOB posting | payer=${String(payload['payerName'] ?? '').trim()}; claim=${String(payload['claimRef'] ?? '').trim()}; ` +
-				`check=${String(payload['checkNumber'] ?? '').trim()}; billed=${billed.toFixed(2)}; allowed=${allowed.toFixed(2)}; ` +
-				`paid=${paid.toFixed(2)}; copay=${copay.toFixed(2)}; deductible=${deductible.toFixed(2)}; ` +
-				`coinsurance=${coinsurance.toFixed(2)}; writeoff=${writeOff.toFixed(2)}; resp=${resp.toFixed(2)}` +
-				(denialReason ? `; denial=${denialReason}` : '') +
-				(forwarded ? `; fwd=1; payer2=${secondaryPayer}` : '') +
-				(balanced ? '' : ' | WARN: allowed != paid + patient responsibility');
-			return payload;
-		},
-		// Zero-pay denial: correct the placeholder cent (see beforeSave) back to $0.
-		afterSave: (saved) => {
-			const paid = parseEobField(String(saved['description'] ?? ''), 'paid');
-			if (paid === 0 && saved['id'] !== undefined && Number(saved['amount']) !== 0) {
-				this.apiService.fetch(`/api/payments/transactions/${saved['id']}`, {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ amount: 0 }),
-				}).catch(() => { /* display already shows the parsed $0 */ });
-			}
-		},
-		// Summary cards: totals across the loaded postings (dollar figures) plus
-		// clickable denial / awaiting-secondary work-list counts (statsFilterMap).
-		computeStats: (items) => {
-			const sum = (k: string) => Math.round(items.reduce((s, it) => s + (Number(it[k]) || 0), 0) * 100) / 100;
-			return {
-				postings: items.length,
-				insurancePaid: sum('amount'),
-				patientResponsibility: sum('patientResp'),
-				writeOffs: sum('writeOff'),
-				denials: items.filter(it => it['postingStatus'] === 'DENIAL').length,
-				awaitingSecondary: items.filter(it => it['postingStatus'] === 'AWAITING_SECONDARY').length,
-			};
-		},
-		cellRenderer: (key, value, item) => {
-			if ((key === 'amount' || key === 'billedAmount' || key === 'allowedAmount'
-				|| key === 'patientResp' || key === 'writeOff')) {
-				const n = Number(value);
-				return Number.isFinite(n) && value !== undefined && value !== null && value !== '' ? `$${n.toFixed(2)}` : '—';
-			}
-			if (key === 'postingStatus') {
-				if (value === 'DENIAL') { return 'Denial'; }
-				if (value === 'AWAITING_SECONDARY') { return 'Awaiting Secondary'; }
-				return 'Posted';
-			}
-			if (key === 'collectedAt' && typeof value === 'string') {
-				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
-			}
-			if (key === 'patientName' && !value) {
-				const pid = item['patientId'];
-				return pid !== undefined && pid !== null && pid !== '' ? `Patient #${pid}` : '';
-			}
-			return String(value ?? '');
-		},
-		actions: [
-			{
-				// allow-any-unicode-next-line
-				label: 'View', icon: '\u{1F441}', handler: async (item) => {
-					const money = (k: string): string => { const n = Number(item[k]); return Number.isFinite(n) ? `$${n.toFixed(2)}` : '—'; };
-					await showThemedDetails({
-						title: 'Insurance Payment Posting',
-						subtitle: String(item.patientName || (item.patientId ? `Patient #${item.patientId}` : '')),
-						anchor: this.root,
-						rows: [
-							{ label: 'Payer', value: String(item.payerName || '—') },
-							{ label: 'Claim #', value: String(item.claimRef || '—') },
-							{ label: 'Check #', value: String(item.checkNumber || '—') },
-							{ label: 'Billed', value: money('billedAmount') },
-							{ label: 'Allowed', value: money('allowedAmount') },
-							{ label: 'Insurance Paid', value: money('amount'), emphasis: true },
-							{ label: 'Copay', value: money('copay') },
-							{ label: 'Deductible', value: money('deductible') },
-							{ label: 'Coinsurance', value: money('coinsurance') },
-							{ label: 'Patient Responsibility', value: money('patientResp'), accent: '#f59e0b' },
-							{ label: 'Write-off (Billed - Allowed)', value: money('writeOff') },
-							{
-								label: 'Status',
-								value: item.postingStatus === 'DENIAL' ? 'Denial'
-									: item.postingStatus === 'AWAITING_SECONDARY' ? 'Awaiting Secondary' : 'Posted',
-								accent: item.postingStatus === 'DENIAL' ? '#ef4444'
-									: item.postingStatus === 'AWAITING_SECONDARY' ? '#f59e0b' : '#22c55e'
-							},
-							...(item.denialReason ? [{ label: 'Denial Reason', value: String(item.denialReason), wide: true }] : []),
-							...(item.secondaryPayer ? [{ label: 'Forwarded To', value: String(item.secondaryPayer) }] : []),
-						],
-					});
-				}
-			},
-			{
-				// allow-any-unicode-next-line
-				label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => {
-					const r = await dlg.confirm({ message: 'Delete this insurance posting?', type: 'warning', primaryButton: 'Delete' });
-					if (r.confirmed) {
-						await api.fetch(`/api/payments/transactions/${item.id}`, { method: 'DELETE' });
-						reload();
-					}
-				}
-			},
-		],
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+		listUrlBuilder: () => null,
 	};
+
+	/** A billed fee sheet reshaped as a postable claim for the EOB form. */
+	private _feeSheetToClaim(s: Record<string, unknown>): EobClaimOption {
+		const items = (s['items'] as Array<Record<string, unknown>>) || [];
+		const lines: EobLine[] = items
+			.filter(it => String(it['type'] ?? '') !== 'ICD10' && it['code'])
+			.map(it => ({
+				code: String(it['code']),
+				description: String(it['description'] ?? ''),
+				billed: Math.round((Number(it['price'] ?? 0) || 0) * (Number(it['qty'] ?? 1) || 1) * 100) / 100,
+				allowed: 0,
+				paid: 0,
+			}));
+		return {
+			claimRef: claimNumberForFeeSheet(String(s['id'] ?? '')),
+			feeSheetId: String(s['id'] ?? ''),
+			patientId: String(s['patientId'] ?? ''),
+			patientName: String(s['patientName'] ?? ''),
+			serviceDate: String(s['encounterDate'] ?? s['serviceDate'] ?? s['createdAt'] ?? '').slice(0, 10),
+			lines,
+		};
+	}
+
+	/**
+	 * Open the modal line-level EOB form. Used only for the toolbar
+	 * "+ Post Insurance Payment (EOB)" button — for a claim billed outside the
+	 * app (manual claim ref) or when the biller prefers the centred form. The
+	 * primary path is the INLINE expandable grid (_renderInsurancePosting).
+	 */
+	private async _openEobPosting(item: Record<string, unknown> | null): Promise<void> {
+		let claim: EobClaimOption | undefined;
+		let initial: Partial<EobFormValues> | undefined;
+		let editId: string | undefined;
+		if (item && item['__claimRow'] === true) {
+			claim = this._billedClaims.find(c => `claim-${c.feeSheetId}` === String(item['id']));
+		} else if (item) {
+			editId = String(item['id']);
+			const match = this._billedClaims.find(c => normalizeClaimRef(c.claimRef) === normalizeClaimRef(String(item['claimRef'] ?? '')));
+			const storedLines = (item['eobLines'] as EobLine[]) || [];
+			const lines: EobLine[] = storedLines.map(l => ({ ...l, description: match?.lines.find(cl => cl.code === l.code)?.description || l.description }));
+			initial = {
+				claimRef: String(item['claimRef'] ?? ''),
+				patientId: String(item['patientId'] ?? ''),
+				patientName: String(item['patientName'] ?? (item['patientId'] ? `Patient #${item['patientId']}` : '')),
+				payerName: String(item['payerName'] ?? ''),
+				checkNumber: String(item['checkNumber'] ?? ''),
+				paymentMethodType: String(item['paymentMethodType'] ?? 'check'),
+				billed: Number(item['billedAmount']) || 0,
+				allowed: Number(item['allowedAmount']) || 0,
+				paid: Number(item['amount']) || 0,
+				copay: Number(item['copay']) || 0,
+				deductible: Number(item['deductible']) || 0,
+				coinsurance: Number(item['coinsurance']) || 0,
+				denialReason: String(item['denialReason'] ?? ''),
+				forwardedToSecondary: item['forwardedToSecondary'] === 'yes',
+				secondaryPayer: String(item['secondaryPayer'] ?? ''),
+				lines,
+			};
+		}
+		const result = await showEobPostingForm({
+			anchor: this.root,
+			title: editId ? 'Edit Insurance Posting (EOB)' : 'Post Insurance Payment (EOB)',
+			confirmLabel: editId ? 'Save Posting' : 'Post EOB',
+			claim: editId ? undefined : claim,
+			claimOptions: editId || claim ? undefined : this._billedClaims,
+			initial,
+		});
+		if (!result) { return; }
+		await this._saveEobPosting(result, editId);
+	}
+
+	/** Persist an EOB form result as a payment transaction (+ patient-pay follow-ups on create). */
+	private async _saveEobPosting(v: EobFormValues, editId?: string): Promise<void> {
+		const writeOff = Math.max(Math.round((v.billed - v.allowed) * 100) / 100, 0);
+		const resp = Math.round((v.copay + v.deductible + v.coinsurance) * 100) / 100;
+		const balanced = Math.abs(v.allowed - (v.paid + resp)) <= 0.01;
+		const description =
+			`EOB posting | payer=${v.payerName}; claim=${v.claimRef}; ` +
+			`check=${v.checkNumber}; billed=${v.billed.toFixed(2)}; allowed=${v.allowed.toFixed(2)}; ` +
+			`paid=${v.paid.toFixed(2)}; copay=${v.copay.toFixed(2)}; deductible=${v.deductible.toFixed(2)}; ` +
+			`coinsurance=${v.coinsurance.toFixed(2)}; writeoff=${writeOff.toFixed(2)}; resp=${resp.toFixed(2)}` +
+			(v.denialReason ? `; denial=${v.denialReason}` : '') +
+			(v.forwardedToSecondary ? `; fwd=1; payer2=${v.secondaryPayer}` : '') +
+			(balanced ? '' : ' | WARN: allowed != paid + patient responsibility');
+		// The description column is too small for per-line detail — the CPT
+		// breakdown rides in the TEXT notes column instead.
+		const notes = v.lines.length
+			? `check=${v.checkNumber} | lines=${v.lines.map(l => `${l.code}~${l.billed.toFixed(2)}~${l.allowed.toFixed(2)}~${l.paid.toFixed(2)}`).join(';')}`
+			: v.checkNumber;
+		try {
+			if (editId) {
+				const res = await this.apiService.fetch(`/api/payments/transactions/${editId}`, {
+					method: 'PUT', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ amount: v.paid > 0 ? v.paid : 0, description, notes, paymentMethodType: v.paymentMethodType }),
+				});
+				if (!res.ok) {
+					const e = await res.json().catch(() => null) as Record<string, unknown> | null;
+					await this.dialogService.error(String(e?.['message'] || `Posting update failed (${res.status}).`));
+					return;
+				}
+			} else {
+				// The backend rejects amount <= 0 on create, but a zero-pay denial is
+				// a legitimate posting — create with a placeholder cent and PUT the
+				// amount back to 0 (the description carries paid=0.00, which the grid
+				// treats as authoritative).
+				const res = await this.apiService.fetch('/api/payments/collect', {
+					method: 'POST',
+					body: JSON.stringify({
+						patientId: v.patientId,
+						patientName: v.patientName,
+						amount: v.paid > 0 ? v.paid : 0.01,
+						transactionType: 'insurance_payment',
+						paymentMethodType: v.paymentMethodType || 'check',
+						status: 'completed',
+						description,
+						notes,
+					}),
+				});
+				if (!res.ok) {
+					const e = await res.json().catch(() => null) as Record<string, unknown> | null;
+					await this.dialogService.error(String(e?.['message'] || `Posting failed (${res.status}).`));
+					return;
+				}
+				const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+				const saved = (data?.['data'] ?? data) as Record<string, unknown> | null;
+				if (v.paid <= 0 && saved?.['id'] !== undefined && saved?.['id'] !== null) {
+					await this.apiService.fetch(`/api/payments/transactions/${saved['id']}`, {
+						method: 'PUT', headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ amount: 0 }),
+					}).catch(() => { /* grid shows the parsed $0 either way */ });
+				}
+				// Copay / deductible / coinsurance are the PATIENT-PAY portion — they
+				// move to the Transactions tab as pending transactions the front desk
+				// collects (Encounter Billing's Collect completes them).
+				await this._createPatientRespTransactions(v);
+			}
+			this._resetAndReload();
+		} catch (e) {
+			await this.dialogService.error(`Posting failed: ${e}`);
+		}
+	}
+
+	/**
+	 * One pending transaction per non-zero patient-responsibility component
+	 * (copay / deductible / coinsurance), typed accordingly so the Transactions
+	 * tab's Type filter groups them. Collecting the encounter in Encounter
+	 * Billing marks them completed instead of duplicating the charge.
+	 */
+	private async _createPatientRespTransactions(v: EobFormValues): Promise<void> {
+		const parts: Array<[string, number]> = [['copay', v.copay], ['deductible', v.deductible], ['coinsurance', v.coinsurance]];
+		for (const [type, amt] of parts) {
+			if (!amt || amt <= 0) { continue; }
+			try {
+				await this.apiService.fetch('/api/payments/collect', {
+					method: 'POST',
+					body: JSON.stringify({
+						patientId: v.patientId,
+						patientName: v.patientName,
+						amount: amt,
+						transactionType: type,
+						paymentMethodType: 'other',
+						status: 'pending',
+						description: `${type.charAt(0).toUpperCase()}${type.slice(1)} due from patient — claim ${v.claimRef} (from EOB)`,
+					}),
+				});
+			} catch { /* best-effort — the EOB posting itself already saved */ }
+		}
+	}
+
+	// allow-any-unicode-next-line
+	// ── Insurance Posting (custom expandable grid) ─────────────────────────
+	// Each billed claim is one collapsed row. Clicking it (or "Expand codes")
+	// unfolds ALL its CPT codes inline — one editable row per code with Billed /
+	// Allowed / Ins Paid inputs — plus claim-level Copay / Deductible /
+	// Coinsurance, Payer, Check # and a Post button. No popup: the biller types
+	// every figure directly in the grid.
+
+	private async _loadAndRenderInsurancePosting(): Promise<void> {
+		if (!this.contentEl) { return; }
+		this._insLoading = true;
+		this._renderInsurancePosting();
+		try {
+			const [txns, sheets] = await Promise.all([
+				this.apiService.fetch('/api/payments/transactions').then(async r => r.ok ? await r.json() : null).catch(() => null),
+				this.apiService.fetch('/api/fee-sheets').then(async r => r.ok ? await r.json() : null).catch(() => null),
+			]);
+			const txnList = ((txns?.data ?? txns)?.content || (Array.isArray(txns?.data) ? txns.data : Array.isArray(txns) ? txns : [])) as Array<Record<string, unknown>>;
+			const sheetList = ((sheets?.data ?? sheets)?.content || (Array.isArray(sheets?.data) ? sheets.data : Array.isArray(sheets) ? sheets : [])) as Array<Record<string, unknown>>;
+
+			// Billed fee sheets are the claims.
+			const billed = sheetList.filter(s => /^(billed|paid|eob)/i.test(String(s['billingStatus'] ?? '')));
+			this._billedClaims = billed.map(s => this._feeSheetToClaim(s));
+			const claimByRef = new Map(this._billedClaims.map(c => [normalizeClaimRef(c.claimRef), c]));
+
+			// Existing EOB postings → rows (with their per-CPT line detail).
+			const postings = txnList.filter(t => String(t['transactionType'] ?? '') === 'insurance_payment'
+				|| String(t['description'] ?? '').startsWith('EOB posting'));
+			const postedRefs = new Set<string>();
+			const postingRows: InsurancePostingRow[] = postings.map(t => {
+				const desc = String(t['description'] ?? '');
+				const ref = (desc.match(/claim=([^;|]+)/)?.[1] || '').trim();
+				postedRefs.add(normalizeClaimRef(ref));
+				const claim = claimByRef.get(normalizeClaimRef(ref));
+				const storedLines = parseEobLines(String(t['notes'] ?? ''));
+				const lines: EobLine[] = (storedLines.length ? storedLines : (claim?.lines || [])).map(l => ({
+					...l, description: claim?.lines.find(cl => cl.code === l.code)?.description || l.description,
+				}));
+				const paid = parseEobField(desc, 'paid') ?? Number(t['amount']) ?? 0;
+				const writeOff = parseEobField(desc, 'writeoff') ?? 0;
+				const fwd = /fwd=1/.test(desc);
+				const denialReason = desc.match(/denial=([^;|]+)/)?.[1]?.trim() || '';
+				let status: InsurancePostingRow['status'] = 'POSTED';
+				if (denialReason || (paid === 0 && writeOff > 0)) { status = 'DENIAL'; }
+				else if (fwd) { status = 'AWAITING_SECONDARY'; }
+				return {
+					txnId: String(t['id'] ?? ''),
+					claimRef: ref,
+					feeSheetId: claim?.feeSheetId || '',
+					patientId: String(t['patientId'] ?? (claim?.patientId || '')),
+					patientName: String(t['patientName'] ?? (claim?.patientName || '')),
+					serviceDate: claim?.serviceDate || String(t['collectedAt'] ?? '').slice(0, 10),
+					payerName: desc.match(/payer=([^;|]+)/)?.[1]?.trim() || '',
+					checkNumber: desc.match(/check=([^;|]+)/)?.[1]?.trim() || String(t['notes'] ?? ''),
+					paymentMethodType: String(t['paymentMethodType'] ?? 'check'),
+					lines,
+					copay: parseEobField(desc, 'copay') ?? 0,
+					deductible: parseEobField(desc, 'deductible') ?? 0,
+					coinsurance: parseEobField(desc, 'coinsurance') ?? 0,
+					denialReason,
+					forwardedToSecondary: fwd,
+					secondaryPayer: desc.match(/payer2=([^;|]+)/)?.[1]?.trim() || '',
+					status,
+				};
+			});
+
+			// Claims with no posting yet → "Awaiting EOB" rows (the work list).
+			const awaitingRows: InsurancePostingRow[] = this._billedClaims
+				.filter(c => !postedRefs.has(normalizeClaimRef(c.claimRef)))
+				.map(c => ({
+					txnId: '',
+					claimRef: c.claimRef,
+					feeSheetId: c.feeSheetId,
+					patientId: c.patientId,
+					patientName: c.patientName,
+					serviceDate: c.serviceDate || '',
+					payerName: '',
+					checkNumber: '',
+					paymentMethodType: 'check',
+					lines: c.lines.map(l => ({ ...l })),
+					copay: 0, deductible: 0, coinsurance: 0,
+					denialReason: '', forwardedToSecondary: false, secondaryPayer: '',
+					status: 'AWAITING_EOB' as const,
+				}));
+			this._insRows = [...awaitingRows, ...postingRows];
+		} catch {
+			this._insRows = [];
+		}
+		this._insLoading = false;
+		this._renderInsurancePosting();
+	}
+
+	/** Rows passing the current search + status filter. */
+	private _visibleInsRows(): InsurancePostingRow[] {
+		const q = this._insSearch.trim().toLowerCase();
+		return this._insRows.filter(r => {
+			if (this._insStatusFilter && r.status !== this._insStatusFilter) { return false; }
+			if (!q) { return true; }
+			const hay = `${r.patientName} ${r.claimRef} ${r.checkNumber} ${r.payerName} ${r.lines.map(l => l.code).join(' ')}`.toLowerCase();
+			return hay.includes(q);
+		});
+	}
+
+	private _renderInsurancePosting(): void {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+
+		// Toolbar.
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Insurance Posting';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const right = DOM.append(toolbar, DOM.$('div'));
+		right.style.cssText = 'display:flex;align-items:center;gap:10px;';
+		const searchEl = DOM.append(right, DOM.$('input')) as HTMLInputElement;
+		searchEl.placeholder = 'Search by patient, claim, CPT, check #...';
+		searchEl.value = this._insSearch;
+		searchEl.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;min-width:240px;';
+		searchEl.addEventListener('input', () => { this._insSearch = searchEl.value; this._renderInsuranceRows(scroll); });
+		const refreshBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.textContent = '\u21BB Refresh';
+		refreshBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:6px;cursor:pointer;font-size:12px;';
+		refreshBtn.addEventListener('click', () => this._loadAndRenderInsurancePosting());
+		const postBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
+		postBtn.textContent = '+ Post Insurance Payment (EOB)';
+		postBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		postBtn.addEventListener('click', () => this._openEobPosting(null));
+
+		// Summary cards.
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const posted = this._insRows.filter(r => r.status !== 'AWAITING_EOB');
+		const sumPaid = posted.reduce((s, r) => s + r.lines.reduce((a, l) => a + l.paid, 0), 0);
+		const sumResp = posted.reduce((s, r) => s + r.copay + r.deductible + r.coinsurance, 0);
+		const awaiting = this._insRows.filter(r => r.status === 'AWAITING_EOB').length;
+		const denials = this._insRows.filter(r => r.status === 'DENIAL').length;
+		const cards = DOM.append(this.contentEl, DOM.$('div'));
+		cards.style.cssText = 'display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;';
+		const card = (label: string, value: string, color: string, filter?: InsurancePostingRow['status']) => {
+			const c = DOM.append(cards, DOM.$('div'));
+			c.style.cssText = `flex:0 0 170px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:12px 16px;text-align:center;${filter ? 'cursor:pointer;' : ''}`;
+			const v = DOM.append(c, DOM.$('div')); v.textContent = value; v.style.cssText = `font-size:20px;font-weight:700;color:${color};`;
+			const l = DOM.append(c, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+			if (filter) {
+				c.addEventListener('click', () => { this._insStatusFilter = this._insStatusFilter === filter ? '' : filter; this._renderInsurancePosting(); });
+				if (this._insStatusFilter === filter) { c.style.borderColor = color; c.style.background = `${color}14`; }
+			}
+		};
+		card('Awaiting EOB', String(awaiting), '#f59e0b', 'AWAITING_EOB');
+		card('Postings', String(posted.length), 'var(--vscode-foreground)');
+		card('Insurance Paid', money(sumPaid), '#3b9edd');
+		card('Patient Resp', money(sumResp), '#f59e0b');
+		card('Denials', String(denials), '#ef4444', 'DENIAL');
+
+		const scroll = DOM.append(this.contentEl, DOM.$('div'));
+		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
+		this._renderInsuranceRows(scroll);
+	}
+
+	private _renderInsuranceRows(scroll: HTMLElement): void {
+		DOM.clearNode(scroll);
+		const COLS = '28px minmax(120px,1.3fr) 100px minmax(150px,1.4fr) 95px 95px 100px 130px 150px';
+		const header = DOM.append(scroll, DOM.$('div'));
+		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
+		for (const h of ['', 'Patient', 'Claim #', 'CPT Codes', 'Billed', 'Ins Paid', 'Patient Resp', 'Status', 'Action']) {
+			DOM.append(header, DOM.$('span')).textContent = h;
+		}
+
+		if (this._insLoading) {
+			const l = DOM.append(scroll, DOM.$('div'));
+			l.textContent = 'Loading…'; l.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;';
+			return;
+		}
+		const rows = this._visibleInsRows();
+		if (rows.length === 0) {
+			const e = DOM.append(scroll, DOM.$('div'));
+			e.textContent = 'No claims to post yet. Bill a fee sheet (Encounter Billing → Send to Billing) and its claim shows here awaiting the payer EOB.';
+			e.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+			return;
+		}
+		for (const row of rows) { this._renderInsuranceRow(scroll, row, COLS); }
+	}
+
+	private _renderInsuranceRow(scroll: HTMLElement, row: InsurancePostingRow, COLS: string): void {
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const expanded = this._insExpanded.has(normalizeClaimRef(row.claimRef));
+		const billedTotal = row.lines.reduce((s, l) => s + l.billed, 0);
+		const paidTotal = row.lines.reduce((s, l) => s + l.paid, 0);
+		const respTotal = row.copay + row.deductible + row.coinsurance;
+
+		const r = DOM.append(scroll, DOM.$('div'));
+		r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;align-items:center;padding:8px 12px;border-top:1px solid rgba(128,128,128,0.1);font-size:12px;${expanded ? 'background:rgba(59,158,221,0.05);' : ''}`;
+
+		// Expand caret.
+		const caret = DOM.append(r, DOM.$('span'));
+		caret.textContent = expanded ? '\u25BC' : '\u25B6';
+		caret.style.cssText = 'cursor:pointer;color:var(--vscode-descriptionForeground);font-size:11px;user-select:none;text-align:center;';
+		const toggle = () => {
+			const key = normalizeClaimRef(row.claimRef);
+			if (this._insExpanded.has(key)) { this._insExpanded.delete(key); } else { this._insExpanded.add(key); }
+			this._renderInsuranceRows(scroll);
+		};
+		caret.addEventListener('click', toggle);
+
+		const nameEl = DOM.append(r, DOM.$('span'));
+		nameEl.textContent = row.patientName || `Patient #${row.patientId}`;
+		nameEl.style.cssText = 'font-weight:500;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		nameEl.addEventListener('click', toggle);
+
+		const claimEl = DOM.append(r, DOM.$('span'));
+		claimEl.textContent = row.claimRef || '—';
+		claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;';
+
+		// CPT codes cell: 2 inline + "expand N more" (NO popup — clicking expands
+		// the row so every code becomes an editable line).
+		const codesEl = DOM.append(r, DOM.$('span'));
+		codesEl.style.cssText = 'cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		const codes = row.lines.map(l => l.code);
+		if (codes.length <= 2) {
+			codesEl.textContent = codes.join(', ') || '—';
+		} else {
+			codesEl.textContent = `${codes.slice(0, 2).join(', ')} `;
+			const more = DOM.append(codesEl, DOM.$('span'));
+			more.textContent = expanded ? '(collapse)' : `+${codes.length - 2} more`;
+			more.style.cssText = 'color:#3b9edd;font-weight:600;';
+		}
+		codesEl.title = codes.join(', ');
+		codesEl.addEventListener('click', toggle);
+
+		DOM.append(r, DOM.$('span')).textContent = money(billedTotal);
+		const insEl = DOM.append(r, DOM.$('span'));
+		insEl.textContent = row.status === 'AWAITING_EOB' ? '—' : money(paidTotal);
+		insEl.style.color = row.status === 'AWAITING_EOB' ? 'var(--vscode-descriptionForeground)' : '#3b9edd';
+		const respEl = DOM.append(r, DOM.$('span'));
+		respEl.textContent = respTotal > 0 ? money(respTotal) : '—';
+		respEl.style.color = respTotal > 0 ? '#f59e0b' : 'var(--vscode-descriptionForeground)';
+
+		const statusEl = DOM.append(r, DOM.$('span'));
+		const statusMeta: Record<InsurancePostingRow['status'], [string, string]> = {
+			AWAITING_EOB: ['Awaiting EOB', '#f59e0b'], POSTED: ['Posted', '#22c55e'],
+			DENIAL: ['Denial', '#ef4444'], AWAITING_SECONDARY: ['Awaiting Secondary', '#8b5cf6'],
+		};
+		const [stLabel, stColor] = statusMeta[row.status];
+		statusEl.textContent = stLabel;
+		statusEl.style.cssText = `color:${stColor};font-weight:600;`;
+
+		const act = DOM.append(r, DOM.$('div'));
+		act.style.cssText = 'display:flex;gap:6px;align-items:center;';
+		const actBtn = (label: string, color: string, handler: () => void) => {
+			const b = DOM.append(act, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.style.cssText = `padding:4px 10px;background:${color};color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;`;
+			b.addEventListener('click', handler);
+		};
+		actBtn(expanded ? 'Collapse' : (row.status === 'AWAITING_EOB' ? 'Post EOB' : 'Edit'), row.status === 'AWAITING_EOB' ? '#22c55e' : '#0e639c', toggle);
+		if (row.txnId) {
+			actBtn('Delete', '#a11', async () => {
+				const c = await this.dialogService.confirm({ message: 'Delete this insurance posting?', type: 'warning', primaryButton: 'Delete' });
+				if (c.confirmed) { await this.apiService.fetch(`/api/payments/transactions/${row.txnId}`, { method: 'DELETE' }); this._loadAndRenderInsurancePosting(); }
+			});
+		}
+
+		if (expanded) { this._renderInsuranceExpansion(scroll, row); }
+	}
+
+	/**
+	 * The inline expansion: one editable row per CPT code (Billed / Allowed /
+	 * Ins Paid), a claim-level Copay / Deductible / Coinsurance + Payer / Check #
+	 * row, live totals, and a Post/Save button — all inside the grid, no popup.
+	 */
+	private _renderInsuranceExpansion(scroll: HTMLElement, row: InsurancePostingRow): void {
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const wrap = DOM.append(scroll, DOM.$('div'));
+		wrap.style.cssText = 'padding:6px 12px 16px 40px;border-top:1px solid rgba(128,128,128,0.06);background:rgba(59,158,221,0.04);';
+
+		const inputStyle = 'width:100%;box-sizing:border-box;padding:5px 7px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const numInput = (val: number, onInput: (n: number) => void): HTMLInputElement => {
+			const inp = DOM.append(DOM.$('span'), DOM.$('input')) as HTMLInputElement;
+			inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.placeholder = '0.00';
+			inp.value = val ? String(val) : '';
+			inp.style.cssText = inputStyle;
+			inp.addEventListener('input', () => { onInput(Number(inp.value) || 0); recompute(); });
+			return inp;
+		};
+
+		// Per-CPT lines table.
+		const heading = DOM.append(wrap, DOM.$('div'));
+		heading.textContent = `Enter the payer EOB amounts for each of the ${row.lines.length} CPT code${row.lines.length === 1 ? '' : 's'}:`;
+		heading.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
+
+		const LCOLS = '80px minmax(180px,1fr) 110px 110px 110px';
+		const lineHead = DOM.append(wrap, DOM.$('div'));
+		lineHead.style.cssText = `display:grid;grid-template-columns:${LCOLS};gap:10px;padding:4px 0;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--vscode-descriptionForeground);`;
+		for (const h of ['CPT', 'Description', 'Billed ($)', 'Allowed ($)', 'Ins Paid ($)']) { DOM.append(lineHead, DOM.$('span')).textContent = h; }
+
+		for (const line of row.lines) {
+			const lr = DOM.append(wrap, DOM.$('div'));
+			lr.style.cssText = `display:grid;grid-template-columns:${LCOLS};gap:10px;padding:4px 0;align-items:center;`;
+			const codeEl = DOM.append(lr, DOM.$('span')); codeEl.textContent = line.code; codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
+			const descEl = DOM.append(lr, DOM.$('span')); descEl.textContent = line.description || ''; descEl.title = line.description || ''; descEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			lr.appendChild(numInput(line.billed, n => { line.billed = n; }).parentElement!);
+			lr.appendChild(numInput(line.allowed, n => { line.allowed = n; }).parentElement!);
+			lr.appendChild(numInput(line.paid, n => { line.paid = n; }).parentElement!);
+		}
+
+		// Claim-level responsibility + payer/check row.
+		const respRow = DOM.append(wrap, DOM.$('div'));
+		respRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-top:12px;';
+		const field = (parent: HTMLElement, label: string): HTMLElement => {
+			const cell = DOM.append(parent, DOM.$('div'));
+			const l = DOM.append(cell, DOM.$('label')); l.textContent = label;
+			l.style.cssText = 'display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+			return cell;
+		};
+		field(respRow, 'Copay ($)').appendChild(numInput(row.copay, n => { row.copay = n; }));
+		field(respRow, 'Deductible ($)').appendChild(numInput(row.deductible, n => { row.deductible = n; }));
+		field(respRow, 'Coinsurance ($)').appendChild(numInput(row.coinsurance, n => { row.coinsurance = n; }));
+
+		const metaRow = DOM.append(wrap, DOM.$('div'));
+		metaRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-top:10px;';
+		const payerInp = DOM.append(field(metaRow, 'Insurance / Payer'), DOM.$('input')) as HTMLInputElement;
+		payerInp.value = row.payerName; payerInp.placeholder = 'e.g. Medicare, BCBS'; payerInp.style.cssText = inputStyle;
+		payerInp.addEventListener('input', () => { row.payerName = payerInp.value; });
+		const checkInp = DOM.append(field(metaRow, 'Check / EFT #'), DOM.$('input')) as HTMLInputElement;
+		checkInp.value = row.checkNumber; checkInp.placeholder = 'Check # from EOB'; checkInp.style.cssText = inputStyle;
+		checkInp.addEventListener('input', () => { row.checkNumber = checkInp.value; });
+		const denialInp = DOM.append(field(metaRow, 'Denial Reason (if denied)'), DOM.$('input')) as HTMLInputElement;
+		denialInp.value = row.denialReason; denialInp.placeholder = 'e.g. CO-97 bundled'; denialInp.style.cssText = inputStyle;
+		denialInp.addEventListener('input', () => { row.denialReason = denialInp.value; });
+
+		// Live totals + Post button.
+		const footer = DOM.append(wrap, DOM.$('div'));
+		footer.style.cssText = 'display:flex;align-items:center;gap:20px;margin-top:14px;flex-wrap:wrap;';
+		const totalsEl = DOM.append(footer, DOM.$('div'));
+		totalsEl.style.cssText = 'display:flex;gap:18px;font-size:12px;flex-wrap:wrap;';
+		const spacer = DOM.append(footer, DOM.$('div')); spacer.style.flex = '1';
+		const postBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
+		postBtn.textContent = row.txnId ? 'Save Posting' : 'Post EOB';
+		postBtn.style.cssText = 'padding:7px 20px;background:#2e7d32;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700;';
+
+		const recompute = () => {
+			const billed = round2(row.lines.reduce((s, l) => s + l.billed, 0));
+			const allowed = round2(row.lines.reduce((s, l) => s + l.allowed, 0));
+			const paid = round2(row.lines.reduce((s, l) => s + l.paid, 0));
+			const writeOff = Math.max(round2(billed - allowed), 0);
+			const resp = round2(row.copay + row.deductible + row.coinsurance);
+			DOM.clearNode(totalsEl);
+			const cell = (label: string, val: string, color?: string) => {
+				const c = DOM.append(totalsEl, DOM.$('div'));
+				const l = DOM.append(c, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:9px;font-weight:700;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+				const v = DOM.append(c, DOM.$('div')); v.textContent = val; v.style.cssText = `font-size:14px;font-weight:700;${color ? `color:${color};` : ''}`;
+			};
+			cell('Billed', money(billed)); cell('Allowed', money(allowed)); cell('Ins Paid', money(paid), '#3b9edd');
+			cell('Write-off', money(writeOff), '#8b5cf6'); cell('Patient Resp', money(resp), '#f59e0b');
+			const diff = round2(allowed - (paid + resp));
+			if (allowed || paid || resp) {
+				const bal = DOM.append(totalsEl, DOM.$('div'));
+				bal.style.cssText = 'align-self:center;font-size:11px;';
+				if (Math.abs(diff) <= 0.01) { bal.textContent = '\u2713 Balanced'; bal.style.color = '#22c55e'; }
+				else { bal.textContent = `\u26A0 off by ${money(Math.abs(diff))}`; bal.style.color = '#f59e0b'; }
+			}
+		};
+		recompute();
+
+		postBtn.addEventListener('click', async () => {
+			const billed = round2(row.lines.reduce((s, l) => s + l.billed, 0));
+			const allowed = round2(row.lines.reduce((s, l) => s + l.allowed, 0));
+			const paid = round2(row.lines.reduce((s, l) => s + l.paid, 0));
+			const resp = round2(row.copay + row.deductible + row.coinsurance);
+			if (billed <= 0) { await this.dialogService.info('Enter the billed amounts before posting.'); return; }
+			if (paid <= 0 && !row.denialReason.trim() && resp <= 0) {
+				await this.dialogService.info('A zero-pay EOB needs a denial reason (or a patient-responsibility amount).');
+				return;
+			}
+			postBtn.disabled = true; postBtn.textContent = 'Posting…';
+			const values: EobFormValues = {
+				claimRef: row.claimRef, patientId: row.patientId, patientName: row.patientName,
+				payerName: row.payerName, checkNumber: row.checkNumber, paymentMethodType: row.paymentMethodType || 'check',
+				billed, allowed, paid, copay: row.copay, deductible: row.deductible, coinsurance: row.coinsurance,
+				denialReason: row.denialReason, forwardedToSecondary: row.forwardedToSecondary, secondaryPayer: row.secondaryPayer,
+				lines: row.lines.map(l => ({ ...l })),
+			};
+			this._insExpanded.delete(normalizeClaimRef(row.claimRef));
+			await this._saveEobPosting(values, row.txnId || undefined);
+		});
+	}
+
 	// allow-any-unicode-next-line
 	// ── Credit-card grid rendering ─────────────────────────────────────────
 
@@ -6118,6 +6481,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// generic list base can't render) take over here on first open.
 		if (this.payView === 'encounter-billing') {
 			this._loadAndRenderEncounterBilling();
+		} else if (this.payView === 'insurance-posting') {
+			this._loadAndRenderInsurancePosting();
 		} else if (this.payView === 'invoices') {
 			this._loadAndRenderInvoices();
 		} else if (this.payView === 'methods') {
@@ -6141,6 +6506,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	protected override _resetAndReload(): void {
 		if (this.payView === 'encounter-billing') {
 			this._loadAndRenderEncounterBilling();
+		} else if (this.payView === 'insurance-posting') {
+			this._loadAndRenderInsurancePosting();
 		} else if (this.payView === 'methods') {
 			this._loadAndRenderCards();
 		} else if (this.payView === 'invoices') {
@@ -6410,6 +6777,9 @@ ${rows.join('\n')}
 			billedMode: String(d.billedMode ?? 'cash'),
 			paymentStatus: String(d.paymentStatus ?? (totalPaid <= 0 ? 'None' : totalPaid >= totalFee ? 'Paid' : 'Partial')),
 			comments: String(d.comments ?? ''),
+			// The claim number is derived from the auto-increment fee-sheet id —
+			// shown once the sheet is billed (billing creates the claim).
+			claimNumber: d.id !== undefined && d.id !== null ? claimNumberForFeeSheet(String(d.id)) : '',
 			// Raw fee-sheet items kept for the RCM-lite X12 837 export.
 			rawItems: items,
 			// Filled by _applyInsurancePostings from EOB postings matched to this row.
@@ -6417,6 +6787,9 @@ ${rows.join('\n')}
 			writeOff: 0,
 			respAssigned: 0,
 			patientPortion: 0,
+			eobPosted: false,
+			// Filled by _applyInvoiceFlags from the patient-pay invoice list.
+			invoiced: false,
 		};
 	}
 
@@ -6434,6 +6807,7 @@ ${rows.join('\n')}
 				this._billingRows = [];
 			}
 			await this._applyInsurancePostings();
+			await this._applyInvoiceFlags();
 		} catch {
 			this._billingRows = [];
 		}
@@ -6463,8 +6837,10 @@ ${rows.join('\n')}
 
 		const byRef = new Map<string, Record<string, unknown>>();
 		for (const row of this._billingRows) {
-			if (row.id) { byRef.set(`fs${row.id}`, row); byRef.set(String(row.id), row); }
-			if (row.encounterId) { byRef.set(String(row.encounterId), row); }
+			// Normalized keys make `CLM-0012`, `FS12` and `12` all match row 12
+			// (claim numbers are CLM-…, legacy postings used FS…).
+			if (row.id) { byRef.set(`fs${row.id}`, row); byRef.set(String(row.id), row); byRef.set(normalizeClaimRef(String(row.id)), row); }
+			if (row.encounterId) { byRef.set(String(row.encounterId), row); byRef.set(normalizeClaimRef(String(row.encounterId)), row); }
 		}
 
 		for (const txn of txns) {
@@ -6473,8 +6849,9 @@ ${rows.join('\n')}
 			const refMatch = desc.match(/claim=([^;|]+)/);
 			const ref = refMatch ? refMatch[1].trim().toLowerCase() : '';
 			if (!ref) { continue; }
-			const row = byRef.get(ref) || byRef.get(ref.replace(/^fs-?/, ''));
+			const row = byRef.get(ref) || byRef.get(ref.replace(/^fs-?/, '')) || byRef.get(normalizeClaimRef(ref));
 			if (!row) { continue; }
+			row.eobPosted = true;
 			row.insurancePaid = Number(row.insurancePaid || 0) + (parseEobField(desc, 'paid') ?? Number(txn['amount']) ?? 0);
 			row.writeOff = Number(row.writeOff || 0) + (parseEobField(desc, 'writeoff') ?? 0);
 			row.respAssigned = Number(row.respAssigned || 0) + (parseEobField(desc, 'resp') ?? 0);
@@ -6492,9 +6869,34 @@ ${rows.join('\n')}
 			// what actually remains open on the encounter.
 			row.patientPortion = Math.min(Math.max(Number(row.respAssigned || 0), 0), balance);
 			row.paymentStatus = balance <= 0 ? 'Paid' : (collected > 0 ? 'Partial' : String(row.paymentStatus || 'None'));
+			// Dashboard stage: adjudicated-but-open encounters show "EOB Posted"
+			// (the front desk still owes a patient-portion collection).
 			if (balance <= 0) { row.billingStatus = 'Paid'; }
-			else if (String(row.billingStatus) === 'Unbilled') { row.billingStatus = 'Billed'; }
+			else { row.billingStatus = 'EOB Posted'; }
 		}
+	}
+
+	/**
+	 * Mark rows whose encounter already has a patient-pay invoice — the
+	 * dashboard's "Invoice" column shows the full process closed out
+	 * (billed → EOB posted → patient paid → invoiced). Cosmetic; fails soft
+	 * when the patient-pay service is unreachable.
+	 */
+	private async _applyInvoiceFlags(): Promise<void> {
+		if (this._billingRows.length === 0) { return; }
+		try {
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { headers: this._patientPayHeaders() });
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const w = (data?.data ?? data) as { content?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+			const invoices = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>;
+			const byFeeSheet = new Set(invoices.map(i => String(i['feeSheetId'] ?? '')).filter(Boolean));
+			const byEncounter = new Set(invoices.map(i => String(i['encounterId'] ?? '')).filter(Boolean));
+			for (const row of this._billingRows) {
+				row.invoiced = (!!row.id && byFeeSheet.has(String(row.id)))
+					|| (!!row.encounterId && byEncounter.has(String(row.encounterId)));
+			}
+		} catch { /* indicator stays off */ }
 	}
 
 	private _renderEncounterBilling(): void {
@@ -6526,18 +6928,20 @@ ${rows.join('\n')}
 			const l = DOM.append(c, DOM.$('div'));
 			l.textContent = label; l.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
 		};
+		const totalBalance = this._billingRows.reduce((s, r) => s + Number(r.balance || 0), 0);
 		card('Total Charges', `$${totalCharges.toFixed(2)}`, 'var(--vscode-foreground)');
 		card('Total Paid', `$${totalPaid.toFixed(2)}`, '#22c55e');
 		card('Insurance Paid', `$${totalInsurance.toFixed(2)}`, '#3b9edd');
 		card('Patient Portion', `$${totalPatientPortion.toFixed(2)}`, '#f59e0b');
+		card('Outstanding Balance', `$${totalBalance.toFixed(2)}`, totalBalance > 0 ? '#ef4444' : '#22c55e');
 
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
 		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
 
-		const COLS = 'minmax(120px,1.2fr) minmax(110px,1fr) 110px 90px 110px 90px 90px 90px 100px 120px 100px 110px minmax(120px,1fr) 170px';
+		const COLS = 'minmax(115px,1.1fr) minmax(100px,0.9fr) 92px 82px 90px 100px 85px 90px 82px 82px 95px 110px 90px 100px 72px minmax(110px,1fr) 170px';
 		const header = DOM.append(scroll, DOM.$('div'));
 		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
-		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Codes', 'Pay Amount', 'Total Fee', 'Total Paid', 'Balance', 'Patient Portion', 'Billing Status', 'Billed Mode', 'Pay Status', 'Comments', 'Action']) {
+		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Claim #', 'Codes', 'Pay Amount', 'Total Fee', 'Patient Paid', 'Ins Paid', 'Balance', 'Patient Portion', 'Billing Status', 'Billed Mode', 'Pay Status', 'Invoice', 'Comments', 'Action']) {
 			DOM.append(header, DOM.$('span')).textContent = h;
 		}
 
@@ -6562,6 +6966,12 @@ ${rows.join('\n')}
 			const nameEl = DOM.append(r, DOM.$('span')); nameEl.textContent = String(row.patientName || `Patient #${row.patientId}`); nameEl.style.fontWeight = '500';
 			DOM.append(r, DOM.$('span')).textContent = String(row.clinician || '—');
 			DOM.append(r, DOM.$('span')).textContent = String(row.encounterDate || '—');
+			// The claim exists once the sheet is billed (billing creates it).
+			const claimEl = DOM.append(r, DOM.$('span'));
+			const isBilled = String(row.billingStatus || 'Unbilled') !== 'Unbilled';
+			claimEl.textContent = isBilled ? String(row.claimNumber || '—') : '—';
+			claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;';
+			claimEl.title = isBilled ? 'Auto-increment claim number created when the fee sheet was sent to billing.' : 'Send to billing to create the claim.';
 			const codesEl = DOM.append(r, DOM.$('span')); codesEl.textContent = String(row.codes || '—'); codesEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; codesEl.title = String(row.codes || '');
 
 			// After an EOB posts, the front desk collects the PATIENT PORTION, not
@@ -6574,11 +6984,12 @@ ${rows.join('\n')}
 
 			DOM.append(r, DOM.$('span')).textContent = `$${Number(row.totalFee || 0).toFixed(2)}`;
 			const insurancePaid = Number(row.insurancePaid || 0);
-			const collectedTotal = Number(row.totalPaid || 0) + insurancePaid;
-			const paidEl = DOM.append(r, DOM.$('span')); paidEl.textContent = `$${collectedTotal.toFixed(2)}`; paidEl.style.color = '#22c55e';
-			if (insurancePaid > 0 || Number(row.writeOff || 0) > 0) {
-				paidEl.title = `Patient/front desk $${Number(row.totalPaid || 0).toFixed(2)} + Insurance $${insurancePaid.toFixed(2)}`
-					+ (Number(row.writeOff || 0) > 0 ? ` (write-off $${Number(row.writeOff || 0).toFixed(2)})` : '');
+			const paidEl = DOM.append(r, DOM.$('span')); paidEl.textContent = `$${Number(row.totalPaid || 0).toFixed(2)}`; paidEl.style.color = '#22c55e';
+			const insEl = DOM.append(r, DOM.$('span'));
+			insEl.textContent = insurancePaid > 0 ? `$${insurancePaid.toFixed(2)}` : '—';
+			insEl.style.color = insurancePaid > 0 ? '#3b9edd' : 'var(--vscode-descriptionForeground)';
+			if (Number(row.writeOff || 0) > 0) {
+				insEl.title = `Insurance paid $${insurancePaid.toFixed(2)} (contractual write-off $${Number(row.writeOff || 0).toFixed(2)})`;
 			}
 			const balEl = DOM.append(r, DOM.$('span')); balEl.textContent = `$${Number(row.balance || 0).toFixed(2)}`; balEl.style.color = Number(row.balance || 0) > 0 ? '#ef4444' : 'var(--vscode-descriptionForeground)';
 			const portionEl = DOM.append(r, DOM.$('span'));
@@ -6588,7 +6999,7 @@ ${rows.join('\n')}
 
 			const billSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
 			billSel.style.cssText = inputStyle;
-			for (const opt of ['Unbilled', 'Billed', 'Paid']) {
+			for (const opt of ['Unbilled', 'Billed', 'EOB Posted', 'Paid']) {
 				const o = DOM.append(billSel, DOM.$('option')) as HTMLOptionElement; o.value = opt; o.textContent = opt;
 			}
 			billSel.value = String(row.billingStatus || 'Unbilled');
@@ -6610,6 +7021,14 @@ ${rows.join('\n')}
 			paySel.value = String(row.paymentStatus || 'None');
 			paySel.addEventListener('change', () => { row.paymentStatus = paySel.value; });
 
+			const invEl = DOM.append(r, DOM.$('span'));
+			// allow-any-unicode-next-line
+			invEl.textContent = row.invoiced ? '✓ Sent' : '—';
+			invEl.style.cssText = `text-align:center;font-weight:600;color:${row.invoiced ? '#22c55e' : 'var(--vscode-descriptionForeground)'};`;
+			invEl.title = row.invoiced
+				? 'Patient invoice created and emailed for this encounter.'
+				: 'No invoice yet — collecting the full balance auto-generates it.';
+
 			const commentInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
 			commentInp.value = String(row.comments || ''); commentInp.style.cssText = inputStyle;
 			commentInp.addEventListener('input', () => { row.comments = commentInp.value; });
@@ -6625,7 +7044,7 @@ ${rows.join('\n')}
 			};
 			actBtn('\u270F\uFE0F', 'Edit fee sheet', 'var(--vscode-textLink-foreground)', () => this._editBillingRow(row));
 			actBtn('\u2705', 'Collect payment', '#22c55e', () => this._completeBillingRow(row, Number(payInp.value) || 0, modeSel.value));
-			actBtn('\u{1F4E4}', `Download X12 837 claim file (claim # FS${row.id}) for clearinghouse submission`, 'var(--vscode-textLink-foreground)', () => this._download837ForRow(row));
+			actBtn('\u{1F4E4}', `Download X12 837 claim file (claim # ${row.claimNumber || claimNumberForFeeSheet(String(row.id))}) for clearinghouse submission`, 'var(--vscode-textLink-foreground)', () => this._download837ForRow(row));
 			actBtn('\u{1F9FE}', 'Generate invoice, show PDF & email patient', 'var(--vscode-textLink-foreground)', () => this._invoiceBillingRow(row));
 			actBtn('\u{1F4D2}', 'Open ledger', 'var(--vscode-descriptionForeground)', () => this._openLedgerForRow(row));
 		}
@@ -6716,7 +7135,7 @@ ${rows.join('\n')}
 		}
 
 		const nameParts = String(row.patientName || '').split(/\s+/);
-		const claimNumber = `FS${row.id}`;
+		const claimNumber = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
 		const claim: Edi837Claim = {
 			submitterId: cfg('ciyex.billing.submitterId'),
 			submitterName: pick('ciyex.billing.submitterName', practice.name),
@@ -6771,22 +7190,29 @@ ${rows.join('\n')}
 			await this.dialogService.info('Enter a Pay Amount greater than 0 before collecting.');
 			return;
 		}
-		const payload = {
-			patientId: row.patientId,
-			patientName: row.patientName,
-			amount: payAmount,
-			transactionType: 'encounter',
-			paymentMethodType: method,
-			description: `Encounter ${row.encounterId} — ${row.codes}`,
-			status: 'completed',
-			feeSheetId: row.id,
-			encounterId: row.encounterId,
-		};
 		try {
-			const res = await this.apiService.fetch('/api/payments/collect', { method: 'POST', body: JSON.stringify(payload) });
-			if (!res.ok) {
-				await this.dialogService.error(`Payment failed (${res.status}).`);
-				return;
+			// If the EOB posting already moved this claim's copay / deductible /
+			// coinsurance to the Transactions tab as PENDING patient-pay
+			// transactions, collecting the matching amount completes THOSE instead
+			// of adding a duplicate charge.
+			const settledPending = await this._completePendingPatientResp(row, payAmount, method);
+			if (!settledPending) {
+				const payload = {
+					patientId: row.patientId,
+					patientName: row.patientName,
+					amount: payAmount,
+					transactionType: 'encounter',
+					paymentMethodType: method,
+					description: `Encounter ${row.encounterId} — ${row.codes}`,
+					status: 'completed',
+					feeSheetId: row.id,
+					encounterId: row.encounterId,
+				};
+				const res = await this.apiService.fetch('/api/payments/collect', { method: 'POST', body: JSON.stringify(payload) });
+				if (!res.ok) {
+					await this.dialogService.error(`Payment failed (${res.status}).`);
+					return;
+				}
 			}
 			const newPaid = Number(row.totalPaid || 0) + payAmount;
 			const newBalance = Math.max(0, Number(row.totalFee || 0) - newPaid);
@@ -6804,6 +7230,42 @@ ${rows.join('\n')}
 		} catch (e) {
 			await this.dialogService.error(`Payment failed: ${e}`);
 		}
+	}
+
+	/**
+	 * Complete the claim's pending patient-responsibility transactions (created
+	 * by the EOB posting for copay / deductible / coinsurance) when the
+	 * collected amount matches their total. Returns true when the collection
+	 * was settled that way; false lets the caller record a fresh transaction
+	 * (no pendings, or a different amount was entered).
+	 */
+	private async _completePendingPatientResp(row: Record<string, unknown>, payAmount: number, method: string): Promise<boolean> {
+		const claimNo = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
+		let pendings: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch('/api/payments/transactions');
+			if (!res.ok) { return false; }
+			const data = await res.json();
+			const w = data?.data ?? data;
+			const txns = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			pendings = txns.filter(t => String(t['status'] ?? '') === 'pending'
+				&& ['copay', 'deductible', 'coinsurance'].includes(String(t['transactionType'] ?? ''))
+				&& String(t['description'] ?? '').includes(`claim ${claimNo}`));
+		} catch { return false; }
+		if (pendings.length === 0) { return false; }
+		const pendingSum = Math.round(pendings.reduce((s, t) => s + (Number(t['amount']) || 0), 0) * 100) / 100;
+		if (Math.abs(pendingSum - payAmount) > 0.01) { return false; }
+		let completed = 0;
+		for (const t of pendings) {
+			const res = await this.apiService.fetch(`/api/payments/transactions/${t['id']}`, {
+				method: 'PUT', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'completed', paymentMethodType: method }),
+			});
+			if (res.ok) { completed++; }
+		}
+		// Once any pending flipped to completed, never also POST a fresh
+		// transaction — that would double-charge the patient ledger.
+		return completed > 0;
 	}
 
 	private async _invoiceBillingRow(row: Record<string, unknown>, silent = false): Promise<void> {
