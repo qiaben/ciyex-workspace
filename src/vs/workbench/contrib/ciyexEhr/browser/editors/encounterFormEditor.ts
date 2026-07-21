@@ -100,6 +100,67 @@ export class EncounterFormEditor extends EditorPane {
 				this._renderForm();
 			}).catch(() => { /* keep current view */ });
 		}));
+		// History edited on the patient chart must reflect in an already-open
+		// encounter too (QA: "if we edit the patient history page it will
+		// reflect in the encounter page also") — the reverse direction of
+		// `_syncChartHistory`. Skip our own broadcasts (sourceId) and never
+		// clobber unsaved edits.
+		this._register(this.apiService.onDidMutateClinicalRecord(m => {
+			if (m.entity !== 'history' || !this.patientId) { return; }
+			if (String(m.patientId ?? m.record.patientId ?? '') !== this.patientId) { return; }
+			if (String(m.record.sourceId ?? '') === this._editorInstanceId) { return; }
+			if (this._isDirty || this._isSigned) { return; }
+			void this._applyChartHistoryToForm(m.record);
+		}));
+	}
+
+	/** Overwrite the form's pmh_/fh_/sh_ fields with the patient's latest chart
+	 *  History values, then re-render. Prefers the mutation broadcast's record —
+	 *  a refetch can race the FHIR search index / renderer cache — and falls
+	 *  back to a fresh lookup. Chart edits are the newest truth for the shared
+	 *  history fields; the refreshed values reach the Composition on the next
+	 *  save. */
+	private async _applyChartHistoryToForm(record?: Record<string, unknown>): Promise<void> {
+		try {
+			let hist: { id: string; fields: Record<string, unknown> } | null = null;
+			if (record && EncounterFormEditor.CHART_HISTORY_FIELD_MAP.some(([chartKey]) => record[chartKey] !== undefined)) {
+				const fields: Record<string, unknown> = {};
+				for (const [chartKey, formKey] of EncounterFormEditor.CHART_HISTORY_FIELD_MAP) {
+					if (record[chartKey] !== undefined) { fields[formKey] = record[chartKey]; }
+				}
+				hist = { id: String(record.id ?? record.fhirId ?? this._chartHistoryId ?? ''), fields };
+			} else {
+				hist = await this._findChartHistoryForDate('');
+			}
+			if (!hist) { return; }
+			this._chartHistoryId = hist.id;
+			// encounterData is the load-time snapshot — fold in the CURRENT form
+			// state first so re-rendering doesn't revert fields saved since load.
+			Object.assign(this.encounterData, this._collectFormData());
+			let changed = false;
+			for (const [k, v] of Object.entries(hist.fields)) {
+				const next = v === undefined || v === null ? '' : String(v);
+				if (String(this.encounterData[k] ?? '') !== next) {
+					this.encounterData[k] = next;
+					changed = true;
+				}
+			}
+			if (changed) {
+				this._renderForm();
+				// Persist directly. The pane is usually HIDDEN when this fires (the
+				// user is over on the chart), and a hidden pane has no input
+				// (clearInput) — so the ordinary dirty→auto-save path silently
+				// no-ops and the refreshed values would be lost on the next
+				// activation's reload.
+				const compPatientId = this._compositionPatientId || this.patientId;
+				if (this._compositionId && compPatientId && !this._isSigned) {
+					void this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${compPatientId}/${this._compositionId}`, {
+						method: 'PUT',
+						body: JSON.stringify(this._collectFormData()),
+					}).catch(() => { /* best-effort — prefill re-applies on next open */ });
+				}
+			}
+		} catch { /* keep current view */ }
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -188,7 +249,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections))));
+					this.formSections = EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections)))));
 					return;
 				}
 			}
@@ -202,7 +263,7 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections))));
+				this.formSections = EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections)))));
 				return;
 			}
 		} catch { /* fall through */ }
@@ -309,10 +370,55 @@ export class EncounterFormEditor extends EditorPane {
 			if (!target) { out.push({ ...def, fields: [...(def.fields || [])] }); continue; }
 			const haveKeys = new Set((target.fields || []).map(f => norm(f.key)));
 			const haveLabels = new Set((target.fields || []).map(f => norm(f.label)));
-			for (const df of def.fields || []) {
+			const defFields = def.fields || [];
+			for (let di = 0; di < defFields.length; di++) {
+				const df = defFields[di];
 				if (haveKeys.has(norm(df.key))) { continue; }
 				if (df.label && haveLabels.has(norm(df.label))) { continue; }
-				target.fields.push(df);
+				// Insert at the default spec's relative position — right after the
+				// nearest PRECEDING default field the backend section carries —
+				// instead of appending at the end. Appending put Family History's
+				// Offspring below Additional Notes because the backend config
+				// lacked fh_offspring (QA: Offspring must sit beside Siblings).
+				let insertAt = target.fields.length;
+				for (let pi = di - 1; pi >= 0; pi--) {
+					const prevKey = norm(defFields[pi].key);
+					const prevLabel = norm(defFields[pi].label);
+					const idx = target.fields.findIndex(f => norm(f.key) === prevKey || (!!prevLabel && norm(f.label) === prevLabel));
+					if (idx >= 0) { insertAt = idx + 1; break; }
+				}
+				target.fields.splice(insertAt, 0, df);
+				haveKeys.add(norm(df.key));
+				if (df.label) { haveLabels.add(norm(df.label)); }
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * The encounter form no longer has a standalone "Allergies & Medications"
+	 * section — the charted allergy/medication lists live inside Past Medical /
+	 * Surgical History (QA request). Drop any standalone section a backend or
+	 * legacy local config still ships, remove the old free-text
+	 * pmh_allergies / pmh_medications duplicates, and guarantee the pmh section
+	 * carries the chart-backed list fields.
+	 */
+	private static _foldAllergiesMedsIntoPmh(sections: FieldSection[]): FieldSection[] {
+		const isAllergiesMedsSection = (s: FieldSection): boolean =>
+			s.key === 'allergies_meds' || /allerg/i.test(s.title || '') && /medication/i.test(s.title || '');
+		const isPmhSection = (s: FieldSection): boolean =>
+			s.key === 'pmh' || /past\s*medical/i.test(s.title || '');
+		const dropKeys = new Set(['pmh_allergies', 'pmh_medications']);
+		const out = sections
+			.filter(s => !isAllergiesMedsSection(s))
+			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '') && (isPmhSection(s) || (f.type !== 'allergy-list' && f.type !== 'medication-list'))) }));
+		const pmh = out.find(isPmhSection);
+		if (pmh) {
+			if (!pmh.fields.some(f => f.type === 'allergy-list')) {
+				pmh.fields.push({ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' });
+			}
+			if (!pmh.fields.some(f => f.type === 'medication-list')) {
+				pmh.fields.push({ key: 'chart_medications', label: 'Medications', type: 'medication-list' });
 			}
 		}
 		return out;
@@ -374,21 +480,16 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
-				// Read-only reference: the patient's charted Allergies and Medications
-				// pulled from their chart so the provider sees them while documenting
-				// the encounter (QA issue 7). Not a form input — nothing here is saved
-				// back on the Encounter.
-				key: 'allergies_meds', title: 'Allergies & Medications', columns: 2, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' },
-					{ key: 'chart_medications', label: 'Medications', type: 'medication-list' },
-				]
-			},
-			{
+				// Allergies & Medications live INSIDE Past Medical / Surgical History
+				// (QA: the separate "Allergies & Medications" tab was removed). The
+				// chart_* fields render the patient's charted AllergyIntolerance /
+				// MedicationRequest stores plus an inline add form — entries write to
+				// the chart stores, not the encounter Composition.
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pmh_conditions', label: 'Medical History', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
-					{ key: 'pmh_allergies', label: 'Allergies', type: 'textarea', placeholder: 'List known allergies...' },
-					{ key: 'pmh_medications', label: 'Current Medications', type: 'textarea', placeholder: 'List current medications...' },
+					{ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' },
+					{ key: 'chart_medications', label: 'Medications', type: 'medication-list' },
 				]
 			},
 			{
@@ -558,6 +659,7 @@ export class EncounterFormEditor extends EditorPane {
 		['motherHistory', 'fh_mother'],
 		['siblingsHistory', 'fh_siblings'],
 		['offspringHistory', 'fh_offspring'],
+		['familyHistoryNotes', 'fh_notes'],
 		['smokingStatus', 'sh_smoking'],
 		['alcoholUse', 'sh_alcohol'],
 		['exerciseFrequency', 'sh_exercise'],
@@ -570,7 +672,9 @@ export class EncounterFormEditor extends EditorPane {
 	 *  values mapped onto the encounter form's pmh_/fh_/sh_ keys, or null when
 	 *  the patient has no history charted yet. */
 	private async _findChartHistoryForDate(dateRaw: string): Promise<{ id: string; fields: Record<string, unknown> } | null> {
-		const r = await this.apiService.fetch(`/api/fhir-resource/history/patient/${this.patientId}?page=0&size=50`);
+		// no-store: the renderer HTTP cache can serve a stale history list, which
+		// would make the chart→encounter reflection a silent no-op.
+		const r = await this.apiService.fetch(`/api/fhir-resource/history/patient/${this.patientId}?page=0&size=50`, { cache: 'no-store' });
 		if (!r.ok) { return null; }
 		const arr = ((await r.json())?.data?.content ?? []) as Array<Record<string, unknown>>;
 		if (!Array.isArray(arr) || arr.length === 0) { return null; }
@@ -648,7 +752,9 @@ export class EncounterFormEditor extends EditorPane {
 	 *  when one is found; returns {} when none exists. */
 	private async _fetchFormComposition(patientId: string): Promise<Record<string, unknown>> {
 		try {
-			const r = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${this.encounterId}`);
+			// no-store: the renderer HTTP cache can hand back a stale composition
+			// on re-activation, silently reverting data saved moments ago.
+			const r = await this.apiService.fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${this.encounterId}`, { cache: 'no-store' });
 			if (!r.ok) { return {}; }
 			const d = await r.json();
 			const dd = (d?.data ?? {}) as Record<string, unknown>;
@@ -1568,8 +1674,8 @@ export class EncounterFormEditor extends EditorPane {
 				if (f.type === 'diagnosis-list') { this._renderDiagnosisList(cell, f.key, readOnly); continue; }
 				if (f.type === 'plan-items') { this._renderPlanItems(cell, f.key, readOnly); continue; }
 				if (f.type === 'procedure-list') { this._renderProcedureList(cell, f.key, readOnly); continue; }
-				if (f.type === 'allergy-list') { void this._renderChartAllergyList(cell); continue; }
-				if (f.type === 'medication-list') { void this._renderChartMedicationList(cell); continue; }
+				if (f.type === 'allergy-list') { void this._renderChartAllergyList(cell, readOnly); continue; }
+				if (f.type === 'medication-list') { void this._renderChartMedicationList(cell, readOnly); continue; }
 
 				// Standard field label
 				const lbl = DOM.append(cell, DOM.$('label'));
@@ -1736,9 +1842,17 @@ export class EncounterFormEditor extends EditorPane {
 			const row = DOM.append(grid, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;background:rgba(128,128,128,0.05);';
 
+			// Saved encounters carry the grid state as the FLAT keys the DOM walk
+			// collects (`ros_{sys}` boolean + `ros_{sys}_note` text) — prefill from
+			// those first. The legacy `ros_data` object shape is kept as fallback.
+			// (QA issue: saved Review of Systems entries disappeared on reopen —
+			// the grid only ever read the object shape nothing wrote.)
+			const flatChecked = this.encounterData[`ros_${sysKey}`];
+			const flatNote = this.encounterData[`ros_${sysKey}_note`];
+
 			const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			cb.type = 'checkbox';
-			cb.checked = rosData[sysKey] === 'positive' || rosData[sysKey] === 'abnormal';
+			cb.checked = flatChecked === true || flatChecked === 'true' || rosData[sysKey] === 'positive' || rosData[sysKey] === 'abnormal';
 			cb.dataset.key = `ros_${sysKey}`;
 			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;flex-shrink:0;';
 			if (readOnly) { cb.disabled = true; }
@@ -1750,7 +1864,9 @@ export class EncounterFormEditor extends EditorPane {
 
 			const noteInput = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			noteInput.type = 'text';
-			noteInput.value = typeof rosData[sysKey] === 'string' && rosData[sysKey] !== 'positive' && rosData[sysKey] !== 'negative' && rosData[sysKey] !== 'abnormal' ? rosData[sysKey] : '';
+			noteInput.value = typeof flatNote === 'string' && flatNote.trim() !== ''
+				? flatNote
+				: (typeof rosData[sysKey] === 'string' && rosData[sysKey] !== 'positive' && rosData[sysKey] !== 'negative' && rosData[sysKey] !== 'abnormal' ? rosData[sysKey] : '');
 			noteInput.placeholder = 'Findings...';
 			noteInput.dataset.key = `ros_${sysKey}_note`;
 			noteInput.style.cssText = 'width:120px;padding:2px 6px;font-size:11px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);';
@@ -1761,7 +1877,12 @@ export class EncounterFormEditor extends EditorPane {
 			const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 			allNorm.textContent = 'Mark All Negative / Normal';
 			allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
-			allNorm.addEventListener('click', () => { for (const cb of checkboxes) { cb.checked = false; } });
+			// Programmatic checkbox writes fire no input/change event, so mark the
+			// form dirty explicitly or the bulk action never reaches a save.
+			allNorm.addEventListener('click', () => {
+				for (const cb of checkboxes) { cb.checked = false; }
+				this._onFormChange();
+			});
 		}
 	}
 
@@ -1776,9 +1897,17 @@ export class EncounterFormEditor extends EditorPane {
 			const row = DOM.append(parent, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(128,128,128,0.1);';
 
+			// Prefill from the FLAT keys the DOM walk saves (`pe_{sys}` text +
+			// `pe_{sys}_normal` boolean); the legacy `pe_data` object shape is the
+			// fallback (same disappear-on-reopen bug as the ROS grid).
+			const flatText = this.encounterData[`pe_${sysKey}`];
+			const flatNormal = this.encounterData[`pe_${sysKey}_normal`];
+			const savedText = typeof flatText === 'string' && flatText.trim() !== '' ? flatText : (peData[sysKey] || '');
+
 			const cb = DOM.append(row, DOM.$('input')) as HTMLInputElement;
 			cb.type = 'checkbox';
-			cb.checked = !peData[sysKey] || peData[sysKey] === normal;
+			cb.checked = flatNormal === true || flatNormal === 'true'
+				|| (flatNormal === undefined && (!savedText || savedText === normal));
 			cb.title = 'Normal';
 			cb.dataset.key = `pe_${sysKey}_normal`;
 			cb.style.cssText = 'width:16px;height:16px;cursor:pointer;margin-top:2px;flex-shrink:0;';
@@ -1790,7 +1919,7 @@ export class EncounterFormEditor extends EditorPane {
 			label.style.cssText = 'font-size:12px;font-weight:600;width:120px;flex-shrink:0;padding-top:2px;';
 
 			const ta = DOM.append(row, DOM.$('textarea')) as HTMLTextAreaElement;
-			ta.value = peData[sysKey] || normal;
+			ta.value = savedText || normal;
 			ta.dataset.key = `pe_${sysKey}`;
 			ta.style.cssText = 'flex:1;padding:4px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:3px;color:var(--vscode-input-foreground);resize:vertical;min-height:28px;';
 			if (readOnly) { ta.readOnly = true; ta.style.opacity = '0.7'; }
@@ -1803,11 +1932,15 @@ export class EncounterFormEditor extends EditorPane {
 			const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
 			allNorm.textContent = 'Set All Normal';
 			allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			// Mark the form dirty explicitly — programmatic value writes fire no
+			// input/change event, so "Set All Normal" never reached a save (QA:
+			// the button "is not working").
 			allNorm.addEventListener('click', () => {
 				for (const cb of peCheckboxes) { cb.checked = true; }
 				for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
 					if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
 				}
+				this._onFormChange();
 			});
 		}
 	}
@@ -1844,16 +1977,122 @@ export class EncounterFormEditor extends EditorPane {
 		pill.style.cssText = `font-size:10px;padding:2px 8px;border-radius:8px;background:${color}22;color:${color};font-weight:700;flex-shrink:0;`;
 	}
 
-	/** Read-only display of the patient's charted Allergies (allergen name +
-	 *  Active/Inactive status) in the encounter form — the same AllergyIntolerance
-	 *  store the chart's Allergies tab reads (QA issue 7). */
-	private async _renderChartAllergyList(parent: HTMLElement): Promise<void> {
+	/** One list row (name + Active/Inactive pill) for the PMH allergy/medication
+	 *  lists. Also used to OPTIMISTICALLY append a just-added record — the FHIR
+	 *  search index lags creates (and the renderer HTTP cache can hold a stale
+	 *  empty list), so an immediate refetch usually misses the new row. */
+	private static _chartListRow(parent: HTMLElement, text: string, status: unknown): void {
+		const none = [...parent.children].find(c => /^No (allergies|medications) recorded\.$/.test(c.textContent || ''));
+		none?.remove();
+		const row = DOM.append(parent, DOM.$('div'));
+		row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(128,128,128,0.12);';
+		const nameEl = DOM.append(row, DOM.$('span'));
+		nameEl.textContent = text;
+		nameEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);flex:1;';
+		EncounterFormEditor._statusPill(row, EncounterFormEditor._activeInactive(status));
+	}
+
+	/** Sub-heading + list host + inline add-form scaffold shared by the
+	 *  chart-backed Allergies / Medications blocks inside Past Medical History. */
+	private _chartListScaffold(parent: HTMLElement, label: string): { listHost: HTMLElement; formHost: HTMLElement } {
+		const head = DOM.append(parent, DOM.$('div'));
+		head.textContent = label;
+		head.style.cssText = 'font-size:11px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.3px;margin:10px 0 4px;';
+		const listHost = DOM.append(parent, DOM.$('div'));
+		const formHost = DOM.append(parent, DOM.$('div'));
+		// The inline add-form's inputs are NOT part of the encounter Composition:
+		// they carry no data-key (so `_collectFormData` skips them) and their
+		// input/change events must not bubble into the auto-save listener.
+		formHost.addEventListener('input', e => e.stopPropagation());
+		formHost.addEventListener('change', e => e.stopPropagation());
+		return { listHost, formHost };
+	}
+
+	private static readonly _MINI_INPUT_STYLE = 'padding:5px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);outline:none;box-sizing:border-box;';
+
+	/** The patient's charted Allergies (allergen name + Active/Inactive status)
+	 *  inside the encounter form's Past Medical / Surgical History section — the
+	 *  same AllergyIntolerance store the chart's Allergies tab reads, plus an
+	 *  inline add form carrying the chart form's required (*) and clinically
+	 *  related fields (QA: the standalone Allergies & Medications tab was
+	 *  folded into Past Medical History). */
+	private async _renderChartAllergyList(parent: HTMLElement, readOnly?: boolean): Promise<void> {
+		const { listHost, formHost } = this._chartListScaffold(parent, 'Allergies');
+		await this._loadChartAllergyRows(listHost);
+		if (readOnly) { return; }
+
+		const form = DOM.append(formHost, DOM.$('div'));
+		form.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;';
+		const mk = (ph: string, flex: string): HTMLInputElement => {
+			const inp = DOM.append(form, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'text';
+			inp.placeholder = ph;
+			inp.style.cssText = EncounterFormEditor._MINI_INPUT_STYLE + `flex:${flex};min-width:110px;`;
+			return inp;
+		};
+		const nameInp = mk('Allergy *', '2');
+		const reactionInp = mk('Reaction', '2');
+		const statusWrap = DOM.append(form, DOM.$('div'));
+		statusWrap.style.cssText = 'width:110px;';
+		const statusSel = createCustomDropdown({
+			parent: statusWrap,
+			options: [{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Resolved', value: 'resolved' }],
+			initialValue: 'active',
+			placeholder: 'Status *',
+			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
+		});
+		const sevWrap = DOM.append(form, DOM.$('div'));
+		sevWrap.style.cssText = 'width:110px;';
+		const sevSel = createCustomDropdown({
+			parent: sevWrap,
+			options: [{ label: 'Mild', value: 'mild' }, { label: 'Moderate', value: 'moderate' }, { label: 'Severe', value: 'severe' }],
+			initialValue: '',
+			placeholder: 'Severity…',
+			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
+		});
+		const addBtn = DOM.append(form, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add';
+		addBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;';
+		const err = DOM.append(formHost, DOM.$('div'));
+		err.style.cssText = 'font-size:11px;color:#EF5350;margin-top:3px;display:none;';
+
+		addBtn.addEventListener('click', async () => {
+			const name = nameInp.value.trim();
+			// Same letters-only rule the chart's Allergy add form enforces.
+			if (!name || !/^[A-Za-z][A-Za-z ]*$/.test(name)) {
+				err.textContent = !name ? 'Allergy name is required.' : 'Allergy may contain only letters and spaces.';
+				err.style.display = 'block';
+				return;
+			}
+			err.style.display = 'none';
+			addBtn.disabled = true;
+			try {
+				const body: Record<string, unknown> = { allergyName: name, status: statusSel.value, patientId: this.patientId };
+				if (sevSel.value) { body.severity = sevSel.value; }
+				if (reactionInp.value.trim()) { body.reaction = reactionInp.value.trim(); }
+				const res = await this.apiService.fetch(`/api/fhir-resource/allergies/patient/${this.patientId}`, { method: 'POST', body: JSON.stringify(body) });
+				if (!res.ok) { throw new Error(String(res.status)); }
+				nameInp.value = ''; reactionInp.value = '';
+				this.apiService.notifyClinicalRecordMutation({ entity: 'allergies', patientId: this.patientId, kind: 'create', record: { patientId: this.patientId, sourceId: this._editorInstanceId } });
+				EncounterFormEditor._chartListRow(listHost, name, body.status);
+			} catch {
+				err.textContent = 'Could not save the allergy. Please try again.';
+				err.style.display = 'block';
+			} finally {
+				addBtn.disabled = false;
+			}
+		});
+	}
+
+	private async _loadChartAllergyRows(parent: HTMLElement): Promise<void> {
 		const loading = DOM.append(parent, DOM.$('div'));
 		loading.textContent = 'Loading allergies…';
 		loading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		let rows: Array<Record<string, unknown>> = [];
 		try {
-			const r = await this.apiService.fetch(`/api/fhir-resource/allergies/patient/${this.patientId}?page=0&size=100`);
+			// no-store: the renderer HTTP cache can pin a stale empty list and hide
+			// rows added moments ago.
+			const r = await this.apiService.fetch(`/api/fhir-resource/allergies/patient/${this.patientId}?page=0&size=100`, { cache: 'no-store' });
 			if (r.ok) {
 				const j = await r.json().catch(() => null);
 				rows = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;
@@ -1878,16 +2117,79 @@ export class EncounterFormEditor extends EditorPane {
 		}
 	}
 
-	/** Read-only display of the patient's charted Medications (name + dosage +
-	 *  Active/Inactive status) in the encounter form — the same MedicationRequest
-	 *  store the chart's Medications tab reads (QA issue 7). */
-	private async _renderChartMedicationList(parent: HTMLElement): Promise<void> {
+	/** The patient's charted Medications (name + dosage + Active/Inactive
+	 *  status) inside Past Medical / Surgical History — the same
+	 *  MedicationRequest store the chart's Medications tab reads, plus an inline
+	 *  add form with the chart form's required (*) fields. */
+	private async _renderChartMedicationList(parent: HTMLElement, readOnly?: boolean): Promise<void> {
+		const { listHost, formHost } = this._chartListScaffold(parent, 'Medications');
+		await this._loadChartMedicationRows(listHost);
+		if (readOnly) { return; }
+
+		const form = DOM.append(formHost, DOM.$('div'));
+		form.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;';
+		const mk = (ph: string, flex: string): HTMLInputElement => {
+			const inp = DOM.append(form, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'text';
+			inp.placeholder = ph;
+			inp.style.cssText = EncounterFormEditor._MINI_INPUT_STYLE + `flex:${flex};min-width:110px;`;
+			return inp;
+		};
+		const nameInp = mk('Medication *', '2');
+		const doseInp = mk('Dosage *', '1');
+		const statusWrap = DOM.append(form, DOM.$('div'));
+		statusWrap.style.cssText = 'width:110px;';
+		const statusSel = createCustomDropdown({
+			parent: statusWrap,
+			options: [{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' }, { label: 'Stopped', value: 'stopped' }],
+			initialValue: 'active',
+			placeholder: 'Status',
+			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
+		});
+		const addBtn = DOM.append(form, DOM.$('button')) as HTMLButtonElement;
+		addBtn.textContent = '+ Add';
+		addBtn.style.cssText = 'padding:5px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;';
+		const err = DOM.append(formHost, DOM.$('div'));
+		err.style.cssText = 'font-size:11px;color:#EF5350;margin-top:3px;display:none;';
+
+		addBtn.addEventListener('click', async () => {
+			const name = nameInp.value.trim();
+			const dose = doseInp.value.trim();
+			if (!name || !/^[A-Za-z][A-Za-z ]*$/.test(name)) {
+				err.textContent = !name ? 'Medication name is required.' : 'Medication may contain only letters and spaces.';
+				err.style.display = 'block';
+				return;
+			}
+			if (!dose) {
+				err.textContent = 'Dosage is required.';
+				err.style.display = 'block';
+				return;
+			}
+			err.style.display = 'none';
+			addBtn.disabled = true;
+			try {
+				const body: Record<string, unknown> = { medicationName: name, dosage: dose, status: statusSel.value, patientId: this.patientId };
+				const res = await this.apiService.fetch(`/api/fhir-resource/medications/patient/${this.patientId}`, { method: 'POST', body: JSON.stringify(body) });
+				if (!res.ok) { throw new Error(String(res.status)); }
+				this.apiService.notifyClinicalRecordMutation({ entity: 'medications', patientId: this.patientId, kind: 'create', record: { patientId: this.patientId, sourceId: this._editorInstanceId } });
+				EncounterFormEditor._chartListRow(listHost, dose ? `${name} — ${dose}` : name, body.status);
+				nameInp.value = ''; doseInp.value = '';
+			} catch {
+				err.textContent = 'Could not save the medication. Please try again.';
+				err.style.display = 'block';
+			} finally {
+				addBtn.disabled = false;
+			}
+		});
+	}
+
+	private async _loadChartMedicationRows(parent: HTMLElement): Promise<void> {
 		const loading = DOM.append(parent, DOM.$('div'));
 		loading.textContent = 'Loading medications…';
 		loading.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);';
 		let rows: Array<Record<string, unknown>> = [];
 		try {
-			const r = await this.apiService.fetch(`/api/fhir-resource/medications/patient/${this.patientId}?page=0&size=100`);
+			const r = await this.apiService.fetch(`/api/fhir-resource/medications/patient/${this.patientId}?page=0&size=100`, { cache: 'no-store' });
 			if (r.ok) {
 				const j = await r.json().catch(() => null);
 				rows = (j?.data?.content ?? j?.data ?? j ?? []) as Array<Record<string, unknown>>;

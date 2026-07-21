@@ -1636,6 +1636,15 @@ export class CiyexAuthGate extends Disposable {
 			return;
 		}
 
+		// Remember the account as soon as it's confirmed to exist so the email
+		// pre-fills on the next launch even when the user never accepts the
+		// save-password popup (QA: "we want the username also to save because
+		// every time we want to type it"). Accounts opted out via "Never" are
+		// still excluded.
+		if (!this._neverSaveList().includes(this._email.trim().toLowerCase())) {
+			try { localStorage.setItem(CiyexAuthGate._LAST_EMAIL_KEY, this._email.trim()); } catch { /* storage unavailable */ }
+		}
+
 		this._discoverResult = result;
 		this._step = 'authenticate';
 		this._render();

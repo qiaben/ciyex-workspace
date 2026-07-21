@@ -4648,15 +4648,18 @@ export class SettingsHubEditor extends EditorPane {
 		// reloads the list fresh so a just-saved record shows up.
 		const goBack = (): void => { this._renderContent(); };
 
+		// Header matches the Providers / Facilities add-new pages: title on the
+		// left, a bordered "\u2190 Back to list" button on the right (QA: the Codes
+		// back link didn't fit the settings page styling).
 		const head = DOM.append(root, DOM.$('div'));
-		head.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:20px;';
-		const backBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
-		backBtn.textContent = '\u2190 Back to Codes';
-		backBtn.style.cssText = 'align-self:flex-start;background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:12px;padding:0;';
-		backBtn.addEventListener('click', goBack);
+		head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:20px;';
 		const ht = DOM.append(head, DOM.$('h1'));
 		ht.textContent = mode === 'create' ? 'Create Code' : mode === 'edit' ? 'Edit Code' : 'View Code';
 		ht.style.cssText = 'margin:0;font-size:22px;font-weight:600;';
+		const backBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
+		backBtn.textContent = '\u2190 Back to list';
+		backBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-foreground);cursor:pointer;font-size:12px;';
+		backBtn.addEventListener('click', goBack);
 
 		const grid = DOM.append(root, DOM.$('div'));
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;align-content:start;';

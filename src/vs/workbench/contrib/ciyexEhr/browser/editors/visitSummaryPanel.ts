@@ -1261,6 +1261,25 @@ function renderEncounterFormSections(deps: IVisitSummaryDeps, body: HTMLElement,
 				const v = fmtValue(k, comp[k]);
 				if (v) { rows.push([humanizeFieldKey(k, grp.prefix), v]); usedKeys.add(k); }
 			}
+		} else if (grp.prefix === 'ros') {
+			// Review of Systems: the Composition stores one checkbox key per system
+			// (`ros_ent`) plus a findings note (`ros_ent_note`). Pair them into one
+			// row per system — flagged systems and/or noted findings only — instead
+			// of dumping raw keys (QA: entered ROS details must show in the visit
+			// summary / PDF).
+			const bases = keys.filter(k => k !== 'ros_data' && !/_note$/.test(k));
+			for (const k of keys) { usedKeys.add(k); }
+			for (const base of bases) {
+				const note = String(comp[`${base}_note`] ?? '').trim();
+				const flagged = comp[base] === true || comp[base] === 'true' || comp[base] === 'positive' || comp[base] === 'abnormal';
+				if (!flagged && !note) { continue; }
+				let label = humanizeFieldKey(base, grp.prefix);
+				label = label.replace(/\bEnt\b/g, 'ENT').replace(/\bGi\b/g, 'GI').replace(/\bGu\b/g, 'GU');
+				rows.push([label, note ? (flagged ? `Positive — ${note}` : note) : 'Positive']);
+			}
+			if (!rows.length && bases.length > 0) {
+				rows.push(['All Systems', 'Negative / Normal']);
+			}
 		} else {
 			for (const k of keys) {
 				// Physical Exam: skip the per-system "Normal" checkbox scaffolding and

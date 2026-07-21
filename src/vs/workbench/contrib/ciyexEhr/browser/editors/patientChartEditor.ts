@@ -329,21 +329,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
-			{
-				key: 'visit-notes', label: 'Visit Notes', icon: 'FileEdit', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'],
-				columns: [
-					// Aliases so the table populates regardless of the exact field
-					// names the DocumentReference list returns (QA issue 12: Visit
-					// Notes table rendered blank rows).
-					{ key: 'type', label: 'Note Type', aliases: ['type', 'noteType', 'documentType', 'category', 'typeDisplay', 'noteTypeDisplay', 'docType'] },
-					{ key: 'date', label: 'Visit Date', aliases: ['date', 'visitDate', 'authoredOn', 'created', 'createdAt', 'effectiveDate', 'recordedDate', '_lastUpdated'] },
-					{ key: 'authorName', label: 'Author', aliases: ['authorName', 'author', 'authorDisplay', 'practitionerName', 'providerName', 'performerDisplay'] },
-					{ key: 'subject', label: 'Subject', aliases: ['subject', 'title', 'description', 'subjectTitle'] },
-					{ key: 'status', label: 'Status', aliases: ['status', 'docStatus'] },
-				],
-			},
-			// Referrals visible per the 02.05.26 *workspace* test report
-			// (Encounters sub-pages must include Referrals after Visit Notes).
+			// Visit Notes tab removed from the patient chart (QA 21-Jul: "in
+			// patient list remove the visit notes page").
+			// Referrals visible per the 02.05.26 *workspace* test report.
 			// Referrals read & write the CLINICAL store (/api/referrals) — the SAME
 			// endpoint the clinical Referrals page uses — so a record created on
 			// either surface shows up on the other (QA issue 6). Plain apiPath
@@ -708,6 +696,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'motherHistory', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
 					{ key: 'siblingsHistory', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
 					{ key: 'offspringHistory', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
+					// Mirrors the encounter form's Family History "Additional Notes"
+					// (fh_notes) so both surfaces carry the same field (QA 21-Jul).
+					// Requires the matching backend history tab_field_config mapping
+					// (linkId family-additional-notes) or the generic FHIR save drops it.
+					{ key: 'familyHistoryNotes', label: 'Additional Notes', type: 'textarea', colSpan: 2, placeholder: 'Other relevant family history...' },
 				],
 			},
 			{
@@ -2153,6 +2146,9 @@ export class PatientChartEditor extends EditorPane {
 	// start of every dashboard render so re-rendering the tab doesn't leak the
 	// previous render's pagers.
 	private readonly _dashboardDisposables = this._register(new DisposableStore());
+	// Pager for the main-panel list tabs (currently Appointments) — cleared on
+	// every list render so stale controls don't pile up.
+	private readonly _listPagerDisposables = this._register(new DisposableStore());
 
 	constructor(
 		group: IEditorGroup,
@@ -2304,7 +2300,9 @@ export class PatientChartEditor extends EditorPane {
 				let tabs = cat.tabs.filter(t => t.visible !== false).sort((a, b) => a.position - b.position);
 				// Hide the Messaging section from the patient chart for every
 				// practice, regardless of any persisted/backend layout (issue 11).
-				tabs = tabs.filter(t => t.key !== 'messaging');
+				// Visit Notes likewise removed chart-wide (QA 21-Jul) — filtered
+				// here so a persisted chart-layout.json can't re-add it.
+				tabs = tabs.filter(t => t.key !== 'messaging' && t.key !== 'visit-notes');
 				if (cat.key === 'clinical') {
 					const byKey = new Map<string, ChartTab>();
 					for (const t of tabs) { byKey.set(t.key, t); }
@@ -4581,13 +4579,13 @@ export class PatientChartEditor extends EditorPane {
 			if (!tab.readOnly && tab.key !== 'encounters') {
 				const addBtn = DOM.append(actionSlot, DOM.$('button'));
 				// History is a SINGLE evolving record (Past / Family / Social) shared
-				// with the encounter form's history section. Editing the latest record
-				// — instead of creating a fresh one every time — prefills the form with
-				// what's already charted and upserts in place, so the patient list and
-				// the encounter page always show the same details (QA issue 5). When no
-				// history exists yet, fall back to the normal create flow.
+				// with the encounter form's history section. The tab has NO "+ Add"
+				// flow at all (QA 21-Jul: "remove the add new page, only keep the
+				// edit history page") — the button always reads "Edit History"; when
+				// the patient has no record yet the same edit dialog creates the
+				// first (and only) one.
 				const historyLatest = tab.key === 'history' ? this._latestHistoryRecord(data) : null;
-				addBtn.textContent = historyLatest ? 'Edit History' : '+ Add';
+				addBtn.textContent = tab.key === 'history' ? 'Edit History' : '+ Add';
 				addBtn.style.cssText = 'padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:500;border:none;background:var(--vscode-button-background);color:var(--vscode-button-foreground);';
 				addBtn.addEventListener('click', () => historyLatest
 					? this._openRecordDialog(tab, config, historyLatest)
@@ -5762,6 +5760,7 @@ export class PatientChartEditor extends EditorPane {
 			tile(famBody, 'Mother', val(rec, ['motherHistory', 'mother']));
 			tile(famBody, 'Siblings', val(rec, ['siblingsHistory', 'siblings']));
 			tile(famBody, 'Offspring', val(rec, ['offspringHistory', 'offspring']));
+			tile(famBody, 'Additional Notes', val(rec, ['familyHistoryNotes', 'familyNotes']));
 
 			const socBody = section('Social History', '\u{1F3E0}');
 			tile(socBody, 'Smoking Status', val(rec, ['smokingStatus', 'smoking']));
@@ -5832,6 +5831,12 @@ export class PatientChartEditor extends EditorPane {
 			return typeof s === 'string' ? s.toLowerCase() : '';
 		};
 
+		// Client-side pagination for the Appointments tab (QA 21-Jul: "in patient
+		// list the appointment page add the pagination to it"). Other list tabs
+		// keep the plain full-list rendering.
+		this._listPagerDisposables.clear();
+		let pager: PaginationControl | undefined;
+
 		const applyFilters = () => {
 			const q = searchInput.value.trim();
 			const st = statusSel ? statusSel.value : '';
@@ -5839,8 +5844,14 @@ export class PatientChartEditor extends EditorPane {
 			DOM.clearNode(tableWrap);
 			countBadge.textContent = `${filtered.length} record${filtered.length === 1 ? '' : 's'}`;
 			if (filtered.length > 0) {
-				this._listAuto(tableWrap, tab, filtered, config);
+				let visible = filtered;
+				if (pager) {
+					pager.setTotal(filtered.length);
+					visible = pager.slice(filtered);
+				}
+				this._listAuto(tableWrap, tab, visible, config);
 			} else {
+				pager?.setTotal(0);
 				const empty = DOM.append(tableWrap, DOM.$('div'));
 				empty.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
 				const msg = DOM.append(empty, DOM.$('div'));
@@ -5866,6 +5877,15 @@ export class PatientChartEditor extends EditorPane {
 			searchTimer = setTimeout(applyFilters, 150);
 		});
 		statusSel?.addEventListener('change', applyFilters);
+		if (tab.key === 'appointments') {
+			pager = this._listPagerDisposables.add(new PaginationControl({
+				pageSize: 10,
+				pageSizeOptions: [10, 25, 50],
+				itemLabel: 'appointments',
+				onChange: () => applyFilters(),
+			}));
+			container.appendChild(pager.element);
+		}
 		applyFilters();
 	}
 
@@ -6880,7 +6900,14 @@ export class PatientChartEditor extends EditorPane {
 						}
 					} catch { /* response not JSON — skip optimistic merge */ }
 
-					const merged: Record<string, unknown> = { ...payload, ...(savedRecord || {}) };
+					// Payload wins over the response echo: the backend's PUT response can
+					// map the resource from a pre-update read, so response values for
+					// fields the user just edited may be STALE — which made the optimistic
+					// row (and the encounter editor's history-sync listener) show old
+					// values. The response still contributes server-only fields (id,
+					// fhirId, timestamps) that the payload never carries; the 1.5s
+					// reconciliation refetch picks up any server-side normalisation.
+					const merged: Record<string, unknown> = { ...(savedRecord || {}), ...payload };
 					if (isEdit && recordId) {
 						const cached = this._tabDataCache.get(tab.key);
 						if (cached) {
