@@ -67,6 +67,28 @@ const COLORS = {
 };
 
 /**
+ * Close callbacks for every dropdown panel that is CURRENTLY open. Every panel
+ * is `position:fixed` and mounted on `document.body`, so it escapes its host
+ * editor's DOM. When the workbench swaps the active editor (e.g. navigating Lab
+ * Orders → Settings) the previous editor is only hidden, not removed — the
+ * per-dropdown MutationObserver never fires, so an open panel keeps painting
+ * over the new page. {@link closeAllOpenDropdowns} lets the navigation path
+ * dismiss any that are still open. A panel adds its closer on open and removes
+ * it on close/cleanup, so this set only ever holds live, open panels.
+ */
+const openDropdownClosers = new Set<() => void>();
+
+/**
+ * Dismiss every currently-open body-mounted dropdown popover. Called on editor
+ * navigation so a dropdown left open on one page can't linger over the next.
+ */
+export function closeAllOpenDropdowns(): void {
+	for (const close of Array.from(openDropdownClosers)) {
+		try { close(); } catch { /* a failed close must not block the others */ }
+	}
+}
+
+/**
  * Replacement for `<select>` that returns an HTMLInputElement so existing
  * form code (which stores controls in a Map<…, HTMLInputElement | …> and
  * reads `.value`) keeps working without changes.
@@ -298,11 +320,13 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 		panel.style.display = 'block';
 		trigger.setAttribute('aria-expanded', 'true');
 		panelOpen = true;
+		openDropdownClosers.add(closePanel);
 	};
 	const closePanel = () => {
 		panel.style.display = 'none';
 		trigger.setAttribute('aria-expanded', 'false');
 		panelOpen = false;
+		openDropdownClosers.delete(closePanel);
 	};
 	trigger.addEventListener('click', (e) => {
 		e.preventDefault();
@@ -328,6 +352,7 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 	// dialog has been closed). MutationObserver on the trigger's parent
 	// catches this without requiring callers to wire explicit lifecycle.
 	const cleanup = () => {
+		openDropdownClosers.delete(closePanel);
 		doc.removeEventListener('mousedown', onDocClick, true);
 		win?.removeEventListener('scroll', reposition, true);
 		win?.removeEventListener('resize', reposition);
@@ -596,11 +621,13 @@ export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputE
 		panel.style.display = 'block';
 		trigger.setAttribute('aria-expanded', 'true');
 		panelOpen = true;
+		openDropdownClosers.add(closePanel);
 	};
 	const closePanel = () => {
 		panel.style.display = 'none';
 		trigger.setAttribute('aria-expanded', 'false');
 		panelOpen = false;
+		openDropdownClosers.delete(closePanel);
 	};
 	trigger.addEventListener('click', (e) => {
 		e.preventDefault();
@@ -623,6 +650,7 @@ export function createTimeDropdown(opts: ICreateTimeDropdownOptions): HTMLInputE
 	win?.addEventListener('resize', reposition);
 
 	const cleanup = () => {
+		openDropdownClosers.delete(closePanel);
 		doc.removeEventListener('mousedown', onDocClick, true);
 		win?.removeEventListener('scroll', reposition, true);
 		win?.removeEventListener('resize', reposition);

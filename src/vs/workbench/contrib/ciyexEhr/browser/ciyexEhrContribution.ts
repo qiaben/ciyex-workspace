@@ -34,6 +34,7 @@ import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { INotificationsModel, NotificationChangeType } from '../../../common/notifications.js';
 import { recordNotification } from './notificationHistoryLog.js';
+import { closeAllOpenDropdowns } from './customDropdown.js';
 
 /**
  * Main EHR workbench contribution.
@@ -334,6 +335,13 @@ export class CiyexEhrContribution extends Disposable implements IWorkbenchContri
 			}
 		};
 		this._register(this.editorService.onDidActiveEditorChange(closeStrayFocusedCharts));
+
+		// Dismiss any open custom dropdown popover when the active editor changes.
+		// The popovers are position:fixed and mounted on document.body, so a
+		// dropdown left open on one page (e.g. Lab Orders) would otherwise linger
+		// painted over the next page (e.g. Settings) — the workbench only hides the
+		// previous editor's DOM, so the per-dropdown detach observer never fires.
+		this._register(this.editorService.onDidActiveEditorChange(() => closeAllOpenDropdowns()));
 	}
 
 	private _authenticated = false;

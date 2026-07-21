@@ -530,8 +530,8 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'genderIdentity', label: 'Gender Identity', type: 'text' },
 					{ key: 'pronouns', label: 'Pronouns', type: 'text' },
 					{ key: 'sexualOrientation', label: 'Sexual Orientation', type: 'text' },
-					{ key: 'mrn', label: 'Medical Record Number', type: 'text' },
-					{ key: 'ssn', label: 'SSN', type: 'text' },
+					{ key: 'mrn', label: 'Medical Record Number', type: 'text', validationPattern: '^[A-Za-z0-9-]+$', validationMessage: 'Medical Record Number may contain only letters, numbers and hyphens' },
+					{ key: 'ssn', label: 'SSN', type: 'text', validationPattern: '^\\d{3}-?\\d{2}-?\\d{4}$', validationMessage: 'SSN must be 9 digits (e.g. 123-45-6789)' },
 					{ key: 'maritalStatus', label: 'Marital Status', type: 'select', options: [{ label: 'Single', value: 'Single' }, { label: 'Married', value: 'Married' }, { label: 'Divorced', value: 'Divorced' }, { label: 'Widowed', value: 'Widowed' }, { label: 'Separated', value: 'Separated' }] },
 					{ key: 'race', label: 'Race', type: 'text' },
 					{ key: 'ethnicity', label: 'Ethnicity', type: 'text' },
@@ -1520,7 +1520,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'subject', label: 'Subject / Title', type: 'text', colSpan: 2, placeholder: 'Brief subject line' },
-					{ key: 'content', label: 'Note Content', type: 'textarea', colSpan: 2, placeholder: 'Enter the visit note...' },
+					{ key: 'content', label: 'Note Content', type: 'textarea', required: true, colSpan: 2, placeholder: 'Enter the visit note...' },
 				],
 			},
 		],
@@ -1827,7 +1827,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'cptCode', label: 'CPT Code', type: 'code-search', placeholder: 'Search CPT codes', lookupConfig: { system: 'CPT' } },
 					{ key: 'icdCode', label: 'Diagnosis (ICD-10)', type: 'code-search', placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
 					{ key: 'totalAmount', label: 'Charge Amount', type: 'number', required: true, placeholder: '0.00' },
-					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', placeholder: 'Search Provider' },
+					{ key: 'providerId', label: 'Provider', type: 'practitioner-search', required: true, placeholder: 'Search Provider' },
 					{
 						key: 'status', label: 'Status', type: 'select', options: [
 							{ label: 'Active', value: 'active' },
@@ -1945,7 +1945,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{
-						key: 'type', label: 'Claim Type', type: 'select', options: [
+						key: 'type', label: 'Claim Type', type: 'select', required: true, options: [
 							{ label: 'Professional', value: 'professional' },
 							{ label: 'Institutional', value: 'institutional' },
 							{ label: 'Oral', value: 'oral' },
@@ -2046,7 +2046,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// this file uses this endpoint. The old /api/organizations target
 					// returned no payers, so the "Search Payer" typeahead listed nothing.
 					{ key: 'insurer', label: 'Insurer / Payer', type: 'lookup', placeholder: 'Search Payer', lookupConfig: { endpoint: '/api/fhir-resource/insurance-companies', displayField: 'name', valueField: 'id', searchable: true } },
-					{ key: 'billingProvider', label: 'Billing Provider', type: 'practitioner-search', placeholder: 'Search Billing Provider' },
+					{ key: 'billingProvider', label: 'Billing Provider', type: 'practitioner-search', required: true, placeholder: 'Search Billing Provider' },
 					// Service period (FHIR Claim.billablePeriod.start/.end) — matches
 					// the ciyex-ehr-ui submission "Service From / Service To" fields.
 					{ key: 'billablePeriodStart', label: 'Service From', type: 'date' },
@@ -6072,6 +6072,20 @@ export class PatientChartEditor extends EditorPane {
 			this.notificationService.warn(`Invalid: ${invalid.map(p => p.label).join(', ')}`);
 			return false;
 		}
+		// Date of Death can never precede Date of Birth. Both registered inputs hold
+		// the hidden ISO yyyy-mm-dd value, which sorts lexicographically, so a plain
+		// string compare is correct. Surface a specific field-level error instead of
+		// letting the backend reject the update with a generic "Failed to update
+		// patient" (QA issue 7).
+		const dobIso = this._formInputs.get('dateOfBirth')?.value.trim() || '';
+		const dodIso = this._formInputs.get('dateOfDeath')?.value.trim() || '';
+		if (dobIso && dodIso && dodIso < dobIso) {
+			const dodEl = this._dateVisibleByKey.get('dateOfDeath') || this._formInputs.get('dateOfDeath');
+			this._showFieldErrors(this._formCells, [{ key: 'dateOfDeath', label: 'Date of Death', el: dodEl as HTMLElement, msg: 'Date of Death cannot be before Date of Birth' }]);
+			if (dodEl && typeof (dodEl as HTMLElement).focus === 'function') { (dodEl as HTMLElement).focus(); }
+			this.notificationService.warn('Date of Death cannot be before Date of Birth');
+			return false;
+		}
 		const payload: Record<string, unknown> = {};
 		for (const [key, el] of this._formInputs) {
 			if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
@@ -6139,11 +6153,16 @@ export class PatientChartEditor extends EditorPane {
 				}
 				this._renderMain();
 			} else {
-				const err = await res.text().catch(() => 'Unknown error');
-				this.notificationService.error(`Save failed: ${err.substring(0, 200)}`);
+				// Surface a readable reason instead of the raw backend dump. The
+				// Demographics PUT previously showed a bare "Failed to update patient"
+				// (or a wall of SQL/FHIR text) with no guidance (QA issue 7);
+				// friendlyBackendError parses the {message|error} out of the body and
+				// maps common backend phrasings to actionable text.
+				const err = await res.text().catch(() => '');
+				this.notificationService.error(friendlyBackendError(err, `Could not save ${tab.label}. Please review the highlighted fields and try again.`));
 			}
 		} catch (e) {
-			this.notificationService.error(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+			this.notificationService.error(friendlyBackendError(e instanceof Error ? e.message : String(e), `Could not save ${tab.label}. Please check your connection and try again.`));
 		} finally {
 			btn.disabled = false;
 			btn.textContent = prev;
