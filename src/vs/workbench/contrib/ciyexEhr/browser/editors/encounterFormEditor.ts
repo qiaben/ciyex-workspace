@@ -396,32 +396,21 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	/**
-	 * The encounter form no longer has a standalone "Allergies & Medications"
-	 * section — the charted allergy/medication lists live inside Past Medical /
-	 * Surgical History (QA request). Drop any standalone section a backend or
-	 * legacy local config still ships, remove the old free-text
-	 * pmh_allergies / pmh_medications duplicates, and guarantee the pmh section
-	 * carries the chart-backed list fields.
+	 * The encounter form carries NO allergy / medication blocks at all — the
+	 * chart's Allergies and Medications tabs are the single source for those
+	 * records (QA 22-Jul: they read as duplicate sections on the encounter
+	 * page). Drop any standalone "Allergies & Medications" section a backend
+	 * or legacy local config still ships, the old free-text pmh_allergies /
+	 * pmh_medications fields, and any chart-backed allergy-list /
+	 * medication-list fields earlier builds folded into Past Medical History.
 	 */
 	private static _foldAllergiesMedsIntoPmh(sections: FieldSection[]): FieldSection[] {
 		const isAllergiesMedsSection = (s: FieldSection): boolean =>
 			s.key === 'allergies_meds' || /allerg/i.test(s.title || '') && /medication/i.test(s.title || '');
-		const isPmhSection = (s: FieldSection): boolean =>
-			s.key === 'pmh' || /past\s*medical/i.test(s.title || '');
-		const dropKeys = new Set(['pmh_allergies', 'pmh_medications']);
-		const out = sections
+		const dropKeys = new Set(['pmh_allergies', 'pmh_medications', 'chart_allergies', 'chart_medications']);
+		return sections
 			.filter(s => !isAllergiesMedsSection(s))
-			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '') && (isPmhSection(s) || (f.type !== 'allergy-list' && f.type !== 'medication-list'))) }));
-		const pmh = out.find(isPmhSection);
-		if (pmh) {
-			if (!pmh.fields.some(f => f.type === 'allergy-list')) {
-				pmh.fields.push({ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' });
-			}
-			if (!pmh.fields.some(f => f.type === 'medication-list')) {
-				pmh.fields.push({ key: 'chart_medications', label: 'Medications', type: 'medication-list' });
-			}
-		}
-		return out;
+			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '') && f.type !== 'allergy-list' && f.type !== 'medication-list') }));
 	}
 
 	private static _defaultSections(): FieldSection[] {
@@ -480,16 +469,12 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
-				// Allergies & Medications live INSIDE Past Medical / Surgical History
-				// (QA: the separate "Allergies & Medications" tab was removed). The
-				// chart_* fields render the patient's charted AllergyIntolerance /
-				// MedicationRequest stores plus an inline add form — entries write to
-				// the chart stores, not the encounter Composition.
+				// No allergy / medication fields here — the chart's Allergies and
+				// Medications tabs are the single source for those records
+				// (QA 22-Jul: they read as duplicates on the encounter page).
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pmh_conditions', label: 'Medical History', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
-					{ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' },
-					{ key: 'chart_medications', label: 'Medications', type: 'medication-list' },
 				]
 			},
 			{
@@ -1930,16 +1915,30 @@ export class EncounterFormEditor extends EditorPane {
 
 		if (!readOnly) {
 			const allNorm = DOM.append(parent, DOM.$('button')) as HTMLButtonElement;
-			allNorm.textContent = 'Set All Normal';
 			allNorm.style.cssText = 'margin-top:6px;padding:4px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;cursor:pointer;font-size:11px;';
+			// The button is a TOGGLE: with every system already checked Normal a
+			// plain "check everything" click was a visible no-op (QA 22-Jul: the
+			// button "does nothing"). All checked → the click clears every
+			// checkbox; otherwise it checks them all and fills the normal text.
+			const refreshLabel = () => {
+				allNorm.textContent = peCheckboxes.every(cb => cb.checked) ? 'Clear All Normal' : 'Set All Normal';
+			};
+			refreshLabel();
+			for (const cb of peCheckboxes) { cb.addEventListener('change', refreshLabel); }
 			// Mark the form dirty explicitly — programmatic value writes fire no
-			// input/change event, so "Set All Normal" never reached a save (QA:
+			// input/change event, so the bulk action never reached a save (QA:
 			// the button "is not working").
 			allNorm.addEventListener('click', () => {
-				for (const cb of peCheckboxes) { cb.checked = true; }
-				for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
-					if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
+				const allChecked = peCheckboxes.every(cb => cb.checked);
+				if (allChecked) {
+					for (const cb of peCheckboxes) { cb.checked = false; }
+				} else {
+					for (const cb of peCheckboxes) { cb.checked = true; }
+					for (let i = 0; i < EncounterFormEditor.PE_SYSTEMS.length; i++) {
+						if (peTextareas[i]) { peTextareas[i].value = EncounterFormEditor.PE_SYSTEMS[i].normal; }
+					}
 				}
+				refreshLabel();
 				this._onFormChange();
 			});
 		}

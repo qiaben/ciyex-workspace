@@ -101,6 +101,13 @@ export class CiyexApiService extends Disposable implements ICiyexApiService {
 	private async _fetchOnce(path: string, options?: RequestInit): Promise<Response> {
 		const url = path.startsWith('http') ? path : `${this.apiUrl}${path}`;
 		return globalThis.fetch(url, {
+			// EHR data must always be current: the Chromium HTTP cache serves
+			// stale GET responses for minutes after a create/update (QA 22-Jul:
+			// "a new provider takes several minutes to appear in the list" —
+			// the post-create refetch was answered from cache). `no-store`
+			// bypasses the HTTP cache for every call; callers may still
+			// override via options.
+			cache: 'no-store',
 			...options,
 			headers: {
 				'Content-Type': 'application/json',

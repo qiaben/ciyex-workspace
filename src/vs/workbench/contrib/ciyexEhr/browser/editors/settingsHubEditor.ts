@@ -23,6 +23,7 @@ import { parseSavedRecord } from '../sidebarActions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { lookupZipCityState } from '../zipAutoFill.js';
 
 // ------------------------- Field-format validators -------------------------
 // Reusable client-side validators for the Settings > General add/edit forms.
@@ -136,29 +137,11 @@ function normalizeSeg(key: string): string {
 	return (key.split('.').pop() || key).replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
-/** ZIP → { city, state } lookups already resolved this session, so retyping a
- *  ZIP fills instantly and offline. */
-const zipLookupCache = new Map<string, { city: string; state: string } | null>();
-
-/** Resolves a 5-digit US ZIP to its city + state via the free Zippopotam
- *  service. Returns null (and caches the miss) when the ZIP is unknown or the
- *  lookup fails — auto-fill is best-effort and never blocks typing. Shared
- *  with the Practice Settings editor's address grid. */
-export async function lookupZipCityState(zip: string): Promise<{ city: string; state: string } | null> {
-	if (zipLookupCache.has(zip)) { return zipLookupCache.get(zip)!; }
-	try {
-		const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
-		if (!res.ok) { zipLookupCache.set(zip, null); return null; }
-		const j = await res.json().catch(() => null) as { places?: Array<Record<string, string>> } | null;
-		const place = j?.places?.[0];
-		const hit = place ? { city: place['place name'] || '', state: place['state'] || '' } : null;
-		const result = hit && hit.city ? hit : null;
-		zipLookupCache.set(zip, result);
-		return result;
-	} catch {
-		return null;
-	}
-}
+// ZIP → city/state resolution now lives in the shared zipAutoFill module so
+// every create/edit surface (chart, snapshot, clinical drawers, credit-card
+// forms) uses the same lookup + session cache. Re-exported because the
+// Practice Settings editor's address grid imports it from here.
+export { lookupZipCityState };
 
 interface FieldDef {
 	key: string;

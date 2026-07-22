@@ -720,8 +720,68 @@ export class CiyexAuthGate extends Disposable {
 			borderRadius: '8px', fontSize: '14px', color: inputColor,
 			outline: 'none', boxSizing: 'border-box', background: inputBg,
 		});
-		labelDiv.appendChild(emailInput);
+		const emailWrap = h('div', { position: 'relative' });
+		emailWrap.appendChild(emailInput);
+		labelDiv.appendChild(emailWrap);
 		card.appendChild(labelDiv);
+
+		// Google-style saved-account suggestions: focusing/clicking the email
+		// field lists the accounts remembered via the "Save credentials?" popup;
+		// picking one fills the email, and the matching saved password pre-fills
+		// automatically on the password step (QA 22-Jul: "when user clicks the
+		// username show the saved username & password like Google's saved
+		// credentials").
+		const savedAccounts = Object.keys(this._savedLogins());
+		if (savedAccounts.length > 0) {
+			const darkBg = this._isDark();
+			const panel = h('div', {
+				position: 'absolute', left: '0', right: '0', top: 'calc(100% + 4px)', zIndex: '10',
+				background: darkBg ? '#252526' : '#ffffff',
+				border: `1px solid ${darkBg ? '#3c3c3c' : '#D1D5DB'}`,
+				borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+				overflow: 'hidden', display: 'none',
+			});
+			panel.id = 'ciyex-saved-accounts';
+			emailWrap.appendChild(panel);
+			const renderRows = (): void => {
+				while (panel.firstChild) { panel.firstChild.remove(); }
+				const typed = emailInput.value.trim().toLowerCase();
+				const matches = savedAccounts.filter(a => !typed || a.includes(typed));
+				if (matches.length === 0) { panel.style.display = 'none'; return; }
+				for (const account of matches) {
+					const row = h('div', {
+						display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 14px',
+						cursor: 'pointer', fontSize: '13px', color: darkBg ? '#cccccc' : '#111827',
+					});
+					// allow-any-unicode-next-line
+					row.appendChild(text(h('span', { fontSize: '14px' }), '🔑'));
+					const col = h('div', { display: 'flex', flexDirection: 'column' });
+					col.appendChild(text(h('span', { fontWeight: '600' }), account));
+					col.appendChild(text(h('span', { fontSize: '11px', color: darkBg ? '#9CA3AF' : '#6B7280' }), 'Saved password'));
+					row.appendChild(col);
+					row.addEventListener('mouseenter', () => { row.style.background = darkBg ? 'rgba(255,255,255,0.06)' : '#F3F4F6'; });
+					row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
+					// mousedown, not click — the row must win the race against the
+					// input's blur (which hides the panel before a click lands).
+					row.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						emailInput.value = account;
+						this._email = account;
+						// Enable Continue right away (mirrors the input listener) BEFORE
+						// hiding — the input event re-runs renderRows, so hiding last
+						// keeps the panel closed after a pick.
+						emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+						panel.style.display = 'none';
+					});
+					panel.appendChild(row);
+				}
+				panel.style.display = 'block';
+			};
+			emailInput.addEventListener('focus', renderRows);
+			emailInput.addEventListener('click', renderRows);
+			emailInput.addEventListener('input', renderRows);
+			emailInput.addEventListener('blur', () => { setTimeout(() => { panel.style.display = 'none'; }, 150); });
+		}
 
 		// Error
 		if (this._error) {

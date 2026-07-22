@@ -31,6 +31,7 @@ import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js'
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
 import { SH_SMOKING_OPTIONS, SH_ALCOHOL_OPTIONS, SH_EXERCISE_OPTIONS } from './socialHistoryOptions.js';
+import { attachZipCityStateAutoFill, wireZipCityStateInputs } from '../zipAutoFill.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -277,7 +278,9 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 				],
 			},
 			{
-				key: 'procedures', label: 'Procedures', icon: 'Scissors', emoji: '\u{2702}\u{FE0F}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['Procedure'],
+				// Hidden from the chart sidebar (QA 22-Jul: "remove procedures
+				// page") — config kept for the Procedure FHIR mapping/columns.
+				key: 'procedures', label: 'Procedures', icon: 'Scissors', emoji: '\u{2702}\u{FE0F}', position: 4, visible: false, display: 'list', panel: 'main', fhirResources: ['Procedure'],
 				columns: [
 					{ key: 'procedureName', label: 'Procedure' },
 					{ key: 'cptCode', label: 'CPT Code' },
@@ -698,9 +701,10 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'offspringHistory', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
 					// Mirrors the encounter form's Family History "Additional Notes"
 					// (fh_notes) so both surfaces carry the same field (QA 21-Jul).
-					// Requires the matching backend history tab_field_config mapping
-					// (linkId family-additional-notes) or the generic FHIR save drops it.
-					{ key: 'familyHistoryNotes', label: 'Additional Notes', type: 'textarea', colSpan: 2, placeholder: 'Other relevant family history...' },
+					// `localOnly` so the field still renders when the backend history
+					// tab_field_config predates the V202 mapping (QA 22-Jul flagged it
+					// missing from the dialog while the encounter form showed it).
+					{ key: 'familyHistoryNotes', label: 'Additional Notes', type: 'textarea', colSpan: 2, placeholder: 'Other relevant family history...', localOnly: true },
 				],
 			},
 			{
@@ -2292,7 +2296,10 @@ export class PatientChartEditor extends EditorPane {
 		// Clinical Alerts is intentionally omitted — the test team doesn't want it on
 		// the patient chart (13.07.26 report); the tab config stays (visible:false) so
 		// the FHIR Flag mapping/columns remain available elsewhere.
-		const CLINICAL_TAB_WHITELIST = ['medications', 'labs', 'lab-results', 'immunizations', 'procedures', 'history'];
+		// Procedures is likewise omitted (QA 22-Jul: "we don't want, remove
+		// procedures page"); its tab config stays so the Procedure FHIR mapping
+		// remains available to other surfaces (encounter Procedures & Coding).
+		const CLINICAL_TAB_WHITELIST = ['medications', 'labs', 'lab-results', 'immunizations', 'history'];
 
 		this.categories = Array.from(byKey.values())
 			.sort((a, b) => a.position - b.position)
@@ -2725,6 +2732,31 @@ export class PatientChartEditor extends EditorPane {
 		const s = String(raw ?? '').toLowerCase();
 		return (s.includes('sign') && !s.includes('unsign')) || s.includes('finish') || (s.includes('complet') && !s.includes('incomplet'))
 			? 'Signed' : 'Unsigned';
+	}
+
+	/**
+	 * After a chart History save, tell the user whether the edit will also show
+	 * up on the encounter page (QA 22-Jul). The encounter form only mirrors
+	 * chart history edits while the encounter is UNSIGNED — a signed encounter
+	 * is permanently locked, so without this notice a locked encounter read as
+	 * "my history save didn't work". Best-effort: any fetch/parse failure just
+	 * skips the notice, never the save.
+	 */
+	private async _notifyHistoryEncounterSync(): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=50`);
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const rows = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []))) as Record<string, unknown>[];
+			if (!Array.isArray(rows) || rows.length === 0) { return; }
+			const latest = [...rows].sort((a, b) =>
+				this._toEpoch(b.startDate ?? b.start) - this._toEpoch(a.startDate ?? a.start))[0];
+			if (PatientChartEditor._encounterSignedLabel(latest.status) === 'Signed') {
+				this.notificationService.warn('History saved — but the latest encounter is signed and locked, so these changes will NOT reflect on that encounter. Unsign the encounter to update its history.');
+			} else {
+				this.notificationService.info('History saved — the changes also reflect on the open (unsigned) encounter.');
+			}
+		} catch { /* sync notice is best-effort */ }
 	}
 
 	/**
@@ -3299,6 +3331,36 @@ export class PatientChartEditor extends EditorPane {
 				return isNaN(t) ? 0 : t;
 			};
 			data = [[...data].sort((a, b) => ts(b) - ts(a))[0]];
+		}
+		// Encounters show the VISIT TYPE their appointment was created with
+		// (Consultation, Follow-Up, Telehealth, …) instead of the FHIR encounter
+		// class ("Ambulatory") (QA 22-Jul). Only the FLAT /api/appointments rows
+		// carry the encounter link (encounterId) + visitType — the FHIR
+		// appointment resource has neither. That endpoint is org-wide (its
+		// ?patientId filter is ignored server-side), so filter to this patient
+		// client-side, then stamp the linked appointment's type onto each row
+		// under the Visit Type column's primary key; unlinked encounters keep
+		// falling back to their own type/class fields via the column aliases.
+		if (tab.key === 'encounters' && data.length > 0) {
+			try {
+				const res = await this.apiService.fetch(`/api/appointments?patientId=${encodeURIComponent(this.patientId)}&page=0&size=500`);
+				if (res.ok) {
+					const json = await res.json();
+					const appts = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+					const ids = this._patientIdSet();
+					const typeByEncId = new Map<string, string>();
+					for (const a of (Array.isArray(appts) ? appts : [])) {
+						if (!ids.has(String(a.patientId ?? a.encounterPatientId ?? '').trim())) { continue; }
+						const encId = String(a.encounterId ?? '');
+						const t = this._displayText(a.visitType) || this._displayText(a.appointmentType) || this._displayText(a.type);
+						if (encId && t && !typeByEncId.has(encId)) { typeByEncId.set(encId, t); }
+					}
+					for (const e of data) {
+						const t = typeByEncId.get(String(e.id ?? e.fhirId ?? ''));
+						if (t) { e.visitCategory = t; }
+					}
+				}
+			} catch { /* appointment lookup is best-effort — rows fall back to encounter class */ }
 		}
 		data = this._mergePendingCreates(tab.key, data);
 		const result = { config, data };
@@ -5567,6 +5629,9 @@ export class PatientChartEditor extends EditorPane {
 		// Zip Code is numeric only — strip any non-digit as typed/pasted (maxLength
 		// alone doesn't block letters) so an invalid ZIP can't be entered.
 		zipEl.addEventListener('input', () => { zipEl.value = zipEl.value.replace(/\D/g, '').slice(0, 5); });
+		// A complete ZIP auto-fills + freezes the billing City/State (QA 22-Jul:
+		// ZIP auto-fill on every create/edit form app-wide).
+		wireZipCityStateInputs(zipEl, cityEl, stateEl);
 		const countryEl = makeInput('Country', false, { maxLength: 50, placeholder: 'USA' });
 		const isDefaultEl = makeCheckbox('Set as default payment method', true);
 		const isActiveEl = makeCheckbox('Active', true);
@@ -5719,15 +5784,9 @@ export class PatientChartEditor extends EditorPane {
 				badge.textContent = `Recorded ${recDate}`;
 				badge.style.cssText = 'font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);';
 			}
-			const spacer = DOM.append(head, DOM.$('span')); spacer.style.flex = '1';
-			const editBtn = DOM.append(head, DOM.$('button')) as HTMLButtonElement;
-			editBtn.title = 'Edit history';
-			editBtn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;background:transparent;color:var(--vscode-foreground);cursor:pointer;font-size:11px;';
-			DOM.append(editBtn, DOM.$('span.codicon.codicon-edit')).style.fontSize = '12px';
-			DOM.append(editBtn, DOM.$('span')).textContent = 'Edit';
-			editBtn.addEventListener('mouseenter', () => { editBtn.style.background = 'var(--vscode-toolbar-hoverBackground)'; });
-			editBtn.addEventListener('mouseleave', () => { editBtn.style.background = 'transparent'; });
-			editBtn.addEventListener('click', () => this._openRecordDialog(tab, config, rec));
+			// No per-card Edit button — the tab header's single "Edit History"
+			// button is the one edit entry point (QA 22-Jul: "two edit buttons
+			// showing, remove one").
 
 			const section = (title: string, icon: string): HTMLElement => {
 				const sec = DOM.append(card, DOM.$('div'));
@@ -5877,11 +5936,13 @@ export class PatientChartEditor extends EditorPane {
 			searchTimer = setTimeout(applyFilters, 150);
 		});
 		statusSel?.addEventListener('change', applyFilters);
-		if (tab.key === 'appointments') {
+		// Encounters got the same pager (QA 22-Jul: "the encounter page add the
+		// pagination button in it").
+		if (tab.key === 'appointments' || tab.key === 'encounters') {
 			pager = this._listPagerDisposables.add(new PaginationControl({
 				pageSize: 10,
 				pageSizeOptions: [10, 25, 50],
-				itemLabel: 'appointments',
+				itemLabel: tab.key,
 				onChange: () => applyFilters(),
 			}));
 			container.appendChild(pager.element);
@@ -6534,6 +6595,30 @@ export class PatientChartEditor extends EditorPane {
 					this.notificationService.warn(apptErr);
 					return;
 				}
+				// One appointment per patient per day (QA 22-Jul) — the same rule
+				// the calendar's Schedule Appointment form enforces. Cancelled
+				// appointments don't count, and on edit the record being edited is
+				// excluded so moving its time within the same day still saves.
+				const dayVal = String(startEl?.value ?? '').trim().slice(0, 10);
+				if (dayVal) {
+					try {
+						const dupRes = await this.apiService.fetch(`${FHIR_MAP['Appointment']}/patient/${this.patientId}?page=0&size=200`);
+						if (dupRes.ok) {
+							const dupJson = await dupRes.json();
+							const rows = (dupJson?.data?.content || dupJson?.content || (Array.isArray(dupJson?.data) ? dupJson.data : [])) as Record<string, unknown>[];
+							const clash = rows.some(a => {
+								if (String(a.status ?? '').toLowerCase() === 'cancelled') { return false; }
+								if (isEdit && String(a.id ?? a.fhirId ?? '') === String(recordId)) { return false; }
+								const d = String(a.start ?? a.startDate ?? a.appointmentStartDate ?? '').slice(0, 10);
+								return !!d && d === dayVal;
+							});
+							if (clash) {
+								this.notificationService.warn(`This patient already has an appointment on ${dayVal}. Only one appointment per patient per day is allowed.`);
+								return;
+							}
+						}
+					} catch { /* pre-check failed (offline/API error) — let the save proceed */ }
+				}
 			}
 
 			// Clinical Alerts: the End Date must not be earlier than the Identified
@@ -6883,7 +6968,13 @@ export class PatientChartEditor extends EditorPane {
 					}
 				}
 				if (res.ok) {
-					this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
+					if (tab.key === 'history') {
+						// History gets a tailored save notice: signed-encounter edits
+						// don't propagate, and the user needs to know which case hit.
+						void this._notifyHistoryEncounterSync();
+					} else {
+						this.notificationService.info(isEdit ? `${tab.label} updated` : `${tab.label} record created`);
+					}
 					overlay.remove();
 
 					// Optimistic update: read the create/update response and inject the
@@ -7429,6 +7520,11 @@ export class PatientChartEditor extends EditorPane {
 		// Insurance: when "Self (Patient is Subscriber)" is selected, copy the
 		// patient's demographics into the subscriber fields (issue 2).
 		this._wireSubscriberSelfFill();
+
+		// ZIP → City/State auto-fill on every chart form and add/edit drawer
+		// that carries an address group (QA 22-Jul: roll the Settings behaviour
+		// out to the whole workspace). No-op on forms without a ZIP field.
+		attachZipCityStateAutoFill(formInputs);
 	}
 
 	/**
@@ -8360,6 +8456,19 @@ export class PatientChartEditor extends EditorPane {
 				// Try the backend key first, then the label-matched alias chain.
 				return byLabel ? [k, ...byLabel] : [k];
 			});
+			// Encounters: the backend config ships the column as `type`
+			// ("Encounter Type") which resolves to the FHIR class ("Ambulatory").
+			// QA 22-Jul wants the APPOINTMENT's visit type ("Consultation", …) —
+			// `visitCategory` is stamped by _loadTabData from the linked
+			// appointment, so surface it first and rename the header.
+			if (tab.key === 'encounters') {
+				usedKeys.forEach((k, i) => {
+					if (/^(type|encounterType|class|visitCategory|visitType)$/i.test(k) || /^(encounter|visit)\s*type$/i.test((cols[i] || '').trim())) {
+						cols[i] = 'Visit Type';
+						usedAliases[i] = ['visitCategory', 'visitType', ...usedAliases[i].filter(a => a !== 'visitCategory' && a !== 'visitType')];
+					}
+				});
+			}
 		} else if (tab.columns && tab.columns.length > 0) {
 			usedKeys = tab.columns.map(c => c.key);
 			cols = tab.columns.map(c => c.label);

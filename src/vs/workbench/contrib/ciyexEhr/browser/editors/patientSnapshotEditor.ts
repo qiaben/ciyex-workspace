@@ -3705,7 +3705,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._renderAppointmentHistoryRows(visitCard, visitList);
 
 		const encCard = this._renderWideCard(grid, 'notebook', 'Encounter History', 2, encs.length, undefined);
-		this._renderEncounterClinicalRows(encCard, encs);
+		this._renderEncounterClinicalRows(encCard, encs, visitList);
 
 		// Active Problems (2) + Medications (2)
 		const activeProblems = conds.filter(c => {
@@ -3993,7 +3993,18 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._revealVitalsEntry?.();
 	}
 
-	private _renderEncounterClinicalRows(card: HTMLElement, encsInput: Record<string, unknown>[]): void {
+	private _renderEncounterClinicalRows(card: HTMLElement, encsInput: Record<string, unknown>[], appts: Record<string, unknown>[]): void {
+		// Visit types keyed by linked encounter id — the Encounter History rows
+		// show the APPOINTMENT's visit type (Consultation, Follow-Up, …) when the
+		// encounter came from a visit, not the FHIR encounter class
+		// ("Ambulatory") (QA 22-Jul). Encounters with no linked appointment fall
+		// back to their own type fields below.
+		const apptTypeByEncId = new Map<string, string>();
+		for (const a of appts) {
+			const encId = String(a.encounterId || '');
+			const t = this._apptTypeStr(a);
+			if (encId && t && !apptTypeByEncId.has(encId)) { apptTypeByEncId.set(encId, t); }
+		}
 		// Show the most recent encounter first, then older ones (QA: Encounter
 		// History should list latest → oldest). Read the date from any of the keys
 		// an encounter row can carry; rows with no parseable date sort to the bottom.
@@ -4038,12 +4049,13 @@ export class PatientSnapshotEditor extends EditorPane {
 		for (const enc of page) {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-			const rawVisitType = typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
+			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
+			const rawVisitType = apptTypeByEncId.get(encRowId)
+				|| typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
 				|| typeText(enc.serviceType) || typeText(enc.encounterType) || typeText(enc.visitCategory) || typeText(enc.class) || 'Encounter';
 			// Expand short FHIR class codes ("AMB"/"VR") to their full form
 			// ("Ambulatory"/"Virtual"); already-full values pass through unchanged.
 			const visitType = expandEncounterType(rawVisitType) || rawVisitType;
-			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
 			const isSigned = PatientSnapshotEditor._normalizeEncounterStatus(enc.status) === 'SIGNED';
 
 			const dateCell = DOM.append(table, DOM.$('div'));
@@ -4918,7 +4930,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		wrap.style.cssText = 'overflow-y:auto;max-height:320px;margin-top:4px;';
 		const table = DOM.append(wrap, DOM.$('div'));
 		table.style.cssText = 'display:grid;grid-template-columns:120px 1fr 90px 78px 56px;gap:0;';
-		for (const lbl of ['Date', 'Type', 'Status', 'Encounter', '']) {
+		// "Visit Type" (not "Type") — matches the appointment form's field label
+		// and the Encounter History card next to it (QA 22-Jul).
+		for (const lbl of ['Date', 'Visit Type', 'Status', 'Encounter', '']) {
 			const h = DOM.append(table, DOM.$('div'));
 			h.textContent = lbl;
 			h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:var(--vscode-descriptionForeground);padding:4px 0 6px;border-bottom:2px solid var(--vscode-editorWidget-border);position:sticky;top:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));';

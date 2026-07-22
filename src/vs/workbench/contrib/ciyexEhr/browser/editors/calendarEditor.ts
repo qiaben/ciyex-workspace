@@ -1793,12 +1793,12 @@ export class CalendarEditor extends EditorPane {
 				saveBtn.textContent = 'Schedule Appointment';
 			};
 
-			// Prevent double-booking: a patient may have at most one active
-			// appointment per calendar day PER VISIT TYPE — a second visit of a
-			// different type (e.g. Lab Work after an Urgent visit) on the same day
-			// is a legitimate booking (QA issue 1). Check the server for the chosen
-			// day so the rule holds even when that date is outside the currently
-			// loaded range (cancelled appointments don't count, so a patient can be
+			// Prevent double-booking: a patient may have at most ONE active
+			// appointment per calendar day, regardless of visit type (QA 22-Jul:
+			// "one day one appointment for patient" — this supersedes the earlier
+			// per-visit-type rule). Check the server for the chosen day so the
+			// rule holds even when that date is outside the currently loaded
+			// range (cancelled appointments don't count, so a patient can be
 			// re-booked after a cancellation). A flat-shape match (patientId) is
 			// preferred; we fall back to name when no stable id is available.
 			const matchesPatient = (a: Appointment): boolean => {
@@ -1817,25 +1817,19 @@ export class CalendarEditor extends EditorPane {
 				if (dupRes.ok) {
 					const dupData = await dupRes.json();
 					const existing = (dupData?.data?.content || dupData?.content || (Array.isArray(dupData?.data) ? dupData.data : (Array.isArray(dupData) ? dupData : []))) as Appointment[];
-					const newType = (visitType || '').trim().toLowerCase();
 					// A row with no patient identity of its own is trusted to belong to
 					// this patient only when the server was asked to filter by patientId.
 					const rowIsAnonymous = (a: Appointment): boolean =>
 						!resolveApptPatientId(a) && !(a.patientName || '').trim();
 					const clash = existing.some(a => {
 						if ((a.status || '').toLowerCase() === 'cancelled') { return false; }
-						// Only a SAME visit type on the same day is a duplicate (QA
-						// issue 1). When the existing row's type can't be resolved
-						// (some backends drop the visit-type CodeableConcept from the
-						// flat DTO) we let the booking through rather than resurrect
-						// the blanket one-per-day block the test team rejected.
-						const aType = (getAppointmentType(a) || '').trim().toLowerCase();
-						if (!aType || aType !== newType) { return false; }
+						// ANY non-cancelled appointment on the same day is a duplicate —
+						// visit type doesn't matter (QA 22-Jul: one per patient per day).
 						const aDate = this._parseAptDate(a);
 						return !!aDate && localDateStr(aDate) === startD && (matchesPatient(a) || (!!patId && rowIsAnonymous(a)));
 					});
 					if (clash) {
-						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has a ${visitType || ''} appointment on ${startD}. Only one appointment per visit type per patient per day is allowed.`.replace(/\s+/g, ' ') });
+						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.`.replace(/\s+/g, ' ') });
 						patInput.style.borderColor = '#ef4444';
 						patInput.focus();
 						reopenForRetry();

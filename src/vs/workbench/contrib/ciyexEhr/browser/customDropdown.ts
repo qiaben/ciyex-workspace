@@ -257,10 +257,17 @@ export function createCustomDropdown(opts: ICreateCustomDropdownOptions): HTMLIn
 		// choice is invalid there, so showing "Select a provider…" next to the real
 		// providers is redundant and confusing.
 		const rows: Array<{ value: string; label: string; placeholder?: boolean }> = [];
-		if (opts.placeholder && !opts.required) {
+		// Callers may already ship their own empty-value placeholder row inside
+		// `options` (e.g. the shared Social History lists start with
+		// { value: '', label: 'Select smoking status...' }). Adding the synthetic
+		// placeholder on top duplicated it — the dropdown showed both
+		// "Select Smoking..." and "Select smoking status...". Reuse the
+		// caller-provided row as THE placeholder instead of adding a second one.
+		const hasOwnPlaceholder = opts.options.some(o => !o.value);
+		if (opts.placeholder && !opts.required && !hasOwnPlaceholder) {
 			rows.push({ value: '', label: opts.placeholder, placeholder: true });
 		}
-		for (const o of opts.options) { rows.push({ value: o.value, label: o.label }); }
+		for (const o of opts.options) { rows.push({ value: o.value, label: o.label, placeholder: !o.value || undefined }); }
 		for (const opt of rows) {
 			const row = doc.createElement('div');
 			row.setAttribute('role', 'option');

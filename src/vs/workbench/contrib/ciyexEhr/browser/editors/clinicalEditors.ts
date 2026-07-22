@@ -24,6 +24,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
+import { wireZipCityStateInputs } from '../zipAutoFill.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6474,6 +6475,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const cityEl = inp('City', 'billingCity', false, { maxLength: 50, placeholder: 'New York' });
 		const stateEl = inp('State', 'billingState', false, { maxLength: 50, placeholder: 'NY' });
 		const zipEl = inp('Zip Code', 'billingZip', false, { maxLength: 10, placeholder: '10001' });
+		// A complete ZIP auto-fills + freezes the billing City/State (QA 22-Jul:
+		// ZIP auto-fill on every create/edit form app-wide).
+		wireZipCityStateInputs(zipEl, cityEl, stateEl);
 		const countryEl = inp('Country', 'billingCountry', false, { maxLength: 50, placeholder: 'USA' });
 		const isDefaultEl = chk('Set as default payment method', true);
 		const isActiveEl = chk('Active', true);

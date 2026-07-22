@@ -8,6 +8,7 @@ import { mainWindow } from '../../../../base/browser/window.js';
 import { createTimeDropdown } from './customDropdown.js';
 import { createUsDateField } from './ciyexDateMask.js';
 import { FormFieldDef } from './editors/clinicalListEditor.js';
+import { attachZipCityStateAutoFill } from './zipAutoFill.js';
 
 /**
  * Shared sidebar UI primitives used across every Ciyex side-pane:
@@ -1963,6 +1964,12 @@ export function openRecordEditDialog(opts: IEditDialogOptions): void {
 
 		form.appendChild(wrap);
 	}
+
+	// ZIP → City/State auto-fill on every drawer form that carries an address
+	// group (QA 22-Jul: roll the Settings behaviour out app-wide — snapshot
+	// modals, clinical/system/operations drawers all render here). No-op on
+	// forms without a ZIP field.
+	attachZipCityStateAutoFill(inputs);
 
 	// Derived fields: recompute every `compute` field from the current values
 	// whenever any input changes (and once now, so editing an existing record
