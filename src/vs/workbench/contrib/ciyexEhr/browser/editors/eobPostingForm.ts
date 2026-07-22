@@ -17,6 +17,11 @@ export interface EobLine {
 	allowed: number;
 	/** Insurance-paid amount from the EOB. */
 	paid: number;
+	/** Per-line patient-responsibility split from the EOB (optional — legacy
+	 *  postings only carried claim-level values). */
+	copay?: number;
+	deductible?: number;
+	coinsurance?: number;
 }
 
 /** A billed fee sheet presented as a postable claim in the EOB form. */
@@ -26,6 +31,9 @@ export interface EobClaimOption {
 	patientId: string;
 	patientName: string;
 	serviceDate?: string;
+	/** Encounter the fee sheet was billed from — links the claim to the
+	 *  completed appointment whose date is the date of service. */
+	encounterId?: string;
 	lines: EobLine[];
 }
 
