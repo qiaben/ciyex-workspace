@@ -2477,8 +2477,10 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		toolbar.appendChild(searchWrap);
 		body.appendChild(toolbar);
 
+		// overflow:auto (not just -y): wide record tables (e.g. the full vitals
+		// measurement set) scroll horizontally instead of clipping columns.
 		const scroll = doc.createElement('div');
-		scroll.style.cssText = 'flex:1;overflow-y:auto;padding:6px 22px 18px;';
+		scroll.style.cssText = 'flex:1;overflow:auto;padding:6px 22px 18px;';
 		body.appendChild(scroll);
 
 		if (!listLoaded) {
@@ -2542,7 +2544,10 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 
 			const table = doc.createElement('div');
 			const cols = opts.listColumns.map(col => col.width || '1fr').join(' ') + ' 76px';
-			table.style.cssText = `display:grid;grid-template-columns:${cols};gap:0;margin-top:8px;`;
+			// min-width:max-content lets a many-column table grow past the sheet
+			// width; the scroll host pans horizontally so every column stays
+			// reachable (QA: vitals table must show ALL measurements).
+			table.style.cssText = `display:grid;grid-template-columns:${cols};gap:0;margin-top:8px;min-width:max-content;`;
 
 			for (const col of opts.listColumns) {
 				const h = doc.createElement('div');

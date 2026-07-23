@@ -30,7 +30,6 @@ import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
-import { SH_SMOKING_OPTIONS, SH_ALCOHOL_OPTIONS, SH_EXERCISE_OPTIONS } from './socialHistoryOptions.js';
 import { attachZipCityStateAutoFill, wireZipCityStateInputs } from '../zipAutoFill.js';
 
 // --- Types ---
@@ -41,7 +40,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean; storeLabelAsValue?: boolean }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; singleRow?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean; storeLabelAsValue?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -694,25 +693,31 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				],
 			},
 			{
-				key: 'family-history', title: 'Family History', columns: 2, visible: true, collapsible: false, fields: [
-					{ key: 'fatherHistory', label: 'Father', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'motherHistory', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'siblingsHistory', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'offspringHistory', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
+				// QA 23-Jul: every Family History field sits on its OWN full-width
+				// row as an auto-growing text box that starts one row tall and
+				// expands as text is entered — exactly like Additional Notes.
+				key: 'family-history', title: 'Family History', columns: 1, visible: true, collapsible: false, fields: [
+					{ key: 'fatherHistory', label: 'Father', type: 'textarea', singleRow: true, placeholder: 'Health conditions...' },
+					{ key: 'motherHistory', label: 'Mother', type: 'textarea', singleRow: true, placeholder: 'Health conditions...' },
+					{ key: 'siblingsHistory', label: 'Siblings', type: 'textarea', singleRow: true, placeholder: 'Health conditions...' },
+					{ key: 'offspringHistory', label: 'Offspring', type: 'textarea', singleRow: true, placeholder: 'Health conditions...' },
 					// Mirrors the encounter form's Family History "Additional Notes"
 					// (fh_notes) so both surfaces carry the same field (QA 21-Jul).
 					// `localOnly` so the field still renders when the backend history
 					// tab_field_config predates the V202 mapping (QA 22-Jul flagged it
 					// missing from the dialog while the encounter form showed it).
-					{ key: 'familyHistoryNotes', label: 'Additional Notes', type: 'textarea', colSpan: 2, placeholder: 'Other relevant family history...', localOnly: true },
+					{ key: 'familyHistoryNotes', label: 'Additional Notes', type: 'textarea', placeholder: 'Other relevant family history...', localOnly: true },
 				],
 			},
 			{
-				key: 'social-history', title: 'Social History', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'smokingStatus', label: 'Smoking', type: 'select', options: [...SH_SMOKING_OPTIONS] },
-					{ key: 'alcoholUse', label: 'Alcohol', type: 'select', options: [...SH_ALCOHOL_OPTIONS] },
-					{ key: 'exerciseFrequency', label: 'Exercise', type: 'select', options: [...SH_EXERCISE_OPTIONS] },
-					{ key: 'additionalHistory', label: 'Additional Notes', type: 'textarea', colSpan: 3, placeholder: 'Occupation, lifestyle, other history...' },
+				// QA 23-Jul: Smoking / Alcohol / Exercise are free-text boxes (the
+				// dropdowns are gone) — one per row, one row tall, growing like
+				// the notes field as text is entered.
+				key: 'social-history', title: 'Social History', columns: 1, visible: true, collapsible: false, fields: [
+					{ key: 'smokingStatus', label: 'Smoking', type: 'textarea', singleRow: true, placeholder: 'Smoking status / history...' },
+					{ key: 'alcoholUse', label: 'Alcohol', type: 'textarea', singleRow: true, placeholder: 'Alcohol use...' },
+					{ key: 'exerciseFrequency', label: 'Exercise', type: 'textarea', singleRow: true, placeholder: 'Exercise habits...' },
+					{ key: 'additionalHistory', label: 'Additional Notes', type: 'textarea', placeholder: 'Occupation, lifestyle, other history...' },
 				],
 			},
 		],
@@ -7246,7 +7251,23 @@ export class PatientChartEditor extends EditorPane {
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
-					ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
+					if (f.singleRow) {
+						// Single-row auto-growing text box (QA 23-Jul, history
+						// dialog): opens one input-row tall and stretches with its
+						// content — no inner scrollbar, no manual resize handle.
+						ta.rows = 1;
+						ta.style.cssText = inputStyle + 'height:32px;min-height:32px;overflow-y:hidden;resize:none;';
+						const grow = () => {
+							ta.style.height = 'auto';
+							ta.style.height = `${Math.max(32, ta.scrollHeight)}px`;
+						};
+						ta.addEventListener('input', grow);
+						// Initial size for a pre-filled value — measured after the
+						// dialog attaches so scrollHeight is real.
+						setTimeout(grow, 0);
+					} else {
+						ta.style.cssText = inputStyle + 'min-height:70px;height:auto;resize:vertical;';
+					}
 					this._formInputs.set(f.key, ta);
 				} else if (f.type === 'date') {
 					// Date-only field: mm/dd/yyyy text + native picker; hidden ISO for save.

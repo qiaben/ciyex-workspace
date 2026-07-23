@@ -249,7 +249,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections)))));
+					this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections))))));
 					return;
 				}
 			}
@@ -263,7 +263,7 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections)))));
+				this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections))))));
 				return;
 			}
 		} catch { /* fall through */ }
@@ -413,6 +413,32 @@ export class EncounterFormEditor extends EditorPane {
 			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '') && f.type !== 'allergy-list' && f.type !== 'medication-list') }));
 	}
 
+	/**
+	 * Enforce the Plan tab's field order regardless of which config shipped the
+	 * section (QA 23-Jul): Follow-up is the FIRST field and Additional Plan
+	 * Notes the SECOND, right after the structured plan-items control when one
+	 * is present. Backend tab_field_config rows ship their own order (Follow-up
+	 * buried mid-section), so the local default order alone isn't enough.
+	 */
+	private static _orderPlanFields(sections: FieldSection[]): FieldSection[] {
+		return sections.map(s => {
+			const isPlan = s.key === 'plan' || /^plan\b/i.test(s.title || '') || (s.fields || []).some(f => /^plan_/.test(f.key || ''));
+			if (!isPlan) { return s; }
+			const fields = [...(s.fields || [])];
+			const take = (pred: (f: FieldDef) => boolean): FieldDef | undefined => {
+				const i = fields.findIndex(pred);
+				return i >= 0 ? fields.splice(i, 1)[0] : undefined;
+			};
+			const followup = take(f => f.key === 'plan_followup' || /follow[\s_-]?up/i.test(f.label || ''));
+			const notes = take(f => f.key === 'plan_notes' || /plan\s*notes/i.test(f.label || ''));
+			let at = fields.findIndex(f => f.type === 'plan-items');
+			at = at >= 0 ? at + 1 : 0;
+			if (notes) { fields.splice(at, 0, notes); }
+			if (followup) { fields.splice(at, 0, followup); }
+			return { ...s, fields };
+		});
+	}
+
 	private static _defaultSections(): FieldSection[] {
 		return [
 			{
@@ -511,14 +537,17 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
+				// Field order per QA 23-Jul: Follow-up is the FIRST field of the
+				// Plan tab and Additional Plan Notes the SECOND (after the
+				// structured plan-items control); the remaining fields follow.
 				key: 'plan', title: 'Plan', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
 					{ key: 'plan_items', label: 'Plan Items', type: 'plan-items' },
+					{ key: 'plan_followup', label: 'Follow-up', type: 'text', placeholder: 'Return in 2 weeks, PRN, etc.' },
+					{ key: 'plan_notes', label: 'Additional Plan Notes', type: 'textarea', placeholder: 'Additional plan details...' },
 					{ key: 'plan_medications', label: 'Medications Prescribed', type: 'textarea', placeholder: 'Medications prescribed or changed...' },
 					{ key: 'plan_labs', label: 'Labs / Imaging Ordered', type: 'textarea', placeholder: 'Lab tests, imaging, or diagnostics ordered...' },
 					{ key: 'plan_referrals', label: 'Referrals', type: 'textarea', placeholder: 'Specialist referrals...' },
-					{ key: 'plan_followup', label: 'Follow-up', type: 'text', placeholder: 'Return in 2 weeks, PRN, etc.' },
 					{ key: 'plan_patient_education', label: 'Patient Education', type: 'textarea', placeholder: 'Education and instructions provided...' },
-					{ key: 'plan_notes', label: 'Plan Notes', type: 'textarea', placeholder: 'Additional plan details...' },
 				]
 			},
 			{
@@ -651,6 +680,15 @@ export class EncounterFormEditor extends EditorPane {
 		['additionalHistory', 'sh_notes'],
 	];
 
+	/** Chart-history keys whose text accumulates over time — {@link _syncChartHistory}
+	 *  appends new encounter text below the existing chart value instead of
+	 *  replacing it, so older history is never lost. */
+	private static readonly _APPEND_HISTORY_KEYS: ReadonlySet<string> = new Set([
+		'pastMedicalHistoryNotes', 'pastSurgicalHistoryNotes',
+		'fatherHistory', 'motherHistory', 'siblingsHistory', 'offspringHistory',
+		'familyHistoryNotes', 'additionalHistory',
+	]);
+
 	/** Find the chart History record that was current ON the given visit date —
 	 *  the most recent record dated on-or-before the end of that day. With no
 	 *  usable visit date the latest record wins. Returns the record id plus its
@@ -687,15 +725,6 @@ export class EncounterFormEditor extends EditorPane {
 	 *  History page too. Upserts the record the form was pre-filled from (or
 	 *  creates the patient's first one). Best-effort — never blocks the save. */
 	private async _syncChartHistory(patientId: string, formData: Record<string, unknown>): Promise<void> {
-		const payload: Record<string, unknown> = {};
-		let any = false;
-		for (const [chartKey, formKey] of EncounterFormEditor.CHART_HISTORY_FIELD_MAP) {
-			const v = String(formData[formKey] ?? '').trim();
-			if (!v) { continue; }
-			payload[chartKey] = v;
-			any = true;
-		}
-		if (!any) { return; }
 		// History is ONE evolving record per patient — always upsert the LATEST
 		// existing record, resolved fresh at save time. The prefill's date-scoped
 		// id can be stale (another surface may have saved meanwhile) or missing
@@ -703,10 +732,31 @@ export class EncounterFormEditor extends EditorPane {
 		// history row that the chart then shows alongside the first (QA:
 		// "update through the encounter shows one more history — replace the
 		// existing one and always show the latest").
+		let latest: { id: string; fields: Record<string, unknown> } | null = null;
 		try {
-			const latest = await this._findChartHistoryForDate('');
+			latest = await this._findChartHistoryForDate('');
 			if (latest?.id) { this._chartHistoryId = latest.id; }
 		} catch { /* lookup failed — fall back to the prefilled id / create */ }
+		const payload: Record<string, unknown> = {};
+		let any = false;
+		for (const [chartKey, formKey] of EncounterFormEditor.CHART_HISTORY_FIELD_MAP) {
+			const v = String(formData[formKey] ?? '').trim();
+			if (!v) { continue; }
+			// Never DELETE previously charted history (QA 23-Jul): the narrative
+			// fields ACCUMULATE — an encounter that was charted without the
+			// earlier history in view (prefill raced, or the provider typed only
+			// the new findings) must APPEND below the existing chart text, not
+			// replace it. When the form value already carries the previous text
+			// (the normal prefill-then-add-below flow) it is saved as typed.
+			// Single-valued Social History status fields (smoking / alcohol /
+			// exercise) stay latest-wins — appending states makes no sense there.
+			const prev = String(latest?.fields[formKey] ?? '').trim();
+			payload[chartKey] = (EncounterFormEditor._APPEND_HISTORY_KEYS.has(chartKey) && prev && v !== prev && !v.includes(prev))
+				? `${prev}\n${v}`
+				: v;
+			any = true;
+		}
+		if (!any) { return; }
 		const body = JSON.stringify({ ...payload, patientId });
 		let res = this._chartHistoryId
 			? await this.apiService.fetch(`/api/fhir-resource/history/patient/${patientId}/${this._chartHistoryId}`, { method: 'PUT', body })

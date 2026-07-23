@@ -217,12 +217,28 @@ export class PatientSnapshotEditor extends EditorPane {
 	private static readonly _ENTITY_REGISTRY: Record<string, EntitySpec> = {
 		vitals: {
 			title: 'Vitals', configKey: 'vitals', basePath: '/api/fhir-resource/vitals', fhirPatientScoped: true,
+			// The records table shows EVERY charted measurement, not just a
+			// BP/HR/Temp/O2 excerpt (QA: "incomplete view" — Weight / Height /
+			// BMI / Respiration / Notes were recorded but invisible). The list
+			// dialog scrolls horizontally when the columns outgrow the sheet.
 			columns: [
-				{ key: 'recordedAt', label: 'Recorded', width: '140px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
-				{ key: 'bpSystolic', label: 'BP', width: '90px', format: (_v, r) => (r.bpSystolic && r.bpDiastolic) ? `${r.bpSystolic}/${r.bpDiastolic}` : '—' },
-				{ key: 'pulse', label: 'Heart Rate', width: '70px' },
-				{ key: 'temperatureC', label: 'Temp', width: '60px' },
-				{ key: 'oxygenSaturation', label: 'O2 %', width: '60px' },
+				{ key: 'recordedAt', label: 'Recorded', width: '104px', format: (v) => v ? new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' },
+				{ key: 'weightKg', label: 'Wt (kg)', width: '64px' },
+				{ key: 'heightCm', label: 'Ht (cm)', width: '64px' },
+				{
+					key: 'bmi', label: 'BMI', width: '56px', format: (v, r) => {
+						if (v !== undefined && v !== null && String(v).trim() !== '') { return String(v); }
+						const w = parseFloat(String(r.weightKg ?? ''));
+						const h = parseFloat(String(r.heightCm ?? ''));
+						return (!isNaN(w) && !isNaN(h) && h > 0) ? (w / ((h / 100) * (h / 100))).toFixed(1) : '—';
+					}
+				},
+				{ key: 'bpSystolic', label: 'BP', width: '76px', format: (_v, r) => (r.bpSystolic && r.bpDiastolic) ? `${r.bpSystolic}/${r.bpDiastolic}` : '—' },
+				{ key: 'pulse', label: 'Pulse', width: '58px' },
+				{ key: 'respiration', label: 'Resp', width: '56px' },
+				{ key: 'temperatureC', label: 'Temp', width: '56px' },
+				{ key: 'oxygenSaturation', label: 'O2 %', width: '56px' },
+				{ key: 'notes', label: 'Notes', width: 'minmax(110px,1fr)' },
 			],
 			listPath: (pid) => `/api/fhir-resource/vitals/patient/${pid}?page=0&size=50`,
 		},
@@ -4832,7 +4848,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	/** Pending Items — unfinished clinical work the provider must action. The
 	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
 	 *  unfinished work"). Each item is derived from real record state. */
-	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], results: Record<string, unknown>[], encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
+	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], results: Record<string, unknown>[], _encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
 		// An order stops being "pending" once a completed result exists for it —
 		// matched by explicit order linkage when the result carries one, else by
 		// test name. Previously only the ORDER's status was checked, so a final
@@ -4856,18 +4872,14 @@ export class PatientSnapshotEditor extends EditorPane {
 			return !!t && resultTestNames.has(t);
 		};
 		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')) && !hasCompletedResult(l));
-		const openEncounters = encs.filter(e => {
-			const s = String(e.status || '').toLowerCase();
-			return s.includes('progress') || s.includes('unsign') || s === 'arrived' || s === 'planned';
-		});
 
 		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
 		if (pendingLabs.length > 0) {
 			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labResults', 'list') });
 		}
-		if (openEncounters.length > 0) {
-			items.push({ icon: 'note', label: 'Encounter Unsigned', detail: `${openEncounters.length} open encounter${openEncounters.length > 1 ? 's' : ''} to finalize`, color: '#3b9edd', onClick: () => this._openManager('encounters', 'list') });
-		}
+		// NOTE: no "Encounter Unsigned" tile — QA 23-Jul asked for it to be
+		// removed from Pending Items (unsigned encounters are already visible
+		// in Encounter History with their Unsigned status).
 		// NOTE: no "create encounter" pending tile — encounters are created
 		// automatically when the visit is marked Completed, never by a manual click.
 		// Treatment plan is pending only until a visit note is written for the patient;
