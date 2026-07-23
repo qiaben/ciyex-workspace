@@ -22,6 +22,9 @@ export interface EobLine {
 	copay?: number;
 	deductible?: number;
 	coinsurance?: number;
+	/** Per-line contractual write-off / adjustment from the EOB. Defaults to
+	 *  billed - allowed until the biller enters an explicit figure. */
+	writeOff?: number;
 }
 
 /** A billed fee sheet presented as a postable claim in the EOB form. */
@@ -416,7 +419,7 @@ export function showEobPostingForm(opts: IEobFormOptions): Promise<EobFormValues
 				focus?.focus();
 			};
 			if (!patientId || !patientName) { fail('Select the claim this EOB pays (or enter the patient manually).'); return; }
-			if (!claimRef.trim()) { fail('A claim / bill reference is required so the posting flows back to Encounter Billing.', manualClaimInput); return; }
+			if (!claimRef.trim()) { fail('A claim / bill reference is required so the posting flows back to the Payment Dashboard.', manualClaimInput); return; }
 			if (!checkInp.value.trim()) { fail('The check / EFT number from the EOB is required.', checkInp); return; }
 			const t = currentTotals();
 			if (t.billed <= 0) { fail('Billed amount must be greater than 0.'); return; }

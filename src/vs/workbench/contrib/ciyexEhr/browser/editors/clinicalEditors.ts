@@ -4840,7 +4840,33 @@ interface InsurancePostingRow {
 	denialReason: string;
 	forwardedToSecondary: boolean;
 	secondaryPayer: string;
+	// allow-any-unicode-next-line
+	// ── Secondary-payer EOB state ──────────────────────────────────────────
+	// A primary EOB that leaves a coinsurance balance does NOT close the claim:
+	// the amount is carried to the patient's SECONDARY insurance (it is an
+	// insurance balance, not patient responsibility) and a pending secondary
+	// EOB entry is auto-generated on the row. Only after the secondary EOB is
+	// posted does the claim close — and only its unpaid remainder becomes
+	// patient responsibility.
+	secPayer: string;
+	secCheck: string;
+	secDate: string;
+	secPosted: boolean;
+	/** Per-code secondary figures — carried = the coinsurance from the primary EOB. */
+	secLines: SecondaryEobLine[];
+	/** AWAITING_SECONDARY = "Insurance Pending": coinsurance carried to the secondary payer. */
 	status: 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY';
+}
+
+/** One CPT line of the secondary-payer EOB entry. */
+interface SecondaryEobLine {
+	code: string;
+	/** Coinsurance carried over from the primary EOB for this code. */
+	carried: number;
+	/** What the secondary payer paid on this code. */
+	paid: number;
+	/** Secondary adjustment / write-off (e.g. OA-23 prior-payer adjustment). */
+	adj: number;
 }
 
 interface CreditCardRecord {
@@ -4927,25 +4953,65 @@ function parseEobField(description: string, field: string): number | undefined {
 
 /**
  * Parse the per-CPT EOB breakdown out of a posting's notes. Line-level
- * postings store `lines=CODE~billed~allowed~paid~copay~deductible~coinsurance;CODE~…`
+ * postings store `lines=CODE~billed~allowed~paid~copay~deductible~coinsurance~writeOff;CODE~…`
  * in the TEXT notes column (the description column is too small to carry
- * per-line detail). Legacy postings only carried the first 4 segments — the
- * patient-responsibility split stays 0 for those.
+ * per-line detail). Legacy postings only carried the first 4 (then 7)
+ * segments — the missing figures stay 0 / undefined for those.
  */
 function parseEobLines(notes: string): EobLine[] {
 	const m = String(notes ?? '').match(/lines=([^|]+)/);
 	if (!m) { return []; }
 	const out: EobLine[] = [];
 	for (const part of m[1].split(';')) {
-		const [code, billed, allowed, paid, copay, deductible, coinsurance] = part.split('~');
+		const [code, billed, allowed, paid, copay, deductible, coinsurance, writeOff] = part.split('~');
 		if (!code || !code.trim()) { continue; }
-		out.push({
+		const line: EobLine = {
 			code: code.trim(), description: '',
 			billed: Number(billed) || 0, allowed: Number(allowed) || 0, paid: Number(paid) || 0,
 			copay: Number(copay) || 0, deductible: Number(deductible) || 0, coinsurance: Number(coinsurance) || 0,
-		});
+		};
+		if (writeOff !== undefined) { line.writeOff = Number(writeOff) || 0; }
+		out.push(line);
 	}
 	return out;
+}
+
+/** A line's write-off: the explicit per-code figure when entered, else billed - allowed. */
+function lineWriteOff(l: EobLine): number {
+	if (l.writeOff !== undefined) { return l.writeOff; }
+	return l.allowed > 0 ? Math.max(Math.round((l.billed - l.allowed) * 100) / 100, 0) : 0;
+}
+
+/** Serialize the per-CPT EOB lines for the notes column (see parseEobLines). */
+function eobLinesSegment(lines: EobLine[]): string {
+	return lines.map(l => `${l.code}~${l.billed.toFixed(2)}~${l.allowed.toFixed(2)}~${l.paid.toFixed(2)}~${(l.copay || 0).toFixed(2)}~${(l.deductible || 0).toFixed(2)}~${(l.coinsurance || 0).toFixed(2)}~${lineWriteOff(l).toFixed(2)}`).join(';');
+}
+
+/**
+ * Parse the secondary-payer EOB detail out of a posting's notes. Stored as
+ * `| sec=payer~check~date~posted | sl=CODE~carried~paid~adj;CODE~…` appended
+ * after the primary `lines=` segment.
+ */
+function parseSecondaryEob(notes: string): { payer: string; check: string; date: string; posted: boolean; lines: SecondaryEobLine[] } | undefined {
+	const raw = String(notes ?? '');
+	const m = raw.match(/(?:^|\| ?)sec=([^|]+)/);
+	if (!m) { return undefined; }
+	const [payer, check, date, posted] = m[1].split('~');
+	const lines: SecondaryEobLine[] = [];
+	const lm = raw.match(/(?:^|\| ?)sl=([^|]+)/);
+	if (lm) {
+		for (const part of lm[1].split(';')) {
+			const [code, carried, paid, adj] = part.split('~');
+			if (!code || !code.trim()) { continue; }
+			lines.push({ code: code.trim(), carried: Number(carried) || 0, paid: Number(paid) || 0, adj: Number(adj) || 0 });
+		}
+	}
+	return { payer: (payer || '').trim(), check: (check || '').trim(), date: (date || '').trim(), posted: posted?.trim() === '1', lines };
+}
+
+/** Serialize the secondary-payer EOB detail for the notes column (see parseSecondaryEob). */
+function secondaryEobSegment(payer: string, check: string, date: string, posted: boolean, lines: SecondaryEobLine[]): string {
+	return ` | sec=${payer}~${check}~${date}~${posted ? 1 : 0} | sl=${lines.map(s => `${s.code}~${s.carried.toFixed(2)}~${s.paid.toFixed(2)}~${s.adj.toFixed(2)}`).join(';')}`;
 }
 
 export class PaymentsEditor extends ClinicalListEditorBase {
@@ -4988,7 +5054,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _insStatusFilter: '' | 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY' = '';
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
-		title: 'Transactions', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
+		title: 'Patient Balance', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
 		searchPlaceholder: 'Search by patient, transaction...',
 		// "+ Collect Payment" POSTs to /api/payments/collect — the GET list lives
 		// at /api/payments/transactions but the backend has no POST on that path.
@@ -5329,10 +5395,16 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/** Persist an EOB form result as a payment transaction (+ patient-pay follow-ups on create). */
-	private async _saveEobPosting(v: EobFormValues, editId?: string): Promise<void> {
-		const writeOff = Math.max(Math.round((v.billed - v.allowed) * 100) / 100, 0);
-		const resp = Math.round((v.copay + v.deductible + v.coinsurance) * 100) / 100;
-		const balanced = Math.abs(v.allowed - (v.paid + resp)) <= 0.01;
+	private async _saveEobPosting(v: EobFormValues, editId?: string, secSuffix?: string): Promise<void> {
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const writeOff = v.lines.length
+			? round2(v.lines.reduce((s, l) => s + lineWriteOff(l), 0))
+			: Math.max(round2(v.billed - v.allowed), 0);
+		// Coinsurance is NOT patient responsibility yet — it is carried to the
+		// patient's SECONDARY insurance and stays an insurance balance until the
+		// secondary EOB posts (only its unpaid remainder bills to the patient).
+		const resp = round2(v.copay + v.deductible);
+		const balanced = Math.abs(v.allowed - (v.paid + resp + v.coinsurance)) <= 0.01;
 		const description =
 			`EOB posting | payer=${v.payerName}; claim=${v.claimRef}; ` +
 			`check=${v.checkNumber}; billed=${v.billed.toFixed(2)}; allowed=${v.allowed.toFixed(2)}; ` +
@@ -5343,10 +5415,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			(balanced ? '' : ' | WARN: allowed != paid + patient responsibility');
 		// The description column is too small for per-line detail — the CPT
 		// breakdown rides in the TEXT notes column instead (billed / allowed /
-		// paid / copay / deductible / coinsurance per code).
-		const notes = v.lines.length
-			? `check=${v.checkNumber} | lines=${v.lines.map(l => `${l.code}~${l.billed.toFixed(2)}~${l.allowed.toFixed(2)}~${l.paid.toFixed(2)}~${(l.copay || 0).toFixed(2)}~${(l.deductible || 0).toFixed(2)}~${(l.coinsurance || 0).toFixed(2)}`).join(';')}`
-			: v.checkNumber;
+		// paid / copay / deductible / coinsurance / write-off per code), plus
+		// the secondary-EOB segments when the row carries them.
+		const notes = (v.lines.length
+			? `check=${v.checkNumber} | lines=${eobLinesSegment(v.lines)}`
+			: `check=${v.checkNumber}`) + (secSuffix || '');
 		try {
 			if (editId) {
 				const res = await this.apiService.fetch(`/api/payments/transactions/${editId}`, {
@@ -5389,10 +5462,26 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 						body: JSON.stringify({ amount: 0 }),
 					}).catch(() => { /* grid shows the parsed $0 either way */ });
 				}
-				// Copay / deductible / coinsurance are the PATIENT-PAY portion — they
-				// move to the Transactions tab as pending transactions the front desk
-				// collects (Encounter Billing's Collect completes them).
+				// Copay / deductible are the PATIENT-PAY portion — they move to the
+				// Patient Balance tab as a pending transaction the front desk
+				// collects (the Dashboard's Collect completes it). Coinsurance is
+				// deliberately excluded: it is pending with the secondary payer.
 				await this._createPatientRespTransactions(v);
+				if (v.coinsurance > 0) {
+					// The claim stays open ("Insurance Pending") — a secondary EOB
+					// entry is pre-generated on the row for when the secondary
+					// payer's EOB arrives.
+					this._showPayToast(
+						`EOB posted. $${v.coinsurance.toFixed(2)} coinsurance is carried to the patient's secondary insurance — the claim stays "Insurance Pending" with a pre-generated secondary EOB entry on its row.`);
+				} else if (resp > 0) {
+					// No coinsurance → the insurance side is closed; statement the
+					// patient with the full code & service breakdown of what they pay.
+					const emailed = await this._sendClaimStatement(v);
+					this._showPayToast(
+						`EOB posted — claim ${v.claimRef} is closed. $${resp.toFixed(2)} is patient responsibility${emailed
+							? ' and the patient was emailed a statement with the full code & service breakdown.'
+							: ' (statement email could not be sent — use the Dashboard invoice action).'}`);
+				}
 			}
 			this._resetAndReload();
 		} catch (e) {
@@ -5401,15 +5490,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/**
-	 * ONE pending transaction for the whole patient-responsibility total
-	 * (copay + deductible + coinsurance combined) — the Transactions tab shows
-	 * a single "Patient Resp" record per claim instead of one row per
-	 * component. Typed `copay` so Encounter Billing's Collect flow
-	 * (_completePendingPatientResp) still matches and completes it; the
-	 * description carries the component split.
+	 * ONE pending transaction for the patient-responsibility total (copay +
+	 * deductible combined) — the Patient Balance tab shows a single "Patient
+	 * Resp" record per claim instead of one row per component. Typed `copay`
+	 * so the Dashboard's Collect flow (_completePendingPatientResp) still
+	 * matches and completes it; the description carries the component split.
+	 * Coinsurance is NOT included — it is pending with the secondary payer and
+	 * only its unpaid remainder becomes patient responsibility when the
+	 * secondary EOB posts (_postSecondaryEob creates that record).
 	 */
 	private async _createPatientRespTransactions(v: EobFormValues): Promise<void> {
-		const parts: Array<[string, number]> = ([['copay', v.copay], ['deductible', v.deductible], ['coinsurance', v.coinsurance]] as Array<[string, number]>)
+		const parts: Array<[string, number]> = ([['copay', v.copay], ['deductible', v.deductible]] as Array<[string, number]>)
 			.filter(([, amt]) => amt > 0);
 		const total = Math.round(parts.reduce((s, [, amt]) => s + amt, 0) * 100) / 100;
 		if (total <= 0) { return; }
@@ -5424,7 +5515,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					transactionType: 'copay',
 					paymentMethodType: 'other',
 					status: 'pending',
-					description: `Patient responsibility (${split}) due from patient — claim ${v.claimRef} (from EOB)`,
+					description: `Patient responsibility (${split}) due from patient — claim ${v.claimRef} (from EOB)`
+						+ (v.coinsurance > 0 ? ` — coinsurance $${v.coinsurance.toFixed(2)} pending secondary insurance` : ''),
 				}),
 			});
 		} catch { /* best-effort — the EOB posting itself already saved */ }
@@ -5498,10 +5590,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const postedRefs = new Set<string>();
 			const postingRows: InsurancePostingRow[] = postings.map(t => {
 				const desc = String(t['description'] ?? '');
+				const rawNotes = String(t['notes'] ?? '');
 				const ref = (desc.match(/claim=([^;|]+)/)?.[1] || '').trim();
 				postedRefs.add(normalizeClaimRef(ref));
 				const claim = claimByRef.get(normalizeClaimRef(ref));
-				const storedLines = parseEobLines(String(t['notes'] ?? ''));
+				const storedLines = parseEobLines(rawNotes);
+				const sec = parseSecondaryEob(rawNotes);
 				const lines: EobLine[] = (storedLines.length ? storedLines : (claim?.lines || [])).map(l => ({
 					...l, description: claim?.lines.find(cl => cl.code === l.code)?.description || l.description,
 				}));
@@ -5521,9 +5615,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				const writeOff = parseEobField(desc, 'writeoff') ?? 0;
 				const fwd = /fwd=1/.test(desc);
 				const denialReason = desc.match(/denial=([^;|]+)/)?.[1]?.trim() || '';
+				const coinsEff = claimCoinsurance > 0 ? claimCoinsurance
+					: Math.round(lines.reduce((s, l) => s + (l.coinsurance || 0), 0) * 100) / 100;
 				let status: InsurancePostingRow['status'] = 'POSTED';
 				if (denialReason || (paid === 0 && writeOff > 0)) { status = 'DENIAL'; }
-				else if (fwd) { status = 'AWAITING_SECONDARY'; }
+				// Coinsurance left by the primary payer keeps the claim OPEN — it is
+				// pending with the secondary insurance ("Insurance Pending") until
+				// the secondary EOB is posted.
+				else if ((coinsEff > 0 || fwd) && !sec?.posted) { status = 'AWAITING_SECONDARY'; }
 				return {
 					txnId: String(t['id'] ?? ''),
 					claimRef: ref,
@@ -5532,15 +5631,24 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					patientName: String(t['patientName'] ?? (claim?.patientName || '')),
 					serviceDate: this._resolveDateOfService(dosIndex, claim?.encounterId || '', String(t['patientId'] ?? (claim?.patientId || '')), claim?.serviceDate || String(t['collectedAt'] ?? '').slice(0, 10)),
 					payerName: desc.match(/payer=([^;|]+)/)?.[1]?.trim() || '',
-					checkNumber: desc.match(/check=([^;|]+)/)?.[1]?.trim() || String(t['notes'] ?? ''),
+					// Only ever show a real check number — never the raw notes blob
+					// (legacy fallback leaked `check= | lines=…` into the field).
+					checkNumber: desc.match(/check=([^;|]+)/)?.[1]?.trim()
+						|| rawNotes.match(/(?:^|\| ?)check=([^|;]+)/)?.[1]?.trim()
+						|| (!rawNotes.includes('=') ? rawNotes.trim() : ''),
 					paymentMethodType: String(t['paymentMethodType'] ?? 'check'),
 					lines,
 					copay: claimCopay,
 					deductible: claimDeductible,
-					coinsurance: claimCoinsurance,
+					coinsurance: coinsEff,
 					denialReason,
 					forwardedToSecondary: fwd,
 					secondaryPayer: desc.match(/payer2=([^;|]+)/)?.[1]?.trim() || '',
+					secPayer: sec?.payer || '',
+					secCheck: sec?.check || '',
+					secDate: sec?.date || '',
+					secPosted: sec?.posted === true,
+					secLines: sec?.lines || [],
 					status,
 				};
 			});
@@ -5561,6 +5669,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					lines: c.lines.map(l => ({ ...l })),
 					copay: 0, deductible: 0, coinsurance: 0,
 					denialReason: '', forwardedToSecondary: false, secondaryPayer: '',
+					secPayer: '', secCheck: '', secDate: '', secPosted: false, secLines: [],
 					status: 'AWAITING_EOB' as const,
 				}));
 			this._insRows = [...awaitingRows, ...postingRows];
@@ -5569,6 +5678,42 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		}
 		this._insLoading = false;
 		this._renderInsurancePosting();
+	}
+
+	/**
+	 * Non-blocking inline toast at the bottom of the pane. Success feedback
+	 * must NOT go through dialogService here — those dialogs are native and
+	 * block the renderer.
+	 */
+	private _showPayToast(message: string, timeoutMs = 9000): void {
+		if (!this.contentEl) { return; }
+		const host = this.contentEl.parentElement || this.contentEl;
+		if (!host.style.position) { host.style.position = 'relative'; }
+		const toast = host.ownerDocument.createElement('div');
+		toast.textContent = message;
+		toast.style.cssText = 'position:absolute;left:50%;bottom:18px;transform:translateX(-50%);max-width:70%;z-index:80;padding:10px 16px;border-radius:6px;background:var(--vscode-editorWidget-background,#252526);border:1px solid #22c55e;color:var(--vscode-foreground);font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,0.45);';
+		host.appendChild(toast);
+		setTimeout(() => toast.remove(), timeoutMs);
+	}
+
+	/** Insurance dollars received from the secondary payer (0 until its EOB posts). */
+	private _rowSecPaid(row: InsurancePostingRow): number {
+		return row.secPosted ? Math.round(row.secLines.reduce((s, l) => s + l.paid, 0) * 100) / 100 : 0;
+	}
+
+	/** Coinsurance left to the patient AFTER the secondary payer adjudicated. */
+	private _rowSecRemainder(row: InsurancePostingRow): number {
+		if (!row.secPosted) { return 0; }
+		return Math.max(Math.round(row.secLines.reduce((s, l) => s + (l.carried - l.paid - l.adj), 0) * 100) / 100, 0);
+	}
+
+	/**
+	 * Patient responsibility for a row: copay + deductible immediately, but
+	 * coinsurance only AFTER the secondary EOB posted (its unpaid remainder) —
+	 * while the secondary is pending the coinsurance is an INSURANCE balance.
+	 */
+	private _rowPatientResp(row: InsurancePostingRow): number {
+		return Math.round((row.copay + row.deductible + this._rowSecRemainder(row)) * 100) / 100;
 	}
 
 	/** Rows passing the current search + status filter. */
@@ -5610,8 +5755,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// Summary cards.
 		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 		const posted = this._insRows.filter(r => r.status !== 'AWAITING_EOB');
-		const sumPaid = posted.reduce((s, r) => s + r.lines.reduce((a, l) => a + l.paid, 0), 0);
-		const sumResp = posted.reduce((s, r) => s + r.copay + r.deductible + r.coinsurance, 0);
+		const sumPaid = posted.reduce((s, r) => s + r.lines.reduce((a, l) => a + l.paid, 0) + this._rowSecPaid(r), 0);
+		const sumResp = posted.reduce((s, r) => s + this._rowPatientResp(r), 0);
+		// Coinsurance balances carried to the secondary payer — INSURANCE
+		// pending, deliberately not part of the Patient Resp card.
+		const sumPendingCoins = this._insRows.filter(r => r.status === 'AWAITING_SECONDARY')
+			.reduce((s, r) => s + r.coinsurance, 0);
 		const awaiting = this._insRows.filter(r => r.status === 'AWAITING_EOB').length;
 		const denials = this._insRows.filter(r => r.status === 'DENIAL').length;
 		const cards = DOM.append(this.contentEl, DOM.$('div'));
@@ -5629,6 +5778,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		card('Awaiting EOB', String(awaiting), '#f59e0b', 'AWAITING_EOB');
 		card('Postings', String(posted.length), 'var(--vscode-foreground)');
 		card('Insurance Paid', money(sumPaid), '#3b9edd');
+		card('Insurance Pending', money(sumPendingCoins), '#8b5cf6', 'AWAITING_SECONDARY');
 		card('Patient Resp', money(sumResp), '#f59e0b');
 		card('Denials', String(denials), '#ef4444', 'DENIAL');
 
@@ -5654,7 +5804,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const rows = this._visibleInsRows();
 		if (rows.length === 0) {
 			const e = DOM.append(scroll, DOM.$('div'));
-			e.textContent = 'No claims to post yet. Bill a fee sheet (Encounter Billing → Send to Billing) and its claim shows here awaiting the payer EOB.';
+			e.textContent = 'No claims to post yet. Bill a fee sheet (Dashboard → Send to Billing) and its claim shows here awaiting the payer EOB.';
 			e.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
 			return;
 		}
@@ -5665,8 +5815,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 		const expanded = this._insExpanded.has(normalizeClaimRef(row.claimRef));
 		const billedTotal = row.lines.reduce((s, l) => s + l.billed, 0);
-		const paidTotal = row.lines.reduce((s, l) => s + l.paid, 0);
-		const respTotal = row.copay + row.deductible + row.coinsurance;
+		const paidTotal = row.lines.reduce((s, l) => s + l.paid, 0) + this._rowSecPaid(row);
+		// Pending coinsurance is NOT patient responsibility — it shows as a
+		// Co-Ins badge on the status instead until the secondary EOB posts.
+		const respTotal = this._rowPatientResp(row);
 
 		const r = DOM.append(scroll, DOM.$('div'));
 		r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;align-items:center;padding:8px 12px;border-top:1px solid rgba(128,128,128,0.1);font-size:12px;${expanded ? 'background:rgba(59,158,221,0.05);' : ''}`;
@@ -5723,11 +5875,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const statusEl = DOM.append(r, DOM.$('span'));
 		const statusMeta: Record<InsurancePostingRow['status'], [string, string]> = {
 			AWAITING_EOB: ['Awaiting EOB', '#f59e0b'], POSTED: ['Posted', '#22c55e'],
-			DENIAL: ['Denial', '#ef4444'], AWAITING_SECONDARY: ['Awaiting Secondary', '#8b5cf6'],
+			DENIAL: ['Denial', '#ef4444'], AWAITING_SECONDARY: ['Insurance Pending', '#8b5cf6'],
 		};
 		const [stLabel, stColor] = statusMeta[row.status];
 		statusEl.textContent = stLabel;
 		statusEl.style.cssText = `color:${stColor};font-weight:600;`;
+		if (row.status === 'AWAITING_SECONDARY' && row.coinsurance > 0) {
+			// The carried coinsurance shows right next to the status (team
+			// design: "Insurance Pending" + "Co-Ins: $20.00").
+			const coinsBadge = DOM.append(statusEl, DOM.$('div'));
+			coinsBadge.textContent = `Co-Ins: ${money(row.coinsurance)}`;
+			coinsBadge.style.cssText = 'font-size:10px;font-weight:600;color:#8b5cf6;opacity:0.9;';
+		}
 
 		const act = DOM.append(r, DOM.$('div'));
 		act.style.cssText = 'display:flex;gap:6px;align-items:center;';
@@ -5740,7 +5899,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// No "Collapse" action button (team request) — the caret / patient name /
 		// codes cell all collapse an expanded row.
 		if (!expanded) {
-			actBtn(row.status === 'AWAITING_EOB' ? 'Post EOB' : 'Edit', row.status === 'AWAITING_EOB' ? '#22c55e' : '#0e639c', toggle);
+			const [actLabel, actColor] = row.status === 'AWAITING_EOB' ? ['Post EOB', '#22c55e']
+				: row.status === 'AWAITING_SECONDARY' ? ['Post 2nd EOB', '#8b5cf6']
+					: ['Edit', '#0e639c'];
+			actBtn(actLabel, actColor, toggle);
 		}
 		if (row.txnId) {
 			actBtn('Delete', '#a11', async () => {
@@ -5753,12 +5915,15 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/**
-	 * The inline expansion: one editable row per CPT code with SIX amount
-	 * inputs — Billed / Allowed / Ins Paid / Copay / Deductible / Coinsurance
-	 * (plain text boxes, no number-input spinners) — plus Payer / Check # /
-	 * Denial, EOB document attachments, live totals, and a Post/Save button —
-	 * all inside the grid, no popup. The claim-level responsibility figures
-	 * are the per-line sums.
+	 * The inline expansion: one editable row per CPT code with SEVEN amount
+	 * inputs — Billed / Allowed / Ins Paid / Copay / Deductible / Coinsurance /
+	 * Write-off (plain text boxes, no number-input spinners; the write-off
+	 * auto-fills from billed - allowed until the biller overrides it) — plus
+	 * mandatory Payer + Check #, Denial, EOB document attachments, live
+	 * totals, and a Post/Save button — all inside the grid, no popup. The
+	 * claim-level responsibility figures are the per-line sums, and a claim
+	 * whose primary EOB carries coinsurance also grows a secondary-EOB entry
+	 * (see _renderSecondaryEobSection).
 	 */
 	private _renderInsuranceExpansion(scroll: HTMLElement, row: InsurancePostingRow): void {
 		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
@@ -5792,39 +5957,57 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		heading.textContent = `Enter the payer EOB amounts ($) for each of the ${row.lines.length} CPT code${row.lines.length === 1 ? '' : 's'}:`;
 		heading.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:6px;';
 
-		const LCOLS = '70px minmax(120px,1fr) repeat(6, minmax(76px, 96px))';
+		const LCOLS = '70px minmax(110px,1fr) repeat(7, minmax(70px, 92px))';
 		const linesBox = DOM.append(wrap, DOM.$('div'));
 		linesBox.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;overflow:hidden;background:var(--vscode-editor-background);';
 		const lineHead = DOM.append(linesBox, DOM.$('div'));
 		lineHead.style.cssText = `display:grid;grid-template-columns:${LCOLS};gap:8px;padding:6px 10px;background:rgba(59,158,221,0.08);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--vscode-descriptionForeground);`;
-		for (const h of ['CPT', 'Description', 'Billed', 'Allowed', 'Ins Paid', 'Copay', 'Deductible', 'Coinsurance']) { DOM.append(lineHead, DOM.$('span')).textContent = h; }
+		for (const h of ['CPT', 'Description', 'Billed', 'Allowed', 'Ins Paid', 'Copay', 'Deductible', 'Coinsurance', 'Write-off']) { DOM.append(lineHead, DOM.$('span')).textContent = h; }
 
 		for (const line of row.lines) {
 			const lr = DOM.append(linesBox, DOM.$('div'));
 			lr.style.cssText = `display:grid;grid-template-columns:${LCOLS};gap:8px;padding:5px 10px;align-items:center;border-top:1px solid rgba(128,128,128,0.08);`;
 			const codeEl = DOM.append(lr, DOM.$('span')); codeEl.textContent = line.code; codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
 			const descEl = DOM.append(lr, DOM.$('span')); descEl.textContent = line.description || ''; descEl.title = line.description || ''; descEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-			lr.appendChild(numInput(line.billed, n => { line.billed = n; }).parentElement!);
-			lr.appendChild(numInput(line.allowed, n => { line.allowed = n; }).parentElement!);
+			// The per-code write-off auto-fills from billed - allowed while the
+			// biller types those figures; an explicit entry stops the auto-sync.
+			let woManual = line.writeOff !== undefined;
+			const woInp = numInput(lineWriteOff(line), n => { line.writeOff = n; woManual = true; });
+			const syncWriteOff = () => {
+				if (woManual) { return; }
+				const w = line.allowed > 0 ? Math.max(round2(line.billed - line.allowed), 0) : 0;
+				line.writeOff = w;
+				woInp.value = w ? String(w) : '';
+			};
+			lr.appendChild(numInput(line.billed, n => { line.billed = n; syncWriteOff(); }).parentElement!);
+			lr.appendChild(numInput(line.allowed, n => { line.allowed = n; syncWriteOff(); }).parentElement!);
 			lr.appendChild(numInput(line.paid, n => { line.paid = n; }).parentElement!);
 			lr.appendChild(numInput(line.copay || 0, n => { line.copay = n; }).parentElement!);
 			lr.appendChild(numInput(line.deductible || 0, n => { line.deductible = n; }).parentElement!);
 			lr.appendChild(numInput(line.coinsurance || 0, n => { line.coinsurance = n; }).parentElement!);
+			lr.appendChild(woInp.parentElement!);
 		}
 
-		const field = (parent: HTMLElement, label: string): HTMLElement => {
+		const field = (parent: HTMLElement, label: string, required = false): HTMLElement => {
 			const cell = DOM.append(parent, DOM.$('div'));
 			const l = DOM.append(cell, DOM.$('label')); l.textContent = label;
 			l.style.cssText = 'display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+			if (required) {
+				const star = DOM.append(l, DOM.$('span'));
+				star.textContent = ' *';
+				star.style.cssText = 'color:#ef4444;';
+			}
 			return cell;
 		};
 
 		const metaRow = DOM.append(wrap, DOM.$('div'));
 		metaRow.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-top:10px;';
-		const payerInp = DOM.append(field(metaRow, 'Insurance / Payer'), DOM.$('input')) as HTMLInputElement;
+		// Payer + Check / EFT # are MANDATORY (team request) — starred labels
+		// and hard-validated before posting.
+		const payerInp = DOM.append(field(metaRow, 'Insurance / Payer', true), DOM.$('input')) as HTMLInputElement;
 		payerInp.value = row.payerName; payerInp.placeholder = 'e.g. Medicare, BCBS'; payerInp.style.cssText = inputStyle;
 		payerInp.addEventListener('input', () => { row.payerName = payerInp.value; });
-		const checkInp = DOM.append(field(metaRow, 'Check / EFT #'), DOM.$('input')) as HTMLInputElement;
+		const checkInp = DOM.append(field(metaRow, 'Check / EFT #', true), DOM.$('input')) as HTMLInputElement;
 		checkInp.value = row.checkNumber; checkInp.placeholder = 'Check # from EOB'; checkInp.style.cssText = inputStyle;
 		checkInp.addEventListener('input', () => { row.checkNumber = checkInp.value; });
 		const denialInp = DOM.append(field(metaRow, 'Denial Reason (if denied)'), DOM.$('input')) as HTMLInputElement;
@@ -5887,6 +6070,15 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const postBtn = DOM.append(footer, DOM.$('button')) as HTMLButtonElement;
 		postBtn.textContent = row.txnId ? 'Save Posting' : 'Post EOB';
 		postBtn.style.cssText = 'padding:7px 20px;background:#2e7d32;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700;';
+		// Inline validation message — dialogService dialogs are native and
+		// block the renderer, so validation stays in the pane.
+		const errEl = DOM.append(wrap, DOM.$('div'));
+		errEl.style.cssText = 'display:none;margin-top:8px;font-size:12px;font-weight:600;color:var(--vscode-errorForeground,#f48771);';
+		const fail = (msg: string, focusEl?: HTMLElement): void => {
+			errEl.textContent = msg;
+			errEl.style.display = 'block';
+			focusEl?.focus();
+		};
 
 		const recompute = () => {
 			const billed = round2(row.lines.reduce((s, l) => s + l.billed, 0));
@@ -5897,8 +6089,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			row.copay = round2(row.lines.reduce((s, l) => s + (l.copay || 0), 0));
 			row.deductible = round2(row.lines.reduce((s, l) => s + (l.deductible || 0), 0));
 			row.coinsurance = round2(row.lines.reduce((s, l) => s + (l.coinsurance || 0), 0));
-			const writeOff = Math.max(round2(billed - allowed), 0);
-			const resp = round2(row.copay + row.deductible + row.coinsurance);
+			const writeOff = round2(row.lines.reduce((s, l) => s + lineWriteOff(l), 0));
+			// Coinsurance is carried to the secondary payer \u2014 the patient owes
+			// only copay + deductible at primary-posting time.
+			const resp = round2(row.copay + row.deductible);
 			DOM.clearNode(totalsEl);
 			const cell = (label: string, val: string, color?: string) => {
 				const c = DOM.append(totalsEl, DOM.$('div'));
@@ -5907,10 +6101,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			};
 			cell('Billed', money(billed)); cell('Allowed', money(allowed)); cell('Ins Paid', money(paid), '#3b9edd');
 			cell('Write-off', money(writeOff), '#8b5cf6');
-			cell('Copay', money(row.copay), '#f59e0b'); cell('Deductible', money(row.deductible), '#f59e0b'); cell('Coinsurance', money(row.coinsurance), '#f59e0b');
+			cell('Copay', money(row.copay), '#f59e0b'); cell('Deductible', money(row.deductible), '#f59e0b');
+			// allow-any-unicode-next-line
+			cell('Coinsurance \u2192 2nd Ins', money(row.coinsurance), '#8b5cf6');
 			cell('Patient Resp', money(resp), '#f59e0b');
-			const diff = round2(allowed - (paid + resp));
-			if (allowed || paid || resp) {
+			const diff = round2(allowed - (paid + resp + row.coinsurance));
+			if (allowed || paid || resp || row.coinsurance) {
 				const bal = DOM.append(totalsEl, DOM.$('div'));
 				bal.style.cssText = 'align-self:center;font-size:11px;';
 				if (Math.abs(diff) <= 0.01) { bal.textContent = '\u2713 Balanced'; bal.style.color = '#22c55e'; }
@@ -5924,9 +6120,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const allowed = round2(row.lines.reduce((s, l) => s + l.allowed, 0));
 			const paid = round2(row.lines.reduce((s, l) => s + l.paid, 0));
 			const resp = round2(row.copay + row.deductible + row.coinsurance);
-			if (billed <= 0) { await this.dialogService.info('Enter the billed amounts before posting.'); return; }
+			errEl.style.display = 'none';
+			if (billed <= 0) { fail('Enter the billed amounts before posting.'); return; }
+			// Payer + check number are mandatory — every EOB posting must carry
+			// the payer and the check/EFT it was paid with (team request).
+			if (!row.payerName.trim()) { fail('Insurance / Payer is required.', payerInp); return; }
+			if (!row.checkNumber.trim()) { fail('The check / EFT number from the EOB is required.', checkInp); return; }
 			if (paid <= 0 && !row.denialReason.trim() && resp <= 0) {
-				await this.dialogService.info('A zero-pay EOB needs a denial reason (or a patient-responsibility amount).');
+				fail('A zero-pay EOB needs a denial reason (or a patient-responsibility amount).', denialInp);
 				return;
 			}
 			postBtn.disabled = true; postBtn.textContent = 'Posting…';
@@ -5937,9 +6138,272 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				denialReason: row.denialReason, forwardedToSecondary: row.forwardedToSecondary, secondaryPayer: row.secondaryPayer,
 				lines: row.lines.map(l => ({ ...l })),
 			};
+			// Re-saving the primary must not drop an already-stored secondary EOB.
+			const secSuffix = (row.secPosted || row.secPayer || row.secCheck)
+				? secondaryEobSegment(row.secPayer, row.secCheck, row.secDate, row.secPosted, row.secLines)
+				: undefined;
 			this._insExpanded.delete(normalizeClaimRef(row.claimRef));
-			await this._saveEobPosting(values, row.txnId || undefined);
+			await this._saveEobPosting(values, row.txnId || undefined, secSuffix);
 		});
+
+		// Secondary-payer EOB block — pre-generated the moment the primary EOB
+		// leaves a coinsurance balance on a posted claim.
+		if (row.txnId && (row.secPosted || row.lines.some(l => (l.coinsurance || 0) > 0))) {
+			this._renderSecondaryEobSection(wrap, row);
+		}
+	}
+
+	/**
+	 * Secondary-payer EOB block inside the expansion. A primary EOB that
+	 * leaves a coinsurance balance does NOT close the claim — the amount is
+	 * carried to the patient's secondary insurance and shows as "Insurance
+	 * Pending" (an insurance balance, not patient responsibility). This
+	 * pre-generated entry lists exactly those CPT codes with their carried
+	 * amounts; the biller enters the secondary payer / check # / figures when
+	 * that EOB arrives and posts it — only then does the claim close, and only
+	 * the unpaid remainder becomes patient responsibility.
+	 */
+	private _renderSecondaryEobSection(wrap: HTMLElement, row: InsurancePostingRow): void {
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const box = DOM.append(wrap, DOM.$('div'));
+		box.style.cssText = 'margin-top:16px;border:1px solid rgba(139,92,246,0.45);border-radius:6px;padding:12px 14px;background:rgba(139,92,246,0.06);';
+		const head = DOM.append(box, DOM.$('div'));
+		head.textContent = row.secPosted ? 'Secondary Insurance EOB — Posted' : 'Secondary Insurance EOB — Pending';
+		head.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#8b5cf6;margin-bottom:8px;';
+
+		if (row.secPosted) {
+			const paid = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
+			const adj = round2(row.secLines.reduce((s, l) => s + l.adj, 0));
+			const rem = this._rowSecRemainder(row);
+			const sum = DOM.append(box, DOM.$('div'));
+			// allow-any-unicode-next-line
+			sum.textContent = `✓ Posted — payer ${row.secPayer || '—'}, check ${row.secCheck || '—'}${row.secDate ? `, received ${row.secDate}` : ''}. Secondary paid ${money(paid)}, adjustments ${money(adj)}, patient responsibility ${money(rem)}. The claim is closed.`;
+			sum.style.cssText = 'font-size:12px;color:#22c55e;';
+			return;
+		}
+
+		// Seed / refresh the pending entry from the primary lines that carry a
+		// coinsurance balance, keeping figures already typed for matching codes.
+		const carried = row.lines.filter(l => (l.coinsurance || 0) > 0);
+		row.secLines = carried.map(l => {
+			const prev = row.secLines.find(s => s.code === l.code);
+			return { code: l.code, carried: l.coinsurance || 0, paid: prev?.paid || 0, adj: prev?.adj || 0 };
+		});
+		const carriedTotal = round2(row.secLines.reduce((s, l) => s + l.carried, 0));
+
+		const info = DOM.append(box, DOM.$('div'));
+		info.textContent = `${money(carriedTotal)} coinsurance from the primary EOB is pending with the patient's secondary insurance — it is an insurance balance, NOT patient responsibility. When the secondary EOB arrives, enter its figures per code below and post: the claim closes and only the unpaid remainder bills to the patient.`;
+		info.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:10px;';
+
+		const inputStyle = 'width:100%;box-sizing:border-box;padding:5px 7px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const oweCells = new Map<string, HTMLElement>();
+		const refreshOwes = () => {
+			for (const l of row.secLines) {
+				const c = oweCells.get(l.code);
+				if (c) { c.textContent = money(Math.max(round2(l.carried - l.paid - l.adj), 0)); }
+			}
+		};
+		const mkNum = (parent: HTMLElement, val: number, onInput: (n: number) => void): HTMLInputElement => {
+			const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
+			inp.type = 'text';
+			inp.inputMode = 'decimal';
+			inp.autocomplete = 'off';
+			inp.placeholder = '0.00';
+			inp.value = val ? String(val) : '';
+			inp.style.cssText = inputStyle + 'text-align:right;';
+			inp.addEventListener('input', () => {
+				const clean = inp.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+				if (inp.value !== clean) { inp.value = clean; }
+				onInput(Number(inp.value) || 0);
+				refreshOwes();
+			});
+			return inp;
+		};
+
+		const SCOLS = '70px minmax(90px,120px) minmax(90px,120px) minmax(90px,120px) minmax(90px,120px)';
+		const grid = DOM.append(box, DOM.$('div'));
+		grid.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;overflow:hidden;background:var(--vscode-editor-background);';
+		const gHead = DOM.append(grid, DOM.$('div'));
+		gHead.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:6px 10px;background:rgba(139,92,246,0.10);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--vscode-descriptionForeground);`;
+		for (const h of ['CPT', 'Carried Co-Ins', 'Secondary Paid', 'Adjustment', 'Patient Owes']) { DOM.append(gHead, DOM.$('span')).textContent = h; }
+		for (const l of row.secLines) {
+			const gr = DOM.append(grid, DOM.$('div'));
+			gr.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:5px 10px;align-items:center;border-top:1px solid rgba(128,128,128,0.08);`;
+			const codeEl = DOM.append(gr, DOM.$('span')); codeEl.textContent = l.code; codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
+			const carriedEl = DOM.append(gr, DOM.$('span')); carriedEl.textContent = money(l.carried); carriedEl.style.cssText = 'font-size:12px;color:#8b5cf6;font-weight:600;text-align:right;';
+			mkNum(gr, l.paid, n => { l.paid = n; });
+			mkNum(gr, l.adj, n => { l.adj = n; });
+			const oweEl = DOM.append(gr, DOM.$('span'));
+			oweEl.style.cssText = 'font-size:12px;color:#f59e0b;font-weight:600;text-align:right;';
+			oweCells.set(l.code, oweEl);
+		}
+		refreshOwes();
+
+		const sField = (parent: HTMLElement, label: string, required = false): HTMLElement => {
+			const cell = DOM.append(parent, DOM.$('div'));
+			const lb = DOM.append(cell, DOM.$('label')); lb.textContent = label;
+			lb.style.cssText = 'display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:3px;';
+			if (required) {
+				const star = DOM.append(lb, DOM.$('span'));
+				star.textContent = ' *';
+				star.style.cssText = 'color:#ef4444;';
+			}
+			return cell;
+		};
+		const meta = DOM.append(box, DOM.$('div'));
+		meta.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-top:10px;';
+		const sPayerInp = DOM.append(sField(meta, 'Secondary Payer', true), DOM.$('input')) as HTMLInputElement;
+		sPayerInp.value = row.secPayer; sPayerInp.placeholder = 'e.g. UnitedHealthcare'; sPayerInp.style.cssText = inputStyle;
+		sPayerInp.addEventListener('input', () => { row.secPayer = sPayerInp.value; });
+		const sCheckInp = DOM.append(sField(meta, 'Check / EFT #', true), DOM.$('input')) as HTMLInputElement;
+		sCheckInp.value = row.secCheck; sCheckInp.placeholder = 'Check # from secondary EOB'; sCheckInp.style.cssText = inputStyle;
+		sCheckInp.addEventListener('input', () => { row.secCheck = sCheckInp.value; });
+		const sDateInp = DOM.append(sField(meta, 'Date Received'), DOM.$('input')) as HTMLInputElement;
+		sDateInp.value = row.secDate; sDateInp.placeholder = 'MM/DD/YYYY'; sDateInp.style.cssText = inputStyle;
+		sDateInp.addEventListener('input', () => { row.secDate = sDateInp.value; });
+
+		const foot = DOM.append(box, DOM.$('div'));
+		foot.style.cssText = 'display:flex;justify-content:flex-end;margin-top:12px;';
+		const postSecBtn = DOM.append(foot, DOM.$('button')) as HTMLButtonElement;
+		postSecBtn.textContent = 'Post Secondary EOB';
+		postSecBtn.style.cssText = 'padding:7px 20px;background:#8b5cf6;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700;';
+		// Inline validation — dialogService dialogs are native and block the renderer.
+		const secErrEl = DOM.append(box, DOM.$('div'));
+		secErrEl.style.cssText = 'display:none;margin-top:8px;font-size:12px;font-weight:600;color:var(--vscode-errorForeground,#f48771);';
+		const secFail = (msg: string, focusEl?: HTMLElement): void => {
+			secErrEl.textContent = msg;
+			secErrEl.style.display = 'block';
+			focusEl?.focus();
+		};
+		postSecBtn.addEventListener('click', async () => {
+			secErrEl.style.display = 'none';
+			if (!row.secPayer.trim()) { secFail('Secondary Payer is required.', sPayerInp); return; }
+			if (!row.secCheck.trim()) { secFail('The check / EFT number from the secondary EOB is required.', sCheckInp); return; }
+			postSecBtn.disabled = true; postSecBtn.textContent = 'Posting…';
+			await this._postSecondaryEob(row);
+		});
+	}
+
+	/**
+	 * Post the secondary-payer EOB against the primary posting transaction:
+	 * the description is rebuilt with the COMBINED figures (paid, write-off,
+	 * patient resp) so the Dashboard's balance reflection closes the
+	 * encounter, the notes gain the secondary segments, the unpaid coinsurance
+	 * remainder becomes a pending patient-responsibility transaction, and the
+	 * patient is emailed the full statement — the claim is then Completed.
+	 */
+	private async _postSecondaryEob(row: InsurancePostingRow): Promise<void> {
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const paidSec = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
+		const adjSec = round2(row.secLines.reduce((s, l) => s + l.adj, 0));
+		const remainder = Math.max(round2(row.secLines.reduce((s, l) => s + (l.carried - l.paid - l.adj), 0)), 0);
+		const billed = round2(row.lines.reduce((s, l) => s + l.billed, 0));
+		const allowed = round2(row.lines.reduce((s, l) => s + l.allowed, 0));
+		const paidPrimary = round2(row.lines.reduce((s, l) => s + l.paid, 0));
+		const primaryWo = round2(row.lines.reduce((s, l) => s + lineWriteOff(l), 0));
+		const resp = round2(row.copay + row.deductible + remainder);
+		const description =
+			`EOB posting | payer=${row.payerName}; claim=${row.claimRef}; ` +
+			`check=${row.checkNumber}; billed=${billed.toFixed(2)}; allowed=${allowed.toFixed(2)}; ` +
+			`paid=${round2(paidPrimary + paidSec).toFixed(2)}; copay=${row.copay.toFixed(2)}; deductible=${row.deductible.toFixed(2)}; ` +
+			`coinsurance=${row.coinsurance.toFixed(2)}; writeoff=${round2(primaryWo + adjSec).toFixed(2)}; resp=${resp.toFixed(2)}`;
+		const notes = `check=${row.checkNumber} | lines=${eobLinesSegment(row.lines)}`
+			+ secondaryEobSegment(row.secPayer, row.secCheck, row.secDate, true, row.secLines);
+		try {
+			const res = await this.apiService.fetch(`/api/payments/transactions/${row.txnId}`, {
+				method: 'PUT', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ amount: round2(paidPrimary + paidSec), description, notes }),
+			});
+			if (!res.ok) {
+				const e = await res.json().catch(() => null) as Record<string, unknown> | null;
+				await this.dialogService.error(String(e?.['message'] || `Secondary posting failed (${res.status}).`));
+				this._renderInsurancePosting();
+				return;
+			}
+			// Only NOW does the unpaid coinsurance become patient responsibility.
+			if (remainder > 0) {
+				await this.apiService.fetch('/api/payments/collect', {
+					method: 'POST',
+					body: JSON.stringify({
+						patientId: row.patientId,
+						patientName: row.patientName,
+						amount: remainder,
+						transactionType: 'coinsurance',
+						paymentMethodType: 'other',
+						status: 'pending',
+						description: `Patient responsibility (coinsurance remainder $${remainder.toFixed(2)} after secondary EOB from ${row.secPayer}) due from patient — claim ${row.claimRef} (from EOB)`,
+					}),
+				}).catch(() => { /* best-effort — the secondary posting itself saved */ });
+			}
+			row.secPosted = true;
+			let emailed = false;
+			if (resp > 0) {
+				emailed = await this._sendClaimStatement(row, { payer: row.secPayer, check: row.secCheck, paid: paidSec, remainder });
+			}
+			this._insExpanded.delete(normalizeClaimRef(row.claimRef));
+			this._showPayToast(
+				`Secondary EOB posted — claim ${row.claimRef} is closed.`
+				+ (remainder > 0 ? ` $${remainder.toFixed(2)} coinsurance remainder is now patient responsibility.` : '')
+				+ (emailed ? ' The patient was emailed a statement with the full code & service breakdown.' : ''));
+			this._loadAndRenderInsurancePosting();
+		} catch (e) {
+			await this.dialogService.error(`Secondary posting failed: ${e}`);
+			this._renderInsurancePosting();
+		}
+	}
+
+	/**
+	 * Email the patient a full statement for a CLOSED claim — every code &
+	 * service with its billed / allowed / insurance-paid / write-off /
+	 * responsibility figures and exactly what the patient pays — via a
+	 * ciyex-patient-pay invoice (its send workflow emails the statement PDF
+	 * with these notes). Best-effort; returns whether the email went out.
+	 */
+	private async _sendClaimStatement(
+		v: { claimRef: string; patientId: string; patientName: string; payerName: string; checkNumber: string; serviceDate?: string; lines: EobLine[]; copay: number; deductible: number },
+		sec?: { payer: string; check: string; paid: number; remainder: number },
+	): Promise<boolean> {
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const fmt = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const respTotal = round2(v.copay + v.deductible + (sec?.remainder || 0));
+		if (respTotal <= 0 || !v.patientId) { return false; }
+		const lineTexts = v.lines.map(l =>
+			`${l.code} ${l.description || 'Service'}: billed ${fmt(l.billed)}, allowed ${fmt(l.allowed)}, insurance paid ${fmt(l.paid)}, write-off ${fmt(lineWriteOff(l))}, copay ${fmt(l.copay || 0)}, deductible ${fmt(l.deductible || 0)}, coinsurance ${fmt(l.coinsurance || 0)}`);
+		const paidPrimary = round2(v.lines.reduce((s, l) => s + l.paid, 0));
+		const notes =
+			`Patient statement — claim ${v.claimRef}${v.serviceDate ? `, date of service ${isoToUsDate(v.serviceDate)}` : ''}. ` +
+			`Insurance: ${v.payerName || '—'} (check ${v.checkNumber || '—'})${sec ? `; secondary ${sec.payer} (check ${sec.check})` : ''}. ` +
+			`${lineTexts.join(' | ')}. ` +
+			`Insurance paid ${fmt(paidPrimary)}${sec ? ` primary + ${fmt(sec.paid)} secondary` : ''}. ` +
+			`You pay ${fmt(respTotal)} (copay ${fmt(v.copay)} + deductible ${fmt(v.deductible)}${sec ? ` + coinsurance remainder ${fmt(sec.remainder)}` : ''}).`;
+		const payload: Record<string, unknown> = {
+			patientId: v.patientId,
+			patientName: v.patientName,
+			totalAmount: respTotal,
+			balanceDue: respTotal,
+			status: 'SENT',
+			notes,
+		};
+		try {
+			const pr = await this.apiService.fetch(`/api/patients/${encodeURIComponent(v.patientId)}`);
+			if (pr.ok) {
+				const pd = await pr.json();
+				const patient = (pd?.data ?? pd) as Record<string, unknown>;
+				const email = String(patient?.['email'] ?? patient?.['patientEmail'] ?? patient?.['emailAddress'] ?? '');
+				if (email) { payload['patientEmail'] = email; }
+			}
+		} catch { /* email lookup is best-effort */ }
+		try {
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
+			if (!res.ok) { return false; }
+			const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+			const createdData = (created['data'] ?? created) as Record<string, unknown>;
+			const invId = String(createdData['id'] ?? '');
+			if (!invId) { return false; }
+			const sent = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invId)}/send`, { method: 'POST', headers: this._patientPayHeaders() });
+			return sent.ok;
+		} catch { return false; }
 	}
 
 	// allow-any-unicode-next-line
@@ -6805,7 +7269,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	// grid is custom (one row per signed-encounter fee sheet) and rendered by
 	// _loadAndRenderEncounterBilling() rather than the generic list base.
 	private readonly _encounterBillingConfig: ClinicalEditorConfig = {
-		title: 'Encounter Billing', apiPath: '/api/fee-sheets',
+		title: 'Payment Dashboard', apiPath: '/api/fee-sheets',
 		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
 		// Returning null short-circuits the generic base loader (no fetch / no
 		// error UI) — the custom grid is rendered by _loadAndRenderEncounterBilling().
@@ -6865,9 +7329,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			btn.style.color = active ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)';
 			btn.style.fontWeight = active ? '600' : '400';
 		};
+		// Team renames (meeting 2026-07-22): "Encounter Billing" → "Dashboard",
+		// "Transactions" → "Patient Balance"; the views themselves are unchanged.
 		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
-			{ view: 'encounter-billing', label: 'Encounter Billing' },
-			{ view: 'transactions', label: 'Transactions' },
+			{ view: 'encounter-billing', label: 'Dashboard' },
+			{ view: 'transactions', label: 'Patient Balance' },
 			{ view: 'insurance-posting', label: 'Insurance Posting' },
 			{ view: 'methods', label: 'Payment Methods' },
 			{ view: 'plans', label: 'Payment Plans' },
@@ -7243,7 +7709,7 @@ ${rows.join('\n')}
 		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
 		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;';
 		const titleEl = DOM.append(toolbar, DOM.$('h2'));
-		titleEl.textContent = 'Encounter Billing';
+		titleEl.textContent = 'Payment Dashboard';
 		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
 		const refreshBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.textContent = '\u21BB Refresh';
