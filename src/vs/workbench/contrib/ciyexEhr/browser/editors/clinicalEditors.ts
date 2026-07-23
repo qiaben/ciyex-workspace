@@ -4858,15 +4858,37 @@ interface InsurancePostingRow {
 	status: 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY';
 }
 
-/** One CPT line of the secondary-payer EOB entry. */
+/**
+ * One CPT line of the secondary-payer EOB entry. The secondary EOB is a FULL
+ * per-code posting like the primary — Billed (defaults to the carried
+ * coinsurance), Allowed, Ins Paid, Copay, Deductible, Coinsurance and
+ * Write-off/Adjustment (e.g. OA-23 prior-payer adjustment).
+ */
 interface SecondaryEobLine {
 	code: string;
 	/** Coinsurance carried over from the primary EOB for this code. */
 	carried: number;
+	/** Billed to the secondary payer — prefilled with the carried coinsurance. */
+	billed: number;
+	allowed: number;
 	/** What the secondary payer paid on this code. */
 	paid: number;
-	/** Secondary adjustment / write-off (e.g. OA-23 prior-payer adjustment). */
-	adj: number;
+	copay: number;
+	deductible: number;
+	coinsurance: number;
+	/** Secondary adjustment / write-off (auto-fills billed - allowed). */
+	writeOff: number;
+}
+
+/**
+ * What the patient owes on a secondary line: the explicitly entered
+ * responsibility split when present, else billed - paid - write-off (which
+ * equals allowed - paid once the write-off auto-fills).
+ */
+function secondaryLineOwes(l: SecondaryEobLine): number {
+	const explicit = Math.round((l.copay + l.deductible + l.coinsurance) * 100) / 100;
+	if (explicit > 0) { return explicit; }
+	return Math.max(Math.round((l.billed - l.paid - l.writeOff) * 100) / 100, 0);
 }
 
 interface CreditCardRecord {
@@ -4989,8 +5011,9 @@ function eobLinesSegment(lines: EobLine[]): string {
 
 /**
  * Parse the secondary-payer EOB detail out of a posting's notes. Stored as
- * `| sec=payer~check~date~posted | sl=CODE~carried~paid~adj;CODE~…` appended
- * after the primary `lines=` segment.
+ * `| sec=payer~check~date~posted | sl=CODE~carried~paid~writeOff~billed~allowed~copay~deductible~coinsurance;CODE~…`
+ * appended after the primary `lines=` segment. Early postings carried only
+ * the first 4 segments — billed defaults to the carried coinsurance then.
  */
 function parseSecondaryEob(notes: string): { payer: string; check: string; date: string; posted: boolean; lines: SecondaryEobLine[] } | undefined {
 	const raw = String(notes ?? '');
@@ -5001,9 +5024,17 @@ function parseSecondaryEob(notes: string): { payer: string; check: string; date:
 	const lm = raw.match(/(?:^|\| ?)sl=([^|]+)/);
 	if (lm) {
 		for (const part of lm[1].split(';')) {
-			const [code, carried, paid, adj] = part.split('~');
+			const [code, carried, paid, writeOff, billed, allowed, copay, deductible, coinsurance] = part.split('~');
 			if (!code || !code.trim()) { continue; }
-			lines.push({ code: code.trim(), carried: Number(carried) || 0, paid: Number(paid) || 0, adj: Number(adj) || 0 });
+			const carriedN = Number(carried) || 0;
+			lines.push({
+				code: code.trim(), carried: carriedN,
+				billed: billed !== undefined ? (Number(billed) || 0) : carriedN,
+				allowed: Number(allowed) || 0,
+				paid: Number(paid) || 0,
+				copay: Number(copay) || 0, deductible: Number(deductible) || 0, coinsurance: Number(coinsurance) || 0,
+				writeOff: Number(writeOff) || 0,
+			});
 		}
 	}
 	return { payer: (payer || '').trim(), check: (check || '').trim(), date: (date || '').trim(), posted: posted?.trim() === '1', lines };
@@ -5011,7 +5042,8 @@ function parseSecondaryEob(notes: string): { payer: string; check: string; date:
 
 /** Serialize the secondary-payer EOB detail for the notes column (see parseSecondaryEob). */
 function secondaryEobSegment(payer: string, check: string, date: string, posted: boolean, lines: SecondaryEobLine[]): string {
-	return ` | sec=${payer}~${check}~${date}~${posted ? 1 : 0} | sl=${lines.map(s => `${s.code}~${s.carried.toFixed(2)}~${s.paid.toFixed(2)}~${s.adj.toFixed(2)}`).join(';')}`;
+	return ` | sec=${payer}~${check}~${date}~${posted ? 1 : 0} | sl=${lines.map(s =>
+		`${s.code}~${s.carried.toFixed(2)}~${s.paid.toFixed(2)}~${s.writeOff.toFixed(2)}~${s.billed.toFixed(2)}~${s.allowed.toFixed(2)}~${s.copay.toFixed(2)}~${s.deductible.toFixed(2)}~${s.coinsurance.toFixed(2)}`).join(';')}`;
 }
 
 export class PaymentsEditor extends ClinicalListEditorBase {
@@ -5704,7 +5736,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	/** Coinsurance left to the patient AFTER the secondary payer adjudicated. */
 	private _rowSecRemainder(row: InsurancePostingRow): number {
 		if (!row.secPosted) { return 0; }
-		return Math.max(Math.round(row.secLines.reduce((s, l) => s + (l.carried - l.paid - l.adj), 0) * 100) / 100, 0);
+		return Math.max(Math.round(row.secLines.reduce((s, l) => s + secondaryLineOwes(l), 0) * 100) / 100, 0);
 	}
 
 	/**
@@ -6174,7 +6206,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 		if (row.secPosted) {
 			const paid = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
-			const adj = round2(row.secLines.reduce((s, l) => s + l.adj, 0));
+			const adj = round2(row.secLines.reduce((s, l) => s + l.writeOff, 0));
 			const rem = this._rowSecRemainder(row);
 			const sum = DOM.append(box, DOM.$('div'));
 			// allow-any-unicode-next-line
@@ -6185,24 +6217,41 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 		// Seed / refresh the pending entry from the primary lines that carry a
 		// coinsurance balance, keeping figures already typed for matching codes.
+		// The BILLED amount to the secondary payer IS the carried coinsurance.
 		const carried = row.lines.filter(l => (l.coinsurance || 0) > 0);
 		row.secLines = carried.map(l => {
 			const prev = row.secLines.find(s => s.code === l.code);
-			return { code: l.code, carried: l.coinsurance || 0, paid: prev?.paid || 0, adj: prev?.adj || 0 };
+			const carriedAmt = l.coinsurance || 0;
+			return {
+				code: l.code, carried: carriedAmt,
+				billed: prev?.billed || carriedAmt,
+				allowed: prev?.allowed || 0,
+				paid: prev?.paid || 0,
+				copay: prev?.copay || 0, deductible: prev?.deductible || 0, coinsurance: prev?.coinsurance || 0,
+				writeOff: prev?.writeOff || 0,
+			};
 		});
 		const carriedTotal = round2(row.secLines.reduce((s, l) => s + l.carried, 0));
 
 		const info = DOM.append(box, DOM.$('div'));
-		info.textContent = `${money(carriedTotal)} coinsurance from the primary EOB is pending with the patient's secondary insurance — it is an insurance balance, NOT patient responsibility. When the secondary EOB arrives, enter its figures per code below and post: the claim closes and only the unpaid remainder bills to the patient.`;
+		info.textContent = `${money(carriedTotal)} coinsurance from the primary EOB is pending with the patient's secondary insurance — it is an insurance balance, NOT patient responsibility. When the secondary EOB arrives, enter its full figures for these exact codes below (Billed is prefilled with the carried coinsurance amount) and post: the claim closes and only the unpaid remainder bills to the patient.`;
 		info.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:10px;';
 
 		const inputStyle = 'width:100%;box-sizing:border-box;padding:5px 7px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		// Live per-line "Patient Owes" cells + secondary claim totals.
 		const oweCells = new Map<string, HTMLElement>();
-		const refreshOwes = () => {
+		const secTotalsEl = DOM.append(box, DOM.$('div'));
+		const refreshSecTotals = () => {
 			for (const l of row.secLines) {
 				const c = oweCells.get(l.code);
-				if (c) { c.textContent = money(Math.max(round2(l.carried - l.paid - l.adj), 0)); }
+				if (c) { c.textContent = money(secondaryLineOwes(l)); }
 			}
+			const billed = round2(row.secLines.reduce((s, l) => s + l.billed, 0));
+			const allowed = round2(row.secLines.reduce((s, l) => s + l.allowed, 0));
+			const paid = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
+			const wo = round2(row.secLines.reduce((s, l) => s + l.writeOff, 0));
+			const owes = round2(row.secLines.reduce((s, l) => s + secondaryLineOwes(l), 0));
+			secTotalsEl.textContent = `Secondary totals: billed ${money(billed)}, allowed ${money(allowed)}, paid ${money(paid)}, write-off ${money(wo)} — patient owes ${money(owes)} after posting.`;
 		};
 		const mkNum = (parent: HTMLElement, val: number, onInput: (n: number) => void): HTMLInputElement => {
 			const inp = DOM.append(parent, DOM.$('input')) as HTMLInputElement;
@@ -6216,29 +6265,50 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				const clean = inp.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
 				if (inp.value !== clean) { inp.value = clean; }
 				onInput(Number(inp.value) || 0);
-				refreshOwes();
+				refreshSecTotals();
 			});
 			return inp;
 		};
 
-		const SCOLS = '70px minmax(90px,120px) minmax(90px,120px) minmax(90px,120px) minmax(90px,120px)';
+		// Full EOB columns for the exact carried codes — the same shape as the
+		// primary entry (Billed = coinsurance amount, Allowed, Ins Paid, Copay,
+		// Deductible, Coinsurance, Write-off) plus a live Patient Owes cell.
+		const SCOLS = '70px repeat(7, minmax(66px, 88px)) minmax(80px, 100px)';
 		const grid = DOM.append(box, DOM.$('div'));
 		grid.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;overflow:hidden;background:var(--vscode-editor-background);';
 		const gHead = DOM.append(grid, DOM.$('div'));
 		gHead.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:6px 10px;background:rgba(139,92,246,0.10);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--vscode-descriptionForeground);`;
-		for (const h of ['CPT', 'Carried Co-Ins', 'Secondary Paid', 'Adjustment', 'Patient Owes']) { DOM.append(gHead, DOM.$('span')).textContent = h; }
+		for (const h of ['CPT', 'Billed', 'Allowed', 'Ins Paid', 'Copay', 'Deductible', 'Coinsurance', 'Write-off', 'Patient Owes']) { DOM.append(gHead, DOM.$('span')).textContent = h; }
 		for (const l of row.secLines) {
 			const gr = DOM.append(grid, DOM.$('div'));
 			gr.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:5px 10px;align-items:center;border-top:1px solid rgba(128,128,128,0.08);`;
-			const codeEl = DOM.append(gr, DOM.$('span')); codeEl.textContent = l.code; codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
-			const carriedEl = DOM.append(gr, DOM.$('span')); carriedEl.textContent = money(l.carried); carriedEl.style.cssText = 'font-size:12px;color:#8b5cf6;font-weight:600;text-align:right;';
-			mkNum(gr, l.paid, n => { l.paid = n; });
-			mkNum(gr, l.adj, n => { l.adj = n; });
+			const codeEl = DOM.append(gr, DOM.$('span'));
+			codeEl.textContent = l.code;
+			codeEl.title = `Carried coinsurance from the primary EOB: ${money(l.carried)}`;
+			codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
+			// Write-off auto-fills billed - allowed until explicitly overridden
+			// (same behaviour as the primary lines).
+			let woManual = l.writeOff > 0;
+			const woInp = mkNum(DOM.$('span'), l.writeOff, n => { l.writeOff = n; woManual = true; });
+			const syncWo = () => {
+				if (woManual) { return; }
+				const w = l.allowed > 0 ? Math.max(round2(l.billed - l.allowed), 0) : 0;
+				l.writeOff = w;
+				woInp.value = w ? String(w) : '';
+			};
+			gr.appendChild(mkNum(DOM.$('span'), l.billed, n => { l.billed = n; syncWo(); }).parentElement!);
+			gr.appendChild(mkNum(DOM.$('span'), l.allowed, n => { l.allowed = n; syncWo(); }).parentElement!);
+			gr.appendChild(mkNum(DOM.$('span'), l.paid, n => { l.paid = n; }).parentElement!);
+			gr.appendChild(mkNum(DOM.$('span'), l.copay, n => { l.copay = n; }).parentElement!);
+			gr.appendChild(mkNum(DOM.$('span'), l.deductible, n => { l.deductible = n; }).parentElement!);
+			gr.appendChild(mkNum(DOM.$('span'), l.coinsurance, n => { l.coinsurance = n; }).parentElement!);
+			gr.appendChild(woInp.parentElement!);
 			const oweEl = DOM.append(gr, DOM.$('span'));
 			oweEl.style.cssText = 'font-size:12px;color:#f59e0b;font-weight:600;text-align:right;';
 			oweCells.set(l.code, oweEl);
 		}
-		refreshOwes();
+		secTotalsEl.style.cssText = 'margin-top:8px;font-size:11px;color:var(--vscode-descriptionForeground);';
+		refreshSecTotals();
 
 		const sField = (parent: HTMLElement, label: string, required = false): HTMLElement => {
 			const cell = DOM.append(parent, DOM.$('div'));
@@ -6296,8 +6366,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private async _postSecondaryEob(row: InsurancePostingRow): Promise<void> {
 		const round2 = (n: number) => Math.round(n * 100) / 100;
 		const paidSec = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
-		const adjSec = round2(row.secLines.reduce((s, l) => s + l.adj, 0));
-		const remainder = Math.max(round2(row.secLines.reduce((s, l) => s + (l.carried - l.paid - l.adj), 0)), 0);
+		const adjSec = round2(row.secLines.reduce((s, l) => s + l.writeOff, 0));
+		const remainder = Math.max(round2(row.secLines.reduce((s, l) => s + secondaryLineOwes(l), 0)), 0);
 		const billed = round2(row.lines.reduce((s, l) => s + l.billed, 0));
 		const allowed = round2(row.lines.reduce((s, l) => s + l.allowed, 0));
 		const paidPrimary = round2(row.lines.reduce((s, l) => s + l.paid, 0));
