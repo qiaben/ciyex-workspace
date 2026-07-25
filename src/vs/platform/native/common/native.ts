@@ -203,12 +203,14 @@ export interface ICommonNativeHostService {
 	// the PDF must be written from the main process instead.
 	savePdfToDownloads(fileName: string): Promise<string | undefined>;
 
-	// Open the native OS print dialog on the active window's content (honours
-	// @media print CSS, same as `savePdfToDownloads`). Routed through the main
-	// process because a renderer-side `window.print()` under `vscode-file://` does
-	// not reliably resolve. Returns `true` if the document was sent to the printer,
-	// `false` if the user cancelled the dialog.
-	printDocument(): Promise<boolean>;
+	// Render the active window's content to a PDF (honours @media print CSS), write
+	// it to a whitelisted temp folder and open it in an in-app child window using
+	// Electron/Chromium's built-in PDF viewer, which shows a real preview plus its
+	// own toolbar Print button. Electron's native OS print dialog cannot render a
+	// live preview on its own (a Windows/Electron limitation, not fixable from
+	// here), so printing is routed through this in-app viewer instead. Returns
+	// `true` once the viewer opened.
+	printPdfPreview(fileName: string): Promise<boolean>;
 
 	// Process
 	getProcessId(): Promise<number | undefined>;
