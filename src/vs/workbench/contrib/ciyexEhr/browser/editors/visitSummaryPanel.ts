@@ -422,11 +422,13 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 	};
 
-	// "Print" renders the summary to a PDF in the main process and opens it in the
-	// OS default PDF viewer, which gives a real print preview to review and print
-	// from. A bare renderer-side `window.print()` under `vscode-file://` (Electron)
-	// jumps straight to the OS print dialog with NO document preview — the reported
-	// bug — so we route printing through the native host instead.
+	// "Print" renders the summary to a PDF in the main process and opens it in an
+	// in-app child window using Electron's built-in PDF viewer, which shows a real
+	// preview plus its own toolbar Print button. A bare renderer-side
+	// `window.print()` under `vscode-file://` (Electron) jumps straight to the OS
+	// print dialog with NO document preview, and handing the file off to the OS's
+	// default PDF app is unreliable (may be missing or not obviously offer print)
+	// — so we route printing through the native host's in-app viewer instead.
 	const printSummary = async () => {
 		if (!summaryLoaded) {
 			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
