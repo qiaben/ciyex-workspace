@@ -14,7 +14,10 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost } from './patientLedger.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -454,6 +457,12 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
+			// Financial > Ledger: the SAME per-patient financial ledger the
+			// Payments editor's Ledger tab shows (charges / insurance payments /
+			// write-offs / patient payments / patient portion with a running
+			// balance), scoped to this chart's patient. Rendered custom via
+			// patientLedger.ts — no backend tab config / FHIR resource behind it.
+			{ key: 'ledger', label: 'Ledger', icon: 'BookOpen', emoji: '\u{1F4D2}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
 		],
 	},
 	{
@@ -2172,6 +2181,8 @@ export class PatientChartEditor extends EditorPane {
 		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INativeHostService private readonly nativeHostService: INativeHostService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 	) {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
@@ -2185,6 +2196,31 @@ export class PatientChartEditor extends EditorPane {
 			this._tabDataCache.delete('history');
 			if (this.activeTab === 'history') { this._renderMain(); }
 		}));
+	}
+
+	/**
+	 * Actions host (View / Download / Delete) for the Financial → Ledger page.
+	 * Locally-deleted entries are stored per patient — the same shared ledger
+	 * table the Payments editor uses, but the hidden set is keyed by patient id
+	 * so each chart carries its own dynamic ledger view.
+	 */
+	private _ledgerActionsHost(): ILedgerActionsHost {
+		const key = `ciyex.ledger.hiddenEntries.${this.patientId}`;
+		return makeLedgerActionsHost({
+			loadHidden: () => this.storageSvc.get(key, StorageScope.PROFILE, '[]'),
+			storeHidden: json => this.storageSvc.store(key, json, StorageScope.PROFILE, StorageTarget.USER),
+			saveFile: async (fileName, html) => {
+				try {
+					const target = URI.joinPath(await this.fileDialogService.defaultFilePath(), fileName);
+					await this.fileService.writeFile(target, VSBuffer.fromString(html));
+					this.notificationService.info(`Saved ${target.fsPath}`);
+				} catch (e) {
+					this.notificationService.error(`Could not save the file: ${e instanceof Error ? e.message : String(e)}`);
+				}
+			},
+			confirmDelete: async message => (await this.dialogService.confirm({ message, type: 'warning', primaryButton: 'Remove' })).confirmed,
+			notify: message => this.notificationService.info(message),
+		});
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -4491,6 +4527,20 @@ export class PatientChartEditor extends EditorPane {
 			const loading = DOM.append(content, DOM.$('div'));
 			loading.textContent = 'Loading...';
 			loading.style.cssText = 'color:var(--vscode-descriptionForeground);font-size:12px;font-style:italic;';
+		}
+
+		// Financial > Ledger: the shared patient ledger (same module as the
+		// Payments editor's Ledger tab) — composed from fee sheets + payment
+		// transactions, so it has no tab endpoint of its own.
+		if (tab.key === 'ledger') {
+			const events = await buildLedgerEvents(this.apiService, this.patientId);
+			if (tab.key !== this.activeTab) { return; }
+			DOM.clearNode(content);
+			countEl.textContent = events.length > 0 ? String(events.length) : '';
+			content.style.display = 'flex';
+			content.style.flexDirection = 'column';
+			renderLedger(content, events, { showPatientColumn: false, actionsHost: this._ledgerActionsHost() });
+			return;
 		}
 
 		// Tab with no endpoint (neither FHIR resource nor apiPath) → show placeholder, no Add button

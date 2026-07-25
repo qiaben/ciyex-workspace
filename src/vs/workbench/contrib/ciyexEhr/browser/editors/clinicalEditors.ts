@@ -9,7 +9,7 @@ import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick, isoToUsDate } from '../ciyexDateMask.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -19,6 +19,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { generate837P, Edi837Claim, Edi837ServiceLine, claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
 import { EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost } from './patientLedger.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -7205,120 +7206,80 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		],
 	};
 
+	// Thin stub used when payView === 'ledger' — the ledger is the shared
+	// all-patients financial ledger (charges / insurance postings / patient
+	// payments / write-offs / patient portions with per-patient running
+	// balances) rendered by _loadAndRenderLedger() via patientLedger.ts, NOT
+	// the generic list base. The old view required picking a patient first
+	// (backend only has /api/payments/ledger/patient/{id}); the team asked for
+	// every patient's activity visible at once, so the ledger is now composed
+	// client-side from /api/fee-sheets + /api/payments/transactions.
 	private readonly _ledgerConfig: ClinicalEditorConfig = {
-		title: 'Ledger', apiPath: '/api/payments/ledger',
-		searchPlaceholder: 'Search ledger entries...',
-		// Backend only exposes /api/payments/ledger/patient/{id} for GET
-		// (a bare GET /api/payments/ledger has no endpoint → 500). Scope by patient.
-		listUrlBuilder: () => this._payPatientId ? `/api/payments/ledger/patient/${this._payPatientId}` : null,
-		emptyListMessage: 'Select a patient to view their ledger.',
-		clientSideFilter: ['patientName', 'entryType', 'description', 'id'],
-		editable: false,
-		// Column keys map to the ledger payload fields (createdAt / amount /
-		// runningBalance / patientId). Debit & credit are derived from the signed
-		// `amount` (a payment posts as a negative amount → credit; a charge posts
-		// positive → debit), so they have no own field and are computed in the
-		// renderer from `item`. Previously the columns used non-existent keys
-		// (entryDate/debit/credit/balance) so every value rendered blank.
-		columns: [
-			{ key: 'createdAt', label: 'Date', width: '110px' },
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'entryType', label: 'Type', width: '100px' },
-			{ key: 'description', label: 'Description' },
-			{ key: 'debit', label: 'Debit', width: '90px' },
-			{ key: 'credit', label: 'Credit', width: '90px' },
-			{ key: 'balance', label: 'Balance', width: '90px' },
-		],
-		cellRenderer: (key, value, item) => {
-			const amount = Number(item?.['amount']);
-			if (key === 'debit') { return Number.isFinite(amount) && amount > 0 ? `$${amount.toFixed(2)}` : ''; }
-			if (key === 'credit') { return Number.isFinite(amount) && amount < 0 ? `$${Math.abs(amount).toFixed(2)}` : ''; }
-			if (key === 'balance') { const b = Number(item?.['runningBalance']); return Number.isFinite(b) ? `$${b.toFixed(2)}` : ''; }
-			if (key === 'createdAt' && typeof value === 'string') {
-				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
-			}
-			if (key === 'patientName' && !value) {
-				// The ledger is always scoped to the selected patient, so fall back to
-				// that patient's name rather than the raw "Patient #<id>" (QA report
-				// 2026-07-10, issue 5). Only if the name is somehow unknown do we show
-				// the id as a last resort.
-				if (this._payPatientName) { return this._payPatientName; }
-				return item?.['patientId'] ? `Patient #${item['patientId']}` : '';
-			}
-			if (key === 'entryType' && typeof value === 'string') {
-				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-			}
-			return String(value ?? '');
-		},
-		// MedOffice-style balance split: how much of the outstanding balance is
-		// due FROM THE PATIENT vs still pending WITH INSURANCE. Patient
-		// responsibility accrues from EOB postings (the `resp=` breakdown in
-		// insurance-posting descriptions) and is paid down by patient payments
-		// (negative non-EOB entries); the remainder of the balance is insurance.
-		computeStats: (items) => {
-			const round = (n: number) => Math.round(n * 100) / 100;
-			let respAccrued = 0;
-			let patientPaid = 0;
-			let totalBalance = 0;
-			let haveBalance = false;
-			for (const it of items) {
-				const desc = String(it['description'] ?? '');
-				const resp = parseEobField(desc, 'resp');
-				if (resp !== undefined) { respAccrued += resp; }
-				const amount = Number(it['amount']);
-				if (Number.isFinite(amount) && amount < 0 && resp === undefined && !desc.startsWith('EOB')) {
-					patientPaid += Math.abs(amount);
-				}
-				// Entries arrive newest-first; the first finite running balance is current.
-				if (!haveBalance) {
-					const rb = Number(it['runningBalance']);
-					if (Number.isFinite(rb)) { totalBalance = rb; haveBalance = true; }
-				}
-			}
-			const patientPortion = round(Math.max(Math.min(respAccrued - patientPaid, Math.max(totalBalance, 0)), 0));
-			const insurancePortion = round(Math.max(totalBalance - patientPortion, 0));
-
-			// RCM-lite A/R aging: FIFO — payments/credits retire the OLDEST charges
-			// first, then the remaining open charge amounts are bucketed by age.
-			const charges: Array<{ date: number; amt: number }> = [];
-			let credits = 0;
-			for (let i = items.length - 1; i >= 0; i--) { // oldest → newest
-				const amount = Number(items[i]['amount']);
-				if (!Number.isFinite(amount) || amount === 0) { continue; }
-				const when = new Date(String(items[i]['createdAt'] ?? items[i]['entryDate'] ?? '')).getTime();
-				if (amount > 0) { charges.push({ date: when, amt: amount }); }
-				else { credits += Math.abs(amount); }
-			}
-			for (const c of charges) {
-				if (credits <= 0) { break; }
-				const applied = Math.min(c.amt, credits);
-				c.amt -= applied;
-				credits -= applied;
-			}
-			const now = Date.now();
-			const dayMs = 86400000;
-			let a30 = 0; let a60 = 0; let a90 = 0; let a90plus = 0;
-			for (const c of charges) {
-				if (c.amt <= 0) { continue; }
-				const days = Number.isFinite(c.date) ? (now - c.date) / dayMs : 0;
-				if (days <= 30) { a30 += c.amt; }
-				else if (days <= 60) { a60 += c.amt; }
-				else if (days <= 90) { a90 += c.amt; }
-				else { a90plus += c.amt; }
-			}
-
-			return {
-				totalBalance: round(totalBalance),
-				patientPortion,
-				insurancePortion,
-				aging0to30: round(a30),
-				aging31to60: round(a60),
-				aging61to90: round(a90),
-				aging90plus: round(a90plus),
-			};
-		},
-		actions: [],
+		title: 'Ledger', apiPath: '/api/payments/transactions',
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+		listUrlBuilder: () => null,
 	};
+
+	/** All-patients ledger (Payments → Ledger). */
+	private async _loadAndRenderLedger(): Promise<void> {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Ledger';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const sub = DOM.append(toolbar, DOM.$('span'));
+		sub.textContent = 'Every charge, insurance payment, write-off, patient payment and patient portion — all patients.';
+		sub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);flex:1;';
+		const refreshBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.textContent = '\u21BB Refresh';
+		refreshBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:6px;cursor:pointer;font-size:12px;';
+		refreshBtn.addEventListener('click', () => this._loadAndRenderLedger());
+
+		const bodyHost = DOM.append(this.contentEl, DOM.$('div'));
+		bodyHost.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;';
+		const loading = DOM.append(bodyHost, DOM.$('div'));
+		loading.textContent = 'Loading ledger…';
+		loading.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;';
+
+		const events = await buildLedgerEvents(this.apiService);
+		if (this.payView !== 'ledger') { return; }
+		// The patient bar (top) doubles as the initial filter — picking a
+		// patient there scopes the ledger AND enables Download Statement.
+		renderLedger(bodyHost, events, {
+			showPatientColumn: true,
+			initialFilter: this._payPatientName || '',
+			actionsHost: this._ledgerActionsHost(),
+		});
+	}
+
+	/** Locally-deleted ledger entries persist app-wide (ids embed the patient, so it's naturally per-patient). */
+	private static readonly LEDGER_HIDDEN_KEY = 'ciyex.ledger.hiddenEntries';
+
+	/** Actions host (View / Download / Delete) for the all-patients Ledger table. */
+	private _ledgerActionsHost(): ILedgerActionsHost {
+		return makeLedgerActionsHost({
+			loadHidden: () => this.storageSvc.get(PaymentsEditor.LEDGER_HIDDEN_KEY, StorageScope.PROFILE, '[]'),
+			storeHidden: json => this.storageSvc.store(PaymentsEditor.LEDGER_HIDDEN_KEY, json, StorageScope.PROFILE, StorageTarget.USER),
+			saveFile: (fileName, html) => this._saveLocalFile(fileName, html),
+			confirmDelete: async message => (await this.dialogService.confirm({ message, type: 'warning', primaryButton: 'Remove' })).confirmed,
+			notify: message => this.dialogService.info(message),
+		});
+	}
+
+	/** Write an HTML file to the user's default folder (no native Save dialog — unusable in remote sessions). */
+	private async _saveLocalFile(fileName: string, html: string): Promise<void> {
+		try {
+			const defaultDir = await this.fileDialogService.defaultFilePath();
+			const target = URI.joinPath(defaultDir, fileName);
+			await this.fileService.writeFile(target, VSBuffer.fromString(html));
+			this.dialogService.info('Saved', target.fsPath);
+		} catch (e) {
+			this.dialogService.error('Could not save the file', String(e));
+		}
+	}
 
 	// Thin stub used only when payView === 'methods' to satisfy the abstract
 	// config getter — actual rendering is done by _loadAndRenderCards().
@@ -7358,6 +7319,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._loadAndRenderInvoices();
 		} else if (this.payView === 'methods') {
 			this._loadAndRenderCards();
+		} else if (this.payView === 'ledger') {
+			this._loadAndRenderLedger();
 		}
 	}
 
@@ -7383,6 +7346,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._loadAndRenderCards();
 		} else if (this.payView === 'invoices') {
 			this._loadAndRenderInvoices();
+		} else if (this.payView === 'ledger') {
+			this._loadAndRenderLedger();
 		} else {
 			super._resetAndReload();
 		}
@@ -8518,7 +8483,7 @@ ${rows.join('\n')}
 		});
 	}
 
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService s: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService, @IConfigurationService private readonly configurationService: IConfigurationService) { super(PaymentsEditor.ID, group, t, th, s, a, d); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService private readonly storageSvc: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService, @IConfigurationService private readonly configurationService: IConfigurationService) { super(PaymentsEditor.ID, group, t, th, storageSvc, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {
