@@ -11,7 +11,7 @@ import { promisify } from 'util';
 import { memoize } from '../../../base/common/decorators.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, DisposableMap, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
-import { FileAccess, matchesSomeScheme, Schemas } from '../../../base/common/network.js';
+import { matchesSomeScheme, Schemas } from '../../../base/common/network.js';
 import { dirname, join, posix, resolve, win32 } from '../../../base/common/path.js';
 import { isLinux, isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { AddFirstParameterToFunctions } from '../../../base/common/types.js';
@@ -29,7 +29,6 @@ import { ILifecycleMainService, IRelaunchOptions } from '../../lifecycle/electro
 import { ILogService } from '../../log/common/log.js';
 import { FocusMode, ICommonNativeHostService, INativeHostOptions, IOSProperties, IOSStatistics, IToastOptions, IToastResult, PowerSaveBlockerType, SystemIdleState, ThermalState } from '../common/native.js';
 import { IProductService } from '../../product/common/productService.js';
-import { IProtocolMainService } from '../../protocol/electron-main/protocol.js';
 import { IPartsSplash } from '../../theme/common/themeService.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
 import { defaultWindowState, ICodeWindow } from '../../window/electron-main/window.js';
@@ -72,8 +71,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IRequestService private readonly requestService: IRequestService,
 		@IProxyAuthService private readonly proxyAuthService: IProxyAuthService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IProtocolMainService private readonly protocolMainService: IProtocolMainService
+		@IInstantiationService private readonly instantiationService: IInstantiationService
 	) {
 		super();
 
@@ -902,45 +900,23 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return result.filePath;
 	}
 
-	async printPdfPreview(windowId: number | undefined, fileName: string, options?: INativeHostOptions): Promise<boolean> {
+	async printDocument(windowId: number | undefined, options?: INativeHostOptions): Promise<boolean> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		// Render the active window to a PDF exactly like `savePdfToDownloads` (same
-		// print options so the preview matches the downloaded file), but open it in
-		// an in-app child window using Electron/Chromium's built-in PDF viewer
-		// instead of the OS default PDF app. A renderer-side `window.print()` under
-		// `vscode-file://` (Electron) jumps straight to the OS print dialog with NO
-		// document preview, and `shell.openPath` hands off to whatever (or no) PDF
-		// app happens to be installed — neither gives a reliable in-product preview.
-		// The built-in Chromium PDF viewer always renders a preview and carries its
-		// own toolbar Print button, so this works the same on every machine.
-		const data = await window?.win?.webContents.printToPDF({
-			printBackground: true,
-			margins: { top: 0.47, bottom: 0.47, left: 0.47, right: 0.47 },
-			displayHeaderFooter: true,
-			headerTemplate: '<span></span>',
-			footerTemplate: '<div style="width:100%;font-size:8px;color:#666;padding:0 9mm 0 0;text-align:right;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+		// Open the OS print dialog directly on the active window's content
+		// (honours the same @media print CSS `savePdfToDownloads` relies on to
+		// isolate the printable content). `printBackground` keeps section styling
+		// legible the same way it does for the PDF download.
+		return new Promise<boolean>((resolve, reject) => {
+			if (!window?.win) {
+				return resolve(false);
+			}
+			window.win.webContents.print({ silent: false, printBackground: true }, (success, failureReason) => {
+				if (!success && failureReason !== 'cancelled') {
+					return reject(new Error(failureReason));
+				}
+				resolve(success);
+			});
 		});
-		if (!data) {
-			throw new Error('Failed to render the window to PDF');
-		}
-		// Write into a dedicated subfolder of the OS temp dir (not the temp dir
-		// itself, which is shared with unrelated processes) under a clean, stable
-		// filename so the viewer's title shows the document name rather than a
-		// random hash.
-		const previewDir = join(this.environmentMainService.tmpDir.fsPath, 'ciyex-print-preview');
-		await fs.promises.mkdir(previewDir, { recursive: true });
-		const safeName = fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName}.pdf`;
-		const filePath = join(previewDir, safeName);
-		await Promises.writeFile(filePath, data);
-		// The default session blocks the raw `file://` protocol outright (see
-		// `ProtocolMainService`), so a child window can't `loadURL('file://...')`.
-		// Whitelist just this preview folder and load through `vscode-file://`
-		// instead — the one scheme the app's renderers are allowed to load local
-		// resources from.
-		this.protocolMainService.addValidFileRoot(previewDir);
-		const browserUri = FileAccess.uriToBrowserUri(URI.file(filePath));
-		this.openChildWindow(window?.win ?? null, browserUri.toString(true));
-		return true;
 	}
 
 	//#endregion

@@ -422,13 +422,10 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 	};
 
-	// "Print" renders the summary to a PDF in the main process and opens it in an
-	// in-app child window using Electron's built-in PDF viewer, which shows a real
-	// preview plus its own toolbar Print button. A bare renderer-side
-	// `window.print()` under `vscode-file://` (Electron) jumps straight to the OS
-	// print dialog with NO document preview, and handing the file off to the OS's
-	// default PDF app is unreliable (may be missing or not obviously offer print)
-	// — so we route printing through the native host's in-app viewer instead.
+	// "Print" opens the native OS print dialog directly on the summary content
+	// (isolated via the @media print stylesheet above). Routed through the native
+	// host because a bare renderer-side `window.print()` under `vscode-file://`
+	// (Electron) does not reliably resolve.
 	const printSummary = async () => {
 		if (!summaryLoaded) {
 			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
@@ -436,9 +433,9 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 		printBtn.disabled = true;
 		try {
-			await deps.nativeHostService.printPdfPreview(`encounter-${encounterId}-summary.pdf`);
+			await deps.nativeHostService.printDocument();
 		} catch (err) {
-			deps.notificationService.notify({ severity: Severity.Error, message: `Could not open the print preview: ${err instanceof Error ? err.message : String(err)}` });
+			deps.notificationService.notify({ severity: Severity.Error, message: `Could not open the print dialog: ${err instanceof Error ? err.message : String(err)}` });
 		} finally {
 			printBtn.disabled = false;
 		}

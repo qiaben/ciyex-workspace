@@ -203,12 +203,12 @@ export interface ICommonNativeHostService {
 	// the PDF must be written from the main process instead.
 	savePdfToDownloads(fileName: string): Promise<string | undefined>;
 
-	// Render the active window's content to a PDF (honours @media print CSS), write
-	// it to a temp file and open it in the OS default PDF viewer so the user gets a
-	// real print preview. A renderer-side `window.print()` under `vscode-file://`
-	// jumps straight to the OS print dialog with no document preview, so printing is
-	// routed through the main process instead. Returns `true` once the viewer opened.
-	printPdfPreview(fileName: string): Promise<boolean>;
+	// Open the native OS print dialog on the active window's content (honours
+	// @media print CSS, same as `savePdfToDownloads`). Routed through the main
+	// process because a renderer-side `window.print()` under `vscode-file://` does
+	// not reliably resolve. Returns `true` if the document was sent to the printer,
+	// `false` if the user cancelled the dialog.
+	printDocument(): Promise<boolean>;
 
 	// Process
 	getProcessId(): Promise<number | undefined>;
