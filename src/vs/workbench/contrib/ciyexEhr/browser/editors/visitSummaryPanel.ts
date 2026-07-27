@@ -276,18 +276,27 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
 
 	// Print/PDF structure: the content lives in a <table> whose <thead> carries the
-	// practice/patient letterhead. Chromium (both window.print() and the main
-	// process printToPDF) REPEATS a table-header-group on every page and reserves
-	// its height, so the letterhead prints atop each page with no overlap — the one
-	// reliable cross-page repeating-header technique. On screen the thead is hidden
-	// and the table/cells collapse to blocks (see the screen stylesheet below) so
-	// the panel looks exactly as before.
+	// practice/patient letterhead and whose <tfoot> is an empty spacer row.
+	// Chromium (both window.print() and the main process printToPDF) REPEATS a
+	// table-header-group AND a table-footer-group on every page and reserves their
+	// height, so the letterhead prints atop, and the spacer prints below, every
+	// page with no overlap. The page-frame border lives entirely on this one
+	// table (all four sides, via border-collapse) instead of being split across
+	// the table's own left/right borders and separately-rendered printToPDF
+	// header/footer templates — two different rendering passes never lined up
+	// pixel-perfect with the table's edges, leaving the frame's corners visibly
+	// disconnected. Now every edge comes from the same bordered box in the same
+	// layout pass, so the corners always meet. On screen the thead/tfoot are
+	// hidden and the table/cells collapse to blocks (see the screen stylesheet
+	// below) so the panel looks exactly as before.
 	const printTable = DOM.append(body, DOM.$('table.ciyex-summary-table'));
 	printTable.style.cssText = 'width:100%;border-collapse:collapse;';
 	const runHead = DOM.append(printTable, DOM.$('thead.ciyex-summary-runhead'));
 	const headCell = DOM.append(DOM.append(runHead, DOM.$('tr')), DOM.$('td')) as HTMLElement;
 	const content = DOM.append(DOM.append(DOM.append(printTable, DOM.$('tbody')), DOM.$('tr')), DOM.$('td.ciyex-summary-content')) as HTMLElement;
 	content.style.cssText = 'padding:0;vertical-align:top;';
+	const runFoot = DOM.append(printTable, DOM.$('tfoot.ciyex-summary-runfoot'));
+	DOM.append(DOM.append(runFoot, DOM.$('tr')), DOM.$('td'));
 	const loading = DOM.append(content, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
@@ -323,37 +332,46 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		// Screen: hide the run-head, flatten the print table to plain blocks.
-		'.ciyex-summary-runhead{display:none;}',
+		// Screen: hide the run-head/run-foot, flatten the print table to plain blocks.
+		'.ciyex-summary-runhead,.ciyex-summary-runfoot{display:none;}',
 		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
+		// Force the page canvas itself white first: `.ciyex-summary-backdrop` below
+		// only ever covers its own (auto-height) content, so any page area beyond
+		// that — including the trailing page after the last section — falls through
+		// to the `html`/`body` background. Without this rule that fallback was
+		// whatever the underlying (possibly dark-themed) window background was,
+		// which is what QA saw as a black page instead of a white one.
+		'  html,body{background:#fff !important;}',
 		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
 		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
 		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
 		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		// Print: restore real table semantics so the letterhead repeats per page.
-		// The page border's left/right edges live on the table itself (not a
-		// position:fixed overlay — Chromium's printToPDF lays the whole document out
-		// in one continuous pass before slicing it into pages, so a fixed-position
-		// box only ever lands on one page, not every one). A bordered table
-		// fragments the same way the letterhead <thead> already reliably does: the
-		// left/right edges draw on every page the table continues onto. The top and
-		// bottom edges of the frame (plus the page number, nested inside the bottom
-		// one) are drawn by the header/footer templates passed to printToPDF in
-		// nativeHostMainService.ts, so the same #9aa0a6 line continues seamlessly
-		// from the header cap, down these table edges, into the footer cap.
-		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;border-left:1px solid #9aa0a6 !important;border-right:1px solid #9aa0a6 !important;}',
+		// Print: restore real table semantics so the letterhead/spacer repeat per
+		// page. The ENTIRE page-frame border (all four sides) lives on this one
+		// table via border-collapse, not split across the table's own borders plus
+		// separately-rendered printToPDF header/footer templates (that mismatch is
+		// exactly what left the frame's corners visibly disconnected). A bordered
+		// table fragments the same way the letterhead <thead> already reliably
+		// does: the left/right edges draw on every page the table continues onto,
+		// the top edge draws at the top of the repeating <thead>, and the bottom
+		// edge draws at the bottom of the repeating <tfoot> — all merged into one
+		// border box by border-collapse, so every corner meets cleanly.
+		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;border:1px solid #9aa0a6 !important;}',
 		'  .ciyex-summary-runhead{display:table-header-group !important;}',
+		'  .ciyex-summary-runfoot{display:table-footer-group !important;}',
 		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
-		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
-		'  .ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
+		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr,.ciyex-summary-runfoot>tr{display:table-row !important;}',
+		'  .ciyex-summary-content,.ciyex-summary-runhead td,.ciyex-summary-runfoot td{display:table-cell !important;}',
 		// Inset the printed content from the page-frame border so nothing (letterhead
 		// or section boxes) touches the box drawn at the content-box edge. The
 		// letterhead cell repeats every page, so its top/side padding keeps the
-		// letterhead clear of the frame on every page.
+		// letterhead clear of the frame on every page. The footer spacer just needs
+		// enough height to read as a clean bottom margin above the frame's bottom edge.
 		'  .ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
+		'  .ciyex-summary-runfoot td{padding:6px 6mm !important;}',
 		'  .ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
 		// The letterhead rules are deliberately bold black — override the generic
 		// light-grey border rule above (higher specificity beats it).
@@ -367,9 +385,10 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		// The signature line stays a firm dark rule (beats the generic light-grey
 		// border override above).
 		'  .vs-sig-rule{border-color:#222 !important;}',
-		// Page margins: the printToPDF path sets matching margins (and the page-number
-		// footer) — this @page rule governs the browser Print dialog path so the frame
-		// and content sit the same distance from the paper edge there too.
+		// Page margins: the printToPDF path sets matching margins (and the header's
+		// date/page-number text) — this @page rule governs the browser Print dialog
+		// path so the frame and content sit the same distance from the paper edge
+		// there too.
 		'  @page{margin:12mm;}',
 		'}',
 	].join('');
@@ -1029,12 +1048,19 @@ function formatPrintDateTime(d: Date): string {
  *  provider's typed name, "Signed off By", and the print date/time. Rendered at
  *  the end of the summary (both the DTO and the encounter-form render paths call
  *  this) whenever a provider is known. */
-function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, providerName: string, status?: string, signedAt?: string): void {
+function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, providerName: string, status?: string, signedAt?: string, finalizedAt?: string, lockedAt?: string): void {
 	const col = summaryColors(deps.themeService);
 	const name = (providerName || '').trim();
 	const card = summarySectionCard(body, col, 'Provider Signature');
 	if (status) { summaryKvRow(card, col, 'Status', status); }
 	if (signedAt) { summaryKvRow(card, col, 'Signed at', signedAt); }
+	// Folded in from the old standalone "Date/Time Finalized" card (below) so the
+	// trailing sign-off content is a single break-inside:avoid unit — a separate
+	// 2-line card at the very end of the document was small enough to get shoved
+	// whole onto its own near-empty trailing page whenever it didn't fit the
+	// remaining space on the previous page (print QA: stray last page).
+	if (finalizedAt) { summaryKvRow(card, col, 'Finalized At', finalizedAt); }
+	if (lockedAt) { summaryKvRow(card, col, 'Locked At', lockedAt); }
 	const block = DOM.append(card, DOM.$('div'));
 	block.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding:16px 16px 12px;';
 	const provLabel = DOM.append(block, DOM.$('div'));
@@ -1623,17 +1649,11 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	// summary always carries a signature area.
 	const sig = data.providerSignature;
 	const sigName = (sig?.signedBy || data.meta?.providerName || '').trim();
-	if (sigName || sig) {
+	const finalizedAt = data.dateTimeFinalized?.finalizedAt;
+	const lockedAt = data.dateTimeFinalized?.lockedAt;
+	if (sigName || sig || finalizedAt || lockedAt) {
 		renderedAny = true;
-		renderSignatureBlock(deps, body, sigName, sig?.status, sig?.signedAt);
-	}
-
-	// --- Date/Time Finalized ---
-	if (data.dateTimeFinalized && (data.dateTimeFinalized.finalizedAt || data.dateTimeFinalized.lockedAt)) {
-		renderedAny = true;
-		const card = section('Date/Time Finalized');
-		line(card, 'Finalized At', data.dateTimeFinalized.finalizedAt);
-		line(card, 'Locked At', data.dateTimeFinalized.lockedAt);
+		renderSignatureBlock(deps, body, sigName, sig?.status, sig?.signedAt, finalizedAt, lockedAt);
 	}
 
 	if (!renderedAny) {

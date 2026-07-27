@@ -51,26 +51,37 @@ import { AuthInfo, Credentials, IRequestService } from '../../request/common/req
 import { randomPath } from '../../../base/common/extpath.js';
 import { CancellationTokenSource } from '../../../base/common/cancellation.js';
 
-// Shared `printToPDF` options for the Visit Summary "Download PDF" and "Print"
-// paths (kept as one constant so the two stay in sync). The page border is
-// split across three pieces that Chromium repeats reliably on every page —
-// the header/footer margin areas (unlike a `position:fixed` element in the
-// document body, which only ever lands on one page) and the content table's
-// own left/right borders (the content already relies on real table
-// fragmentation for its repeating letterhead `<thead>`, so it fragments the
-// same way). The header template draws the top+side border "cap", the
-// content table's left/right borders continue those same lines down the
-// page, and the footer template draws the bottom+side border "cap" — with
-// the "X / Y" page-number text placed INSIDE that bottom cap, so the number
-// reads as part of the framed sheet rather than floating below it. Margins
-// are sized to fit each cap's border line without clipping.
-const CIYEX_VISIT_SUMMARY_PRINT_OPTIONS: Electron.PrintToPDFOptions = {
-	printBackground: true,
-	margins: { top: 0.35, bottom: 0.55, left: 0.47, right: 0.47 },
-	displayHeaderFooter: true,
-	headerTemplate: '<div style="width:100%;height:100%;box-sizing:border-box;margin:0;border-top:1px solid #9aa0a6;border-left:1px solid #9aa0a6;border-right:1px solid #9aa0a6;"></div>',
-	footerTemplate: '<div style="width:100%;height:100%;box-sizing:border-box;margin:0;border-bottom:1px solid #9aa0a6;border-left:1px solid #9aa0a6;border-right:1px solid #9aa0a6;display:flex;align-items:flex-end;justify-content:flex-end;font-size:8px;color:#666;padding:0 9mm 2mm 0;"><span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span></div>',
-};
+// Builds the shared `printToPDF` options for the Visit Summary "Download PDF"
+// and "Print" paths (a function, not a static constant, so the header's date
+// stamp is captured fresh at print time rather than at process start).
+//
+// The page-frame border is drawn ENTIRELY by the content table in
+// visitSummaryPanel.ts (all four sides, via border-collapse across its
+// repeating <thead>/<tfoot>) — not here. It used to be split across these
+// header/footer templates (top+side "cap", bottom+side "cap") and the table's
+// own left/right borders, but those are two separate Chromium rendering
+// passes that never lined up pixel-perfect with the table's edges, leaving
+// the frame's corners visibly disconnected. These templates now carry ONLY
+// the date/time (left) and page number (right) text — no border lines — so
+// there's a single source of truth for every edge of the frame.
+//
+// `pageSize` is set explicitly (rather than left to default to the `'Letter'`
+// preset string) because Electron's `printToPDF` validates `margins` against
+// the *resolved* page size and throws "margins must be less than or equal to
+// pageSize" — even for these small sub-inch margins — when that resolution
+// doesn't happen before the check runs. Passing the concrete inches sidesteps
+// the preset-resolution ordering bug entirely.
+function buildVisitSummaryPrintOptions(): Electron.PrintToPDFOptions {
+	const dateTime = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
+	return {
+		printBackground: true,
+		pageSize: { width: 8.5, height: 11 },
+		margins: { marginType: 'custom', top: 0.35, bottom: 0.55, left: 0.47, right: 0.47 },
+		displayHeaderFooter: true,
+		headerTemplate: `<div style="width:100%;height:100%;box-sizing:border-box;margin:0;display:flex;align-items:flex-start;justify-content:space-between;font-size:8px;color:#666;padding:0 9mm;"><span>${dateTime}</span><span><span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span></span></div>`,
+		footerTemplate: '<div></div>',
+	};
+}
 
 export interface INativeHostMainService extends AddFirstParameterToFunctions<ICommonNativeHostService, Promise<unknown> /* only methods, not events */, number | undefined /* window ID */> { }
 
@@ -891,7 +902,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		// `printBackground` keeps the summary's section styling; the renderer's
 		// `@media print` rules already isolate the summary and force it to legible
 		// black-on-white, so the resulting PDF matches the on-screen preview.
-		const data = await window?.win?.webContents.printToPDF(CIYEX_VISIT_SUMMARY_PRINT_OPTIONS);
+		const data = await window?.win?.webContents.printToPDF(buildVisitSummaryPrintOptions());
 		if (!data) {
 			throw new Error('Failed to render the window to PDF');
 		}
@@ -923,7 +934,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		// toolbar Print button (which still opens the OS dialog to actually send it
 		// to a printer — unavoidable for physical printing — but by then the user
 		// has already seen a real preview).
-		const data = await window?.win?.webContents.printToPDF(CIYEX_VISIT_SUMMARY_PRINT_OPTIONS);
+		const data = await window?.win?.webContents.printToPDF(buildVisitSummaryPrintOptions());
 		if (!data) {
 			throw new Error('Failed to render the window to PDF');
 		}
