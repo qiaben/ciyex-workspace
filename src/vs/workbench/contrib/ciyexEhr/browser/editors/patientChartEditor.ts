@@ -34,6 +34,7 @@ import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js'
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
 import { attachZipCityStateAutoFill, wireZipCityStateInputs } from '../zipAutoFill.js';
+import { buildAddressFieldConfigs, ADDRESS_LABELS, ADDRESS_PLACEHOLDERS } from '../addressFields.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -545,13 +546,13 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				],
 			},
 			{
-				key: 'contact', title: 'Contact Information', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
+				key: 'contact-info', title: 'Contact Information', columns: 3, visible: true, collapsible: true, collapsed: false, fields: [
 					{ key: 'phoneNumber', label: 'Mobile Phone', type: 'phone', required: true },
 					{ key: 'homePhone', label: 'Home Phone', type: 'phone' },
 					{ key: 'workPhone', label: 'Work Phone', type: 'phone' },
 					{ key: 'email', label: 'Email Address', type: 'email' },
 					{ key: 'preferredContactMethod', label: 'Preferred Contact Method', type: 'select', options: [{ label: 'Phone', value: 'Phone' }, { label: 'Email', value: 'Email' }, { label: 'SMS', value: 'SMS' }, { label: 'Mail', value: 'Mail' }] },
-					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 3 },
+					...buildAddressFieldConfigs('', 3),
 				],
 			},
 			{
@@ -1425,7 +1426,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationPattern: '^[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$',
 						validationMessage: 'Enter a valid email address',
 					},
-					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
+					...buildAddressFieldConfigs('', 3),
 					{ key: 'active', label: 'Active', type: 'boolean' },
 					{ key: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Additional notes', colSpan: 3 },
 				],
@@ -1578,10 +1579,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						validationPattern: '^[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$',
 						validationMessage: 'Enter a valid email address',
 					},
-					{ key: 'address', label: 'Address', type: 'textarea', colSpan: 2 },
-					{ key: 'zipCode', label: 'ZIP Code', type: 'text' },
-					{ key: 'city', label: 'City', type: 'text' },
-					{ key: 'state', label: 'State', type: 'text' },
+					...buildAddressFieldConfigs('', 3),
 					{ key: 'country', label: 'Country', type: 'text' },
 					{ key: 'primaryContactName', label: 'Primary Contact', type: 'text' },
 					{ key: 'npi', label: 'NPI', type: 'text', placeholder: 'National Provider Identifier' },
@@ -3061,6 +3059,22 @@ export class PatientChartEditor extends EditorPane {
 								fields: s.fields.filter(f => !dupAttachKeys.has(f.key) && f.type !== 'file'),
 							}));
 						}
+						// Split-address rollout (27-Jul): these tabs' backend tab_field_config
+						// rows still ship the old single free-text address blob. Drop that
+						// legacy key so it doesn't render alongside the new Address Line 1/2 +
+						// City/State/ZIP fields the `localOnly` append below adds.
+						const legacyAddressKeysByTab: Record<string, string[]> = {
+							demographics: ['address'],
+							relationships: ['address'],
+							facility: ['address', 'zipCode'],
+						};
+						const legacyAddressKeys = legacyAddressKeysByTab[tab.key];
+						if (legacyAddressKeys) {
+							sections = sections.map(s => ({
+								...s,
+								fields: s.fields.filter(f => !legacyAddressKeys.includes(f.key)),
+							}));
+						}
 						// Per-field overlays: backend tab_field_config often omits the
 						// search type, placeholder, validation pattern, default value, or
 						// select options that the local fallback specifies. Carry those
@@ -3985,10 +3999,10 @@ export class PatientChartEditor extends EditorPane {
 		const addrString = typeof pd.address === 'string' ? pd.address : '';
 		const address = [
 			pd.addressLine1 || addr.line1 || addr.line || addrString || pd.street,
-			addr.line2,
+			pd.addressLine2 || addr.line2,
 			pd.city || addr.city,
 			pd.state || addr.state,
-			pd.postalCode || pd.zip || pd.zipcode || addr.postalCode || addr.zip,
+			pd.zip || pd.postalCode || pd.zipcode || addr.postalCode || addr.zip,
 		].map(v => String(v || '').trim()).filter(Boolean).join(', ');
 		const rows: Array<[string, string]> = [
 			['MRN', String(pd.mrn || pd.medicalRecordNumber || pd.id || this.patientId)],
@@ -5306,6 +5320,16 @@ export class PatientChartEditor extends EditorPane {
 					{ label: 'Active', value: 'active' },
 					{ label: 'Inactive', value: 'inactive' },
 				];
+			case 'relationships':
+				// Match the New/Edit Relationship form's Active options (Active /
+				// Inactive) — the generic clinical default offered a 'Resolved'
+				// choice no Related Person row or form value ever uses (list
+				// filter disagreed with the create/edit form).
+				return [
+					{ label: 'All Statuses', value: '' },
+					{ label: 'Active', value: 'active' },
+					{ label: 'Inactive', value: 'inactive' },
+				];
 			default:
 				return [
 					{ label: 'All Clinical Statuses', value: '' },
@@ -5677,7 +5701,8 @@ export class PatientChartEditor extends EditorPane {
 		// Digits only, capped at 3 (issue 16) — slice guards against paste that
 		// bypasses the maxLength attribute.
 		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, '').slice(0, 3); });
-		const addrEl = makeInput('Billing Address', true, { placeholder: '123 Main St' });
+		const addrEl = makeInput(ADDRESS_LABELS.addressLine1, true, { placeholder: ADDRESS_PLACEHOLDERS.addressLine1 });
+		const addr2El = makeInput(ADDRESS_LABELS.addressLine2, true, { placeholder: ADDRESS_PLACEHOLDERS.addressLine2 });
 		const cityEl = makeInput('City', false, { maxLength: 50, placeholder: 'New York' });
 		const stateEl = makeInput('State', false, { maxLength: 50, placeholder: 'NY' });
 		const zipEl = makeInput('Zip Code', false, { maxLength: 5, placeholder: '10001' });
@@ -5702,7 +5727,8 @@ export class PatientChartEditor extends EditorPane {
 			typeEl.value = String(card['cardType'] || 'VISA');
 			monthEl.value = String(card['expiryMonth'] || 1);
 			yearEl.value = String(card['expiryYear'] || now.getFullYear());
-			addrEl.value = String(card['billingAddress'] || '');
+			addrEl.value = String(card['billingAddressLine1'] || card['billingAddress'] || '');
+			addr2El.value = String(card['billingAddressLine2'] || '');
 			cityEl.value = String(card['billingCity'] || '');
 			stateEl.value = String(card['billingState'] || '');
 			zipEl.value = String(card['billingZip'] || '');
@@ -5757,7 +5783,8 @@ export class PatientChartEditor extends EditorPane {
 				cardType: typeEl.value,
 				expiryMonth: Number(monthEl.value),
 				expiryYear: Number(yearEl.value),
-				billingAddress: addrEl.value.trim() || undefined,
+				billingAddressLine1: addrEl.value.trim() || undefined,
+				billingAddressLine2: addr2El.value.trim() || undefined,
 				billingCity: city || undefined,
 				billingState: state || undefined,
 				billingZip: zipEl.value.trim() || undefined,

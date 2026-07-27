@@ -26,6 +26,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { wireZipCityStateInputs } from '../zipAutoFill.js';
+import { buildAddressFieldConfigs, ADDRESS_LABELS, ADDRESS_PLACEHOLDERS } from '../addressFields.js';
 
 // allow-any-unicode-next-line
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1485,7 +1486,7 @@ export const REFERRALS_FORM_FIELDS: FormFieldDef[] = [
 		]
 	},
 	{ key: 'facilityName', label: 'Facility Name', type: 'text', required: true, placeholder: 'e.g. City Medical Center', validationPattern: '^[A-Za-z0-9\\s\\-\'.,&#()\\/]{2,200}$', validationMessage: 'Facility name must be 2-200 characters using only letters, numbers, and common punctuation' },
-	{ key: 'facilityAddress', label: 'Facility Address', type: 'text', placeholder: '123 Main St, City, ST 12345' },
+	...buildAddressFieldConfigs('facility'),
 	{ key: 'facilityPhone', label: 'Facility Phone', type: 'text', placeholder: '(555) 123-4567', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Phone must be a 10-digit US number' },
 	{ key: 'facilityFax', label: 'Facility Fax', type: 'text', placeholder: '(555) 123-4568', validationPattern: '^\\(?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}$', validationMessage: 'Fax must be a 10-digit US number' },
 	{ key: 'reason', label: 'Reason for Referral', type: 'textarea', required: true, placeholder: 'Reason for referral...' },
@@ -3860,7 +3861,7 @@ export class InventoryEditor extends ClinicalListEditorBase {
 			// Address is part of the ciyex-ehr-ui Add Supplier form (and the backend
 			// InvSupplierDto supports it) — Name | Contact | Phone | Email | Address |
 			// Notes | Status.
-			{ key: 'address', label: 'Address', type: 'text', placeholder: 'e.g. 123 Main St, City, State' },
+			...buildAddressFieldConfigs('supplier'),
 			{
 				key: 'isActive', label: 'Status', type: 'select', options: [
 					{ label: 'Active', value: 'true' }, { label: 'Inactive', value: 'false' },
@@ -4907,7 +4908,8 @@ interface CreditCardRecord {
 	cardType: string;
 	expiryMonth: number;
 	expiryYear: number;
-	billingAddress?: string;
+	billingAddressLine1?: string;
+	billingAddressLine2?: string;
 	billingCity?: string;
 	billingState?: string;
 	billingZip?: string;
@@ -7106,7 +7108,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const cvvEl = inp('CVV *', 'cvv', false, { maxLength: 3, placeholder: '123', inputMode: 'numeric' });
 		cvvEl.addEventListener('input', () => { cvvEl.value = cvvEl.value.replace(/\D/g, '').slice(0, 3); });
 
-		const addrEl = inp('Billing Address', 'billingAddress', true, { placeholder: '123 Main St' });
+		const addrEl = inp(ADDRESS_LABELS.addressLine1, 'billingAddressLine1', true, { placeholder: ADDRESS_PLACEHOLDERS.addressLine1 });
+		const addr2El = inp(ADDRESS_LABELS.addressLine2, 'billingAddressLine2', true, { placeholder: ADDRESS_PLACEHOLDERS.addressLine2 });
 		const cityEl = inp('City', 'billingCity', false, { maxLength: 50, placeholder: 'New York' });
 		const stateEl = inp('State', 'billingState', false, { maxLength: 50, placeholder: 'NY' });
 		const zipEl = inp('Zip Code', 'billingZip', false, { maxLength: 10, placeholder: '10001' });
@@ -7124,7 +7127,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			typeEl.value = card.cardType || 'VISA';
 			monthEl.value = String(card.expiryMonth || 1);
 			yearEl.value = String(card.expiryYear || now.getFullYear());
-			addrEl.value = card.billingAddress || '';
+			addrEl.value = card.billingAddressLine1 || '';
+			addr2El.value = card.billingAddressLine2 || '';
 			cityEl.value = card.billingCity || '';
 			stateEl.value = card.billingState || '';
 			zipEl.value = card.billingZip || '';
@@ -7174,7 +7178,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				cardType: typeEl.value,
 				expiryMonth: Number(monthEl.value),
 				expiryYear: Number(yearEl.value),
-				billingAddress: addrEl.value.trim() || undefined,
+				billingAddressLine1: addrEl.value.trim() || undefined,
+				billingAddressLine2: addr2El.value.trim() || undefined,
 				billingCity: cityEl.value.trim() || undefined,
 				billingState: stateEl.value.trim() || undefined,
 				billingZip: zipEl.value.trim() || undefined,

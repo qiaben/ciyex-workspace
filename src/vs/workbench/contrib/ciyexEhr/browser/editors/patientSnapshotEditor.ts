@@ -24,6 +24,7 @@ import { INativeHostService } from '../../../../../platform/native/common/native
 import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog, withTypeaheadSearch, formFieldsToEditFields } from '../sidebarActions.js';
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
+import { ADDRESS_LABELS, ADDRESS_PLACEHOLDERS } from '../addressFields.js';
 
 interface QuickAction {
 	icon: string;
@@ -4641,7 +4642,8 @@ export class PatientSnapshotEditor extends EditorPane {
 				{ key: 'cvv', label: 'CVV', kind: 'text', required: true, placeholder: '123', widthPct: 50 },
 				{ key: 'expiryMonth', label: 'Expiry Month', kind: 'select', required: true, widthPct: 50, options: months },
 				{ key: 'expiryYear', label: 'Expiry Year', kind: 'select', required: true, widthPct: 50, options: years },
-				{ key: 'billingAddress', label: 'Billing Address', kind: 'text', placeholder: '123 Main St', widthPct: 100 },
+				{ key: 'billingAddressLine1', label: ADDRESS_LABELS.addressLine1, kind: 'text', placeholder: ADDRESS_PLACEHOLDERS.addressLine1, widthPct: 100 },
+				{ key: 'billingAddressLine2', label: ADDRESS_LABELS.addressLine2, kind: 'text', placeholder: ADDRESS_PLACEHOLDERS.addressLine2, widthPct: 100 },
 				{ key: 'billingCity', label: 'City', kind: 'text', placeholder: 'New York', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'City may only contain letters and spaces.' },
 				{ key: 'billingState', label: 'State', kind: 'text', placeholder: 'NY', widthPct: 50, typingPattern: '[A-Za-z ]', validationPattern: '^[A-Za-z ]+$', validationMessage: 'State may only contain letters and spaces.' },
 				{ key: 'billingZip', label: 'Zip Code', kind: 'text', placeholder: '10001', widthPct: 50, typingPattern: '[0-9]', validationPattern: '^\\d{5}$', validationMessage: 'Zip Code must be exactly 5 digits (e.g. 10001).' },
@@ -4685,7 +4687,8 @@ export class PatientSnapshotEditor extends EditorPane {
 					cardType: next.cardType || 'VISA',
 					expiryMonth: Number(next.expiryMonth),
 					expiryYear: Number(next.expiryYear),
-					billingAddress: String(next.billingAddress || '').trim() || undefined,
+					billingAddressLine1: String(next.billingAddressLine1 || '').trim() || undefined,
+					billingAddressLine2: String(next.billingAddressLine2 || '').trim() || undefined,
 					billingCity: String(next.billingCity || '').trim() || undefined,
 					billingState: String(next.billingState || '').trim() || undefined,
 					billingZip: String(next.billingZip || '').trim() || undefined,
