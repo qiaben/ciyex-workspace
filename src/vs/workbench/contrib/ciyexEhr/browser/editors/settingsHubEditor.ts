@@ -2193,7 +2193,7 @@ export class SettingsHubEditor extends EditorPane {
 		// don't cascade — so copy the workbench root's class onto it, exactly like
 		// the intake-form overlay does, so those tokens resolve here too.
 		const wbRoot = findWorkbenchRoot(mainWindow.document.body, mainWindow.document);
-		dropdown.className = wbRoot.classList.contains('monaco-workbench') ? wbRoot.className : 'monaco-workbench';
+		dropdown.className = (wbRoot.classList.contains('monaco-workbench') ? wbRoot.className : 'monaco-workbench') + ' ciyex-search-dropdown';
 		dropdown.style.cssText = 'position:fixed;background:var(--vscode-dropdown-background,var(--vscode-editorWidget-background,#252526));border:1px solid var(--vscode-focusBorder,#0e639c);border-radius:6px;max-height:280px;overflow-y:auto;z-index:100000;display:none;box-shadow:0 12px 36px rgba(0,0,0,0.5);color:var(--vscode-dropdown-foreground,var(--vscode-foreground,#cccccc));';
 		const positionDropdown = (): void => {
 			const rect = input.getBoundingClientRect();

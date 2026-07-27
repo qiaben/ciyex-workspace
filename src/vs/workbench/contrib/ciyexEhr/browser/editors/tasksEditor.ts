@@ -636,7 +636,7 @@ export class TasksEditor extends EditorPane {
 			// `var(--vscode-…)` lookups resolve on the panel itself even if
 			// the mount root happened to fall outside `.monaco-workbench`.
 			const provWorkbenchRoot = findWorkbenchRoot(assignedToInput, provOwnerDoc);
-			provDropdown.className = provWorkbenchRoot.classList && provWorkbenchRoot.classList.contains('monaco-workbench') ? provWorkbenchRoot.className : 'monaco-workbench';
+			provDropdown.className = (provWorkbenchRoot.classList && provWorkbenchRoot.classList.contains('monaco-workbench') ? provWorkbenchRoot.className : 'monaco-workbench') + ' ciyex-search-dropdown';
 			provDropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
 			provWorkbenchRoot.appendChild(provDropdown);
 			const positionProvDropdown = () => {
@@ -745,7 +745,7 @@ export class TasksEditor extends EditorPane {
 			const patOwnerDoc = patNameInput.ownerDocument || document;
 			const dropdown = patOwnerDoc.createElement('div');
 			const patWorkbenchRoot = findWorkbenchRoot(patNameInput, patOwnerDoc);
-			dropdown.className = patWorkbenchRoot.classList && patWorkbenchRoot.classList.contains('monaco-workbench') ? patWorkbenchRoot.className : 'monaco-workbench';
+			dropdown.className = (patWorkbenchRoot.classList && patWorkbenchRoot.classList.contains('monaco-workbench') ? patWorkbenchRoot.className : 'monaco-workbench') + ' ciyex-search-dropdown';
 			dropdown.style.cssText = 'position:fixed;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10000;display:none;';
 			patWorkbenchRoot.appendChild(dropdown);
 			const positionPatDropdown = () => {

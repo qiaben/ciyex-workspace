@@ -138,6 +138,14 @@ export interface FormFieldDef {
 	 * record (e.g. a provider), not arbitrary text.
 	 */
 	strictSelect?: boolean;
+	/**
+	 * For 'search' type: let the field collect MANY picks instead of one. Each
+	 * selection is added as a removable chip under the search box and the saved
+	 * value is the picked codes joined with ", " (e.g. "R51, Z00.00"). Used by the
+	 * lab order Diagnosis (ICD-10) / Procedure (CPT) fields, where one order
+	 * routinely carries several codes.
+	 */
+	multi?: boolean;
 	/** Validation pattern for non-search inputs (regex source). When set, save fails if value doesn't match. */
 	validationPattern?: string;
 	/** Error message for validationPattern mismatch. */
@@ -1564,6 +1572,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// Segmented (pill-box) select fields: key → repaint callback so the initial
 		// / edit-seeded value highlights the right pill (mirrors dateRefs seeding).
 		const segmentedRefs = new Map<string, (value: string) => void>();
+		// Multi-value search fields (`field.multi`): key → chip repaint callback, so
+		// the edit-prefill step can rebuild the chips from the saved comma-separated
+		// code list (mirrors dateRefs / segmentedRefs seeding).
+		const multiSeedRefs = new Map<string, (value: string) => void>();
 
 		for (const field of fields) {
 			// Every typeahead/search field locks to a value chosen from its results
@@ -1571,7 +1583,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			// provider that doesn't exist) is wiped on blur and rejected on save, so
 			// only real records are stored. Opt a field out with `strictSelect:false`
 			// for the rare case where free text is genuinely allowed.
-			if (field.type === 'search' && field.strictSelect === undefined) {
+			// `multi` fields opt out: their search box must stay typeable after a
+			// pick (that's how the next code is added) and the saved value lives on
+			// the hidden chip carrier, not in the box, so the lock + blur-wipe the
+			// strict path applies would fight the chip workflow.
+			if (field.type === 'search' && field.strictSelect === undefined && !field.multi) {
 				field.strictSelect = true;
 			}
 			const group = DOM.append(body, DOM.$('div'));
@@ -1674,16 +1690,69 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const searchWrapper = DOM.append(group, DOM.$('div'));
 				searchWrapper.style.cssText = 'position:relative;';
 
-				inputEl = DOM.append(searchWrapper, DOM.$('input')) as HTMLInputElement;
-				inputEl.type = 'text';
-				inputEl.style.cssText = inputStyle;
-				inputEl.placeholder = field.placeholder || `Search ${field.label}...`;
+				const searchEl = DOM.append(searchWrapper, DOM.$('input')) as HTMLInputElement;
+				searchEl.type = 'text';
+				searchEl.style.cssText = inputStyle;
+				searchEl.placeholder = field.placeholder || `Search ${field.label}...`;
+				inputEl = searchEl;
+
+				// `multi`: the field holds a LIST of picked codes (QA: a lab order
+				// needs several ICD-10 diagnoses and several CPT procedures). The
+				// search box stays a search box — every pick becomes a removable chip
+				// below it and the box clears, ready for the next code. The value the
+				// form saves lives in a hidden input holding the codes joined with
+				// ", ", so the save/validation/edit-seed paths are unchanged.
+				let addMultiValue: ((code: string, label: string) => void) | undefined;
+				if (field.multi) {
+					const chips = DOM.append(group, DOM.$('div'));
+					chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;';
+					const hiddenMulti = DOM.append(group, DOM.$('input')) as HTMLInputElement;
+					hiddenMulti.type = 'hidden';
+					const picked = new Map<string, string>();
+					const sync = () => { hiddenMulti.value = Array.from(picked.keys()).join(', '); };
+					const renderChips = () => {
+						DOM.clearNode(chips);
+						for (const [code, label] of picked) {
+							const chip = DOM.append(chips, DOM.$('span'));
+							chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border-radius:12px;font-size:11px;line-height:1.5;background:var(--vscode-badge-background,#4d4d4d);color:var(--vscode-badge-foreground,#fff);border:1px solid var(--vscode-input-border,#3c3c3c);';
+							const text = DOM.append(chip, DOM.$('span'));
+							text.textContent = label;
+							text.title = label;
+							text.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+							const del = DOM.append(chip, DOM.$('span'));
+							del.textContent = '\u2715';
+							del.title = `Remove ${code}`;
+							del.style.cssText = 'cursor:pointer;opacity:0.75;font-size:10px;line-height:1;';
+							del.addEventListener('click', () => { picked.delete(code); sync(); renderChips(); });
+						}
+					};
+					addMultiValue = (code: string, label: string) => {
+						const key = code.trim();
+						if (!key || picked.has(key)) { return; }
+						picked.set(key, label.trim() || key);
+						sync();
+						renderChips();
+					};
+					// Edit prefill: `inputEl.value = val` below writes the saved
+					// "R51, Z00.00" string onto the hidden carrier; re-render the chips
+					// from it once the seeding pass has run.
+					multiSeedRefs.set(field.key, (seeded: string) => {
+						picked.clear();
+						for (const part of seeded.split(',')) {
+							const code = part.trim();
+							if (code) { picked.set(code, code); }
+						}
+						sync();
+						renderChips();
+					});
+					inputEl = hiddenMulti;
+				}
 
 				// `strictSelect`: the value must come from the results dropdown. We
 				// lock the input after a pick (no free typing) and expose a clear
 				// button to re-search. Unselected free text is wiped on blur so it can
 				// never be saved as if it were a real record.
-				const strictInput = inputEl as HTMLInputElement;
+				const strictInput = searchEl as HTMLInputElement;
 				let lockSelection: ((locked: boolean) => void) | undefined;
 				if (field.strictSelect) {
 					const clearBtn = DOM.append(searchWrapper, DOM.$('span'));
@@ -1716,11 +1785,14 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const dropdownHost = this.formOverlay ?? (ownerDoc.body || ownerDoc.documentElement);
 				const dropdown = DOM.append(dropdownHost, DOM.$('div'));
 				// monaco-workbench class makes --vscode-* vars resolve even if the
-				// host falls back to body.
-				dropdown.className = 'monaco-workbench';
+				// host falls back to body; `ciyex-search-dropdown` is what the shared
+				// stylesheet keys the "no vertical scrollbar in dropdowns" rule off
+				// (QA 27-Jul — the New Immunization CVX list was the one still
+				// painting Chromium's own scrollbar).
+				dropdown.className = 'monaco-workbench ciyex-search-dropdown';
 				dropdown.style.cssText = 'position:fixed;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border,rgba(255,255,255,0.35));border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:10001;display:none;';
 				const positionDropdown = () => {
-					const rect = (inputEl as HTMLInputElement).getBoundingClientRect();
+					const rect = (searchEl as HTMLInputElement).getBoundingClientRect();
 					const viewportH = win?.innerHeight ?? ownerDoc.documentElement.clientHeight;
 					const gap = 2;
 					const spaceBelow = viewportH - rect.bottom - gap - 8;
@@ -1758,11 +1830,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				const displayField = field.searchDisplayField || 'name';
 				const valueField = field.searchValueField || 'id';
 
-				inputEl.addEventListener('input', () => {
+				searchEl.addEventListener('input', () => {
 					const timerKey = field.key;
 					const existing = this.searchDebounceTimers.get(timerKey);
 					if (existing) { clearTimeout(existing); }
-					const query = (inputEl as HTMLInputElement).value.trim();
+					const query = (searchEl as HTMLInputElement).value.trim();
 					if (query.length < 2) {
 						dropdown.style.display = 'none';
 						DOM.clearNode(dropdown);
@@ -1878,11 +1950,22 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 								// (QA: dropdown options select only on double click).
 								item.addEventListener('mousedown', (e) => {
 									e.preventDefault();
+									// `multi`: the pick becomes a chip and the box empties so the
+									// next code can be searched straight away — the box itself never
+									// holds the value.
+									if (addMultiValue) {
+										addMultiValue(String(getPath(result, valueField) ?? displayText), displayText);
+										searchEl.value = '';
+										dropdown.style.display = 'none';
+										DOM.clearNode(dropdown);
+										searchEl.focus();
+										return;
+									}
 									// When `selectDisplayField` is set, the input shows only that
 									// field (e.g. the description) while the dropdown still shows the
 									// fuller `displayText` (code + description). Otherwise fall back to
 									// the dropdown text so existing search fields are unchanged.
-									(inputEl as HTMLInputElement).value = field.selectDisplayField
+									(searchEl as HTMLInputElement).value = field.selectDisplayField
 										? String(getPath(result, field.selectDisplayField) ?? displayText)
 										: displayText;
 									dropdown.style.display = 'none';
@@ -1925,9 +2008,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				});
 
 				// Hide dropdown on blur (with delay for click)
-				inputEl.addEventListener('blur', () => {
+				searchEl.addEventListener('blur', () => {
 					setTimeout(() => {
 						dropdown.style.display = 'none';
+						// `multi`: leftover text that was never picked isn't a value —
+						// the chips are. Wipe it so the box reads as an empty search box.
+						if (addMultiValue) { searchEl.value = ''; return; }
 						// strictSelect: if the user typed without picking a result, wipe the
 						// stray text (and its related id) so only a real selection survives.
 						const relatedFilled = !!(field.relatedField && inputs.get(field.relatedField)?.value.trim());
@@ -1937,7 +2023,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						}
 					}, 200);
 				});
-				inputEl.addEventListener('focus', () => {
+				searchEl.addEventListener('focus', () => {
 					if (dropdown.childElementCount > 0) { showDropdown(); }
 				});
 			} else if (field.type === 'date') {
@@ -2118,6 +2204,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			inputEl.value = val;
 			// Segmented pill-box: highlight the pill matching the seeded value.
 			if (field.type === 'select' && field.segmented) { segmentedRefs.get(field.key)?.(val); }
+			// Multi-value search field: rebuild one chip per saved code.
+			if (field.multi && val) { multiSeedRefs.get(field.key)?.(val); }
 			// strictSelect search field opened for edit with a saved value — treat
 			// it as an existing selection: lock it (read-only + clear button to change) so the
 			// blur-clear doesn't wipe the already-saved provider.

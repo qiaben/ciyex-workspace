@@ -5945,11 +5945,23 @@ export class PatientChartEditor extends EditorPane {
 			return typeof s === 'string' ? s.toLowerCase() : '';
 		};
 
-		// Client-side pagination for the Appointments tab (QA 21-Jul: "in patient
-		// list the appointment page add the pagination to it"). Other list tabs
-		// keep the plain full-list rendering.
+		// Client-side pagination for EVERY chart list tab (QA 27-Jul: "add the
+		// pagination to the patient list, all the needed pages"). Started as
+		// Appointments-only (QA 21-Jul) then Encounters (QA 22-Jul); the rest of the
+		// chart's record lists — Vitals, Allergies, Problems, Medications, Lab
+		// Orders / Results, Immunizations, Documents, Insurance, … — grow just as
+		// long, so they all get the same control. It hides itself when a tab has no
+		// records, and otherwise carries the "Showing 1-10 of N" summary the
+		// clinical pages already show.
 		this._listPagerDisposables.clear();
-		let pager: PaginationControl | undefined;
+		const pager = this._listPagerDisposables.add(new PaginationControl({
+			pageSize: 10,
+			pageSizeOptions: [10, 25, 50],
+			itemLabel: tab.label.toLowerCase(),
+			// `applyFilters` is declared below; the callback only ever runs after
+			// the user changes page, long past its initialisation.
+			onChange: () => applyFilters(),
+		}));
 
 		const applyFilters = () => {
 			const q = searchInput.value.trim();
@@ -5958,14 +5970,10 @@ export class PatientChartEditor extends EditorPane {
 			DOM.clearNode(tableWrap);
 			countBadge.textContent = `${filtered.length} record${filtered.length === 1 ? '' : 's'}`;
 			if (filtered.length > 0) {
-				let visible = filtered;
-				if (pager) {
-					pager.setTotal(filtered.length);
-					visible = pager.slice(filtered);
-				}
-				this._listAuto(tableWrap, tab, visible, config);
+				pager.setTotal(filtered.length);
+				this._listAuto(tableWrap, tab, pager.slice(filtered), config);
 			} else {
-				pager?.setTotal(0);
+				pager.setTotal(0);
 				const empty = DOM.append(tableWrap, DOM.$('div'));
 				empty.style.cssText = 'padding:40px 16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:13px;';
 				const msg = DOM.append(empty, DOM.$('div'));
@@ -5991,17 +5999,7 @@ export class PatientChartEditor extends EditorPane {
 			searchTimer = setTimeout(applyFilters, 150);
 		});
 		statusSel?.addEventListener('change', applyFilters);
-		// Encounters got the same pager (QA 22-Jul: "the encounter page add the
-		// pagination button in it").
-		if (tab.key === 'appointments' || tab.key === 'encounters') {
-			pager = this._listPagerDisposables.add(new PaginationControl({
-				pageSize: 10,
-				pageSizeOptions: [10, 25, 50],
-				itemLabel: tab.key,
-				onChange: () => applyFilters(),
-			}));
-			container.appendChild(pager.element);
-		}
+		container.appendChild(pager.element);
 		applyFilters();
 	}
 

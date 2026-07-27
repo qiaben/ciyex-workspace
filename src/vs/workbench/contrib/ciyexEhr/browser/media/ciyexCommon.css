@@ -76,48 +76,32 @@
 /* Body-mounted dropdown / typeahead popovers (custom <select> replacements and
  * the form search/lookup fields). These are appended to document.body — not to
  * the editor pane — so they escape the editor's overflow/transform clipping.
- * That also puts them OUTSIDE `.ciyex-editor-root`, so the friendly-scroll rule
- * above never reaches them. Option lists that overflow `max-height` (e.g. the
- * Inventory Category / Location / Supplier dropdowns) need a *visible*, usable
- * scrollbar so the user can tell there's more data and drag to it — QA flagged
- * the previously-hidden scrollbar as "not user-friendly / can't scroll". Render
- * a thin themed scrollbar (matching the editor's friendly-scroll style) on every
- * category's create+edit form dropdown (customDropdown.ts + sidebarActions
- * select panels + patientChartEditor _buildSearchInput). */
+ * That also puts them OUTSIDE `.ciyex-editor-root`, so the pane's
+ * scrollbar-hiding rule above never reaches them and Chromium paints its own
+ * chunky vertical scrollbar inside the option list (QA flagged it on the
+ * Immunization CVX lookup). No surface in this app shows a vertical scrollbar,
+ * dropdowns included — hide it on every category's create+edit form dropdown
+ * (customDropdown.ts + sidebarActions select panels + patientChartEditor
+ * _buildSearchInput) while keeping the list scrollable by wheel / keyboard. */
 .ciyex-custom-dropdown-panel,
 .ciyex-search-dropdown,
-.ciyex-select-panel {
-	scrollbar-width: thin !important;
-	scrollbar-color: rgba(127, 127, 127, 0.45) transparent !important;
+.ciyex-select-panel,
+.ciyex-custom-dropdown-panel *,
+.ciyex-search-dropdown *,
+.ciyex-select-panel * {
+	scrollbar-width: none !important;
+	-ms-overflow-style: none !important;
 }
 
 .ciyex-custom-dropdown-panel::-webkit-scrollbar,
 .ciyex-search-dropdown::-webkit-scrollbar,
-.ciyex-select-panel::-webkit-scrollbar {
-	width: 10px !important;
-	height: 10px !important;
-}
-
-.ciyex-custom-dropdown-panel::-webkit-scrollbar-track,
-.ciyex-search-dropdown::-webkit-scrollbar-track,
-.ciyex-select-panel::-webkit-scrollbar-track {
-	background: transparent !important;
-}
-
-.ciyex-custom-dropdown-panel::-webkit-scrollbar-thumb,
-.ciyex-search-dropdown::-webkit-scrollbar-thumb,
-.ciyex-select-panel::-webkit-scrollbar-thumb {
-	background: rgba(127, 127, 127, 0.45) !important;
-	border-radius: 5px !important;
-	border: 2px solid transparent !important;
-	background-clip: padding-box !important;
-}
-
-.ciyex-custom-dropdown-panel::-webkit-scrollbar-thumb:hover,
-.ciyex-search-dropdown::-webkit-scrollbar-thumb:hover,
-.ciyex-select-panel::-webkit-scrollbar-thumb:hover {
-	background: rgba(127, 127, 127, 0.7) !important;
-	background-clip: padding-box !important;
+.ciyex-select-panel::-webkit-scrollbar,
+.ciyex-custom-dropdown-panel *::-webkit-scrollbar,
+.ciyex-search-dropdown *::-webkit-scrollbar,
+.ciyex-select-panel *::-webkit-scrollbar {
+	width: 0 !important;
+	height: 0 !important;
+	display: none !important;
 }
 
 /* ============================================================================

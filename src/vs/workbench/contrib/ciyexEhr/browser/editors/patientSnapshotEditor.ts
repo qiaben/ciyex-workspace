@@ -3125,6 +3125,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// and the list can't be scrolled to (QA: status dropdown not scrollable).
 		// Positioned from the trigger's rect each time it opens / the page scrolls.
 		const menu = DOM.append(wrap, DOM.$('div'));
+		menu.classList.add('ciyex-select-panel');
 		menu.style.cssText = 'position:fixed;min-width:180px;max-height:280px;overflow-y:auto;background:var(--vscode-menu-background,var(--vscode-editor-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-menu-border,var(--vscode-editorWidget-border));border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.28);padding:4px;z-index:1000;display:none;';
 
 		// Place the menu under (or above, if there's no room below) the trigger,

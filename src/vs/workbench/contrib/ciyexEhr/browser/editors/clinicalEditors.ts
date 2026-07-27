@@ -636,8 +636,11 @@ export const LAB_ORDER_FORM_FIELDS: FormFieldDef[] = [
 			{ label: 'Corrected', value: 'Corrected' }, { label: 'Amended', value: 'Amended' },
 		], defaultValue: 'Pending'
 	},
-	{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'search', required: true, placeholder: 'Search ICD-10 codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
-	{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'search', required: true, placeholder: 'Search CPT codes', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+	// `multi`: one lab order routinely justifies several diagnoses and covers
+	// several procedures, so both code fields collect a LIST — each pick becomes a
+	// removable chip and the saved value is the codes joined with ", ".
+	{ key: 'diagnosisCode', label: 'Diagnosis Codes (ICD-10)', type: 'search', multi: true, required: true, placeholder: 'Search ICD-10 codes — pick one or more', apiPath: '/api/app-proxy/ciyex-codes/api/codes/ICD10_CM/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
+	{ key: 'procedureCode', label: 'Procedure Codes (CPT)', type: 'search', multi: true, required: true, placeholder: 'Search CPT codes — pick one or more', apiPath: '/api/app-proxy/ciyex-codes/api/codes/CPT/search', searchParam: 'q', searchDisplayField: 'shortDescription', searchValueField: 'code', relatedDisplayFields: ['code', 'shortDescription'] },
 ];
 
 /**
@@ -1277,7 +1280,12 @@ export const IMMUNIZATIONS_FORM_FIELDS: FormFieldDef[] = [
 	{ key: 'patientName', label: 'Patient Name', type: 'search', required: true, placeholder: 'Search patient by name...', apiPath: '/api/patients', relatedField: 'patientId', relatedDisplayFields: ['firstName', 'lastName'] },
 	{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled from patient search' },
 	// Vaccine Information
-	{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', placeholder: 'Influenza, inactivated' },
+	// The vaccine name is never typed — picking a CVX code below writes the code's
+	// short description here (see cvxCode.relatedFieldsMap). Mirror the Patient ID
+	// field: an auto-filled, read-only box whose placeholder says where the value
+	// comes from, so the form doesn't invite free text that would disagree with
+	// the selected code.
+	{ key: 'vaccineName', label: 'Vaccine Name', type: 'text', readOnly: true, placeholder: 'Auto-filled from CVX code' },
 	{
 		key: 'cvxCode', label: 'CVX Code', type: 'search', required: true,
 		placeholder: 'Search CVX vaccine code...',
