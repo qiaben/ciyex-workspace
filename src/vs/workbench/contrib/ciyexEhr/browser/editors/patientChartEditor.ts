@@ -34,7 +34,6 @@ import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js'
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
 import { attachZipCityStateAutoFill, wireZipCityStateInputs } from '../zipAutoFill.js';
-import { addressPartsFor, createAddressGroup, isAddressField, readControlValue } from '../addressGroup.js';
 
 // --- Types ---
 interface ChartCategory { key: string; label: string; position: number; hideFromChart?: boolean; tabs: ChartTab[] }
@@ -6241,9 +6240,7 @@ export class PatientChartEditor extends EditorPane {
 			if (DOM.isHTMLInputElement(el) && el.type === 'checkbox') {
 				payload[key] = el.checked;
 			} else {
-				// Address groups post the { line1, line2, city, state, zip }
-				// object their FHIR mapping expects; everything else posts text.
-				const v = readControlValue(el);
+				const v = el.value;
 				if (v !== '') { payload[key] = v; }
 			}
 		}
@@ -7299,24 +7296,6 @@ export class PatientChartEditor extends EditorPane {
 					cbLabel.textContent = val ? 'Yes' : 'No';
 					cb.addEventListener('change', () => { cbLabel.textContent = cb.checked ? 'Yes' : 'No'; });
 					this._formInputs.set(f.key, cb);
-				} else if (isAddressField(f.type, f.key)) {
-					// Every address in the app is captured the same way — Line 1 /
-					// Line 2 / ZIP / City / State with the Settings page's ZIP
-					// auto-fill (QA 27-Jul). The backend's structured `address`
-					// type round-trips as a { line1, line2, city, state, zip }
-					// object; the string-valued address extensions (guardian,
-					// pharmacy, guarantor, employer…) keep their one-line shape.
-					const group = createAddressGroup({
-						parent: cell,
-						value: recordVal ?? val,
-						format: (f.type || '').toLowerCase() === 'address' ? 'map' : 'string',
-						inputStyle,
-						// Sections that already ship City / State / ZIP fields of
-						// their own (facilities, organizations) only get the two
-						// address lines here — no duplicate inputs.
-						parts: addressPartsFor(f.key, sec.fields.map(sf => sf.key)),
-					});
-					this._formInputs.set(f.key, group);
 				} else if (f.type === 'textarea') {
 					const ta = DOM.append(cell, DOM.$('textarea')) as HTMLTextAreaElement;
 					ta.value = String(val); ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
