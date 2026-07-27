@@ -244,14 +244,6 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	const backdrop = DOM.append(doc.body, DOM.$('div.ciyex-summary-backdrop'));
 	backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;display:flex;justify-content:flex-end;';
 
-	// Print-only page frame — a thin border rectangle drawn on EVERY printed page.
-	// A position:fixed element repeats on each page in Chromium's print path, so it
-	// gives the document the boxed look of the reference letterhead. It's inset
-	// inside the printToPDF margins so the content sits within the frame and the
-	// page-number footer prints just below it. All of its styling (position/border)
-	// lives in the print stylesheet; on screen it stays display:none.
-	DOM.append(backdrop, DOM.$('div.ciyex-summary-pageframe'));
-
 	// Right-anchored slide-over sheet.
 	const sheet = DOM.append(backdrop, DOM.$('div.ciyex-summary-sheet'));
 	sheet.style.cssText = `background:${col.bg};color:${col.fg};width:min(720px,65vw);height:100%;box-shadow:-8px 0 32px rgba(0,0,0,0.35);display:flex;flex-direction:column;overflow:hidden;font-family:var(--vscode-font-family);`;
@@ -331,26 +323,28 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		// Screen: hide the run-head + the print-only page frame, flatten the print
-		// table to plain blocks.
+		// Screen: hide the run-head, flatten the print table to plain blocks.
 		'.ciyex-summary-runhead{display:none;}',
-		'.ciyex-summary-pageframe{display:none;}',
 		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
 		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
 		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
-		// The page frame: a border box repeated on every printed page. In print a
-		// position:fixed element is laid out against the page CONTENT box (inside the
-		// margins) and painted on each page, so `inset:0` traces the content box edge
-		// — i.e. the border sits just inside the paper margin. The content cells get
-		// their own padding below so text never touches this border.
-		'  .ciyex-summary-pageframe{display:block !important;position:fixed !important;inset:0 !important;border:1px solid #9aa0a6 !important;border-radius:2px;pointer-events:none;z-index:0;background:transparent !important;}',
 		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
 		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
 		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
 		// Print: restore real table semantics so the letterhead repeats per page.
-		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
+		// The page border's left/right edges live on the table itself (not a
+		// position:fixed overlay — Chromium's printToPDF lays the whole document out
+		// in one continuous pass before slicing it into pages, so a fixed-position
+		// box only ever lands on one page, not every one). A bordered table
+		// fragments the same way the letterhead <thead> already reliably does: the
+		// left/right edges draw on every page the table continues onto. The top and
+		// bottom edges of the frame (plus the page number, nested inside the bottom
+		// one) are drawn by the header/footer templates passed to printToPDF in
+		// nativeHostMainService.ts, so the same #9aa0a6 line continues seamlessly
+		// from the header cap, down these table edges, into the footer cap.
+		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;border-left:1px solid #9aa0a6 !important;border-right:1px solid #9aa0a6 !important;}',
 		'  .ciyex-summary-runhead{display:table-header-group !important;}',
 		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
 		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
