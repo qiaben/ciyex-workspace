@@ -219,7 +219,7 @@ registerAction2(class extends Action2 {
 							<span class="label">Status</span><span class="status-active">${p.status || 'N/A'}</span>
 							<span class="label">MRN</span><span>${p.mrn || 'N/A'}</span>
 							<span class="label">SSN</span><span>${p.ssn || 'N/A'}</span>
-							<span class="label">Address</span><span>${[p.addressLine1, p.city, p.state, p.postalCode].filter(Boolean).join(', ') || 'N/A'}</span>
+							<span class="label">Address</span><span>${[p.addressLine1, p.addressLine2, p.city, p.state, (p.zip || p.postalCode)].filter(Boolean).join(', ') || 'N/A'}</span>
 						</div>
 					</div>
 					<div class="tab-panel" id="panel-encounters">

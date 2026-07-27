@@ -10,7 +10,8 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { formatUsPhone } from '../sidebarActions.js';
-import { lookupZipCityState } from './settingsHubEditor.js';
+import { wireZipCityStateInputs } from '../zipAutoFill.js';
+import { ADDRESS_LABELS, ADDRESS_PLACEHOLDERS } from '../addressFields.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -356,13 +357,13 @@ export class PracticeSettingsEditor extends EditorPane {
 
 	private _renderAddressFields(): HTMLElement {
 		const grid = DOM.$('div');
-		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;';
+		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
 
-		this._gridField(grid, 'addressLine1', 'Address Line 1', this.practice.addressLine1 || '', 'text', 4, 'Street address');
-		this._gridField(grid, 'addressLine2', 'Address Line 2', this.practice.addressLine2 || '', 'text', 4, 'Suite, unit, building (optional)');
-		this._gridField(grid, 'city', 'City', this.practice.city || '', 'text', 2, 'City');
-		this._gridField(grid, 'state', 'State', this.practice.state || '', 'text', 1, 'State');
-		this._gridField(grid, 'zip', 'ZIP', this.practice.zip || '', 'text', 1, 'Enter ZIP — city & state auto-fill');
+		this._gridField(grid, 'addressLine1', ADDRESS_LABELS.addressLine1, this.practice.addressLine1 || '', 'text', 1, ADDRESS_PLACEHOLDERS.addressLine1);
+		this._gridField(grid, 'addressLine2', ADDRESS_LABELS.addressLine2, this.practice.addressLine2 || '', 'text', 1, ADDRESS_PLACEHOLDERS.addressLine2);
+		this._gridField(grid, 'city', ADDRESS_LABELS.city, this.practice.city || '', 'text', 1, ADDRESS_PLACEHOLDERS.city);
+		this._gridField(grid, 'state', ADDRESS_LABELS.state, this.practice.state || '', 'text', 1, ADDRESS_PLACEHOLDERS.state);
+		this._gridField(grid, 'zip', ADDRESS_LABELS.zip, this.practice.zip || '', 'text', 1, ADDRESS_PLACEHOLDERS.zip);
 
 		return grid;
 	}
@@ -410,32 +411,11 @@ export class PracticeSettingsEditor extends EditorPane {
 				if (input.value !== masked) { input.value = masked; }
 			}
 			(this.practice as Record<string, unknown>)[key as string] = input.value;
-			if (key === 'zip') {
-				// Auto-filled City / State freeze while a complete ZIP drives them
-				// (QA: "once fetch make it freeze"); clearing/editing the ZIP
-				// releases them for manual entry again.
-				const setFrozen = (frozen: boolean): void => {
-					for (const el of [this._cityInput, this._stateInput]) {
-						if (el?.isConnected) {
-							el.readOnly = frozen;
-							el.style.opacity = frozen ? '0.75' : '';
-						}
-					}
-				};
-				if (/^\d{5}$/.test(input.value.trim())) {
-					void lookupZipCityState(input.value.trim()).then(hit => {
-						if (!hit) { return; }
-						this.practice.city = hit.city;
-						this.practice.state = hit.state;
-						if (this._cityInput?.isConnected) { this._cityInput.value = hit.city; }
-						if (this._stateInput?.isConnected) { this._stateInput.value = hit.state; }
-						setFrozen(true);
-					});
-				} else {
-					setFrozen(false);
-				}
-			}
 		});
+		// A complete ZIP auto-fills + freezes City / State (QA: "fill the zip
+		// code → auto-fill state & city", "once fetch make it freeze") — shared
+		// with every other create/edit form app-wide.
+		if (key === 'zip') { wireZipCityStateInputs(input, this._cityInput, this._stateInput); }
 	}
 
 	private _gridSelect(parent: HTMLElement, key: keyof PracticeData, label: string, value: string, options: Array<[string, string]>): void {
