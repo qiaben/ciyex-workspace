@@ -5091,6 +5091,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _insLoading = false;
 	/** claimRef (normalized) of the rows currently expanded to per-CPT inputs. */
 	private readonly _insExpanded = new Set<string>();
+	/** claimRef (normalized) of POSTED secondary EOBs expanded to their full breakdown. */
+	private readonly _secExpanded = new Set<string>();
 	private _insSearch = '';
 	private _insStatusFilter: '' | 'AWAITING_EOB' | 'POSTED' | 'DENIAL' | 'AWAITING_SECONDARY' = '';
 
@@ -6217,10 +6219,34 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const paid = round2(row.secLines.reduce((s, l) => s + l.paid, 0));
 			const adj = round2(row.secLines.reduce((s, l) => s + l.writeOff, 0));
 			const rem = this._rowSecRemainder(row);
+			// The one-line summary is a toggle: clicking it opens the full
+			// read-only breakdown of what was posted to the secondary payer
+			// (per-CPT figures + payer/check/date), so the biller can review a
+			// closed claim without digging into the transaction record.
+			const key = normalizeClaimRef(row.claimRef);
 			const sum = DOM.append(box, DOM.$('div'));
+			sum.style.cssText = 'font-size:12px;color:#22c55e;cursor:pointer;display:flex;align-items:flex-start;gap:6px;';
+			sum.title = 'Click to show / hide the full secondary EOB breakdown';
+			const caret = DOM.append(sum, DOM.$('span'));
+			caret.style.cssText = 'flex:0 0 auto;font-size:10px;line-height:16px;';
+			const sumText = DOM.append(sum, DOM.$('span'));
 			// allow-any-unicode-next-line
-			sum.textContent = `✓ Posted — payer ${row.secPayer || '—'}, check ${row.secCheck || '—'}${row.secDate ? `, received ${row.secDate}` : ''}. Secondary paid ${money(paid)}, adjustments ${money(adj)}, patient responsibility ${money(rem)}. The claim is closed.`;
-			sum.style.cssText = 'font-size:12px;color:#22c55e;';
+			sumText.textContent = `✓ Posted — payer ${row.secPayer || '—'}, check ${row.secCheck || '—'}${row.secDate ? `, received ${row.secDate}` : ''}. Secondary paid ${money(paid)}, adjustments ${money(adj)}, patient responsibility ${money(rem)}. The claim is closed.`;
+
+			const details = DOM.append(box, DOM.$('div'));
+			details.style.cssText = 'margin-top:10px;';
+			this._renderPostedSecondaryDetails(details, row);
+			const applyExpanded = () => {
+				const open = this._secExpanded.has(key);
+				// allow-any-unicode-next-line
+				caret.textContent = open ? '▼' : '▶';
+				details.style.display = open ? 'block' : 'none';
+			};
+			applyExpanded();
+			sum.addEventListener('click', () => {
+				if (this._secExpanded.has(key)) { this._secExpanded.delete(key); } else { this._secExpanded.add(key); }
+				applyExpanded();
+			});
 			return;
 		}
 
@@ -6362,6 +6388,72 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			postSecBtn.disabled = true; postSecBtn.textContent = 'Posting…';
 			await this._postSecondaryEob(row);
 		});
+	}
+
+	/**
+	 * Read-only breakdown of an already-posted secondary EOB, revealed when the
+	 * biller clicks the posted summary line. Shows the payer / check / date it
+	 * was posted with and every CPT code's full figures (carried coinsurance,
+	 * billed, allowed, paid, copay, deductible, coinsurance, write-off and the
+	 * resulting patient responsibility) plus the claim totals.
+	 */
+	private _renderPostedSecondaryDetails(host: HTMLElement, row: InsurancePostingRow): void {
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+
+		const meta = DOM.append(host, DOM.$('div'));
+		meta.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-bottom:10px;';
+		const metaCell = (label: string, value: string) => {
+			const c = DOM.append(meta, DOM.$('div'));
+			const l = DOM.append(c, DOM.$('div')); l.textContent = label;
+			l.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--vscode-descriptionForeground);margin-bottom:2px;';
+			const v = DOM.append(c, DOM.$('div')); v.textContent = value;
+			v.style.cssText = 'font-size:12px;font-weight:600;';
+		};
+		// allow-any-unicode-next-line
+		metaCell('Secondary Payer', row.secPayer || '—');
+		// allow-any-unicode-next-line
+		metaCell('Check / EFT #', row.secCheck || '—');
+		// allow-any-unicode-next-line
+		metaCell('Date Received', row.secDate || '—');
+
+		const SCOLS = '70px repeat(8, minmax(66px, 92px))';
+		const grid = DOM.append(host, DOM.$('div'));
+		grid.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:6px;overflow:hidden;background:var(--vscode-editor-background);';
+		const gHead = DOM.append(grid, DOM.$('div'));
+		gHead.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:6px 10px;background:rgba(139,92,246,0.10);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--vscode-descriptionForeground);`;
+		for (const h of ['CPT', 'Carried', 'Billed', 'Allowed', 'Ins Paid', 'Copay', 'Deductible', 'Write-off', 'Patient Owes']) { DOM.append(gHead, DOM.$('span')).textContent = h; }
+		for (const l of row.secLines) {
+			const gr = DOM.append(grid, DOM.$('div'));
+			gr.style.cssText = `display:grid;grid-template-columns:${SCOLS};gap:8px;padding:5px 10px;align-items:center;border-top:1px solid rgba(128,128,128,0.08);font-size:12px;`;
+			const codeEl = DOM.append(gr, DOM.$('span'));
+			codeEl.textContent = l.code;
+			codeEl.style.cssText = 'font-weight:600;font-family:var(--vscode-editor-font-family,monospace);';
+			const val = (v: number, color?: string) => {
+				const s = DOM.append(gr, DOM.$('span'));
+				s.textContent = money(v);
+				s.style.cssText = `text-align:right;${color ? `color:${color};font-weight:600;` : ''}`;
+			};
+			val(l.carried); val(l.billed); val(l.allowed); val(l.paid, '#3b9edd');
+			val(l.copay); val(l.deductible); val(l.writeOff, '#8b5cf6');
+			val(secondaryLineOwes(l), '#f59e0b');
+		}
+
+		const totals = DOM.append(host, DOM.$('div'));
+		totals.style.cssText = 'display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;';
+		const tCell = (label: string, value: string, color?: string) => {
+			const c = DOM.append(totals, DOM.$('div'));
+			const l = DOM.append(c, DOM.$('div')); l.textContent = label;
+			l.style.cssText = 'font-size:9px;font-weight:700;text-transform:uppercase;color:var(--vscode-descriptionForeground);';
+			const v = DOM.append(c, DOM.$('div')); v.textContent = value;
+			v.style.cssText = `font-size:14px;font-weight:700;${color ? `color:${color};` : ''}`;
+		};
+		tCell('Carried', money(round2(row.secLines.reduce((s, l) => s + l.carried, 0))));
+		tCell('Billed', money(round2(row.secLines.reduce((s, l) => s + l.billed, 0))));
+		tCell('Allowed', money(round2(row.secLines.reduce((s, l) => s + l.allowed, 0))));
+		tCell('Secondary Paid', money(round2(row.secLines.reduce((s, l) => s + l.paid, 0))), '#3b9edd');
+		tCell('Write-off', money(round2(row.secLines.reduce((s, l) => s + l.writeOff, 0))), '#8b5cf6');
+		tCell('Patient Resp', money(this._rowSecRemainder(row)), '#f59e0b');
 	}
 
 	/**
@@ -7374,15 +7466,22 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		};
 		// Team renames (meeting 2026-07-22): "Encounter Billing" → "Dashboard",
 		// "Transactions" → "Patient Balance"; the views themselves are unchanged.
-		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string }> = [
+		// `hidden` keeps a view's implementation intact while taking its tab out
+		// of the bar (team request 2026-07-27: hide Payment Methods, do not
+		// delete it) — flip the flag back to bring the tab straight back.
+		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string; hidden?: boolean }> = [
 			{ view: 'encounter-billing', label: 'Dashboard' },
 			{ view: 'transactions', label: 'Patient Balance' },
 			{ view: 'insurance-posting', label: 'Insurance Posting' },
-			{ view: 'methods', label: 'Payment Methods' },
+			{ view: 'methods', label: 'Payment Methods', hidden: true },
 			{ view: 'plans', label: 'Payment Plans' },
 			{ view: 'ledger', label: 'Ledger' },
 		];
-		payTabs.forEach(({ view, label }) => {
+		// A hidden tab must not stay selected from a previous session.
+		if (payTabs.some(t => t.view === this.payView && t.hidden)) {
+			this.payView = 'encounter-billing';
+		}
+		payTabs.filter(t => !t.hidden).forEach(({ view, label }) => {
 			const btn = parent.ownerDocument.createElement('button') as HTMLButtonElement;
 			btn.textContent = label;
 			const isActive = this.payView === view;
