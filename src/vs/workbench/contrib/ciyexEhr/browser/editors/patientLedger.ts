@@ -6,6 +6,7 @@
 import * as DOM from '../../../../../base/browser/dom.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { claimNumberForFeeSheet } from '../billing/edi837.js';
+import { findWorkbenchRoot } from '../customDropdown.js';
 
 /**
  * Shared patient-ledger view: one chronological financial record built from
@@ -344,6 +345,13 @@ export interface IRenderLedgerOptions {
 	showPatientColumn: boolean;
 	/** Initial text filter (e.g. the Payments patient bar selection). */
 	initialFilter?: string;
+	/**
+	 * Called on every filter edit so the host can remember what the user typed.
+	 * The ledger re-renders whenever it reloads (Refresh, tab switch, patient
+	 * pick) and without this the box fell back to `initialFilter` — which is
+	 * what made a cleared filter reappear on its own (QA 27-Jul).
+	 */
+	onFilterChange?: (value: string) => void;
 	/** When set, render a per-row Actions column (View / Download / Delete) backed by this host. */
 	actionsHost?: ILedgerActionsHost;
 }
@@ -384,6 +392,12 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 	search.style.cssText = 'flex:0 0 340px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
 	const countEl = DOM.append(bar, DOM.$('span'));
 	countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+	// Clear button — clearing the box must STAY cleared (the host is told, so a
+	// later reload doesn't restore the patient-bar name).
+	const clearBtn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+	clearBtn.textContent = 'Clear';
+	clearBtn.title = 'Clear the ledger filter';
+	clearBtn.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:11px;';
 
 	// -- Table --
 	const host2 = opts.actionsHost;
@@ -449,7 +463,7 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 				p.textContent = label;
 				p.title = 'Filter the ledger to this patient';
 				p.style.cssText = 'font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
-				p.addEventListener('click', () => { search.value = label; renderRows(); });
+				p.addEventListener('click', () => { search.value = label; opts.onFilterChange?.(label); renderRows(); });
 			}
 			const typeEl = DOM.append(r, DOM.$('span'));
 			const badge = DOM.append(typeEl, DOM.$('span'));
@@ -501,7 +515,13 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		}
 	};
 
-	search.addEventListener('input', renderRows);
+	search.addEventListener('input', () => { opts.onFilterChange?.(search.value); renderRows(); });
+	clearBtn.addEventListener('click', () => {
+		search.value = '';
+		opts.onFilterChange?.('');
+		renderRows();
+		search.focus();
+	});
 	renderRows();
 }
 
@@ -524,16 +544,28 @@ function ledgerEntryFields(ev: LedgerEvent, showPatient: boolean): Array<[string
 	return rows;
 }
 
-/** Body-mounted modal listing every field of a ledger entry (escapes the editor's clipping). */
+/**
+ * Modal listing every field of a ledger entry, mounted on the workbench root so
+ * it escapes the editor's clipping. It must NOT go on `document.body`: the
+ * `--vscode-*` theme variables live on `.monaco-workbench`, so a body-mounted
+ * box resolved every `var(--vscode-editor-background)` to nothing and rendered
+ * see-through over the ledger (QA 27-Jul: "the view page is showing like
+ * transparent — add the background colour theme wise"). Mounting inside the
+ * workbench (and copying its class) makes the panel opaque in every theme.
+ */
 function showLedgerEntry(host: HTMLElement, ev: LedgerEvent, showPatient: boolean): void {
 	const doc = host.ownerDocument;
-	const overlay = DOM.append(doc.body, DOM.$('div'));
-	overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;';
+	const mount = findWorkbenchRoot(host, doc);
+	const overlay = DOM.append(mount, DOM.$('div'));
+	overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+	// The copied workbench class also carries an opaque page background — reset it
+	// so only the scrim below dims the ledger behind the modal.
+	overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);';
 	const close = () => overlay.remove();
 	overlay.addEventListener('click', e => { if (e.target === overlay) { close(); } });
 
 	const box = DOM.append(overlay, DOM.$('div'));
-	box.style.cssText = 'width:460px;max-width:92vw;max-height:82vh;overflow:auto;background:var(--vscode-editor-background);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+	box.style.cssText = 'width:460px;max-width:92vw;max-height:82vh;overflow:auto;background:var(--vscode-editorWidget-background, var(--vscode-editor-background, var(--vscode-menu-background)));color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
 	const head = DOM.append(box, DOM.$('div'));
 	head.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 16px;border-bottom:1px solid var(--vscode-editorWidget-border);`;
 	const title = DOM.append(head, DOM.$('div'));

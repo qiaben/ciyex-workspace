@@ -21,6 +21,7 @@ import { FeeSheetEditorInput } from './ciyexEditorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, IDropdownOption } from '../customDropdown.js';
 import { parseSavedRecord } from '../sidebarActions.js';
+import { expandEncounterType } from './visitSummaryPanel.js';
 
 /** A single billable line on the fee sheet. Mirrors the OpenEMR fee-sheet row. */
 interface FeeItem {
@@ -81,6 +82,8 @@ export class FeeSheetEditor extends EditorPane {
 	private encounterId = '';
 	private patientName = '';
 	private encounterLabel = '';
+	/** Visit type of the encounter's appointment ("Follow-Up", "Consultation"…). */
+	private visitType = '';
 
 	private feeSheetId: string | null = null;
 	private priceLevels: IDropdownOption[] = [];
@@ -133,6 +136,7 @@ export class FeeSheetEditor extends EditorPane {
 		this.encounterId = input.encounterId;
 		this.patientName = input.patientName;
 		this.encounterLabel = input.encounterLabel || '';
+		this.visitType = '';
 		this.feeSheetId = null;
 		this.items = [];
 		this.selectedPriceLevel = '';
@@ -155,12 +159,43 @@ export class FeeSheetEditor extends EditorPane {
 		// Each keeps its own try/catch so one failure can't sink the others, and
 		// the existing fee sheet must apply LAST since it overrides the default
 		// price level / providers chosen above.
-		const [, , feeSheet] = await Promise.all([
+		const [, , , feeSheet] = await Promise.all([
 			this._loadPriceLevels(),
 			this._loadProviders(),
+			this._loadVisitType(),
 			this._loadExistingFeeSheet(),
 		]);
 		if (feeSheet) { this._applyExistingFeeSheet(feeSheet); }
+	}
+
+	/**
+	 * Visit type of the appointment the encounter was created from
+	 * ("Consultation", "Follow-Up", "Telehealth"…). The fee sheet used to title
+	 * itself with the encounter's raw FHIR class code — "AMB" — which means
+	 * nothing to a biller (QA 27-Jul: "remove the encounter type as AMB, instead
+	 * display the visit type of appointment"). Only the FLAT /api/appointments
+	 * rows carry both the encounter link and the visit type; that endpoint
+	 * ignores its ?patientId filter server-side, so the match is done here.
+	 */
+	private async _loadVisitType(): Promise<void> {
+		if (!this.encounterId || this.encounterId === '_') { return; }
+		try {
+			const res = await this.apiService.fetch('/api/appointments?page=0&size=500');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const rows = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Array<Record<string, unknown>>;
+			const text = (v: unknown): string => {
+				if (!v) { return ''; }
+				if (typeof v === 'string') { return v.trim(); }
+				const o = v as { text?: string; coding?: Array<{ display?: string; code?: string }> };
+				return String(o.text || o.coding?.[0]?.display || o.coding?.[0]?.code || '').trim();
+			};
+			for (const a of (Array.isArray(rows) ? rows : [])) {
+				if (String(a.encounterId ?? '') !== this.encounterId) { continue; }
+				const t = text(a.visitType) || text(a.appointmentType) || text(a.serviceType) || text(a.type);
+				if (t) { this.visitType = t; break; }
+			}
+		} catch { /* best-effort — the header falls back to the encounter label */ }
 	}
 
 	/** Price levels (from Settings → Price Level). */
@@ -250,12 +285,27 @@ export class FeeSheetEditor extends EditorPane {
 		};
 	}
 
+	/**
+	 * What the header calls this visit: the appointment's visit type when the
+	 * encounter has one, otherwise the label we were opened with — with any raw
+	 * FHIR class code in it expanded ("AMB" → "Ambulatory") so a code never
+	 * reaches the biller.
+	 */
+	private _visitLabel(): string {
+		if (this.visitType) { return this.visitType; }
+		const label = this.encounterLabel.trim();
+		if (!label) { return ''; }
+		const expanded = expandEncounterType(label);
+		return expanded && expanded !== label ? expanded : label;
+	}
+
 	private _renderHeader(): void {
 		DOM.clearNode(this.headerBar);
+		const visit = this._visitLabel();
 		const title = DOM.append(this.headerBar, DOM.$('div'));
 		title.style.cssText = 'font-size:15px;font-weight:600;';
 		title.textContent = this.patientName
-			? `Fee Sheet for ${this.patientName}${this.encounterLabel ? ` — ${this.encounterLabel}` : ''}`
+			? `Fee Sheet for ${this.patientName}${visit ? ` — ${visit}` : ''}`
 			: 'Fee Sheet';
 		const sub = DOM.append(this.headerBar, DOM.$('div'));
 		sub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';

@@ -19,6 +19,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { parseSavedRecord } from '../sidebarActions.js';
+import { addressPartsFor, createAddressGroup, isAddressField } from '../addressGroup.js';
 
 /**
  * Resolve a {@link FormFieldDef.minDate} token/string to a concrete ISO date
@@ -1673,6 +1674,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 						} catch { /* leave dropdown empty on failure */ }
 					})();
 				}
+			} else if (isAddressField(field.type, field.key)) {
+				// One address control app-wide: Line 1 / Line 2 / ZIP / City /
+				// State with the Settings page's ZIP auto-fill (QA 27-Jul). The
+				// composed one-line value keeps the field's existing wire shape.
+				inputEl = createAddressGroup({ parent: group, value: '', format: 'string', inputStyle, parts: addressPartsFor(field.key, fields.map(f2 => f2.key)) });
 			} else if (field.type === 'textarea') {
 				inputEl = DOM.append(group, DOM.$('textarea')) as HTMLTextAreaElement;
 				// Issue #17: 60px was too tall — the prescription dialog felt

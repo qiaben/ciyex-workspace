@@ -5064,6 +5064,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _payPatientId = '';
 	private _payPatientName = '';
 	private _payPatientBar: HTMLElement | null = null;
+	/**
+	 * What the user last typed in the Ledger's own filter box. `undefined` means
+	 * "untouched", so the ledger opens scoped to the patient bar selection; an
+	 * empty string is a deliberate clear and must survive the next reload — the
+	 * ledger used to re-seed itself from the patient name, which is why a
+	 * cleared/edited filter kept coming back (QA 27-Jul).
+	 */
+	private _ledgerFilter: string | undefined;
 	/** "Download Statement" button in the patient bar — Ledger view only. */
 	private _stmtBtn: HTMLButtonElement | null = null;
 	// allow-any-unicode-next-line
@@ -7350,7 +7358,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// patient there scopes the ledger AND enables Download Statement.
 		renderLedger(bodyHost, events, {
 			showPatientColumn: true,
-			initialFilter: this._payPatientName || '',
+			initialFilter: this._ledgerFilter ?? this._payPatientName ?? '',
+			onFilterChange: value => { this._ledgerFilter = value; },
 			actionsHost: this._ledgerActionsHost(),
 		});
 	}
@@ -7535,6 +7544,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		input.addEventListener('input', () => {
 			const q = input.value.trim();
 			if (debounce) { clearTimeout(debounce); }
+			// Emptying the picker releases the patient scope instead of leaving the
+			// previous selection silently in force (and re-seeding the ledger filter
+			// with that name on the next reload).
+			if (!q && this._payPatientId) {
+				this._payPatientId = '';
+				this._payPatientName = '';
+				this._ledgerFilter = undefined;
+				dropdown.style.display = 'none';
+				this._resetAndReload();
+				return;
+			}
 			if (q.length < 2) { dropdown.style.display = 'none'; return; }
 			debounce = setTimeout(async () => {
 				let list: Array<Record<string, unknown>> = [];
@@ -7560,6 +7580,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 						e.preventDefault();
 						this._payPatientId = pid;
 						this._payPatientName = name;
+						// A fresh patient pick re-scopes the ledger filter too.
+						this._ledgerFilter = undefined;
 						input.value = name;
 						dropdown.style.display = 'none';
 						this._resetAndReload();
@@ -8269,6 +8291,9 @@ ${rows.join('\n')}
 	private _openLedgerForRow(row: Record<string, unknown>): void {
 		this._payPatientId = String(row.patientId || '');
 		this._payPatientName = String(row.patientName || '');
+		// Opening the ledger for a row scopes it to that patient, so any filter
+		// the user had typed on a previous visit no longer applies.
+		this._ledgerFilter = undefined;
 		this.payView = 'ledger';
 		this._syncPayPatientBar();
 		this._resetAndReload();

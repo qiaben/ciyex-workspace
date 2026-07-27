@@ -3860,7 +3860,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		const enc = linkedEncId ? (encs.find(e => String(e.id ?? e.fhirId ?? '') === linkedEncId) ?? st.encounter) : null;
 		const encId = linkedEncId;
 		const encStatus = String(enc?.status ?? '').toLowerCase();
-		const encName = enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter';
+		// Name the visit by the APPOINTMENT's visit type ("Follow-Up",
+		// "Consultation"…) — that name travels into the encounter editor and the
+		// fee-sheet title. The encounter's own `type` is the FHIR class code
+		// ("AMB"), which QA rejected as a heading (27-Jul).
+		const apptType = this._apptTypeStr(apt);
+		const encName = (apptType && apptType !== '—')
+			? apptType
+			: (enc ? `${enc.type || enc.serviceType || 'Encounter'}`.trim() : 'Encounter');
 
 		const hasEncounter = !!linkedEncId;
 		const signed = ['signed', 'finished', 'complete', 'completed', 'locked'].includes(encStatus);
