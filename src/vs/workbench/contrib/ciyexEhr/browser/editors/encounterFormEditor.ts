@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
-import { SH_SMOKING_OPTIONS, SH_ALCOHOL_OPTIONS, SH_EXERCISE_OPTIONS, SH_DRUGS_OPTIONS } from './socialHistoryOptions.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
@@ -249,7 +248,7 @@ export class EncounterFormEditor extends EditorPane {
 					// houses those fields with the local Procedures & Coding
 					// section, which uses the procedure-list search widget
 					// (live CPT + HCPCS lookup via /api/app-proxy/ciyex-codes).
-					this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections))))));
+					this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._historyFieldsToText(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(sections)))))));
 					return;
 				}
 			}
@@ -263,13 +262,13 @@ export class EncounterFormEditor extends EditorPane {
 				// Apply the same Procedures & Coding merge so legacy local
 				// configs that ship plain CPT/HCPCS text inputs still get the
 				// searchable widget. (Issue #16)
-				this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections))))));
+				this.formSections = EncounterFormEditor._orderPlanFields(EncounterFormEditor._historyFieldsToText(EncounterFormEditor._foldAllergiesMedsIntoPmh(EncounterFormEditor._ensurePeNotes(EncounterFormEditor._stripPainLevel(EncounterFormEditor._mergeWithDefaultFields(EncounterFormEditor._mergeProceduresSection(json.sections)))))));
 				return;
 			}
 		} catch { /* fall through */ }
 
 		// 3) Hardcoded default
-		this.formSections = EncounterFormEditor._defaultSections();
+		this.formSections = EncounterFormEditor._historyFieldsToText(EncounterFormEditor._defaultSections());
 	}
 
 	/**
@@ -283,6 +282,44 @@ export class EncounterFormEditor extends EditorPane {
 		const isPain = (f: { key?: string; label?: string }): boolean =>
 			/pain/i.test(f.key || '') || /\bpain\b/i.test(f.label || '');
 		return sections.map(s => ({ ...s, fields: (s.fields || []).filter(f => !isPain(f)) }));
+	}
+
+	/**
+	 * Family History and Social History are captured as free text: every field
+	 * in both sections becomes a large text box on its own full-width row, and
+	 * any dropdown the config shipped (Smoking / Alcohol / Exercise /
+	 * Recreational Drugs) loses its options (QA 27-Jul: "family history, social
+	 * history — these two, all the fields input text, and make the input text
+	 * field large"). Applied after every config merge so the backend's
+	 * tab_field_config can't reintroduce the selects or a cramped multi-column
+	 * layout. Matches the patient chart's History page.
+	 */
+	private static _historyFieldsToText(sections: FieldSection[]): FieldSection[] {
+		const norm = (s: string | undefined) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+		const isHistorySection = (s: FieldSection): boolean => s.key === 'fh' || s.key === 'sh'
+			|| norm(s.title) === 'familyhistory' || norm(s.title) === 'socialhistory';
+		// The backend config ships these fields without placeholders — borrow the
+		// local defaults' hints ("Smoking status / history…") so the boxes still
+		// say what belongs in them.
+		const hints = new Map<string, string>();
+		for (const def of EncounterFormEditor._defaultSections()) {
+			if (!isHistorySection(def)) { continue; }
+			for (const f of def.fields || []) { if (f.placeholder) { hints.set(norm(f.key), f.placeholder); } }
+		}
+		return sections.map(s => {
+			if (!isHistorySection(s)) { return s; }
+			return {
+				...s,
+				columns: 1,
+				fields: (s.fields || []).map(f => ({
+					...f,
+					type: 'textarea',
+					colSpan: 1,
+					options: undefined,
+					placeholder: f.placeholder || hints.get(norm(f.key)) || `Enter ${(f.label || '').toLowerCase()}...`,
+				})),
+			};
+		});
 	}
 
 	/**
@@ -503,31 +540,26 @@ export class EncounterFormEditor extends EditorPane {
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
 				]
 			},
+			// QA 27-Jul: every Family History and Social History field is a large
+			// free-text box on its own full-width row (no dropdowns) — the same
+			// shape the patient chart's History page uses.
 			{
-				key: 'fh', title: 'Family History', columns: 2, visible: true, collapsible: true, collapsed: true, fields: [
-					{ key: 'fh_father', label: 'Father', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'fh_mother', label: 'Mother', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'fh_siblings', label: 'Siblings', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'fh_offspring', label: 'Offspring', type: 'text', placeholder: 'Health conditions...' },
-					{ key: 'fh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 2 },
+				key: 'fh', title: 'Family History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'fh_father', label: 'Father', type: 'textarea', placeholder: 'Health conditions...' },
+					{ key: 'fh_mother', label: 'Mother', type: 'textarea', placeholder: 'Health conditions...' },
+					{ key: 'fh_siblings', label: 'Siblings', type: 'textarea', placeholder: 'Health conditions...' },
+					{ key: 'fh_offspring', label: 'Offspring', type: 'textarea', placeholder: 'Health conditions...' },
+					{ key: 'fh_notes', label: 'Additional Notes', type: 'textarea', placeholder: 'Other relevant family history...' },
 				]
 			},
 			{
-				key: 'sh', title: 'Social History', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
-					{
-						key: 'sh_smoking', label: 'Smoking', type: 'select', options: [...SH_SMOKING_OPTIONS]
-					},
-					{
-						key: 'sh_alcohol', label: 'Alcohol', type: 'select', options: [...SH_ALCOHOL_OPTIONS]
-					},
-					{
-						key: 'sh_exercise', label: 'Exercise', type: 'select', options: [...SH_EXERCISE_OPTIONS]
-					},
-					{ key: 'sh_occupation', label: 'Occupation', type: 'text' },
-					{
-						key: 'sh_drugs', label: 'Recreational Drugs', type: 'select', options: [...SH_DRUGS_OPTIONS]
-					},
-					{ key: 'sh_notes', label: 'Additional Notes', type: 'textarea', colSpan: 3 },
+				key: 'sh', title: 'Social History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
+					{ key: 'sh_smoking', label: 'Smoking', type: 'textarea', placeholder: 'Smoking status / history...' },
+					{ key: 'sh_alcohol', label: 'Alcohol', type: 'textarea', placeholder: 'Alcohol use...' },
+					{ key: 'sh_exercise', label: 'Exercise', type: 'textarea', placeholder: 'Exercise habits...' },
+					{ key: 'sh_occupation', label: 'Occupation', type: 'textarea', placeholder: 'Occupation / work history...' },
+					{ key: 'sh_drugs', label: 'Recreational Drugs', type: 'textarea', placeholder: 'Recreational drug use...' },
+					{ key: 'sh_notes', label: 'Additional Notes', type: 'textarea', placeholder: 'Lifestyle, living situation, other history...' },
 				]
 			},
 			{
