@@ -275,14 +275,41 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// scrollbar — matches the rest of the app's chrome-less look.
 	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
 
-	// Print/PDF structure: the content lives in a <table> whose <thead> carries the
-	// practice/patient letterhead. Chromium (both window.print() and the main
-	// process printToPDF) REPEATS a table-header-group on every page and reserves
-	// its height, so the letterhead prints atop each page with no overlap — the one
-	// reliable cross-page repeating-header technique. On screen the thead is hidden
-	// and the table/cells collapse to blocks (see the screen stylesheet below) so
-	// the panel looks exactly as before.
-	const printTable = DOM.append(body, DOM.$('table.ciyex-summary-table'));
+	// Print/PDF structure: a bordered frame <div> wraps a <table> whose <thead>
+	// carries the practice/patient letterhead. Chromium (both window.print() and
+	// the main process printToPDF) REPEATS a table-header-group on every page and
+	// reserves its height, so the letterhead prints atop each page with no overlap
+	// — the one reliable cross-page repeating-header technique. On screen the
+	// thead is hidden and the table/cells collapse to blocks (see the screen
+	// stylesheet below) so the panel looks exactly as before.
+	//
+	// The page-frame border lives on the wrapping <div class="ciyex-summary-frame">,
+	// not the table, and not printToPDF's header/footer templates. Two earlier
+	// attempts both failed for the same underlying reason — a box that fragments
+	// across pages only paints its top border on the box's first fragment and its
+	// bottom border on its last fragment (i.e. the actual first/last page of the
+	// WHOLE box, not every visual page):
+	//  1) All four sides on the table itself (border-collapse, with a matching
+	//     <tfoot> spacer to mirror the thead): most pages showed no border at all,
+	//     and the <tfoot> spacer's own box got fragmented onto a near-empty
+	//     trailing page carrying a stray leftover border fragment.
+	//  2) Splitting top/bottom into printToPDF header/footer template "caps" (top
+	//     cap + bottom cap) with only the table's own left/right borders for the
+	//     sides: the caps render in a SEPARATE Chromium rendering pass (the page's
+	//     margin boxes) that does not share a coordinate system with the page
+	//     CONTENT box the table lives in — verified by measuring actual pixel
+	//     offsets in a rendered PDF, the caps' border lines landed at different x
+	//     positions than the table's, so the corners never met.
+	// `box-decoration-break: clone` (see below) sidesteps both problems in one
+	// step: it tells the browser to treat EVERY page-fragment of the frame div as
+	// if it were an independent box with the full border painted on all four
+	// sides — so every page gets a complete, self-contained, properly-connected
+	// rectangle, in the SAME rendering pass as the content (no cross-pass
+	// coordinate mismatch is even possible), and a page with no real content left
+	// on it is never created (nothing forces an extra fragment into existence —
+	// the frame only fragments where the table itself already needed to break).
+	const frame = DOM.append(body, DOM.$('div.ciyex-summary-frame'));
+	const printTable = DOM.append(frame, DOM.$('table.ciyex-summary-table'));
 	printTable.style.cssText = 'width:100%;border-collapse:collapse;';
 	const runHead = DOM.append(printTable, DOM.$('thead.ciyex-summary-runhead'));
 	const headCell = DOM.append(DOM.append(runHead, DOM.$('tr')), DOM.$('td')) as HTMLElement;
@@ -323,28 +350,45 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		// Screen: hide the run-head, flatten the print table to plain blocks.
+		// Screen: hide the run-head, flatten the print table/frame to plain blocks.
 		'.ciyex-summary-runhead{display:none;}',
-		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
+		'.ciyex-summary-frame,.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
+		// Force the page canvas itself white first: `.ciyex-summary-backdrop` below
+		// only ever covers its own (auto-height) content, so any page area beyond
+		// that — including the trailing page after the last section — falls through
+		// to the `html`/`body` background. Without this rule that fallback was
+		// whatever the underlying (possibly dark-themed) window background was,
+		// which is what QA saw as a black page instead of a white one.
+		'  html,body{background:#fff !important;}',
 		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;}',
+		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
 		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
-		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
+		// Reset the on-screen scroll padding for print — it has no relationship to
+		// printToPDF's own margins (set in nativeHostMainService.ts) and, left in
+		// place, silently shifts the frame/table off of where those margins expect
+		// it to sit (verified by pixel-measuring a rendered PDF: the table's left
+		// edge landed noticeably right of the declared page margin).
+		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;padding:0 !important;}',
 		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
 		// Print: restore real table semantics so the letterhead repeats per page.
-		// The page border's left/right edges live on the table itself (not a
-		// position:fixed overlay — Chromium's printToPDF lays the whole document out
-		// in one continuous pass before slicing it into pages, so a fixed-position
-		// box only ever lands on one page, not every one). A bordered table
-		// fragments the same way the letterhead <thead> already reliably does: the
-		// left/right edges draw on every page the table continues onto. The top and
-		// bottom edges of the frame (plus the page number, nested inside the bottom
-		// one) are drawn by the header/footer templates passed to printToPDF in
-		// nativeHostMainService.ts, so the same #9aa0a6 line continues seamlessly
-		// from the header cap, down these table edges, into the footer cap.
-		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;border-left:1px solid #9aa0a6 !important;border-right:1px solid #9aa0a6 !important;}',
+		// The page-frame border lives on .ciyex-summary-frame — see the long comment
+		// above its construction for why the table's own border and printToPDF's
+		// header/footer templates both failed to produce connected corners.
+		// `box-decoration-break: clone` makes a single border declaration paint a
+		// complete, independent rectangle on every page this box fragments onto,
+		// instead of only the top edge on the first page and the bottom edge on the
+		// last.
+		// box-sizing:border-box is required here: with the default content-box, a
+		// 1px border on a width:100% box adds 2px BEYOND that 100%, pushing the
+		// right edge past the page's printable-area clip boundary — verified by
+		// pixel-measuring a rendered PDF, the left/top/bottom border lines all
+		// painted correctly but the right one was clipped away almost entirely.
+		// border-box keeps the border inside the declared width, so it never
+		// crosses that boundary.
+		'  .ciyex-summary-frame{display:block !important;box-sizing:border-box !important;border:1px solid #9aa0a6 !important;-webkit-box-decoration-break:clone !important;box-decoration-break:clone !important;}',
+		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
 		'  .ciyex-summary-runhead{display:table-header-group !important;}',
 		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
 		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
@@ -367,9 +411,10 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		// The signature line stays a firm dark rule (beats the generic light-grey
 		// border override above).
 		'  .vs-sig-rule{border-color:#222 !important;}',
-		// Page margins: the printToPDF path sets matching margins (and the page-number
-		// footer) — this @page rule governs the browser Print dialog path so the frame
-		// and content sit the same distance from the paper edge there too.
+		// Page margins: the printToPDF path sets matching margins (and the header's
+		// date/page-number text) — this @page rule governs the browser Print dialog
+		// path so the frame and content sit the same distance from the paper edge
+		// there too.
 		'  @page{margin:12mm;}',
 		'}',
 	].join('');
@@ -1029,12 +1074,19 @@ function formatPrintDateTime(d: Date): string {
  *  provider's typed name, "Signed off By", and the print date/time. Rendered at
  *  the end of the summary (both the DTO and the encounter-form render paths call
  *  this) whenever a provider is known. */
-function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, providerName: string, status?: string, signedAt?: string): void {
+function renderSignatureBlock(deps: IVisitSummaryDeps, body: HTMLElement, providerName: string, status?: string, signedAt?: string, finalizedAt?: string, lockedAt?: string): void {
 	const col = summaryColors(deps.themeService);
 	const name = (providerName || '').trim();
 	const card = summarySectionCard(body, col, 'Provider Signature');
 	if (status) { summaryKvRow(card, col, 'Status', status); }
 	if (signedAt) { summaryKvRow(card, col, 'Signed at', signedAt); }
+	// Folded in from the old standalone "Date/Time Finalized" card (below) so the
+	// trailing sign-off content is a single break-inside:avoid unit — a separate
+	// 2-line card at the very end of the document was small enough to get shoved
+	// whole onto its own near-empty trailing page whenever it didn't fit the
+	// remaining space on the previous page (print QA: stray last page).
+	if (finalizedAt) { summaryKvRow(card, col, 'Finalized At', finalizedAt); }
+	if (lockedAt) { summaryKvRow(card, col, 'Locked At', lockedAt); }
 	const block = DOM.append(card, DOM.$('div'));
 	block.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding:16px 16px 12px;';
 	const provLabel = DOM.append(block, DOM.$('div'));
@@ -1623,17 +1675,11 @@ function renderVisitSummary(deps: IVisitSummaryDeps, body: HTMLElement, data: Vi
 	// summary always carries a signature area.
 	const sig = data.providerSignature;
 	const sigName = (sig?.signedBy || data.meta?.providerName || '').trim();
-	if (sigName || sig) {
+	const finalizedAt = data.dateTimeFinalized?.finalizedAt;
+	const lockedAt = data.dateTimeFinalized?.lockedAt;
+	if (sigName || sig || finalizedAt || lockedAt) {
 		renderedAny = true;
-		renderSignatureBlock(deps, body, sigName, sig?.status, sig?.signedAt);
-	}
-
-	// --- Date/Time Finalized ---
-	if (data.dateTimeFinalized && (data.dateTimeFinalized.finalizedAt || data.dateTimeFinalized.lockedAt)) {
-		renderedAny = true;
-		const card = section('Date/Time Finalized');
-		line(card, 'Finalized At', data.dateTimeFinalized.finalizedAt);
-		line(card, 'Locked At', data.dateTimeFinalized.lockedAt);
+		renderSignatureBlock(deps, body, sigName, sig?.status, sig?.signedAt, finalizedAt, lockedAt);
 	}
 
 	if (!renderedAny) {
