@@ -45,7 +45,7 @@ export interface FieldSection { key: string; title: string; columns: number; vis
 // tab_field_config doesn't ship it — used for UX extras like priority,
 // duration, BMI, URL link, attachment, "Send Via" channel. Default-off so
 // keyless-collision duplicates don't sneak back in.
-export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; singleRow?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean; storeLabelAsValue?: boolean }
+export interface FieldDef { key: string; label: string; type: string; required?: boolean; colSpan?: number; placeholder?: string; options?: Array<{ label: string; value: string } | string>; fhirMapping?: Record<string, string>; validation?: Record<string, unknown>; lookupConfig?: { system?: string; endpoint?: string; searchable?: boolean;[k: string]: string | boolean | undefined }; showWhen?: { field: string; equals?: string; notEquals?: string }; validationPattern?: string; validationMessage?: string; minDate?: 'today' | 'year-start' | string; defaultValue?: string | number | (() => string | number); showInTable?: boolean; localOnly?: boolean; singleRow?: boolean; apiPath?: string; relatedDisplayFields?: string[]; relatedField?: string; aliases?: string[]; readonly?: boolean; mergeOptions?: boolean; storeLabelAsValue?: boolean; multi?: boolean }
 export interface FieldConfig { tabKey: string; sections: FieldSection[] }
 interface QuickInfo { allergies: string; problems: string; history: string; vitals: string }
 
@@ -742,9 +742,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					// (V5 / V18 / V20 — `code.text` mapping). Sending `condition` saves no
 					// value to the FHIR Condition resource so the row can't be reloaded.
 					{ key: 'conditionName', label: 'Condition', type: 'text', required: true, placeholder: 'Condition name' },
-					// Selecting / pasting an ICD-10 code fills the Condition name from the
-					// code's description (relatedField), mirroring the CPT→procedureName wiring.
-					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' }, relatedField: 'conditionName' },
+					{ key: 'icdCode', label: 'ICD-10 Code', type: 'code-search', placeholder: 'Search ICD-10 codes...', lookupConfig: { system: 'ICD10_CM' } },
 					{
 						key: 'clinicalStatus', label: 'Status', type: 'select', required: true, options: [
 							{ label: 'Active', value: 'active' },
@@ -897,8 +895,11 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 						]
 					},
 					{ key: 'specimenId', label: 'Specimen ID', type: 'text', placeholder: 'S-0001' },
-					{ key: 'diagnosisCode', label: 'Diagnosis Code (ICD-10)', type: 'code-search', required: true, placeholder: 'Search ICD-10 codes', lookupConfig: { system: 'ICD10_CM' } },
-					{ key: 'procedureCode', label: 'Procedure Code (CPT)', type: 'code-search', required: true, placeholder: 'Search CPT codes', lookupConfig: { system: 'CPT' } },
+					// `multi`: one lab order routinely justifies several diagnoses and covers
+					// several procedures — matches the clinical Labs page's LAB_ORDER_FORM_FIELDS,
+					// which already collects both as a chip list saved comma-joined.
+					{ key: 'diagnosisCode', label: 'Diagnosis Codes (ICD-10)', type: 'code-search', multi: true, required: true, placeholder: 'Search ICD-10 codes — pick one or more', lookupConfig: { system: 'ICD10_CM' } },
+					{ key: 'procedureCode', label: 'Procedure Codes (CPT)', type: 'code-search', multi: true, required: true, placeholder: 'Search CPT codes — pick one or more', lookupConfig: { system: 'CPT' } },
 					{ key: 'notes', label: 'Notes', type: 'textarea', colSpan: 2 },
 				],
 			},
@@ -7878,6 +7879,56 @@ export class PatientChartEditor extends EditorPane {
 		hidden.type = 'hidden';
 		hidden.value = currentValue;
 		formInputs.set(f.key, hidden);
+
+		// `multi`: this code-search field collects a LIST of picks (e.g. a lab
+		// order routinely justifies several ICD-10 diagnoses and covers several
+		// CPT procedures) instead of a single value. Each pick becomes a
+		// removable chip below the box, the box itself clears and stays a
+		// search box, and the saved value is the picked codes joined with ", "
+		// into the same hidden input every other code-search field already
+		// saves from — mirrors the chip list clinicalListEditor.ts's `multi`
+		// search fields use.
+		let addMultiValue: ((code: string, label: string) => void) | undefined;
+		if (f.multi && isCodeSearch) {
+			const chips = DOM.append(cell, DOM.$('div'));
+			chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;';
+			const picked = new Map<string, string>();
+			const sync = () => { hidden.value = Array.from(picked.keys()).join(', '); };
+			const renderChips = () => {
+				DOM.clearNode(chips);
+				for (const [code, label] of picked) {
+					const chip = DOM.append(chips, DOM.$('span'));
+					chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border-radius:12px;font-size:11px;line-height:1.5;background:var(--vscode-badge-background,#4d4d4d);color:var(--vscode-badge-foreground,#fff);border:1px solid var(--vscode-input-border,#3c3c3c);';
+					const text = DOM.append(chip, DOM.$('span'));
+					text.textContent = label;
+					text.title = label;
+					text.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+					const del = DOM.append(chip, DOM.$('span'));
+					// allow-any-unicode-next-line
+					del.textContent = '✕';
+					del.title = `Remove ${code}`;
+					del.style.cssText = 'cursor:pointer;opacity:0.75;font-size:10px;line-height:1;';
+					del.addEventListener('click', () => { picked.delete(code); sync(); renderChips(); });
+				}
+			};
+			// Edit prefill: seed chips from the saved "R51, Z00.00" string and
+			// empty the visible box so it reads as a ready-to-use search field
+			// rather than showing the raw joined codes.
+			for (const part of currentValue.split(',')) {
+				const code = part.trim();
+				if (code) { picked.set(code, code); }
+			}
+			sync();
+			renderChips();
+			input.value = '';
+			addMultiValue = (code: string, label: string) => {
+				const key = code.trim();
+				if (!key || picked.has(key)) { return; }
+				picked.set(key, label.trim() || key);
+				sync();
+				renderChips();
+			};
+		}
 		// Companion hidden input for `relatedField` (e.g. a prescriber-search's
 		// `prescriberName`). The dropdown selection handler writes the chosen
 		// display NAME here so the save payload carries a human-readable name
@@ -7937,8 +7988,10 @@ export class PatientChartEditor extends EditorPane {
 		// because the value IS the code, not a foreign key.
 		if (isIdLookup) {
 			input.addEventListener('input', () => { hidden.value = ''; });
-		} else {
+		} else if (!addMultiValue) {
 			// Keep hidden in sync with raw typing so non-selected codes still save.
+			// Skipped in `multi` mode: hidden holds the joined chip list, which the
+			// search box's own typing must never overwrite.
 			input.addEventListener('input', () => { hidden.value = input.value; });
 		}
 
@@ -8135,6 +8188,16 @@ export class PatientChartEditor extends EditorPane {
 							// the input focused.
 							row.addEventListener('mousedown', (e) => {
 								e.preventDefault();
+								// `multi`: the pick becomes a chip and the box empties so the
+								// next code can be searched straight away — the box itself
+								// never holds the value.
+								if (addMultiValue) {
+									addMultiValue(it.code, it.label);
+									input.value = '';
+									dropdown.style.display = 'none';
+									input.focus();
+									return;
+								}
 								if (isCodeSearch) {
 									input.value = `${it.code} - ${it.label}`;
 									hidden.value = it.code;
@@ -8169,7 +8232,14 @@ export class PatientChartEditor extends EditorPane {
 		};
 		input.addEventListener('input', () => search(input.value));
 		input.addEventListener('focus', () => { search(input.value); });
-		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+		input.addEventListener('blur', () => {
+			setTimeout(() => {
+				dropdown.style.display = 'none';
+				// `multi`: leftover text that was never picked isn't a value — the
+				// chips are. Wipe it so the box reads as an empty search box again.
+				if (addMultiValue) { input.value = ''; }
+			}, 150);
+		});
 		input.addEventListener('keydown', (e: KeyboardEvent) => {
 			if (dropdown.style.display === 'none' || rows.length === 0) { return; }
 			if (e.key === 'ArrowDown') {
@@ -8197,7 +8267,7 @@ export class PatientChartEditor extends EditorPane {
 				const pasted = (e.clipboardData?.getData('text') || '').trim();
 				if (!pasted) { return; }
 				// Defer so the pasted value has landed in the input first.
-				DOM.getActiveWindow().setTimeout(() => { void this._resolvePastedCode(f, pasted, input, hidden, dropdown, formInputs); }, 0);
+				DOM.getActiveWindow().setTimeout(() => { void this._resolvePastedCode(f, pasted, input, hidden, dropdown, formInputs, addMultiValue); }, 0);
 			});
 		}
 	}
@@ -8209,7 +8279,7 @@ export class PatientChartEditor extends EditorPane {
 	 * code match is auto-applied — anything else is left to the normal search
 	 * dropdown so a partial paste doesn't silently pick the wrong code.
 	 */
-	private async _resolvePastedCode(f: FieldDef, text: string, input: HTMLInputElement, hidden: HTMLInputElement, dropdown: HTMLElement, formInputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>): Promise<void> {
+	private async _resolvePastedCode(f: FieldDef, text: string, input: HTMLInputElement, hidden: HTMLInputElement, dropdown: HTMLElement, formInputs: Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>, addMultiValue?: (code: string, label: string) => void): Promise<void> {
 		// Codes never contain whitespace; take the first token so a pasted
 		// "E11.9 - Type 2 diabetes" still resolves on the bare code.
 		const code = text.split(/\s+/)[0].trim();
@@ -8226,6 +8296,12 @@ export class PatientChartEditor extends EditorPane {
 		if (items.length === 0) { items = this._codeSearchFallback(f, code); }
 		const match = items.find(it => it.code.toUpperCase() === code.toUpperCase());
 		if (!match) { return; }
+		if (addMultiValue) {
+			addMultiValue(match.code, match.label);
+			input.value = '';
+			dropdown.style.display = 'none';
+			return;
+		}
 		input.value = `${match.code} - ${match.label}`;
 		hidden.value = match.code;
 		if (f.relatedField) {
