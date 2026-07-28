@@ -8104,6 +8104,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		}
 
 		const inputStyle = 'width:100%;box-sizing:border-box;padding:4px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
+		const localInvoices = this._readLocalInvoices();
 
 		for (const row of this._billingRows) {
 			const r = DOM.append(scroll, DOM.$('div'));
@@ -8168,12 +8169,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			paySel.addEventListener('change', () => { row.paymentStatus = paySel.value; });
 
 			const invEl = DOM.append(r, DOM.$('span'));
+			// An invoice generated on this workstation (patient-pay unreachable) was
+			// saved as a PDF, NOT emailed — say so rather than claiming a delivery
+			// that never happened.
+			const localInvoice = row.id ? localInvoices[String(row.id)] : undefined;
 			// allow-any-unicode-next-line
-			invEl.textContent = row.invoiced ? '✓ Sent' : '—';
+			invEl.textContent = row.invoiced ? (localInvoice ? '✓ PDF' : '✓ Sent') : '—';
 			invEl.style.cssText = `text-align:center;font-weight:600;color:${row.invoiced ? '#22c55e' : 'var(--vscode-descriptionForeground)'};`;
-			invEl.title = row.invoiced
-				? 'Patient invoice created and emailed for this encounter.'
-				: 'No invoice yet — collecting the full balance auto-generates it.';
+			invEl.title = !row.invoiced
+				? 'No invoice yet — collecting the full balance auto-generates it.'
+				: localInvoice
+					? `Invoice ${localInvoice} generated on this workstation and saved as a PDF (the billing service was unreachable, so it was not emailed).`
+					: 'Patient invoice created and emailed for this encounter.';
 
 			const commentInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
 			commentInp.value = String(row.comments || ''); commentInp.style.cssText = inputStyle;
