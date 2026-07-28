@@ -606,3 +606,17 @@
 	height: 0;
 	display: none;
 }
+
+/* ============================================================================
+ * Ciyex EHR — number inputs: drop the native up/down spin-button control
+ * ----------------------------------------------------------------------------
+ * On a form/table where every field is numeric (e.g. Fee Sheet Price/Qty,
+ * Vitals) the spin buttons read as a stray per-field "Adjust" control. Firefox
+ * honors `appearance:textfield` on the input itself (set inline); Chromium
+ * only obeys these ::-webkit-*-spin-button pseudo-elements.
+ * ============================================================================ */
+.ciyex-num-noSpin::-webkit-inner-spin-button,
+.ciyex-num-noSpin::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}

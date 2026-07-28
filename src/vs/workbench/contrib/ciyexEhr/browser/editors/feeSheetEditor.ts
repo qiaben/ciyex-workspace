@@ -586,11 +586,17 @@ export class FeeSheetEditor extends EditorPane {
 				modInp.addEventListener('input', () => { it.modifiers = modInp.value; this._markDirty(); });
 
 				const priceInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-				priceInp.type = 'number'; priceInp.step = '0.01'; priceInp.value = String(it.price); priceInp.style.cssText = inputStyle;
+				priceInp.type = 'number'; priceInp.step = '0.01'; priceInp.value = String(it.price);
+				// Drop the native up/down spin-button "Adjust" control (QA) — see
+				// .ciyex-num-noSpin in ciyexCommon.css.
+				priceInp.classList.add('ciyex-num-noSpin');
+				priceInp.style.cssText = inputStyle + 'appearance:textfield;-moz-appearance:textfield;';
 				priceInp.addEventListener('input', () => { it.price = parseFloat(priceInp.value) || 0; this._markDirty(); this._renderTotals(); });
 
 				const qtyInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;
-				qtyInp.type = 'number'; qtyInp.value = String(it.qty); qtyInp.style.cssText = inputStyle;
+				qtyInp.type = 'number'; qtyInp.value = String(it.qty);
+				qtyInp.classList.add('ciyex-num-noSpin');
+				qtyInp.style.cssText = inputStyle + 'appearance:textfield;-moz-appearance:textfield;';
 				qtyInp.addEventListener('input', () => { it.qty = parseInt(qtyInp.value, 10) || 0; this._markDirty(); this._renderTotals(); });
 
 				const justInp = DOM.append(row, DOM.$('input')) as HTMLInputElement;

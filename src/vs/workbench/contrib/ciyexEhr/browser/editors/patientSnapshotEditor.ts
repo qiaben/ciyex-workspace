@@ -736,18 +736,6 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/**
-	 * True when a lab status means "order placed, result not in yet" — these rows
-	 * belong in Pending Items, never the Lab Results list. Covers the FHIR
-	 * Observation/DiagnosticReport order states (registered/unknown) plus the
-	 * app's own order statuses (ordered/pending/in-progress/collected/active).
-	 */
-	private static _isLabOrderPending(status: string): boolean {
-		const s = status.toLowerCase();
-		return s === '' || s === 'registered' || s === 'unknown' || s === 'ordered'
-			|| s === 'pending' || s === 'in-progress' || s === 'collected' || s === 'active';
-	}
-
-	/**
 	 * Collapse any encounter status onto the two states the workspace tracks:
 	 * SIGNED (finalized / locked) and UNSIGNED (still open). Accepts FHIR codes
 	 * ('finished', 'completed', 'in-progress', 'planned', …) and the EHR values
@@ -2336,15 +2324,10 @@ export class PatientSnapshotEditor extends EditorPane {
 			: encs.find(e => this._isSameDay(e.encounterDate || e.startDate || e.start || e.date || e.periodStart, apptDateRaw));
 		const visitEncId = visitEnc ? String(visitEnc.id ?? visitEnc.fhirId ?? '') : '';
 
-		const [fsRaw, visitForm, visitNotesRaw] = await Promise.all([
+		const [fsRaw, visitForm] = await Promise.all([
 			todayEncId ? this._fetch(`/api/fee-sheets/encounter/${encodeURIComponent(todayEncId)}`).catch(() => null) : Promise.resolve(null),
 			visitEnc && visitEncId ? this._fetch(`/api/fhir-resource/encounter-form/patient/${patientId}?encounterRef=${encodeURIComponent(visitEncId)}`).catch(() => null) : Promise.resolve(null),
-			// Visit notes drive whether the "Treatment Plan" pending tile shows: once a
-			// note exists for the patient the care plan is considered actioned (QA — the
-			// tile previously always showed even after notes were created).
-			this._fetch(`/api/fhir-resource/visit-notes/patient/${patientId}?page=0&size=1`).catch(() => null),
 		]);
-		const hasVisitNotes = this._list({ status: 'fulfilled', value: visitNotesRaw }).length > 0;
 		if (fsRaw) {
 			const fsInner = (fsRaw?.data ?? fsRaw) as unknown;
 			const fs = (Array.isArray(fsInner) ? fsInner[0] : fsInner) as Record<string, unknown> | null | undefined;
@@ -2366,7 +2349,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		DOM.clearNode(this.root);
 		this._renderHeader(p, patientName, apt, cov);
 		this._renderWorkflowBanner(apt, vit, encs, pipeline);
-		this._renderGrid(p, conds, meds, vit, encs, orderList, resultList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw, hasVisitNotes);
+		this._renderGrid(p, conds, meds, vit, encs, orderList, resultList, payList, stmtList, apt, apptList, pipeline, visitVitals, apptDateRaw);
 	}
 
 	/** The encounter that belongs to today's visit: the appointment's linked
@@ -3709,7 +3692,6 @@ export class PatientSnapshotEditor extends EditorPane {
 		pipeline?: VisitPipelineState,
 		visitVitals?: Record<string, unknown> | null,
 		apptDateRaw?: string,
-		hasVisitNotes: boolean = false,
 	): void {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
@@ -3762,11 +3744,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			const freq = m.frequency || '';
 			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
 		}, () => this._openCreateModal('medications'), 'medications', 2);
-
-		// Pending Items — unfinished work the doctor must action (full width).
-		// Orders still awaiting a result drive the "Lab Results Pending" prompt;
-		// orders whose result has already arrived are excluded.
-		this._renderPendingItems(grid, labOrders, labResults, encs, hasVisitNotes);
 
 		// Bottom rows: Lab Orders and Lab Results, each in its own full-width card
 		// with create / edit / delete. Both read & write the clinical lab stores so
@@ -4890,75 +4867,6 @@ export class PatientSnapshotEditor extends EditorPane {
 					this._rerender();
 				} catch { /* ignore */ }
 			});
-		}
-	}
-
-	/** Pending Items — unfinished clinical work the provider must action. The
-	 *  doctor needs this at a glance (Siva: "Doctor needs visibility of
-	 *  unfinished work"). Each item is derived from real record state. */
-	private _renderPendingItems(grid: HTMLElement, labs: Record<string, unknown>[], results: Record<string, unknown>[], _encs: Record<string, unknown>[], hasVisitNotes: boolean = false): void {
-		// An order stops being "pending" once a completed result exists for it —
-		// matched by explicit order linkage when the result carries one, else by
-		// test name. Previously only the ORDER's status was checked, so a final
-		// result could exist while the card still said "Lab Results Pending"
-		// (QA issue 7).
-		const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase();
-		const doneResults = results.filter(r => /^(final|corrected|amended|complete|completed)$/.test(norm(r.status)));
-		const resultOrderIds = new Set<string>();
-		const resultTestNames = new Set<string>();
-		for (const r of doneResults) {
-			for (const k of ['labOrderId', 'orderId', 'labOrderNumber', 'orderNumber']) {
-				const v = norm(r[k]);
-				if (v) { resultOrderIds.add(v); }
-			}
-			const t = norm(r.testName ?? r.testDisplay ?? r.name);
-			if (t) { resultTestNames.add(t); }
-		}
-		const hasCompletedResult = (o: Record<string, unknown>): boolean => {
-			if ([o.id, o.orderNumber, o.labOrderId].map(norm).some(id => !!id && resultOrderIds.has(id))) { return true; }
-			const t = norm(o.testDisplay ?? o.testName ?? o.orderName);
-			return !!t && resultTestNames.has(t);
-		};
-		const pendingLabs = labs.filter(l => PatientSnapshotEditor._isLabOrderPending(String(l.status || '')) && !hasCompletedResult(l));
-
-		const items: Array<{ icon: string; label: string; detail: string; color: string; onClick: () => void }> = [];
-		if (pendingLabs.length > 0) {
-			items.push({ icon: 'beaker', label: 'Lab Results Pending', detail: `${pendingLabs.length} test${pendingLabs.length > 1 ? 's' : ''} awaiting results`, color: '#f59e0b', onClick: () => this._openManager('labResults', 'list') });
-		}
-		// NOTE: no "Encounter Unsigned" tile — QA 23-Jul asked for it to be
-		// removed from Pending Items (unsigned encounters are already visible
-		// in Encounter History with their Unsigned status).
-		// NOTE: no "create encounter" pending tile — encounters are created
-		// automatically when the visit is marked Completed, never by a manual click.
-		// Treatment plan is pending only until a visit note is written for the patient;
-		// once a note exists the care plan is considered actioned so the tile is dropped
-		// (QA — it previously showed unconditionally even after notes were created).
-		if (!hasVisitNotes) {
-			items.push({ icon: 'checklist', label: 'Treatment Plan', detail: 'Review or update the care plan', color: '#a78bfa', onClick: () => this._openManager('visit-notes', 'list') });
-		}
-
-		const card = DOM.append(grid, DOM.$('.snap-card'));
-		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
-		this._cardHeader(card, 'tasklist', 'Pending Items', items.length, undefined);
-
-		const rowWrap = DOM.append(card, DOM.$('div'));
-		rowWrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:4px;';
-		for (const it of items) {
-			const tile = DOM.append(rowWrap, DOM.$('button')) as HTMLButtonElement;
-			tile.style.cssText = `display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:9px;cursor:pointer;text-align:left;background:var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.06));border:1px solid var(--vscode-editorWidget-border);border-left:3px solid ${it.color};`;
-			const ico = DOM.append(tile, DOM.$('span.codicon.codicon-' + it.icon));
-			(ico as HTMLElement).style.cssText = `font-size:20px;color:${it.color};flex-shrink:0;`;
-			const txt = DOM.append(tile, DOM.$('div'));
-			txt.style.cssText = 'min-width:0;';
-			const lbl = DOM.append(txt, DOM.$('div'));
-			lbl.textContent = it.label;
-			lbl.style.cssText = 'font-size:13px;font-weight:700;color:var(--vscode-editor-foreground);';
-			const det = DOM.append(txt, DOM.$('div'));
-			det.textContent = it.detail;
-			det.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-			tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-toolbar-hoverBackground,rgba(128,128,128,0.18))'; });
-			tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-toolbar-activeBackground,rgba(128,128,128,0.06))'; });
-			tile.addEventListener('click', (e) => { e.stopPropagation(); it.onClick(); });
 		}
 	}
 

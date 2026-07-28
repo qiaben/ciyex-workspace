@@ -4130,6 +4130,14 @@ export class PatientChartEditor extends EditorPane {
 		// Only the FLAT /api/appointments rows carry the encounter link
 		// (encounterId) + visitType; the FHIR encounter resource has neither.
 		const encounterVisitTypeById = new Map<string, string>();
+		// ~40% of encounters in this backend have no `Encounter.appointment`
+		// FHIR link at all (created directly rather than from a completed
+		// appointment), so the id match above misses them and they kept
+		// falling back to the raw class label (28-Jul report). Same-day is a
+		// reasonable fallback — an encounter and the appointment it came from
+		// are, in practice, always on the same calendar day — so index visit
+		// types by date too and try that before giving up.
+		const encounterVisitTypeByDate = new Map<string, string>();
 		try {
 			const apptRes = await this.apiService.fetch(`/api/appointments?patientId=${encodeURIComponent(this.patientId)}&page=0&size=500`);
 			if (apptRes.ok) {
@@ -4140,7 +4148,10 @@ export class PatientChartEditor extends EditorPane {
 					if (!ids.has(String(a.patientId ?? a.encounterPatientId ?? '').trim())) { continue; }
 					const encId = String(a.encounterId ?? '');
 					const t = this._displayText(a.visitType) || this._displayText(a.appointmentType) || this._displayText(a.type);
-					if (encId && t && !encounterVisitTypeById.has(encId)) { encounterVisitTypeById.set(encId, t); }
+					if (!t) { continue; }
+					if (encId && !encounterVisitTypeById.has(encId)) { encounterVisitTypeById.set(encId, t); }
+					const apptDate = this._formatDate(a.appointmentStartDate);
+					if (apptDate && !encounterVisitTypeByDate.has(apptDate)) { encounterVisitTypeByDate.set(apptDate, t); }
 				}
 			}
 		} catch { /* best-effort — encounters fall back to their own class label */ }
@@ -4168,10 +4179,11 @@ export class PatientChartEditor extends EditorPane {
 				emoji: '\u{1F4CB}',
 				build: (e) => {
 					// Prefer the linked appointment's visit type (Consultation,
-					// Telehealth, …) over the encounter's own generic class code —
-					// falls back to the expanded ActCode class ("Ambulatory") only
-					// when the encounter has no linked appointment row.
-					const linkedType = encounterVisitTypeById.get(String(e.id ?? e.fhirId ?? ''));
+					// Telehealth, …) over the encounter's own generic class code;
+					// fall back to a same-day appointment when there's no explicit
+					// link, and only then to the expanded ActCode class ("Ambulatory").
+					const linkedType = encounterVisitTypeById.get(String(e.id ?? e.fhirId ?? ''))
+						|| encounterVisitTypeByDate.get(this._formatDate(e.startDate || e.start));
 					const visitLabel = linkedType || PatientChartEditor._encounterClassLabel(this._displayText(e.visitType) || this._displayText(e.type)) || 'Visit';
 					return {
 						title: `Encounter: ${visitLabel}`,
