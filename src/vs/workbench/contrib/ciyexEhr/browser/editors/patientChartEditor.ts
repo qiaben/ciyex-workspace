@@ -378,54 +378,6 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'status', label: 'Status' },
 				],
 			},
-			{
-				key: 'claims', label: 'Claims', icon: 'FileCheck', emoji: '\u{1F4CB}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'],
-				columns: [
-					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'identifier', 'id'] },
-					{ key: 'serviceDate', label: 'Service Date', aliases: ['serviceDate', 'date', 'period.start', 'created'] },
-					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
-					// Issue #11: prefer human-readable display fields BEFORE the bare
-					// id aliases so the cell falls back to the org-cache lookup
-					// only when the FHIR row genuinely lacks a display name.
-					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'insuranceCompanyName', 'companyName', 'organizationDisplay', 'organizationName', 'payor.display', 'payor.0.display', 'coverage.payor.display', 'coverage.payor.0.display', 'insurerDisplay', 'payerDisplay', 'insurerId', 'payerId'] },
-					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
-					{ key: 'status', label: 'Status' },
-				],
-			},
-			// Submissions: route through the FHIR generic controller via the
-			// `claim-submissions` tab_field_config row (FHIR Claim resource).
-			// The legacy /api/portal/form-submissions endpoint required a
-			// PortalFormSubmission shape (form_id / form_key / form_title) that
-			// the generic add/edit form doesn't supply, which was producing the
-			// "null value in column form_id" save error on every retest.
-			{ key: 'submissions', label: 'Submissions', icon: 'Upload', emoji: '\u{1F4E4}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'] },
-			// Denials are FHIR ClaimResponse resources — the same model the EHR-UI's
-			// claim-denials tab uses. TAB_API_SLUG maps 'denials' → 'claim-denials',
-			// so list/create/update route to /api/fhir-resource/claim-denials and the
-			// backend resolves the ClaimResponse field mapping (Denial Information /
-			// Adjudication Summary / Process Notes). The previous apiPath pointed at
-			// /claims?status=denied (the Claim resource), which rendered the wrong,
-			// minimal denial form instead of the rich EHR-UI layout.
-			{ key: 'denials', label: 'Denials', icon: 'AlertCircle', emoji: '\u{26D4}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: ['ClaimResponse'] },
-			// readOnly was true for a long time; the test team needs the Add New
-			// button to manually post a remittance entry until the 835 ingestion
-			// pipeline is wired up. PaymentReconciliation is FHIR-write capable.
-			{ key: 'era-remittance', label: 'ERA / Remittance', icon: 'FileDown', emoji: '\u{1F4C4}', position: 4, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentReconciliation'] },
-			// Transactions writes go through FHIR Invoice (same backend tab_field_config
-			// as the Payment tab — Invoice covers both ledger entries and statements).
-			// Was previously read-only with apiPath:/api/payments/transactions which has
-			// no POST handler, so users couldn't create records.
-			{
-				key: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight', emoji: '\u{1F4B3}', position: 5, visible: true, display: 'list', panel: 'main', fhirResources: ['Invoice'],
-				columns: [
-					{ key: 'transactionDate', label: 'Date', aliases: ['transactionDate', 'date', 'serviceDate', 'period.start', 'created', 'createdAt'] },
-					{ key: 'transactionType', label: 'Type', aliases: ['transactionType', 'type'] },
-					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value', 'totalGross.value'] },
-					{ key: 'referenceNumber', label: 'Reference', aliases: ['referenceNumber', 'identifier', 'reference'] },
-					{ key: 'description', label: 'Description', aliases: ['description', 'note'] },
-					{ key: 'status', label: 'Status' },
-				],
-			},
 		],
 	},
 	{
@@ -443,20 +395,6 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 					{ key: 'paymentType', label: 'Type', aliases: ['paymentType', 'paymentMethod', 'method', 'type'] },
 					{ key: 'amount', label: 'Amount', aliases: ['amount', 'totalAmount', 'totalNet.value', 'totalGross.value'] },
 					{ key: 'reference', label: 'Reference', aliases: ['reference', 'referenceNumber', 'identifier', 'checkNumber'] },
-					{ key: 'status', label: 'Status' },
-				],
-			},
-			{
-				key: 'statements', label: 'Statements', icon: 'FileBarChart', emoji: '\u{1F4CA}', position: 1, visible: true, display: 'list', panel: 'main', fhirResources: ['PaymentNotice'],
-				// Columns mirror web app StatementsTab.
-				columns: [
-					{ key: 'statementNumber', label: 'Statement #', aliases: ['statementNumber', 'identifier', 'id'] },
-					{ key: 'statementDate', label: 'Statement Date', aliases: ['statementDate', 'date', 'created', 'createdAt'] },
-					{ key: 'dueDate', label: 'Due Date', aliases: ['dueDate', 'paymentDate'] },
-					{ key: 'totalCharges', label: 'Charges', aliases: ['totalCharges', 'totalGross.value'] },
-					{ key: 'totalPayments', label: 'Payments', aliases: ['totalPayments', 'amount.value'] },
-					{ key: 'totalAdjustments', label: 'Adjustments', aliases: ['totalAdjustments'] },
-					{ key: 'balance', label: 'Balance', aliases: ['balance', 'totalNet.value'] },
 					{ key: 'status', label: 'Status' },
 				],
 			},
