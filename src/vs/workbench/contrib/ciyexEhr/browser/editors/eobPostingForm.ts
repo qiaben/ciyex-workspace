@@ -45,6 +45,8 @@ export interface EobFormValues {
 	claimRef: string;
 	patientId: string;
 	patientName: string;
+	/** Date of service of the visit the claim was billed from (yyyy-mm-dd). */
+	serviceDate?: string;
 	payerName: string;
 	checkNumber: string;
 	paymentMethodType: string;
@@ -432,6 +434,7 @@ export function showEobPostingForm(opts: IEobFormOptions): Promise<EobFormValues
 				claimRef: claimRef.trim(),
 				patientId: String(patientId).trim(),
 				patientName: patientName.trim(),
+				serviceDate: claim?.serviceDate || opts.initial?.serviceDate,
 				payerName: payerInp.value.trim(),
 				checkNumber: checkInp.value.trim(),
 				paymentMethodType: methodSel.value,

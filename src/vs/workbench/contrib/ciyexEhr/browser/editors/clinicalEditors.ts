@@ -6243,6 +6243,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			postBtn.disabled = true; postBtn.textContent = 'Posting…';
 			const values: EobFormValues = {
 				claimRef: row.claimRef, patientId: row.patientId, patientName: row.patientName,
+				// Carries the date of service onto the patient's statement email.
+				serviceDate: row.serviceDate,
 				payerName: row.payerName, checkNumber: row.checkNumber, paymentMethodType: row.paymentMethodType || 'check',
 				billed, allowed, paid, copay: row.copay, deductible: row.deductible, coinsurance: row.coinsurance,
 				denialReason: row.denialReason, forwardedToSecondary: row.forwardedToSecondary, secondaryPayer: row.secondaryPayer,
@@ -6664,11 +6666,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		} catch { /* the invoice is best-effort — the email below is what matters */ }
 
 		if (!patientEmail) { return false; }
-		const body = this._buildClaimStatementEmail(v, respTotal, paidPrimary, dos, sec, pending, opts?.secondaryPayer);
+		const brand = await this._fetchPracticeBranding();
+		const body = this._buildClaimStatementEmail(v, respTotal, paidPrimary, dos, sec, pending, opts?.secondaryPayer, brand);
 		const send: Record<string, unknown> = {
 			channelType: 'email',
 			recipient: patientEmail,
-			subject: `Your statement for claim ${v.claimRef}${dos ? ` (visit ${dos})` : ''} — you owe ${fmt(respTotal)}`,
+			subject: `${brand.name ? `${brand.name} — s` : 'S'}tatement for claim ${v.claimRef}${dos ? ` (visit ${dos})` : ''} — you owe ${fmt(respTotal)}`,
 			body,
 			triggerType: 'insurance_posting',
 		};
@@ -6690,32 +6693,88 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/**
-	 * The statement email body: a full per-code table (billed, allowed,
-	 * insurance paid, write-off, copay, deductible, coinsurance, patient owes)
-	 * followed by the totals and what the patient actually pays.
+	 * Practice identity for outbound patient email — name, NPI, phone and the
+	 * uploaded logo (Settings > Practice). Cached for the editor's lifetime so
+	 * a run of postings doesn't re-fetch it per statement. Every field is
+	 * optional: the letterhead degrades to the practice name, and to a plain
+	 * heading when even that is unavailable — nothing here is hardcoded.
+	 */
+	private _practiceBrand: { name: string; npi: string; phone: string; logo: string } | undefined;
+
+	private async _fetchPracticeBranding(): Promise<{ name: string; npi: string; phone: string; logo: string }> {
+		if (this._practiceBrand) { return this._practiceBrand; }
+		const brand = { name: '', npi: '', phone: '', logo: '' };
+		try {
+			const [pRes, lRes] = await Promise.all([
+				this.apiService.fetch('/api/practices?page=0&size=1').catch(() => null),
+				this.apiService.fetch('/api/practice-logo').catch(() => null),
+			]);
+			if (pRes?.ok) {
+				const j = await pRes.json().catch(() => null);
+				const list = (j?.data?.content ?? j?.content ?? j?.data ?? []) as Record<string, unknown>[];
+				const p = (Array.isArray(list) ? list[0] : (j?.data ?? j)) as Record<string, unknown> | undefined;
+				if (p) {
+					brand.name = String(p['name'] ?? '');
+					brand.npi = String(p['npi'] ?? '');
+					brand.phone = String(p['phone'] ?? '');
+				}
+			}
+			if (lRes?.ok) {
+				const j = await lRes.json().catch(() => null);
+				brand.logo = String(j?.data?.logoData ?? j?.logoData ?? '');
+			}
+		} catch { /* branding is decoration — the statement sends either way */ }
+		this._practiceBrand = brand;
+		return brand;
+	}
+
+	/**
+	 * The statement email body: a practice letterhead, the claim/visit facts,
+	 * then a full per-code table (date of service, billed, allowed, insurance
+	 * paid, write-off, copay, deductible, coinsurance, patient owes) with the
+	 * totals and an amount-due panel.
+	 *
+	 * Laid out with tables and inline styles only — mail clients drop
+	 * stylesheets, flexbox and grid. The logo is emitted when the practice has
+	 * uploaded one; note some webmail clients (Gmail among them) strip
+	 * `data:` image sources, which is why the practice name is always drawn as
+	 * text beside it rather than baked into the image.
 	 */
 	private _buildClaimStatementEmail(
 		v: { claimRef: string; patientName: string; payerName: string; checkNumber: string; lines: EobLine[]; copay: number; deductible: number },
 		respTotal: number, paidPrimary: number, dos: string,
 		sec: { payer: string; check: string; paid: number; remainder: number } | undefined,
 		pending: number, secondaryPayer: string | undefined,
+		brand: { name: string; npi: string; phone: string; logo: string },
 	): string {
 		const round2 = (n: number) => Math.round(n * 100) / 100;
 		const fmt = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 		const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-		const th = 'padding:6px 8px;border-bottom:2px solid #d1d5db;text-align:right;font-size:12px;color:#374151;';
+		const ACCENT = '#1f6feb';
+		// Ten columns have to survive a 600-700px mail viewport, so the grid is
+		// fixed-layout with tight padding and the two text columns pinned — left
+		// to itself the description column starves the money columns and the
+		// right-hand "You Owe" falls off the card.
+		// `overflow-wrap` (not `word-break`) so a header only splits when it truly
+		// cannot fit — word-break chops "BILLED" into "BILLE/D" at mail widths.
+		// `overflow-wrap` (not `word-break`) so a header only splits when it truly
+		// cannot fit — word-break chops "BILLED" into "BILLE/D" at mail widths.
+		const th = `padding:7px 4px;background:#f1f5f9;border-bottom:1px solid #cbd5e1;text-align:right;font-size:9px;text-transform:uppercase;color:#475569;font-weight:700;overflow-wrap:break-word;`;
 		const thL = th.replace('text-align:right', 'text-align:left');
-		const td = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:right;font-size:12px;color:#111;';
-		const tdL = td.replace('text-align:right', 'text-align:left');
+		const td = 'padding:7px 4px;border-bottom:1px solid #eef2f7;text-align:right;font-size:11px;color:#0f172a;white-space:nowrap;';
+		const tdL = td.replace('text-align:right', 'text-align:left').replace('white-space:nowrap;', '');
+		const tf = 'padding:8px 4px;border-top:2px solid #cbd5e1;text-align:right;font-size:11px;color:#0f172a;font-weight:700;white-space:nowrap;';
+		const tfL = tf.replace('text-align:right', 'text-align:left');
 		const rows = v.lines.map(l => {
 			const owes = round2((l.copay || 0) + (l.deductible || 0));
 			return `<tr>`
-				+ `<td style="${tdL}"><strong>${esc(l.code)}</strong>${l.description ? ` — ${esc(l.description)}` : ''}</td>`
+				+ `<td style="${tdL}white-space:nowrap;">${esc(dos || '—')}</td>`
+				+ `<td style="${tdL}"><strong>${esc(l.code)}</strong>${l.description ? `<br><span style="font-size:11px;color:#64748b;">${esc(l.description)}</span>` : ''}</td>`
 				+ `<td style="${td}">${fmt(l.billed)}</td><td style="${td}">${fmt(l.allowed)}</td>`
 				+ `<td style="${td}">${fmt(l.paid)}</td><td style="${td}">${fmt(lineWriteOff(l))}</td>`
 				+ `<td style="${td}">${fmt(l.copay || 0)}</td><td style="${td}">${fmt(l.deductible || 0)}</td>`
 				+ `<td style="${td}">${fmt(l.coinsurance || 0)}</td>`
-				+ `<td style="${td}"><strong>${fmt(owes)}</strong></td></tr>`;
+				+ `<td style="${td}color:${ACCENT};font-weight:700;">${fmt(owes)}</td></tr>`;
 		}).join('');
 		const totals = v.lines.reduce((a, l) => ({
 			billed: a.billed + l.billed, allowed: a.allowed + l.allowed, paid: a.paid + l.paid,
@@ -6723,37 +6782,108 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			deductible: a.deductible + (l.deductible || 0), coinsurance: a.coinsurance + (l.coinsurance || 0),
 		}), { billed: 0, allowed: 0, paid: 0, writeOff: 0, copay: 0, deductible: 0, coinsurance: 0 });
 
-		return `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:760px;color:#111;">`
-			+ `<h2 style="margin:0 0 4px;font-size:18px;">Statement for claim ${esc(v.claimRef)}</h2>`
-			+ `<p style="margin:0 0 14px;color:#4b5563;font-size:13px;">`
-			+ `Dear ${esc(v.patientName || 'Patient')}, your insurance has finished processing${dos ? ` your visit on <strong>${esc(dos)}</strong>` : ' this claim'}. `
-			+ `Here is the full breakdown of every code and service, and the amount that is now your responsibility.</p>`
-			+ `<p style="margin:0 0 14px;font-size:13px;color:#374151;">`
-			+ `<strong>Insurance:</strong> ${esc(v.payerName || '—')} (check/EFT ${esc(v.checkNumber || '—')})`
-			+ (sec ? `<br><strong>Secondary insurance:</strong> ${esc(sec.payer)} (check/EFT ${esc(sec.check)})` : '')
-			+ `</p>`
-			+ `<table style="border-collapse:collapse;width:100%;margin-bottom:14px;">`
-			+ `<thead><tr><th style="${thL}">Code / Service</th><th style="${th}">Billed</th><th style="${th}">Allowed</th>`
-			+ `<th style="${th}">Insurance Paid</th><th style="${th}">Write-off</th><th style="${th}">Copay</th>`
-			+ `<th style="${th}">Deductible</th><th style="${th}">Coinsurance</th><th style="${th}">You Owe</th></tr></thead>`
+		// Letterhead — uploaded logo when there is one, else a monogram of the
+		// practice initials so the mail still reads as a branded document.
+		const initials = (brand.name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+		const mark = brand.logo
+			? `<img src="${esc(brand.logo)}" alt="${esc(brand.name)}" width="52" height="52" style="display:block;width:52px;height:52px;border-radius:8px;object-fit:contain;background:#ffffff;" />`
+			: (initials
+				? `<div style="width:52px;height:52px;border-radius:8px;background:${ACCENT};color:#ffffff;font-size:19px;font-weight:700;line-height:52px;text-align:center;letter-spacing:.04em;">${esc(initials)}</div>`
+				: '');
+		const contact = [brand.phone ? `Tel ${esc(brand.phone)}` : '', brand.npi ? `NPI ${esc(brand.npi)}` : '']
+			.filter(Boolean).join(' &nbsp;·&nbsp; ');
+		const fact = (label: string, value: string) =>
+			`<tr><td style="padding:3px 16px 3px 0;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:#64748b;white-space:nowrap;">${esc(label)}</td>`
+			+ `<td style="padding:3px 0;font-size:13px;color:#0f172a;font-weight:600;">${value}</td></tr>`;
+
+		return `<div style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;background:#f8fafc;padding:24px 12px;">`
+			+ `<div style="max-width:880px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">`
+
+			// Letterhead
+			+ `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border-top:4px solid ${ACCENT};">`
+			+ `<tr><td style="padding:20px 24px 16px;border-bottom:1px solid #e2e8f0;">`
+			+ `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">`
+			+ `<tr>${mark ? `<td style="padding-right:14px;vertical-align:middle;">${mark}</td>` : ''}`
+			+ `<td style="vertical-align:middle;">`
+			+ `<div style="font-size:19px;font-weight:700;letter-spacing:.01em;">${esc(brand.name || 'Patient Statement')}</div>`
+			+ (contact ? `<div style="font-size:11px;color:#64748b;margin-top:3px;">${contact}</div>` : '')
+			+ `</td></tr></table></td></tr>`
+
+			// Title band
+			+ `<tr><td style="padding:18px 24px 4px;">`
+			+ `<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:${ACCENT};font-weight:700;">Patient Statement</div>`
+			+ `<div style="font-size:22px;font-weight:700;margin-top:2px;">Claim ${esc(v.claimRef)}</div>`
+			+ `</td></tr>`
+
+			// Greeting
+			+ `<tr><td style="padding:10px 24px 0;font-size:13px;line-height:1.55;color:#475569;">`
+			+ `Dear ${esc(v.patientName || 'Patient')}, your insurance has finished processing`
+			+ `${dos ? ` your visit on <strong style="color:#0f172a;">${esc(dos)}</strong>` : ' this claim'}. `
+			+ `Below is the full breakdown of every code and service, and the amount that is now your responsibility.`
+			+ `</td></tr>`
+
+			// Facts
+			+ `<tr><td style="padding:16px 24px 0;">`
+			+ `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">`
+			+ fact('Patient', esc(v.patientName || '—'))
+			+ (dos ? fact('Date of Service', esc(dos)) : '')
+			+ fact('Insurance', `${esc(v.payerName || '—')}<span style="font-weight:400;color:#64748b;"> &nbsp;·&nbsp; check/EFT ${esc(v.checkNumber || '—')}</span>`)
+			+ (sec ? fact('Secondary Insurance', `${esc(sec.payer)}<span style="font-weight:400;color:#64748b;"> &nbsp;·&nbsp; check/EFT ${esc(sec.check)}</span>`) : '')
+			+ `</table></td></tr>`
+
+			// Charge detail
+			+ `<tr><td style="padding:18px 24px 0;">`
+			+ `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #e2e8f0;border-radius:6px;">`
+			+ `<colgroup><col style="width:68px;"><col style="width:17%;">`
+			+ `<col><col><col><col><col><col><col><col style="width:58px;"></colgroup>`
+			+ `<thead><tr><th style="${thL}">Date of Service</th><th style="${thL}">Code / Service</th><th style="${th}">Billed</th><th style="${th}">Allowed</th>`
+			+ `<th style="${th}">Ins. Paid</th><th style="${th}">Write-off</th><th style="${th}">Copay</th>`
+			+ `<th style="${th}">Deduct.</th><th style="${th}">Coins.</th><th style="${th}">You Owe</th></tr></thead>`
 			+ `<tbody>${rows}</tbody>`
-			+ `<tfoot><tr><td style="${tdL}"><strong>Total</strong></td>`
-			+ `<td style="${td}"><strong>${fmt(totals.billed)}</strong></td><td style="${td}"><strong>${fmt(totals.allowed)}</strong></td>`
-			+ `<td style="${td}"><strong>${fmt(totals.paid)}</strong></td><td style="${td}"><strong>${fmt(totals.writeOff)}</strong></td>`
-			+ `<td style="${td}"><strong>${fmt(totals.copay)}</strong></td><td style="${td}"><strong>${fmt(totals.deductible)}</strong></td>`
-			+ `<td style="${td}"><strong>${fmt(totals.coinsurance)}</strong></td>`
-			+ `<td style="${td}"><strong>${fmt(respTotal)}</strong></td></tr></tfoot></table>`
-			+ `<p style="margin:0 0 6px;font-size:13px;">Insurance paid <strong>${fmt(paidPrimary)}</strong>`
-			+ (sec ? ` from ${esc(v.payerName || 'the primary payer')} and <strong>${fmt(sec.paid)}</strong> from ${esc(sec.payer)}` : '')
-			+ `.</p>`
-			+ `<p style="margin:0 0 6px;font-size:15px;"><strong>Your balance: ${fmt(respTotal)}</strong> `
-			+ `<span style="color:#4b5563;font-size:13px;">(copay ${fmt(v.copay)} + deductible ${fmt(v.deductible)}`
-			+ (sec ? ` + coinsurance remainder ${fmt(sec.remainder)}` : '') + `)</span></p>`
+			+ `<tfoot><tr><td style="${tfL}" colspan="2">Total</td>`
+			+ `<td style="${tf}">${fmt(totals.billed)}</td><td style="${tf}">${fmt(totals.allowed)}</td>`
+			+ `<td style="${tf}">${fmt(totals.paid)}</td><td style="${tf}">${fmt(totals.writeOff)}</td>`
+			+ `<td style="${tf}">${fmt(totals.copay)}</td><td style="${tf}">${fmt(totals.deductible)}</td>`
+			+ `<td style="${tf}">${fmt(totals.coinsurance)}</td>`
+			+ `<td style="${tf}color:${ACCENT};">${fmt(respTotal)}</td></tr></tfoot></table></td></tr>`
+
+			// Amount-due panel
+			+ `<tr><td style="padding:18px 24px 0;">`
+			+ `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background:#f1f6ff;border:1px solid #cfe0ff;border-radius:8px;">`
+			+ `<tr><td style="padding:16px 18px;">`
+			+ `<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#475569;font-weight:600;">Amount due</div>`
+			+ `<div style="font-size:28px;font-weight:700;color:${ACCENT};margin-top:2px;">${fmt(respTotal)}</div>`
+			+ `<div style="font-size:12px;color:#475569;margin-top:4px;">`
+			+ `Copay ${fmt(v.copay)} &nbsp;+&nbsp; deductible ${fmt(v.deductible)}`
+			+ (sec ? ` &nbsp;+&nbsp; coinsurance remainder ${fmt(sec.remainder)}` : '')
+			+ `</div>`
+			+ `<div style="font-size:12px;color:#475569;margin-top:8px;">`
+			+ `Your insurance paid <strong style="color:#0f172a;">${fmt(paidPrimary)}</strong>`
+			+ (sec ? ` (${esc(v.payerName || 'primary payer')}) and <strong style="color:#0f172a;">${fmt(sec.paid)}</strong> (${esc(sec.payer)})` : '')
+			+ `, and ${fmt(totals.writeOff)} was written off under the plan's contract.`
+			+ `</div></td></tr></table></td></tr>`
+
+			// Coinsurance still with the secondary payer
 			+ (pending > 0
-				? `<p style="margin:0 0 6px;font-size:13px;color:#6d28d9;">${fmt(pending)} of coinsurance is still pending with `
-				+ `${esc(secondaryPayer || 'your secondary insurance')} — it is not billed to you. We will send an updated statement if any part of it becomes your responsibility.</p>`
+				? `<tr><td style="padding:12px 24px 0;">`
+				+ `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background:#faf5ff;border:1px solid #e6d8fb;border-radius:8px;">`
+				+ `<tr><td style="padding:12px 16px;font-size:12px;line-height:1.55;color:#5b21b6;">`
+				+ `<strong>${fmt(pending)}</strong> of coinsurance is still pending with `
+				+ `${esc(secondaryPayer || 'your secondary insurance')} and is <strong>not</strong> billed to you. `
+				+ `We will send an updated statement if any part of it becomes your responsibility.`
+				+ `</td></tr></table></td></tr>`
 				: '')
-			+ `<p style="margin:14px 0 0;font-size:12px;color:#6b7280;">Please contact our billing office with any questions about this statement.</p></div>`;
+
+			// Footer
+			+ `<tr><td style="padding:20px 24px 22px;">`
+			+ `<div style="border-top:1px solid #e2e8f0;padding-top:14px;font-size:12px;line-height:1.6;color:#64748b;">`
+			+ `Questions about this statement? Contact our billing office`
+			+ (brand.phone ? ` on <strong style="color:#0f172a;">${esc(brand.phone)}</strong>` : '')
+			+ ` and quote claim <strong style="color:#0f172a;">${esc(v.claimRef)}</strong>.`
+			+ (brand.name ? `<div style="margin-top:6px;color:#94a3b8;">${esc(brand.name)}</div>` : '')
+			+ `</div></td></tr>`
+
+			+ `</table></div></div>`;
 	}
 
 	// allow-any-unicode-next-line
