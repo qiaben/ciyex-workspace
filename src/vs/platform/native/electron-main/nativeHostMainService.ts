@@ -55,15 +55,30 @@ import { CancellationTokenSource } from '../../../base/common/cancellation.js';
 // and "Print" paths (a function, not a static constant, so the header's date
 // stamp is captured fresh at print time rather than at process start).
 //
-// The page-frame border is drawn ENTIRELY by the content table in
-// visitSummaryPanel.ts (all four sides, via border-collapse across its
-// repeating <thead>/<tfoot>) — not here. It used to be split across these
-// header/footer templates (top+side "cap", bottom+side "cap") and the table's
-// own left/right borders, but those are two separate Chromium rendering
-// passes that never lined up pixel-perfect with the table's edges, leaving
-// the frame's corners visibly disconnected. These templates now carry ONLY
-// the date/time (left) and page number (right) text — no border lines — so
-// there's a single source of truth for every edge of the frame.
+// The page-frame border is drawn ENTIRELY by the content in
+// visitSummaryPanel.ts — the `.ciyex-summary-frame` div wrapping the summary
+// table, via `box-decoration-break: clone` (see the long comment above that
+// div's construction for the two earlier approaches that failed: an
+// all-sides table border, and splitting the border across these header/footer
+// templates plus the table's own left/right borders). Both of those failed
+// for the same reason: a box that fragments across pages only paints its
+// top/bottom border on the box's first/last fragment, not on every visual
+// page — and, measured directly in a rendered PDF, printToPDF's header/footer
+// templates render in a page-margin coordinate space that does NOT line up
+// pixel-for-pixel with the content box the table lives in, so a border split
+// across the two never has its corners meet. `box-decoration-break: clone`
+// draws a complete, self-contained rectangle on every page in one rendering
+// pass, sidestepping the cross-pass alignment problem entirely.
+//
+// These templates therefore carry ONLY text — no full-width border LINES of
+// their own — so they can never be the thing that makes a page's frame look
+// disconnected. The header shows the print date/time (top-left) and the
+// footer shows the "X / Y" page number (bottom-right), and rather than let
+// either float loose in the bare margin strip, each is wrapped in its own
+// small self-contained bordered chip (same colour as the page frame) so the
+// text still reads as sitting inside a bordered box on the white page instead
+// of unbounded — without needing that chip's border to be pixel-aligned with
+// the frame's (neither chip touches the frame; each is its own tiny box).
 //
 // `pageSize` is set explicitly (rather than left to default to the `'Letter'`
 // preset string) because Electron's `printToPDF` validates `margins` against
@@ -76,10 +91,10 @@ function buildVisitSummaryPrintOptions(): Electron.PrintToPDFOptions {
 	return {
 		printBackground: true,
 		pageSize: { width: 8.5, height: 11 },
-		margins: { marginType: 'custom', top: 0.35, bottom: 0.55, left: 0.47, right: 0.47 },
+		margins: { marginType: 'custom', top: 0.35, bottom: 0.5, left: 0.47, right: 0.47 },
 		displayHeaderFooter: true,
-		headerTemplate: `<div style="width:100%;height:100%;box-sizing:border-box;margin:0;display:flex;align-items:flex-start;justify-content:space-between;font-size:8px;color:#666;padding:0 9mm;"><span>${dateTime}</span><span><span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span></span></div>`,
-		footerTemplate: '<div></div>',
+		headerTemplate: `<div style="width:100%;height:100%;box-sizing:border-box;margin:0;display:flex;align-items:center;justify-content:flex-start;padding:0 9mm;"><span style="display:inline-block;box-sizing:border-box;border:1px solid #9aa0a6;border-radius:2px;padding:1px 7px;font-size:8px;color:#666;background:#fff;">${dateTime}</span></div>`,
+		footerTemplate: '<div style="width:100%;height:100%;box-sizing:border-box;margin:0;display:flex;align-items:center;justify-content:flex-end;padding:0 9mm;"><span style="display:inline-block;box-sizing:border-box;border:1px solid #9aa0a6;border-radius:2px;padding:1px 7px;font-size:8px;color:#666;background:#fff;"><span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span></span></div>',
 	};
 }
 

@@ -275,28 +275,46 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// scrollbar — matches the rest of the app's chrome-less look.
 	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
 
-	// Print/PDF structure: the content lives in a <table> whose <thead> carries the
-	// practice/patient letterhead and whose <tfoot> is an empty spacer row.
-	// Chromium (both window.print() and the main process printToPDF) REPEATS a
-	// table-header-group AND a table-footer-group on every page and reserves their
-	// height, so the letterhead prints atop, and the spacer prints below, every
-	// page with no overlap. The page-frame border lives entirely on this one
-	// table (all four sides, via border-collapse) instead of being split across
-	// the table's own left/right borders and separately-rendered printToPDF
-	// header/footer templates — two different rendering passes never lined up
-	// pixel-perfect with the table's edges, leaving the frame's corners visibly
-	// disconnected. Now every edge comes from the same bordered box in the same
-	// layout pass, so the corners always meet. On screen the thead/tfoot are
-	// hidden and the table/cells collapse to blocks (see the screen stylesheet
-	// below) so the panel looks exactly as before.
-	const printTable = DOM.append(body, DOM.$('table.ciyex-summary-table'));
+	// Print/PDF structure: a bordered frame <div> wraps a <table> whose <thead>
+	// carries the practice/patient letterhead. Chromium (both window.print() and
+	// the main process printToPDF) REPEATS a table-header-group on every page and
+	// reserves its height, so the letterhead prints atop each page with no overlap
+	// — the one reliable cross-page repeating-header technique. On screen the
+	// thead is hidden and the table/cells collapse to blocks (see the screen
+	// stylesheet below) so the panel looks exactly as before.
+	//
+	// The page-frame border lives on the wrapping <div class="ciyex-summary-frame">,
+	// not the table, and not printToPDF's header/footer templates. Two earlier
+	// attempts both failed for the same underlying reason — a box that fragments
+	// across pages only paints its top border on the box's first fragment and its
+	// bottom border on its last fragment (i.e. the actual first/last page of the
+	// WHOLE box, not every visual page):
+	//  1) All four sides on the table itself (border-collapse, with a matching
+	//     <tfoot> spacer to mirror the thead): most pages showed no border at all,
+	//     and the <tfoot> spacer's own box got fragmented onto a near-empty
+	//     trailing page carrying a stray leftover border fragment.
+	//  2) Splitting top/bottom into printToPDF header/footer template "caps" (top
+	//     cap + bottom cap) with only the table's own left/right borders for the
+	//     sides: the caps render in a SEPARATE Chromium rendering pass (the page's
+	//     margin boxes) that does not share a coordinate system with the page
+	//     CONTENT box the table lives in — verified by measuring actual pixel
+	//     offsets in a rendered PDF, the caps' border lines landed at different x
+	//     positions than the table's, so the corners never met.
+	// `box-decoration-break: clone` (see below) sidesteps both problems in one
+	// step: it tells the browser to treat EVERY page-fragment of the frame div as
+	// if it were an independent box with the full border painted on all four
+	// sides — so every page gets a complete, self-contained, properly-connected
+	// rectangle, in the SAME rendering pass as the content (no cross-pass
+	// coordinate mismatch is even possible), and a page with no real content left
+	// on it is never created (nothing forces an extra fragment into existence —
+	// the frame only fragments where the table itself already needed to break).
+	const frame = DOM.append(body, DOM.$('div.ciyex-summary-frame'));
+	const printTable = DOM.append(frame, DOM.$('table.ciyex-summary-table'));
 	printTable.style.cssText = 'width:100%;border-collapse:collapse;';
 	const runHead = DOM.append(printTable, DOM.$('thead.ciyex-summary-runhead'));
 	const headCell = DOM.append(DOM.append(runHead, DOM.$('tr')), DOM.$('td')) as HTMLElement;
 	const content = DOM.append(DOM.append(DOM.append(printTable, DOM.$('tbody')), DOM.$('tr')), DOM.$('td.ciyex-summary-content')) as HTMLElement;
 	content.style.cssText = 'padding:0;vertical-align:top;';
-	const runFoot = DOM.append(printTable, DOM.$('tfoot.ciyex-summary-runfoot'));
-	DOM.append(DOM.append(runFoot, DOM.$('tr')), DOM.$('td'));
 	const loading = DOM.append(content, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
@@ -332,9 +350,9 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// the thead becomes a repeating table-header-group on every page.
 	const printStyle = doc.createElement('style');
 	printStyle.textContent = [
-		// Screen: hide the run-head/run-foot, flatten the print table to plain blocks.
-		'.ciyex-summary-runhead,.ciyex-summary-runfoot{display:none;}',
-		'.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
+		// Screen: hide the run-head, flatten the print table/frame to plain blocks.
+		'.ciyex-summary-runhead{display:none;}',
+		'.ciyex-summary-frame,.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
 		'@media print{',
 		// Force the page canvas itself white first: `.ciyex-summary-backdrop` below
 		// only ever covers its own (auto-height) content, so any page area beyond
@@ -347,31 +365,39 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
 		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
 		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
-		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;}',
+		// Reset the on-screen scroll padding for print — it has no relationship to
+		// printToPDF's own margins (set in nativeHostMainService.ts) and, left in
+		// place, silently shifts the frame/table off of where those margins expect
+		// it to sit (verified by pixel-measuring a rendered PDF: the table's left
+		// edge landed noticeably right of the declared page margin).
+		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;padding:0 !important;}',
 		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		// Print: restore real table semantics so the letterhead/spacer repeat per
-		// page. The ENTIRE page-frame border (all four sides) lives on this one
-		// table via border-collapse, not split across the table's own borders plus
-		// separately-rendered printToPDF header/footer templates (that mismatch is
-		// exactly what left the frame's corners visibly disconnected). A bordered
-		// table fragments the same way the letterhead <thead> already reliably
-		// does: the left/right edges draw on every page the table continues onto,
-		// the top edge draws at the top of the repeating <thead>, and the bottom
-		// edge draws at the bottom of the repeating <tfoot> — all merged into one
-		// border box by border-collapse, so every corner meets cleanly.
-		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;border:1px solid #9aa0a6 !important;}',
+		// Print: restore real table semantics so the letterhead repeats per page.
+		// The page-frame border lives on .ciyex-summary-frame — see the long comment
+		// above its construction for why the table's own border and printToPDF's
+		// header/footer templates both failed to produce connected corners.
+		// `box-decoration-break: clone` makes a single border declaration paint a
+		// complete, independent rectangle on every page this box fragments onto,
+		// instead of only the top edge on the first page and the bottom edge on the
+		// last.
+		// box-sizing:border-box is required here: with the default content-box, a
+		// 1px border on a width:100% box adds 2px BEYOND that 100%, pushing the
+		// right edge past the page's printable-area clip boundary — verified by
+		// pixel-measuring a rendered PDF, the left/top/bottom border lines all
+		// painted correctly but the right one was clipped away almost entirely.
+		// border-box keeps the border inside the declared width, so it never
+		// crosses that boundary.
+		'  .ciyex-summary-frame{display:block !important;box-sizing:border-box !important;border:1px solid #9aa0a6 !important;-webkit-box-decoration-break:clone !important;box-decoration-break:clone !important;}',
+		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
 		'  .ciyex-summary-runhead{display:table-header-group !important;}',
-		'  .ciyex-summary-runfoot{display:table-footer-group !important;}',
 		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
-		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr,.ciyex-summary-runfoot>tr{display:table-row !important;}',
-		'  .ciyex-summary-content,.ciyex-summary-runhead td,.ciyex-summary-runfoot td{display:table-cell !important;}',
+		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
+		'  .ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
 		// Inset the printed content from the page-frame border so nothing (letterhead
 		// or section boxes) touches the box drawn at the content-box edge. The
 		// letterhead cell repeats every page, so its top/side padding keeps the
-		// letterhead clear of the frame on every page. The footer spacer just needs
-		// enough height to read as a clean bottom margin above the frame's bottom edge.
+		// letterhead clear of the frame on every page.
 		'  .ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
-		'  .ciyex-summary-runfoot td{padding:6px 6mm !important;}',
 		'  .ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
 		// The letterhead rules are deliberately bold black — override the generic
 		// light-grey border rule above (higher specificity beats it).
