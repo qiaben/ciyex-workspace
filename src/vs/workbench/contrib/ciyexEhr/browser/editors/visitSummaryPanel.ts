@@ -10,6 +10,7 @@ import { descriptionForeground, errorForeground, textLinkForeground } from '../.
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
+import { _printTtPolicy } from './reportsEditor.js';
 
 /** Shape of the encounter `EncounterSummaryDto` returned by
  *  `GET /api/encounters/{patientId}/{encounterId}/summary`. Mirrors the fields
@@ -461,30 +462,129 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 		}
 	};
 
-	// "Print" renders the summary to a PDF in the main process and opens it in an
-	// in-app child window using Electron's built-in PDF viewer, which shows a real
-	// preview plus its own toolbar Print button. Electron's native OS print dialog
-	// cannot render a live preview on its own (a Windows/Electron limitation), so
-	// printing is routed through this in-app viewer instead.
-	const printSummary = async () => {
+	// "Print" opens an in-app "Print Preview" overlay — same look/flow as the
+	// Reports print preview (title bar, Close/Print, themed iframe) — instead
+	// of the old main-process PDF render + separate native-viewer child window
+	// (28-Jul: "like this print preview I want it in the visit summary"). The
+	// iframe's Print button fires the OS print dialog directly on that iframe's
+	// content, which is what Reports already does successfully; "Download PDF"
+	// above is untouched — it still goes through the exact main-process
+	// printToPDF path for a byte-accurate saved file.
+	const printSummary = () => {
 		if (!summaryLoaded) {
 			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
 			return;
 		}
-		printBtn.disabled = true;
-		try {
-			await deps.nativeHostService.printPdfPreview(`encounter-${encounterId}-summary.pdf`);
-		} catch (err) {
-			deps.notificationService.notify({ severity: Severity.Error, message: `Could not open the print preview: ${err instanceof Error ? err.message : String(err)}` });
-		} finally {
-			printBtn.disabled = false;
-		}
+		showVisitSummaryPrintPreview(doc, patientName, backdrop);
 	};
 
 	pdfBtn.addEventListener('click', () => void downloadPdf());
-	printBtn.addEventListener('click', () => void printSummary());
+	printBtn.addEventListener('click', () => printSummary());
 
 	void loadVisitSummary(deps, patientId, encounterId, content, loading, facilityHint, patientName, headCell).then(ok => { summaryLoaded = ok; });
+}
+
+/**
+ * "Print Preview — Visit Summary" overlay — visually and behaviourally the
+ * same pattern as ReportsEditor's `_printReport` preview: a themed modal with
+ * a live iframe of the exact printed output and Close / Print buttons, where
+ * Print fires the OS print dialog on a hidden clone of that same iframe.
+ *
+ * The iframe body is `backdrop.outerHTML` — the already-rendered summary DOM,
+ * complete with all its `.style.cssText` inline styling — so nothing has to
+ * be redrawn. The CSS below is the visit summary's existing print stylesheet
+ * (letterhead repeat, page-frame border, black-on-white, …) with the
+ * `@media print { … }` wrapper removed so those rules are the iframe's
+ * default appearance instead of only applying once an OS print actually
+ * starts — this iframe IS the dedicated print-preview surface, so the print
+ * layout should be what it shows immediately.
+ */
+function showVisitSummaryPrintPreview(doc: Document, patientName: string, backdrop: HTMLElement): void {
+	// `!important` on every rule is required, not decorative: the cloned nodes
+	// carry their on-screen look as INLINE `style="…"` (set via `.style.cssText`
+	// throughout this file), and inline styles beat an embedded stylesheet's
+	// rules unless those rules are `!important` — dropping it here left the
+	// on-screen footer (Download PDF / Print buttons) showing inside the
+	// preview instead of the print layout replacing it.
+	const previewCss = [
+		'html,body{background:#fff !important;margin:0 !important;}',
+		'body>*:not(.ciyex-summary-backdrop){display:none !important;}',
+		'.ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
+		'.ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
+		'.ciyex-summary-header,.ciyex-summary-footer{display:none !important;}',
+		'.ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;padding:0 !important;}',
+		'.ciyex-summary-body,.ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
+		'.ciyex-summary-frame{display:block !important;box-sizing:border-box !important;border:1px solid #9aa0a6 !important;-webkit-box-decoration-break:clone !important;box-decoration-break:clone !important;}',
+		'.ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
+		'.ciyex-summary-runhead{display:table-header-group !important;}',
+		'.ciyex-summary-table>tbody{display:table-row-group !important;}',
+		'.ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
+		'.ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
+		'.ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
+		'.ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
+		'.ciyex-summary-runhead .vs-hdr-rule{border-bottom:2px solid #222 !important;}',
+		'.vs-card{break-inside:avoid !important;page-break-inside:avoid !important;}',
+		'.vs-sig-rule{border-color:#222 !important;}',
+		'@page{margin:12mm;}',
+	].join('\n');
+	const previewHtml = `<!DOCTYPE html><html><head><title>Visit Summary — ${patientName}</title><style>${previewCss}</style></head><body>${backdrop.outerHTML}</body></html>`;
+	const trustedHtml = _printTtPolicy?.createHTML(previewHtml) ?? previewHtml;
+
+	const overlay = doc.createElement('div');
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+
+	const modal = doc.createElement('div');
+	modal.style.cssText = 'background:#1e1e1e;color:#d4d4d4;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);width:90vw;max-width:960px;height:85vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #454545;';
+
+	const mHeader = doc.createElement('div');
+	mHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #454545;flex-shrink:0;';
+	const mTitle = doc.createElement('span');
+	mTitle.textContent = `Print Preview — Visit Summary`;
+	mTitle.style.cssText = 'font-weight:600;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
+	const mMeta = doc.createElement('span');
+	mMeta.textContent = patientName;
+	mMeta.style.cssText = 'font-size:12px;color:#999;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
+
+	const btnGroup = doc.createElement('div');
+	btnGroup.style.cssText = 'display:flex;gap:8px;';
+
+	const closeBtn = doc.createElement('button');
+	closeBtn.textContent = 'Close';
+	closeBtn.style.cssText = 'padding:6px 16px;border:1px solid #454545;border-radius:4px;background:#1e1e1e;color:#d4d4d4;cursor:pointer;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
+
+	const doPrintBtn = doc.createElement('button');
+	// allow-any-unicode-next-line
+	doPrintBtn.textContent = '🖨 Print';
+	doPrintBtn.style.cssText = 'padding:6px 16px;border:none;border-radius:4px;background:#0078d4;color:#fff;cursor:pointer;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
+
+	const close = () => overlay.remove();
+	closeBtn.addEventListener('click', close);
+	overlay.addEventListener('click', (e) => { if (e.target === overlay) { close(); } });
+
+	doPrintBtn.addEventListener('click', () => {
+		const iframe = doc.createElement('iframe');
+		iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;border:none;';
+		doc.body.appendChild(iframe);
+		const idoc = iframe.contentDocument;
+		if (!idoc) { iframe.remove(); return; }
+		idoc.open(); idoc.write(trustedHtml as string); idoc.close();
+		const iw = iframe.contentWindow;
+		if (!iw) { iframe.remove(); return; }
+		iw.focus();
+		iw.print();
+		setTimeout(() => iframe.remove(), 2000);
+	});
+
+	// Preview iframe — srcdoc requires TrustedHTML; blob:/data: src blocked by CSP frame-src.
+	const preview = doc.createElement('iframe');
+	preview.style.cssText = 'flex:1;border:none;background:#fff;';
+	preview.srcdoc = trustedHtml as unknown as string;
+
+	btnGroup.append(closeBtn, doPrintBtn);
+	mHeader.append(mTitle, mMeta, btnGroup);
+	modal.append(mHeader, preview);
+	overlay.appendChild(modal);
+	doc.body.appendChild(overlay);
 }
 
 /** Data the repeating print letterhead shows. Any empty field is omitted. */

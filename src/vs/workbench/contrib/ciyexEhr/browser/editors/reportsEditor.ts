@@ -18,7 +18,11 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createTrustedTypesPolicy } from '../../../../../base/browser/trustedTypes.js';
 
-const _printTtPolicy = createTrustedTypesPolicy('ciyexEhrPrint', { createHTML: (html: string) => html });
+// Exported so other in-app print-preview overlays (e.g. visitSummaryPanel.ts)
+// can reuse the same policy instead of registering a new 'trusted-types' CSP
+// entry per feature — each distinct policy name needs its own allowlist entry
+// in workbench(-dev).html, so sharing this one avoids growing that list.
+export const _printTtPolicy = createTrustedTypesPolicy('ciyexEhrPrint', { createHTML: (html: string) => html });
 
 const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#14b8a6'];
 const INPUT_STYLE = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;outline:none;';
