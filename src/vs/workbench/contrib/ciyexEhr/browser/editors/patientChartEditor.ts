@@ -4543,6 +4543,11 @@ export class PatientChartEditor extends EditorPane {
 	// --- Generic tab (list or form) ---
 
 	private _formInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+	// Non-image `type: 'file'` fields stash their picked File here (keyed by
+	// field key) alongside the base64 preview `_formInputs` already carries —
+	// only the Documents tab's save path reads it, to multipart-upload the
+	// real bytes through /api/documents/upload (see _openRecordDialog).
+	private _pendingFilesByKey = new Map<string, File>();
 	/** Visible MM/DD/YYYY input for each date field, keyed by field key, so the
 	 *  save guard can highlight/focus an invalid date without DOM selectors. */
 	private _dateVisibleByKey = new Map<string, HTMLInputElement>();
@@ -7082,7 +7087,75 @@ export class PatientChartEditor extends EditorPane {
 					}
 				}
 				const method = isEdit ? 'PUT' : 'POST';
-				let res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				const pendingDocFile = tab.key === 'documents' ? this._pendingFilesByKey.get('attachment') : undefined;
+				let res: Response;
+				if (pendingDocFile && !isEdit) {
+					// A Document with a real attachment goes through the dedicated
+					// upload service (its own tab_field_config declares this as the
+					// uploadEndpoint) instead of the generic FHIR create below — that's
+					// the only path that actually stores the file bytes and links them
+					// to the DocumentReference. The generic create only ever persisted
+					// the metadata fields; the attachment silently went nowhere, so the
+					// row looked created but Edit/View could never show a document
+					// (28-Jul report).
+					// Omit (not empty-string) any field the user left blank: the backend
+					// only defaults a field (e.g. Document Date → today) when its DTO
+					// value is JSON null. An empty string is NOT null, so it was
+					// tripping DocumentService's `!= null` checks and then failing to
+					// parse — for the date specifically that left
+					// DocumentReference.date completely unset (28-Jul report:
+					// "document date is empty"), instead of defaulting to today the
+					// way the generic create path already does.
+					const orUndef = (v: unknown): string | undefined => {
+						const s = String(v ?? '').trim();
+						return s || undefined;
+					};
+					const dto = {
+						// The rendered field is labelled/keyed "title", but
+						// DocumentService only ever writes DocumentReference.description
+						// from DocumentDto's OWN `description` field — it never reads
+						// `title` — so the document name has to travel as `description`
+						// here or it saves as blank.
+						description: orUndef(payload.title ?? payload.description),
+						category: orUndef(payload.category),
+						status: orUndef(payload.status) ?? 'current',
+						date: orUndef(payload.date),
+						author: orUndef(payload.author ?? payload.authorName),
+					};
+					const fd = new FormData();
+					fd.append('patientId', String(parseInt(this.patientId, 10) || this.patientId));
+					fd.append('dto', JSON.stringify(dto));
+					fd.append('file', pendingDocFile);
+					const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('ciyex_token') : '') || '';
+					const tenant = (typeof localStorage !== 'undefined' ? (localStorage.getItem('ciyex_selected_tenant') || localStorage.getItem('ciyex_tenant')) : '') || '';
+					// Raw fetch: ICiyexApiService.fetch forces application/json, which
+					// breaks multipart (no boundary gets added).
+					res = await fetch(`${this.apiService.apiUrl}/api/documents/upload`, {
+						method: 'POST',
+						headers: { 'Authorization': `Bearer ${token}`, ...(tenant ? { 'X-Tenant-Name': tenant } : {}) },
+						body: fd,
+					});
+					if (res.ok) {
+						// DocumentDto.id is a synthetic Math.abs(fhirId.hashCode()) long,
+						// not the real FHIR id — the shared optimistic-merge /
+						// pending-create reconciliation below keys off `id` first
+						// (_recordId), so left as-is it never matches the id the later
+						// server list-refetch returns and the new row renders twice,
+						// permanently. Overwrite it with the real fhirId before the
+						// shared success handling reads the body.
+						const uploadJson = await res.json().catch(() => null);
+						const docData = uploadJson?.data;
+						if (docData && typeof docData === 'object') {
+							docData.id = docData.fhirId ?? docData.id;
+						}
+						if (uploadJson) {
+							res = new Response(JSON.stringify(uploadJson), { status: res.status, statusText: res.statusText, headers: res.headers });
+						}
+					}
+					this._pendingFilesByKey.delete('attachment');
+				} else {
+					res = await this.apiService.fetch(url, { method, body: JSON.stringify(payload) });
+				}
 				// A denial's optional "Original Claim" (ClaimResponse.request) is a FHIR
 				// reference HAPI validates for existence. If it points at a Claim that
 				// doesn't exist (e.g. a bare claim number typed into an older text field),
@@ -7458,9 +7531,14 @@ export class PatientChartEditor extends EditorPane {
 						const file = fileInp.files && fileInp.files[0];
 						if (!file) {
 							hidden.value = ''; status.textContent = '';
+							this._pendingFilesByKey.delete(f.key);
 							if (preview) { preview.style.display = 'none'; preview.removeAttribute('src'); }
 							return;
 						}
+						// Keep the real File around (Documents' save path multipart-
+						// uploads it) alongside the base64 preview other file fields
+						// (e.g. Demographics Photo) still save inline.
+						this._pendingFilesByKey.set(f.key, file);
 						const reader = new FileReader();
 						reader.onload = () => {
 							hidden.value = String(reader.result || '');
@@ -8921,19 +8999,25 @@ export class PatientChartEditor extends EditorPane {
 			// read-only "View" action — a signed/uploaded document is a record of
 			// what was attached at the time, not something staff should freely
 			// re-edit inline (QA: Documents row action should be View, not Edit).
-			// Reuse _openRecordDialog with a shallow tab.readOnly clone rather than
-			// adding a new readonly parameter — that already hides Save/Delete on
-			// the dialog for read-only tabs (ledger/statements/etc.), so the same
-			// dialog opens here in view-only mode. Scanned (Document Scanning)
-			// rows are handled above via the `__readonly` early return and already
-			// get no actions at all — this branch only reaches genuine
-			// DocumentReference rows.
+			// The metadata (title/category/status/date) already shows in the row
+			// itself, so View fetches the real file through the dedicated
+			// download endpoint (the generic form dialog never had the actual
+			// bytes to show — 28-Jul report: "document is not there ... can't
+			// view"). Scanned (Document Scanning) rows are handled above via the
+			// `__readonly` early return and already get no actions at all — this
+			// branch only reaches genuine DocumentReference rows.
 			if (tab.key === 'documents') {
 				onClick = undefined;
+				const docId = String(item.fhirId ?? item.id ?? '').trim();
 				extraActions = [
 					...(extraActions ?? []),
-					// allow-any-unicode-next-line
-					{ icon: '👁️', title: 'View', color: '#10b981', onClick: () => this._openRecordDialog({ ...tab, readOnly: true }, config, item) },
+					{
+						// allow-any-unicode-next-line
+						icon: '👁️', title: 'View', color: '#10b981', onClick: () => {
+							if (!docId) { return; }
+							void this._downloadDocument(docId, String(item.title ?? item.description ?? 'document'));
+						},
+					},
 				];
 			}
 
@@ -8977,6 +9061,37 @@ export class PatientChartEditor extends EditorPane {
 		// Practitioner row fell outside the bulk /api/providers page) — fetch them
 		// individually, then re-render so the table shows the name (QA issue 9).
 		void this._resolvePendingProviderIds(tab);
+	}
+
+	/**
+	 * Fetches a Document's real file bytes through the dedicated download
+	 * endpoint (the generic FHIR DocumentReference the row is built from never
+	 * carries the content itself — see the Documents save path above) and
+	 * saves it via a transient object URL, the same authenticated-blob pattern
+	 * Messaging attachments already use. `fallbackName` is the document's
+	 * title, used only if the server didn't send a Content-Disposition
+	 * filename.
+	 */
+	private async _downloadDocument(fhirId: string, fallbackName: string): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`/api/documents/upload/${encodeURIComponent(fhirId)}/download`);
+			if (!res.ok) {
+				this.notificationService.info('This document has no file attached.');
+				return;
+			}
+			const cd = res.headers.get('content-disposition') || '';
+			const m = /filename="?([^"]+)"?/i.exec(cd);
+			const fileName = m ? m[1] : fallbackName;
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = fileName;
+			a.click();
+			DOM.getActiveWindow().setTimeout(() => URL.revokeObjectURL(url), 5000);
+		} catch {
+			this.notificationService.error('Could not open the document.');
+		}
 	}
 
 	/**
