@@ -7548,20 +7548,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _ledgerExportHost(): ILedgerExportHost {
 		return {
 			savePdf: async (fileName, html) => {
-				console.log('[ledger] savePdf start', fileName, html.length);
-				try {
-					const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
-					console.log('[ledger] savePdf result', saved);
-					if (saved) { this.dialogService.info('Statement saved', saved); }
-				} catch (e) { console.log('[ledger] savePdf ERROR', String(e)); throw e; }
+				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
+				if (saved) { this.dialogService.info('Statement saved', saved); }
 			},
 			saveWorkbook: async (fileName, data) => {
-				console.log('[ledger] saveWorkbook start', fileName, data.length);
-				const dir = await this.fileDialogService.defaultFilePath();
-				console.log('[ledger] defaultFilePath', dir && dir.toString());
-				const target = URI.joinPath(dir, fileName);
+				const target = URI.joinPath(await this.fileDialogService.defaultFilePath(), fileName);
 				await this.fileService.writeFile(target, VSBuffer.wrap(data));
-				console.log('[ledger] wrote', target.toString());
 				this.dialogService.info('Ledger exported to Excel', target.fsPath);
 			},
 			notify: message => this.dialogService.error(message),
@@ -8547,16 +8539,24 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 <div class="due">${balance > 0 ? `Amount due: <b>${money(balance)}</b>. Please remit on receipt.` : 'This encounter is paid in full. Thank you.'}</div>
 </div>`;
 
+		// The auto-invoice fired by a completed collection must not interrupt the
+		// front desk with a Save dialog — it records the invoice and leaves the
+		// document to the row's own Invoice action.
+		if (silent) {
+			this._recordLocalInvoice(row, invoiceNumber);
+			this._renderEncounterBilling();
+			return;
+		}
 		try {
 			const saved = await savePrintableAsPdf(this.nativeHostService, `${invoiceNumber}.pdf`, html);
-			this._recordLocalInvoice(row, invoiceNumber);
-			if (!silent) {
-				if (saved) {
-					await this.dialogService.info(`Invoice ${invoiceNumber} generated.`,
-						`${saved}\n\nGenerated locally because ${reason}. Set "Ciyex: Patient Pay > Api Url" in Settings to have the billing service create and email invoices instead.`);
-				} else {
-					await this.dialogService.info(`Invoice ${invoiceNumber} was not saved (the Save dialog was cancelled).`);
-				}
+			if (saved) {
+				// Only a saved document counts as invoiced — a cancelled Save dialog
+				// must not light up the Dashboard's Invoice column.
+				this._recordLocalInvoice(row, invoiceNumber);
+				await this.dialogService.info(`Invoice ${invoiceNumber} generated.`,
+					`${saved}\n\nGenerated locally because ${reason}. Set "Ciyex: Patient Pay > Api Url" in Settings to have the billing service create and email invoices instead.`);
+			} else {
+				await this.dialogService.info(`Invoice ${invoiceNumber} was not saved (the Save dialog was cancelled).`);
 			}
 			this._renderEncounterBilling();
 		} catch (e) {

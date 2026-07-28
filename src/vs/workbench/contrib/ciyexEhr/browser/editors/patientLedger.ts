@@ -611,7 +611,8 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		totalsEls.patientPaid.textContent = money(totals.patientPaid);
 		totalsEls.adjustments.textContent = money(totals.adjustments);
 		totalsEls.patientPortionDue.textContent = money(totals.patientPortionDue);
-		totalsEls.outstanding.textContent = money(totals.outstanding);
+		// A patient who has paid ahead reads as a credit, not a minus sign.
+		totalsEls.outstanding.textContent = balanceLabel(totals.outstanding);
 
 		const groups = groupLedgerByClaim(matches);
 		visibleGroups = groups;
@@ -796,7 +797,6 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		const stamp = new Date().toISOString().slice(0, 10);
 		const who = (opts.accountName || search.value.trim() || 'all-patients').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
 		pdfBtn.addEventListener('click', async () => {
-			console.log('[ledger] pdf click', visibleGroups.length);
 			try {
 				await exportHost.savePdf(`ledger-statement-${who}-${stamp}.pdf`,
 					ledgerStatementHtml(visibleGroups, { accountName: opts.accountName || (search.value.trim() || undefined), showPatient: opts.showPatientColumn }));
@@ -805,7 +805,6 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 			}
 		});
 		xlsBtn.addEventListener('click', async () => {
-			console.log('[ledger] xls click', visibleGroups.length);
 			try {
 				await exportHost.saveWorkbook(`ledger-${who}-${stamp}.xlsx`, ledgerWorkbook(visibleGroups, opts.showPatientColumn));
 			} catch (e) {
