@@ -577,24 +577,30 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				],
 			},
 			{
-				key: 'guardian', title: 'Guardian Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+				// Section key must match the backend tab_field_config key
+				// ('guardian-info') — otherwise the localOnly address fields below
+				// get appended as a whole duplicate section instead of merging in.
+				// See legacyAddressKeysByTab a few hundred lines down.
+				key: 'guardian-info', title: 'Guardian Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'guardianName', label: 'Guardian Name', type: 'text' },
 					{ key: 'guardianRelationship', label: 'Relationship', type: 'text' },
 					{ key: 'guardianPhone', label: 'Phone', type: 'phone' },
 					{ key: 'guardianEmail', label: 'Email', type: 'email' },
-					{ key: 'guardianAddress', label: 'Address', type: 'textarea' },
+					...buildAddressFieldConfigs('guardian', 3),
 					// allow-any-unicode-next-line
 					{ key: 'motherName', label: 'Mother’s Name', type: 'text' },
 				],
 			},
 			{
-				key: 'guarantor', title: 'Guarantor / Billing Responsible Party', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+				// Section key must match the backend's 'guarantor-info'  — see note above.
+				key: 'guarantor-info', title: 'Guarantor / Billing Responsible Party', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'guarantorFirstName', label: 'First Name', type: 'text' },
 					{ key: 'guarantorLastName', label: 'Last Name', type: 'text' },
 					{ key: 'guarantorRelationship', label: 'Relationship to Patient', type: 'text' },
 					{ key: 'guarantorDob', label: 'Date of Birth', type: 'date' },
 					{ key: 'guarantorSsn', label: 'SSN', type: 'text' },
 					{ key: 'guarantorPhone', label: 'Phone', type: 'phone' },
+					...buildAddressFieldConfigs('guarantor', 3),
 				],
 			},
 			{
@@ -602,7 +608,7 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'pharmacyName', label: 'Pharmacy Name', type: 'text' },
 					{ key: 'pharmacyPhone', label: 'Phone', type: 'phone' },
 					{ key: 'pharmacyFax', label: 'Fax', type: 'phone' },
-					{ key: 'pharmacyAddress', label: 'Address', type: 'textarea', colSpan: 2 },
+					...buildAddressFieldConfigs('pharmacy', 3),
 					{ key: 'mailOrderPharmacy', label: 'Mail-Order Pharmacy', type: 'text' },
 				],
 			},
@@ -627,12 +633,13 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 				],
 			},
 			{
-				key: 'employer', title: 'Employer Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
+				// Section key must match the backend's 'employer-info' — see note above.
+				key: 'employer-info', title: 'Employer Information', columns: 3, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'occupation', label: 'Occupation', type: 'text' },
 					{ key: 'industry', label: 'Industry', type: 'text' },
 					{ key: 'employerName', label: 'Employer Name', type: 'text' },
 					{ key: 'employerPhone', label: 'Employer Phone', type: 'phone' },
-					{ key: 'employerAddress', label: 'Employer Address', type: 'textarea', colSpan: 2 },
+					...buildAddressFieldConfigs('employer', 3),
 				],
 			},
 			{
@@ -3084,12 +3091,17 @@ export class PatientChartEditor extends EditorPane {
 								fields: s.fields.filter(f => !dupAttachKeys.has(f.key) && f.type !== 'file'),
 							}));
 						}
-						// Split-address rollout (27-Jul): these tabs' backend tab_field_config
-						// rows still ship the old single free-text address blob. Drop that
-						// legacy key so it doesn't render alongside the new Address Line 1/2 +
-						// City/State/ZIP fields the `localOnly` append below adds.
+						// Split-address rollout (27-Jul, extended 28-Jul to Guardian /
+						// Guarantor / Pharmacy / Employer): these tabs' backend
+						// tab_field_config rows still ship the old single free-text
+						// address blob. Drop that legacy key so it doesn't render
+						// alongside the new Address Line 1/2 + City/State/ZIP fields the
+						// `localOnly` append below adds. Any address a patient already
+						// had saved under the old single-field extension path won't show
+						// up in the new split fields (same tradeoff already accepted for
+						// Contact Information's `address` field on 27-Jul).
 						const legacyAddressKeysByTab: Record<string, string[]> = {
-							demographics: ['address'],
+							demographics: ['address', 'guardianAddress', 'guarantorAddress', 'pharmacyAddress', 'employerAddress'],
 							relationships: ['address'],
 							facility: ['address', 'zipCode'],
 						};
