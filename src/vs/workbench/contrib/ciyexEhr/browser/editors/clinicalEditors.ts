@@ -8173,14 +8173,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// saved as a PDF, NOT emailed — say so rather than claiming a delivery
 			// that never happened.
 			const localInvoice = row.id ? localInvoices[String(row.id)] : undefined;
+			const emailed = !localInvoice || localInvoice.emailed === true;
 			// allow-any-unicode-next-line
-			invEl.textContent = row.invoiced ? (localInvoice ? '✓ PDF' : '✓ Sent') : '—';
-			invEl.style.cssText = `text-align:center;font-weight:600;color:${row.invoiced ? '#22c55e' : 'var(--vscode-descriptionForeground)'};`;
+			invEl.textContent = row.invoiced ? (emailed ? '✓ Sent' : '✓ PDF') : '—';
+			invEl.style.cssText = `text-align:center;font-weight:600;color:${row.invoiced ? (emailed ? '#22c55e' : '#f59e0b') : 'var(--vscode-descriptionForeground)'};`;
 			invEl.title = !row.invoiced
 				? 'No invoice yet — collecting the full balance auto-generates it.'
-				: localInvoice
-					? `Invoice ${localInvoice} generated on this workstation and saved as a PDF (the billing service was unreachable, so it was not emailed).`
-					: 'Patient invoice created and emailed for this encounter.';
+				: !localInvoice
+					? 'Patient invoice created and emailed for this encounter.'
+					: emailed
+						? `Invoice ${localInvoice.number} generated here and emailed to the patient.`
+						: `Invoice ${localInvoice.number} generated here as a PDF but NOT emailed — the patient has no email address on file, or the practice SMTP is not configured (Settings > Notifications).`;
 
 			const commentInp = DOM.append(r, DOM.$('input')) as HTMLInputElement;
 			commentInp.value = String(row.comments || ''); commentInp.style.cssText = inputStyle;
@@ -8489,20 +8492,123 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	/** Invoice numbers minted locally when patient-pay is unavailable. */
 	private static readonly LOCAL_INVOICE_KEY = 'ciyex.payments.localInvoices';
 
-	/** feeSheetId -> invoice number for invoices this workstation generated. */
-	private _readLocalInvoices(): Record<string, string> {
+	/** What a locally-generated invoice recorded: its number and whether it was emailed. */
+	private _readLocalInvoices(): Record<string, { number: string; emailed?: boolean }> {
 		try {
 			const parsed = JSON.parse(this.storageSvc.get(PaymentsEditor.LOCAL_INVOICE_KEY, StorageScope.PROFILE, '{}'));
-			return (parsed && typeof parsed === 'object') ? parsed as Record<string, string> : {};
+			if (!parsed || typeof parsed !== 'object') { return {}; }
+			const out: Record<string, { number: string; emailed?: boolean }> = {};
+			for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+				// Entries written before invoices could be emailed are plain strings.
+				if (typeof v === 'string') { out[k] = { number: v }; }
+				else if (v && typeof v === 'object') { out[k] = v as { number: string; emailed?: boolean }; }
+			}
+			return out;
 		} catch { return {}; }
 	}
 
-	private _recordLocalInvoice(row: Record<string, unknown>, invoiceNumber: string): void {
+	private _recordLocalInvoice(row: Record<string, unknown>, invoiceNumber: string, emailed = false): void {
 		const map = this._readLocalInvoices();
-		map[String(row.id)] = invoiceNumber;
+		map[String(row.id)] = { number: invoiceNumber, emailed };
 		this.storageSvc.store(PaymentsEditor.LOCAL_INVOICE_KEY, JSON.stringify(map), StorageScope.PROFILE, StorageTarget.USER);
 		row.invoiced = true;
 		row.invoiceNumber = invoiceNumber;
+		row.invoiceEmailed = emailed;
+	}
+
+	/**
+	 * Email the patient their invoice through the EHR's OWN notification channel
+	 * (`/api/notifications/send` -> per-practice SMTP from Settings >
+	 * Notifications) — the same path the appointment confirmations and the
+	 * insurance-posting statements deliver on.
+	 *
+	 * The patient-pay route is NOT usable for this: it delivers through
+	 * ciyex-comm, whose SMTP credentials fail, and in most environments the
+	 * patient-pay host does not even resolve. Returns why it could not send so
+	 * the caller can tell the user rather than silently claiming delivery.
+	 */
+	private async _emailInvoiceToPatient(row: Record<string, unknown>, invoiceNumber: string, figures: { total: number; insurance: number; writeOff: number; patientPaid: number; balance: number }): Promise<{ sent: boolean; reason: string }> {
+		const patientId = String(row.patientId ?? '');
+		let email = String(row.patientEmail ?? '').trim();
+		if (!email && patientId) {
+			try {
+				const pr = await this.apiService.fetch(`/api/patients/${encodeURIComponent(patientId)}`);
+				if (pr.ok) {
+					const pd = await pr.json();
+					const patient = (pd?.data ?? pd) as Record<string, unknown>;
+					email = String(patient?.['email'] ?? patient?.['patientEmail'] ?? patient?.['emailAddress'] ?? '').trim();
+				}
+			} catch { /* handled by the empty check below */ }
+		}
+		if (!email) { return { sent: false, reason: 'the patient record has no email address' }; }
+
+		const send: Record<string, unknown> = {
+			channelType: 'email',
+			recipient: email,
+			subject: figures.balance > 0
+				? `Invoice ${invoiceNumber} — amount due $${figures.balance.toFixed(2)}`
+				: `Invoice ${invoiceNumber} — paid in full`,
+			body: this._buildInvoiceEmail(row, invoiceNumber, figures),
+			triggerType: 'invoice',
+		};
+		// The notification log keys patients by numeric id; a FHIR-style id would
+		// blow up the Long conversion server-side, so only send it when numeric.
+		if (/^\d+$/.test(patientId)) { send['patientId'] = Number(patientId); }
+		try {
+			const res = await this.apiService.fetch('/api/notifications/send', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(send),
+			});
+			if (!res.ok) { return { sent: false, reason: `the notification service returned ${res.status}` }; }
+			const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+			const log = (data?.['data'] ?? data) as Record<string, unknown> | null;
+			// The endpoint answers 200 even when SMTP rejected the message — the
+			// log row's status is the only truthful signal.
+			const status = String(log?.['status'] ?? '').toLowerCase();
+			if (status === '' || status === 'sent' || status === 'queued') { return { sent: true, reason: email }; }
+			return { sent: false, reason: `SMTP reported "${status}" (check Settings > Notifications)` };
+		} catch (e) {
+			return { sent: false, reason: `the notification service is unreachable (${e instanceof Error ? e.message : String(e)})` };
+		}
+	}
+
+	/** The invoice email body: the itemised charges, the totals and what is owed. */
+	private _buildInvoiceEmail(row: Record<string, unknown>, invoiceNumber: string, f: { total: number; insurance: number; writeOff: number; patientPaid: number; balance: number }): string {
+		const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const th = 'padding:6px 8px;border-bottom:2px solid #d1d5db;text-align:right;font-size:12px;color:#374151;';
+		const thL = th.replace('text-align:right', 'text-align:left');
+		const td = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:right;font-size:12px;color:#111;';
+		const tdL = td.replace('text-align:right', 'text-align:left');
+		const items = (row.rawItems as Array<Record<string, unknown>>) || [];
+		const rows = items
+			.filter(it => String(it['type'] ?? '') !== 'ICD10' && it['code'])
+			.map(it => {
+				const qty = Number(it['qty'] ?? 1) || 1;
+				const price = Number(it['price'] ?? 0) || 0;
+				return `<tr><td style="${tdL}"><strong>${esc(it['code'])}</strong>${it['description'] ? ` &mdash; ${esc(it['description'])}` : ''}</td>`
+					+ `<td style="${td}">${qty}</td><td style="${td}">${money(price)}</td><td style="${td}"><strong>${money(price * qty)}</strong></td></tr>`;
+			}).join('');
+		const dos = isoToUsDate(String(row.encounterDate || '')) || String(row.encounterDate || '');
+		const summary = (label: string, value: string, bold = false) =>
+			`<tr><td style="${tdL}">${esc(label)}</td><td style="${td}">${bold ? `<strong>${value}</strong>` : value}</td></tr>`;
+		return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:640px;">
+<h2 style="margin:0 0 4px;font-size:18px;">Invoice ${esc(invoiceNumber)}</h2>
+<p style="margin:0 0 14px;font-size:12px;color:#555;">${esc(String(row.patientName || 'Patient'))}${dos ? ` &nbsp;|&nbsp; Date of service ${esc(dos)}` : ''} &nbsp;|&nbsp; Claim ${esc(String(row.claimNumber || ''))}</p>
+<table style="border-collapse:collapse;width:100%;margin-bottom:14px;">
+<thead><tr><th style="${thL}">Service</th><th style="${th}">Qty</th><th style="${th}">Unit</th><th style="${th}">Amount</th></tr></thead>
+<tbody>${rows || `<tr><td style="${tdL}" colspan="4">No itemised charges recorded.</td></tr>`}</tbody>
+</table>
+<table style="border-collapse:collapse;width:320px;">
+${summary('Total charges', money(f.total))}
+${summary('Insurance paid', money(f.insurance))}
+${summary('Adjustments', money(f.writeOff))}
+${summary('Already paid by you', money(f.patientPaid))}
+${summary('Amount due', money(f.balance), true)}
+</table>
+<p style="margin:14px 0 0;font-size:13px;">${f.balance > 0
+				? `Please pay <strong>${money(f.balance)}</strong>. Contact the practice if you have any questions about this invoice.`
+				: 'This visit is paid in full. Thank you.'}</p>
+</div>`;
 	}
 
 	/**
@@ -8546,11 +8652,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 <div class="due">${balance > 0 ? `Amount due: <b>${money(balance)}</b>. Please remit on receipt.` : 'This encounter is paid in full. Thank you.'}</div>
 </div>`;
 
+		// Email the patient their invoice over the EHR's own SMTP channel. This is
+		// what actually reaches the patient — patient-pay's own send goes through
+		// ciyex-comm, whose credentials fail.
+		const figures = { total, insurance, writeOff, patientPaid, balance };
+		const mail = await this._emailInvoiceToPatient(row, invoiceNumber, figures);
+
 		// The auto-invoice fired by a completed collection must not interrupt the
-		// front desk with a Save dialog — it records the invoice and leaves the
-		// document to the row's own Invoice action.
+		// front desk with a Save dialog — it records (and emails) the invoice and
+		// leaves the document to the row's own Invoice action.
 		if (silent) {
-			this._recordLocalInvoice(row, invoiceNumber);
+			this._recordLocalInvoice(row, invoiceNumber, mail.sent);
 			this._renderEncounterBilling();
 			return;
 		}
@@ -8559,11 +8671,16 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			if (saved) {
 				// Only a saved document counts as invoiced — a cancelled Save dialog
 				// must not light up the Dashboard's Invoice column.
-				this._recordLocalInvoice(row, invoiceNumber);
-				await this.dialogService.info(`Invoice ${invoiceNumber} generated.`,
-					`${saved}\n\nGenerated locally because ${reason}. Set "Ciyex: Patient Pay > Api Url" in Settings to have the billing service create and email invoices instead.`);
+				this._recordLocalInvoice(row, invoiceNumber, mail.sent);
+				await this.dialogService.info(
+					mail.sent ? `Invoice ${invoiceNumber} generated and emailed.` : `Invoice ${invoiceNumber} generated.`,
+					`${saved}\n\n${mail.sent
+						? `Emailed to ${mail.reason}.`
+						: `NOT emailed: ${mail.reason}.`}\n\nThe invoice was produced by this workstation because ${reason}.`);
 			} else {
-				await this.dialogService.info(`Invoice ${invoiceNumber} was not saved (the Save dialog was cancelled).`);
+				await this.dialogService.info(`Invoice ${invoiceNumber} was not saved (the Save dialog was cancelled).`,
+					mail.sent ? `It was still emailed to ${mail.reason}.` : undefined);
+				if (mail.sent) { this._recordLocalInvoice(row, invoiceNumber, true); }
 			}
 			this._renderEncounterBilling();
 		} catch (e) {
