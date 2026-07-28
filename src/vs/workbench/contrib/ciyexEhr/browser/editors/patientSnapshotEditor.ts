@@ -61,6 +61,12 @@ interface VisitStage {
 	doneSub: string;
 	done: boolean;
 	action?: () => void;
+	/** When true, this step is NOT re-clickable once it reaches the "done"
+	 *  state — unlike most steps (which stay reviewable/re-openable by design,
+	 *  see the clickable comment in {@link PatientSnapshotEditor._renderVisitWorkflow}),
+	 *  this one should lock immediately once done (e.g. Scheduled/Arrived should
+	 *  not be re-editable from the workflow tile after check-in). */
+	lockedWhenDone?: boolean;
 }
 
 /**
@@ -2959,6 +2965,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		return '—';
 	}
 
+	/** Whether this appointment is a Telehealth / virtual / video visit — the
+	 *  single source of truth shared by the Video Call action, the Assign Room
+	 *  workflow tile (hidden — no physical room to assign) and the Today's
+	 *  Vitals card (hidden — no in-person MA to record them) so all three never
+	 *  disagree on what counts as Telehealth. */
+	private _isTelehealthAppt(apt: Record<string, unknown>): boolean {
+		const vt = this._apptTypeStr(apt).toLowerCase();
+		return vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+	}
+
 	/** Resolve the appointment duration (minutes) from whichever field the
 	 *  backend supplied — a numeric duration, or the gap between start and end.
 	 *  The card previously read only `apt.duration`, which the appointments API
@@ -3622,8 +3638,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const terminal = new Set(['completed', 'fulfilled', 'cancelled', 'canceled', 'noshow', 'no-show', 'no show']);
 		const isTerminal = terminal.has(status);
-		const vt = this._apptTypeStr(apt).toLowerCase();
-		const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
+		const isTele = this._isTelehealthAppt(apt);
 
 		const bar = DOM.append(card, DOM.$('div'));
 		bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;padding-top:12px;border-top:1px solid var(--vscode-editorWidget-border);';
@@ -3700,6 +3715,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
 
+		// Telehealth visits have no physical room to assign and no in-person MA
+		// to record vitals — the Assign Room workflow tile and the Today's
+		// Vitals card are hidden for them (see _isTelehealthAppt).
+		const isTele = apt ? this._isTelehealthAppt(apt) : false;
+
 		if (apt) {
 			this._renderAppointmentCard(grid, apt);
 			// ONE unified workflow strip — the former "Quick Actions" (Check In →
@@ -3707,11 +3727,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			// Sign → Fee Sheet → Billing → Payment) were two overlapping step rows;
 			// they are now a single end-to-end flow so staff follow one line from
 			// arrival to payment.
-			this._renderVisitWorkflow(grid, apt, vit, encs, pipeline ?? { encounter: this._todayEncounter(apt, encs), feeSheet: null, statement: statements[0] ?? null, payments });
+			this._renderVisitWorkflow(grid, apt, vit, encs, pipeline ?? { encounter: this._todayEncounter(apt, encs), feeSheet: null, statement: statements[0] ?? null, payments }, isTele);
 		}
 
 		// Today's Vitals + Financials pair (recommended layout row 1)
-		this._renderTodayVitalsCard(grid, vit, visitVitals, apptDateRaw);
+		if (!isTele) { this._renderTodayVitalsCard(grid, vit, visitVitals, apptDateRaw); }
 		this._renderFinancialsCard(grid, payments, statements);
 
 		// Visit History (2) lists the patient's APPOINTMENTS (the visits), while
@@ -3765,8 +3785,8 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  Fee Sheet → Billing → Payment) so the front desk and clinical/billing steps
 	 *  are one line, not two overlapping rows. Each stage shows done / next / todo /
 	 *  locked state and carries a one-click action. */
-	private _renderVisitWorkflow(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): void {
-		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st);
+	private _renderVisitWorkflow(grid: HTMLElement, apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState, isTele: boolean): void {
+		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st, isTele);
 
 		const card = DOM.append(grid, DOM.$('.snap-card'));
 		card.style.cssText = 'background:var(--vscode-editorWidget-background,rgba(128,128,128,0.05));border:1px solid var(--vscode-editorWidget-border);border-radius:10px;padding:14px;grid-column:span 4;';
@@ -3794,7 +3814,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			// Every locked future step stays inert: strict order means a step the
 			// visit hasn't reached yet must not be runnable early, so Sign & Lock is
 			// only actionable once it IS the current step, never before.
-			const clickable = (state === 'done' || state === 'next') && !!s.action;
+			const clickable = (state === 'done' || state === 'next') && !!s.action && !(state === 'done' && s.lockedWhenDone);
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 			tile.disabled = !clickable;
 			tile.title = !clickable ? s.label : state === 'done' ? `${s.label} — open` : `${s.label} — ${s.sub}`;
@@ -3840,7 +3860,7 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  Scheduled → Check In → Assign Room → Record Vitals → Completed → Encounter →
 	 *  Sign & Lock → Fee Sheet → Billing → Payment, exactly the order the clinic
 	 *  works the visit. */
-	private _buildVisitStages(apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): { stages: VisitStage[]; currentIdx: number } {
+	private _buildVisitStages(apt: Record<string, unknown>, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState, isTele: boolean = false): { stages: VisitStage[]; currentIdx: number } {
 		const appointmentId = String(apt.id || apt.appointmentId || this._lastRenderArgs?.appointmentId || '');
 		const apptStatus = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const startRaw = String(apt.start || apt.startTime || '');
@@ -3920,10 +3940,14 @@ export class PatientSnapshotEditor extends EditorPane {
 			? () => void this.commandService.executeCommand('ciyex.openFeeSheet', encId, this._currentPatientId, this._currentPatientName, encName)
 			: undefined;
 
-		const stages: VisitStage[] = [
+		let stages: VisitStage[] = [
 			{
 				key: 'scheduled', label: 'Scheduled', role: 'Front desk', icon: 'calendar', done: true,
 				sub: whenStr, doneSub: whenStr, action: () => void this._openApptEdit(apt),
+				// Unlike most steps, Scheduled must NOT stay clickable once it shows
+				// its done tick — the visit's arrival/scheduling should not be
+				// re-editable from this tile after the fact (QA).
+				lockedWhenDone: true,
 			},
 			{
 				key: 'checkin', label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn,
@@ -3978,6 +4002,11 @@ export class PatientSnapshotEditor extends EditorPane {
 				sub: 'Collect', doneSub: 'Paid', action: () => this._openCreateModal('payment'),
 			},
 		];
+		// Telehealth visits have no physical room to assign — drop the Assign
+		// Room step entirely (not just CSS-hide it) so the strip's grid columns
+		// and step numbering stay contiguous, then recompute currentIdx against
+		// the filtered list.
+		if (isTele) { stages = stages.filter(s => s.key !== 'room'); }
 		const firstNotDone = stages.findIndex(s => !s.done);
 		const currentIdx = firstNotDone === -1 ? stages.length : firstNotDone;
 		return { stages, currentIdx };
@@ -4389,6 +4418,14 @@ export class PatientSnapshotEditor extends EditorPane {
 		let firstInput: HTMLInputElement | null = null;
 		const formGrid = DOM.append(container, DOM.$('div'));
 		formGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;';
+		// Chromium only drops the native up/down spin-button control on
+		// <input type="number"> via its ::-webkit-*-spin-button pseudo-elements
+		// (appearance:textfield on the input itself only covers Firefox) — it
+		// otherwise read as a stray per-field "Adjust" control on every vital
+		// (QA). The field stays a real number input; only the spinner glyph
+		// goes.
+		const noSpinStyle = DOM.append(formGrid, DOM.$('style'));
+		noSpinStyle.textContent = '.ciyex-vital-num-input::-webkit-inner-spin-button,.ciyex-vital-num-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}';
 		for (const f of PatientSnapshotEditor._VITAL_INPUTS) {
 			const cell = DOM.append(formGrid, DOM.$('div'));
 			cell.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
@@ -4397,12 +4434,13 @@ export class PatientSnapshotEditor extends EditorPane {
 			l.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;';
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 			inp.type = 'number';
+			inp.classList.add('ciyex-vital-num-input');
 			if (f.step) { inp.step = f.step; }
 			inp.placeholder = '—';
 			// Prefill with today's value so the user edits rather than re-keys.
 			const seed = initial ? initial[f.key] : undefined;
 			if (seed !== undefined && seed !== null && String(seed) !== '') { inp.value = String(seed); }
-			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;';
+			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;appearance:textfield;-moz-appearance:textfield;';
 			inputs.set(f.key, inp);
 			if (!firstInput) { firstInput = inp; }
 		}

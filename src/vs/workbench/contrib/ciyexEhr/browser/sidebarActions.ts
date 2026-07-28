@@ -359,6 +359,10 @@ function detectThemeKind(doc: Document, anchor?: HTMLElement): ThemeKind {
 /** Track the currently open menu so opening a new one auto-closes the previous. */
 let activeOverflowMenu: HTMLElement | undefined;
 
+/** Inject the number-input no-spin-button stylesheet exactly once per session
+ *  (see the ciyex-num-noSpin usage in openListAndFormDialog's field renderer). */
+let numNoSpinStyleInjected = false;
+
 function closeActiveOverflowMenu(): void {
 	if (activeOverflowMenu && activeOverflowMenu.parentElement) {
 		activeOverflowMenu.parentElement.removeChild(activeOverflowMenu);
@@ -2776,6 +2780,25 @@ export function openListAndFormDialog(opts: IListAndFormDialogOptions): void {
 		inp.placeholder = field.placeholder || '';
 		inp.setAttribute('autocomplete', 'off');
 		inp.style.cssText = baseInput;
+		if (inp.type === 'number') {
+			// Drop the native up/down spin-button control Chromium/Firefox render
+			// on <input type="number"> — on a form where every field is numeric
+			// (e.g. the Vitals New/Edit dialog: Weight, Height, BP, Pulse,
+			// Respiration, Temperature, O2 Sat) it read as a stray per-field
+			// "Adjust" control on every row (QA). appearance:textfield covers
+			// Firefox; Chromium only obeys the ::-webkit-*-spin-button
+			// pseudo-elements, which need a real stylesheet rule (inject once,
+			// guarded by id, since this renderer runs per-field/per-dialog-open).
+			inp.classList.add('ciyex-num-noSpin');
+			inp.style.setProperty('appearance', 'textfield');
+			inp.style.setProperty('-moz-appearance', 'textfield');
+			if (!numNoSpinStyleInjected) {
+				numNoSpinStyleInjected = true;
+				const noSpinStyle = doc.createElement('style');
+				noSpinStyle.textContent = '.ciyex-num-noSpin::-webkit-inner-spin-button,.ciyex-num-noSpin::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}';
+				doc.head.appendChild(noSpinStyle);
+			}
+		}
 		if (field.readonly) {
 			// Derived / auto-calculated field (e.g. BMI) — read-only + dimmed so
 			// it reads as non-editable, matching the chart editor.

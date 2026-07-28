@@ -2013,6 +2013,13 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		let firstInput: HTMLInputElement | null = null;
 		const formGrid = DOM.append(container, DOM.$('div'));
 		formGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;';
+		// Chromium only drops the native up/down spin-button control on
+		// <input type="number"> via its ::-webkit-*-spin-button pseudo-elements
+		// (appearance:textfield on the input itself only covers Firefox) — it
+		// otherwise read as a stray per-field "Adjust" control on every vital
+		// (QA), mirroring the production Snapshot editor's fix.
+		const noSpinStyle = DOM.append(formGrid, DOM.$('style'));
+		noSpinStyle.textContent = '.ciyex-vital-num-input::-webkit-inner-spin-button,.ciyex-vital-num-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}';
 		for (const f of PatientSnapshotDemoEditor._VITAL_INPUTS) {
 			const cell = DOM.append(formGrid, DOM.$('div'));
 			cell.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
@@ -2021,12 +2028,13 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			l.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;';
 			const inp = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
 			inp.type = 'number';
+			inp.classList.add('ciyex-vital-num-input');
 			if (f.step) { inp.step = f.step; }
 			inp.placeholder = '—';
 			// Prefill with today's value so the user edits rather than re-keys.
 			const seed = initial ? initial[f.key] : undefined;
 			if (seed !== undefined && seed !== null && String(seed) !== '') { inp.value = String(seed); }
-			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;';
+			inp.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-editorWidget-border));border-radius:6px;font-size:13px;font-weight:600;outline:none;appearance:textfield;-moz-appearance:textfield;';
 			inputs.set(f.key, inp);
 			if (!firstInput) { firstInput = inp; }
 		}

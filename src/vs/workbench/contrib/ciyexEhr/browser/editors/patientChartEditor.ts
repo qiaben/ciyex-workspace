@@ -1191,9 +1191,9 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		sections: [
 			{
 				key: 'details', title: 'Document Details', columns: 3, visible: true, collapsible: false, fields: [
-					{ key: 'description', label: 'Document Name', type: 'text', required: true, placeholder: 'e.g., Lab Report, Consent Form' },
+					{ key: 'description', label: 'Document Name', type: 'text', required: true, placeholder: 'e.g., Lab Report, Consent Form', showInTable: true },
 					{
-						key: 'type', label: 'Document Type', type: 'select', required: true, options: [
+						key: 'type', label: 'Document Type', type: 'select', required: true, showInTable: true, options: [
 							{ label: 'Clinical Note', value: 'clinical-note' },
 							{ label: 'Lab Report', value: 'lab-report' },
 							{ label: 'Imaging Report', value: 'imaging-report' },
@@ -1215,15 +1215,15 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 							{ label: 'Other', value: 'other' },
 						]
 					},
-					{ key: 'date', label: 'Document Date', type: 'date', required: true },
+					{ key: 'date', label: 'Document Date', type: 'date', required: true, showInTable: true },
 					{
-						key: 'status', label: 'Status', type: 'select', required: true, options: [
+						key: 'status', label: 'Status', type: 'select', required: true, showInTable: true, options: [
 							{ label: 'Current', value: 'current' },
 							{ label: 'Superseded', value: 'superseded' },
 							{ label: 'Entered in Error', value: 'entered-in-error' },
 						]
 					},
-					{ key: 'authorName', label: 'Author / Provider', type: 'practitioner-search', placeholder: 'Search Author' },
+					{ key: 'authorName', label: 'Author / Provider', type: 'practitioner-search', placeholder: 'Search Author', showInTable: true },
 					{ key: 'encounterId', label: 'Encounter ID', type: 'text', placeholder: 'Optional' },
 					// Single attachment input — local file picker reads the file as a
 					// base64 data URL and stores it in `attachment`. The previous form
@@ -6432,7 +6432,10 @@ export class PatientChartEditor extends EditorPane {
 		const hdrRow = DOM.append(panel, DOM.$('div'));
 		hdrRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:18px 20px 14px;flex-shrink:0;border-bottom:1px solid var(--vscode-editorWidget-border);';
 		const hdrTitle = DOM.append(hdrRow, DOM.$('h2'));
-		hdrTitle.textContent = isEdit ? `Edit ${tab.label}` : `New ${tab.label}`;
+		// A read-only tab (ledgers/statements, or the Documents "View" action's
+		// readOnly-clone) has no Save button below — label the dialog "View" so
+		// it doesn't read as an editable form it isn't.
+		hdrTitle.textContent = isEdit ? `${tab.readOnly ? 'View' : 'Edit'} ${tab.label}` : `New ${tab.label}`;
 		hdrTitle.style.cssText = 'margin:0;font-size:16px;font-weight:600;flex:1;';
 		const closeBtn = DOM.append(hdrRow, DOM.$('button')) as HTMLButtonElement;
 		// allow-any-unicode-next-line
@@ -8814,6 +8817,26 @@ export class PatientChartEditor extends EditorPane {
 					{ icon: '❤️', title: 'Record Vitals', color: '#ef4444', onClick: () => openSection('vitals') },
 					// allow-any-unicode-next-line
 					{ icon: '👁️', title: 'View Visit Summary', color: '#10b981', onClick: () => openSection('plan') },
+				];
+			}
+
+			// Documents: replace the generic pencil "Edit" row action with a
+			// read-only "View" action — a signed/uploaded document is a record of
+			// what was attached at the time, not something staff should freely
+			// re-edit inline (QA: Documents row action should be View, not Edit).
+			// Reuse _openRecordDialog with a shallow tab.readOnly clone rather than
+			// adding a new readonly parameter — that already hides Save/Delete on
+			// the dialog for read-only tabs (ledger/statements/etc.), so the same
+			// dialog opens here in view-only mode. Scanned (Document Scanning)
+			// rows are handled above via the `__readonly` early return and already
+			// get no actions at all — this branch only reaches genuine
+			// DocumentReference rows.
+			if (tab.key === 'documents') {
+				onClick = undefined;
+				extraActions = [
+					...(extraActions ?? []),
+					// allow-any-unicode-next-line
+					{ icon: '👁️', title: 'View', color: '#10b981', onClick: () => this._openRecordDialog({ ...tab, readOnly: true }, config, item) },
 				];
 			}
 
