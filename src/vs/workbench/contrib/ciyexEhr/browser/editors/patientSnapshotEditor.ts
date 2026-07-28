@@ -3039,8 +3039,13 @@ export class PatientSnapshotEditor extends EditorPane {
 		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const missing: string[] = [];
 		if (!['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status)) { missing.push('Check In'); }
-		if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
-		if (this._vitalsOnDate(this._lastLoadedVitals, String(apt.start || apt.startTime || '')).length === 0) { missing.push('Record Vitals'); }
+		// Telehealth visits have no physical room and no in-person MA to record
+		// vitals — those steps are dropped from the workflow strip entirely
+		// (see _buildVisitStages), so they must not gate Completed either.
+		if (!this._isTelehealthAppt(apt)) {
+			if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
+			if (this._vitalsOnDate(this._lastLoadedVitals, String(apt.start || apt.startTime || '')).length === 0) { missing.push('Record Vitals'); }
+		}
 		return missing;
 	}
 
@@ -3978,11 +3983,12 @@ export class PatientSnapshotEditor extends EditorPane {
 				sub: 'Collect', doneSub: 'Paid', action: () => this._openCreateModal('payment'),
 			},
 		];
-		// Telehealth visits have no physical room to assign — drop the Assign
-		// Room step entirely (not just CSS-hide it) so the strip's grid columns
-		// and step numbering stay contiguous, then recompute currentIdx against
-		// the filtered list.
-		if (isTele) { stages = stages.filter(s => s.key !== 'room'); }
+		// Telehealth visits have no physical room to assign and no in-person MA
+		// to record vitals — drop the Assign Room and Record Vitals steps
+		// entirely (not just CSS-hide them) so the strip's grid columns and step
+		// numbering stay contiguous, then recompute currentIdx against the
+		// filtered list.
+		if (isTele) { stages = stages.filter(s => s.key !== 'room' && s.key !== 'vitals'); }
 		const firstNotDone = stages.findIndex(s => !s.done);
 		const currentIdx = firstNotDone === -1 ? stages.length : firstNotDone;
 		return { stages, currentIdx };
