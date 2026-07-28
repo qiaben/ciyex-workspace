@@ -2369,7 +2369,11 @@ export class PatientChartEditor extends EditorPane {
 				// practice, regardless of any persisted/backend layout (issue 11).
 				// Visit Notes likewise removed chart-wide (QA 21-Jul) — filtered
 				// here so a persisted chart-layout.json can't re-add it.
-				tabs = tabs.filter(t => t.key !== 'messaging' && t.key !== 'visit-notes');
+				// Issues + Report removed chart-wide (28-Jul report: "Others"
+				// section not needed) — that was the only two tabs in the
+				// Others category, so this also drops the section itself
+				// (categories with zero tabs are skipped by the sidebar).
+				tabs = tabs.filter(t => t.key !== 'messaging' && t.key !== 'visit-notes' && t.key !== 'issues' && t.key !== 'report');
 				if (cat.key === 'clinical') {
 					const byKey = new Map<string, ChartTab>();
 					for (const t of tabs) { byKey.set(t.key, t); }
@@ -4107,6 +4111,28 @@ export class PatientChartEditor extends EditorPane {
 		interface ActivityItem { title: string; description: string; timestamp: string; sortKey: number; status: string; emoji: string }
 		const acts: ActivityItem[] = [];
 
+		// Encounters should show the VISIT TYPE their appointment was created
+		// with (Consultation, Follow-Up, Telehealth, …) instead of the generic
+		// FHIR encounter class ("Ambulatory") — same fix as the Encounters tab
+		// (QA 22-Jul, see _fetchTabData's `tab.key === 'encounters'` branch).
+		// Only the FLAT /api/appointments rows carry the encounter link
+		// (encounterId) + visitType; the FHIR encounter resource has neither.
+		const encounterVisitTypeById = new Map<string, string>();
+		try {
+			const apptRes = await this.apiService.fetch(`/api/appointments?patientId=${encodeURIComponent(this.patientId)}&page=0&size=500`);
+			if (apptRes.ok) {
+				const apptJson = await apptRes.json();
+				const appts = (apptJson?.data?.content || apptJson?.content || (Array.isArray(apptJson?.data) ? apptJson.data : [])) as Record<string, unknown>[];
+				const ids = this._patientIdSet();
+				for (const a of (Array.isArray(appts) ? appts : [])) {
+					if (!ids.has(String(a.patientId ?? a.encounterPatientId ?? '').trim())) { continue; }
+					const encId = String(a.encounterId ?? '');
+					const t = this._displayText(a.visitType) || this._displayText(a.appointmentType) || this._displayText(a.type);
+					if (encId && t && !encounterVisitTypeById.has(encId)) { encounterVisitTypeById.set(encId, t); }
+				}
+			}
+		} catch { /* best-effort — encounters fall back to their own class label */ }
+
 		// Fetch the most recent N records from each resource in parallel.
 		// We merge them into a single timeline, sorted newest-first.
 		const sources: Array<{ ep: string; emoji: string; build: (it: Record<string, unknown>) => ActivityItem | null }> = [
@@ -4128,18 +4154,25 @@ export class PatientChartEditor extends EditorPane {
 			{
 				ep: `${FHIR_MAP['Encounter']}/patient/${this.patientId}?page=0&size=50`,
 				emoji: '\u{1F4CB}',
-				build: (e) => ({
-					// Expand the short v3-ActCode class code ("AMB") to its full form
-					// ("Ambulatory") and show the signing-workflow state (Signed /
-					// Unsigned) instead of the raw FHIR status ("in-progress") — the
-					// same vocabulary the Encounters tab and the snapshot use.
-					title: `Encounter: ${PatientChartEditor._encounterClassLabel(this._displayText(e.visitType) || this._displayText(e.type)) || 'Visit'}`,
-					description: this._displayText(e.providerName) || this._displayText(e.practitionerName) || '',
-					timestamp: this._formatDate(e.startDate || e.start) || '',
-					sortKey: this._toEpoch(e.startDate || e.start),
-					status: PatientChartEditor._encounterSignedLabel(e.status),
-					emoji: '\u{1F4CB}',
-				}),
+				build: (e) => {
+					// Prefer the linked appointment's visit type (Consultation,
+					// Telehealth, …) over the encounter's own generic class code —
+					// falls back to the expanded ActCode class ("Ambulatory") only
+					// when the encounter has no linked appointment row.
+					const linkedType = encounterVisitTypeById.get(String(e.id ?? e.fhirId ?? ''));
+					const visitLabel = linkedType || PatientChartEditor._encounterClassLabel(this._displayText(e.visitType) || this._displayText(e.type)) || 'Visit';
+					return {
+						title: `Encounter: ${visitLabel}`,
+						description: this._displayText(e.providerName) || this._displayText(e.practitionerName) || '',
+						timestamp: this._formatDate(e.startDate || e.start) || '',
+						sortKey: this._toEpoch(e.startDate || e.start),
+						// Show the signing-workflow state (Signed / Unsigned) instead of
+						// the raw FHIR status ("in-progress") — the same vocabulary the
+						// Encounters tab and the snapshot use.
+						status: PatientChartEditor._encounterSignedLabel(e.status),
+						emoji: '\u{1F4CB}',
+					};
+				},
 			},
 			{
 				ep: `${FHIR_MAP['AllergyIntolerance']}/patient/${this.patientId}?page=0&size=50`,
