@@ -886,6 +886,25 @@ async function enrichSummaryMeta(deps: IVisitSummaryDeps, dto: VisitSummaryDTO, 
 	const text = (v: unknown): string => (v === null || v === undefined) ? '' : String(v).trim();
 	meta.encounterId = meta.encounterId || encounterId;
 
+	// Type should show the APPOINTMENT's visit type (Consultation, Follow-Up,
+	// Telehealth, …), not the encounter's generic FHIR class ("Ambulatory")
+	// that sanitizeSummaryMeta expands meta.type to by default — the PDF
+	// showed the encounter type instead of the appointment visit type
+	// (28-Jul report). Only the flat /api/appointments rows carry the
+	// encounter link (encounterId) + visitType — same lookup already used by
+	// the chart's Encounters tab and activity feed (QA 22-Jul). Best-effort:
+	// an unlinked encounter keeps the sanitizeSummaryMeta fallback.
+	try {
+		const res = await deps.apiService.fetch(`/api/appointments?patientId=${encodeURIComponent(patientId)}&page=0&size=500`);
+		if (res.ok) {
+			const json = await res.json().catch(() => null);
+			const appts = (json?.data?.content || json?.content || (Array.isArray(json?.data) ? json.data : [])) as Record<string, unknown>[];
+			const linked = (Array.isArray(appts) ? appts : []).find(a => text(a.encounterId) === encounterId);
+			const visitType = linked ? (text(linked.visitType) || text(linked.appointmentType) || text(linked.type)) : '';
+			if (visitType) { meta.type = visitType; }
+		}
+	} catch { /* best-effort — Type falls back to the encounter class label */ }
+
 	if (!meta.dateOfService && enc) {
 		const period = enc.period as Record<string, unknown> | undefined;
 		meta.dateOfService = text(enc.startDate) || text(enc.encounterDate) || text(enc.date) || text(period?.start) || text(enc.createdAt) || undefined;
