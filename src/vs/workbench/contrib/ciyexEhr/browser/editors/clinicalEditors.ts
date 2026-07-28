@@ -5127,16 +5127,19 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			refundedCount: 'refunded',
 		},
 		columns: [
-			{ key: 'patientName', label: 'Patient' },
-			{ key: 'amount', label: 'Amount', width: '80px' },
+			{ key: 'serviceDate', label: 'DOS', width: '90px' },
+			{ key: 'claimRef', label: 'Claim No', width: '85px' },
+			{ key: 'encounterId', label: 'Encounter No', width: '95px' },
+			{ key: 'patientName', label: 'Patient Name' },
 			{ key: 'transactionType', label: 'Type', width: '95px' },
 			{ key: 'paymentMethodType', label: 'Method', width: '80px' },
+			{ key: 'amount', label: 'Amount', width: '80px' },
 			{ key: 'description', label: 'Description' },
-			{ key: 'serviceDate', label: 'Date of Service', width: '100px' },
-			{ key: 'encounterId', label: 'Encounter ID', width: '95px' },
-			{ key: 'claimRef', label: 'Claim #', width: '85px' },
 			{ key: 'status', label: 'Status', width: '85px' },
-			{ key: 'collectedAt', label: 'Date', width: '105px' },
+			// Payment posting date — date only, no time (QA: the timestamp made
+			// the column noisy and inconsistent with every other date column
+			// in this table).
+			{ key: 'collectedAt', label: 'Date', width: '90px' },
 		],
 		statusTabs: [
 			{ label: 'Completed', value: 'completed' }, { label: 'Pending', value: 'pending' },
@@ -5171,7 +5174,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		cellRenderer: (key: string, value: unknown, item: Record<string, unknown>): string => {
 			if (key === 'amount' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
 			if (key === 'collectedAt' && typeof value === 'string') {
-				try { return new Date(value).toLocaleString(); } catch { return String(value); }
+				return value ? (isoToUsDate(value) || String(value)) : '—';
 			}
 			// Date of service (the completed appointment's date), encounter id
 			// and claim # are resolved by enrichItems from the claim reference.
