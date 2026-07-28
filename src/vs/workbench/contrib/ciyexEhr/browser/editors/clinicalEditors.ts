@@ -17,9 +17,11 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
-import { generate837P, Edi837Claim, Edi837ServiceLine, claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
+import { claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
 import { EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
-import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost } from './patientLedger.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import { savePrintableAsPdf } from './printableDocument.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -5074,8 +5076,6 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	 * cleared/edited filter kept coming back (QA 27-Jul).
 	 */
 	private _ledgerFilter: string | undefined;
-	/** "Download Statement" button in the patient bar — Ledger view only. */
-	private _stmtBtn: HTMLButtonElement | null = null;
 	// allow-any-unicode-next-line
 	// ── Credit-card grid state ──────────────────────────────────────────────
 	private _cards: CreditCardRecord[] = [];
@@ -5286,9 +5286,56 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			}
 			return rows;
 		},
-		// Issue #12: full action set — View, Edit, Refund, Void, Delete — matching
-		// the TransactionsTab.tsx row actions.
+		// Issue #12: full action set — View, Collect, Edit, Refund, Void, Delete —
+		// matching the TransactionsTab.tsx row actions.
 		actions: [
+			{
+				// Collect Payment: settle a still-open patient balance straight from
+				// this tab (team request 2026-07-27). Only pending rows can be
+				// collected — a completed transaction is already money in hand.
+				// allow-any-unicode-next-line
+				label: 'Collect Payment', icon: '💵', color: '#22c55e',
+				visible: item => String(item['status'] ?? '').toLowerCase() === 'pending',
+				handler: async (item, api, reload, dlg) => {
+					const due = Number(item['amount']) || 0;
+					const result = await showThemedModal({
+						title: 'Collect Payment',
+						subtitle: `${String(item['patientName'] || (item['patientId'] ? `Patient #${item['patientId']}` : 'Patient'))} — $${due.toFixed(2)} due`,
+						confirmLabel: 'Collect',
+						confirmColor: '#22c55e',
+						fields: [
+							{ key: 'amount', label: 'Amount to Collect ($)', type: 'number', value: due.toFixed(2), required: true },
+							{
+								key: 'paymentMethodType', label: 'Method', type: 'select', value: 'cash', required: true,
+								options: [
+									{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
+									{ label: 'Credit Card', value: 'credit_card' }, { label: 'Debit Card', value: 'debit_card' },
+									{ label: 'ACH', value: 'ach' },
+								],
+							},
+							{ key: 'note', label: 'Note', type: 'text', placeholder: 'Reference / receipt note (optional)' },
+						],
+						anchor: this.root,
+					});
+					if (!result) { return; }
+					const amount = Math.round((Number(result.amount) || 0) * 100) / 100;
+					if (!amount || amount <= 0) { await dlg.error('Enter an amount greater than 0.'); return; }
+					if (amount > due + 0.005) { await dlg.error(`The most that can be collected on this row is $${due.toFixed(2)}.`); return; }
+					const method = String(result.paymentMethodType || 'cash');
+					// A merged "Patient Resp" display row is backed by several records;
+					// settle them oldest-first so a part payment leaves the right
+					// remainder showing as due.
+					const ids = (Array.isArray(item['__mergedIds']) && (item['__mergedIds'] as unknown[]).length
+						? item['__mergedIds'] as unknown[] : [item['id']]).map(String);
+					const ok = await this._collectPendingTransactions(ids, amount, method, item, String(result.note || ''));
+					if (!ok) { await dlg.error('The collection could not be recorded. Please try again.'); return; }
+					reload();
+					// The Dashboard's balance / patient-portion columns read the same
+					// transactions, so refresh its cache too.
+					void this._loadEncounterBillingSilently();
+					await dlg.info(`Collected $${amount.toFixed(2)}. The Dashboard balance has been updated.`);
+				}
+			},
 			{
 				// allow-any-unicode-next-line
 				label: 'View', icon: '\u{1F441}', handler: async (item, _api, _reload, _dlg) => {
@@ -5523,9 +5570,19 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				if (v.coinsurance > 0) {
 					// The claim stays open ("Insurance Pending") — a secondary EOB
 					// entry is pre-generated on the row for when the secondary
-					// payer's EOB arrives.
+					// payer's EOB arrives. The copay/deductible part is already a
+					// patient balance though, so the patient is statemented now
+					// (the email flags the coinsurance as still with the secondary).
+					const emailed = resp > 0
+						? await this._sendClaimStatement(v, undefined, { coinsurancePending: v.coinsurance, secondaryPayer: v.secondaryPayer })
+						: false;
 					this._showPayToast(
-						`EOB posted. $${v.coinsurance.toFixed(2)} coinsurance is carried to the patient's secondary insurance — the claim stays "Insurance Pending" with a pre-generated secondary EOB entry on its row.`);
+						`EOB posted. $${v.coinsurance.toFixed(2)} coinsurance is carried to the patient's secondary insurance — the claim stays "Insurance Pending" with a pre-generated secondary EOB entry on its row.`
+						+ (resp > 0
+							? ` $${resp.toFixed(2)} is patient responsibility now${emailed
+								? ' and the patient was emailed a statement with the full code & service breakdown.'
+								: ' (statement email could not be sent — check Settings > Notifications and the patient\'s email).'}`
+							: ''));
 				} else if (resp > 0) {
 					// No coinsurance → the insurance side is closed; statement the
 					// patient with the full code & service breakdown of what they pay.
@@ -6535,29 +6592,55 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	}
 
 	/**
-	 * Email the patient a full statement for a CLOSED claim — every code &
-	 * service with its billed / allowed / insurance-paid / write-off /
-	 * responsibility figures and exactly what the patient pays — via a
-	 * ciyex-patient-pay invoice (its send workflow emails the statement PDF
-	 * with these notes). Best-effort; returns whether the email went out.
+	 * Email the patient their statement once insurance has been posted — every
+	 * code & service with its billed / allowed / insurance-paid / write-off /
+	 * copay / deductible / coinsurance figures and exactly what the patient owes.
+	 *
+	 * Delivery goes through the EHR's OWN notification channel
+	 * (`/api/notifications/send` -> per-practice SMTP from Settings >
+	 * Notifications), the same path the appointment confirmations use. The
+	 * ciyex-patient-pay invoice is still created (it backs the Dashboard's
+	 * invoice list and the pay-portal link) but its comm-service email is no
+	 * longer what decides success — that route delivers through ciyex-comm,
+	 * whose SMTP credentials fail, which is why patients never received these
+	 * statements. Best-effort; returns whether the email actually went out.
 	 */
 	private async _sendClaimStatement(
 		v: { claimRef: string; patientId: string; patientName: string; payerName: string; checkNumber: string; serviceDate?: string; lines: EobLine[]; copay: number; deductible: number },
 		sec?: { payer: string; check: string; paid: number; remainder: number },
+		opts?: { coinsurancePending?: number; secondaryPayer?: string },
 	): Promise<boolean> {
 		const round2 = (n: number) => Math.round(n * 100) / 100;
 		const fmt = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 		const respTotal = round2(v.copay + v.deductible + (sec?.remainder || 0));
 		if (respTotal <= 0 || !v.patientId) { return false; }
+		const pending = round2(opts?.coinsurancePending || 0);
+		const paidPrimary = round2(v.lines.reduce((s, l) => s + l.paid, 0));
+		const dos = v.serviceDate ? isoToUsDate(v.serviceDate) : '';
+
+		// One plain-text summary line per code — this is what rides in the
+		// patient-pay invoice notes (and onto its statement PDF).
 		const lineTexts = v.lines.map(l =>
 			`${l.code} ${l.description || 'Service'}: billed ${fmt(l.billed)}, allowed ${fmt(l.allowed)}, insurance paid ${fmt(l.paid)}, write-off ${fmt(lineWriteOff(l))}, copay ${fmt(l.copay || 0)}, deductible ${fmt(l.deductible || 0)}, coinsurance ${fmt(l.coinsurance || 0)}`);
-		const paidPrimary = round2(v.lines.reduce((s, l) => s + l.paid, 0));
 		const notes =
-			`Patient statement — claim ${v.claimRef}${v.serviceDate ? `, date of service ${isoToUsDate(v.serviceDate)}` : ''}. ` +
+			`Patient statement — claim ${v.claimRef}${dos ? `, date of service ${dos}` : ''}. ` +
 			`Insurance: ${v.payerName || '—'} (check ${v.checkNumber || '—'})${sec ? `; secondary ${sec.payer} (check ${sec.check})` : ''}. ` +
 			`${lineTexts.join(' | ')}. ` +
 			`Insurance paid ${fmt(paidPrimary)}${sec ? ` primary + ${fmt(sec.paid)} secondary` : ''}. ` +
-			`You pay ${fmt(respTotal)} (copay ${fmt(v.copay)} + deductible ${fmt(v.deductible)}${sec ? ` + coinsurance remainder ${fmt(sec.remainder)}` : ''}).`;
+			`You pay ${fmt(respTotal)} (copay ${fmt(v.copay)} + deductible ${fmt(v.deductible)}${sec ? ` + coinsurance remainder ${fmt(sec.remainder)}` : ''}).` +
+			(pending > 0 ? ` ${fmt(pending)} coinsurance is still pending with ${opts?.secondaryPayer || 'the secondary insurance'} and is not billed to you yet.` : '');
+
+		let patientEmail = '';
+		try {
+			const pr = await this.apiService.fetch(`/api/patients/${encodeURIComponent(v.patientId)}`);
+			if (pr.ok) {
+				const pd = await pr.json();
+				const patient = (pd?.data ?? pd) as Record<string, unknown>;
+				patientEmail = String(patient?.['email'] ?? patient?.['patientEmail'] ?? patient?.['emailAddress'] ?? '').trim();
+			}
+		} catch { /* email lookup is best-effort */ }
+
+		// The invoice keeps the balance visible in the pay portal / Dashboard.
 		const payload: Record<string, unknown> = {
 			patientId: v.patientId,
 			patientName: v.patientName,
@@ -6566,25 +6649,111 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			status: 'SENT',
 			notes,
 		};
-		try {
-			const pr = await this.apiService.fetch(`/api/patients/${encodeURIComponent(v.patientId)}`);
-			if (pr.ok) {
-				const pd = await pr.json();
-				const patient = (pd?.data ?? pd) as Record<string, unknown>;
-				const email = String(patient?.['email'] ?? patient?.['patientEmail'] ?? patient?.['emailAddress'] ?? '');
-				if (email) { payload['patientEmail'] = email; }
-			}
-		} catch { /* email lookup is best-effort */ }
+		if (patientEmail) { payload['patientEmail'] = patientEmail; }
 		try {
 			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
+			if (res.ok) {
+				const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+				const createdData = (created['data'] ?? created) as Record<string, unknown>;
+				const invId = String(createdData['id'] ?? '');
+				if (invId) {
+					await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invId)}/send`, { method: 'POST', headers: this._patientPayHeaders() })
+						.catch(() => { /* comm-service delivery is the fallback path */ });
+				}
+			}
+		} catch { /* the invoice is best-effort — the email below is what matters */ }
+
+		if (!patientEmail) { return false; }
+		const body = this._buildClaimStatementEmail(v, respTotal, paidPrimary, dos, sec, pending, opts?.secondaryPayer);
+		const send: Record<string, unknown> = {
+			channelType: 'email',
+			recipient: patientEmail,
+			subject: `Your statement for claim ${v.claimRef}${dos ? ` (visit ${dos})` : ''} — you owe ${fmt(respTotal)}`,
+			body,
+			triggerType: 'insurance_posting',
+		};
+		// The notification log keys patients by numeric id; a FHIR-style id would
+		// blow up the Long conversion server-side, so only send it when numeric.
+		if (/^\d+$/.test(v.patientId)) { send['patientId'] = Number(v.patientId); }
+		try {
+			const res = await this.apiService.fetch('/api/notifications/send', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(send),
+			});
 			if (!res.ok) { return false; }
-			const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-			const createdData = (created['data'] ?? created) as Record<string, unknown>;
-			const invId = String(createdData['id'] ?? '');
-			if (!invId) { return false; }
-			const sent = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invId)}/send`, { method: 'POST', headers: this._patientPayHeaders() });
-			return sent.ok;
+			const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+			const log = (data?.['data'] ?? data) as Record<string, unknown> | null;
+			// The endpoint answers 200 even when SMTP rejected the message — the
+			// log row's status is the only truthful signal.
+			const status = String(log?.['status'] ?? '').toLowerCase();
+			return status === '' || status === 'sent' || status === 'queued';
 		} catch { return false; }
+	}
+
+	/**
+	 * The statement email body: a full per-code table (billed, allowed,
+	 * insurance paid, write-off, copay, deductible, coinsurance, patient owes)
+	 * followed by the totals and what the patient actually pays.
+	 */
+	private _buildClaimStatementEmail(
+		v: { claimRef: string; patientName: string; payerName: string; checkNumber: string; lines: EobLine[]; copay: number; deductible: number },
+		respTotal: number, paidPrimary: number, dos: string,
+		sec: { payer: string; check: string; paid: number; remainder: number } | undefined,
+		pending: number, secondaryPayer: string | undefined,
+	): string {
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		const fmt = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const th = 'padding:6px 8px;border-bottom:2px solid #d1d5db;text-align:right;font-size:12px;color:#374151;';
+		const thL = th.replace('text-align:right', 'text-align:left');
+		const td = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:right;font-size:12px;color:#111;';
+		const tdL = td.replace('text-align:right', 'text-align:left');
+		const rows = v.lines.map(l => {
+			const owes = round2((l.copay || 0) + (l.deductible || 0));
+			return `<tr>`
+				+ `<td style="${tdL}"><strong>${esc(l.code)}</strong>${l.description ? ` — ${esc(l.description)}` : ''}</td>`
+				+ `<td style="${td}">${fmt(l.billed)}</td><td style="${td}">${fmt(l.allowed)}</td>`
+				+ `<td style="${td}">${fmt(l.paid)}</td><td style="${td}">${fmt(lineWriteOff(l))}</td>`
+				+ `<td style="${td}">${fmt(l.copay || 0)}</td><td style="${td}">${fmt(l.deductible || 0)}</td>`
+				+ `<td style="${td}">${fmt(l.coinsurance || 0)}</td>`
+				+ `<td style="${td}"><strong>${fmt(owes)}</strong></td></tr>`;
+		}).join('');
+		const totals = v.lines.reduce((a, l) => ({
+			billed: a.billed + l.billed, allowed: a.allowed + l.allowed, paid: a.paid + l.paid,
+			writeOff: a.writeOff + lineWriteOff(l), copay: a.copay + (l.copay || 0),
+			deductible: a.deductible + (l.deductible || 0), coinsurance: a.coinsurance + (l.coinsurance || 0),
+		}), { billed: 0, allowed: 0, paid: 0, writeOff: 0, copay: 0, deductible: 0, coinsurance: 0 });
+
+		return `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:760px;color:#111;">`
+			+ `<h2 style="margin:0 0 4px;font-size:18px;">Statement for claim ${esc(v.claimRef)}</h2>`
+			+ `<p style="margin:0 0 14px;color:#4b5563;font-size:13px;">`
+			+ `Dear ${esc(v.patientName || 'Patient')}, your insurance has finished processing${dos ? ` your visit on <strong>${esc(dos)}</strong>` : ' this claim'}. `
+			+ `Here is the full breakdown of every code and service, and the amount that is now your responsibility.</p>`
+			+ `<p style="margin:0 0 14px;font-size:13px;color:#374151;">`
+			+ `<strong>Insurance:</strong> ${esc(v.payerName || '—')} (check/EFT ${esc(v.checkNumber || '—')})`
+			+ (sec ? `<br><strong>Secondary insurance:</strong> ${esc(sec.payer)} (check/EFT ${esc(sec.check)})` : '')
+			+ `</p>`
+			+ `<table style="border-collapse:collapse;width:100%;margin-bottom:14px;">`
+			+ `<thead><tr><th style="${thL}">Code / Service</th><th style="${th}">Billed</th><th style="${th}">Allowed</th>`
+			+ `<th style="${th}">Insurance Paid</th><th style="${th}">Write-off</th><th style="${th}">Copay</th>`
+			+ `<th style="${th}">Deductible</th><th style="${th}">Coinsurance</th><th style="${th}">You Owe</th></tr></thead>`
+			+ `<tbody>${rows}</tbody>`
+			+ `<tfoot><tr><td style="${tdL}"><strong>Total</strong></td>`
+			+ `<td style="${td}"><strong>${fmt(totals.billed)}</strong></td><td style="${td}"><strong>${fmt(totals.allowed)}</strong></td>`
+			+ `<td style="${td}"><strong>${fmt(totals.paid)}</strong></td><td style="${td}"><strong>${fmt(totals.writeOff)}</strong></td>`
+			+ `<td style="${td}"><strong>${fmt(totals.copay)}</strong></td><td style="${td}"><strong>${fmt(totals.deductible)}</strong></td>`
+			+ `<td style="${td}"><strong>${fmt(totals.coinsurance)}</strong></td>`
+			+ `<td style="${td}"><strong>${fmt(respTotal)}</strong></td></tr></tfoot></table>`
+			+ `<p style="margin:0 0 6px;font-size:13px;">Insurance paid <strong>${fmt(paidPrimary)}</strong>`
+			+ (sec ? ` from ${esc(v.payerName || 'the primary payer')} and <strong>${fmt(sec.paid)}</strong> from ${esc(sec.payer)}` : '')
+			+ `.</p>`
+			+ `<p style="margin:0 0 6px;font-size:15px;"><strong>Your balance: ${fmt(respTotal)}</strong> `
+			+ `<span style="color:#4b5563;font-size:13px;">(copay ${fmt(v.copay)} + deductible ${fmt(v.deductible)}`
+			+ (sec ? ` + coinsurance remainder ${fmt(sec.remainder)}` : '') + `)</span></p>`
+			+ (pending > 0
+				? `<p style="margin:0 0 6px;font-size:13px;color:#6d28d9;">${fmt(pending)} of coinsurance is still pending with `
+				+ `${esc(secondaryPayer || 'your secondary insurance')} — it is not billed to you. We will send an updated statement if any part of it becomes your responsibility.</p>`
+				: '')
+			+ `<p style="margin:14px 0 0;font-size:12px;color:#6b7280;">Please contact our billing office with any questions about this statement.</p></div>`;
 	}
 
 	// allow-any-unicode-next-line
@@ -7360,13 +7529,43 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const events = await buildLedgerEvents(this.apiService);
 		if (this.payView !== 'ledger') { return; }
 		// The patient bar (top) doubles as the initial filter — picking a
-		// patient there scopes the ledger AND enables Download Statement.
+		// patient there scopes the ledger AND names the generated statement.
 		renderLedger(bodyHost, events, {
 			showPatientColumn: true,
 			initialFilter: this._ledgerFilter ?? this._payPatientName ?? '',
 			onFilterChange: value => { this._ledgerFilter = value; },
 			actionsHost: this._ledgerActionsHost(),
+			exportHost: this._ledgerExportHost(),
+			accountName: this._payPatientName || undefined,
 		});
+	}
+
+	/**
+	 * The ledger's two download options (QA 27-Jul): the statement as a real PDF
+	 * (rendered through the native host, like the visit summary) and the same
+	 * ledger as an Excel workbook.
+	 */
+	private _ledgerExportHost(): ILedgerExportHost {
+		return {
+			savePdf: async (fileName, html) => {
+				console.log('[ledger] savePdf start', fileName, html.length);
+				try {
+					const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
+					console.log('[ledger] savePdf result', saved);
+					if (saved) { this.dialogService.info('Statement saved', saved); }
+				} catch (e) { console.log('[ledger] savePdf ERROR', String(e)); throw e; }
+			},
+			saveWorkbook: async (fileName, data) => {
+				console.log('[ledger] saveWorkbook start', fileName, data.length);
+				const dir = await this.fileDialogService.defaultFilePath();
+				console.log('[ledger] defaultFilePath', dir && dir.toString());
+				const target = URI.joinPath(dir, fileName);
+				await this.fileService.writeFile(target, VSBuffer.wrap(data));
+				console.log('[ledger] wrote', target.toString());
+				this.dialogService.info('Ledger exported to Excel', target.fsPath);
+			},
+			notify: message => this.dialogService.error(message),
+		};
 	}
 
 	/** Locally-deleted ledger entries persist app-wide (ids embed the patient, so it's naturally per-patient). */
@@ -7598,16 +7797,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		});
 		input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 200); });
 
-		// RCM-lite patient statement: renders the selected patient's ledger into a
-		// downloadable HTML statement (charges/payments, patient vs insurance
-		// portion, amount due) — statement generation without the RCM app.
-		const stmtBtn = doc.createElement('button') as HTMLButtonElement;
-		stmtBtn.textContent = 'Download Statement';
-		stmtBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;display:none;';
-		stmtBtn.addEventListener('click', () => { this._downloadPatientStatement(); });
-		bar.appendChild(stmtBtn);
-		this._stmtBtn = stmtBtn;
-
+		// The statement download lives on the ledger toolbar itself now (PDF +
+		// Excel, the only two options the team wants), so the patient bar carries
+		// just the picker.
 		parent.appendChild(bar);
 		this._payPatientBar = bar;
 	}
@@ -7618,101 +7810,6 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// /api/credit-cards/patient/{id}), so it shares the patient picker.
 			this._payPatientBar.style.display =
 				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
-		}
-		if (this._stmtBtn) {
-			this._stmtBtn.style.display = this.payView === 'ledger' ? 'inline-block' : 'none';
-		}
-	}
-
-	/**
-	 * Build and download an HTML patient statement from the ledger (RCM-lite:
-	 * statement generation for orgs without the RCM app). Amount due = the
-	 * patient portion; insurance-pending amounts are listed as informational.
-	 */
-	private async _downloadPatientStatement(): Promise<void> {
-		if (!this._payPatientId) {
-			this.dialogService.info('Select a patient first to generate their statement.');
-			return;
-		}
-		let entries: Array<Record<string, unknown>> = [];
-		try {
-			const res = await this.apiService.fetch(`/api/payments/ledger/patient/${this._payPatientId}`);
-			if (res.ok) {
-				const data = await res.json();
-				const w = data?.data ?? data;
-				entries = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>;
-			}
-		} catch { /* fall through to empty statement */ }
-
-		const esc = (v: unknown): string => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-		const money = (n: number): string => `$${n.toFixed(2)}`;
-
-		let respAccrued = 0;
-		let patientPaid = 0;
-		let totalBalance = 0;
-		let haveBalance = false;
-		const rows: string[] = [];
-		for (const it of entries) {
-			const desc = String(it['description'] ?? '');
-			const resp = parseEobField(desc, 'resp');
-			if (resp !== undefined) { respAccrued += resp; }
-			const amount = Number(it['amount']);
-			if (Number.isFinite(amount) && amount < 0 && resp === undefined && !desc.startsWith('EOB')) {
-				patientPaid += Math.abs(amount);
-			}
-			if (!haveBalance) {
-				const rb = Number(it['runningBalance']);
-				if (Number.isFinite(rb)) { totalBalance = rb; haveBalance = true; }
-			}
-			const when = String(it['createdAt'] ?? it['entryDate'] ?? '');
-			let dateStr = when;
-			try { dateStr = when ? new Date(when).toLocaleDateString() : ''; } catch { /* keep raw */ }
-			const type = String(it['entryType'] ?? '').replace(/_/g, ' ');
-			const debit = Number.isFinite(amount) && amount > 0 ? money(amount) : '';
-			const credit = Number.isFinite(amount) && amount < 0 ? money(Math.abs(amount)) : '';
-			const rb = Number(it['runningBalance']);
-			rows.push(`<tr><td>${esc(dateStr)}</td><td>${esc(type)}</td><td>${esc(desc)}</td>` +
-				`<td class="amt">${debit}</td><td class="amt">${credit}</td>` +
-				`<td class="amt">${Number.isFinite(rb) ? money(rb) : ''}</td></tr>`);
-		}
-		const patientPortion = Math.max(Math.min(respAccrued - patientPaid, Math.max(totalBalance, 0)), 0);
-		const insurancePortion = Math.max(totalBalance - patientPortion, 0);
-		const today = new Date().toLocaleDateString();
-
-		const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Patient Statement</title><style>
-body{font-family:Arial,sans-serif;color:#222;margin:24px;}
-h1{font-size:20px;} .summary{margin:16px 0;} .summary b{font-size:16px;}
-table{border-collapse:collapse;width:100%;font-size:12px;}
-th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}
-th{background:#f0f4f8;} .amt{text-align:right;}
-.due{margin-top:16px;padding:12px;background:#fff7e6;border:1px solid #f0c36d;}
-</style></head><body>
-<h1>Patient Statement</h1>
-<div class="summary">
-Patient: <b>${esc(this._payPatientName || this._payPatientId)}</b><br/>
-Statement date: ${esc(today)}<br/>
-Amount due from you: <b>${money(patientPortion)}</b> &nbsp;&nbsp; Pending with insurance: ${money(insurancePortion)}<br/>
-Total account balance: ${money(totalBalance)}
-</div>
-<table>
-<tr><th>Date</th><th>Type</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
-${rows.join('\n')}
-</table>
-<div class="due">Please pay <b>${money(patientPortion)}</b>. Amounts pending with your insurance are not due yet and may change after processing.</div>
-</body></html>`;
-
-		const fileName = `statement-${(this._payPatientName || this._payPatientId).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.html`;
-		// Write via the file service instead of an <a download> anchor — the
-		// anchor path pops Electron's native Save dialog, which is unusable in
-		// remote/headless sessions and skippable here since we can save directly.
-		try {
-			const defaultDir = await this.fileDialogService.defaultFilePath();
-			const target = URI.joinPath(defaultDir, fileName);
-			await this.fileService.writeFile(target, VSBuffer.fromString(html));
-			this.dialogService.info('Statement saved', target.fsPath);
-		} catch (e) {
-			this.dialogService.error('Could not save the statement', String(e));
 		}
 	}
 
@@ -7743,6 +7840,13 @@ ${rows.join('\n')}
 			encounterDate: String(d.encounterDate ?? d.serviceDate ?? d.createdAt ?? '').slice(0, 10),
 			codes,
 			totalFee,
+			// What the fee-sheet record itself reports as collected. The authoritative
+			// figure is recomputed by _applyPaymentActivity, which also counts the
+			// payment transactions the fee-sheet record never learns about (a
+			// patient-responsibility collection just flips pending transactions to
+			// completed — it never touches the sheet). Keep the raw value so the two
+			// sources can be reconciled instead of double-counted.
+			sheetPaid: totalPaid,
 			totalPaid,
 			balance: Math.max(0, totalFee - totalPaid),
 			billingStatus: String(d.billingStatus ?? 'Unbilled'),
@@ -7754,10 +7858,12 @@ ${rows.join('\n')}
 			claimNumber: d.id !== undefined && d.id !== null ? claimNumberForFeeSheet(String(d.id)) : '',
 			// Raw fee-sheet items kept for the RCM-lite X12 837 export.
 			rawItems: items,
-			// Filled by _applyInsurancePostings from EOB postings matched to this row.
+			// Filled by _applyPaymentActivity from the payment transactions.
 			insurancePaid: 0,
 			writeOff: 0,
 			respAssigned: 0,
+			/** Patient-responsibility transactions still sitting in `pending`. */
+			respPending: 0,
 			patientPortion: 0,
 			eobPosted: false,
 			// Filled by _applyInvoiceFlags from the patient-pay invoice list.
@@ -7778,7 +7884,7 @@ ${rows.join('\n')}
 			} else {
 				this._billingRows = [];
 			}
-			await this._applyInsurancePostings();
+			await this._applyPaymentActivity();
 			await this._applyInvoiceFlags();
 		} catch {
 			this._billingRows = [];
@@ -7788,15 +7894,28 @@ ${rows.join('\n')}
 	}
 
 	/**
-	 * RCM-lite adjudication reflection: match Insurance Posting (EOB)
-	 * transactions to encounter-billing rows by claim reference — the X12
-	 * export uses claim number `FS{feeSheetId}`, so postings entered against
-	 * that reference (or the raw fee-sheet/encounter id) flow back here. The
-	 * insurance payment and contractual write-off reduce the row balance and
-	 * the EOB's copay/deductible/coinsurance becomes the PATIENT PORTION that
-	 * the front desk collects (also pre-filled into Pay Amount).
+	 * Reflect ALL payment activity onto the dashboard rows in one pass over
+	 * `/api/payments/transactions` — the single source of truth the Patient
+	 * Balance tab and the Ledger also read, so the three views agree.
+	 *
+	 * Two classes of transaction land on a row (matched by claim reference — the
+	 * X12 export uses `FS{feeSheetId}`, so `CLM-0012`, `FS12` and `12` all
+	 * resolve to fee sheet 12 — or by an explicit feeSheetId / encounterId):
+	 *
+	 *  1. EOB postings: insurance payment + contractual write-off reduce the
+	 *     balance; the copay/deductible/coinsurance becomes the patient
+	 *     responsibility.
+	 *  2. Patient money: COMPLETED transactions are collections; the still
+	 *     PENDING copay/deductible/coinsurance records are what the patient
+	 *     still owes.
+	 *
+	 * Counting (2) is what fixes the balance after a collection: collecting a
+	 * patient portion only flips those pending transactions to completed, and
+	 * the fee-sheet record's own `totalPaid` never moves — so the dashboard used
+	 * to snap straight back to the pre-collection balance and kept advertising a
+	 * Patient Portion that had already been paid.
 	 */
-	private async _applyInsurancePostings(): Promise<void> {
+	private async _applyPaymentActivity(): Promise<void> {
 		if (this._billingRows.length === 0) { return; }
 		let txns: Array<Record<string, unknown>> = [];
 		try {
@@ -7807,44 +7926,90 @@ ${rows.join('\n')}
 			txns = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
 		} catch { return; }
 
+		const round2 = (n: number) => Math.round(n * 100) / 100;
 		const byRef = new Map<string, Record<string, unknown>>();
 		for (const row of this._billingRows) {
 			// Normalized keys make `CLM-0012`, `FS12` and `12` all match row 12
 			// (claim numbers are CLM-…, legacy postings used FS…).
-			if (row.id) { byRef.set(`fs${row.id}`, row); byRef.set(String(row.id), row); byRef.set(normalizeClaimRef(String(row.id)), row); }
+			if (row.id) {
+				byRef.set(`fs${row.id}`, row); byRef.set(String(row.id), row);
+				byRef.set(normalizeClaimRef(String(row.id)), row);
+				byRef.set(normalizeClaimRef(String(row.claimNumber ?? '')), row);
+			}
 			if (row.encounterId) { byRef.set(String(row.encounterId), row); byRef.set(normalizeClaimRef(String(row.encounterId)), row); }
 		}
+		const resolve = (ref: string): Record<string, unknown> | undefined => {
+			const r = ref.trim().toLowerCase();
+			if (!r) { return undefined; }
+			return byRef.get(r) || byRef.get(r.replace(/^fs-?/, '')) || byRef.get(normalizeClaimRef(r));
+		};
 
+		/** Patient money already collected, per row id. */
+		const collectedByRow = new Map<Record<string, unknown>, number>();
 		for (const txn of txns) {
 			const desc = String(txn['description'] ?? '');
-			if (!desc.startsWith('EOB posting')) { continue; }
-			const refMatch = desc.match(/claim=([^;|]+)/);
-			const ref = refMatch ? refMatch[1].trim().toLowerCase() : '';
-			if (!ref) { continue; }
-			const row = byRef.get(ref) || byRef.get(ref.replace(/^fs-?/, '')) || byRef.get(normalizeClaimRef(ref));
+			const status = String(txn['status'] ?? '').toLowerCase();
+			const type = String(txn['transactionType'] ?? '');
+			const amount = Number(txn['amount']) || 0;
+
+			if (desc.startsWith('EOB posting') || type === 'insurance_payment') {
+				const row = resolve(desc.match(/claim=([^;|]+)/)?.[1] ?? '');
+				if (!row) { continue; }
+				row.eobPosted = true;
+				row.insurancePaid = Number(row.insurancePaid || 0) + (parseEobField(desc, 'paid') ?? amount);
+				row.writeOff = Number(row.writeOff || 0) + (parseEobField(desc, 'writeoff') ?? 0);
+				row.respAssigned = Number(row.respAssigned || 0) + (parseEobField(desc, 'resp') ?? 0);
+				continue;
+			}
+
+			// Patient-side transaction. Prefer the explicit fee-sheet / encounter
+			// linkage the Dashboard's own collect writes, then the claim reference
+			// the EOB flow embeds in the description.
+			const row = resolve(String(txn['claimId'] ?? ''))
+				?? resolve(String(txn['feeSheetId'] ?? ''))
+				?? resolve(String(txn['encounterId'] ?? ''))
+				?? resolve(desc.match(/claim[= ]([A-Za-z0-9-]+)/)?.[1] ?? '')
+				// Legacy Dashboard collections carried only "Encounter {id} — codes".
+				?? resolve(desc.match(/encounter\s+([A-Za-z0-9-]+)/i)?.[1] ?? '');
 			if (!row) { continue; }
-			row.eobPosted = true;
-			row.insurancePaid = Number(row.insurancePaid || 0) + (parseEobField(desc, 'paid') ?? Number(txn['amount']) ?? 0);
-			row.writeOff = Number(row.writeOff || 0) + (parseEobField(desc, 'writeoff') ?? 0);
-			row.respAssigned = Number(row.respAssigned || 0) + (parseEobField(desc, 'resp') ?? 0);
+			if (status === 'pending' && ['copay', 'deductible', 'coinsurance'].includes(type)) {
+				row.respPending = Number(row.respPending || 0) + amount;
+			} else if (status === 'completed' && amount > 0) {
+				collectedByRow.set(row, (collectedByRow.get(row) || 0) + amount);
+			} else if (status === 'refunded' && amount > 0) {
+				collectedByRow.set(row, (collectedByRow.get(row) || 0) - amount);
+			}
 		}
 
 		for (const row of this._billingRows) {
-			const insurancePaid = Number(row.insurancePaid || 0);
-			const writeOff = Number(row.writeOff || 0);
-			if (insurancePaid <= 0 && writeOff <= 0) { continue; }
 			const totalFee = Number(row.totalFee || 0);
-			const collected = Number(row.totalPaid || 0) + insurancePaid;
-			const balance = Math.max(0, totalFee - collected - writeOff);
+			const insurancePaid = round2(Number(row.insurancePaid || 0));
+			const writeOff = round2(Number(row.writeOff || 0));
+			// The fee-sheet record and the transaction list describe the SAME patient
+			// money whenever both were updated, so take the larger of the two rather
+			// than their sum (which would double-count a Dashboard collection).
+			const patientPaid = round2(Math.max(Number(row.sheetPaid || 0), collectedByRow.get(row) || 0));
+			row.insurancePaid = insurancePaid;
+			row.writeOff = writeOff;
+			row.totalPaid = patientPaid;
+			const balance = round2(Math.max(0, totalFee - insurancePaid - writeOff - patientPaid));
 			row.balance = balance;
-			// The patient owes at most their EOB-assigned responsibility, capped by
-			// what actually remains open on the encounter.
-			row.patientPortion = Math.min(Math.max(Number(row.respAssigned || 0), 0), balance);
-			row.paymentStatus = balance <= 0 ? 'Paid' : (collected > 0 ? 'Partial' : String(row.paymentStatus || 'None'));
-			// Dashboard stage: adjudicated-but-open encounters show "EOB Posted"
-			// (the front desk still owes a patient-portion collection).
+
+			// What the patient still owes: the pending responsibility records when the
+			// EOB created them, otherwise the EOB-assigned responsibility net of what
+			// has already been collected. Either way it can never exceed the balance.
+			const respPending = round2(Number(row.respPending || 0));
+			const assignedOutstanding = Math.max(0, round2(Number(row.respAssigned || 0) - patientPaid));
+			row.patientPortion = round2(Math.min(respPending > 0 ? respPending : assignedOutstanding, balance));
+
+			if (!row.eobPosted && patientPaid <= 0) { continue; }
+			row.paymentStatus = balance <= 0 ? 'Paid' : ((patientPaid + insurancePaid) > 0 ? 'Partial' : 'None');
 			if (balance <= 0) { row.billingStatus = 'Paid'; }
-			else { row.billingStatus = 'EOB Posted'; }
+			else if (row.eobPosted) {
+				// Dashboard stage: adjudicated-but-open encounters show "EOB Posted"
+				// (the front desk still owes a patient-portion collection).
+				row.billingStatus = 'EOB Posted';
+			}
 		}
 	}
 
@@ -7856,15 +8021,32 @@ ${rows.join('\n')}
 	 */
 	private async _applyInvoiceFlags(): Promise<void> {
 		if (this._billingRows.length === 0) { return; }
+		// Locally-generated invoices (patient-pay unreachable) count too.
+		const local = this._readLocalInvoices();
+		for (const row of this._billingRows) {
+			const num = local[String(row.id)];
+			if (num) { row.invoiced = true; row.invoiceNumber = num; }
+		}
 		try {
 			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { headers: this._patientPayHeaders() });
 			if (!res.ok) { return; }
 			const data = await res.json();
 			const w = (data?.data ?? data) as { content?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
 			const invoices = (Array.isArray(w) ? w : (w?.content || [])) as Array<Record<string, unknown>>;
-			const byFeeSheet = new Set(invoices.map(i => String(i['feeSheetId'] ?? '')).filter(Boolean));
-			const byEncounter = new Set(invoices.map(i => String(i['encounterId'] ?? '')).filter(Boolean));
+			// `feeSheetId` / `encounterId` are not columns on a patient-pay invoice
+			// (the entity has no such fields, so they were dropped on create and this
+			// flag never lit up). The linkage is written into `notes` instead.
+			const byFeeSheet = new Set<string>();
+			const byEncounter = new Set<string>();
+			for (const inv of invoices) {
+				const notes = String(inv['notes'] ?? '');
+				const fs = notes.match(/feeSheet=([A-Za-z0-9-]+)/)?.[1];
+				const enc = notes.match(/encounter=([A-Za-z0-9-]+)/)?.[1];
+				if (fs) { byFeeSheet.add(fs); }
+				if (enc) { byEncounter.add(enc); }
+			}
 			for (const row of this._billingRows) {
+				if (row.invoiced) { continue; }
 				row.invoiced = (!!row.id && byFeeSheet.has(String(row.id)))
 					|| (!!row.encounterId && byEncounter.has(String(row.encounterId)));
 			}
@@ -8016,7 +8198,9 @@ ${rows.join('\n')}
 			};
 			actBtn('\u270F\uFE0F', 'Edit fee sheet', 'var(--vscode-textLink-foreground)', () => this._editBillingRow(row));
 			actBtn('\u2705', 'Collect payment', '#22c55e', () => this._completeBillingRow(row, Number(payInp.value) || 0, modeSel.value));
-			actBtn('\u{1F4E4}', `Download X12 837 claim file (claim # ${row.claimNumber || claimNumberForFeeSheet(String(row.id))}) for clearinghouse submission`, 'var(--vscode-textLink-foreground)', () => this._download837ForRow(row));
+			// The X12 837 download was dropped from this action column (team request
+			// 2026-07-27). Claims can still be exported as 837P from the Operations
+			// side menu's Claims rows, which is where clearinghouse work belongs.
 			actBtn('\u{1F9FE}', 'Generate invoice, show PDF & email patient', 'var(--vscode-textLink-foreground)', () => this._invoiceBillingRow(row));
 			actBtn('\u{1F4D2}', 'Open ledger', 'var(--vscode-descriptionForeground)', () => this._openLedgerForRow(row));
 		}
@@ -8026,135 +8210,6 @@ ${rows.join('\n')}
 		// Re-open the fee sheet editor for this encounter to adjust charges.
 		this.commandService.executeCommand('ciyex.openFeeSheet', String(row.encounterId || ''), String(row.patientId || ''), String(row.patientName || ''), `Encounter ${row.encounterId}`)
 			.then(undefined, () => { /* command may be unavailable */ });
-	}
-
-	/**
-	 * RCM-lite claim submission: render this encounter's fee sheet as an X12
-	 * 837P file and save it so a non-RCM org can upload it to their own
-	 * clearinghouse. Uses the same real data sources as the Fee Sheet editor's
-	 * export (patient demographics, active coverage + payer directory,
-	 * practice identifiers, ciyex.billing.* settings) and the claim number
-	 * `FS{feeSheetId}` — post the payer's EOB against that reference in the
-	 * Insurance Posting tab and the balance flows back to this row's
-	 * Patient Portion.
-	 */
-	private async _download837ForRow(row: Record<string, unknown>): Promise<void> {
-		const getJson = async (path: string): Promise<Record<string, unknown> | null> => {
-			try {
-				const res = await this.apiService.fetch(path);
-				return res.ok ? await res.json() : null;
-			} catch { return null; }
-		};
-		const listOf = (j: Record<string, unknown> | null): Record<string, unknown>[] => {
-			const w = (j?.data ?? j) as Record<string, unknown> | Record<string, unknown>[] | null;
-			if (Array.isArray(w)) { return w; }
-			return ((w?.content as Record<string, unknown>[]) || []) as Record<string, unknown>[];
-		};
-		const cfg = (key: string): string => String(this.configurationService.getValue<string>(key) ?? '').trim();
-
-		// Patient demographics + coverage (fails soft — blanks flag at the clearinghouse).
-		const patientId = String(row.patientId || '');
-		let patient: Record<string, unknown> = {};
-		if (patientId) {
-			const pj = await getJson(`/api/patients/${encodeURIComponent(patientId)}`);
-			patient = ((pj?.data ?? pj) as Record<string, unknown>) || {};
-		}
-		let payerName = '';
-		let payerId = '';
-		let policyNumber = '';
-		let groupNumber = '';
-		if (patientId) {
-			const coverages = listOf(await getJson(`/api/fhir-resource/insurance-coverage/patient/${encodeURIComponent(patientId)}?page=0&size=10`));
-			const active = coverages.find(c => /active/i.test(String(c.status ?? ''))) || coverages[0];
-			if (active) {
-				payerName = String(active.payerName ?? active.insuranceCompany ?? active.companyName ?? '');
-				payerId = String(active.payerId ?? '');
-				policyNumber = String(active.policyNumber ?? active.subscriberId ?? active.memberId ?? '');
-				groupNumber = String(active.groupNumber ?? '');
-				if (payerName && !payerId) {
-					const dir = listOf(await getJson(`/api/insurance-companies?page=0&size=50&search=${encodeURIComponent(payerName)}`));
-					const match = dir.find(d => String(d.name ?? '').trim().toLowerCase() === payerName.trim().toLowerCase()) || dir[0];
-					if (match?.payerId) { payerId = String(match.payerId); }
-				}
-			}
-		}
-
-		// Practice / billing provider identifiers (settings override the record).
-		const practiceList = listOf(await getJson('/api/practices?page=0&size=1'));
-		const practice = practiceList[0] || {};
-		const pAddr = (practice.address as { line1?: string; city?: string; state?: string; zip?: string }) || {};
-		const pick = (key: string, ...fallbacks: Array<unknown>): string => {
-			const v = cfg(key);
-			if (v) { return v; }
-			for (const f of fallbacks) { if (f) { return String(f); } }
-			return '';
-		};
-
-		const items = (row.rawItems as Array<Record<string, unknown>>) || [];
-		const diagnoses = items.filter(it => String(it.type ?? '') === 'ICD10').map(it => String(it.code ?? '')).filter(Boolean);
-		const procedures = items.filter(it => String(it.type ?? '') !== 'ICD10' && it.code);
-		const allPointers = diagnoses.map((_, i) => i + 1);
-		const lines: Edi837ServiceLine[] = procedures.map(it => ({
-			cptCode: String(it.code),
-			modifiers: it.modifiers ? String(it.modifiers).split(/[,\s]+/).filter(Boolean) : [],
-			chargeAmount: Number(it.price ?? 0) * Number(it.qty ?? 1),
-			units: Number(it.qty ?? 1),
-			diagnosisPointers: allPointers.length ? allPointers : [1],
-		}));
-		if (lines.length === 0) {
-			await this.dialogService.info('This fee sheet has no billable procedure lines to export.');
-			return;
-		}
-
-		const nameParts = String(row.patientName || '').split(/\s+/);
-		const claimNumber = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
-		const claim: Edi837Claim = {
-			submitterId: cfg('ciyex.billing.submitterId'),
-			submitterName: pick('ciyex.billing.submitterName', practice.name),
-			submitterContactName: String(practice.name ?? ''),
-			submitterPhone: String(practice.phone ?? ''),
-			submitterEmail: String(practice.email ?? ''),
-			receiverId: cfg('ciyex.billing.receiverId'),
-			receiverName: cfg('ciyex.billing.receiverName') || 'CLEARINGHOUSE',
-			usageIndicator: this.configurationService.getValue<boolean>('ciyex.billing.productionMode') ? 'P' : 'T',
-			billingName: pick('ciyex.billing.billingName', practice.name),
-			billingNpi: pick('ciyex.billing.billingNpi', practice.npi),
-			billingTaxId: pick('ciyex.billing.billingTaxId', practice.taxId, practice.ein),
-			billingAddress1: pick('ciyex.billing.billingAddress1', pAddr.line1, practice.address1),
-			billingCity: pick('ciyex.billing.billingCity', pAddr.city, practice.city),
-			billingState: pick('ciyex.billing.billingState', pAddr.state, practice.state),
-			billingZip: pick('ciyex.billing.billingZip', pAddr.zip, practice.zip),
-			patientFirstName: String(patient.firstName ?? nameParts[0] ?? ''),
-			patientLastName: String(patient.lastName ?? nameParts.slice(1).join(' ') ?? 'Patient'),
-			patientDob: String(patient.dateOfBirth ?? patient.dob ?? ''),
-			patientGender: String(patient.gender ?? ''),
-			patientAddress1: String(patient.address1 ?? (patient.address as Record<string, unknown>)?.line1 ?? ''),
-			patientCity: String(patient.city ?? (patient.address as Record<string, unknown>)?.city ?? ''),
-			patientState: String(patient.state ?? (patient.address as Record<string, unknown>)?.state ?? ''),
-			patientZip: String(patient.zip ?? (patient.address as Record<string, unknown>)?.zip ?? ''),
-			subscriberId: policyNumber || String(patient.mrn ?? patientId),
-			groupNumber,
-			payerName: payerName || 'UNKNOWN PAYER',
-			payerId,
-			claimNumber,
-			totalCharge: lines.reduce((s, l) => s + l.chargeAmount, 0),
-			placeOfService: '11',
-			dateOfService: String(row.encounterDate || new Date().toISOString().slice(0, 10)),
-			diagnoses,
-			lines,
-		};
-
-		try {
-			const edi = generate837P(claim, new Date());
-			const fileName = `claim-${claimNumber}-837P.txt`;
-			const defaultDir = await this.fileDialogService.defaultFilePath();
-			const target = URI.joinPath(defaultDir, fileName);
-			await this.fileService.writeFile(target, VSBuffer.fromString(edi));
-			await this.dialogService.info(`837P claim file saved (claim # ${claimNumber}).`,
-				`${target.fsPath}\n\nUpload it to your clearinghouse. When the payer's EOB arrives, post it in the Insurance Posting tab with Claim/Bill # "${claimNumber}" — the balance and patient portion on this row update automatically.`);
-		} catch (e) {
-			await this.dialogService.error('Could not generate the 837P file', String(e));
-		}
 	}
 
 	private async _completeBillingRow(row: Record<string, unknown>, payAmount: number, method: string): Promise<void> {
@@ -8169,14 +8224,24 @@ ${rows.join('\n')}
 			// of adding a duplicate charge.
 			const settledPending = await this._completePendingPatientResp(row, payAmount, method);
 			if (!settledPending) {
+				const claimNo = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
+				// `feeSheetId` / `encounterId` are NOT columns on a payment
+				// transaction (the backend DTO drops them), so the claim number has
+				// to ride in fields that ARE persisted — `claimId` and the
+				// description — or nothing can match this payment back to its
+				// encounter and the collected money never reduces the row's balance.
 				const payload = {
 					patientId: row.patientId,
 					patientName: row.patientName,
 					amount: payAmount,
-					transactionType: 'encounter',
+					transactionType: 'payment',
 					paymentMethodType: method,
-					description: `Encounter ${row.encounterId} — ${row.codes}`,
+					// allow-any-unicode-next-line
+					description: `Patient payment — claim ${claimNo} (encounter ${row.encounterId}) — ${row.codes}`,
 					status: 'completed',
+					referenceType: 'claim',
+					claimId: claimNo,
+					dateOfService: String(row.encounterDate || '') || undefined,
 					feeSheetId: row.id,
 					encounterId: row.encounterId,
 				};
@@ -8186,30 +8251,40 @@ ${rows.join('\n')}
 					return;
 				}
 			}
+			// The remaining balance nets off insurance and the contractual write-off
+			// too — computing it as `totalFee - patientPaid` (as this used to) left a
+			// fully-settled encounter still showing the insurance-covered amount as
+			// an open balance right after the collection.
 			const newPaid = Number(row.totalPaid || 0) + payAmount;
-			const newBalance = Math.max(0, Number(row.totalFee || 0) - newPaid);
-			row.totalPaid = newPaid;
-			row.balance = newBalance;
-			row.paymentStatus = newBalance <= 0 ? 'Paid' : 'Partial';
-			row.billingStatus = newBalance <= 0 ? 'Paid' : 'Billed';
+			const newBalance = Math.max(0, Number(row.totalFee || 0) - newPaid
+				- Number(row.insurancePaid || 0) - Number(row.writeOff || 0));
 
 			// Auto-generate the invoice once the encounter balance is cleared — the
 			// patient receives the invoice without anyone creating it manually.
-			if (newBalance <= 0) {
-				await this._invoiceBillingRow(row, true);
+			if (newBalance <= 0.005) {
+				await this._invoiceBillingRow({ ...row, totalPaid: newPaid }, true);
 			}
-			this._renderEncounterBilling();
+			// Re-derive every figure from the server (fee sheets + transactions)
+			// instead of patching the row in place: a patient-responsibility
+			// collection only flips pending transactions to completed, so the local
+			// arithmetic and the reloaded data disagreed and the balance "jumped
+			// back" on the next refresh.
+			await this._loadAndRenderEncounterBilling();
 		} catch (e) {
 			await this.dialogService.error(`Payment failed: ${e}`);
 		}
 	}
 
 	/**
-	 * Complete the claim's pending patient-responsibility transactions (created
-	 * by the EOB posting for copay / deductible / coinsurance) when the
-	 * collected amount matches their total. Returns true when the collection
-	 * was settled that way; false lets the caller record a fresh transaction
-	 * (no pendings, or a different amount was entered).
+	 * Settle the claim's pending patient-responsibility transactions (created by
+	 * the EOB posting for copay / deductible / coinsurance) with the collected
+	 * amount. Records are completed oldest-first until the money runs out; a
+	 * record only partly covered is reduced to its remainder and the covered
+	 * part is written as its own completed transaction, so a part-payment leaves
+	 * the correct amount still showing as due.
+	 *
+	 * Returns true when the collection was settled that way; false lets the
+	 * caller record a fresh transaction (nothing pending on this claim).
 	 */
 	private async _completePendingPatientResp(row: Record<string, unknown>, payAmount: number, method: string): Promise<boolean> {
 		const claimNo = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
@@ -8225,33 +8300,147 @@ ${rows.join('\n')}
 				&& String(t['description'] ?? '').includes(`claim ${claimNo}`));
 		} catch { return false; }
 		if (pendings.length === 0) { return false; }
-		const pendingSum = Math.round(pendings.reduce((s, t) => s + (Number(t['amount']) || 0), 0) * 100) / 100;
-		if (Math.abs(pendingSum - payAmount) > 0.01) { return false; }
-		let completed = 0;
-		for (const t of pendings) {
-			const res = await this.apiService.fetch(`/api/payments/transactions/${t['id']}`, {
-				method: 'PUT', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ status: 'completed', paymentMethodType: method }),
+
+		const { settled, remaining } = await this._settlePendingTransactions(pendings, payAmount, method, {
+			patientId: row.patientId, patientName: row.patientName, claimId: claimNo,
+		});
+		// Money left over after every pending record was cleared is an extra
+		// payment on the encounter — book it as its own completed charge.
+		if (settled > 0 && remaining > 0.005) {
+			await this.apiService.fetch('/api/payments/collect', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					patientId: row.patientId, patientName: row.patientName, amount: remaining,
+					transactionType: 'payment', paymentMethodType: method, status: 'completed',
+					referenceType: 'claim', claimId: claimNo,
+					// allow-any-unicode-next-line
+					description: `Patient payment — claim ${claimNo} (encounter ${row.encounterId})`,
+				}),
 			});
-			if (res.ok) { completed++; }
 		}
-		// Once any pending flipped to completed, never also POST a fresh
-		// transaction — that would double-charge the patient ledger.
-		return completed > 0;
+		// Once any pending flipped to completed, never also POST the caller's
+		// fresh transaction — that would double-charge the patient ledger.
+		return settled > 0;
 	}
 
+	/**
+	 * Apply `payAmount` to a list of PENDING transactions, oldest first. A record
+	 * the money fully covers flips to `completed`; the one it only partly covers
+	 * is reduced to its remainder and the collected slice is written as its own
+	 * completed transaction, so the patient's remaining balance stays exact.
+	 * Returns how many records were touched and any money left over.
+	 */
+	private async _settlePendingTransactions(
+		pendings: Array<Record<string, unknown>>, payAmount: number, method: string,
+		ctx: { patientId: unknown; patientName: unknown; claimId?: string; note?: string },
+	): Promise<{ settled: number; remaining: number }> {
+		const round2 = (n: number) => Math.round(n * 100) / 100;
+		let remaining = round2(payAmount);
+		let settled = 0;
+		for (const t of pendings) {
+			if (remaining <= 0.005) { break; }
+			const due = round2(Number(t['amount']) || 0);
+			if (due <= 0) { continue; }
+			if (remaining + 0.005 >= due) {
+				const res = await this.apiService.fetch(`/api/payments/transactions/${t['id']}`, {
+					method: 'PUT', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ status: 'completed', paymentMethodType: method }),
+				});
+				if (res.ok) { settled++; remaining = round2(remaining - due); }
+				continue;
+			}
+			// Part payment: shrink what is still owed and book the collected slice.
+			const paidNow = remaining;
+			const putRes = await this.apiService.fetch(`/api/payments/transactions/${t['id']}`, {
+				method: 'PUT', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ amount: round2(due - paidNow) }),
+			});
+			if (!putRes.ok) { break; }
+			const type = String(t['transactionType'] ?? 'payment');
+			await this.apiService.fetch('/api/payments/collect', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					patientId: ctx.patientId, patientName: ctx.patientName, amount: paidNow,
+					transactionType: type, paymentMethodType: method, status: 'completed',
+					referenceType: 'claim', claimId: ctx.claimId,
+					// allow-any-unicode-next-line
+					description: `Patient payment — part of ${type} for claim ${ctx.claimId || '(unlinked)'}${ctx.note ? ` — ${ctx.note}` : ''}`,
+				}),
+			});
+			settled++;
+			remaining = 0;
+		}
+		return { settled, remaining };
+	}
+
+	/**
+	 * Collect against specific pending transaction ids — the Patient Balance
+	 * tab's "Collect Payment" row action. The row may be a merged patient-resp
+	 * display record standing in for several backing transactions.
+	 */
+	private async _collectPendingTransactions(ids: string[], amount: number, method: string, item: Record<string, unknown>, note: string): Promise<boolean> {
+		let pendings: Array<Record<string, unknown>> = [];
+		try {
+			const res = await this.apiService.fetch('/api/payments/transactions');
+			if (!res.ok) { return false; }
+			const data = await res.json();
+			const w = data?.data ?? data;
+			const txns = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			const wanted = new Set(ids);
+			pendings = txns.filter(t => wanted.has(String(t['id'])) && String(t['status'] ?? '').toLowerCase() === 'pending');
+		} catch { return false; }
+		if (pendings.length === 0) { return false; }
+		const claimId = String(item['claimRef'] ?? '')
+			|| String(item['description'] ?? '').match(/claim[= ]([A-Za-z0-9-]+)/)?.[1]
+			|| '';
+		const { settled } = await this._settlePendingTransactions(pendings, amount, method, {
+			patientId: item['patientId'], patientName: item['patientName'], claimId, note,
+		});
+		return settled > 0;
+	}
+
+	/** Refresh the Dashboard's cached rows without stealing the current view. */
+	private async _loadEncounterBillingSilently(): Promise<void> {
+		if (this.payView === 'encounter-billing') { await this._loadAndRenderEncounterBilling(); return; }
+		try {
+			const res = await this.apiService.fetch('/api/fee-sheets');
+			if (!res.ok) { return; }
+			const data = await res.json();
+			const w = data?.data ?? data;
+			const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			this._billingRows = list.map(d => this._normalizeBillingRow(d));
+			await this._applyPaymentActivity();
+			await this._applyInvoiceFlags();
+		} catch { /* the Dashboard reloads on its next open anyway */ }
+	}
+
+	/**
+	 * Invoice an encounter.
+	 *
+	 * The invoice record belongs to ciyex-patient-pay, but that service is a
+	 * separate deployment that most environments do not expose to the desktop
+	 * app: the derived host (`patient-pay-api…`) simply does not resolve unless
+	 * someone sets `ciyex.patientPay.apiUrl`, so every attempt died in the
+	 * `catch` below as "Invoice generation failed: TypeError: Failed to fetch"
+	 * and no invoice was ever produced.
+	 *
+	 * So the invoice is now always produced: patient-pay is tried first (and
+	 * still owns emailing when it is reachable), and when it is not the invoice
+	 * is generated locally as a PDF from the same encounter data and recorded so
+	 * the Dashboard's Invoice column reflects it.
+	 */
 	private async _invoiceBillingRow(row: Record<string, unknown>, silent = false): Promise<void> {
 		const total = Number(row.totalFee || 0);
-		const paid = Number(row.totalPaid || 0);
+		const paid = Number(row.totalPaid || 0) + Number(row.insurancePaid || 0) + Number(row.writeOff || 0);
 		const payload: Record<string, unknown> = {
 			patientId: row.patientId,
 			patientName: row.patientName,
 			totalAmount: total,
-			balanceDue: Math.max(0, total - paid),
+			balanceDue: Math.max(0, Math.round((total - paid) * 100) / 100),
 			status: 'SENT',
-			encounterId: row.encounterId,
-			feeSheetId: row.id,
-			notes: `Encounter ${row.encounterId} — ${row.codes}`,
+			// patient-pay has no feeSheet/encounter columns, so the linkage rides in
+			// `notes` in a form _applyInvoiceFlags can match again.
+			notes: `feeSheet=${row.id}; encounter=${row.encounterId}; claim=${row.claimNumber || claimNumberForFeeSheet(String(row.id))}; codes=${row.codes}`,
 		};
 		// The patient email is needed so patient-pay can email the statement. Pull
 		// it from the patient record (the billing row doesn't carry it).
@@ -8269,6 +8458,7 @@ ${rows.join('\n')}
 				}
 			} catch { /* email lookup is best-effort */ }
 		}
+		let failure = '';
 		try {
 			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { method: 'POST', headers: this._patientPayHeaders(), body: JSON.stringify(payload) });
 			if (res.ok) {
@@ -8277,19 +8467,103 @@ ${rows.join('\n')}
 				const created = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 				const createdData = (created['data'] ?? created) as Record<string, unknown>;
 				const invId = String(createdData['id'] ?? '');
+				const invNo = String(createdData['invoiceNumber'] ?? invId);
+				this._recordLocalInvoice(row, invNo);
 				if (invId) {
 					try {
 						await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invId)}/send`, { method: 'POST', headers: this._patientPayHeaders() });
 					} catch { /* email is best-effort; invoice is already created */ }
 					// Show the generated PDF (skip for the silent auto-on-payment path).
-					if (!silent) { await this._showInvoicePdf(invId, String(createdData['invoiceNumber'] ?? invId)); }
+					if (!silent) { await this._showInvoicePdf(invId, invNo); }
 				}
 				if (!silent) { await this.dialogService.info('Invoice generated, shown, and emailed to the patient with the statement PDF attached.'); }
-			} else if (!silent) {
-				await this.dialogService.error(`Invoice generation failed (${res.status}).`);
+				return;
 			}
+			const detail = await res.text().catch(() => '');
+			failure = `the billing service returned ${res.status}${detail ? ` (${detail.slice(0, 160)})` : ''}`;
 		} catch (e) {
-			if (!silent) { await this.dialogService.error(`Invoice generation failed: ${e}`); }
+			failure = `the billing service is unreachable at ${this._patientPayBase()} (${e instanceof Error ? e.message : String(e)})`;
+		}
+		await this._generateLocalInvoice(row, failure, silent);
+	}
+
+	/** Invoice numbers minted locally when patient-pay is unavailable. */
+	private static readonly LOCAL_INVOICE_KEY = 'ciyex.payments.localInvoices';
+
+	/** feeSheetId -> invoice number for invoices this workstation generated. */
+	private _readLocalInvoices(): Record<string, string> {
+		try {
+			const parsed = JSON.parse(this.storageSvc.get(PaymentsEditor.LOCAL_INVOICE_KEY, StorageScope.PROFILE, '{}'));
+			return (parsed && typeof parsed === 'object') ? parsed as Record<string, string> : {};
+		} catch { return {}; }
+	}
+
+	private _recordLocalInvoice(row: Record<string, unknown>, invoiceNumber: string): void {
+		const map = this._readLocalInvoices();
+		map[String(row.id)] = invoiceNumber;
+		this.storageSvc.store(PaymentsEditor.LOCAL_INVOICE_KEY, JSON.stringify(map), StorageScope.PROFILE, StorageTarget.USER);
+		row.invoiced = true;
+		row.invoiceNumber = invoiceNumber;
+	}
+
+	/**
+	 * Produce the invoice without the patient-pay service: render it from the
+	 * encounter's own charges and save it as a PDF the front desk can hand or
+	 * mail to the patient. The invoice number is minted from the claim number so
+	 * it stays stable for the encounter.
+	 */
+	private async _generateLocalInvoice(row: Record<string, unknown>, reason: string, silent: boolean): Promise<void> {
+		const claimNo = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
+		const invoiceNumber = `INV-${claimNo}`;
+		const total = Number(row.totalFee || 0);
+		const insurance = Number(row.insurancePaid || 0);
+		const writeOff = Number(row.writeOff || 0);
+		const patientPaid = Number(row.totalPaid || 0);
+		const balance = Math.max(0, Math.round((total - insurance - writeOff - patientPaid) * 100) / 100);
+		const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+
+		const items = (row.rawItems as Array<Record<string, unknown>>) || [];
+		const lineRows = items
+			.filter(it => String(it['type'] ?? '') !== 'ICD10' && it['code'])
+			.map(it => {
+				const qty = Number(it['qty'] ?? 1) || 1;
+				const price = Number(it['price'] ?? 0) || 0;
+				return `<tr><td>${esc(it['code'])}</td><td>${esc(it['description'] ?? '')}</td><td class="amt">${qty}</td><td class="amt">${money(price)}</td><td class="amt">${money(price * qty)}</td></tr>`;
+			}).join('\n');
+
+		const html = `<div class="stmt">
+<h1>Invoice ${esc(invoiceNumber)}</h1>
+<div class="meta">Patient: <b>${esc(row.patientName || `Patient #${row.patientId}`)}</b> &nbsp;|&nbsp; Claim ${esc(claimNo)} &nbsp;|&nbsp; Date of service ${esc(isoToUsDate(String(row.encounterDate || '')) || String(row.encounterDate || ''))} &nbsp;|&nbsp; Issued ${esc(new Date().toLocaleDateString('en-US'))}</div>
+<table>
+<thead><tr><th>Code</th><th>Description</th><th class="amt">Qty</th><th class="amt">Unit</th><th class="amt">Amount</th></tr></thead>
+<tbody>${lineRows || '<tr><td colspan="5">No itemised charges recorded.</td></tr>'}</tbody>
+</table>
+<table class="summary">
+<tr><th>Total charges</th><td class="amt">${money(total)}</td><th>Insurance paid</th><td class="amt">${money(insurance)}</td></tr>
+<tr><th>Adjustments</th><td class="amt">${money(writeOff)}</td><th>Patient paid</th><td class="amt">${money(patientPaid)}</td></tr>
+<tr><th>Balance due</th><td class="amt"><b>${money(balance)}</b></td><th></th><td></td></tr>
+</table>
+<div class="due">${balance > 0 ? `Amount due: <b>${money(balance)}</b>. Please remit on receipt.` : 'This encounter is paid in full. Thank you.'}</div>
+</div>`;
+
+		try {
+			const saved = await savePrintableAsPdf(this.nativeHostService, `${invoiceNumber}.pdf`, html);
+			this._recordLocalInvoice(row, invoiceNumber);
+			if (!silent) {
+				if (saved) {
+					await this.dialogService.info(`Invoice ${invoiceNumber} generated.`,
+						`${saved}\n\nGenerated locally because ${reason}. Set "Ciyex: Patient Pay > Api Url" in Settings to have the billing service create and email invoices instead.`);
+				} else {
+					await this.dialogService.info(`Invoice ${invoiceNumber} was not saved (the Save dialog was cancelled).`);
+				}
+			}
+			this._renderEncounterBilling();
+		} catch (e) {
+			if (!silent) {
+				await this.dialogService.error('Invoice generation failed',
+					`${reason}, and the local invoice could not be rendered either: ${e instanceof Error ? e.message : String(e)}`);
+			}
 		}
 	}
 
@@ -8310,7 +8584,17 @@ ${rows.join('\n')}
 	// API, so these helpers resolve that base + auth headers directly (the same
 	// way ciyexCommands' patient-pay flow does).
 
+	/**
+	 * Resolve the ciyex-patient-pay base URL. Order: the `ciyex.patientPay.apiUrl`
+	 * setting, then the `ciyex_patient_pay_api_url` localStorage override, then a
+	 * host derived from the EHR API URL by swapping the `api` segment for
+	 * `patient-pay-api` — the same order ciyexCommands' patient-pay flow uses.
+	 * The setting used to be ignored here, so an org that had configured the
+	 * service still had its invoice requests aimed at the derived host.
+	 */
 	private _patientPayBase(): string {
+		const configured = String(this.configurationService.getValue<string>('ciyex.patientPay.apiUrl') ?? '').trim();
+		if (configured) { return configured.replace(/\/$/, ''); }
 		let override = '';
 		try { override = localStorage.getItem('ciyex_patient_pay_api_url') || ''; } catch { /* ignore */ }
 		if (override) { return override.replace(/\/$/, ''); }
@@ -8620,7 +8904,7 @@ ${rows.join('\n')}
 		});
 	}
 
-	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService private readonly storageSvc: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService, @IConfigurationService private readonly configurationService: IConfigurationService) { super(PaymentsEditor.ID, group, t, th, storageSvc, a, d); }
+	constructor(group: IEditorGroup, @ITelemetryService t: ITelemetryService, @IThemeService th: IThemeService, @IStorageService private readonly storageSvc: IStorageService, @ICiyexApiService a: ICiyexApiService, @IDialogService d: IDialogService, @ICommandService private readonly commandService: ICommandService, @IFileService private readonly fileService: IFileService, @IFileDialogService private readonly fileDialogService: IFileDialogService, @IConfigurationService private readonly configurationService: IConfigurationService, @INativeHostService private readonly nativeHostService: INativeHostService) { super(PaymentsEditor.ID, group, t, th, storageSvc, a, d); }
 }
 
 export class ClaimsEditor extends ClinicalListEditorBase {

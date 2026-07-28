@@ -17,7 +17,8 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost } from './patientLedger.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import { savePrintableAsPdf } from './printableDocument.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -2219,6 +2220,25 @@ export class PatientChartEditor extends EditorPane {
 			confirmDelete: async message => (await this.dialogService.confirm({ message, type: 'warning', primaryButton: 'Remove' })).confirmed,
 			notify: message => this.notificationService.info(message),
 		});
+	}
+
+	/**
+	 * The chart ledger's two downloads — the patient's statement as a PDF and the
+	 * same ledger as an Excel workbook (matching the Payments editor's Ledger).
+	 */
+	private _ledgerExportHost(): ILedgerExportHost {
+		return {
+			savePdf: async (fileName, html) => {
+				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
+				if (saved) { this.notificationService.info(`Statement saved to ${saved}`); }
+			},
+			saveWorkbook: async (fileName, data) => {
+				const target = URI.joinPath(await this.fileDialogService.defaultFilePath(), fileName);
+				await this.fileService.writeFile(target, VSBuffer.wrap(data));
+				this.notificationService.info(`Ledger exported to ${target.fsPath}`);
+			},
+			notify: message => this.notificationService.error(message),
+		};
 	}
 
 	protected createEditor(parent: HTMLElement): void {
@@ -4553,7 +4573,12 @@ export class PatientChartEditor extends EditorPane {
 			countEl.textContent = events.length > 0 ? String(events.length) : '';
 			content.style.display = 'flex';
 			content.style.flexDirection = 'column';
-			renderLedger(content, events, { showPatientColumn: false, actionsHost: this._ledgerActionsHost() });
+			renderLedger(content, events, {
+				showPatientColumn: false,
+				actionsHost: this._ledgerActionsHost(),
+				exportHost: this._ledgerExportHost(),
+				accountName: this.patientName || undefined,
+			});
 			return;
 		}
 

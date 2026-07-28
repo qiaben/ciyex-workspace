@@ -6,14 +6,23 @@
 import * as DOM from '../../../../../base/browser/dom.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { claimNumberForFeeSheet } from '../billing/edi837.js';
+import { buildXlsx, IXlsxColumn, XlsxRow } from '../billing/xlsx.js';
 import { findWorkbenchRoot } from '../customDropdown.js';
 
 /**
- * Shared patient-ledger view: one chronological financial record built from
- * the billed fee sheets (charges) and the payment transactions (insurance
- * postings, patient payments, write-offs, patient portions). Used by BOTH the
- * Payments editor's Ledger tab (all patients) and the patient chart's
- * Financial > Ledger page (one patient) so the two stay identical.
+ * Shared patient-ledger view: one financial record built from the billed fee
+ * sheets (charges) and the payment transactions (insurance postings, patient
+ * payments, write-offs, patient portions). Used by BOTH the Payments editor's
+ * Ledger tab (all patients) and the patient chart's Financial > Ledger page
+ * (one patient) so the two stay identical.
+ *
+ * The ledger reads CLAIM-FIRST (QA 27-Jul: "make one claim means all the
+ * transaction include that"): every claim is one card showing what was charged,
+ * what insurance paid, what was written off, what the patient paid and what is
+ * still owed, and it expands to the individual postings behind those numbers.
+ * The old flat, newest-first event list with a per-patient running balance was
+ * the reason the balance column "did not show properly" — in an all-patients
+ * list the running total jumped between patients on adjacent rows.
  *
  * The EOB `key=value` description fields and the notes `sec=`/`sl=` segments
  * parsed here are written by the Insurance Posting flow in clinicalEditors.ts
@@ -30,7 +39,7 @@ export interface LedgerEvent {
 	date: string;
 	/** ISO date of the underlying service / encounter (DOS); '' when it can't be resolved. */
 	serviceDate: string;
-	/** Millisecond timestamp for ordering (events on the same day keep charge → payment order). */
+	/** Millisecond timestamp for ordering (events on the same day keep charge then payment order). */
 	sortKey: number;
 	patientId: string;
 	patientName: string;
@@ -45,6 +54,8 @@ export interface LedgerEvent {
 	info: number;
 	/** Running balance of THIS PATIENT's account after the event. */
 	balance: number;
+	/** Running balance of THIS CLAIM after the event (what the claim card expands to show). */
+	claimBalance: number;
 }
 
 export interface LedgerTotals {
@@ -97,6 +108,7 @@ function isoDate(value: unknown): string {
 
 function usDate(iso: string): string {
 	const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+	// allow-any-unicode-next-line
 	return m ? `${m[2]}/${m[3]}/${m[1]}` : (iso || '—');
 }
 
@@ -122,36 +134,53 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 
 	const events: LedgerEvent[] = [];
 	const wanted = (pid: string) => !patientId || String(pid) === String(patientId);
-	// claimRef → date of service, so payment/EOB rows can show the DOS of the
+	// claimRef -> date of service, so payment/EOB rows can show the DOS of the
 	// charge they settle even though the transaction record only has a post date.
 	const serviceDateByClaim = new Map<string, string>();
+	// encounter id / fee-sheet id -> claim ref. A payment transaction has no
+	// fee-sheet column, so Dashboard collections identify themselves only through
+	// their description ("Encounter 15868 — …"). Without this map those payments
+	// landed under "Unlinked activity" and the claim they settled kept showing the
+	// full balance, which is why the ledger and the Dashboard disagreed.
+	const claimByRef = new Map<string, string>();
 
 	// -- Charges: every billed fee sheet is a charge on the patient account --
 	for (const s of sheets) {
-		if (!/^(billed|paid|eob)/i.test(String(s['billingStatus'] ?? ''))) { continue; }
+		// A sheet that already carries collected money belongs on the ledger even
+		// if its billing status was never advanced past "Unbilled" — otherwise the
+		// payment credit landed with no matching charge and drove the running
+		// balance negative (QA 27-Jul: "balance also not properly showing").
+		const billed = /^(billed|paid|eob)/i.test(String(s['billingStatus'] ?? ''));
+		const collected = Number(s['totalPaid'] ?? s['paidAmount'] ?? 0) || 0;
+		if (!billed && collected <= 0) { continue; }
 		const pid = String(s['patientId'] ?? '');
 		if (!wanted(pid)) { continue; }
 		const items = (s['items'] as Array<Record<string, unknown>>) || [];
 		const codes: string[] = [];
-		let billed = 0;
+		let charge = 0;
 		for (const it of items) {
 			if (String(it['type'] ?? '') === 'ICD10' || !it['code']) { continue; }
 			codes.push(String(it['code']));
-			billed += (Number(it['price'] ?? 0) || 0) * (Number(it['qty'] ?? 1) || 1);
+			charge += (Number(it['price'] ?? 0) || 0) * (Number(it['qty'] ?? 1) || 1);
 		}
-		billed = round2(billed);
-		if (billed <= 0) { continue; }
+		charge = round2(charge);
+		if (charge <= 0) { continue; }
 		const date = isoDate(s['billedAt'] ?? s['encounterDate'] ?? s['serviceDate'] ?? s['updatedAt'] ?? s['createdAt']);
 		const serviceDate = isoDate(s['serviceDate'] ?? s['encounterDate'] ?? s['dateOfService'] ?? s['billedAt'] ?? s['createdAt']);
 		const claimRef = String(s['claimNumber'] ?? '') || claimNumberForFeeSheet(String(s['id'] ?? ''));
 		if (claimRef && serviceDate) { serviceDateByClaim.set(claimRef, serviceDate); }
+		if (claimRef) {
+			if (s['id'] !== undefined && s['id'] !== null) { claimByRef.set(String(s['id']).toLowerCase(), claimRef); }
+			if (s['encounterId']) { claimByRef.set(String(s['encounterId']).toLowerCase(), claimRef); }
+		}
 		events.push({
 			id: '', date, serviceDate, sortKey: new Date(date || 0).getTime(),
 			patientId: pid, patientName: String(s['patientName'] ?? ''),
 			type: 'charge',
 			claimRef,
+			// allow-any-unicode-next-line
 			description: `Charges billed — ${codes.join(', ') || 'services'}`,
-			debit: billed, credit: 0, info: 0, balance: 0,
+			debit: charge, credit: 0, info: 0, balance: 0, claimBalance: 0,
 		});
 	}
 
@@ -182,34 +211,45 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 			if (primaryPaid > 0) {
 				events.push({
 					id: '', date, serviceDate: svc(claimRef), sortKey, patientId: pid, patientName, type: 'ins-payment', claimRef,
+					// allow-any-unicode-next-line
 					description: `Insurance payment — ${payer || 'payer'}${check ? `, check ${check}` : ''}`,
-					debit: 0, credit: primaryPaid, info: 0, balance: 0,
+					debit: 0, credit: primaryPaid, info: 0, balance: 0, claimBalance: 0,
 				});
 			}
 			if (sec.posted && sec.paid > 0) {
 				events.push({
 					id: '', date, serviceDate: svc(claimRef), sortKey: sortKey + 1, patientId: pid, patientName, type: 'ins-payment-secondary', claimRef,
+					// allow-any-unicode-next-line
 					description: `Secondary insurance payment — ${sec.payer || 'secondary payer'}${sec.check ? `, check ${sec.check}` : ''}`,
-					debit: 0, credit: sec.paid, info: 0, balance: 0,
+					debit: 0, credit: sec.paid, info: 0, balance: 0, claimBalance: 0,
 				});
 			}
 			if (writeOff > 0) {
 				events.push({
 					id: '', date, serviceDate: svc(claimRef), sortKey: sortKey + 2, patientId: pid, patientName, type: 'writeoff', claimRef,
+					// allow-any-unicode-next-line
 					description: `Contractual write-off / adjustment — ${payer || 'payer'}`,
-					debit: 0, credit: writeOff, info: 0, balance: 0,
+					debit: 0, credit: writeOff, info: 0, balance: 0, claimBalance: 0,
 				});
 			}
 			continue;
 		}
 
 		// Pending patient-responsibility records = the PATIENT PORTION still due.
-		const claimFromDesc = desc.match(/claim ([A-Z]+-?\d+)/)?.[1] || '';
+		// Resolve the claim from every reference a transaction can carry: an
+		// explicit `claimId`, "claim CLM-0018" in the description, or the encounter
+		// / fee-sheet id a Dashboard collection names instead.
+		const claimFromDesc = String(t['claimId'] ?? '')
+			|| desc.match(/claim[= ]([A-Za-z0-9]+-?\d+)/)?.[1]
+			|| claimByRef.get((desc.match(/encounter\s+([A-Za-z0-9-]+)/i)?.[1] || '').toLowerCase())
+			|| claimByRef.get(String(t['feeSheetId'] ?? '').toLowerCase())
+			|| claimByRef.get(String(t['encounterId'] ?? '').toLowerCase())
+			|| '';
 		if (status === 'pending' && ['copay', 'deductible', 'coinsurance'].includes(String(t['transactionType'] ?? ''))) {
 			events.push({
 				id: '', date, serviceDate: svc(claimFromDesc), sortKey: sortKey + 3, patientId: pid, patientName, type: 'patient-portion', claimRef: claimFromDesc,
 				description: desc || 'Patient responsibility due',
-				debit: 0, credit: 0, info: round2(amount), balance: 0,
+				debit: 0, credit: 0, info: round2(amount), balance: 0, claimBalance: 0,
 			});
 			continue;
 		}
@@ -219,25 +259,23 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 			events.push({
 				id: '', date, serviceDate: svc(claimFromDesc), sortKey: sortKey + 3, patientId: pid, patientName, type: 'patient-payment', claimRef: claimFromDesc,
 				description: desc || `Patient payment (${String(t['paymentMethodType'] ?? 'payment')})`,
-				debit: 0, credit: round2(amount), info: 0, balance: 0,
+				debit: 0, credit: round2(amount), info: 0, balance: 0, claimBalance: 0,
 			});
 		} else if (status === 'refunded' && amount > 0) {
 			events.push({
 				id: '', date, serviceDate: svc(claimFromDesc), sortKey: sortKey + 3, patientId: pid, patientName, type: 'patient-payment', claimRef: claimFromDesc,
+				// allow-any-unicode-next-line
 				description: `Refund to patient — ${desc || 'refunded payment'}`,
-				debit: round2(amount), credit: 0, info: 0, balance: 0,
+				debit: round2(amount), credit: 0, info: 0, balance: 0, claimBalance: 0,
 			});
 		}
 	}
 
-	// -- Per-patient running balance, oldest → newest --
+	// -- Per-patient + per-claim running balances, oldest to newest --
 	events.sort((a, b) => a.sortKey - b.sortKey);
-	const balances = new Map<string, number>();
+	assignBalances(events);
 	const idSeen = new Map<string, number>();
 	for (const e of events) {
-		const next = round2((balances.get(e.patientId) || 0) + e.debit - e.credit);
-		balances.set(e.patientId, next);
-		e.balance = next;
 		// Stable id (survives reloads) so a local delete keeps hiding the same row.
 		const base = `${e.type}|${e.patientId}|${e.claimRef}|${e.date}|${e.debit}|${e.credit}|${e.info}`;
 		const n = (idSeen.get(base) || 0) + 1;
@@ -249,15 +287,25 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 	return events;
 }
 
-/** Recompute each patient's running balance over a newest-first event list (used after local deletes). */
-function recomputeBalances(newestFirst: LedgerEvent[]): void {
-	const balances = new Map<string, number>();
-	for (let i = newestFirst.length - 1; i >= 0; i--) {
-		const e = newestFirst[i];
-		const next = round2((balances.get(e.patientId) || 0) + e.debit - e.credit);
-		balances.set(e.patientId, next);
-		e.balance = next;
+/** Assign per-patient and per-claim running balances over an OLDEST-FIRST list. */
+function assignBalances(oldestFirst: LedgerEvent[]): void {
+	const byPatient = new Map<string, number>();
+	const byClaim = new Map<string, number>();
+	for (const e of oldestFirst) {
+		const delta = e.debit - e.credit;
+		const p = round2((byPatient.get(e.patientId) || 0) + delta);
+		byPatient.set(e.patientId, p);
+		e.balance = p;
+		const ck = claimKey(e);
+		const c = round2((byClaim.get(ck) || 0) + delta);
+		byClaim.set(ck, c);
+		e.claimBalance = c;
 	}
+}
+
+/** Recompute running balances over a newest-first event list (used after local deletes). */
+function recomputeBalances(newestFirst: LedgerEvent[]): void {
+	assignBalances([...newestFirst].reverse());
 }
 
 /** Column totals across a set of ledger events. */
@@ -292,18 +340,119 @@ const TYPE_META: Record<LedgerEventType, { label: string; color: string }> = {
 	'patient-portion': { label: 'Patient Portion Due', color: '#f59e0b' },
 };
 
+// allow-any-unicode-next-line
+// ── Claim grouping ─────────────────────────────────────────────────────────
+
+/** Grouping key: a claim belongs to exactly one patient. */
+function claimKey(e: LedgerEvent): string {
+	return `${e.patientId}|${e.claimRef || 'unlinked'}`;
+}
+
+export type LedgerClaimStatus = 'paid' | 'patient-due' | 'awaiting-insurance' | 'open' | 'credit';
+
+/** One claim (or a patient's unlinked activity) with every posting behind it. */
+export interface LedgerClaimGroup {
+	key: string;
+	claimRef: string;
+	patientId: string;
+	patientName: string;
+	/** Date of service of the claim's charge (falls back to the earliest posting). */
+	serviceDate: string;
+	/** Most recent posting date in the group — the list is ordered by this. */
+	lastActivity: string;
+	sortKey: number;
+	/** Newest-first postings. */
+	events: LedgerEvent[];
+	charges: number;
+	insurancePaid: number;
+	adjustments: number;
+	patientPaid: number;
+	/** Patient responsibility still sitting unpaid (pending copay/deductible/coinsurance). */
+	patientDue: number;
+	/** charges - insurance - adjustments - patient payments. */
+	balance: number;
+	status: LedgerClaimStatus;
+}
+
+const STATUS_META: Record<LedgerClaimStatus, { label: string; color: string }> = {
+	'paid': { label: 'Settled', color: '#22c55e' },
+	'patient-due': { label: 'Patient Due', color: '#f59e0b' },
+	'awaiting-insurance': { label: 'Awaiting Insurance', color: '#3b9edd' },
+	'open': { label: 'Open Balance', color: '#ef4444' },
+	'credit': { label: 'Credit Balance', color: '#14b8a6' },
+};
+
+/**
+ * Money owed reads as a plain amount; money the account is AHEAD by reads as a
+ * credit ("$25.00 CR") rather than a bare minus sign, which billers misread as
+ * a broken balance.
+ */
+function balanceLabel(balance: number): string {
+	return balance < -0.005 ? `${money(Math.abs(balance))} CR` : money(Math.max(balance, 0));
+}
+
+/** Roll a flat event list up into one entry per claim, newest activity first. */
+export function groupLedgerByClaim(events: LedgerEvent[]): LedgerClaimGroup[] {
+	const groups = new Map<string, LedgerClaimGroup>();
+	for (const e of events) {
+		const key = claimKey(e);
+		let g = groups.get(key);
+		if (!g) {
+			g = {
+				key, claimRef: e.claimRef, patientId: e.patientId, patientName: e.patientName,
+				serviceDate: '', lastActivity: '', sortKey: 0, events: [],
+				charges: 0, insurancePaid: 0, adjustments: 0, patientPaid: 0, patientDue: 0,
+				balance: 0, status: 'open',
+			};
+			groups.set(key, g);
+		}
+		if (!g.patientName && e.patientName) { g.patientName = e.patientName; }
+		g.events.push(e);
+		if (e.sortKey > g.sortKey) { g.sortKey = e.sortKey; g.lastActivity = e.date; }
+		if (e.type === 'charge' && e.serviceDate) { g.serviceDate = e.serviceDate; }
+		else if (!g.serviceDate && e.serviceDate) { g.serviceDate = e.serviceDate; }
+		switch (e.type) {
+			case 'charge': g.charges += e.debit; break;
+			case 'ins-payment':
+			case 'ins-payment-secondary': g.insurancePaid += e.credit; break;
+			case 'writeoff': g.adjustments += e.credit; break;
+			case 'patient-payment': g.patientPaid += e.credit - e.debit; break;
+			case 'patient-portion': g.patientDue += e.info; break;
+		}
+	}
+	const out = [...groups.values()];
+	for (const g of out) {
+		g.charges = round2(g.charges);
+		g.insurancePaid = round2(g.insurancePaid);
+		g.adjustments = round2(g.adjustments);
+		g.patientPaid = round2(g.patientPaid);
+		// Money already collected settles the recorded responsibility first, so a
+		// claim the front desk has collected on stops advertising a patient due.
+		g.patientDue = round2(Math.max(0, g.patientDue - g.patientPaid));
+		g.balance = round2(g.charges - g.insurancePaid - g.adjustments - g.patientPaid);
+		g.events.sort((a, b) => b.sortKey - a.sortKey);
+		g.status = g.balance < -0.005 ? 'credit'
+			: g.balance <= 0.005 ? 'paid'
+				: g.patientDue > 0.005 ? 'patient-due'
+					: (g.insurancePaid > 0 || g.adjustments > 0) ? 'open'
+						: 'awaiting-insurance';
+	}
+	out.sort((a, b) => b.sortKey - a.sortKey);
+	return out;
+}
+
 /**
  * Host services the ledger's per-row Actions column needs. Supplied by both the
  * Payments editor and the patient chart (each backs it with its own storage,
- * file service and dialogs) so the shared table can offer View / Download /
- * Delete without depending on VS Code services directly.
+ * file service and dialogs) so the shared table can offer View / Delete
+ * without depending on VS Code services directly.
  */
 export interface ILedgerActionsHost {
 	/** Locally-hidden entry ids (kept per patient in the host's storage). */
 	readHidden(): Set<string>;
 	/** Persist the updated hidden-id set. */
 	writeHidden(ids: Set<string>): void;
-	/** Save a generated single-entry statement file locally (no native Save dialog). */
+	/** Save a generated statement file locally (no native Save dialog). */
 	saveStatement(fileName: string, html: string): Promise<void>;
 	/** Confirm a delete; resolve true to proceed. */
 	confirmDelete(message: string): Promise<boolean>;
@@ -340,6 +489,18 @@ export function makeLedgerActionsHost(deps: {
 	};
 }
 
+/**
+ * The ledger's two — and only two — download options (QA 27-Jul): the statement
+ * as a PDF and the same ledger as an Excel workbook.
+ */
+export interface ILedgerExportHost {
+	/** Render printable statement HTML to a PDF through the native host. */
+	savePdf(fileName: string, html: string): Promise<void>;
+	/** Write an Excel workbook's bytes to disk. */
+	saveWorkbook(fileName: string, data: Uint8Array): Promise<void>;
+	notify(message: string): void;
+}
+
 export interface IRenderLedgerOptions {
 	/** Show the Patient column (all-patients view); off for the chart's single-patient page. */
 	showPatientColumn: boolean;
@@ -352,95 +513,119 @@ export interface IRenderLedgerOptions {
 	 * what made a cleared filter reappear on its own (QA 27-Jul).
 	 */
 	onFilterChange?: (value: string) => void;
-	/** When set, render a per-row Actions column (View / Download / Delete) backed by this host. */
+	/** When set, render a per-row Actions column (View / Delete) backed by this host. */
 	actionsHost?: ILedgerActionsHost;
+	/** When set, the toolbar offers the Statement (PDF) + Excel downloads. */
+	exportHost?: ILedgerExportHost;
+	/** Name used in the statement header (single-patient ledgers). */
+	accountName?: string;
 }
 
 /**
- * Render summary cards + a filterable ledger table into `host`. Every row is
- * one financial event with explicit Debit / Credit columns and the patient's
- * running balance after it.
+ * Render summary cards + a claim-grouped ledger into `host`. Each claim card
+ * carries the money summary for that claim and expands to the postings behind
+ * it (charge, insurance payment, write-off, patient payment, patient portion).
  */
 export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRenderLedgerOptions): void {
 	DOM.clearNode(host);
 
 	// -- Summary cards --
 	const cards = DOM.append(host, DOM.$('div'));
-	cards.style.cssText = 'display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;';
-	const card = (label: string, value: string, color: string) => {
+	cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:12px;';
+	const card = (label: string, value: string, color: string, hint: string) => {
 		const c = DOM.append(cards, DOM.$('div'));
-		c.style.cssText = 'flex:0 0 158px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:10px 14px;text-align:center;';
-		const v = DOM.append(c, DOM.$('div')); v.textContent = value; v.style.cssText = `font-size:17px;font-weight:700;color:${color};`;
-		const l = DOM.append(c, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+		c.title = hint;
+		c.style.cssText = `border:1px solid var(--vscode-editorWidget-border);border-top:3px solid ${color};border-radius:8px;padding:10px 14px;background:var(--vscode-editorWidget-background,transparent);`;
+		const v = DOM.append(c, DOM.$('div')); v.textContent = value; v.style.cssText = `font-size:18px;font-weight:700;color:${color};`;
+		const l = DOM.append(c, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-top:3px;';
 		return v;
 	};
 	const totalsEls = {
-		charges: card('Total Charges', money(0), 'var(--vscode-foreground)'),
-		insurancePaid: card('Insurance Paid', money(0), '#3b9edd'),
-		patientPaid: card('Patient Paid', money(0), '#22c55e'),
-		adjustments: card('Write-offs / Adj', money(0), '#8b5cf6'),
-		patientPortionDue: card('Patient Portion Due', money(0), '#f59e0b'),
-		outstanding: card('Outstanding Balance', money(0), '#ef4444'),
+		charges: card('Total Charges', money(0), 'var(--vscode-foreground)', 'Everything billed on the visible claims.'),
+		insurancePaid: card('Insurance Paid', money(0), '#3b9edd', 'Primary + secondary payer payments received.'),
+		adjustments: card('Write-offs / Adj', money(0), '#8b5cf6', 'Contractual adjustments the patient never owes.'),
+		patientPaid: card('Patient Paid', money(0), '#22c55e', 'Money collected from the patient (refunds subtracted).'),
+		patientPortionDue: card('Patient Due Now', money(0), '#f59e0b', 'Copay / deductible / coinsurance assigned by an EOB and not yet collected.'),
+		outstanding: card('Outstanding Balance', money(0), '#ef4444', 'Charges minus insurance payments, adjustments and patient payments.'),
 	};
 
-	// -- Filter bar --
+	// -- Toolbar: filter + the two downloads --
 	const bar = DOM.append(host, DOM.$('div'));
-	bar.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
+	bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;';
 	const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
 	search.placeholder = opts.showPatientColumn ? 'Filter by patient, claim #, type, description...' : 'Filter by claim #, type, description...';
 	search.value = opts.initialFilter || '';
-	search.style.cssText = 'flex:0 0 340px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+	search.style.cssText = 'flex:0 0 320px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
 	const countEl = DOM.append(bar, DOM.$('span'));
 	countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+
+	const toolBtn = (label: string, tip: string, primary: boolean): HTMLButtonElement => {
+		const b = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
+		b.textContent = label;
+		b.title = tip;
+		b.style.cssText = primary
+			? 'padding:5px 12px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;'
+			: 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:11px;';
+		return b;
+	};
 	// Clear button — clearing the box must STAY cleared (the host is told, so a
 	// later reload doesn't restore the patient-bar name).
-	const clearBtn = DOM.append(bar, DOM.$('button')) as HTMLButtonElement;
-	clearBtn.textContent = 'Clear';
-	clearBtn.title = 'Clear the ledger filter';
-	clearBtn.style.cssText = 'padding:5px 10px;background:transparent;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:11px;';
+	const clearBtn = toolBtn('Clear', 'Clear the ledger filter', false);
+	const expandBtn = toolBtn('Expand All', 'Show every posting on every claim', false);
+	const spacer = DOM.append(bar, DOM.$('span'));
+	spacer.style.cssText = 'flex:1;';
+	let pdfBtn: HTMLButtonElement | undefined;
+	let xlsBtn: HTMLButtonElement | undefined;
+	if (opts.exportHost) {
+		pdfBtn = toolBtn('Download Statement (PDF)', 'Save the visible ledger as a printable patient statement PDF', true);
+		xlsBtn = toolBtn('Download Excel', 'Save the visible ledger as an Excel (.xlsx) workbook', false);
+	}
 
-	// -- Table --
-	const host2 = opts.actionsHost;
+	// -- Claim list --
+	const actions = opts.actionsHost;
 	const scroll = DOM.append(host, DOM.$('div'));
-	scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
-	// Columns: Date · Service Date · [Patient] · Type · Claim # · Description · Debit · Credit · Balance · [Actions]
-	const patientCol = opts.showPatientColumn ? 'minmax(110px,1fr) ' : '';
-	const actionsCol = host2 ? ' 108px' : '';
-	const COLS = `88px 92px ${patientCol}138px 76px minmax(180px,1.8fr) 84px 88px 92px${actionsCol}`;
-	const header = DOM.append(scroll, DOM.$('div'));
-	header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
-	const heads = ['Date', 'Service Date',
-		...(opts.showPatientColumn ? ['Patient'] : []),
-		'Type', 'Claim #', 'Description', 'Debit', 'Credit', 'Balance',
-		...(host2 ? ['Actions'] : [])];
-	for (const h of heads) { DOM.append(header, DOM.$('span')).textContent = h; }
+	scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px;';
 
-	const body = DOM.append(scroll, DOM.$('div'));
+	/** Claim keys currently expanded. */
+	const expanded = new Set<string>();
+	let allExpanded = false;
+	/** What the export buttons act on — kept in sync with what is on screen. */
+	let visibleGroups: LedgerClaimGroup[] = [];
 
 	const renderRows = () => {
-		DOM.clearNode(body);
+		DOM.clearNode(scroll);
 		const q = search.value.trim().toLowerCase();
-		// Locally-deleted rows are hidden and the running balance recomputed over
-		// what's left, so the ledger stays internally consistent after a delete.
-		const hidden = host2 ? host2.readHidden() : new Set<string>();
+		// Locally-deleted rows are hidden and the balances recomputed over what's
+		// left, so the ledger stays internally consistent after a delete.
+		const hidden = actions ? actions.readHidden() : new Set<string>();
 		const active = hidden.size ? events.filter(e => !hidden.has(e.id)) : events;
 		if (hidden.size) { recomputeBalances(active); }
-		const visible = active.filter(e => {
+		const matches = active.filter(e => {
 			if (!q) { return true; }
 			return `${e.patientName} ${e.claimRef} ${TYPE_META[e.type].label} ${e.description} ${e.date} ${e.serviceDate}`.toLowerCase().includes(q);
 		});
 
-		const totals = ledgerTotals(visible);
+		const totals = ledgerTotals(matches);
 		totalsEls.charges.textContent = money(totals.charges);
 		totalsEls.insurancePaid.textContent = money(totals.insurancePaid);
 		totalsEls.patientPaid.textContent = money(totals.patientPaid);
 		totalsEls.adjustments.textContent = money(totals.adjustments);
 		totalsEls.patientPortionDue.textContent = money(totals.patientPortionDue);
 		totalsEls.outstanding.textContent = money(totals.outstanding);
-		countEl.textContent = `${visible.length} entr${visible.length === 1 ? 'y' : 'ies'}`;
 
-		if (visible.length === 0) {
-			const e = DOM.append(body, DOM.$('div'));
+		const groups = groupLedgerByClaim(matches);
+		visibleGroups = groups;
+		// The Patient Due card must agree with the claim cards below it: a claim
+		// that has already been collected on no longer advertises a due amount.
+		totalsEls.patientPortionDue.textContent = money(round2(groups.reduce((s, g) => s + g.patientDue, 0)));
+		const entryCount = matches.length;
+		countEl.textContent = `${groups.length} claim${groups.length === 1 ? '' : 's'} / ${entryCount} entr${entryCount === 1 ? 'y' : 'ies'}`;
+		if (pdfBtn) { pdfBtn.disabled = groups.length === 0; }
+		if (xlsBtn) { xlsBtn.disabled = groups.length === 0; }
+		expandBtn.textContent = allExpanded ? 'Collapse All' : 'Expand All';
+
+		if (groups.length === 0) {
+			const e = DOM.append(scroll, DOM.$('div'));
 			e.textContent = q
 				? 'No ledger entries match the filter.'
 				: 'No financial activity yet — bill a fee sheet and its charges, payments and adjustments show here.';
@@ -448,30 +633,108 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 			return;
 		}
 
-		for (const ev of visible) {
-			const meta = TYPE_META[ev.type];
+		for (const g of groups) { renderClaimCard(g); }
+	};
+
+	const renderClaimCard = (g: LedgerClaimGroup): void => {
+		const meta = STATUS_META[g.status];
+		const open = allExpanded || expanded.has(g.key);
+		const cardEl = DOM.append(scroll, DOM.$('div'));
+		// `flex-shrink:0` is required: the scroller is a flex column, so without it
+		// every card shrinks to share the visible height and the claim's
+		// patient/DOS sub-line is clipped away.
+		cardEl.style.cssText = `flex:0 0 auto;border:1px solid var(--vscode-editorWidget-border);border-left:4px solid ${meta.color};border-radius:8px;overflow:hidden;background:var(--vscode-editorWidget-background,transparent);`;
+
+		// -- Header: claim identity on the left, the money summary on the right --
+		const head = DOM.append(cardEl, DOM.$('div'));
+		head.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 12px;cursor:pointer;flex-wrap:wrap;';
+		head.title = open ? 'Hide this claim\'s postings' : 'Show every posting on this claim';
+		head.addEventListener('mouseenter', () => { head.style.background = 'var(--vscode-list-hoverBackground)'; });
+		head.addEventListener('mouseleave', () => { head.style.background = ''; });
+		head.addEventListener('click', () => {
+			if (open) { expanded.delete(g.key); allExpanded = false; } else { expanded.add(g.key); }
+			renderRows();
+		});
+
+		const chevron = DOM.append(head, DOM.$('span'));
+		// allow-any-unicode-next-line
+		chevron.textContent = open ? '⌄' : '›';
+		chevron.style.cssText = 'width:12px;color:var(--vscode-descriptionForeground);font-size:13px;flex-shrink:0;';
+
+		const ident = DOM.append(head, DOM.$('div'));
+		ident.style.cssText = 'flex:1 1 210px;min-width:180px;';
+		const claimLine = DOM.append(ident, DOM.$('div'));
+		claimLine.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+		const claimEl = DOM.append(claimLine, DOM.$('span'));
+		claimEl.textContent = g.claimRef || 'Unlinked activity';
+		claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:13px;font-weight:700;';
+		const badge = DOM.append(claimLine, DOM.$('span'));
+		badge.textContent = meta.label;
+		badge.style.cssText = `padding:1px 8px;border-radius:9px;font-size:10px;font-weight:600;color:${meta.color};border:1px solid ${meta.color}55;background:${meta.color}14;white-space:nowrap;`;
+		const subLine = DOM.append(ident, DOM.$('div'));
+		const who = opts.showPatientColumn ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : 'Unknown patient')) : '';
+		// allow-any-unicode-next-line
+		const dos = g.serviceDate ? `DOS ${usDate(g.serviceDate)}` : '';
+		// allow-any-unicode-next-line
+		const last = g.lastActivity ? `last activity ${usDate(g.lastActivity)}` : '';
+		// allow-any-unicode-next-line
+		subLine.textContent = [who, dos, last].filter(Boolean).join('  ·  ');
+		subLine.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+		if (opts.showPatientColumn && who) {
+			subLine.title = 'Filter the ledger to this patient';
+			subLine.style.cursor = 'pointer';
+			subLine.addEventListener('click', e => {
+				e.stopPropagation();
+				search.value = g.patientName || g.patientId;
+				opts.onFilterChange?.(search.value);
+				renderRows();
+			});
+		}
+
+		const figures = DOM.append(head, DOM.$('div'));
+		figures.style.cssText = 'display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:flex-end;';
+		const figure = (label: string, value: number, color: string, dim: boolean, text?: string) => {
+			const f = DOM.append(figures, DOM.$('div'));
+			f.style.cssText = 'min-width:82px;text-align:right;';
+			const v = DOM.append(f, DOM.$('div'));
+			v.textContent = text ?? money(value);
+			v.style.cssText = `font-size:13px;font-weight:${dim ? '500' : '700'};color:${dim && value <= 0 ? 'var(--vscode-descriptionForeground)' : color};`;
+			const l = DOM.append(f, DOM.$('div'));
+			l.textContent = label;
+			l.style.cssText = 'font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);';
+		};
+		figure('Charges', g.charges, 'var(--vscode-foreground)', true);
+		figure('Insurance', g.insurancePaid, '#3b9edd', true);
+		figure('Adjustments', g.adjustments, '#8b5cf6', true);
+		figure('Patient Paid', g.patientPaid, '#22c55e', true);
+		figure('Patient Due', g.patientDue, '#f59e0b', true);
+		figure('Balance', g.balance, g.balance > 0.005 ? '#ef4444' : g.balance < -0.005 ? '#14b8a6' : '#22c55e', false, balanceLabel(g.balance));
+
+		if (!open) { return; }
+
+		// -- Expanded: every posting behind those figures --
+		const body = DOM.append(cardEl, DOM.$('div'));
+		body.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);background:rgba(128,128,128,0.04);';
+		const COLS = `88px 92px 150px minmax(180px,1.6fr) 90px 90px 96px${actions ? ' 70px' : ''}`;
+		const header = DOM.append(body, DOM.$('div'));
+		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;padding:7px 12px 7px 28px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);`;
+		for (const h of ['Date', 'Service Date', 'Type', 'Description', 'Charge', 'Paid / Adj', 'Claim Balance', ...(actions ? ['Actions'] : [])]) {
+			DOM.append(header, DOM.$('span')).textContent = h;
+		}
+
+		for (const ev of g.events) {
+			const tmeta = TYPE_META[ev.type];
 			const r = DOM.append(body, DOM.$('div'));
-			r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;align-items:center;padding:7px 12px;border-top:1px solid rgba(128,128,128,0.1);font-size:12px;`;
+			r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;align-items:center;padding:6px 12px 6px 28px;border-top:1px solid rgba(128,128,128,0.08);font-size:12px;`;
 			DOM.append(r, DOM.$('span')).textContent = usDate(ev.date);
 			const dosEl = DOM.append(r, DOM.$('span'));
+			// allow-any-unicode-next-line
 			dosEl.textContent = ev.serviceDate ? usDate(ev.serviceDate) : '—';
-			dosEl.title = 'Date of service';
 			dosEl.style.cssText = 'color:var(--vscode-descriptionForeground);';
-			if (opts.showPatientColumn) {
-				const p = DOM.append(r, DOM.$('span'));
-				const label = ev.patientName || (ev.patientId ? `Patient #${ev.patientId}` : '—');
-				p.textContent = label;
-				p.title = 'Filter the ledger to this patient';
-				p.style.cssText = 'font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
-				p.addEventListener('click', () => { search.value = label; opts.onFilterChange?.(label); renderRows(); });
-			}
 			const typeEl = DOM.append(r, DOM.$('span'));
-			const badge = DOM.append(typeEl, DOM.$('span'));
-			badge.textContent = meta.label;
-			badge.style.cssText = `display:inline-block;padding:2px 8px;border-radius:9px;font-size:10px;font-weight:600;color:${meta.color};border:1px solid ${meta.color}55;background:${meta.color}14;white-space:nowrap;`;
-			const claimEl = DOM.append(r, DOM.$('span'));
-			claimEl.textContent = ev.claimRef || '—';
-			claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;';
+			const tb = DOM.append(typeEl, DOM.$('span'));
+			tb.textContent = tmeta.label;
+			tb.style.cssText = `display:inline-block;padding:2px 8px;border-radius:9px;font-size:10px;font-weight:600;color:${tmeta.color};border:1px solid ${tmeta.color}55;background:${tmeta.color}14;white-space:nowrap;`;
 			const descEl = DOM.append(r, DOM.$('span'));
 			descEl.textContent = ev.description;
 			descEl.title = ev.description;
@@ -480,20 +743,21 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 			debitEl.textContent = ev.debit > 0 ? money(ev.debit) : '';
 			debitEl.style.cssText = 'text-align:right;font-weight:600;';
 			const creditEl = DOM.append(r, DOM.$('span'));
-			// A due-from-patient row carries its amount in the Credit column as
-			// context ("(due $x)") so billers see it without it moving the math.
-			creditEl.textContent = ev.credit > 0 ? money(ev.credit) : (ev.type === 'patient-portion' ? `(due ${money(ev.info)})` : '');
+			// A due-from-patient row carries its amount here as context ("due $x")
+			// so billers see it without it moving the math.
+			creditEl.textContent = ev.credit > 0 ? money(ev.credit) : (ev.type === 'patient-portion' ? `due ${money(ev.info)}` : '');
 			creditEl.style.cssText = `text-align:right;font-weight:600;color:${ev.type === 'patient-portion' ? '#f59e0b' : '#22c55e'};`;
 			const balEl = DOM.append(r, DOM.$('span'));
-			balEl.textContent = money(ev.balance);
-			balEl.style.cssText = `text-align:right;font-weight:700;color:${ev.balance > 0.005 ? '#ef4444' : 'var(--vscode-foreground)'};`;
+			balEl.textContent = balanceLabel(ev.claimBalance);
+			balEl.title = `Balance on claim ${g.claimRef || '(unlinked)'} after this posting. Account balance: ${money(ev.balance)}`;
+			balEl.style.cssText = `text-align:right;font-weight:700;color:${ev.claimBalance > 0.005 ? '#ef4444' : ev.claimBalance < -0.005 ? '#14b8a6' : 'var(--vscode-foreground)'};`;
 
-			// -- Actions: View (detail) · Download (single-entry statement) · Delete (local hide) --
-			if (host2) {
-				const actions = DOM.append(r, DOM.$('span'));
-				actions.style.cssText = 'display:flex;gap:4px;justify-content:flex-end;';
+			// -- Actions: View (detail) - Delete (local hide) --
+			if (actions) {
+				const act = DOM.append(r, DOM.$('span'));
+				act.style.cssText = 'display:flex;gap:4px;justify-content:flex-end;';
 				const actBtn = (icon: string, tip: string, color: string, run: () => void) => {
-					const b = DOM.append(actions, DOM.$('button')) as HTMLButtonElement;
+					const b = DOM.append(act, DOM.$('button')) as HTMLButtonElement;
 					b.textContent = icon;
 					b.title = tip;
 					b.style.cssText = `background:transparent;border:1px solid ${color}44;color:${color};border-radius:5px;width:26px;height:24px;cursor:pointer;font-size:13px;line-height:1;padding:0;`;
@@ -501,14 +765,13 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 					return b;
 				};
 				actBtn('\u{1F441}', 'View full details', 'var(--vscode-foreground)', () => showLedgerEntry(host, ev, opts.showPatientColumn));
-				actBtn('\u{2B07}', 'Download this entry', '#3b9edd', () => { downloadLedgerEntry(host2, ev); });
 				actBtn('\u{1F5D1}', 'Delete from this ledger view', '#ef4444', async () => {
-					const ok = await host2.confirmDelete(`Remove this ${TYPE_META[ev.type].label.toLowerCase()} entry from the ledger view? It won't affect the underlying charge or payment record.`);
+					const ok = await actions.confirmDelete(`Remove this ${TYPE_META[ev.type].label.toLowerCase()} entry from the ledger view? It won't affect the underlying charge or payment record.`);
 					if (!ok) { return; }
-					const set = host2.readHidden();
+					const set = actions.readHidden();
 					set.add(ev.id);
-					host2.writeHidden(set);
-					host2.notify('Ledger entry removed from the view.');
+					actions.writeHidden(set);
+					actions.notify('Ledger entry removed from the view.');
 					renderRows();
 				});
 			}
@@ -522,25 +785,170 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		renderRows();
 		search.focus();
 	});
+	expandBtn.addEventListener('click', () => {
+		allExpanded = !allExpanded;
+		if (!allExpanded) { expanded.clear(); }
+		renderRows();
+	});
+
+	const exportHost = opts.exportHost;
+	if (exportHost && pdfBtn && xlsBtn) {
+		const stamp = new Date().toISOString().slice(0, 10);
+		const who = (opts.accountName || search.value.trim() || 'all-patients').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+		pdfBtn.addEventListener('click', async () => {
+			console.log('[ledger] pdf click', visibleGroups.length);
+			try {
+				await exportHost.savePdf(`ledger-statement-${who}-${stamp}.pdf`,
+					ledgerStatementHtml(visibleGroups, { accountName: opts.accountName || (search.value.trim() || undefined), showPatient: opts.showPatientColumn }));
+			} catch (e) {
+				exportHost.notify(`Could not create the statement PDF: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		});
+		xlsBtn.addEventListener('click', async () => {
+			console.log('[ledger] xls click', visibleGroups.length);
+			try {
+				await exportHost.saveWorkbook(`ledger-${who}-${stamp}.xlsx`, ledgerWorkbook(visibleGroups, opts.showPatientColumn));
+			} catch (e) {
+				exportHost.notify(`Could not create the Excel file: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		});
+	}
+
 	renderRows();
 }
 
-/** The full field list for one ledger entry (shared by the View modal and the Download receipt). */
+// allow-any-unicode-next-line
+// ── Exports: statement PDF + Excel workbook ────────────────────────────────
+
+function escapeHtml(v: string): string {
+	return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Printable patient-statement markup for the visible claims: an account summary
+ * followed by one block per claim listing every posting on it. Rendered into
+ * the workbench window behind a print stylesheet and captured as a PDF.
+ */
+export function ledgerStatementHtml(groups: LedgerClaimGroup[], opts: { accountName?: string; showPatient: boolean }): string {
+	const totals = groups.reduce((acc, g) => ({
+		charges: acc.charges + g.charges,
+		insurance: acc.insurance + g.insurancePaid,
+		adjustments: acc.adjustments + g.adjustments,
+		patientPaid: acc.patientPaid + g.patientPaid,
+		patientDue: acc.patientDue + g.patientDue,
+		balance: acc.balance + g.balance,
+	}), { charges: 0, insurance: 0, adjustments: 0, patientPaid: 0, patientDue: 0, balance: 0 });
+
+	const claimBlocks = groups.map(g => {
+		const rows = g.events.slice().reverse().map(ev => `<tr>
+<td>${escapeHtml(usDate(ev.date))}</td>
+<td>${escapeHtml(TYPE_META[ev.type].label)}</td>
+<td>${escapeHtml(ev.description)}</td>
+<td class="amt">${ev.debit > 0 ? money(ev.debit) : ''}</td>
+<td class="amt">${ev.credit > 0 ? money(ev.credit) : (ev.type === 'patient-portion' ? `due ${money(ev.info)}` : '')}</td>
+<td class="amt">${balanceLabel(ev.claimBalance)}</td>
+</tr>`).join('\n');
+		const heading = [
+			g.claimRef || 'Unlinked activity',
+			opts.showPatient ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : '')) : '',
+			g.serviceDate ? `DOS ${usDate(g.serviceDate)}` : '',
+		].filter(Boolean).join(' | ');
+		return `<div class="claim">
+<h2>${escapeHtml(heading)} <span class="pill">${escapeHtml(STATUS_META[g.status].label)}</span></h2>
+<div class="figs">Charges ${money(g.charges)} &nbsp;|&nbsp; Insurance ${money(g.insurancePaid)} &nbsp;|&nbsp; Adjustments ${money(g.adjustments)} &nbsp;|&nbsp; Patient paid ${money(g.patientPaid)} &nbsp;|&nbsp; <b>Balance ${balanceLabel(g.balance)}</b></div>
+<table>
+<thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="amt">Charge</th><th class="amt">Paid / Adj</th><th class="amt">Claim Balance</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>
+</div>`;
+	}).join('\n');
+
+	const heading = opts.accountName ? `Patient Statement — ${escapeHtml(opts.accountName)}` : 'Ledger Statement';
+	return `<div class="stmt">
+<h1>${heading}</h1>
+<div class="meta">Statement date: ${escapeHtml(new Date().toLocaleDateString('en-US'))} &nbsp;|&nbsp; ${groups.length} claim${groups.length === 1 ? '' : 's'}</div>
+<table class="summary">
+<tr><th>Total charges</th><td class="amt">${money(totals.charges)}</td>
+<th>Insurance paid</th><td class="amt">${money(totals.insurance)}</td>
+<th>Write-offs / adjustments</th><td class="amt">${money(totals.adjustments)}</td></tr>
+<tr><th>Patient paid</th><td class="amt">${money(totals.patientPaid)}</td>
+<th>Patient due now</th><td class="amt">${money(totals.patientDue)}</td>
+<th>Outstanding balance</th><td class="amt"><b>${balanceLabel(totals.balance)}</b></td></tr>
+</table>
+${claimBlocks}
+<div class="due">Please pay <b>${money(totals.patientDue > 0 ? totals.patientDue : Math.max(totals.balance, 0))}</b>. Amounts still pending with your insurance are not due yet and may change after processing.</div>
+</div>`;
+}
+
+/** Excel columns for the ledger export — one row per posting, claim-ordered. */
+const LEDGER_SHEET_COLUMNS: IXlsxColumn[] = [
+	{ header: 'Claim #', width: 14 },
+	{ header: 'Patient', width: 24 },
+	{ header: 'Claim Status', width: 18 },
+	{ header: 'Service Date', width: 13 },
+	{ header: 'Posting Date', width: 13 },
+	{ header: 'Type', width: 22 },
+	{ header: 'Description', width: 46 },
+	{ header: 'Charge', width: 12, kind: 'money' },
+	{ header: 'Paid / Adjusted', width: 15, kind: 'money' },
+	{ header: 'Patient Due', width: 12, kind: 'money' },
+	{ header: 'Claim Balance', width: 14, kind: 'money' },
+];
+
+/**
+ * The visible ledger as an Excel workbook: every posting as a row, plus one
+ * bold-free TOTAL row per claim so the sheet reconciles claim by claim.
+ */
+export function ledgerWorkbook(groups: LedgerClaimGroup[], showPatient: boolean): Uint8Array {
+	const rows: XlsxRow[] = [];
+	for (const g of groups) {
+		const patient = showPatient ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : '')) : (g.patientName || '');
+		for (const ev of g.events.slice().reverse()) {
+			rows.push([
+				g.claimRef || 'Unlinked',
+				patient,
+				STATUS_META[g.status].label,
+				ev.serviceDate ? usDate(ev.serviceDate) : '',
+				usDate(ev.date),
+				TYPE_META[ev.type].label,
+				ev.description,
+				ev.debit > 0 ? ev.debit : null,
+				ev.credit > 0 ? ev.credit : null,
+				ev.type === 'patient-portion' ? ev.info : null,
+				ev.claimBalance,
+			]);
+		}
+		rows.push([
+			g.claimRef || 'Unlinked', patient, STATUS_META[g.status].label, '', '', 'CLAIM TOTAL', '',
+			g.charges, round2(g.insurancePaid + g.adjustments + g.patientPaid), g.patientDue, g.balance,
+		]);
+	}
+	return buildXlsx('Ledger', LEDGER_SHEET_COLUMNS, rows);
+}
+
+/** The full field list for one ledger entry (shared by the View modal). */
 function ledgerEntryFields(ev: LedgerEvent, showPatient: boolean): Array<[string, string]> {
 	const rows: Array<[string, string]> = [
 		['Type', TYPE_META[ev.type].label],
 		['Posting Date', usDate(ev.date)],
+		// allow-any-unicode-next-line
 		['Date of Service', ev.serviceDate ? usDate(ev.serviceDate) : '—'],
 	];
+	// allow-any-unicode-next-line
 	if (showPatient) { rows.push(['Patient', ev.patientName || (ev.patientId ? `Patient #${ev.patientId}` : '—')]); }
 	rows.push(
+		// allow-any-unicode-next-line
 		['Claim #', ev.claimRef || '—'],
+		// allow-any-unicode-next-line
 		['Description', ev.description || '—'],
+		// allow-any-unicode-next-line
 		['Debit (charge)', ev.debit > 0 ? money(ev.debit) : '—'],
+		// allow-any-unicode-next-line
 		['Credit (paid / adjusted)', ev.credit > 0 ? money(ev.credit) : '—'],
 	);
 	if (ev.type === 'patient-portion') { rows.push(['Patient portion due', money(ev.info)]); }
-	rows.push(['Running Balance', money(ev.balance)]);
+	rows.push(['Claim Balance', money(ev.claimBalance)]);
+	rows.push(['Account Balance', money(ev.balance)]);
 	return rows;
 }
 
@@ -588,23 +996,4 @@ function showLedgerEntry(host: HTMLElement, ev: LedgerEvent, showPatient: boolea
 		const v = DOM.append(grid, DOM.$('div')); v.textContent = value;
 		v.style.cssText = 'font-weight:500;word-break:break-word;';
 	}
-}
-
-/** Build a one-entry HTML receipt and hand it to the host to save locally. */
-function downloadLedgerEntry(actionsHost: ILedgerActionsHost, ev: LedgerEvent): void {
-	const esc = (v: string): string => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-	const rowsHtml = ledgerEntryFields(ev, true)
-		.map(([l, v]) => `<tr><th>${esc(l)}</th><td>${esc(v)}</td></tr>`)
-		.join('\n');
-	const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Ledger Entry — ${esc(ev.claimRef || TYPE_META[ev.type].label)}</title><style>
-body{font-family:Arial,sans-serif;color:#222;margin:24px;}
-h1{font-size:18px;} table{border-collapse:collapse;margin-top:12px;font-size:13px;}
-th,td{border:1px solid #ccc;padding:6px 12px;text-align:left;} th{background:#f0f4f8;white-space:nowrap;}
-</style></head><body>
-<h1>Ledger Entry — ${esc(TYPE_META[ev.type].label)}</h1>
-<table>${rowsHtml}</table>
-</body></html>`;
-	const stamp = (ev.claimRef || ev.type).replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-	actionsHost.saveStatement(`ledger-entry-${stamp}-${ev.date || 'entry'}.html`, html);
 }

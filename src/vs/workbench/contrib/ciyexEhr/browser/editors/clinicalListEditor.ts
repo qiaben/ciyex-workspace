@@ -451,13 +451,15 @@ const STATUS_COLORS: Record<string, string> = {
 interface IThemedModalField {
 	key: string;
 	label: string;
-	type?: 'text' | 'number' | 'date' | 'textarea';
+	type?: 'text' | 'number' | 'date' | 'textarea' | 'select';
 	value?: string;
 	placeholder?: string;
 	/** When true, the confirm button is blocked until this field has a value. */
 	required?: boolean;
 	/** For 'textarea' type: number of visible rows (taller reason boxes). Default 4. */
 	rows?: number;
+	/** For 'select' type: the choices offered (e.g. the payment methods). */
+	options?: Array<{ label: string; value: string }>;
 }
 
 interface IThemedModalOptions {
@@ -513,14 +515,24 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 		}
 
 		const inputStyle = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
-		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
 		for (const f of opts.fields) {
 			const grp = DOM.append(modal, DOM.$('div'));
 			grp.style.cssText = 'margin-bottom:12px;';
 			const lbl = DOM.append(grp, DOM.$('label'));
 			lbl.textContent = f.label + (f.required ? ' *' : '');
 			lbl.style.cssText = 'display:block;font-size:11px;margin-bottom:4px;color:var(--vscode-descriptionForeground);';
-			if (f.type === 'textarea') {
+			if (f.type === 'select') {
+				const sel = DOM.append(grp, DOM.$('select')) as HTMLSelectElement;
+				for (const o of f.options ?? []) {
+					const opt = DOM.append(sel, DOM.$('option')) as HTMLOptionElement;
+					opt.value = o.value;
+					opt.textContent = o.label;
+				}
+				sel.value = f.value ?? (f.options?.[0]?.value ?? '');
+				sel.style.cssText = inputStyle;
+				inputs.set(f.key, sel);
+			} else if (f.type === 'textarea') {
 				const ta = DOM.append(grp, DOM.$('textarea')) as HTMLTextAreaElement;
 				ta.value = f.value ?? '';
 				ta.placeholder = f.placeholder ?? '';
