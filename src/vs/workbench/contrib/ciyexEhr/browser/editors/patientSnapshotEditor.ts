@@ -2803,7 +2803,6 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ icon: 'symbol-method', title: 'Add Medication', onClick: () => this._openCreateModal('medications') },
 			{ icon: 'shield', title: 'Add Insurance Coverage', onClick: () => this._openCreateModal('insurance') },
 			{ icon: 'beaker', title: 'Order Lab', onClick: () => this._openCreateModal('labOrders') },
-			{ icon: 'note', title: 'Add Visit Note', onClick: () => this._openCreateModal('visit-notes') },
 			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openCreateModal('statements') },
 			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openCreateModal('claims') },
 		];
