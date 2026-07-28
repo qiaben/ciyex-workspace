@@ -28,7 +28,7 @@ function ensureRcmInstalled(accessor: ServicesAccessor): boolean {
 	const commands = accessor.get(ICommandService);
 	notifications.notify({
 		severity: Severity.Info,
-		message: 'Revenue Cycle Management is a marketplace app. Install Ciyex RCM from the Hub to unlock billing, claims and denials.',
+		message: 'Revenue Cycle Management is a marketplace app. Install Qiaben RCM from the Hub to unlock billing, claims and denials.',
 		actions: {
 			primary: [{
 				id: 'ciyex.rcm.goToCheckout', label: 'Open Marketplace', tooltip: '', class: undefined, enabled: true,

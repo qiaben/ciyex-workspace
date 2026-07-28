@@ -64,6 +64,12 @@ export class EncounterFormEditor extends EditorPane {
 	// encounter's Past/Family/Social sections were pre-filled from — save upserts
 	// the SAME record so history stays one shared store across surfaces.
 	private _chartHistoryId = '';
+	// List hosts of the PMH section's chart-backed Allergies / Medications
+	// blocks, kept so a record charted on ANOTHER surface (the patient chart's
+	// Allergies / Medications tabs) can repaint them in place without a
+	// full form re-render that would drop in-progress edits.
+	private _chartAllergyListHost: HTMLElement | undefined;
+	private _chartMedicationListHost: HTMLElement | undefined;
 	private _encounterStatus = '';
 	private _serviceDate = '';
 	private _statusBadge: HTMLElement | undefined;
@@ -110,6 +116,27 @@ export class EncounterFormEditor extends EditorPane {
 			if (String(m.record.sourceId ?? '') === this._editorInstanceId) { return; }
 			if (this._isDirty || this._isSigned) { return; }
 			void this._applyChartHistoryToForm(m.record);
+		}));
+		// Allergies / Medications charted on the patient chart must appear in the
+		// encounter form's Past Medical / Surgical History lists straight away —
+		// the reverse direction of the inline add forms there. Repaint just the
+		// list host so unsaved encounter edits survive.
+		this._register(this.apiService.onDidMutateClinicalRecord(m => {
+			if (m.entity !== 'allergies' && m.entity !== 'medications') { return; }
+			if (!this.patientId) { return; }
+			if (String(m.patientId ?? m.record.patientId ?? '') !== this.patientId) { return; }
+			if (String(m.record.sourceId ?? '') === this._editorInstanceId) { return; }
+			const host = m.entity === 'allergies' ? this._chartAllergyListHost : this._chartMedicationListHost;
+			if (!host || !host.isConnected) { return; }
+			// A create is appended straight from the broadcast record: an immediate
+			// refetch usually races the FHIR search index and would miss the row.
+			if (m.kind === 'create') {
+				EncounterFormEditor._chartListRow(host, EncounterFormEditor._chartRowLabel(m.entity, m.record), m.record.status ?? m.record.clinicalStatus);
+				return;
+			}
+			DOM.clearNode(host);
+			const reload = m.entity === 'allergies' ? this._loadChartAllergyRows(host) : this._loadChartMedicationRows(host);
+			void reload.catch(() => { /* keep whatever is on screen */ });
 		}));
 	}
 
@@ -433,21 +460,34 @@ export class EncounterFormEditor extends EditorPane {
 	}
 
 	/**
-	 * The encounter form carries NO allergy / medication blocks at all — the
-	 * chart's Allergies and Medications tabs are the single source for those
-	 * records (QA 22-Jul: they read as duplicate sections on the encounter
-	 * page). Drop any standalone "Allergies & Medications" section a backend
-	 * or legacy local config still ships, the old free-text pmh_allergies /
-	 * pmh_medications fields, and any chart-backed allergy-list /
-	 * medication-list fields earlier builds folded into Past Medical History.
+	 * Allergies and Medications live INSIDE Past Medical / Surgical History as
+	 * chart-backed lists — they read and write the same AllergyIntolerance /
+	 * MedicationRequest store the patient chart's Allergies and Medications tabs
+	 * use, so a record added on either surface appears on the other (QA 28-Jul).
+	 *
+	 * Drop any standalone "Allergies & Medications" section a backend or legacy
+	 * local config still ships (it duplicated the blocks as its own page) and
+	 * the old FREE-TEXT pmh_allergies / pmh_medications fields, then guarantee
+	 * the two chart-backed list fields exist in PMH regardless of which config
+	 * shipped the section — backend tab_field_config rows carry neither.
 	 */
 	private static _foldAllergiesMedsIntoPmh(sections: FieldSection[]): FieldSection[] {
 		const isAllergiesMedsSection = (s: FieldSection): boolean =>
 			s.key === 'allergies_meds' || /allerg/i.test(s.title || '') && /medication/i.test(s.title || '');
-		const dropKeys = new Set(['pmh_allergies', 'pmh_medications', 'chart_allergies', 'chart_medications']);
-		return sections
+		const dropKeys = new Set(['pmh_allergies', 'pmh_medications']);
+		const out = sections
 			.filter(s => !isAllergiesMedsSection(s))
-			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '') && f.type !== 'allergy-list' && f.type !== 'medication-list') }));
+			.map(s => ({ ...s, fields: (s.fields || []).filter(f => !dropKeys.has(f.key || '')) }));
+
+		const pmh = out.find(s => s.key === 'pmh' || /past medical/i.test(s.title || ''));
+		if (!pmh) { return out; }
+		if (!pmh.fields.some(f => f.type === 'allergy-list')) {
+			pmh.fields.push({ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' });
+		}
+		if (!pmh.fields.some(f => f.type === 'medication-list')) {
+			pmh.fields.push({ key: 'chart_medications', label: 'Medications', type: 'medication-list' });
+		}
+		return out;
 	}
 
 	/**
@@ -532,12 +572,15 @@ export class EncounterFormEditor extends EditorPane {
 				]
 			},
 			{
-				// No allergy / medication fields here — the chart's Allergies and
-				// Medications tabs are the single source for those records
-				// (QA 22-Jul: they read as duplicates on the encounter page).
+				// The Allergies / Medications blocks read and write the SAME
+				// AllergyIntolerance / MedicationRequest store the patient chart's
+				// Allergies and Medications tabs use, so a record charted on either
+				// surface shows on the other (QA 28-Jul).
 				key: 'pmh', title: 'Past Medical / Surgical History', columns: 1, visible: true, collapsible: true, collapsed: true, fields: [
 					{ key: 'pmh_conditions', label: 'Medical History', type: 'textarea', placeholder: 'List past medical conditions...' },
 					{ key: 'pmh_surgeries', label: 'Surgical History', type: 'textarea', placeholder: 'List past surgeries...' },
+					{ key: 'chart_allergies', label: 'Allergies', type: 'allergy-list' },
+					{ key: 'chart_medications', label: 'Medications', type: 'medication-list' },
 				]
 			},
 			// QA 27-Jul: every Family History and Social History field is a large
@@ -2073,6 +2116,21 @@ export class EncounterFormEditor extends EditorPane {
 		EncounterFormEditor._statusPill(row, EncounterFormEditor._activeInactive(status));
 	}
 
+	/** Row label for an allergy / medication record broadcast by another editor —
+	 *  the same "name — detail" shape the loaded lists render. */
+	private static _chartRowLabel(entity: string, rec: Record<string, unknown>): string {
+		if (entity === 'allergies') {
+			const name = EncounterFormEditor._codeText(rec.allergyName) || EncounterFormEditor._codeText(rec.name)
+				|| EncounterFormEditor._codeText(rec.code) || EncounterFormEditor._codeText(rec.substance) || 'Unknown allergen';
+			const allergen = EncounterFormEditor._codeText(rec.allergen) || EncounterFormEditor._codeText(rec.substance);
+			return allergen && allergen !== name ? `${name} — ${allergen}` : name;
+		}
+		const name = EncounterFormEditor._codeText(rec.medicationName) || EncounterFormEditor._codeText(rec.name)
+			|| EncounterFormEditor._codeText(rec.medication) || EncounterFormEditor._codeText(rec.code) || 'Unknown medication';
+		const dosage = EncounterFormEditor._codeText(rec.dosage) || EncounterFormEditor._codeText(rec.dose);
+		return dosage ? `${name} — ${dosage}` : name;
+	}
+
 	/** Sub-heading + list host + inline add-form scaffold shared by the
 	 *  chart-backed Allergies / Medications blocks inside Past Medical History. */
 	private _chartListScaffold(parent: HTMLElement, label: string): { listHost: HTMLElement; formHost: HTMLElement } {
@@ -2089,6 +2147,10 @@ export class EncounterFormEditor extends EditorPane {
 		return { listHost, formHost };
 	}
 
+	/** The chart's Dosage rule — a number followed by a REQUIRED unit, so plain
+	 *  numbers and pure-letter input fail on the encounter form too. */
+	private static readonly _DOSAGE_PATTERN = /^\d+(\.\d+)?\s*(mg|mcg|g|mL|ml|L|IU|units?|tablets?|tabs?|capsules?|caps?|drops?|gtt|puffs?|sprays?|patches?|%)(\s*\/\s*\d+(\.\d+)?\s*(mL|ml|L)?)?$/;
+
 	private static readonly _MINI_INPUT_STYLE = 'padding:5px 8px;font-size:12px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);outline:none;box-sizing:border-box;';
 
 	/** The patient's charted Allergies (allergen name + Active/Inactive status)
@@ -2099,6 +2161,7 @@ export class EncounterFormEditor extends EditorPane {
 	 *  folded into Past Medical History). */
 	private async _renderChartAllergyList(parent: HTMLElement, readOnly?: boolean): Promise<void> {
 		const { listHost, formHost } = this._chartListScaffold(parent, 'Allergies');
+		this._chartAllergyListHost = listHost;
 		await this._loadChartAllergyRows(listHost);
 		if (readOnly) { return; }
 
@@ -2111,25 +2174,18 @@ export class EncounterFormEditor extends EditorPane {
 			inp.style.cssText = EncounterFormEditor._MINI_INPUT_STYLE + `flex:${flex};min-width:110px;`;
 			return inp;
 		};
+		// Same three fields the chart's New Allergies form marks as the clinically
+		// relevant ones: Allergy (*), Allergen and Clinical Status (*).
 		const nameInp = mk('Allergy *', '2');
-		const reactionInp = mk('Reaction', '2');
+		const allergenInp = mk('Allergen', '2');
 		const statusWrap = DOM.append(form, DOM.$('div'));
-		statusWrap.style.cssText = 'width:110px;';
+		statusWrap.style.cssText = 'width:130px;';
 		const statusSel = createCustomDropdown({
 			parent: statusWrap,
 			options: [{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Resolved', value: 'resolved' }],
 			initialValue: 'active',
-			placeholder: 'Status *',
-			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
-		});
-		const sevWrap = DOM.append(form, DOM.$('div'));
-		sevWrap.style.cssText = 'width:110px;';
-		const sevSel = createCustomDropdown({
-			parent: sevWrap,
-			options: [{ label: 'Mild', value: 'mild' }, { label: 'Moderate', value: 'moderate' }, { label: 'Severe', value: 'severe' }],
-			initialValue: '',
-			placeholder: 'Severity…',
-			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
+			placeholder: 'Clinical Status *',
+			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:130px;',
 		});
 		const addBtn = DOM.append(form, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+ Add';
@@ -2139,9 +2195,21 @@ export class EncounterFormEditor extends EditorPane {
 
 		addBtn.addEventListener('click', async () => {
 			const name = nameInp.value.trim();
-			// Same letters-only rule the chart's Allergy add form enforces.
+			const allergen = allergenInp.value.trim();
+			// Same letters-only rule the chart's Allergy add form enforces on both
+			// the Allergy and the Allergen field.
 			if (!name || !/^[A-Za-z][A-Za-z ]*$/.test(name)) {
 				err.textContent = !name ? 'Allergy name is required.' : 'Allergy may contain only letters and spaces.';
+				err.style.display = 'block';
+				return;
+			}
+			if (allergen && !/^[A-Za-z][A-Za-z ]*$/.test(allergen)) {
+				err.textContent = 'Allergen may contain only letters and spaces.';
+				err.style.display = 'block';
+				return;
+			}
+			if (!statusSel.value) {
+				err.textContent = 'Clinical status is required.';
 				err.style.display = 'block';
 				return;
 			}
@@ -2149,13 +2217,12 @@ export class EncounterFormEditor extends EditorPane {
 			addBtn.disabled = true;
 			try {
 				const body: Record<string, unknown> = { allergyName: name, status: statusSel.value, patientId: this.patientId };
-				if (sevSel.value) { body.severity = sevSel.value; }
-				if (reactionInp.value.trim()) { body.reaction = reactionInp.value.trim(); }
+				if (allergen) { body.allergen = allergen; }
 				const res = await this.apiService.fetch(`/api/fhir-resource/allergies/patient/${this.patientId}`, { method: 'POST', body: JSON.stringify(body) });
 				if (!res.ok) { throw new Error(String(res.status)); }
-				nameInp.value = ''; reactionInp.value = '';
+				nameInp.value = ''; allergenInp.value = '';
 				this.apiService.notifyClinicalRecordMutation({ entity: 'allergies', patientId: this.patientId, kind: 'create', record: { patientId: this.patientId, sourceId: this._editorInstanceId } });
-				EncounterFormEditor._chartListRow(listHost, name, body.status);
+				EncounterFormEditor._chartListRow(listHost, allergen ? `${name} — ${allergen}` : name, body.status);
 			} catch {
 				err.textContent = 'Could not save the allergy. Please try again.';
 				err.style.display = 'block';
@@ -2189,10 +2256,11 @@ export class EncounterFormEditor extends EditorPane {
 		for (const a of rows) {
 			const name = EncounterFormEditor._codeText(a.allergyName) || EncounterFormEditor._codeText(a.name)
 				|| EncounterFormEditor._codeText(a.code) || EncounterFormEditor._codeText(a.substance) || 'Unknown allergen';
+			const allergen = EncounterFormEditor._codeText(a.allergen) || EncounterFormEditor._codeText(a.substance);
 			const row = DOM.append(parent, DOM.$('div'));
 			row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(128,128,128,0.12);';
 			const nameEl = DOM.append(row, DOM.$('span'));
-			nameEl.textContent = name;
+			nameEl.textContent = allergen && allergen !== name ? `${name} — ${allergen}` : name;
 			nameEl.style.cssText = 'font-size:12px;color:var(--vscode-foreground);flex:1;';
 			EncounterFormEditor._statusPill(row, EncounterFormEditor._activeInactive(a.status ?? a.clinicalStatus));
 		}
@@ -2204,6 +2272,7 @@ export class EncounterFormEditor extends EditorPane {
 	 *  add form with the chart form's required (*) fields. */
 	private async _renderChartMedicationList(parent: HTMLElement, readOnly?: boolean): Promise<void> {
 		const { listHost, formHost } = this._chartListScaffold(parent, 'Medications');
+		this._chartMedicationListHost = listHost;
 		await this._loadChartMedicationRows(listHost);
 		if (readOnly) { return; }
 
@@ -2216,16 +2285,24 @@ export class EncounterFormEditor extends EditorPane {
 			inp.style.cssText = EncounterFormEditor._MINI_INPUT_STYLE + `flex:${flex};min-width:110px;`;
 			return inp;
 		};
-		const nameInp = mk('Medication *', '2');
+		// Same three fields the chart's New Medications form marks as the
+		// clinically relevant ones: Medication Name (*), Dosage and Status (*).
+		const nameInp = mk('Medication Name *', '2');
 		const doseInp = mk('Dosage *', '1');
 		const statusWrap = DOM.append(form, DOM.$('div'));
-		statusWrap.style.cssText = 'width:110px;';
+		statusWrap.style.cssText = 'width:130px;';
 		const statusSel = createCustomDropdown({
 			parent: statusWrap,
-			options: [{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' }, { label: 'Stopped', value: 'stopped' }],
+			// Mirrors the chart's medications status list so a record created here
+			// round-trips to the same MedicationRequest.status values.
+			options: [
+				{ label: 'Draft', value: 'draft' }, { label: 'Active', value: 'active' },
+				{ label: 'On Hold', value: 'on-hold' }, { label: 'Stopped', value: 'stopped' },
+				{ label: 'Completed', value: 'completed' }, { label: 'Cancelled', value: 'cancelled' },
+			],
 			initialValue: 'active',
-			placeholder: 'Status',
-			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:110px;',
+			placeholder: 'Status *',
+			triggerStyle: EncounterFormEditor._MINI_INPUT_STYLE + 'cursor:pointer;width:130px;',
 		});
 		const addBtn = DOM.append(form, DOM.$('button')) as HTMLButtonElement;
 		addBtn.textContent = '+ Add';
@@ -2236,13 +2313,26 @@ export class EncounterFormEditor extends EditorPane {
 		addBtn.addEventListener('click', async () => {
 			const name = nameInp.value.trim();
 			const dose = doseInp.value.trim();
-			if (!name || !/^[A-Za-z][A-Za-z ]*$/.test(name)) {
-				err.textContent = !name ? 'Medication name is required.' : 'Medication may contain only letters and spaces.';
+			// Same rules the chart's Medication add form enforces.
+			if (!name || !/^[A-Za-z0-9 ,.\-/()+&']{2,120}$/.test(name)) {
+				err.textContent = !name
+					? 'Medication name is required.'
+					: 'Medication name must be 2-120 characters and contain only letters, numbers, and common punctuation.';
 				err.style.display = 'block';
 				return;
 			}
 			if (!dose) {
 				err.textContent = 'Dosage is required.';
+				err.style.display = 'block';
+				return;
+			}
+			if (!EncounterFormEditor._DOSAGE_PATTERN.test(dose)) {
+				err.textContent = 'Dosage must be a number followed by a unit (e.g. "500 mg", "10 mL", "2 tablets").';
+				err.style.display = 'block';
+				return;
+			}
+			if (!statusSel.value) {
+				err.textContent = 'Status is required.';
 				err.style.display = 'block';
 				return;
 			}

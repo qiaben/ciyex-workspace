@@ -1,6 +1,6 @@
 {
 	"name": "ciyex-rcm",
-	"displayName": "Ciyex RCM — Revenue Cycle Management",
+	"displayName": "Qiaben RCM — Revenue Cycle Management",
 	"description": "Unlocks the full Revenue Cycle Management suite inside the Ciyex workbench: the Billing (RCM) sidebar, automated claim submission, ERA/EOB posting, denial work queues, secondary-payer coordination, patient statements and A/R reporting. Disable this extension to fall back to the built-in non-subscription 'lite' billing in the Payments editor.",
 	"version": "0.1.0",
 	"publisher": "ciyex",
@@ -35,7 +35,7 @@
 			{
 				"command": "ciyex-rcm.status",
 				"title": "RCM: Show Subscription Status",
-				"category": "Ciyex RCM"
+				"category": "Qiaben RCM"
 			}
 		],
 		"menus": {
@@ -47,7 +47,7 @@
 			]
 		},
 		"configuration": {
-			"title": "Ciyex RCM",
+			"title": "Qiaben RCM",
 			"properties": {
 				"ciyex.rcm.directUrl": {
 					"type": "string",

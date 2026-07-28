@@ -1,6 +1,6 @@
 {
 	"name": "ciyex-payment-paypal",
-	"displayName": "Ciyex Payment — PayPal",
+	"displayName": "Qiaben Payment — PayPal",
 	"description": "PayPal payment gateway for Ciyex. Registers as a sibling of the Stripe gateway via the same ciyex.payment.registerGateway handshake — no workbench code change.",
 	"version": "0.1.0",
 	"publisher": "ciyex",
@@ -33,12 +33,12 @@
 			{
 				"command": "ciyex-payment-paypal.checkout",
 				"title": "Checkout with PayPal",
-				"category": "Ciyex Payment"
+				"category": "Qiaben Payment"
 			},
 			{
 				"command": "ciyex-payment-paypal.configure",
 				"title": "Configure PayPal Client ID",
-				"category": "Ciyex Payment"
+				"category": "Qiaben Payment"
 			}
 		],
 		"menus": {
@@ -54,7 +54,7 @@
 			]
 		},
 		"configuration": {
-			"title": "Ciyex Payment — PayPal",
+			"title": "Qiaben Payment — PayPal",
 			"properties": {
 				"ciyex.payment.paypal.clientId": {
 					"type": "string",

@@ -815,13 +815,13 @@ registerAction2(class extends Action2 {
 					severity: Severity.Warning,
 					message: localize2(
 						'telehealthExtDisabled',
-						"The Ciyex Telehealth extension is required for video visits. Enable it from the Extensions view.",
+						"The Qiaben Telehealth extension is required for video visits. Enable it from the Extensions view.",
 					).value,
 					actions: {
 						primary: [{
 							id: 'ciyex.telehealth.openExtensionsView',
 							label: localize2('openExtensions', "Open Extensions").value,
-							tooltip: 'Show the Ciyex Telehealth extension',
+							tooltip: 'Show the Qiaben Telehealth extension',
 							class: undefined,
 							enabled: true,
 							run: async () => { await commandService.executeCommand('workbench.view.extensions'); },
@@ -991,7 +991,7 @@ registerAction2(class extends Action2 {
 				severity: Severity.Warning,
 				message: localize2(
 					'noPaymentGateway',
-					"No payment gateway extension is installed. Install Ciyex Payment — Stripe (or another gateway) from the Extensions view.",
+					"No payment gateway extension is installed. Install Qiaben Payment — Stripe (or another gateway) from the Extensions view.",
 				).value,
 				actions: {
 					primary: [{
@@ -1243,7 +1243,7 @@ registerAction2(class extends Action2 {
 		if (!gateway) {
 			notifications.notify({
 				severity: Severity.Warning,
-				message: localize('patientPayNoGateway', "No payment gateway extension is installed. Install Ciyex Payment — Stripe (or another gateway) from the Extensions view."),
+				message: localize('patientPayNoGateway', "No payment gateway extension is installed. Install Qiaben Payment — Stripe (or another gateway) from the Extensions view."),
 				actions: {
 					primary: [{
 						id: 'ciyex.patientPay.openExtensionsView',

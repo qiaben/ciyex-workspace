@@ -358,7 +358,9 @@ export class EhrTitlebarControls extends Disposable {
 		btn.title = 'Donate';
 		btn.setAttribute('aria-label', 'Donate');
 
-		DOM.append(btn, DOM.$('span.codicon.codicon-heart'));
+		// Filled red heart — the donate affordance should read as a call to
+		// action, not as another monochrome toolbar glyph.
+		DOM.append(btn, DOM.$('span.codicon.codicon-heart-filled'));
 
 		this._register(DOM.addDisposableListener(btn, 'click', (e) => {
 			e.stopPropagation();

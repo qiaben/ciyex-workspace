@@ -30,6 +30,7 @@ import { friendlyBackendError } from './clinicalListEditor.js';
 import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
@@ -2174,6 +2175,9 @@ export class PatientChartEditor extends EditorPane {
 	// Pager for the main-panel list tabs (currently Appointments) — cleared on
 	// every list render so stale controls don't pile up.
 	private readonly _listPagerDisposables = this._register(new DisposableStore());
+	// Distinguishes this editor instance in the cross-editor save broadcast so
+	// an instance never invalidates its own freshly-merged optimistic row.
+	private readonly _editorInstanceId = generateUuid();
 
 	constructor(
 		group: IEditorGroup,
@@ -2194,14 +2198,36 @@ export class PatientChartEditor extends EditorPane {
 		super(PatientChartEditor.ID, group, telemetryService, themeService, storageSvc);
 		this._configHome = URI.joinPath(environmentService.userRoamingDataHome, '.ciyex');
 		this.sidebarCollapsed = this.storageSvc.getBoolean(SIDEBAR_COLLAPSED_KEY, StorageScope.PROFILE, false);
-		// History saved from the encounter form lands in the same chart History
-		// store this editor renders — drop the cached tab (and re-render it when
-		// it's on screen) so the just-charted history shows without a reload.
+		// History, Allergies and Medications saved from the encounter form land in
+		// the same chart stores this editor renders — drop the cached tab (and
+		// re-render it when it's on screen) so the just-charted record shows
+		// without a reload. Allergies / Medications are charted from the encounter
+		// form's Past Medical / Surgical History section (QA 28-Jul).
 		this._register(this.apiService.onDidMutateClinicalRecord(m => {
-			if (m.entity !== 'history' || !this.patientId) { return; }
+			if (!this.patientId) { return; }
+			if (m.entity !== 'history' && m.entity !== 'allergies' && m.entity !== 'medications') { return; }
 			if (String(m.patientId || m.record.patientId || '') !== this.patientId) { return; }
-			this._tabDataCache.delete('history');
-			if (this.activeTab === 'history') { this._renderMain(); }
+			// Our own save already merged the record optimistically into the cache;
+			// invalidating here would refetch against a stale FHIR index and blink
+			// the new row away until the delayed reconciliation runs.
+			if (String(m.record.sourceId || '') === this._editorInstanceId) { return; }
+			this._tabDataCache.delete(m.entity);
+			if (this.activeTab === m.entity) { this._renderMain(); }
+			if (m.entity !== 'history') {
+				void this._loadQuickInfo();
+				void this._refreshTabCounts();
+				// The FHIR search index lags the create by a second or two, so the
+				// refetch above can still come back without the new row. Reconcile
+				// once more against a cold cache — same trick this editor's own
+				// save path uses.
+				const entity = m.entity;
+				DOM.getActiveWindow().setTimeout(() => {
+					this._tabDataCache.delete(entity);
+					if (this.activeTab === entity) { this._renderMain(); }
+					void this._loadQuickInfo();
+					void this._refreshTabCounts();
+				}, 1500);
+			}
 		}));
 	}
 
@@ -7207,7 +7233,7 @@ export class PatientChartEditor extends EditorPane {
 							entity: tab.key,
 							patientId: this.patientId,
 							kind: isEdit ? 'update' : 'create',
-							record: merged,
+							record: { ...merged, sourceId: this._editorInstanceId },
 						});
 					}
 

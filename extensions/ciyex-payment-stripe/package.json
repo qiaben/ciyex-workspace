@@ -1,6 +1,6 @@
 {
 	"name": "ciyex-payment-stripe",
-	"displayName": "Ciyex Payment — Stripe",
+	"displayName": "Qiaben Payment — Stripe",
 	"description": "Stripe payment gateway for purchasing Ciyex marketplace extensions (telehealth, eRx, RCM, payment gateway, ...). Supports card, Apple Pay, Google Pay, Link, and ACH.",
 	"version": "0.1.0",
 	"publisher": "ciyex",
@@ -34,12 +34,12 @@
 			{
 				"command": "ciyex-payment-stripe.checkout",
 				"title": "Checkout with Stripe",
-				"category": "Ciyex Payment"
+				"category": "Qiaben Payment"
 			},
 			{
 				"command": "ciyex-payment-stripe.configure",
 				"title": "Configure Stripe Publishable Key",
-				"category": "Ciyex Payment"
+				"category": "Qiaben Payment"
 			}
 		],
 		"menus": {
@@ -79,7 +79,7 @@
 			]
 		},
 		"configuration": {
-			"title": "Ciyex Payment — Stripe",
+			"title": "Qiaben Payment — Stripe",
 			"properties": {
 				"ciyex.payment.stripe.publishableKey": {
 					"type": "string",

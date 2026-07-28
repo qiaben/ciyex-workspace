@@ -1,6 +1,6 @@
 {
 	"name": "ciyex-telehealth",
-	"displayName": "Ciyex Telehealth",
+	"displayName": "Qiaben Telehealth",
 	"description": "Video visits inside the Ciyex workbench. Hosts the provider-side telehealth session (mediasoup WebRTC or iframe vendor) for an appointment, with recording, chat, and mute/camera controls.",
 	"version": "0.1.0",
 	"publisher": "ciyex",
@@ -35,12 +35,12 @@
 			{
 				"command": "ciyex-telehealth.openSession",
 				"title": "Open Video Visit",
-				"category": "Ciyex Telehealth"
+				"category": "Qiaben Telehealth"
 			},
 			{
 				"command": "ciyex-telehealth.configure",
 				"title": "Configure Telehealth",
-				"category": "Ciyex Telehealth"
+				"category": "Qiaben Telehealth"
 			}
 		],
 		"menus": {
@@ -56,7 +56,7 @@
 			]
 		},
 		"configuration": {
-			"title": "Ciyex Telehealth",
+			"title": "Qiaben Telehealth",
 			"properties": {
 				"ciyex.telehealth.apiUrl": {
 					"type": "string",
