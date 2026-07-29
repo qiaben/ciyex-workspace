@@ -19,7 +19,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
 import { EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
-import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, loadLedgerStatementInfo, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
 import { savePrintableAsPdf } from './printableDocument.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -5287,6 +5287,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					if (name) { it['patientName'] = name; }
 				}
 			}
+			// Most recent transaction at the TOP (team request 29-Jul) — the backend
+			// returns them in insertion order, so the ordering is settled here.
+			const when = (it: Record<string, unknown>): number => {
+				const t = new Date(String(it['collectedAt'] ?? it['transactionDate'] ?? it['createdAt'] ?? '')).getTime();
+				return Number.isFinite(t) ? t : 0;
+			};
+			rows.sort((a, b) => when(b) - when(a));
 			return rows;
 		},
 		// Issue #12: full action set — View, Collect, Edit, Refund, Void, Delete —
@@ -5785,7 +5792,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					secPayer: '', secCheck: '', secDate: '', secPosted: false, secLines: [],
 					status: 'AWAITING_EOB' as const,
 				}));
-			this._insRows = [...awaitingRows, ...postingRows];
+			// Newest date of service at the TOP (team request 29-Jul). The list used
+			// to lead with every "Awaiting EOB" claim regardless of age, which put
+			// the oldest work at the top and today's claims below the fold.
+			this._insRows = [...awaitingRows, ...postingRows]
+				.sort((a, b) => (b.serviceDate || '').localeCompare(a.serviceDate || '') || (b.claimRef || '').localeCompare(a.claimRef || ''));
 		} catch {
 			this._insRows = [];
 		}
@@ -7680,10 +7691,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	 */
 	private _ledgerExportHost(): ILedgerExportHost {
 		return {
-			savePdf: async (fileName, html) => {
-				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
+			savePdf: async (fileName, html, printCss) => {
+				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html, printCss);
 				if (saved) { this.dialogService.info('Statement saved', saved); }
 			},
+			loadStatementInfo: patientIds => loadLedgerStatementInfo(this.apiService, patientIds),
 			saveWorkbook: async (fileName, data) => {
 				const target = URI.joinPath(await this.fileDialogService.defaultFilePath(), fileName);
 				await this.fileService.writeFile(target, VSBuffer.wrap(data));

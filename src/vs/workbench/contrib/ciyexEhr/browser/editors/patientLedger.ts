@@ -52,6 +52,8 @@ export interface LedgerEvent {
 	credit: number;
 	/** Informational amount for patient-portion rows — due, not yet paid, so it moves no balance. */
 	info: number;
+	/** Service codes billed on a charge posting; absent on money postings. */
+	codes?: string;
 	/** Running balance of THIS PATIENT's account after the event. */
 	balance: number;
 	/** Running balance of THIS CLAIM after the event (what the claim card expands to show). */
@@ -180,6 +182,7 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 			claimRef,
 			// allow-any-unicode-next-line
 			description: `Charges billed — ${codes.join(', ') || 'services'}`,
+			codes: codes.join(', '),
 			debit: charge, credit: 0, info: 0, balance: 0, claimBalance: 0,
 		});
 	}
@@ -340,6 +343,27 @@ const TYPE_META: Record<LedgerEventType, { label: string; color: string }> = {
 	'patient-portion': { label: 'Patient Portion Due', color: '#f59e0b' },
 };
 
+/**
+ * Order the postings inside a claim card read in, top to bottom: the charge
+ * comes first, then the money that settles it in the sequence a biller works
+ * it (primary EOB, secondary EOB, contractual write-off, patient payment) and
+ * finally what the patient still owes (QA 29-Jul). A newest-first list put the
+ * charge — the thing every other row refers to — at the BOTTOM of the card.
+ */
+const TYPE_ORDER: Record<LedgerEventType, number> = {
+	'charge': 0,
+	'ins-payment': 1,
+	'ins-payment-secondary': 2,
+	'writeoff': 3,
+	'patient-payment': 4,
+	'patient-portion': 5,
+};
+
+/** Workflow order first, then oldest-to-newest inside a type (repeat postings keep their sequence). */
+function compareForClaimCard(a: LedgerEvent, b: LedgerEvent): number {
+	return (TYPE_ORDER[a.type] - TYPE_ORDER[b.type]) || (a.sortKey - b.sortKey);
+}
+
 // allow-any-unicode-next-line
 // ── Claim grouping ─────────────────────────────────────────────────────────
 
@@ -361,7 +385,7 @@ export interface LedgerClaimGroup {
 	/** Most recent posting date in the group — the list is ordered by this. */
 	lastActivity: string;
 	sortKey: number;
-	/** Newest-first postings. */
+	/** Postings in workflow order: charge, insurance, secondary, write-off, patient payment, patient due. */
 	events: LedgerEvent[];
 	charges: number;
 	insurancePaid: number;
@@ -430,7 +454,7 @@ export function groupLedgerByClaim(events: LedgerEvent[]): LedgerClaimGroup[] {
 		// claim the front desk has collected on stops advertising a patient due.
 		g.patientDue = round2(Math.max(0, g.patientDue - g.patientPaid));
 		g.balance = round2(g.charges - g.insurancePaid - g.adjustments - g.patientPaid);
-		g.events.sort((a, b) => b.sortKey - a.sortKey);
+		g.events.sort(compareForClaimCard);
 		g.status = g.balance < -0.005 ? 'credit'
 			: g.balance <= 0.005 ? 'paid'
 				: g.patientDue > 0.005 ? 'patient-due'
@@ -494,8 +518,10 @@ export function makeLedgerActionsHost(deps: {
  * as a PDF and the same ledger as an Excel workbook.
  */
 export interface ILedgerExportHost {
-	/** Render printable statement HTML to a PDF through the native host. */
-	savePdf(fileName: string, html: string): Promise<void>;
+	/** Render printable statement HTML to a PDF through the native host, behind `printCss`. */
+	savePdf(fileName: string, html: string, printCss: string): Promise<void>;
+	/** Resolve the practice / guarantor letterhead for the statement (best-effort). */
+	loadStatementInfo?(patientIds: string[]): Promise<ILedgerStatementInfo>;
 	/** Write an Excel workbook's bytes to disk. */
 	saveWorkbook(fileName: string, data: Uint8Array): Promise<void>;
 	notify(message: string): void;
@@ -798,8 +824,13 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		const who = (opts.accountName || search.value.trim() || 'all-patients').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
 		pdfBtn.addEventListener('click', async () => {
 			try {
-				await exportHost.savePdf(`ledger-statement-${who}-${stamp}.pdf`,
-					ledgerStatementHtml(visibleGroups, { accountName: opts.accountName || (search.value.trim() || undefined), showPatient: opts.showPatientColumn }));
+				// The letterhead (practice + guarantor addresses) is only needed when a
+				// statement is actually generated, so it is fetched on click.
+				const patientIds = [...new Set(visibleGroups.map(g => g.patientId).filter(Boolean))];
+				const info = await exportHost.loadStatementInfo?.(patientIds);
+				await exportHost.savePdf(`patient-statement-${who}-${stamp}.pdf`,
+					ledgerStatementHtml(visibleGroups, { accountName: opts.accountName || (search.value.trim() || undefined), info }),
+					LEDGER_STATEMENT_PRINT_CSS);
 			} catch (e) {
 				exportHost.notify(`Could not create the statement PDF: ${e instanceof Error ? e.message : String(e)}`);
 			}
@@ -823,61 +854,291 @@ function escapeHtml(v: string): string {
 	return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/**
- * Printable patient-statement markup for the visible claims: an account summary
- * followed by one block per claim listing every posting on it. Rendered into
- * the workbench window behind a print stylesheet and captured as a PDF.
- */
-export function ledgerStatementHtml(groups: LedgerClaimGroup[], opts: { accountName?: string; showPatient: boolean }): string {
-	const totals = groups.reduce((acc, g) => ({
-		charges: acc.charges + g.charges,
-		insurance: acc.insurance + g.insurancePaid,
-		adjustments: acc.adjustments + g.adjustments,
-		patientPaid: acc.patientPaid + g.patientPaid,
-		patientDue: acc.patientDue + g.patientDue,
-		balance: acc.balance + g.balance,
-	}), { charges: 0, insurance: 0, adjustments: 0, patientPaid: 0, patientDue: 0, balance: 0 });
+/** Practice block printed on the statement's return-address corner. */
+export interface IStatementPractice {
+	name: string;
+	addressLine1: string;
+	addressLine2: string;
+	phone: string;
+}
 
-	const claimBlocks = groups.map(g => {
-		const rows = g.events.slice().reverse().map(ev => `<tr>
-<td>${escapeHtml(usDate(ev.date))}</td>
-<td>${escapeHtml(TYPE_META[ev.type].label)}</td>
-<td>${escapeHtml(ev.description)}</td>
-<td class="amt">${ev.debit > 0 ? money(ev.debit) : ''}</td>
-<td class="amt">${ev.credit > 0 ? money(ev.credit) : (ev.type === 'patient-portion' ? `due ${money(ev.info)}` : '')}</td>
-<td class="amt">${balanceLabel(ev.claimBalance)}</td>
+/** Guarantor block printed in the statement's mailing window. */
+export interface IStatementPatient {
+	name: string;
+	/** Short account label shown in the payment slip ("Account"). */
+	account: string;
+	addressLine1: string;
+	addressLine2: string;
+}
+
+/** Practice + patient identity the statement's letterhead and payment slip need. */
+export interface ILedgerStatementInfo {
+	practice: IStatementPractice;
+	/** patientId -> guarantor block. Missing ids fall back to the ledger's own name. */
+	patients: Record<string, IStatementPatient>;
+}
+
+/**
+ * Load the letterhead data for a statement: the practice profile once, plus the
+ * demographics of every patient the statement covers. Shared by the Payments
+ * editor and the patient chart so both statements are identical. Everything is
+ * best-effort — a failed lookup just leaves that line off the statement.
+ */
+export async function loadLedgerStatementInfo(apiService: ICiyexApiService, patientIds: string[]): Promise<ILedgerStatementInfo> {
+	const get = async (path: string): Promise<Record<string, unknown> | null> => {
+		try {
+			const r = await apiService.fetch(path);
+			if (!r.ok) { return null; }
+			const j = await r.json();
+			const data = (j?.data ?? j) as Record<string, unknown> | undefined;
+			const list = (data?.['content'] ?? data) as unknown;
+			if (Array.isArray(list)) { return (list[0] as Record<string, unknown>) ?? null; }
+			return (data ?? null) as Record<string, unknown> | null;
+		} catch {
+			return null;
+		}
+	};
+	const str = (v: unknown): string => (v === undefined || v === null) ? '' : String(v).trim();
+	/** Address fields arrive nested (`address:{line1,…}`) or flattened, depending on the endpoint. */
+	const addressOf = (rec: Record<string, unknown>): { line1: string; cityStateZip: string } => {
+		const a = (rec['address'] && typeof rec['address'] === 'object') ? rec['address'] as Record<string, unknown> : {};
+		const line1 = [str(rec['addressLine1'] || a['line1'] || a['line'] || rec['street']), str(rec['addressLine2'] || a['line2'])].filter(Boolean).join(', ');
+		const city = str(rec['city'] || a['city']);
+		const state = str(rec['state'] || a['state']);
+		const zip = str(rec['zip'] || rec['postalCode'] || rec['zipcode'] || a['postalCode'] || a['zip']);
+		const cityStateZip = [city, [state, zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+		return { line1, cityStateZip };
+	};
+
+	const [practiceRec, patientRecs] = await Promise.all([
+		get('/api/fhir-resource/practice?page=0&size=1').then(p => p ?? get('/api/practices?page=0&size=1')),
+		Promise.all(patientIds.map(async id => [id, await get(`/api/patients/${encodeURIComponent(id)}`)] as const)),
+	]);
+
+	const pa = practiceRec ? addressOf(practiceRec) : { line1: '', cityStateZip: '' };
+	const practice: IStatementPractice = {
+		name: practiceRec ? str(practiceRec['name'] || practiceRec['practiceName'] || practiceRec['dba']) : '',
+		addressLine1: pa.line1,
+		addressLine2: pa.cityStateZip,
+		phone: practiceRec ? str(practiceRec['phone'] || practiceRec['phoneNumber'] || practiceRec['telephone']) : '',
+	};
+
+	const patients: Record<string, IStatementPatient> = {};
+	for (const [id, rec] of patientRecs) {
+		if (!rec) { continue; }
+		const ident = (rec['identification'] && typeof rec['identification'] === 'object') ? rec['identification'] as Record<string, unknown> : {};
+		const first = str(rec['firstName'] || ident['firstName']);
+		const last = str(rec['lastName'] || ident['lastName']);
+		const addr = addressOf(rec);
+		patients[id] = {
+			// Statements address the guarantor "Last, First", the way a mailing label reads.
+			name: [last, first].filter(Boolean).join(', ') || str(rec['name'] || rec['fullName']),
+			account: str(rec['mrn'] || rec['medicalRecordNumber'] || ident['mrn']) || `#${id}`,
+			addressLine1: addr.line1,
+			addressLine2: addr.cityStateZip,
+		};
+	}
+	return { practice, patients };
+}
+
+/** `$-30.00` for money that came off the account, `$0.00` / `$135.00` otherwise (matches the statement convention). */
+function signedMoney(n: number): string {
+	const v = Number.isFinite(n) ? round2(n) : 0;
+	return v < 0 ? `$-${Math.abs(v).toFixed(2)}` : `$${v.toFixed(2)}`;
+}
+
+/** Whole days between two ISO dates (0 when either is missing). */
+function daysBetween(fromIso: string, to: Date): number {
+	const t = new Date(`${fromIso}T00:00:00`).getTime();
+	if (!fromIso || !Number.isFinite(t)) { return 0; }
+	return Math.max(0, Math.floor((to.getTime() - t) / 86400000));
+}
+
+/** Aging buckets over the claims that still carry a balance, by age of the service date. */
+function agingBuckets(groups: LedgerClaimGroup[], asOf: Date): { current: number; d31: number; d61: number; d91: number; d120: number } {
+	const b = { current: 0, d31: 0, d61: 0, d91: 0, d120: 0 };
+	for (const g of groups) {
+		if (g.balance <= 0.005) { continue; }
+		const age = daysBetween(g.serviceDate || g.lastActivity, asOf);
+		if (age <= 30) { b.current += g.balance; }
+		else if (age <= 60) { b.d31 += g.balance; }
+		else if (age <= 90) { b.d61 += g.balance; }
+		else if (age <= 120) { b.d91 += g.balance; }
+		else { b.d120 += g.balance; }
+	}
+	return { current: round2(b.current), d31: round2(b.d31), d61: round2(b.d61), d91: round2(b.d91), d120: round2(b.d120) };
+}
+
+/** The CPT / service codes billed on a claim, as printed in the statement's description column. */
+function claimServiceCodes(g: LedgerClaimGroup): string {
+	return g.events.find(e => e.type === 'charge')?.codes?.trim() || 'Services rendered';
+}
+
+/**
+ * One printable statement page per patient, laid out like the billing
+ * statements practices already mail (team reference, 29-Jul): a return-address
+ * letterhead beside a detachable payment slip, the guarantor's mailing block,
+ * the statement-detail table, then the account summary and aging boxes.
+ *
+ * `info` supplies the practice / guarantor identity; without it the page still
+ * prints, just with the ledger's own patient name and no addresses.
+ */
+export function ledgerStatementHtml(groups: LedgerClaimGroup[], opts: { accountName?: string; info?: ILedgerStatementInfo }): string {
+	const asOf = new Date();
+	const statementDate = usDate(asOf.toISOString().slice(0, 10));
+	const practice = opts.info?.practice;
+
+	// One page per patient — a statement is an account document, so an
+	// all-patients ledger prints as a stack of per-account statements.
+	const byPatient = new Map<string, LedgerClaimGroup[]>();
+	for (const g of groups) {
+		const key = g.patientId || g.patientName || 'unknown';
+		byPatient.set(key, [...(byPatient.get(key) || []), g]);
+	}
+	const pages = [...byPatient.entries()];
+
+	const pageHtml = (key: string, claims: LedgerClaimGroup[], pageNo: number): string => {
+		const totals = claims.reduce((acc, g) => ({
+			charges: acc.charges + g.charges,
+			insurance: acc.insurance + g.insurancePaid,
+			adjustments: acc.adjustments + g.adjustments,
+			patientPaid: acc.patientPaid + g.patientPaid,
+			patientDue: acc.patientDue + g.patientDue,
+			balance: acc.balance + g.balance,
+		}), { charges: 0, insurance: 0, adjustments: 0, patientPaid: 0, patientDue: 0, balance: 0 });
+		for (const k of Object.keys(totals) as Array<keyof typeof totals>) { totals[k] = round2(totals[k]); }
+		// A patient who has overpaid carries a credit; it is not a negative balance owed.
+		const credit = round2(Math.max(0, -claims.reduce((s, g) => s + Math.min(g.balance, 0), 0)));
+		const due = round2(totals.patientDue > 0 ? totals.patientDue : Math.max(totals.balance, 0));
+
+		const guarantor = opts.info?.patients[key];
+		const displayName = guarantor?.name || claims[0]?.patientName || opts.accountName || '';
+		const account = guarantor?.account || (claims[0]?.patientId ? `#${claims[0].patientId}` : '');
+
+		// Oldest first: a statement reads down the account's history.
+		const detail = [...claims].sort((a, b) => (a.serviceDate || a.lastActivity).localeCompare(b.serviceDate || b.lastActivity));
+		const rows = detail.map(g => `<tr>
+<td>${escapeHtml(usDate(g.serviceDate || g.lastActivity))}</td>
+<td class="desc">${escapeHtml(`${g.claimRef || 'Unlinked activity'} - ${claimServiceCodes(g)}`)}</td>
+<td class="amt">${signedMoney(g.charges)}</td>
+<td class="amt">${signedMoney(-g.patientPaid)}</td>
+<td class="amt">${signedMoney(-g.insurancePaid)}</td>
+<td class="amt">${signedMoney(-g.adjustments)}</td>
+<td class="amt">${escapeHtml(balanceLabel(g.balance))}</td>
 </tr>`).join('\n');
-		const heading = [
-			g.claimRef || 'Unlinked activity',
-			opts.showPatient ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : '')) : '',
-			g.serviceDate ? `DOS ${usDate(g.serviceDate)}` : '',
-		].filter(Boolean).join(' | ');
-		return `<div class="claim">
-<h2>${escapeHtml(heading)} <span class="pill">${escapeHtml(STATUS_META[g.status].label)}</span></h2>
-<div class="figs">Charges ${money(g.charges)} &nbsp;|&nbsp; Insurance ${money(g.insurancePaid)} &nbsp;|&nbsp; Adjustments ${money(g.adjustments)} &nbsp;|&nbsp; Patient paid ${money(g.patientPaid)} &nbsp;|&nbsp; <b>Balance ${balanceLabel(g.balance)}</b></div>
-<table>
-<thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="amt">Charge</th><th class="amt">Paid / Adj</th><th class="amt">Claim Balance</th></tr></thead>
+
+		const aging = agingBuckets(claims, asOf);
+		// "Days late" counts from the oldest service date that still owes money.
+		const oldestOwed = detail.find(g => g.balance > 0.005);
+		const daysLate = oldestOwed ? daysBetween(oldestOwed.serviceDate || oldestOwed.lastActivity, asOf) : 0;
+
+		return `<div class="stmt-page">
+<div class="stmt-remit">
+<div class="remit-left">
+<div class="prac-name">${escapeHtml(practice?.name || 'Practice')}</div>
+${practice?.addressLine1 ? `<div>${escapeHtml(practice.addressLine1)}</div>` : ''}
+${practice?.addressLine2 ? `<div>${escapeHtml(practice.addressLine2)}</div>` : ''}
+<div class="rsr">RETURN SERVICE REQUESTED</div>
+<div class="rsr">Billing Questions Call: ${escapeHtml(practice?.phone || '')}</div>
+<div class="guarantor">
+<div class="g-name">${escapeHtml(displayName)}</div>
+${guarantor?.addressLine1 ? `<div>${escapeHtml(guarantor.addressLine1)}</div>` : ''}
+${guarantor?.addressLine2 ? `<div>${escapeHtml(guarantor.addressLine2)}</div>` : ''}
+</div>
+</div>
+<div class="remit-right">
+<div class="remit-hint">Please complete payment information.</div>
+<table class="slip">
+<tr><th>Account</th><th>Statement Date</th><th>Acc. Balance</th><th>Payment Due</th></tr>
+<tr><td class="ctr">${escapeHtml(account)}</td><td class="ctr">${escapeHtml(statementDate)}</td><td class="amt">${escapeHtml(balanceLabel(totals.balance))}</td><td class="amt">${money(due)}</td></tr>
+</table>
+<table class="slip pay">
+<tr><td class="lbl" rowspan="3">CREDIT CARD</td><td colspan="2" class="cards">Select Card &nbsp; [ ] Visa &nbsp; [ ] Mastercard &nbsp; [ ] Discover &nbsp; [ ] American Express</td></tr>
+<tr><td class="fld">Card No.</td><td class="fld">Exp. Date &nbsp;&nbsp; CVV</td></tr>
+<tr><td class="fld" colspan="2">Signature</td></tr>
+<tr><td class="lbl">CHECK</td><td class="fld">Check No.</td><td class="fld">Amount Paid</td></tr>
+<tr><td class="lbl payto">Make checks payable to:</td><td class="fld" colspan="2">${escapeHtml(practice?.name || '')}</td></tr>
+</table>
+</div>
+</div>
+<div class="detach">
+<div class="detach-note">[ ] Check if your billing information has changed.<br>Provide update(s) above or on reverse side.</div>
+<div class="detach-msg">Please detach and return top portion with payment.</div>
+</div>
+${daysLate > 30 ? `<div class="late">You are ${daysLate} days late</div>` : ''}
+<div class="det-head"><span class="det-title">Statement Details</span><span class="det-meta">Statement Date: ${escapeHtml(statementDate)} &nbsp;&nbsp; Account: ${escapeHtml(account)}</span></div>
+<table class="details">
+<thead><tr><th>Date</th><th>Description</th><th class="amt">Charges</th><th class="amt">Patient pmt</th><th class="amt">Ins. pmt</th><th class="amt">Adjustments</th><th class="amt">Balance</th></tr></thead>
 <tbody>${rows}</tbody>
 </table>
-</div>`;
-	}).join('\n');
-
-	const heading = opts.accountName ? `Patient Statement — ${escapeHtml(opts.accountName)}` : 'Ledger Statement';
-	return `<div class="stmt">
-<h1>${heading}</h1>
-<div class="meta">Statement date: ${escapeHtml(new Date().toLocaleDateString('en-US'))} &nbsp;|&nbsp; ${groups.length} claim${groups.length === 1 ? '' : 's'}</div>
-<table class="summary">
-<tr><th>Total charges</th><td class="amt">${money(totals.charges)}</td>
-<th>Insurance paid</th><td class="amt">${money(totals.insurance)}</td>
-<th>Write-offs / adjustments</th><td class="amt">${money(totals.adjustments)}</td></tr>
-<tr><th>Patient paid</th><td class="amt">${money(totals.patientPaid)}</td>
-<th>Patient due now</th><td class="amt">${money(totals.patientDue)}</td>
-<th>Outstanding balance</th><td class="amt"><b>${balanceLabel(totals.balance)}</b></td></tr>
+<table class="summary-box">
+<tr><th class="cnr">Account<br>Summary</th><th>Total<br>Charges</th><th>Total<br>Payments</th><th>Total<br>Adjustments</th><th>Total<br>Balance</th><th>* Patient<br>Portion</th><th>Patient<br>Credit</th><th>Payment Due<br>Amount</th></tr>
+<tr><td></td><td class="amt">${signedMoney(totals.charges)}</td><td class="amt">${signedMoney(-(totals.patientPaid + totals.insurance))}</td><td class="amt">${signedMoney(-totals.adjustments)}</td><td class="amt">${escapeHtml(balanceLabel(totals.balance))}</td><td class="amt">${money(totals.patientDue)}</td><td class="amt">${money(credit)}</td><td class="amt due-amt">${money(due)}</td></tr>
 </table>
-${claimBlocks}
-<div class="due">Please pay <b>${money(totals.patientDue > 0 ? totals.patientDue : Math.max(totals.balance, 0))}</b>. Amounts still pending with your insurance are not due yet and may change after processing.</div>
+<table class="summary-box aging">
+<tr><th class="cnr">Aging</th><th>Current</th><th>31-60</th><th>61-90</th><th>91-120</th><th>120+</th></tr>
+<tr><td></td><td class="amt">${money(aging.current)}</td><td class="amt">${money(aging.d31)}</td><td class="amt">${money(aging.d61)}</td><td class="amt">${money(aging.d91)}</td><td class="amt">${money(aging.d120)}</td></tr>
+</table>
+<div class="foot-note">* Patient portion is what your insurance assigned to you. Amounts still pending with your insurance are not due yet and may change after processing.</div>
+<div class="page-num">Page ${pageNo} of ${pages.length}</div>
 </div>`;
+	};
+
+	return `<div class="stmt">${pages.map(([key, claims], i) => pageHtml(key, claims, i + 1)).join('\n')}</div>`;
 }
+
+/**
+ * Print rules for {@link ledgerStatementHtml}. Passed to the printable-document
+ * helper, which appends it AFTER its generic reset — the reset flattens every
+ * colour with `.ciyex-printable-doc *`, so every rule here is class-scoped (one
+ * specificity step higher) to keep the statement's navy rules and shaded
+ * headers on the page.
+ */
+export const LEDGER_STATEMENT_PRINT_CSS = [
+	'  .ciyex-printable-doc .stmt{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#1a1a1a !important;}',
+	'  .ciyex-printable-doc .stmt-page{break-after:page;page-break-after:always;}',
+	'  .ciyex-printable-doc .stmt-page:last-child{break-after:auto;page-break-after:auto;}',
+	'  .ciyex-printable-doc .stmt-remit{display:flex;gap:14px;align-items:flex-start;}',
+	'  .ciyex-printable-doc .remit-left{width:46%;line-height:1.5;}',
+	'  .ciyex-printable-doc .remit-right{width:54%;}',
+	'  .ciyex-printable-doc .prac-name{font-weight:700;font-size:11px;}',
+	'  .ciyex-printable-doc .rsr{font-size:8px;letter-spacing:0.3px;margin-top:6px;color:#444 !important;}',
+	'  .ciyex-printable-doc .guarantor{margin-top:26px;line-height:1.5;}',
+	'  .ciyex-printable-doc .g-name{font-weight:700;}',
+	'  .ciyex-printable-doc .remit-hint{font-size:8px;text-align:center;margin-bottom:2px;}',
+	'  .ciyex-printable-doc .slip{border-collapse:collapse;width:100%;font-size:8px;table-layout:fixed;}',
+	'  .ciyex-printable-doc .slip th,.ciyex-printable-doc .slip td{border:1px solid #1f3b8a !important;padding:3px 4px;color:#1f3b8a !important;}',
+	'  .ciyex-printable-doc .slip th{font-weight:700;text-align:center;}',
+	'  .ciyex-printable-doc .slip td{color:#1a1a1a !important;}',
+	'  .ciyex-printable-doc .slip .ctr{text-align:center;}',
+	'  .ciyex-printable-doc .slip .lbl{font-weight:700;color:#1f3b8a !important;width:82px;vertical-align:middle;}',
+	'  .ciyex-printable-doc .slip .fld{height:15px;color:#1f3b8a !important;font-size:7px;vertical-align:top;}',
+	'  .ciyex-printable-doc .slip .payto{font-size:7px;font-weight:400;}',
+	'  .ciyex-printable-doc .slip .cards{font-size:7px;color:#1f3b8a !important;}',
+	'  .ciyex-printable-doc .slip.pay{margin-top:2px;}',
+	'  .ciyex-printable-doc .detach{display:flex;justify-content:space-between;gap:12px;border-top:1px dashed #666 !important;margin:10px 0 8px;padding-top:5px;font-size:8px;color:#333 !important;}',
+	'  .ciyex-printable-doc .detach-msg{font-style:italic;}',
+	'  .ciyex-printable-doc .late{font-weight:700;font-size:11px;color:#b00020 !important;margin:8px 0;}',
+	'  .ciyex-printable-doc .det-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #1f3b8a !important;padding-bottom:3px;margin-top:10px;}',
+	'  .ciyex-printable-doc .det-title{font-weight:700;font-size:12px;color:#1f3b8a !important;}',
+	'  .ciyex-printable-doc .det-meta{font-size:9px;color:#333 !important;}',
+	'  .ciyex-printable-doc .details{border-collapse:collapse;width:100%;font-size:9px;margin-top:6px;table-layout:fixed;}',
+	'  .ciyex-printable-doc .details th,.ciyex-printable-doc .details td{border:1px solid #1f3b8a !important;padding:4px 5px;vertical-align:top;}',
+	'  .ciyex-printable-doc .details thead th{background:#dde5f7 !important;color:#1f3b8a !important;font-weight:700;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
+	'  .ciyex-printable-doc .details th:first-child,.ciyex-printable-doc .details td:first-child{width:64px;}',
+	'  .ciyex-printable-doc .details tbody tr:nth-child(even) td{background:#f4f7fd !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
+	'  .ciyex-printable-doc .details .desc{word-break:break-word;}',
+	'  .ciyex-printable-doc .details .amt{text-align:right;white-space:nowrap;width:64px;}',
+	'  .ciyex-printable-doc .summary-box{border-collapse:collapse;width:100%;font-size:9px;margin-top:14px;}',
+	'  .ciyex-printable-doc .summary-box th,.ciyex-printable-doc .summary-box td{border:1px solid #1f3b8a !important;padding:4px 6px;text-align:center;}',
+	'  .ciyex-printable-doc .summary-box th{background:#dde5f7 !important;color:#1f3b8a !important;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
+	'  .ciyex-printable-doc .summary-box .cnr{background:#1f3b8a !important;color:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
+	'  .ciyex-printable-doc .summary-box .amt{text-align:right;white-space:nowrap;}',
+	'  .ciyex-printable-doc .summary-box .due-amt{font-weight:700;}',
+	'  .ciyex-printable-doc .summary-box.aging{margin-top:8px;}',
+	'  .ciyex-printable-doc .foot-note{font-size:8px;color:#444 !important;margin-top:10px;}',
+	'  .ciyex-printable-doc .page-num{text-align:right;font-size:8px;color:#444 !important;margin-top:10px;}',
+].join('\n');
 
 /** Excel columns for the ledger export — one row per posting, claim-ordered. */
 const LEDGER_SHEET_COLUMNS: IXlsxColumn[] = [
@@ -902,7 +1163,7 @@ export function ledgerWorkbook(groups: LedgerClaimGroup[], showPatient: boolean)
 	const rows: XlsxRow[] = [];
 	for (const g of groups) {
 		const patient = showPatient ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : '')) : (g.patientName || '');
-		for (const ev of g.events.slice().reverse()) {
+		for (const ev of g.events) {
 			rows.push([
 				g.claimRef || 'Unlinked',
 				patient,

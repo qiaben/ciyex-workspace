@@ -17,7 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, loadLedgerStatementInfo, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
 import { savePrintableAsPdf } from './printableDocument.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
@@ -2200,10 +2200,11 @@ export class PatientChartEditor extends EditorPane {
 	 */
 	private _ledgerExportHost(): ILedgerExportHost {
 		return {
-			savePdf: async (fileName, html) => {
-				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html);
+			savePdf: async (fileName, html, printCss) => {
+				const saved = await savePrintableAsPdf(this.nativeHostService, fileName, html, printCss);
 				if (saved) { this.notificationService.info(`Statement saved to ${saved}`); }
 			},
+			loadStatementInfo: patientIds => loadLedgerStatementInfo(this.apiService, patientIds),
 			saveWorkbook: async (fileName, data) => {
 				const target = URI.joinPath(await this.fileDialogService.defaultFilePath(), fileName);
 				await this.fileService.writeFile(target, VSBuffer.wrap(data));
