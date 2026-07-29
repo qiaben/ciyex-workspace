@@ -56,6 +56,18 @@ export interface INativeHostOptions {
 	readonly targetWindowId?: number;
 }
 
+export interface IPdfRenderOptions {
+
+	/**
+	 * Render edge to edge: no page margins and no browser-drawn header/footer.
+	 * For documents that lay out their own paper-sized pages and paint their own
+	 * page frame, letterhead and page numbers (the Visit Summary), anything the
+	 * renderer adds would double up with — and be misaligned against — what the
+	 * content already draws.
+	 */
+	readonly fullBleed?: boolean;
+}
+
 export const enum FocusMode {
 
 	/**
@@ -201,16 +213,17 @@ export interface ICommonNativeHostService {
 	// path, or `undefined` if nothing could be rendered. A renderer-side `blob:`
 	// download anchor does not produce a file in the `vscode-file://` workbench, so
 	// the PDF must be written from the main process instead.
-	savePdfToDownloads(fileName: string): Promise<string | undefined>;
+	savePdfToDownloads(fileName: string, pdfOptions?: IPdfRenderOptions): Promise<string | undefined>;
 
-	// Render the active window's content to a PDF (honours @media print CSS), write
-	// it to a whitelisted temp folder and open it in an in-app child window using
-	// Electron/Chromium's built-in PDF viewer, which shows a real preview plus its
-	// own toolbar Print button. Electron's native OS print dialog cannot render a
-	// live preview on its own (a Windows/Electron limitation, not fixable from
-	// here), so printing is routed through this in-app viewer instead. Returns
-	// `true` once the viewer opened.
-	printPdfPreview(fileName: string): Promise<boolean>;
+	// Print the active window's content (honours @media print CSS) on a real
+	// printer, showing the OS print dialog. Resolves `true` once the job was
+	// handed to the printer and `false` when the user cancelled the dialog;
+	// rejects with the platform's reason when printing failed (no printer
+	// installed, driver error, …). `window.print()` is deliberately NOT used for
+	// this: it reports none of those outcomes back — with no printer installed it
+	// simply does nothing at all — and it prints through the dialog's own margin
+	// settings, which would rescale documents that lay out their own pages.
+	printWindow(pdfOptions?: IPdfRenderOptions): Promise<boolean>;
 
 	// Process
 	getProcessId(): Promise<number | undefined>;

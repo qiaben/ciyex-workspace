@@ -10,7 +10,7 @@ import { descriptionForeground, errorForeground, textLinkForeground } from '../.
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
-import { _printTtPolicy } from './reportsEditor.js';
+import { buildVisitSummaryPrintDocument, IPrintDocument, showVisitSummaryPrintPreview } from './visitSummaryPrint.js';
 
 /** Shape of the encounter `EncounterSummaryDto` returned by
  *  `GET /api/encounters/{patientId}/{encounterId}/summary`. Mirrors the fields
@@ -276,46 +276,12 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// scrollbar — matches the rest of the app's chrome-less look.
 	body.style.cssText = `overflow-y:auto;overflow-x:hidden;padding:20px 22px;flex:1;background:${col.bg};scrollbar-width:none;-ms-overflow-style:none;`;
 
-	// Print/PDF structure: a bordered frame <div> wraps a <table> whose <thead>
-	// carries the practice/patient letterhead. Chromium (both window.print() and
-	// the main process printToPDF) REPEATS a table-header-group on every page and
-	// reserves its height, so the letterhead prints atop each page with no overlap
-	// — the one reliable cross-page repeating-header technique. On screen the
-	// thead is hidden and the table/cells collapse to blocks (see the screen
-	// stylesheet below) so the panel looks exactly as before.
-	//
-	// The page-frame border lives on the wrapping <div class="ciyex-summary-frame">,
-	// not the table, and not printToPDF's header/footer templates. Two earlier
-	// attempts both failed for the same underlying reason — a box that fragments
-	// across pages only paints its top border on the box's first fragment and its
-	// bottom border on its last fragment (i.e. the actual first/last page of the
-	// WHOLE box, not every visual page):
-	//  1) All four sides on the table itself (border-collapse, with a matching
-	//     <tfoot> spacer to mirror the thead): most pages showed no border at all,
-	//     and the <tfoot> spacer's own box got fragmented onto a near-empty
-	//     trailing page carrying a stray leftover border fragment.
-	//  2) Splitting top/bottom into printToPDF header/footer template "caps" (top
-	//     cap + bottom cap) with only the table's own left/right borders for the
-	//     sides: the caps render in a SEPARATE Chromium rendering pass (the page's
-	//     margin boxes) that does not share a coordinate system with the page
-	//     CONTENT box the table lives in — verified by measuring actual pixel
-	//     offsets in a rendered PDF, the caps' border lines landed at different x
-	//     positions than the table's, so the corners never met.
-	// `box-decoration-break: clone` (see below) sidesteps both problems in one
-	// step: it tells the browser to treat EVERY page-fragment of the frame div as
-	// if it were an independent box with the full border painted on all four
-	// sides — so every page gets a complete, self-contained, properly-connected
-	// rectangle, in the SAME rendering pass as the content (no cross-pass
-	// coordinate mismatch is even possible), and a page with no real content left
-	// on it is never created (nothing forces an extra fragment into existence —
-	// the frame only fragments where the table itself already needed to break).
-	const frame = DOM.append(body, DOM.$('div.ciyex-summary-frame'));
-	const printTable = DOM.append(frame, DOM.$('table.ciyex-summary-table'));
-	printTable.style.cssText = 'width:100%;border-collapse:collapse;';
-	const runHead = DOM.append(printTable, DOM.$('thead.ciyex-summary-runhead'));
-	const headCell = DOM.append(DOM.append(runHead, DOM.$('tr')), DOM.$('td')) as HTMLElement;
-	const content = DOM.append(DOM.append(DOM.append(printTable, DOM.$('tbody')), DOM.$('tr')), DOM.$('td.ciyex-summary-content')) as HTMLElement;
-	content.style.cssText = 'padding:0;vertical-align:top;';
+	// The practice/patient letterhead is built into a hidden holder rather than
+	// into the visible summary: on screen the panel header already names the
+	// patient, while the print document (visitSummaryPrint.ts) clones this holder
+	// onto every printed page.
+	const headCell = DOM.append(body, DOM.$('div.ciyex-summary-letterhead'));
+	const content = DOM.append(body, DOM.$('div.ciyex-summary-content'));
 	const loading = DOM.append(content, DOM.$('div'));
 	loading.textContent = 'Loading encounter summary…';
 	loading.style.cssText = `font-size:13px;color:${col.desc};`;
@@ -337,93 +303,18 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	const { btn: pdfBtn } = makeFooterBtn('cloud-download', 'Download PDF', true);
 	const { btn: printBtn } = makeFooterBtn('printer', 'Print', false);
 
-	// A print-only stylesheet (it lives entirely inside `@media print`, so it has
-	// NO on-screen effect) that isolates the summary body for both actions —
-	// "Download PDF" (the native host renders the window to a PDF) and "Print"
-	// (the OS print dialog). It hides the workbench, the panel header/footer and
-	// the backdrop dimmer so only the summary content — forced to legible
-	// black-on-white — lands on the page / in the saved file, regardless of the
-	// active light/dark theme.
-	//
-	// The letterhead lives in the content table's <thead> (.ciyex-summary-runhead).
-	// On screen that thead is hidden and the table/cells collapse to blocks so the
-	// panel is visually unchanged; in print the table displays as a real table so
-	// the thead becomes a repeating table-header-group on every page.
-	const printStyle = doc.createElement('style');
-	printStyle.textContent = [
-		// Screen: hide the run-head, flatten the print table/frame to plain blocks.
-		'.ciyex-summary-runhead{display:none;}',
-		'.ciyex-summary-frame,.ciyex-summary-table,.ciyex-summary-table>tbody,.ciyex-summary-table>tbody>tr,.ciyex-summary-content{display:block;width:100%;}',
-		'@media print{',
-		// Force the page canvas itself white first: `.ciyex-summary-backdrop` below
-		// only ever covers its own (auto-height) content, so any page area beyond
-		// that — including the trailing page after the last section — falls through
-		// to the `html`/`body` background. Without this rule that fallback was
-		// whatever the underlying (possibly dark-themed) window background was,
-		// which is what QA saw as a black page instead of a white one.
-		'  html,body{background:#fff !important;}',
-		'  body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-		'  .ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
-		'  .ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
-		'  .ciyex-summary-header, .ciyex-summary-footer{display:none !important;}',
-		// Reset the on-screen scroll padding for print — it has no relationship to
-		// printToPDF's own margins (set in nativeHostMainService.ts) and, left in
-		// place, silently shifts the frame/table off of where those margins expect
-		// it to sit (verified by pixel-measuring a rendered PDF: the table's left
-		// edge landed noticeably right of the declared page margin).
-		'  .ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;padding:0 !important;}',
-		'  .ciyex-summary-body, .ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		// Print: restore real table semantics so the letterhead repeats per page.
-		// The page-frame border lives on .ciyex-summary-frame — see the long comment
-		// above its construction for why the table's own border and printToPDF's
-		// header/footer templates both failed to produce connected corners.
-		// `box-decoration-break: clone` makes a single border declaration paint a
-		// complete, independent rectangle on every page this box fragments onto,
-		// instead of only the top edge on the first page and the bottom edge on the
-		// last.
-		// box-sizing:border-box is required here: with the default content-box, a
-		// 1px border on a width:100% box adds 2px BEYOND that 100%, pushing the
-		// right edge past the page's printable-area clip boundary — verified by
-		// pixel-measuring a rendered PDF, the left/top/bottom border lines all
-		// painted correctly but the right one was clipped away almost entirely.
-		// border-box keeps the border inside the declared width, so it never
-		// crosses that boundary.
-		'  .ciyex-summary-frame{display:block !important;box-sizing:border-box !important;border:1px solid #9aa0a6 !important;-webkit-box-decoration-break:clone !important;box-decoration-break:clone !important;}',
-		'  .ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
-		'  .ciyex-summary-runhead{display:table-header-group !important;}',
-		'  .ciyex-summary-table>tbody{display:table-row-group !important;}',
-		'  .ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
-		'  .ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
-		// Inset the printed content from the page-frame border so nothing (letterhead
-		// or section boxes) touches the box drawn at the content-box edge. The
-		// letterhead cell repeats every page, so its top/side padding keeps the
-		// letterhead clear of the frame on every page.
-		'  .ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
-		'  .ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
-		// The letterhead rules are deliberately bold black — override the generic
-		// light-grey border rule above (higher specificity beats it).
-		'  .ciyex-summary-runhead .vs-hdr-rule{border-bottom:2px solid #222 !important;}',
-		// Keep each section box intact — a section (e.g. Vitals) must not split with
-		// half its rows on one page and half on the next. break-inside:avoid moves
-		// the whole card to the next page when it would otherwise straddle the break
-		// (a card taller than a full page still breaks — unavoidable). This is the
-		// QA ask: sections should print together on a single page.
-		'  .vs-card{break-inside:avoid !important;page-break-inside:avoid !important;}',
-		// The signature line stays a firm dark rule (beats the generic light-grey
-		// border override above).
-		'  .vs-sig-rule{border-color:#222 !important;}',
-		// Page margins: the printToPDF path sets matching margins (and the header's
-		// date/page-number text) — this @page rule governs the browser Print dialog
-		// path so the frame and content sit the same distance from the paper edge
-		// there too.
-		'  @page{margin:12mm;}',
-		'}',
-	].join('');
-	doc.head.appendChild(printStyle);
+	// The letterhead holder is print-only: it is filled with the practice/patient
+	// banner (renderLetterhead) purely so the print document can clone it onto
+	// every page, and never shows in the panel itself. A stylesheet — not an
+	// inline style — hides it, because renderLetterhead owns the element's own
+	// `style` attribute.
+	const panelStyle = doc.createElement('style');
+	panelStyle.textContent = '.ciyex-summary-letterhead{display:none !important;}';
+	doc.head.appendChild(panelStyle);
 
 	const dismiss = () => {
 		try { doc.body.removeChild(backdrop); } catch { /* ignore */ }
-		try { doc.head.removeChild(printStyle); } catch { /* ignore */ }
+		try { doc.head.removeChild(panelStyle); } catch { /* ignore */ }
 	};
 	closeBtn.addEventListener('click', dismiss);
 	backdrop.addEventListener('click', (e) => { if (e.target === backdrop) { dismiss(); } });
@@ -432,159 +323,104 @@ export function showVisitSummaryPanel(deps: IVisitSummaryDeps, patientId: string
 	// refuse to operate on a still-loading panel.
 	let summaryLoaded = false;
 
-	// "Download PDF" saves the summary STRAIGHT to a real `.pdf` file in the
-	// Downloads folder — no preview, no OS print dialog. The main process renders
-	// the active window to a PDF (honouring the print stylesheet above, so only
-	// the summary — black-on-white — is captured) and writes it to disk, because a
-	// renderer-side `blob:` download anchor does not produce a file in the
-	// `vscode-file://` workbench.
-	const downloadPdf = async () => {
-		if (!summaryLoaded) {
-			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
-			return;
-		}
-		pdfBtn.disabled = true;
+	const pdfFileName = `encounter-${encounterId}-summary.pdf`;
+
+	/** Guards both actions against a still-loading summary. */
+	const isReady = (): boolean => {
+		if (summaryLoaded) { return true; }
+		deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
+		return false;
+	};
+
+	// Renders the loaded summary into paper-sized, bordered, page-numbered pages
+	// and mounts them off-screen. Both actions below run against that document —
+	// so what is previewed, printed and saved is byte-for-byte the same layout.
+	const buildPrintDoc = (): IPrintDocument => buildVisitSummaryPrintDocument(headCell, content);
+
+	// Saves the paginated document to a real `.pdf` file (the main process renders
+	// the window with `printToPDF` and pops a Save dialog) — a renderer-side
+	// `blob:` download anchor does not produce a file in the `vscode-file://`
+	// workbench. `fullBleed` tells the main process to add neither page margins
+	// nor its own header/footer: the page elements already carry both.
+	// The document must stay mounted for the whole call — it IS what printToPDF
+	// captures — so disposing it is left to the caller.
+	const savePdf = async (): Promise<boolean> => {
 		try {
-			const savedPath = await deps.nativeHostService.savePdfToDownloads(`encounter-${encounterId}-summary.pdf`);
+			const savedPath = await deps.nativeHostService.savePdfToDownloads(pdfFileName, { fullBleed: true });
 			if (!savedPath) {
-				// The user cancelled the Save dialog — keep the panel open, no error.
-				return;
+				// The user cancelled the Save dialog — keep everything open, no error.
+				return false;
 			}
 			deps.notificationService.notify({ severity: Severity.Info, message: `Visit summary saved to ${savedPath}` });
-			// The PDF is already captured (printToPDF resolved above), so it is safe to
-			// close the panel now — the download is done and the user expects the
-			// summary to dismiss once the file has been saved.
-			dismiss();
+			return true;
 		} catch (err) {
 			deps.notificationService.notify({ severity: Severity.Error, message: `Could not save the visit summary PDF: ${err instanceof Error ? err.message : String(err)}` });
+			return false;
+		}
+	};
+
+	const downloadPdf = async () => {
+		if (!isReady()) { return; }
+		pdfBtn.disabled = true;
+		const printDoc = buildPrintDoc();
+		try {
+			// The PDF is fully captured before this resolves, so the panel can close.
+			if (await savePdf()) { dismiss(); }
 		} finally {
+			printDoc.dispose();
 			pdfBtn.disabled = false;
 		}
 	};
 
-	// "Print" opens an in-app "Print Preview" overlay — same look/flow as the
-	// Reports print preview (title bar, Close/Print, themed iframe) — instead
-	// of the old main-process PDF render + separate native-viewer child window
-	// (28-Jul: "like this print preview I want it in the visit summary"). The
-	// iframe's Print button fires the OS print dialog directly on that iframe's
-	// content, which is what Reports already does successfully; "Download PDF"
-	// above is untouched — it still goes through the exact main-process
-	// printToPDF path for a byte-accurate saved file.
+	// "Print" opens the summary in an in-app print preview — the paginated pages
+	// exactly as they will be printed — so the user can check the content first.
+	// Electron's OS print dialog cannot render a preview of the app on its own
+	// ("This app doesn't support print preview"), which is why the preview is
+	// drawn here; printing from the preview still hands off to that dialog, but
+	// only after the pages have been reviewed.
 	const printSummary = () => {
-		if (!summaryLoaded) {
-			deps.notificationService.notify({ severity: Severity.Info, message: 'The visit summary is still loading. Please try again in a moment.' });
+		if (!isReady()) { return; }
+		printBtn.disabled = true;
+		let printDoc: IPrintDocument;
+		try {
+			printDoc = buildPrintDoc();
+		} catch (err) {
+			printBtn.disabled = false;
+			deps.notificationService.notify({ severity: Severity.Error, message: `Could not build the print preview: ${err instanceof Error ? err.message : String(err)}` });
 			return;
 		}
-		showVisitSummaryPrintPreview(doc, patientName, backdrop);
+		let saved = false;
+		showVisitSummaryPrintPreview(printDoc, {
+			title: patientName,
+			theme: col,
+			onPrint: async () => {
+				try {
+					// Sends the mounted pages to the OS print dialog. `fullBleed` keeps
+					// the dialog from adding its own margins on top of the ones the
+					// pages already carry.
+					return await deps.nativeHostService.printWindow({ fullBleed: true });
+				} catch (err) {
+					deps.notificationService.notify({ severity: Severity.Error, message: `Could not print the visit summary: ${err instanceof Error ? err.message : String(err)}` });
+					return false;
+				}
+			},
+			onDownload: async () => {
+				saved = await savePdf();
+				return saved;
+			},
+			onClose: () => {
+				printBtn.disabled = false;
+				printDoc.dispose();
+				// A saved PDF ends the task — close the summary behind the preview too.
+				if (saved) { dismiss(); }
+			},
+		});
 	};
 
 	pdfBtn.addEventListener('click', () => void downloadPdf());
 	printBtn.addEventListener('click', () => printSummary());
 
 	void loadVisitSummary(deps, patientId, encounterId, content, loading, facilityHint, patientName, headCell).then(ok => { summaryLoaded = ok; });
-}
-
-/**
- * "Print Preview — Visit Summary" overlay — visually and behaviourally the
- * same pattern as ReportsEditor's `_printReport` preview: a themed modal with
- * a live iframe of the exact printed output and Close / Print buttons, where
- * Print fires the OS print dialog on a hidden clone of that same iframe.
- *
- * The iframe body is `backdrop.outerHTML` — the already-rendered summary DOM,
- * complete with all its `.style.cssText` inline styling — so nothing has to
- * be redrawn. The CSS below is the visit summary's existing print stylesheet
- * (letterhead repeat, page-frame border, black-on-white, …) with the
- * `@media print { … }` wrapper removed so those rules are the iframe's
- * default appearance instead of only applying once an OS print actually
- * starts — this iframe IS the dedicated print-preview surface, so the print
- * layout should be what it shows immediately.
- */
-function showVisitSummaryPrintPreview(doc: Document, patientName: string, backdrop: HTMLElement): void {
-	// `!important` on every rule is required, not decorative: the cloned nodes
-	// carry their on-screen look as INLINE `style="…"` (set via `.style.cssText`
-	// throughout this file), and inline styles beat an embedded stylesheet's
-	// rules unless those rules are `!important` — dropping it here left the
-	// on-screen footer (Download PDF / Print buttons) showing inside the
-	// preview instead of the print layout replacing it.
-	const previewCss = [
-		'html,body{background:#fff !important;margin:0 !important;}',
-		'body>*:not(.ciyex-summary-backdrop){display:none !important;}',
-		'.ciyex-summary-backdrop{position:static !important;background:#fff !important;display:block !important;inset:auto !important;min-height:100%;}',
-		'.ciyex-summary-sheet{box-shadow:none !important;border-radius:0 !important;width:100% !important;height:auto !important;max-height:none !important;background:#fff !important;color:#222 !important;overflow:visible !important;}',
-		'.ciyex-summary-header,.ciyex-summary-footer{display:none !important;}',
-		'.ciyex-summary-body{overflow:visible !important;height:auto !important;background:#fff !important;padding:0 !important;}',
-		'.ciyex-summary-body,.ciyex-summary-body *{background-color:transparent !important;color:#222 !important;border-color:#d8d8d8 !important;box-shadow:none !important;}',
-		'.ciyex-summary-frame{display:block !important;box-sizing:border-box !important;border:1px solid #9aa0a6 !important;-webkit-box-decoration-break:clone !important;box-decoration-break:clone !important;}',
-		'.ciyex-summary-table{display:table !important;width:100% !important;border-collapse:collapse !important;}',
-		'.ciyex-summary-runhead{display:table-header-group !important;}',
-		'.ciyex-summary-table>tbody{display:table-row-group !important;}',
-		'.ciyex-summary-table>tbody>tr,.ciyex-summary-runhead>tr{display:table-row !important;}',
-		'.ciyex-summary-content,.ciyex-summary-runhead td{display:table-cell !important;}',
-		'.ciyex-summary-runhead td{padding:5mm 6mm 10px !important;}',
-		'.ciyex-summary-content{padding:2mm 6mm 6mm !important;}',
-		'.ciyex-summary-runhead .vs-hdr-rule{border-bottom:2px solid #222 !important;}',
-		'.vs-card{break-inside:avoid !important;page-break-inside:avoid !important;}',
-		'.vs-sig-rule{border-color:#222 !important;}',
-		'@page{margin:12mm;}',
-	].join('\n');
-	const previewHtml = `<!DOCTYPE html><html><head><title>Visit Summary — ${patientName}</title><style>${previewCss}</style></head><body>${backdrop.outerHTML}</body></html>`;
-	const trustedHtml = _printTtPolicy?.createHTML(previewHtml) ?? previewHtml;
-
-	const overlay = doc.createElement('div');
-	overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
-
-	const modal = doc.createElement('div');
-	modal.style.cssText = 'background:#1e1e1e;color:#d4d4d4;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);width:90vw;max-width:960px;height:85vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #454545;';
-
-	const mHeader = doc.createElement('div');
-	mHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #454545;flex-shrink:0;';
-	const mTitle = doc.createElement('span');
-	mTitle.textContent = `Print Preview — Visit Summary`;
-	mTitle.style.cssText = 'font-weight:600;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
-	const mMeta = doc.createElement('span');
-	mMeta.textContent = patientName;
-	mMeta.style.cssText = 'font-size:12px;color:#999;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
-
-	const btnGroup = doc.createElement('div');
-	btnGroup.style.cssText = 'display:flex;gap:8px;';
-
-	const closeBtn = doc.createElement('button');
-	closeBtn.textContent = 'Close';
-	closeBtn.style.cssText = 'padding:6px 16px;border:1px solid #454545;border-radius:4px;background:#1e1e1e;color:#d4d4d4;cursor:pointer;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
-
-	const doPrintBtn = doc.createElement('button');
-	// allow-any-unicode-next-line
-	doPrintBtn.textContent = '🖨 Print';
-	doPrintBtn.style.cssText = 'padding:6px 16px;border:none;border-radius:4px;background:#0078d4;color:#fff;cursor:pointer;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;';
-
-	const close = () => overlay.remove();
-	closeBtn.addEventListener('click', close);
-	overlay.addEventListener('click', (e) => { if (e.target === overlay) { close(); } });
-
-	doPrintBtn.addEventListener('click', () => {
-		const iframe = doc.createElement('iframe');
-		iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;border:none;';
-		doc.body.appendChild(iframe);
-		const idoc = iframe.contentDocument;
-		if (!idoc) { iframe.remove(); return; }
-		idoc.open(); idoc.write(trustedHtml as string); idoc.close();
-		const iw = iframe.contentWindow;
-		if (!iw) { iframe.remove(); return; }
-		iw.focus();
-		iw.print();
-		setTimeout(() => iframe.remove(), 2000);
-	});
-
-	// Preview iframe — srcdoc requires TrustedHTML; blob:/data: src blocked by CSP frame-src.
-	const preview = doc.createElement('iframe');
-	preview.style.cssText = 'flex:1;border:none;background:#fff;';
-	preview.srcdoc = trustedHtml as unknown as string;
-
-	btnGroup.append(closeBtn, doPrintBtn);
-	mHeader.append(mTitle, mMeta, btnGroup);
-	modal.append(mHeader, preview);
-	overlay.appendChild(modal);
-	doc.body.appendChild(overlay);
 }
 
 /** Data the repeating print letterhead shows. Any empty field is omitted. */
@@ -620,14 +456,17 @@ function asText(v: unknown): string {
 /** Format a date-of-birth (ISO string or `[y,m,d]`) as `YYYY-MM-DD`. */
 function fmtDob(raw: unknown): string {
 	if (!raw) { return ''; }
+	// MM/DD/YYYY, the app-wide date standard — the letterhead was the one place
+	// still printing the raw ISO date, right next to the meta card's own
+	// "Date of Birth" row showing the same date the other way round.
 	if (Array.isArray(raw)) {
 		const [y, m, d] = raw as number[];
 		if (!y) { return ''; }
-		return `${y}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
+		return `${String(m || 1).padStart(2, '0')}/${String(d || 1).padStart(2, '0')}/${y}`;
 	}
 	const s = String(raw);
 	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-	return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
+	return m ? `${m[2]}/${m[3]}/${m[1]}` : s;
 }
 
 /** Whole-year age from a date-of-birth, formatted `N yrs`. Empty when unparseable. */
@@ -1511,8 +1350,12 @@ function vitalsRowsFromDto(v: VisitSummaryVitals): Array<[string, string]> {
 	push('BP Systolic', v.bpSystolic, 'mmHg');
 	push('BP Diastolic', v.bpDiastolic, 'mmHg');
 	push('Heart Rate', v.pulse, 'bpm');
+	// Temperature is charted in Fahrenheit on this workspace: the encounter form
+	// maps `vitals_temperature` onto the DTO's `temperatureC` field, so that
+	// field's READING is Fahrenheit despite its name and must be labelled as
+	// such — the summary was printing charted values like 99 as "99 C".
 	// allow-any-unicode-next-line
-	if (v.temperatureF !== undefined && v.temperatureF !== null) { push('Temperature', v.temperatureF, '°F'); } else { push('Temperature', v.temperatureC, '°C'); }
+	push('Temperature', v.temperatureF ?? v.temperatureC, '°F');
 	push('SpO2', v.oxygenSaturation, '%');
 	push('Respiratory Rate', v.respiration, '/min');
 	if (v.weightKg !== undefined && v.weightKg !== null) { push('Weight', v.weightKg, 'kg'); } else { push('Weight', v.weightLbs, 'lbs'); }

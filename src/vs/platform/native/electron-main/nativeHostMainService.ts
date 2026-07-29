@@ -11,7 +11,7 @@ import { promisify } from 'util';
 import { memoize } from '../../../base/common/decorators.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, DisposableMap, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
-import { FileAccess, matchesSomeScheme, Schemas } from '../../../base/common/network.js';
+import { matchesSomeScheme, Schemas } from '../../../base/common/network.js';
 import { dirname, join, posix, resolve, win32 } from '../../../base/common/path.js';
 import { isLinux, isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { AddFirstParameterToFunctions } from '../../../base/common/types.js';
@@ -27,9 +27,8 @@ import { IEnvironmentMainService } from '../../environment/electron-main/environ
 import { createDecorator, IInstantiationService } from '../../instantiation/common/instantiation.js';
 import { ILifecycleMainService, IRelaunchOptions } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
-import { FocusMode, ICommonNativeHostService, INativeHostOptions, IOSProperties, IOSStatistics, IToastOptions, IToastResult, PowerSaveBlockerType, SystemIdleState, ThermalState } from '../common/native.js';
+import { FocusMode, ICommonNativeHostService, INativeHostOptions, IOSProperties, IOSStatistics, IPdfRenderOptions, IToastOptions, IToastResult, PowerSaveBlockerType, SystemIdleState, ThermalState } from '../common/native.js';
 import { IProductService } from '../../product/common/productService.js';
-import { IProtocolMainService } from '../../protocol/electron-main/protocol.js';
 import { IPartsSplash } from '../../theme/common/themeService.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
 import { defaultWindowState, ICodeWindow } from '../../window/electron-main/window.js';
@@ -51,34 +50,24 @@ import { AuthInfo, Credentials, IRequestService } from '../../request/common/req
 import { randomPath } from '../../../base/common/extpath.js';
 import { CancellationTokenSource } from '../../../base/common/cancellation.js';
 
-// Builds the shared `printToPDF` options for the Visit Summary "Download PDF"
-// and "Print" paths (a function, not a static constant, so the header's date
-// stamp is captured fresh at print time rather than at process start).
+// Builds the `printToPDF` options used by the app's printable documents (a
+// function, not a static constant, so the header's date stamp is captured
+// fresh at print time rather than at process start).
 //
-// The page-frame border is drawn ENTIRELY by the content in
-// visitSummaryPanel.ts — the `.ciyex-summary-frame` div wrapping the summary
-// table, via `box-decoration-break: clone` (see the long comment above that
-// div's construction for the two earlier approaches that failed: an
-// all-sides table border, and splitting the border across these header/footer
-// templates plus the table's own left/right borders). Both of those failed
-// for the same reason: a box that fragments across pages only paints its
-// top/bottom border on the box's first/last fragment, not on every visual
-// page — and, measured directly in a rendered PDF, printToPDF's header/footer
-// templates render in a page-margin coordinate space that does NOT line up
-// pixel-for-pixel with the content box the table lives in, so a border split
-// across the two never has its corners meet. `box-decoration-break: clone`
-// draws a complete, self-contained rectangle on every page in one rendering
-// pass, sidestepping the cross-pass alignment problem entirely.
+// `fullBleed` selects between the two layouts the app produces:
 //
-// These templates therefore carry ONLY text — no full-width border LINES of
-// their own — so they can never be the thing that makes a page's frame look
-// disconnected. The header shows the print date/time (top-left) and the
-// footer shows the "X / Y" page number (bottom-right), and rather than let
-// either float loose in the bare margin strip, each is wrapped in its own
-// small self-contained bordered chip (same colour as the page frame) so the
-// text still reads as sitting inside a bordered box on the white page instead
-// of unbounded — without needing that chip's border to be pixel-aligned with
-// the frame's (neither chip touches the frame; each is its own tiny box).
+//  - Default (patient statements and the like): the print engine owns the page
+//    furniture — sub-inch margins, a print date/time chip top-left and an
+//    "X / Y" page-number chip bottom-right. Each chip is its own small bordered
+//    box, deliberately NOT a full-width rule, because these templates render in
+//    a page-margin coordinate space that does not line up pixel-for-pixel with
+//    the page content box (measured in a rendered PDF), so any line drawn here
+//    can never meet a line drawn by the content.
+//  - Full bleed (the Visit Summary): the CONTENT is already laid out as
+//    paper-sized pages that paint their own frame, repeat their own letterhead
+//    and carry their own centred page number (see visitSummaryPrint.ts). The
+//    engine must therefore add nothing at all — margins here would shrink those
+//    pages onto the sheet and its header/footer would double up with theirs.
 //
 // `pageSize` is set explicitly (rather than left to default to the `'Letter'`
 // preset string) because Electron's `printToPDF` validates `margins` against
@@ -86,7 +75,16 @@ import { CancellationTokenSource } from '../../../base/common/cancellation.js';
 // pageSize" — even for these small sub-inch margins — when that resolution
 // doesn't happen before the check runs. Passing the concrete inches sidesteps
 // the preset-resolution ordering bug entirely.
-function buildVisitSummaryPrintOptions(): Electron.PrintToPDFOptions {
+function buildPrintToPdfOptions(fullBleed: boolean): Electron.PrintToPDFOptions {
+	if (fullBleed) {
+		return {
+			printBackground: true,
+			pageSize: { width: 8.5, height: 11 },
+			margins: { marginType: 'none' },
+			displayHeaderFooter: false,
+			preferCSSPageSize: true,
+		};
+	}
 	const dateTime = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
 	return {
 		printBackground: true,
@@ -119,8 +117,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IRequestService private readonly requestService: IRequestService,
 		@IProxyAuthService private readonly proxyAuthService: IProxyAuthService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IProtocolMainService private readonly protocolMainService: IProtocolMainService
+		@IInstantiationService private readonly instantiationService: IInstantiationService
 	) {
 		super();
 
@@ -912,12 +909,12 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return buf && VSBuffer.wrap(buf);
 	}
 
-	async savePdfToDownloads(windowId: number | undefined, fileName: string, options?: INativeHostOptions): Promise<string | undefined> {
+	async savePdfToDownloads(windowId: number | undefined, fileName: string, pdfOptions?: IPdfRenderOptions, options?: INativeHostOptions): Promise<string | undefined> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		// `printBackground` keeps the summary's section styling; the renderer's
-		// `@media print` rules already isolate the summary and force it to legible
-		// black-on-white, so the resulting PDF matches the on-screen preview.
-		const data = await window?.win?.webContents.printToPDF(buildVisitSummaryPrintOptions());
+		// `printBackground` keeps the document's styling; the renderer's
+		// `@media print` rules already isolate the printable document and force it
+		// to legible black-on-white, so the resulting PDF matches its preview.
+		const data = await window?.win?.webContents.printToPDF(buildPrintToPdfOptions(pdfOptions?.fullBleed === true));
 		if (!data) {
 			throw new Error('Failed to render the window to PDF');
 		}
@@ -936,41 +933,31 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return result.filePath;
 	}
 
-	async printPdfPreview(windowId: number | undefined, fileName: string, options?: INativeHostOptions): Promise<boolean> {
+	async printWindow(windowId: number | undefined, pdfOptions?: IPdfRenderOptions, options?: INativeHostOptions): Promise<boolean> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		// Render the active window to a PDF exactly like `savePdfToDownloads` (same
-		// print options so the preview matches the downloaded file), but open it in
-		// an in-app child window using Electron/Chromium's built-in PDF viewer.
-		// Electron's native OS print dialog cannot render a live preview on its own
-		// (a Windows/Electron limitation — it always shows "This app doesn't
-		// support print preview"), and handing the file off to `shell.openPath` is
-		// unreliable (whatever, or no, PDF app happens to be installed). The
-		// built-in Chromium PDF viewer always renders a preview and carries its own
-		// toolbar Print button (which still opens the OS dialog to actually send it
-		// to a printer — unavoidable for physical printing — but by then the user
-		// has already seen a real preview).
-		const data = await window?.win?.webContents.printToPDF(buildVisitSummaryPrintOptions());
-		if (!data) {
-			throw new Error('Failed to render the window to PDF');
+		const contents = window?.win?.webContents;
+		if (!contents) {
+			throw new Error('No window to print');
 		}
-		// Write into a dedicated subfolder of the OS temp dir (not the temp dir
-		// itself, which is shared with unrelated processes) under a clean, stable
-		// filename so the viewer's title shows the document name rather than a
-		// random hash.
-		const previewDir = join(this.environmentMainService.tmpDir.fsPath, 'ciyex-print-preview');
-		await fs.promises.mkdir(previewDir, { recursive: true });
-		const safeName = fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName}.pdf`;
-		const filePath = join(previewDir, safeName);
-		await Promises.writeFile(filePath, data);
-		// The default session blocks the raw `file://` protocol outright (see
-		// `ProtocolMainService`), so a child window can't `loadURL('file://...')`.
-		// Whitelist just this preview folder and load through `vscode-file://`
-		// instead — the one scheme the app's renderers are allowed to load local
-		// resources from.
-		this.protocolMainService.addValidFileRoot(previewDir);
-		const browserUri = FileAccess.uriToBrowserUri(URI.file(filePath));
-		this.openChildWindow(window?.win ?? null, browserUri.toString(true));
-		return true;
+		return new Promise<boolean>((resolve, reject) => {
+			contents.print({
+				silent: false,
+				printBackground: true,
+				pageSize: 'Letter',
+				// Full-bleed documents carry their own paper margins inside their
+				// page elements; letting the print dialog add its margins on top
+				// would rescale every page and clip the page frame.
+				...(pdfOptions?.fullBleed ? { margins: { marginType: 'none' as const } } : {}),
+			}, (success, failureReason) => {
+				if (success) {
+					resolve(true);
+				} else if (/cancel/i.test(failureReason)) {
+					resolve(false); // the user dismissed the print dialog
+				} else {
+					reject(new Error(failureReason));
+				}
+			});
+		});
 	}
 
 	//#endregion
