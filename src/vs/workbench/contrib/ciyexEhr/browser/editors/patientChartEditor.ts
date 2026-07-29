@@ -3375,19 +3375,6 @@ export class PatientChartEditor extends EditorPane {
 			const ids = this._patientIdSet();
 			data = data.filter(r => ids.has(String(r.patientId ?? r.patient ?? '')));
 		}
-		// History is a SINGLE evolving record: chart edits and encounter-page
-		// saves both upsert the latest record, but older duplicates can exist
-		// (created before that model, or by a prefill race). Keep ONLY the
-		// newest one so the page always shows the latest updated history —
-		// never a stack of stale copies (QA: "replace the existing one and
-		// always show the latest data").
-		if (tab.key === 'history' && data.length > 1) {
-			const ts = (r: Record<string, unknown>): number => {
-				const t = new Date(String(r._lastUpdated ?? r.recordedAt ?? r.authored ?? '')).getTime();
-				return isNaN(t) ? 0 : t;
-			};
-			data = [[...data].sort((a, b) => ts(b) - ts(a))[0]];
-		}
 		// Encounters show the VISIT TYPE their appointment was created with
 		// (Consultation, Follow-Up, Telehealth, …) instead of the FHIR encounter
 		// class ("Ambulatory") (QA 22-Jul). Only the FLAT /api/appointments rows
@@ -3419,6 +3406,21 @@ export class PatientChartEditor extends EditorPane {
 			} catch { /* appointment lookup is best-effort — rows fall back to encounter class */ }
 		}
 		data = this._mergePendingCreates(tab.key, data);
+		// History is a SINGLE evolving record: chart edits and encounter-page
+		// saves both upsert the latest record, but older duplicates can exist
+		// (created before that model, a prefill race, or a still-pending
+		// optimistic create merged in above). Keep ONLY the newest one — after
+		// the pending-create merge, not before, so a stale pending row can't
+		// survive the cap — so the page always shows the latest updated
+		// history, never a stack of stale copies (QA: "replace the existing
+		// one and always show the latest data").
+		if (tab.key === 'history' && data.length > 1) {
+			const ts = (r: Record<string, unknown>): number => {
+				const t = new Date(String(r._lastUpdated ?? r.recordedAt ?? r.authored ?? '')).getTime();
+				return isNaN(t) ? 0 : t;
+			};
+			data = [[...data].sort((a, b) => ts(b) - ts(a))[0]];
+		}
 		const result = { config, data };
 		this._tabDataCache.set(tab.key, result);
 		return result;
@@ -7209,6 +7211,22 @@ export class PatientChartEditor extends EditorPane {
 								const id = String(r.id ?? r.fhirId ?? '');
 								return id === String(recordId) ? { ...r, ...merged } : r;
 							});
+							this._tabDataCache.set(tab.key, cached);
+						}
+					} else if (tab.key === 'history') {
+						// History is a SINGLE evolving record — unlike every other tab,
+						// a "create" here must REPLACE the cache/pending state, not
+						// prepend to it, or each save (e.g. one whose response omits
+						// the id and falls into this "create" branch instead of the
+						// isEdit/recordId "update" branch above) stacks another whole
+						// card and the History page shows Past Medical/Family/Social
+						// History repeated once per stale entry (QA: "past medical
+						// history repeated 5 times").
+						if (!this._recordId(merged)) { merged.id = `tmp-${Date.now()}`; }
+						this._pendingCreates.set(tab.key, [merged]);
+						const cached = this._tabDataCache.get(tab.key);
+						if (cached) {
+							cached.data = [merged];
 							this._tabDataCache.set(tab.key, cached);
 						}
 					} else {
