@@ -135,17 +135,41 @@ function listOf(payload: unknown): Array<Record<string, unknown>> {
 }
 
 /**
+ * The two raw stores every money view in the app is built from: the fee sheets
+ * (what was charged) and the payment transactions (EOB postings, patient
+ * payments, credits, patient responsibility).
+ */
+export interface ILedgerSources {
+	txns: Array<Record<string, unknown>>;
+	sheets: Array<Record<string, unknown>>;
+}
+
+/**
+ * Fetch the ledger's two backing stores once. Exposed so a caller that needs
+ * BOTH the ledger events and the raw records behind them (the patient chart's
+ * Billing page reads the fee-sheet service lines and the EOB notes directly)
+ * doesn't fetch the same two endpoints twice.
+ */
+export async function fetchLedgerSources(apiService: ICiyexApiService): Promise<ILedgerSources> {
+	const [txnsRaw, sheetsRaw] = await Promise.all([
+		apiService.fetch('/api/payments/transactions').then(async r => r.ok ? await r.json() : null).catch(() => null),
+		apiService.fetch('/api/fee-sheets').then(async r => r.ok ? await r.json() : null).catch(() => null),
+	]);
+	return { txns: listOf(txnsRaw), sheets: listOf(sheetsRaw) };
+}
+
+/**
  * Build the ledger events from the fee sheets + payment transactions.
  * With `patientId` set only that patient's events are returned; the running
  * balance is always computed per patient either way.
  */
 export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?: string): Promise<LedgerEvent[]> {
-	const [txnsRaw, sheetsRaw] = await Promise.all([
-		apiService.fetch('/api/payments/transactions').then(async r => r.ok ? await r.json() : null).catch(() => null),
-		apiService.fetch('/api/fee-sheets').then(async r => r.ok ? await r.json() : null).catch(() => null),
-	]);
-	const txns = listOf(txnsRaw);
-	const sheets = listOf(sheetsRaw);
+	return buildLedgerEventsFrom(await fetchLedgerSources(apiService), patientId);
+}
+
+/** {@link buildLedgerEvents} over already-fetched sources. */
+export function buildLedgerEventsFrom(sources: ILedgerSources, patientId?: string): LedgerEvent[] {
+	const { txns, sheets } = sources;
 
 	const events: LedgerEvent[] = [];
 	const wanted = (pid: string) => !patientId || String(pid) === String(patientId);

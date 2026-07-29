@@ -18,6 +18,7 @@ import { IDialogService, IFileDialogService } from '../../../../../platform/dial
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, loadLedgerStatementInfo, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import { buildPatientBilling, renderPatientBilling } from './patientBilling.js';
 import { savePrintableAsPdf } from './printableDocument.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
@@ -357,27 +358,17 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 		],
 	},
 	{
-		key: 'claims', label: 'Claims', position: 5, tabs: [
-			// Billing & Claims columns explicitly list a `providerName`-style
-			// alias chain so the table never falls back to the raw provider
-			// or organization ID. The 12.05.26 test report flagged ID-only
-			// columns app-wide; the chart cell renderer also runs the
-			// _resolveIdToName fallback as a second line of defense.
-			{
-				key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: ['Claim'],
-				columns: [
-					{ key: 'serviceDate', label: 'Service Date', aliases: ['serviceDate', 'date', 'period.start', 'created'] },
-					{ key: 'cptCode', label: 'CPT', aliases: ['cptCode', 'cpt'] },
-					{ key: 'icdCode', label: 'Diagnosis', aliases: ['icdCode', 'icd10Code', 'diagnosisCode'] },
-					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerDisplay', 'practitionerName', 'performerDisplay', 'providerId'] },
-					// Issue #11: prefer human-readable display fields BEFORE the bare
-					// id aliases so the cell falls back to the org-cache lookup
-					// only when the FHIR row genuinely lacks a display name.
-					{ key: 'insuranceName', label: 'Insurance Company', aliases: ['insuranceName', 'payerName', 'insurerName', 'insuranceCompanyName', 'companyName', 'organizationDisplay', 'organizationName', 'payor.display', 'payor.0.display', 'coverage.payor.display', 'coverage.payor.0.display', 'insurerDisplay', 'payerDisplay', 'insurerId', 'payerId'] },
-					{ key: 'totalAmount', label: 'Amount', aliases: ['totalAmount', 'amount', 'totalNet.value'] },
-					{ key: 'status', label: 'Status' },
-				],
-			},
+		// The chart's revenue section is ONE page (test team, 29-Jul: "we don't
+		// want Claims, Transactions, Denials, ERA… we want only Billing").
+		// Claims / Submissions / Denials / ERA-Remittance / Transactions were
+		// generic FHIR lists over Claim / ClaimResponse / PaymentReconciliation /
+		// Invoice — resources this app's billing flow never writes, so every one
+		// of them (Billing included) read empty on a patient who had actually
+		// been billed and paid. Billing is now a purpose-built page composed
+		// from the stores the money really lives in (`/api/fee-sheets` +
+		// `/api/payments/transactions`) — see patientBilling.ts.
+		key: 'claims', label: 'Billing', position: 5, tabs: [
+			{ key: 'billing', label: 'Billing', icon: 'Receipt', emoji: '\u{1F9FE}', position: 0, visible: true, display: 'list', panel: 'main', fhirResources: [], readOnly: true },
 		],
 	},
 	{
@@ -2369,40 +2360,22 @@ export class PatientChartEditor extends EditorPane {
 	 * ledger the RCM work queue and claim editor operate on. Orgs without the
 	 * install keep the existing FHIR-backed tabs untouched.
 	 *
-	 * Only tabs with a patient-scoped RCM endpoint are switched (claims,
-	 * billing→charges, payment→ledger); denials / ERA / statements stay on
-	 * FHIR — the RCM service exposes those org-wide, not per patient. RCM
-	 * tabs are read-only: claims are created from the fee sheet flow, not the
-	 * generic chart form (whose FHIR payload the RCM API won't accept).
+	 * Only tabs with a patient-scoped RCM endpoint are switched (payment→ledger);
+	 * denials / ERA / statements stay on FHIR — the RCM service exposes those
+	 * org-wide, not per patient. RCM tabs are read-only: claims are created from
+	 * the fee sheet flow, not the generic chart form (whose FHIR payload the RCM
+	 * API won't accept).
+	 *
+	 * Billing is NOT overridden: it is a custom page composed from the local fee
+	 * sheets + payment transactions (patientBilling.ts), which is where the
+	 * charges live for every org — the RCM charge list only mirrors the sheets
+	 * that were pushed to it, so swapping the endpoint would HIDE the claims of
+	 * an RCM-subscribed org whose fee sheets pre-date the install.
 	 */
 	private _applyRcmTabOverrides(): void {
 		if (!this.installationsService.isInstalled(RCM_APP_SLUG)) { return; }
 		const RCM = '/api/app-proxy/ciyex-rcm/api/rcm';
 		const overrides = new Map<string, Partial<ChartTab>>([
-			['claims', {
-				apiPath: `${RCM}/claims/patient/{patientId}`, fhirResources: [], readOnly: true,
-				columns: [
-					{ key: 'claimNumber', label: 'Claim #', aliases: ['claimNumber', 'id'] },
-					{ key: 'dateOfService', label: 'Service Date', aliases: ['dateOfService', 'serviceDate'] },
-					{ key: 'providerName', label: 'Provider', aliases: ['providerName', 'providerNpi'] },
-					{ key: 'payerName', label: 'Payer', aliases: ['payerName'] },
-					{ key: 'totalCharges', label: 'Charges', aliases: ['totalCharges'] },
-					{ key: 'balance', label: 'Balance', aliases: ['balance'] },
-					{ key: 'status', label: 'Status', aliases: ['claimStatus', 'status'] },
-				],
-			}],
-			['billing', {
-				apiPath: `${RCM}/charges/patient/{patientId}`, fhirResources: [], readOnly: true,
-				columns: [
-					{ key: 'dateOfService', label: 'Service Date', aliases: ['dateOfService'] },
-					{ key: 'cptCode', label: 'CPT', aliases: ['cptCode'] },
-					{ key: 'icd10Codes', label: 'Diagnosis', aliases: ['icd10Codes'] },
-					{ key: 'description', label: 'Description', aliases: ['description'] },
-					{ key: 'units', label: 'Units', aliases: ['units'] },
-					{ key: 'chargeAmount', label: 'Amount', aliases: ['chargeAmount'] },
-					{ key: 'status', label: 'Status' },
-				],
-			}],
 			['payment', {
 				apiPath: `${RCM}/patient-ledger/{patientId}`, fhirResources: [], readOnly: true,
 				columns: [
@@ -4608,6 +4581,46 @@ export class PatientChartEditor extends EditorPane {
 				actionsHost: this._ledgerActionsHost(),
 				exportHost: this._ledgerExportHost(),
 				accountName: this.patientName || undefined,
+			});
+			return;
+		}
+
+		// Billing: the chart's single revenue page. Like Ledger it has no tab
+		// endpoint — it is composed from the fee sheets (charges) and the payment
+		// transactions (EOB postings / patient money), which is where this app's
+		// billing flow actually writes. See patientBilling.ts.
+		if (tab.key === 'billing') {
+			await this._loadLookups();
+			const model = await buildPatientBilling(this.apiService, this.patientId, {
+				providerName: id => this._providerNameById.get(id) || '',
+			});
+			if (tab.key !== this.activeTab) { return; }
+			DOM.clearNode(content);
+			countEl.textContent = model.claims.length > 0 ? String(model.claims.length) : '';
+			content.style.display = 'flex';
+			content.style.flexDirection = 'column';
+			renderPatientBilling(content, model, {
+				accountName: this.patientName || undefined,
+				actionsHost: this._ledgerActionsHost(),
+				exportHost: this._ledgerExportHost(),
+				reload: () => {
+					this._tabDataCache.delete(tab.key);
+					this._renderMain();
+				},
+				openFeeSheet: claim => {
+					this.commandService.executeCommand('ciyex.openFeeSheet',
+						claim.encounterId, this.patientId, this.patientName,
+						claim.encounterId ? `Encounter ${claim.encounterId}` : undefined)
+						.then(undefined, () => { });
+				},
+				openInsurancePosting: claim => {
+					// Insurance Posting is an org-wide work queue in the Payments
+					// editor; it opens filtered to nothing, so name the claim in the
+					// notification rather than pretending we can deep-link to a row.
+					this.commandService.executeCommand('ciyex.openPayments').then(() => {
+						this.notificationService.info(`Payments opened — choose Insurance Posting and work claim ${claim.claimRef}.`);
+					}, () => { });
+				},
 			});
 			return;
 		}
