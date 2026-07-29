@@ -665,7 +665,13 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 					{ key: 'smokingStatus', label: 'Smoking', type: 'textarea', singleRow: true, placeholder: 'Smoking status / history...' },
 					{ key: 'alcoholUse', label: 'Alcohol', type: 'textarea', singleRow: true, placeholder: 'Alcohol use...' },
 					{ key: 'exerciseFrequency', label: 'Exercise', type: 'textarea', singleRow: true, placeholder: 'Exercise habits...' },
-					{ key: 'additionalHistory', label: 'Additional Notes', type: 'textarea', placeholder: 'Occupation, lifestyle, other history...' },
+					// Mirror the encounter form's Social History Occupation (sh_occupation)
+					// and Recreational Drugs (sh_drugs) fields — the chart's History tab
+					// carried neither, so they never round-tripped between the two
+					// surfaces (QA: "occupation and recreational drug fields are missing").
+					{ key: 'occupationHistory', label: 'Occupation', type: 'textarea', singleRow: true, placeholder: 'Occupation / work history...' },
+					{ key: 'recreationalDrugUse', label: 'Recreational Drugs', type: 'textarea', singleRow: true, placeholder: 'Recreational drug use...' },
+					{ key: 'additionalHistory', label: 'Additional Notes', type: 'textarea', placeholder: 'Lifestyle, other history...' },
 				],
 			},
 		],
@@ -5975,6 +5981,8 @@ export class PatientChartEditor extends EditorPane {
 			tile(socBody, 'Smoking Status', val(rec, ['smokingStatus', 'smoking']));
 			tile(socBody, 'Alcohol Use', val(rec, ['alcoholUse', 'alcohol']));
 			tile(socBody, 'Exercise', val(rec, ['exerciseFrequency', 'exercise']));
+			tile(socBody, 'Occupation', val(rec, ['occupationHistory', 'occupation']));
+			tile(socBody, 'Recreational Drugs', val(rec, ['recreationalDrugUse', 'recreationalDrugs', 'drugUse']));
 			tile(socBody, 'Additional Notes', val(rec, ['additionalHistory', 'additionalNotes']));
 
 			// Drop the divider under the last section so the card closes cleanly.

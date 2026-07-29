@@ -752,6 +752,8 @@ export class EncounterFormEditor extends EditorPane {
 		['smokingStatus', 'sh_smoking'],
 		['alcoholUse', 'sh_alcohol'],
 		['exerciseFrequency', 'sh_exercise'],
+		['occupationHistory', 'sh_occupation'],
+		['recreationalDrugUse', 'sh_drugs'],
 		['additionalHistory', 'sh_notes'],
 	];
 
