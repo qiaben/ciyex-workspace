@@ -827,8 +827,20 @@ export class EncounterFormEditor extends EditorPane {
 			// (the normal prefill-then-add-below flow) it is saved as typed.
 			// Single-valued Social History status fields (smoking / alcohol /
 			// exercise) stay latest-wins — appending states makes no sense there.
+			// The "already carries it" check compares with ALL whitespace
+			// stripped: a raw `v.includes(prev)` false-negatived whenever a
+			// single space went missing or was added between the prefilled
+			// value and the resaved one (e.g. "HLD. Cesarean" vs
+			// "HLD.Cesarean"), which made the guard miss the already-present
+			// text and re-append it every save — compounding into the same
+			// paragraph duplicated 2-5x (QA). Collapsing runs of whitespace
+			// to one space is not enough since the drift can be a MISSING
+			// space, not just an extra one — only stripping it entirely
+			// makes the comparison immune to spacing drift either way.
 			const prev = String(latest?.fields[formKey] ?? '').trim();
-			payload[chartKey] = (EncounterFormEditor._APPEND_HISTORY_KEYS.has(chartKey) && prev && v !== prev && !v.includes(prev))
+			const normalize = (s: string): string => s.replace(/\s+/g, '');
+			const alreadyPresent = !prev || v === prev || normalize(v).includes(normalize(prev));
+			payload[chartKey] = (EncounterFormEditor._APPEND_HISTORY_KEYS.has(chartKey) && prev && !alreadyPresent)
 				? `${prev}\n${v}`
 				: v;
 			any = true;
