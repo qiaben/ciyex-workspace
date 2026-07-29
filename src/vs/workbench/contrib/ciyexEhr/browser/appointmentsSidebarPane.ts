@@ -807,10 +807,33 @@ export class AppointmentsSidebarPane extends ViewPane {
 		this.commandService.executeCommand('ciyex.openAppointments');
 	}
 
+	/** Create the appointment's encounter — but only when it genuinely has none.
+	 *  The row's own link is checked first, then a read-only lookup, and the POST
+	 *  is the last resort. The lookup alone cannot be trusted on its own: it
+	 *  answers from the FHIR search index, which stays blind to an encounter
+	 *  created in the last ~60s (e.g. the one the Checked-in status just made), so
+	 *  an unconditional POST here left the visit with two encounters. */
 	private async _newEncounter(apt: Appointment): Promise<void> {
-		try {
-			await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-		} catch { /* */ }
+		if (!apt.encounterId) {
+			try {
+				const look = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`);
+				if (look.ok) {
+					const d = await look.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+					const existing = String(d?.data?.encounterId ?? '').trim();
+					if (existing) { apt.encounterId = existing; }
+				}
+			} catch { /* fall through to create */ }
+		}
+		if (!apt.encounterId) {
+			try {
+				const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
+				if (res.ok) {
+					const d = await res.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+					const created = String(d?.data?.encounterId ?? d?.data?.id ?? '').trim();
+					if (created) { apt.encounterId = created; }
+				}
+			} catch { /* */ }
+		}
 		await this._loadAppointments();
 		this._render();
 	}

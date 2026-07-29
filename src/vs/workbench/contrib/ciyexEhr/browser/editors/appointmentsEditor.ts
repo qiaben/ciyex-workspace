@@ -579,16 +579,27 @@ export class AppointmentsEditor extends EditorPane {
 
 	private async _updateStatus(id: number, newStatus: string): Promise<void> {
 		try {
-			await this.apiService.fetch(`/api/appointments/${id}/status`, {
+			const res = await this.apiService.fetch(`/api/appointments/${id}/status`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status: newStatus }),
 			});
+			// Keep the encounter the backend just auto-created. A trigger status
+			// (Checked-in) creates the visit's encounter server-side and returns its
+			// id here — and this response is the only immediately-consistent view of
+			// that link. `_resolveAppointmentEncounter`'s read-only lookup answers
+			// from the FHIR search index, which stays blind to a fresh encounter for
+			// ~60s, so without stamping the id onto the row the follow-up
+			// "open the visit chart" below POSTs a SECOND encounter for the visit.
+			const body = res.ok ? await res.json().catch(() => null) as { data?: Record<string, unknown> } | null : null;
+			const linkedEncId = String(body?.data?.encounterId ?? '').trim();
 			this.editingStatusId = null;
 			// Optimistic instant reflect: patch the edited row's status in place and
 			// re-render immediately, then reconcile with the server in the background
 			// so the new status shows without waiting on a full-list GET.
-			this.rows = this.rows.map(r => r.id === id ? { ...r, status: normalizeStatus(newStatus) } : r);
+			this.rows = this.rows.map(r => r.id === id
+				? { ...r, status: normalizeStatus(newStatus), ...(linkedEncId ? { encounterId: linkedEncId } : {}) }
+				: r);
 			this._render();
 			void this._loadAppointments();
 			// Marking an appointment "Completed" auto-creates its encounter and opens

@@ -1256,14 +1256,22 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 		}
 	}
 
-	private async _updateAppointmentStatus(id: string, status: string): Promise<void> {
+	/** PUT the status and return the encounter the backend auto-created for it, if
+	 *  any — a trigger status (Checked-in) mints the visit's encounter server-side
+	 *  and this response is the only immediately-consistent view of that link. */
+	private async _updateAppointmentStatus(id: string, status: string): Promise<string> {
 		try {
-			await this.apiService.fetch(`/api/appointments/${id}/status`, {
+			const res = await this.apiService.fetch(`/api/appointments/${id}/status`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),
 			});
+			if (res.ok) {
+				const body = await res.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+				return String(body?.data?.encounterId ?? '').trim();
+			}
 		} catch { /* */ }
+		return '';
 	}
 
 	private async _updateAppointmentRoom(id: string, room: string): Promise<void> {
@@ -1327,21 +1335,36 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 	}
 
 	/** PUT a new appointment status, then refresh the dashboard so the card,
-	 *  status pill and available actions all reflect the new state. */
-	private async _changeApptStatus(id: string, status: string): Promise<void> {
+	 *  status pill and available actions all reflect the new state. When the
+	 *  status triggered encounter creation, the returned id is stamped onto the
+	 *  appointment so the later "Open Encounter" step reuses it instead of
+	 *  creating a second one. */
+	private async _changeApptStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<void> {
 		if (!id) { return; }
-		await this._updateAppointmentStatus(id, status);
+		const encounterId = await this._updateAppointmentStatus(id, status);
+		if (encounterId && apt) { apt.encounterId = encounterId; }
 		this._rerender();
 	}
 
-	/** Create a FHIR encounter from the appointment, open it, then refresh. */
+	/** Create a FHIR encounter from the appointment, open it, then refresh.
+	 *  Idempotent: the appointment's own link and a read-only lookup are checked
+	 *  before creating, because a Checked-in visit already has an encounter the
+	 *  FHIR search index will not reveal for another ~60s — POSTing regardless is
+	 *  what left visits with two encounters. */
 	private async _createEncounterFromAppointment(apt: Record<string, unknown>): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
 		try {
-			const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
-			let encounterId: string | undefined;
-			if (res.ok) {
+			let encounterId = String(apt.encounterId ?? '').trim() || undefined;
+			if (!encounterId) {
+				const look = await this.apiService.fetch(`/api/appointments/${id}/encounter`).catch(() => null);
+				if (look?.ok) {
+					const d = await look.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+					encounterId = String(d?.data?.encounterId ?? '').trim() || undefined;
+				}
+			}
+			const res = encounterId ? null : await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
+			if (res?.ok) {
 				try {
 					const data = await res.json();
 					const payload = (data?.data ?? data) as Record<string, unknown>;
@@ -1713,7 +1736,7 @@ export class PatientSnapshotDemoEditor extends EditorPane {
 			return reachable ? 'todo' : 'disabled';
 		};
 
-		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in'));
+		tile('check', '1 · Check In', 'Front desk', stateFor('checkin', true), () => void this._changeApptStatus(appointmentId, 'Checked-in', apt));
 		tile('home', '2 · Assign Room', 'Front desk', stateFor('room', done('checkin')), () => this._openRoomPicker(appointmentId, String(apt.room || apt.roomName || '')));
 		tile('pulse', '3 · Record Vitals', 'Medical staff', stateFor('vitals', done('checkin')), () => this._focusVitalsEntry());
 		tile('note', '4 · Open Encounter', 'Provider', stateFor('encounter', done('checkin')), () => {

@@ -644,46 +644,21 @@ export class ScheduleSidebarPane extends ViewPane {
 					items.push({
 						symbol: 'pulse', label: 'Record Vitals', disabled: !apt.encounterId && isTerminal,
 						onClick: async () => {
-							if (apt.encounterId) {
-								this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName, 'Vitals', 'vitals').catch(() => { });
-							} else {
-								try {
-									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-									if (res.ok) {
-										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName, 'Vitals', 'vitals'); } } catch { /* */ }
-										// Reconcile the schedule list in the background — the user has
-										// already navigated to the freshly-created encounter.
-										void this._loadAndRender();
-									}
-								} catch { /* */ }
-							}
+							const encId = await this._ensureEncounter(apt);
+							if (encId) { this.commandService.executeCommand('ciyex.openEncounter', encId, apt.patientName, 'Vitals', 'vitals').catch(() => { }); }
 						}
 					});
 					items.push({
 						symbol: 'notebook', label: 'Visit Summary', disabled: !apt.encounterId && isTerminal,
 						onClick: async () => {
-							if (apt.encounterId) {
-								this.commandService.executeCommand('ciyex.openEncounter', apt.encounterId, apt.patientName).catch(() => { });
-							} else {
-								try {
-									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-									if (res.ok) {
-										try { const d = await res.json(); const id = (d?.data ?? d)?.id; if (id) { void this.commandService.executeCommand('ciyex.openEncounter', id, apt.patientName); } } catch { /* */ }
-										// Reconcile the schedule list in the background — the user has
-										// already navigated to the freshly-created encounter.
-										void this._loadAndRender();
-									}
-								} catch { /* */ }
-							}
+							const encId = await this._ensureEncounter(apt);
+							if (encId) { this.commandService.executeCommand('ciyex.openEncounter', encId, apt.patientName).catch(() => { }); }
 						}
 					});
 					if (!isTerminal) {
 						items.push({
 							symbol: 'file-add', label: 'New Encounter', onClick: async () => {
-								try {
-									const res = await this.apiService.fetch(`/api/appointments/${apt.id}/encounter`, { method: 'POST' });
-									if (res.ok) { await this._loadAndRender(); }
-								} catch { /* */ }
+								await this._ensureEncounter(apt);
 							}
 						});
 					}
@@ -1321,17 +1296,73 @@ export class ScheduleSidebarPane extends ViewPane {
 		} catch { /* best effort */ }
 	}
 
-	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {
+	/** Resolve the appointment's encounter, creating one only when it truly has
+	 *  none. Every row action that needs an encounter goes through here so a visit
+	 *  can never end up with two: the row itself and the session override are
+	 *  checked first (both immediately consistent), then a read-only GET, and only
+	 *  then a POST. The GET alone is not enough — it answers from the FHIR search
+	 *  index, which does not see an encounter created in the last ~60s, so the
+	 *  actions used to POST a duplicate for a visit that had just been checked in.
+	 *  Returns the encounter id, or empty when none could be resolved or created. */
+	private async _ensureEncounter(apt: Appointment): Promise<string> {
+		const apptId = String(apt.id ?? '');
+		if (!apptId) { return ''; }
+		const known = String(apt.encounterId ?? this._apptEditOverride.get(apptId)?.encounterId ?? '').trim();
+		if (known) { return known; }
 		try {
-			await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
+			const look = await this.apiService.fetch(`/api/appointments/${apptId}/encounter`);
+			if (look.ok) {
+				const d = await look.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+				const existing = String(d?.data?.encounterId ?? '').trim();
+				if (existing) { this._rememberEncounter(apt, existing); return existing; }
+			}
+		} catch { /* fall through to create */ }
+		try {
+			const res = await this.apiService.fetch(`/api/appointments/${apptId}/encounter`, { method: 'POST' });
+			if (!res.ok) { return ''; }
+			const d = await res.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+			const created = String(d?.data?.encounterId ?? d?.data?.id ?? '').trim();
+			if (created) { this._rememberEncounter(apt, created); }
+			// Reconcile the schedule list in the background — the user has already
+			// navigated to the freshly-created encounter.
+			void this._loadAndRender();
+			return created;
+		} catch { return ''; }
+	}
+
+	/** Stamp a resolved encounter link onto the row, the in-memory list and the
+	 *  session override so no later action re-resolves it through the lagging
+	 *  search index. */
+	private _rememberEncounter(apt: Appointment, encounterId: string): void {
+		const apptId = String(apt.id ?? '');
+		apt.encounterId = encounterId;
+		this._apptEditOverride.set(apptId, { ...this._apptEditOverride.get(apptId), encounterId });
+		this.appointments = this.appointments.map(a => String(a.id ?? '') === apptId ? { ...a, encounterId } : a);
+	}
+
+	private async _changeStatus(apt: Appointment, newStatus: string): Promise<void> {
+		let linkedEncId = '';
+		try {
+			const res = await this.apiService.fetch(`/api/appointments/${apt.id}/status`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
+			// A trigger status (Checked-in) makes the backend create the visit's
+			// encounter and return its id. Keep it — see _ensureEncounter: the
+			// read-only lookup used before creating one answers from the FHIR search
+			// index, which cannot see a fresh encounter for ~60s, so dropping this id
+			// is what let the row actions mint a duplicate encounter.
+			if (res.ok) {
+				const body = await res.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+				linkedEncId = String(body?.data?.encounterId ?? '').trim();
+			}
 		} catch {
 			try { await this.apiService.fetch(`/api/appointments/${apt.id}`, { method: 'PUT', body: JSON.stringify({ ...apt, status: newStatus }) }); } catch { /* */ }
 		}
 		// Optimistic instant reflect: record the override and patch the in-memory
 		// list so the new status shows immediately, then reconcile in the
 		// background instead of blocking on a full reload.
-		this._apptEditOverride.set(String(apt.id ?? ''), { ...this._apptEditOverride.get(String(apt.id ?? '')), status: newStatus });
-		this.appointments = this.appointments.map(a => String(a.id ?? '') === String(apt.id ?? '') ? { ...a, status: newStatus } : a);
+		const patch: Partial<Appointment> = { status: newStatus, ...(linkedEncId ? { encounterId: linkedEncId } : {}) };
+		this._apptEditOverride.set(String(apt.id ?? ''), { ...this._apptEditOverride.get(String(apt.id ?? '')), ...patch });
+		this.appointments = this.appointments.map(a => String(a.id ?? '') === String(apt.id ?? '') ? { ...a, ...patch } : a);
+		if (linkedEncId) { apt.encounterId = linkedEncId; }
 		this._render();
 		void this._loadAndRender();
 	}

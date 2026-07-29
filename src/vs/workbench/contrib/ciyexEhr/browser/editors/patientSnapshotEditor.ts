@@ -2857,6 +2857,38 @@ export class PatientSnapshotEditor extends EditorPane {
 		this._apptStatusOverride.set(id, { ...(this._apptStatusOverride.get(id) || {}), ...patch });
 	}
 
+	/** Remember the encounter the backend auto-created for this appointment.
+	 *  `PUT /api/appointments/{id}/status` answers with `encounterId` whenever the
+	 *  new status triggers encounter creation (Checked-in does), and that response
+	 *  is the ONLY immediately-consistent view of the link: the read-only lookup
+	 *  the workflow uses before creating one goes through the FHIR search index,
+	 *  which stays blind to a brand-new encounter for about a minute (measured at
+	 *  60-62s on dev, stage AND production alike). Discarding the id here is what
+	 *  produced the duplicate encounters — a visit checked in and then marked
+	 *  Completed inside that minute found "No encounter" and POSTed a second one.
+	 *  Persisting it in the session overlay carries the link across the rerender
+	 *  between Check In and Completed. */
+	private _captureEncounterLink(id: string, apt: Record<string, unknown> | undefined, payload: Record<string, unknown> | null): void {
+		const encId = String(payload?.encounterId ?? '').trim();
+		if (!encId) { return; }
+		const patch: Record<string, unknown> = { encounterId: encId };
+		const encPatientId = payload?.encounterPatientId;
+		if (encPatientId !== undefined && encPatientId !== null && String(encPatientId) !== '') {
+			patch.encounterPatientId = String(encPatientId);
+		}
+		this._setApptOverride(id, patch);
+		if (apt) { Object.assign(apt, patch); }
+	}
+
+	/** The encounter already linked to this appointment — from the appointment
+	 *  record itself, or from a link captured earlier in this session (see
+	 *  {@link _captureEncounterLink}). Empty when the visit genuinely has none. */
+	private _linkedEncounterId(apt: Record<string, unknown>, id: string): string {
+		const direct = String(apt.encounterId ?? '').trim();
+		if (direct) { return direct; }
+		return String(this._apptStatusOverride.get(id)?.encounterId ?? '').trim();
+	}
+
 	private async _updateAppointmentStatus(id: string, status: string, apt?: Record<string, unknown>): Promise<boolean> {
 		if (!id) { return false; }
 		// Primary path: the dedicated status sub-resource.
@@ -2866,7 +2898,12 @@ export class PatientSnapshotEditor extends EditorPane {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),
 			});
-			if (res.ok) { this._setApptOverride(id, { status }); return true; }
+			if (res.ok) {
+				this._setApptOverride(id, { status });
+				const body = await res.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+				this._captureEncounterLink(id, apt, body?.data ?? null);
+				return true;
+			}
 		} catch { /* fall through to the full-update fallback */ }
 		// Fallback: re-issue as a full appointment PUT (the same call the Edit
 		// dialog uses). The `/status` sub-resource can reject a transition once the
@@ -3012,8 +3049,11 @@ export class PatientSnapshotEditor extends EditorPane {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
 		await this._updateAppointmentStatus(id, 'Completed', apt);
-		// Already linked → nothing to create, just refresh.
-		if (apt.encounterId) {
+		// Already linked → nothing to create, just refresh. The link is checked
+		// against the session overlay as well as the appointment record: Check In
+		// creates the encounter server-side, and that link only reaches the
+		// appointment record once the FHIR search index catches up a minute later.
+		if (this._linkedEncounterId(apt, id)) {
 			this._rerender();
 			return;
 		}
@@ -3254,8 +3294,10 @@ export class PatientSnapshotEditor extends EditorPane {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
 		try {
-			// 1) Reuse an encounter already linked to this appointment.
-			let existingId = String(apt.encounterId || '');
+			// 1) Reuse an encounter already linked to this appointment — including a
+			//    link captured from an earlier status change this session, which the
+			//    read-only lookup in step 2 cannot see for the first ~60s.
+			let existingId = this._linkedEncounterId(apt, id);
 			// 2) Otherwise ask the backend (read-only) whether one exists.
 			if (!existingId) {
 				try {
@@ -3333,7 +3375,7 @@ export class PatientSnapshotEditor extends EditorPane {
 			// Stamp the link locally so the very next render shows the Encounter step
 			// done (and unlocks Sign & Lock) even though the appointment LIST index
 			// still lags and won't echo `encounterId` for a moment.
-			if (encounterId) { this._setApptOverride(id, { encounterId }); }
+			if (encounterId) { this._captureEncounterLink(id, apt, { encounterId }); }
 			// We do NOT navigate into the encounter editor here — completing the
 			// visit on the snapshot only creates + links the encounter and refreshes
 			// the dashboard so the Encounter status reads "Created". Opening/editing
