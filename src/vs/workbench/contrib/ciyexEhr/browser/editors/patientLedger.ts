@@ -696,7 +696,12 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 	const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
 	search.placeholder = opts.showPatientColumn ? 'Filter by patient, claim #, type, description...' : 'Filter by claim #, type, description...';
 	search.value = opts.initialFilter || '';
-	search.style.cssText = 'flex:0 0 320px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+	// Payments > Ledger (all-patients view) no longer has the redundant top
+	// "Patient:" picker bar above it (QA: "two search options, remove the
+	// top one"), so this is the page's only search box — give it more room
+	// than the chart's embedded single-patient ledger gets.
+	const searchWidth = opts.showPatientColumn ? '560px' : '320px';
+	search.style.cssText = `flex:0 0 ${searchWidth};padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;`;
 	const countEl = DOM.append(bar, DOM.$('span'));
 	countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 

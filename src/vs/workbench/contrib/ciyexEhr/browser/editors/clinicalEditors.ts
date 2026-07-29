@@ -8452,8 +8452,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// /api/credit-cards/patient/{id}), so it shares the patient picker.
 			// Credits lists every patient, but "Collect Credit" needs one selected —
 			// the shared picker is how the front desk names them.
+			// Ledger does NOT use this picker to scope its data — per the comment
+			// on _ledgerConfig, the ledger is composed client-side from EVERY
+			// patient's activity, and picking a name here only pre-seeds the
+			// ledger's own filter box below. That made it read as two redundant
+			// search boxes (QA: "remove the top search bar"), so it's hidden here.
 			this._payPatientBar.style.display =
-				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods' || this.payView === 'credits') ? 'flex' : 'none';
+				(this.payView === 'plans' || this.payView === 'methods' || this.payView === 'credits') ? 'flex' : 'none';
 		}
 	}
 
