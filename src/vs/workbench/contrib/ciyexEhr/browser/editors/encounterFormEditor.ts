@@ -1387,6 +1387,12 @@ export class EncounterFormEditor extends EditorPane {
 				// automatically from all the CPT/ICD codes already captured on the
 				// encounter (every procedure + the diagnosis pointers).
 				await this._autoCreateFeeSheetFromEncounter(procedures, diagnoses);
+				// Sign & Lock is the last step of charting a visit — land the user
+				// back on the Patient Snapshot automatically instead of leaving them
+				// on the now-locked, read-only encounter form (QA request).
+				const appointmentId = this.input instanceof EncounterFormEditorInput ? this.input.appointmentId : undefined;
+				this.commandService.executeCommand('ciyex.openPatientSnapshot', this.patientId, this.patientName, appointmentId)
+					.catch(() => { /* snapshot nav best-effort — encounter is already signed */ });
 			} else {
 				const err = await res.text().catch(() => 'Unknown error');
 				this.notificationService.error(`Failed to sign: ${err}`);
