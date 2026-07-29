@@ -427,8 +427,16 @@ export const PRESCRIPTIONS_FORM_FIELDS: FormFieldDef[] = [
 		]
 	},
 	{ key: 'pharmacyName', label: 'Pharmacy', type: 'text', required: true, placeholder: 'Pharmacy name', validationPattern: '^[A-Za-z0-9 ,.\\-/()&\']{2,128}$', validationMessage: 'Pharmacy Name must be 2-128 valid characters' },
-	{ key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: '+1 555-123-4567', validationPattern: '^\\+?(?:[0-9][\\s().\\-]?){7,15}$', validationMessage: 'Enter a valid phone number e.g. +1 555-123-4567' },
-	{ key: 'pharmacyAddress', label: 'Pharmacy Address', type: 'text', placeholder: 'Pharmacy street address' },
+	{
+		key: 'pharmacyPhone', label: 'Pharmacy Phone', type: 'text', required: true, placeholder: 'e.g. 5551234567',
+		typingPattern: '^[0-9]*$', maxDigits: 10,
+		validationPattern: '^[0-9]{10}$',
+		validationMessage: 'Pharmacy Phone must be exactly 10 digits'
+	},
+	// Split address (was a single free-text pharmacyAddress line — no City/State/
+	// ZIP, so pharmacy mail couldn't be validated) into the canonical Address
+	// Line 1/2, City, State, ZIP group shared by every other form in the app.
+	...buildAddressFieldConfigs('pharmacy'),
 	{
 		key: 'priority', label: 'Priority', type: 'select', options: [
 			{ label: 'Routine', value: 'routine' }, { label: 'Urgent', value: 'urgent' }, { label: 'STAT', value: 'stat' },
@@ -708,9 +716,40 @@ export class LabsEditor extends ClinicalListEditorBase {
 
 	private _activeView: 'orders' | 'results' = 'orders';
 	private _sidebarItems: Map<string, HTMLElement> = new Map();
+	/** Patient full names resolved from /api/patients/{id}, keyed by patientId (cached per editor). */
+	private readonly _patientNameCache = new Map<string, string>();
 
 	protected get config(): ClinicalEditorConfig {
 		return this._activeView === 'results' ? this._resultsConfig : this._ordersConfig;
+	}
+
+	/**
+	 * The lab-order search response doesn't always carry patientFirstName /
+	 * patientLastName on the row (QA: "Patient column not showing the patient
+	 * name") — fill those in from /api/patients/{id} for any row that's
+	 * missing them, same pattern used for Payments / Credits patient lookups.
+	 */
+	private async _resolveOrderPatientNames(items: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+		const missing = items
+			.filter(it => !String(it['patientFirstName'] || '').trim() && !String(it['patientLastName'] || '').trim() && it['patientId'] && !this._patientNameCache.has(String(it['patientId'])))
+			.map(it => String(it['patientId']));
+		await Promise.all([...new Set(missing)].map(async pid => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(pid)}`);
+				if (!res.ok) { return; }
+				const p = (await res.json())?.data ?? {};
+				const first = String(p?.firstName ?? p?.identification?.firstName ?? '').trim();
+				const last = String(p?.lastName ?? p?.identification?.lastName ?? '').trim();
+				const full = `${first} ${last}`.trim();
+				if (full) { this._patientNameCache.set(pid, full); }
+			} catch { /* falls back to "Patient #id" in cellRenderer */ }
+		}));
+		for (const it of items) {
+			if (String(it['patientFirstName'] || '').trim() || String(it['patientLastName'] || '').trim()) { continue; }
+			const cached = this._patientNameCache.get(String(it['patientId']));
+			if (cached) { it['patientFirstName'] = cached; }
+		}
+		return items;
 	}
 
 	private readonly _ordersConfig: ClinicalEditorConfig = {
@@ -726,6 +765,7 @@ export class LabsEditor extends ClinicalListEditorBase {
 		tableMinWidth: '1040px',
 		buildItemUrl: (item) => `/api/lab-order/${item.patientId}/${item.id}`,
 		buildCreateUrl: (payload) => `/api/lab-order/${payload.patientId}`,
+		enrichItems: async (items) => this._resolveOrderPatientNames(items),
 		// Backfill Order Time on edit: if the record carries no standalone time
 		// field (orderTime/collectionTime/…) but one of its datetime fields has a
 		// time component (e.g. orderDate or createdAt as a full ISO timestamp),
@@ -745,7 +785,9 @@ export class LabsEditor extends ClinicalListEditorBase {
 				const ln = String(item.patientLastName || '').trim();
 				const full = `${fn} ${ln}`.trim();
 				if (full) { return full; }
-				const alt = item.patientName || item.patientFullName || item.patient || '';
+				// item.patient may be a nested object (not a display string) on some
+				// payload shapes — only use it as a fallback when it's already text.
+				const alt = item.patientName || item.patientFullName || (typeof item.patient === 'string' ? item.patient : '');
 				return String(alt || (item.patientId ? `Patient #${item.patientId}` : ''));
 			}
 			// TEST column: the order's "orderName" field is usually blank — the test

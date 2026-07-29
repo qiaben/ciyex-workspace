@@ -3190,6 +3190,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		return '#3b9edd';
 	}
 
+	/** Colors for the Medications card badge — matches DEFAULT_FIELD_CONFIGS.medications'
+	 *  status options (draft/active/on-hold/stopped/completed/cancelled). */
+	private static _medicationStatusColor(status: string): string {
+		const s = status.toLowerCase();
+		if (s === 'active') { return '#22c55e'; }
+		if (s === 'on-hold' || s === 'draft') { return '#f59e0b'; }
+		if (s === 'stopped' || s === 'cancelled') { return '#ef4444'; }
+		return '#3b9edd';
+	}
+
 	/** Render the appointment Status as a clickable pill that opens a dropdown of
 	 *  status options. Selecting one applies it inline (no modal) — mirrors the
 	 *  page's other inline editors (e.g. vitals entry). */
@@ -3821,7 +3831,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			const name = m.medicationName || m.name || '—';
 			const dose = m.dosage || '';
 			const freq = m.frequency || '';
-			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · ') };
+			const status = String(m.status || '').trim();
+			const badge = status ? { text: `${status.charAt(0).toUpperCase()}${status.slice(1).replace(/-/g, ' ')}`, color: PatientSnapshotEditor._medicationStatusColor(status) } : undefined;
+			return { primary: String(name), secondary: [dose, freq].filter(Boolean).join(' · '), badge };
 		}, () => this._openCreateModal('medications'), 'medications', 2);
 
 		// Bottom rows: Lab Orders and Lab Results, each in its own full-width card
