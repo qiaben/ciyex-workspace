@@ -196,64 +196,6 @@ const ITEMS: OperationsItem[] = [
 			{ symbol: '\u{2298}', label: 'Void', color: '#ef4444', action: { kind: 'method', method: 'POST', path: r => `/api/payments/transactions/${r.id}/void`, confirm: 'Void this payment?' } },
 		],
 	},
-	{
-		// Claims: \u{270F} Edit + Update Status + Send + \u{21BA} Void & Recreate (clinicalEditors.ts:3354)
-		id: 'claims',
-		// allow-any-unicode-next-line
-		icon: '\u{1F4C4}',
-		label: 'Claims',
-		short: 'Claim',
-		description: 'Claim submission, status tracking',
-		command: 'ciyex.openClaims',
-		color: '#06b6d4',
-		// Claims are derived from invoices via the patient flow — /api/all-claims
-		// has no create route, so POSTing a new claim 500s. Mirror the Claims
-		// editor's `creatable: false` and hide the sidebar "+" (QA #20).
-		creatable: false,
-		apiPath: '/api/all-claims?page=0&size=10',
-		titleField: ['claimNumber', 'patientName'],
-		subtitleField: ['payerName', 'status'],
-		editFields: [
-			{ key: 'patientName', label: 'Patient Name', required: true, placeholder: 'Search patient...', widthPct: 50 },
-			{ key: 'patientId', label: 'Patient ID', placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'provider', label: 'Provider', required: true, placeholder: 'Search provider...', widthPct: 50 },
-			{ key: 'providerId', label: 'Provider ID', placeholder: 'Auto-filled', widthPct: 50 },
-			{ key: 'payerName', label: 'Payer Name', placeholder: 'Insurance payer', widthPct: 50 },
-			{ key: 'diagnosisCode', label: 'Diagnosis Code', placeholder: 'e.g. Z00.00', widthPct: 50 },
-			{ key: 'diagnosisDescription', label: 'Diagnosis Description', widthPct: 100 },
-			{ key: 'policyNumber', label: 'Policy Number', placeholder: 'Policy number', widthPct: 50 },
-			{ key: 'planName', label: 'Plan Name', placeholder: 'Plan name', widthPct: 50 },
-			{
-				key: 'type', label: 'Type', kind: 'select', widthPct: 50, options: [
-					{ value: 'professional', label: 'Professional' }, { value: 'institutional', label: 'Institutional' },
-					{ value: 'dental', label: 'Dental' }, { value: 'pharmacy', label: 'Pharmacy' },
-				]
-			},
-			{
-				key: 'status', label: 'Status', kind: 'select', widthPct: 50, options: [
-					{ value: 'DRAFT', label: 'Draft' }, { value: 'IN_PROCESS', label: 'In Process' },
-					{ value: 'READY_FOR_SUBMISSION', label: 'Ready for Submission' },
-					{ value: 'SUBMITTED', label: 'Submitted' }, { value: 'CLOSED', label: 'Closed' },
-					{ value: 'VOID', label: 'Void' },
-				]
-			},
-			{ key: 'invoiceNumber', label: 'Invoice Number', placeholder: 'Linked invoice number', widthPct: 50 },
-			{ key: 'totalAmount', label: 'Total Amount ($)', kind: 'number', widthPct: 50 },
-			{ key: 'notes', label: 'Notes', kind: 'textarea', placeholder: 'Additional notes...', widthPct: 100 },
-		],
-		actions: [
-			// allow-any-unicode-next-line
-			{ symbol: '\u{270F}', label: 'Edit', color: '#a855f7', action: { kind: 'edit' } },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{2B07}', label: 'Download 837P (X12)', color: '#5b21b6', action: { kind: 'download837' } },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{1F4CB}', label: 'Update Status', color: '#3b82f6', action: { kind: 'method', method: 'PUT', path: r => `/api/all-claims/${r.id}/status`, body: { status: 'submitted' } } },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{1F4E4}', label: 'Send', color: '#22c55e', action: { kind: 'method', method: 'POST', path: r => `/api/all-claims/${r.id}/send` } },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{21BA}', label: 'Void & Recreate', color: '#f59e0b', action: { kind: 'method', method: 'POST', path: r => `/api/all-claims/${r.id}/void-recreate`, confirm: 'Void this claim and create a new one?' } },
-		],
-	},
 ];
 
 export class OperationsMenuPane extends ViewPane {
