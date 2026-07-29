@@ -61,12 +61,6 @@ interface VisitStage {
 	doneSub: string;
 	done: boolean;
 	action?: () => void;
-	/** When true, this step is NOT re-clickable once it reaches the "done"
-	 *  state — unlike most steps (which stay reviewable/re-openable by design,
-	 *  see the clickable comment in {@link PatientSnapshotEditor._renderVisitWorkflow}),
-	 *  this one should lock immediately once done (e.g. Scheduled/Arrived should
-	 *  not be re-editable from the workflow tile after check-in). */
-	lockedWhenDone?: boolean;
 }
 
 /**
@@ -3788,17 +3782,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			// is what guarantees a later step can never render done before an
 			// earlier one, no matter what stray same-day/patient-level data exists.
 			const state: 'done' | 'next' | 'locked' = i < currentIdx ? 'done' : i === currentIdx ? 'next' : 'locked';
-			// Two kinds of clickable step: a DONE step re-opens what it produced
-			// (appointment / encounter / fee sheet / payment) for review, and the one
-			// current "next" step PERFORMS its action — the exact same handler the
-			// banner button runs, so the strip and banner can never act differently.
-			// Every locked future step stays inert: strict order means a step the
-			// visit hasn't reached yet must not be runnable early, so Sign & Lock is
-			// only actionable once it IS the current step, never before.
-			const clickable = (state === 'done' || state === 'next') && !!s.action && !(state === 'done' && s.lockedWhenDone);
+			// Only the current "next" step is clickable — it PERFORMS its action,
+			// the exact same handler the banner button runs, so the strip and
+			// banner can never act differently. Once a step shows its green done
+			// tick it locks — it is a record of what happened, not a re-openable
+			// form, so it must not be editable after the fact. Every locked
+			// future step stays inert too: strict order means a step the visit
+			// hasn't reached yet must not be runnable early.
+			const clickable = state === 'next' && !!s.action;
 			const tile = DOM.append(row, DOM.$('button')) as HTMLButtonElement;
 			tile.disabled = !clickable;
-			tile.title = !clickable ? s.label : state === 'done' ? `${s.label} — open` : `${s.label} — ${s.sub}`;
+			tile.title = clickable ? `${s.label} — ${s.sub}` : s.label;
 			tile.style.cssText = [
 				'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 6px;border-radius:9px;text-align:center;min-height:90px;cursor:' + (clickable ? 'pointer' : 'default') + ';transition:background 0.12s,border-color 0.12s;',
 				state === 'done'
@@ -3817,13 +3811,8 @@ export class PatientSnapshotEditor extends EditorPane {
 			subEl.textContent = state === 'done' ? s.doneSub : s.sub;
 			subEl.style.cssText = 'font-size:9.5px;font-weight:600;opacity:0.85;';
 			if (clickable) {
-				if (state === 'done') {
-					tile.addEventListener('mouseenter', () => { tile.style.background = 'rgba(34,197,94,0.22)'; });
-					tile.addEventListener('mouseleave', () => { tile.style.background = 'rgba(34,197,94,0.10)'; });
-				} else {
-					tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
-					tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-button-background,#0e639c)'; });
-				}
+				tile.addEventListener('mouseenter', () => { tile.style.background = 'var(--vscode-button-hoverBackground,#1177bb)'; });
+				tile.addEventListener('mouseleave', () => { tile.style.background = 'var(--vscode-button-background,#0e639c)'; });
 				tile.addEventListener('click', (e) => { e.stopPropagation(); s.action?.(); });
 			}
 		});
@@ -3925,17 +3914,11 @@ export class PatientSnapshotEditor extends EditorPane {
 			{
 				key: 'scheduled', label: 'Scheduled', role: 'Front desk', icon: 'calendar', done: true,
 				sub: whenStr, doneSub: whenStr, action: () => void this._openApptEdit(apt),
-				// Unlike most steps, Scheduled must NOT stay clickable once it shows
-				// its done tick — the visit's arrival/scheduling should not be
-				// re-editable from this tile after the fact (QA).
-				lockedWhenDone: true,
 			},
 			{
 				key: 'checkin', label: 'Check In', role: 'Front desk', icon: 'sign-in', done: checkedIn,
 				sub: 'Patient arrives', doneSub: 'Checked in',
-				// Once checked in, the step is reviewable: clicking re-opens the
-				// appointment so the front desk can amend the visit.
-				action: checkedIn ? () => void this._openApptEdit(apt) : () => void this._changeApptStatus(appointmentId, 'Checked-in', apt),
+				action: () => void this._changeApptStatus(appointmentId, 'Checked-in', apt),
 			},
 			{
 				key: 'room', label: 'Assign Room', role: 'Front desk', icon: 'home', done: roomAssigned,
@@ -3949,20 +3932,20 @@ export class PatientSnapshotEditor extends EditorPane {
 			},
 			{
 				key: 'completed', label: 'Completed', role: 'Front desk', icon: 'check', done: completed,
-				sub: 'Mark complete', doneSub: 'Visit complete',
 				// Marking Completed auto-creates + links the encounter (single-action
-				// rule). Once complete the step is reviewable — clicking re-opens the
-				// appointment rather than re-running the status change.
-				action: completed ? () => void this._openApptEdit(apt) : () => void this._applyStatusSelection(apt, appointmentId, 'Completed'),
+				// rule).
+				sub: 'Mark complete', doneSub: 'Visit complete',
+				action: () => void this._applyStatusSelection(apt, appointmentId, 'Completed'),
 			},
 			{
 				key: 'encounter', label: 'Encounter', role: 'Provider', icon: 'note', done: hasEncounter,
 				sub: 'Auto on complete', doneSub: 'Created',
 				// The encounter is created ONLY by the Completed transition — a click
 				// must never POST one (the backend create has no dedupe, so a click-to-
-				// create would mint duplicates). Linked → open it; not linked yet →
-				// re-resolve the link read-only (the list record lags the link).
-				action: encId ? openEncounter('edit') : () => void this._reresolveEncounterLink(apt, appointmentId),
+				// create would mint duplicates); re-resolve the link read-only instead
+				// (the list record lags the link). Once linked the step is done and
+				// locks, so this branch only ever runs pre-link.
+				action: () => void this._reresolveEncounterLink(apt, appointmentId),
 			},
 			{
 				key: 'sign', label: 'Sign & Lock', role: 'Provider', icon: 'verified', done: signed,
