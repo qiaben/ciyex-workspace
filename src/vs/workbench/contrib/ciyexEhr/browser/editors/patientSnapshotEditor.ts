@@ -120,6 +120,9 @@ export class PatientSnapshotEditor extends EditorPane {
 	// `encId` guard stops a cached id from a previous edit leaking into a save for
 	// a different encounter (the records-list flow never reloads it).
 	private _encounterCompositionRef: { encId: string; compId: string | undefined } | undefined;
+	// Cached answer to "does the backend mint the encounter on the Completed
+	// status transition?" — see _completedStatusMintsEncounter.
+	private _completedMintsEncounter: Promise<boolean> | undefined;
 	// id → display name for Locations, so appointment / encounter rows can show
 	// the location NAME instead of the raw "Location/{id}" reference (QA 4 & 5).
 	private readonly _locationNames = new Map<string, string>();
@@ -3041,31 +3044,87 @@ export class PatientSnapshotEditor extends EditorPane {
 		return false;
 	}
 
-	/** Mark the appointment Completed and, when no encounter exists yet,
-	 *  automatically spin one up from the appointment and open it. This is the
-	 *  "select Completed → encounter feature" integration: completing a visit
-	 *  always leaves a documented encounter behind. */
+	/** Complete the visit: give the appointment its encounter, and only then mark
+	 *  it Completed. The two always travel together and in that order — a visit
+	 *  never ends up Completed with nothing documented against it, which is what
+	 *  the old status-first flow left behind whenever the encounter create that
+	 *  followed it failed (or the backend created none at all). */
 	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
-		const linkedBefore = this._linkedEncounterId(apt, id);
-		await this._updateAppointmentStatus(id, 'Completed', apt);
-		// Completing the visit is what creates its encounter — the backend does it
-		// on this status transition and hands back the id, which
-		// `_updateAppointmentStatus` records. So a link here means the encounter
-		// exists and nothing needs creating; it only needs the visit's details
-		// stamped on when the transition is what just minted it.
-		const linkedNow = this._linkedEncounterId(apt, id);
-		if (linkedNow) {
-			if (!linkedBefore) { await this._stampEncounterFromAppointment(linkedNow, apt); }
+		const previousStatus = String(apt.status ?? apt.appointmentStatus ?? '').trim();
+		const failed = () => this.notificationService.notify({
+			severity: Severity.Error,
+			message: 'Could not create the encounter for this visit, so it was not marked Completed. Please try again.',
+		});
+		// What the visit already carries, resolved BEFORE the transition: the link
+		// an earlier status change captured, else the backend's read-only lookup.
+		// An encounter that turns up after this point can only have come from this
+		// click — which is what tells a fresh one (still needs the visit's details
+		// stamped onto it) from one that was already documented.
+		let encounterId = this._linkedEncounterId(apt, id) || await this._resolveAppointmentEncounterId(id);
+		const linkedBefore = !!encounterId;
+		let stamped = false;
+
+		// Which side creates the encounter depends on the org's status config. When
+		// the backend mints it on the Completed transition itself the two are one
+		// atomic write, so the status has to go first — creating it here would race
+		// that write into a duplicate, the backend's own guard being blind to a new
+		// encounter for about a minute. Only when the backend will NOT create one
+		// (dev's config triggers on Check-in instead) do we mint it up front.
+		if (!encounterId && !await this._completedStatusMintsEncounter()) {
+			encounterId = await this._createEncounterForAppointment(id, apt);
+			stamped = !!encounterId;
+			// The status is untouched, so the visit simply stays where it was.
+			if (!encounterId) { failed(); return; }
+		}
+
+		if (!await this._updateAppointmentStatus(id, 'Completed', apt)) { return; }
+
+		if (!encounterId) {
+			// `_updateAppointmentStatus` captures the id the transition hands back,
+			// so this picks up the encounter the backend just minted. One that mints
+			// none at all still has to end up with one.
+			encounterId = this._linkedEncounterId(apt, id);
+			if (!encounterId) {
+				encounterId = await this._createEncounterForAppointment(id, apt);
+				stamped = !!encounterId;
+			}
+		}
+		if (!encounterId) {
+			// Put the status back so the visit is not left Completed and empty, and
+			// the front desk can retry the step.
+			await this._updateAppointmentStatus(id, previousStatus || 'Checked-in', apt);
+			failed();
 			this._rerender();
 			return;
 		}
-		// _createEncounterFromAppointment is idempotent (checks apt.encounterId then
-		// a read-only GET before creating) — it mints the FHIR encounter, links it to
-		// the appointment + patient, and rerenders the dashboard so the Encounter
-		// status reads "Created". This is the ONLY place the snapshot creates one.
-		await this._createEncounterFromAppointment(apt);
+		if (!linkedBefore && !stamped) { await this._stampEncounterFromAppointment(encounterId, apt); }
+		this._captureEncounterLink(id, apt, { encounterId });
+		if (!linkedBefore) {
+			this.notificationService.notify({ severity: Severity.Info, message: 'Encounter created for this visit. The appointment is now Completed.' });
+		}
+		this._rerender();
+	}
+
+	/** Whether the backend creates the visit's encounter on the Completed status
+	 *  transition. Orgs configure this per status in `tab_field_config`
+	 *  (`triggersEncounter`), and the answer decides who creates the encounter
+	 *  when a visit is completed — see {@link _completeAppointmentWithEncounter}.
+	 *  Resolved once per session; an unreachable or malformed config answers `true`,
+	 *  the option that can never mint a duplicate. */
+	private _completedStatusMintsEncounter(): Promise<boolean> {
+		this._completedMintsEncounter ??= (async () => {
+			try {
+				const res = await this.apiService.fetch('/api/appointments/status-options');
+				if (!res.ok) { return true; }
+				const data = await res.json();
+				const opts = (data?.data ?? data ?? []) as Array<{ value?: string; label?: string; triggersEncounter?: boolean }>;
+				const completed = opts.find(o => PatientSnapshotEditor._isCompletedStatus(o?.value ?? o?.label));
+				return completed ? completed.triggersEncounter !== false : true;
+			} catch { return true; }
+		})();
+		return this._completedMintsEncounter;
 	}
 
 	/** Visit Workflow prep steps (Check In → Assign Room → Record Vitals) still
@@ -3112,7 +3171,10 @@ export class PatientSnapshotEditor extends EditorPane {
 					`Still pending: ${missing.join(' → ')}. Complete ${missing.length === 1 ? 'this step' : 'these steps'} before marking the visit Completed.`);
 				return;
 			}
-			await this._completeAppointmentWithEncounter({ ...apt, status });
+			// Pass the appointment with its CURRENT status — the completion flow
+			// restores it if the encounter cannot be created, and pre-stamping
+			// "Completed" onto it would make that restore a no-op.
+			await this._completeAppointmentWithEncounter(apt);
 			return;
 		}
 		await this._changeApptStatus(appointmentId, status, apt);
@@ -3328,72 +3390,29 @@ export class PatientSnapshotEditor extends EditorPane {
 		}
 	}
 
-	/** Create a FHIR encounter from the appointment (or reuse the existing one),
-	 *  open it, then refresh. Idempotent: the backend's POST
-	 *  `/api/appointments/{id}/encounter` creates a NEW encounter on every call
-	 *  (no dedupe), so completing an appointment more than once would otherwise
-	 *  leave a trail of duplicate encounters. We first check the appointment's own
-	 *  `encounterId`, then a read-only GET on the same endpoint ("Encounter
-	 *  found"), and only POST to create when neither resolves one. */
-	private async _createEncounterFromAppointment(apt: Record<string, unknown>): Promise<void> {
-		const id = String(apt.id || apt.appointmentId || '');
-		if (!id) { return; }
+	/** POST a new FHIR encounter for this appointment and stamp the visit's
+	 *  details onto it, returning its id (empty when the create failed). The
+	 *  endpoint has NO dedupe — it mints another encounter on every call — so
+	 *  callers must have established that the visit has none first.
+	 *  {@link _completeAppointmentWithEncounter} is the only flow that creates
+	 *  one, and it checks both the captured link and the backend's read-only
+	 *  lookup before getting here. */
+	private async _createEncounterForAppointment(id: string, apt: Record<string, unknown>): Promise<string> {
 		try {
-			// 1) Reuse an encounter already linked to this appointment — including a
-			//    link captured from an earlier status change this session, which the
-			//    read-only lookup in step 2 cannot see for the first ~60s.
-			let existingId = this._linkedEncounterId(apt, id);
-			// 2) Otherwise ask the backend (read-only) whether one exists.
-			if (!existingId) {
-				try {
-					const lookup = await this.apiService.fetch(`/api/appointments/${id}/encounter`);
-					if (lookup.ok) {
-						const lj = await lookup.json();
-						const lp = (lj?.data ?? lj) as Record<string, unknown>;
-						existingId = String(lp?.encounterId || lp?.id || '');
-					}
-				} catch { /* fall through to create */ }
-			}
-			let encounterId = existingId || undefined;
-			let created = false;
-			if (!encounterId) {
-				// 3) None exists yet — create one.
-				const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
-				if (res.ok) {
-					try {
-						const data = await res.json();
-						const payload = (data?.data ?? data) as Record<string, unknown>;
-						encounterId = (payload?.id || payload?.encounterId) as string | undefined;
-						created = !!encounterId;
-						const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? this._currentPatientId) || '');
-						if (encounterId) { await this._stampEncounterFromAppointment(encounterId, apt, encPatient); }
-					} catch { /* empty body — fall through to refresh */ }
-				}
-			}
-			// Single-action rule: creating the encounter finalizes the front-desk
-			// visit — the appointment is automatically marked Completed (and its
-			// status field then locks, see _renderStatusDropdown). This is the only
-			// place that creates an encounter from the snapshot, so the appointment
-			// can never be "completed without an encounter" or vice-versa.
-			const alreadyCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status ?? apt.appointmentStatus);
-			if (encounterId && !alreadyCompleted) {
-				await this._updateAppointmentStatus(id, 'Completed', apt);
-			}
+			const res = await this.apiService.fetch(`/api/appointments/${id}/encounter`, { method: 'POST' });
+			if (!res.ok) { return ''; }
+			const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+			const payload = ((data?.data ?? data) ?? {}) as Record<string, unknown>;
+			const encounterId = String(payload.id ?? payload.encounterId ?? '').trim();
+			if (!encounterId) { return ''; }
+			const encPatient = String(payload.encounterPatientId ?? payload.patientId ?? this._currentPatientId ?? '');
+			await this._stampEncounterFromAppointment(encounterId, apt, encPatient);
 			// Stamp the link locally so the very next render shows the Encounter step
 			// done (and unlocks Sign & Lock) even though the appointment LIST index
 			// still lags and won't echo `encounterId` for a moment.
-			if (encounterId) { this._captureEncounterLink(id, apt, { encounterId }); }
-			// We do NOT navigate into the encounter editor here — completing the
-			// visit on the snapshot only creates + links the encounter and refreshes
-			// the dashboard so the Encounter status reads "Created". Opening/editing
-			// the encounter is done from the Sign & Lock step (or the chart).
-			if (encounterId && created) {
-				this.notificationService.notify({ severity: Severity.Info, message: 'Encounter created for this appointment. The appointment is now Completed.' });
-			}
-			this._rerender();
-		} catch {
-			this.notificationService.notify({ severity: Severity.Error, message: 'Failed to create encounter from appointment.' });
-		}
+			this._captureEncounterLink(id, apt, { encounterId });
+			return encounterId;
+		} catch { return ''; }
 	}
 
 	/** Fetch provider display names for the edit dialog dropdown. */
@@ -3539,12 +3558,15 @@ export class PatientSnapshotEditor extends EditorPane {
 					providerName: provName, practitionerName: provName, providerId: provId,
 					room: next.room, reason: next.reason, notes: next.notes,
 				});
-				// Selecting "Completed" in the status dropdown auto-spins up an
-				// encounter (and opens it) when the visit doesn't have one yet —
-				// the same integration the Quick Actions "Complete" tile performs.
+				// Selecting "Completed" in the status dropdown auto-spins up the
+				// visit's encounter when it doesn't have one yet — the same flow the
+				// Visit Workflow's Completed step runs, so both routes leave the
+				// appointment Completed only once an encounter exists.
 				const wasCompleted = PatientSnapshotEditor._isCompletedStatus(apt.status || apt.appointmentStatus);
 				if (PatientSnapshotEditor._isCompletedStatus(next.status) && !wasCompleted && !this._appointmentHasEncounter(apt)) {
-					await this._createEncounterFromAppointment({ ...apt, status: next.status });
+					// `apt` is passed as it was BEFORE this edit: its status is the one
+					// the flow restores if the encounter cannot be created.
+					await this._completeAppointmentWithEncounter(apt);
 					return;
 				}
 				this._rerender();
