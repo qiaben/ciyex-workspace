@@ -1127,6 +1127,12 @@ export class SettingsHubEditor extends EditorPane {
 		const formRecId = this.selectedRecord ? ((this.selectedRecord as { id?: string | number }).id || (this.selectedRecord as { fhirId?: string }).fhirId) : null;
 
 		for (const section of fc.sections) {
+			// Guard against malformed backend field config (e.g. a stray null
+			// entry in the sections array) — one bad section must not abort
+			// rendering of the rest of the form, which would also skip the
+			// action bar below and leave the form with no Save/Cancel button.
+			if (!section) { continue; }
+
 			const panel = DOM.append(wrap, DOM.$('.sh-form-panel'));
 			panel.style.cssText = 'border:1px solid var(--vscode-editorWidget-border);border-radius:8px;margin-bottom:16px;overflow:hidden;';
 
