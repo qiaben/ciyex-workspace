@@ -5917,11 +5917,6 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
 		const right = DOM.append(toolbar, DOM.$('div'));
 		right.style.cssText = 'display:flex;align-items:center;gap:10px;';
-		const searchEl = DOM.append(right, DOM.$('input')) as HTMLInputElement;
-		searchEl.placeholder = 'Search by patient, claim, CPT, check #...';
-		searchEl.value = this._insSearch;
-		searchEl.style.cssText = 'padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;min-width:240px;';
-		searchEl.addEventListener('input', () => { this._insSearch = searchEl.value; this._renderInsuranceRows(scroll); });
 		const refreshBtn = DOM.append(right, DOM.$('button')) as HTMLButtonElement;
 		refreshBtn.textContent = '\u21BB Refresh';
 		refreshBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:6px;cursor:pointer;font-size:12px;';
@@ -5959,6 +5954,19 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		card('Insurance Pending', money(sumPendingCoins), '#8b5cf6', 'AWAITING_SECONDARY');
 		card('Patient Resp', money(sumResp), '#f59e0b');
 		card('Denials', String(denials), '#ef4444', 'DENIAL');
+
+		// Search — same row (directly below the summary cards, above the table)
+		// as every other Payments page (Dashboard, Patient Balance, Ledger). This
+		// used to sit in the top toolbar next to Refresh, the only one of the
+		// four in a different spot (QA: "same place across all 4 payment
+		// section pages").
+		const tb = DOM.append(this.contentEl, DOM.$('div'));
+		tb.style.cssText = 'display:flex;margin-bottom:12px;';
+		const searchEl = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
+		searchEl.placeholder = 'Search by patient, claim, CPT, check #...';
+		searchEl.value = this._insSearch;
+		searchEl.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		searchEl.addEventListener('input', () => { this._insSearch = searchEl.value; this._renderInsuranceRows(scroll); });
 
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
 		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
@@ -8472,6 +8480,9 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private _billingRows: Array<Record<string, unknown>> = [];
 	private _billingLoading = false;
+	/** What the user typed in the Dashboard's own filter box (QA: the Dashboard
+	 *  had no search at all while every other Payments page did). */
+	private _billingFilter = '';
 
 	private _normalizeBillingRow(d: Record<string, unknown>): Record<string, unknown> {
 		const items = (d.items as Array<Record<string, unknown>>) || [];
@@ -8853,6 +8864,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		card('Patient Portion', `$${totalPatientPortion.toFixed(2)}`, '#f59e0b');
 		card('Outstanding Balance', `$${totalBalance.toFixed(2)}`, totalBalance > 0 ? '#ef4444' : '#22c55e');
 
+		// Search — same row (directly below the summary cards, above the table)
+		// as every other Payments page (Patient Balance, Insurance Posting,
+		// Ledger). The Dashboard previously had no search at all (QA: "keep the
+		// search bar... same place across all 4 payment section pages").
+		const tb = DOM.append(this.contentEl, DOM.$('div'));
+		tb.style.cssText = 'display:flex;margin-bottom:12px;';
+		const searchEl = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
+		searchEl.placeholder = 'Search by patient, claim #, clinician...';
+		searchEl.value = this._billingFilter;
+		searchEl.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		searchEl.addEventListener('input', () => { this._billingFilter = searchEl.value; this._renderEncounterBilling(); });
+
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
 		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
 
@@ -8875,10 +8898,21 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			return;
 		}
 
+		const q = this._billingFilter.trim().toLowerCase();
+		const visibleRows = q
+			? this._billingRows.filter(row => [row.patientName, row.claimNumber, row.clinician].some(v => String(v ?? '').toLowerCase().includes(q)))
+			: this._billingRows;
+		if (visibleRows.length === 0) {
+			const e = DOM.append(scroll, DOM.$('div'));
+			e.textContent = 'No charges match your search.';
+			e.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+			return;
+		}
+
 		const inputStyle = 'width:100%;box-sizing:border-box;padding:4px 6px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:12px;';
 		const localInvoices = this._readLocalInvoices();
 
-		for (const row of this._billingRows) {
+		for (const row of visibleRows) {
 			const r = DOM.append(scroll, DOM.$('div'));
 			r.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;align-items:center;padding:7px 12px;border-top:1px solid rgba(128,128,128,0.08);font-size:12px;`;
 
