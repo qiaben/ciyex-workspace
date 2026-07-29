@@ -3789,7 +3789,16 @@ export class PatientSnapshotEditor extends EditorPane {
 		// Encounter History (2) lists the clinical encounters — the two were
 		// previously the same encounter list, which read as a duplicate. Falls
 		// back to today's appointment when the history endpoint returns nothing.
-		const visitList = appts.length > 0 ? appts : (apt ? [apt] : []);
+		// TODAY's appointment is fetched via a separate, authoritative call
+		// (_fetchTodayAppointment, with its encounterId backfilled) and can lag
+		// behind the bulk `/api/appointments` list (FHIR index lag) — dropping it
+		// whenever the bulk list was non-empty silently hid today's visit from
+		// both cards and starved Encounter History's visit-type matching of the
+		// one row it's most likely to need (QA: today's encounter kept showing
+		// the raw FHIR class "Ambulatory" instead of the appointment's visit
+		// type). Always include it, deduped against the bulk list by id.
+		const apptIdOf = (a: Record<string, unknown>): string => String(a.id || a.appointmentId || '');
+		const visitList = (apt && !appts.some(a => apptIdOf(a) === apptIdOf(apt))) ? [apt, ...appts] : appts;
 		const visitCard = this._renderWideCard(grid, 'history', 'Visit History', 2, visitList.length, undefined);
 		this._renderAppointmentHistoryRows(visitCard, visitList);
 
@@ -4090,10 +4099,29 @@ export class PatientSnapshotEditor extends EditorPane {
 		// ("Ambulatory") (QA 22-Jul). Encounters with no linked appointment fall
 		// back to their own type fields below.
 		const apptTypeByEncId = new Map<string, string>();
+		// Same-day fallback, keyed by calendar date — the bulk appointment LIST
+		// fetch often lacks `encounterId` per row (it lags the FHIR index; only
+		// the SINGLE "today" appointment gets an authoritative backfill via
+		// _resolveAppointmentEncounterId), so the by-id map above frequently
+		// misses and rows fell back to the raw FHIR class ("Ambulatory") even
+		// though the visit's real type was known (QA: "encounter history is
+		// again showing the wrong visit type"). A same-day match is the same
+		// heuristic already used elsewhere on this page (visitEnc lookup) and
+		// the Patient Chart's Encounters tab.
+		const apptTypeByDateKey = new Map<string, string>();
 		for (const a of appts) {
 			const encId = String(a.encounterId || '');
 			const t = this._apptTypeStr(a);
-			if (encId && t && !apptTypeByEncId.has(encId)) { apptTypeByEncId.set(encId, t); }
+			if (!t || t === '—') { continue; }
+			if (encId && !apptTypeByEncId.has(encId)) { apptTypeByEncId.set(encId, t); }
+			const dRaw = a.start || a.startTime || a.appointmentStartDate || a.date;
+			if (dRaw) {
+				const d = new Date(String(dRaw));
+				if (!isNaN(d.getTime())) {
+					const key = d.toDateString();
+					if (!apptTypeByDateKey.has(key)) { apptTypeByDateKey.set(key, t); }
+				}
+			}
 		}
 		// Show the most recent encounter first, then older ones (QA: Encounter
 		// History should list latest → oldest). Read the date from any of the keys
@@ -4140,7 +4168,9 @@ export class PatientSnapshotEditor extends EditorPane {
 			const dateRaw = enc.encounterDate || enc.startDate || enc.start || enc.date || enc.periodStart || enc.createdAt || '';
 			const dateStr = dateRaw ? new Date(String(dateRaw)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 			const encRowId = String(enc.id || enc.encounterId || enc.fhirId || '');
+			const encDateKey = dateRaw ? (d => isNaN(d.getTime()) ? '' : d.toDateString())(new Date(String(dateRaw))) : '';
 			const rawVisitType = apptTypeByEncId.get(encRowId)
+				|| (encDateKey ? apptTypeByDateKey.get(encDateKey) : undefined)
 				|| typeText(enc.visitType) || typeText(enc.appointmentType) || typeText(enc.type)
 				|| typeText(enc.serviceType) || typeText(enc.encounterType) || typeText(enc.visitCategory) || typeText(enc.class) || 'Encounter';
 			// Expand short FHIR class codes ("AMB"/"VR") to their full form
