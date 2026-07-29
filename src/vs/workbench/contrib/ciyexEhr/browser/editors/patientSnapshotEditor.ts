@@ -3048,12 +3048,16 @@ export class PatientSnapshotEditor extends EditorPane {
 	private async _completeAppointmentWithEncounter(apt: Record<string, unknown>): Promise<void> {
 		const id = String(apt.id || apt.appointmentId || '');
 		if (!id) { return; }
+		const linkedBefore = this._linkedEncounterId(apt, id);
 		await this._updateAppointmentStatus(id, 'Completed', apt);
-		// Already linked → nothing to create, just refresh. The link is checked
-		// against the session overlay as well as the appointment record: Check In
-		// creates the encounter server-side, and that link only reaches the
-		// appointment record once the FHIR search index catches up a minute later.
-		if (this._linkedEncounterId(apt, id)) {
+		// Completing the visit is what creates its encounter — the backend does it
+		// on this status transition and hands back the id, which
+		// `_updateAppointmentStatus` records. So a link here means the encounter
+		// exists and nothing needs creating; it only needs the visit's details
+		// stamped on when the transition is what just minted it.
+		const linkedNow = this._linkedEncounterId(apt, id);
+		if (linkedNow) {
+			if (!linkedBefore) { await this._stampEncounterFromAppointment(linkedNow, apt); }
 			this._rerender();
 			return;
 		}
@@ -3283,6 +3287,47 @@ export class PatientSnapshotEditor extends EditorPane {
 			'The encounter is created automatically when the visit is marked Completed — finish the earlier steps and mark the visit Completed to create it.');
 	}
 
+	/** Fill in the visit details on an encounter that was just created for this
+	 *  appointment — whether by the Completed status transition or by the create
+	 *  endpoint. Both mint a bare Encounter: no patient subject (so it never
+	 *  appears on the chart's Encounters tab, which searches by patient), dated
+	 *  to "now" rather than to the visit, and with a blank provider. Best-effort
+	 *  throughout — a failed stamp must never block completing the visit. */
+	private async _stampEncounterFromAppointment(encounterId: string, apt: Record<string, unknown>, patientId?: string): Promise<void> {
+		const encPatient = String(patientId || this._currentPatientId || '').trim();
+		if (!encounterId || !encPatient) { return; }
+		const apptStart = String(apt.start || apt.startTime || apt.scheduledStart || '').trim();
+		const link: Record<string, unknown> = { id: encounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` };
+		// A fresh encounter is in-progress — the provider still has to document
+		// and Sign & Lock it; the appointment itself is what gets marked Completed.
+		const full: Record<string, unknown> = { ...link, status: 'in-progress' };
+		if (apptStart) {
+			full.encounterDate = apptStart;
+			full.startDate = apptStart;
+			full.period = { start: apptStart };
+		}
+		const put = (body: Record<string, unknown>) => this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		const res = await put(full).catch(() => null);
+		// If the enriched PUT was rejected (e.g. backend status enum validation),
+		// still ensure the patient link lands.
+		if (!res || !res.ok) { await put(link).catch(() => { /* best-effort link */ }); }
+		// A provider-only PUT through the EHR endpoint does not disturb the
+		// status (verified) — without it the chart and the encounter edit form
+		// show a blank Provider.
+		const provName = String(apt.providerName || apt.practitionerName || '').trim();
+		if (provName) {
+			await this.apiService.fetch(`/api/${encPatient}/encounters/${encounterId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ encounterProvider: provName }),
+			}).catch(() => { /* best-effort provider stamp */ });
+		}
+	}
+
 	/** Create a FHIR encounter from the appointment (or reuse the existing one),
 	 *  open it, then refresh. Idempotent: the backend's POST
 	 *  `/api/appointments/{id}/encounter` creates a NEW encounter on every call
@@ -3320,46 +3365,8 @@ export class PatientSnapshotEditor extends EditorPane {
 						const payload = (data?.data ?? data) as Record<string, unknown>;
 						encounterId = (payload?.id || payload?.encounterId) as string | undefined;
 						created = !!encounterId;
-						// The endpoint creates the Encounter with no patient subject, so it
-						// never appears on the patient chart's Encounters tab. Link it via
-						// `patientRef` (FHIR Encounter.subject) so the new encounter is
-						// patient-searchable and shows up in the chart. We also stamp the
-						// appointment time so the encounter is dated to the visit (not "now").
 						const encPatient = String((payload?.encounterPatientId ?? payload?.patientId ?? this._currentPatientId) || '');
-						if (encounterId && encPatient) {
-							const apptStart = String(apt.start || apt.startTime || apt.scheduledStart || '').trim();
-							const link: Record<string, unknown> = { id: encounterId, patientId: encPatient, patientRef: `Patient/${encPatient}` };
-							// A fresh encounter is in-progress (the provider still has to
-							// document and Sign & Lock it); the appointment itself is what
-							// gets marked Completed below.
-							const full: Record<string, unknown> = { ...link, status: 'in-progress' };
-							if (apptStart) {
-								full.encounterDate = apptStart;
-								full.startDate = apptStart;
-								full.period = { start: apptStart };
-							}
-							const put = (body: Record<string, unknown>) => this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
-								method: 'PUT',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify(body),
-							});
-							const res2 = await put(full).catch(() => null);
-							// If the enriched PUT was rejected (e.g. backend status enum
-							// validation), still ensure the patient link lands.
-							if (!res2 || !res2.ok) { await put(link).catch(() => { /* best-effort link */ }); }
-							// Carry the appointment's provider onto the encounter — the
-							// create endpoint leaves it blank, so the chart and the encounter
-							// edit form showed a blank Provider. A provider-only PUT through
-							// the EHR endpoint does not disturb the status (verified).
-							const provName = String(apt.providerName || apt.practitionerName || '').trim();
-							if (provName) {
-								await this.apiService.fetch(`/api/${encPatient}/encounters/${encounterId}`, {
-									method: 'PUT',
-									headers: { 'Content-Type': 'application/json' },
-									body: JSON.stringify({ encounterProvider: provName }),
-								}).catch(() => { /* best-effort provider stamp */ });
-							}
-						}
+						if (encounterId) { await this._stampEncounterFromAppointment(encounterId, apt, encPatient); }
 					} catch { /* empty body — fall through to refresh */ }
 				}
 			}
