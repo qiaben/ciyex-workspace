@@ -5127,7 +5127,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			refundedCount: 'refunded',
 		},
 		columns: [
-			{ key: 'serviceDate', label: 'DOS', width: '90px' },
+			{ key: 'serviceDate', label: 'Date of Service', width: '130px' },
 			{ key: 'claimRef', label: 'Claim No', width: '85px' },
 			{ key: 'encounterId', label: 'Encounter No', width: '95px' },
 			{ key: 'patientName', label: 'Patient Name' },
@@ -5139,7 +5139,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// Payment posting date — date only, no time (QA: the timestamp made
 			// the column noisy and inconsistent with every other date column
 			// in this table).
-			{ key: 'collectedAt', label: 'Date', width: '90px' },
+			{ key: 'collectedAt', label: 'Payment Posting Date', width: '150px' },
 		],
 		statusTabs: [
 			{ label: 'Completed', value: 'completed' }, { label: 'Pending', value: 'pending' },
