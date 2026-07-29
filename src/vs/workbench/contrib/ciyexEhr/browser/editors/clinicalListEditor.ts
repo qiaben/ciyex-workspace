@@ -834,6 +834,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 					this.items = [];
 					this.totalPages = 1;
 				}
+				// Patient-scoped lists get the same enrichment pass as the global
+				// ones. Without it a view like Payments > Payment Plans silently
+				// lost every derived column (and the edit form's prefill with it).
+				await this._runEnrichers();
 				this._applyStats();
 				this._render();
 				return;
@@ -878,15 +882,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 				this.items = [];
 				this.totalPages = 1;
 			}
-			// Run even when the primary endpoint returned nothing — enrichers may
-			// MERGE rows from a second store (e.g. patient chart alerts into the
-			// CDS rules list), which must surface on an otherwise empty page.
-			if (this.config.enrichItems) {
-				try {
-					const enriched = await this.config.enrichItems(this.items);
-					if (Array.isArray(enriched)) { this.items = enriched; }
-				} catch { /* enrichment is best-effort */ }
-			}
+			await this._runEnrichers();
 			this._applyStats();
 			this._render();
 		} catch {
@@ -897,6 +893,20 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 	}
 
 	/** Call from a subclass (e.g. after switching a view) to reset state and reload. */
+	/**
+	 * Run {@link ClinicalEditorConfig.enrichItems} over the freshly loaded rows.
+	 * Called even when the primary endpoint returned nothing — enrichers may
+	 * MERGE rows from a second store (e.g. patient chart alerts into the CDS
+	 * rules list), which must surface on an otherwise empty page.
+	 */
+	private async _runEnrichers(): Promise<void> {
+		if (!this.config.enrichItems) { return; }
+		try {
+			const enriched = await this.config.enrichItems(this.items);
+			if (Array.isArray(enriched)) { this.items = enriched; }
+		} catch { /* enrichment is best-effort */ }
+	}
+
 	protected _resetAndReload(): void {
 		this.currentPage = 0;
 		this.statusFilter = '';

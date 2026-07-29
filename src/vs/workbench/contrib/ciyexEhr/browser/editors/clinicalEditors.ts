@@ -20,6 +20,10 @@ import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { claimNumberForFeeSheet, normalizeClaimRef } from '../billing/edi837.js';
 import { EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
 import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, loadLedgerStatementInfo, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
+import {
+	applyPatientCredit, copayPlanNote, loadCreditAccounts, PatientCreditAccount,
+	readCopayPlanNote, recordPatientCredit, refundPatientCredit, resolveVisitCopay, CREDIT_TXN_TYPE,
+} from './patientCredit.js';
 import { savePrintableAsPdf } from './printableDocument.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -4945,6 +4949,10 @@ export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 			{ label: 'Deductible', value: 'deductible' },
 			{ label: 'Coinsurance', value: 'coinsurance' },
 			{ label: 'Self Pay', value: 'self_pay' },
+			// Money taken at the front desk before anyone knows which claim it
+			// belongs to. It is held as an available credit balance and deducted
+			// automatically when a copay comes due (see patientCredit.ts).
+			{ label: 'Patient Credit (hold on account)', value: CREDIT_TXN_TYPE },
 			{ label: 'Other', value: 'other' },
 		], defaultValue: 'payment'
 	},
@@ -5062,7 +5070,7 @@ function secondaryEobSegment(payer: string, check: string, date: string, posted:
 export class PaymentsEditor extends ClinicalListEditorBase {
 	static readonly ID = 'workbench.editor.ciyexPayments';
 
-	private payView: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices' = 'encounter-billing';
+	private payView: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices' | 'credits' = 'encounter-billing';
 	// Methods + Plans + Ledger are patient-scoped on the backend (no global list
 	// route), so those views require a selected patient (matches ciyex-ehr-ui).
 	private _payPatientId = '';
@@ -5157,6 +5165,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					{ label: 'Deductible', value: 'deductible' },
 					{ label: 'Coinsurance', value: 'coinsurance' },
 					{ label: 'Self-Pay', value: 'self_pay' },
+					{ label: 'Patient Credit', value: CREDIT_TXN_TYPE },
 				],
 			},
 			{
@@ -5171,6 +5180,24 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 		],
 		formFields: PAYMENTS_FORM_FIELDS,
+		// A "Patient Credit" collection is deliberately unallocated: no claim, no
+		// encounter, no date of service. Normalising it here means the plain
+		// Collect Payment form produces exactly the record patientCredit.ts writes,
+		// so it shows up on the Credits tab and in the credit ledger card.
+		beforeSave: (payload) => {
+			if (String(payload['transactionType'] ?? '') !== CREDIT_TXN_TYPE) { return payload; }
+			const amount = Math.round((Number(payload['amount']) || 0) * 100) / 100;
+			payload['status'] = 'completed';
+			payload['referenceType'] = 'balance';
+			delete payload['claimId'];
+			delete payload['dateOfService'];
+			if (!payload['description']) {
+				// allow-any-unicode-next-line
+				payload['description'] = `Patient credit — ${String(payload['paymentMethodType'] ?? 'cash').replace(/_/g, ' ')} payment held on account`;
+			}
+			payload['notes'] = `credit=${amount.toFixed(2)}`;
+			return payload;
+		},
 		cellRenderer: (key: string, value: unknown, item: Record<string, unknown>): string => {
 			if (key === 'amount' && typeof value === 'number') { return `$${value.toFixed(2)}`; }
 			if (key === 'collectedAt' && typeof value === 'string') {
@@ -5577,6 +5604,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				// collects (the Dashboard's Collect completes it). Coinsurance is
 				// deliberately excluded: it is pending with the secondary payer.
 				await this._createPatientRespTransactions(v);
+				// The patient may already have paid ahead. Insurance pays first, the
+				// patient's share is worked out next, and any credit on the account is
+				// used against it straight away instead of billing money the practice
+				// is already holding.
+				await this._applyCreditToNewResponsibility(v);
 				if (v.coinsurance > 0) {
 					// The claim stays open ("Insurance Pending") — a secondary EOB
 					// entry is pre-generated on the row for when the secondary
@@ -5640,6 +5672,28 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				}),
 			});
 		} catch { /* best-effort — the EOB posting itself already saved */ }
+	}
+
+	/**
+	 * Use the patient's credit balance against the responsibility an EOB has just
+	 * assigned. Capped at the credit on hand, so whatever the credit can't cover
+	 * stays on the Patient Balance tab as a pending amount to collect.
+	 */
+	private async _applyCreditToNewResponsibility(v: EobFormValues): Promise<void> {
+		if (this.configurationService.getValue<boolean>('ciyex.billing.autoApplyPatientCredit') === false) { return; }
+		const due = Math.round((v.copay + v.deductible) * 100) / 100;
+		if (due <= 0.005 || !v.patientId) { return; }
+		try {
+			const result = await applyPatientCredit(this.apiService, {
+				patientId: String(v.patientId), patientName: v.patientName, due,
+				claimRef: v.claimRef, kind: 'copay', reason: 'auto-deducted from patient credit after EOB',
+			});
+			if (result.applied > 0.005) {
+				this._showPayToast(
+					// allow-any-unicode-next-line
+					`$${result.applied.toFixed(2)} of the patient responsibility was covered by credit already on the account — $${result.remaining.toFixed(2)} credit remains.`);
+			}
+		} catch { /* the responsibility stays collectable the normal way */ }
 	}
 
 	// allow-any-unicode-next-line
@@ -7571,9 +7625,20 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ key: 'paidAmount', label: 'Paid', width: '90px' },
 			{ key: 'remainingAmount', label: 'Remaining', width: '90px' },
 			{ key: 'installments', label: 'Installments', width: '90px' },
+			{ key: 'copayPerVisit', label: 'Copay / Visit', width: '95px' },
 			{ key: 'nextDueDate', label: 'Next Due', width: '110px' },
 			{ key: 'status', label: 'Status', width: '90px' },
 		],
+		// Surface the recurring-copay marker stored in the plan's notes as real
+		// fields, so the grid shows it AND the edit form pre-fills from it.
+		enrichItems: async (items) => {
+			for (const it of items) {
+				const copay = readCopayPlanNote(it['notes']);
+				it['planType'] = copay ? 'recurring_copay' : 'installment';
+				it['copayPerVisit'] = copay ? copay.perVisit : '';
+			}
+			return items;
+		},
 		statusTabs: [
 			{ label: 'Active', value: 'active' }, { label: 'Completed', value: 'completed' },
 			{ label: 'Defaulted', value: 'defaulted' }, { label: 'Cancelled', value: 'cancelled' },
@@ -7581,6 +7646,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		cellRenderer: (key, value) => {
 			if ((key === 'totalAmount' || key === 'paidAmount' || key === 'remainingAmount') && typeof value === 'number') {
 				return `$${value.toFixed(2)}`;
+			}
+			if (key === 'copayPerVisit') {
+				const n = Number(value) || 0;
+				// allow-any-unicode-next-line
+				return n > 0 ? `$${n.toFixed(2)}` : '—';
 			}
 			if (key === 'nextDueDate' && typeof value === 'string') {
 				try { return new Date(value).toLocaleDateString(); } catch { return String(value); }
@@ -7595,8 +7665,20 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			},
 			{ key: 'patientId', label: 'Patient ID', type: 'text', required: true, placeholder: 'Auto-filled' },
 			{ key: 'planName', label: 'Plan Name', type: 'text', required: true, placeholder: 'e.g. 6-Month Payment Plan' },
-			{ key: 'totalAmount', label: 'Total Amount ($)', type: 'number', required: true, placeholder: '0.00' },
-			{ key: 'installments', label: 'Number of Installments', type: 'number', required: true, placeholder: '6' },
+			// A recurring-copay plan charges the SAME copay on every visit (the team's
+			// "$30 per visit, 4 visits a month"). It is what the copay auto-deduction
+			// reads when no EOB has assigned a responsibility yet. It reuses Total /
+			// Installments as "visits x copay" rather than adding parallel required
+			// fields — 4 visits at $30 IS a $120 plan in 4 parts.
+			{
+				key: 'planType', label: 'Plan Type', type: 'select', options: [
+					{ label: 'Installment Plan', value: 'installment' },
+					{ label: 'Recurring Copay (per visit)', value: 'recurring_copay' },
+				], defaultValue: 'installment'
+			},
+			{ key: 'totalAmount', label: 'Total Amount ($)', type: 'number', required: true, placeholder: '0.00 (copay plan: visits x copay)' },
+			{ key: 'installments', label: 'Number of Installments / Visits', type: 'number', required: true, placeholder: '6' },
+			{ key: 'copayPerVisit', label: 'Copay per Visit ($)', type: 'number', placeholder: 'Blank = total / visits' },
 			{ key: 'startDate', label: 'Start Date', type: 'date', defaultValue: () => new Date().toISOString().slice(0, 10) },
 			{ key: 'nextDueDate', label: 'Next Due Date', type: 'date' },
 			// Status dropdown mirrors the list tabs (QA report 2026-07-10, issue 3) —
@@ -7615,10 +7697,27 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// The backend `payment_plan.installment_amount` column is NOT NULL but the
 		// form never collects it. Derive it from total / installments before POST.
 		beforeSave: (payload) => {
+			// A recurring copay plan is a per-visit arrangement. The visit count is the
+			// installment count and the copay defaults to total / visits, so the plan
+			// form's existing required fields carry it; the marker rides in `notes`
+			// because the backend plan table has no column for either.
 			const total = Number(payload['totalAmount']) || 0;
 			const count = Number(payload['installments']) || 0;
+			const explicitCopay = Math.round((Number(payload['copayPerVisit']) || 0) * 100) / 100;
+			const perVisit = explicitCopay > 0
+				? explicitCopay
+				: (count > 0 ? Math.round((total / count) * 100) / 100 : 0);
+			const isCopayPlan = String(payload['planType'] ?? '') === 'recurring_copay' && perVisit > 0;
+			if (isCopayPlan) {
+				payload['notes'] = copayPlanNote(perVisit, count, String(payload['notes'] ?? ''));
+			}
+			delete payload['planType'];
+			delete payload['copayPerVisit'];
+
 			if (total > 0 && count > 0) {
 				payload['installmentAmount'] = Math.round((total / count) * 100) / 100;
+			} else if (isCopayPlan) {
+				payload['installmentAmount'] = perVisit;
 			}
 			// nextDueDate is NOT NULL on some deployments; default it to the start date.
 			if (!payload['nextDueDate'] && payload['startDate']) {
@@ -7731,6 +7830,406 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		}
 	}
 
+	// allow-any-unicode-next-line
+	// ── Patient Credits ────────────────────────────────────────────────────
+	// Copay money the front desk collected without naming a claim, and every
+	// automatic deduction taken out of it. The whole account is derived from the
+	// payment transactions by patientCredit.ts, so this view never stores a
+	// balance of its own and can never show one the transactions don't back.
+
+	/** Stub so the abstract config getter resolves; rendering is custom. */
+	private readonly _creditsConfig: ClinicalEditorConfig = {
+		title: 'Patient Credits', apiPath: '/api/payments/transactions',
+		searchPlaceholder: '', clientSideFilter: [], columns: [], formFields: [],
+		listUrlBuilder: () => null,
+	};
+
+	private _creditAccounts: PatientCreditAccount[] = [];
+	private _creditFilter = '';
+	private readonly _creditExpanded = new Set<string>();
+
+	private async _loadAndRenderCredits(): Promise<void> {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+		const loading = DOM.append(this.contentEl, DOM.$('div'));
+		loading.textContent = 'Loading patient credits…';
+		loading.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;';
+
+		const accounts = await loadCreditAccounts(this.apiService);
+		if (this.payView !== 'credits') { return; }
+		this._creditAccounts = [...accounts.values()].filter(a => a.received > 0.005 || a.applied > 0.005);
+		await this._resolveCreditPatientNames();
+		this._renderCredits();
+	}
+
+	/** Fill in display names the transaction rows didn't carry (cached per editor). */
+	private async _resolveCreditPatientNames(): Promise<void> {
+		const missing = this._creditAccounts
+			.filter(a => !a.patientName && a.patientId && !this._patientNameCache.has(a.patientId))
+			.map(a => a.patientId);
+		await Promise.all([...new Set(missing)].map(async pid => {
+			try {
+				const res = await this.apiService.fetch(`/api/patients/${encodeURIComponent(pid)}`);
+				if (!res.ok) { return; }
+				const p = (await res.json())?.data ?? {};
+				const full = `${p?.firstName ?? p?.identification?.firstName ?? ''} ${p?.lastName ?? p?.identification?.lastName ?? ''}`.trim();
+				if (full) { this._patientNameCache.set(pid, full); }
+			} catch { /* falls back to "Patient #id" */ }
+		}));
+		for (const a of this._creditAccounts) {
+			if (!a.patientName) { a.patientName = this._patientNameCache.get(a.patientId) || ''; }
+		}
+	}
+
+	private _creditPatientLabel(a: PatientCreditAccount): string {
+		return a.patientName || (a.patientId ? `Patient #${a.patientId}` : 'Unknown patient');
+	}
+
+	private _renderCredits(): void {
+		if (!this.contentEl) { return; }
+		DOM.clearNode(this.contentEl);
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+
+		const toolbar = DOM.append(this.contentEl, DOM.$('div'));
+		toolbar.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;';
+		const titleEl = DOM.append(toolbar, DOM.$('h2'));
+		titleEl.textContent = 'Patient Credits';
+		titleEl.style.cssText = 'font-size:20px;font-weight:600;margin:0;color:var(--vscode-foreground);';
+		const sub = DOM.append(toolbar, DOM.$('span'));
+		sub.textContent = 'Copays collected up front, held as credit and deducted automatically on later visits.';
+		sub.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);flex:1;';
+		const collectBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		collectBtn.textContent = '+ Collect Credit';
+		collectBtn.title = this._payPatientId
+			? `Collect a payment from ${this._payPatientName} and hold it as credit`
+			: 'Pick a patient in the bar above first';
+		collectBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
+		collectBtn.addEventListener('click', () => { void this._openCollectCreditForm(); });
+		const refreshBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
+		refreshBtn.textContent = '\u21BB Refresh';
+		refreshBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:6px;cursor:pointer;font-size:12px;';
+		refreshBtn.addEventListener('click', () => { void this._loadAndRenderCredits(); });
+
+		// Summary cards over the WHOLE list (not the filter) — the front desk asks
+		// "how much money are we holding", which the filter must not change.
+		const received = this._creditAccounts.reduce((s, a) => s + a.received, 0);
+		const applied = this._creditAccounts.reduce((s, a) => s + a.applied, 0);
+		const available = this._creditAccounts.reduce((s, a) => s + a.available, 0);
+		const withCredit = this._creditAccounts.filter(a => a.available > 0.005).length;
+		const cards = DOM.append(this.contentEl, DOM.$('div'));
+		cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;';
+		const card = (label: string, value: string, color: string, hint: string) => {
+			const c = DOM.append(cards, DOM.$('div'));
+			c.title = hint;
+			c.style.cssText = `border:1px solid var(--vscode-editorWidget-border);border-top:3px solid ${color};border-radius:8px;padding:10px 14px;background:var(--vscode-editorWidget-background,transparent);`;
+			const v = DOM.append(c, DOM.$('div')); v.textContent = value; v.style.cssText = `font-size:18px;font-weight:700;color:${color};`;
+			const l = DOM.append(c, DOM.$('div')); l.textContent = label; l.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-top:3px;';
+		};
+		card('Credit Collected', money(received), 'var(--vscode-foreground)', 'Every payment taken without naming a claim.');
+		card('Applied to Visits', money(applied), '#0ea5e9', 'Copays automatically deducted from those credits.');
+		card('Available Credit', money(available), '#14b8a6', 'Still on account. It carries forward until it is used up.');
+		card('Patients Holding Credit', String(withCredit), '#f59e0b', 'Patients with a balance left to spend.');
+
+		const bar = DOM.append(this.contentEl, DOM.$('div'));
+		bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+		const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
+		search.placeholder = 'Filter by patient...';
+		search.value = this._creditFilter;
+		search.style.cssText = 'flex:0 0 300px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		const countEl = DOM.append(bar, DOM.$('span'));
+		countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		search.addEventListener('input', () => { this._creditFilter = search.value; renderList(); });
+
+		const scroll = DOM.append(this.contentEl, DOM.$('div'));
+		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px;';
+
+		const renderList = (): void => {
+			DOM.clearNode(scroll);
+			const q = this._creditFilter.trim().toLowerCase();
+			const rows = this._creditAccounts
+				.filter(a => !q || `${this._creditPatientLabel(a)} ${a.patientId}`.toLowerCase().includes(q))
+				.sort((a, b) => b.available - a.available || (b.lastActivity || '').localeCompare(a.lastActivity || ''));
+			countEl.textContent = `${rows.length} account${rows.length === 1 ? '' : 's'}`;
+			if (rows.length === 0) {
+				const e = DOM.append(scroll, DOM.$('div'));
+				e.textContent = q
+					? 'No patient matches the filter.'
+					: 'No patient credits yet. Collect a copay with "+ Collect Credit" and it is held here until a visit needs it.';
+				e.style.cssText = 'padding:18px;color:var(--vscode-descriptionForeground);font-size:13px;font-style:italic;';
+				return;
+			}
+			for (const a of rows) { this._renderCreditAccountCard(scroll, a, renderList); }
+		};
+		renderList();
+	}
+
+	/** One patient's credit account: summary header that expands to the full audit trail. */
+	private _renderCreditAccountCard(host: HTMLElement, a: PatientCreditAccount, rerender: () => void): void {
+		const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+		const open = this._creditExpanded.has(a.patientId);
+		const accent = a.available > 0.005 ? '#14b8a6' : 'var(--vscode-editorWidget-border)';
+		const cardEl = DOM.append(host, DOM.$('div'));
+		cardEl.style.cssText = `flex:0 0 auto;border:1px solid var(--vscode-editorWidget-border);border-left:4px solid ${accent};border-radius:8px;overflow:hidden;background:var(--vscode-editorWidget-background,transparent);`;
+
+		const head = DOM.append(cardEl, DOM.$('div'));
+		head.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 12px;cursor:pointer;flex-wrap:wrap;';
+		head.title = open ? 'Hide this account\'s credit history' : 'Show every credit collected and every deduction';
+		head.addEventListener('click', () => {
+			if (open) { this._creditExpanded.delete(a.patientId); } else { this._creditExpanded.add(a.patientId); }
+			rerender();
+		});
+		const chevron = DOM.append(head, DOM.$('span'));
+		// allow-any-unicode-next-line
+		chevron.textContent = open ? '\u{2304}' : '\u{203A}';
+		chevron.style.cssText = 'width:12px;color:var(--vscode-descriptionForeground);font-size:13px;flex-shrink:0;';
+
+		const ident = DOM.append(head, DOM.$('div'));
+		ident.style.cssText = 'flex:1 1 200px;min-width:160px;';
+		const nameEl = DOM.append(ident, DOM.$('div'));
+		nameEl.textContent = this._creditPatientLabel(a);
+		nameEl.style.cssText = 'font-size:13px;font-weight:700;';
+		const subEl = DOM.append(ident, DOM.$('div'));
+		const counts = `${a.sources.length} credit${a.sources.length === 1 ? '' : 's'} collected  ·  ${a.applications.length} deduction${a.applications.length === 1 ? '' : 's'}`;
+		// allow-any-unicode-next-line
+		subEl.textContent = a.lastActivity ? `${counts}  ·  last activity ${isoToUsDate(a.lastActivity)}` : counts;
+		subEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+
+		const figures = DOM.append(head, DOM.$('div'));
+		figures.style.cssText = 'display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:flex-end;';
+		const figure = (label: string, text: string, color: string, strong: boolean) => {
+			const f = DOM.append(figures, DOM.$('div'));
+			f.style.cssText = 'min-width:84px;text-align:right;';
+			const v = DOM.append(f, DOM.$('div'));
+			v.textContent = text;
+			v.style.cssText = `font-size:13px;font-weight:${strong ? '700' : '500'};color:${color};`;
+			const l = DOM.append(f, DOM.$('div'));
+			l.textContent = label;
+			l.style.cssText = 'font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);';
+		};
+		figure('Collected', money(a.received), 'var(--vscode-descriptionForeground)', false);
+		figure('Applied', money(a.applied), '#0ea5e9', false);
+		figure('Available', money(a.available), a.available > 0.005 ? '#14b8a6' : 'var(--vscode-descriptionForeground)', true);
+
+		const act = DOM.append(head, DOM.$('div'));
+		act.style.cssText = 'display:flex;gap:6px;align-items:center;';
+		const actBtn = (label: string, tip: string, color: string, enabled: boolean, run: () => void) => {
+			const b = DOM.append(act, DOM.$('button')) as HTMLButtonElement;
+			b.textContent = label;
+			b.title = tip;
+			b.disabled = !enabled;
+			b.style.cssText = `padding:4px 9px;background:transparent;border:1px solid ${enabled ? `${color}55` : 'var(--vscode-editorWidget-border)'};color:${enabled ? color : 'var(--vscode-descriptionForeground)'};border-radius:5px;cursor:${enabled ? 'pointer' : 'default'};font-size:11px;`;
+			b.addEventListener('click', e => { e.stopPropagation(); if (enabled) { run(); } });
+		};
+		actBtn('Collect', 'Collect more money onto this credit balance', '#22c55e', true,
+			() => { void this._openCollectCreditForm(a); });
+		actBtn('Apply', 'Deduct a copay from this credit balance', '#0ea5e9', a.available > 0.005,
+			() => { void this._openApplyCreditForm(a); });
+		actBtn('Refund', 'Return unused credit to the patient', '#f59e0b', a.available > 0.005,
+			() => { void this._openRefundCreditForm(a); });
+
+		if (!open) { return; }
+
+		const body = DOM.append(cardEl, DOM.$('div'));
+		body.style.cssText = 'border-top:1px solid var(--vscode-editorWidget-border);background:rgba(128,128,128,0.04);padding-bottom:6px;';
+
+		const section = (title: string, cols: string, headers: string[]): HTMLElement => {
+			const h = DOM.append(body, DOM.$('div'));
+			h.textContent = title;
+			h.style.cssText = 'padding:8px 12px 4px 28px;font-size:11px;font-weight:600;color:var(--vscode-foreground);';
+			const hr = DOM.append(body, DOM.$('div'));
+			hr.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;padding:5px 12px 5px 28px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-editorWidget-border);`;
+			for (const t of headers) { DOM.append(hr, DOM.$('span')).textContent = t; }
+			return body;
+		};
+		const row = (cols: string, cells: Array<{ text: string; style?: string }>): void => {
+			const r = DOM.append(body, DOM.$('div'));
+			r.style.cssText = `display:grid;grid-template-columns:${cols};gap:8px;align-items:center;padding:6px 12px 6px 28px;border-top:1px solid rgba(128,128,128,0.08);font-size:12px;`;
+			for (const c of cells) {
+				const s = DOM.append(r, DOM.$('span'));
+				s.textContent = c.text;
+				s.title = c.text;
+				s.style.cssText = `overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${c.style ?? ''}`;
+			}
+		};
+
+		const SRC_COLS = '92px 110px minmax(160px,1.4fr) 96px 96px 100px';
+		section('Credits collected', SRC_COLS, ['Date', 'Method', 'Description', 'Original', 'Applied', 'Remaining']);
+		if (a.sources.length === 0) {
+			row(SRC_COLS, [{ text: 'No credits collected.', style: 'grid-column:1/-1;font-style:italic;color:var(--vscode-descriptionForeground);' }]);
+		}
+		for (const s of a.sources) {
+			row(SRC_COLS, [
+				// allow-any-unicode-next-line
+				{ text: s.date ? isoToUsDate(s.date) : '—' },
+				{ text: s.method.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) },
+				{ text: s.description || 'Patient credit', style: 'color:var(--vscode-descriptionForeground);' },
+				{ text: money(s.original), style: 'text-align:right;font-weight:600;' },
+				{ text: money(s.applied), style: 'text-align:right;color:#0ea5e9;' },
+				{ text: money(s.remaining), style: `text-align:right;font-weight:700;color:${s.remaining > 0.005 ? '#14b8a6' : 'var(--vscode-descriptionForeground)'};` },
+			]);
+		}
+
+		const APP_COLS = '92px 110px 96px 110px minmax(150px,1fr) 96px 110px';
+		section('Deductions (auto-applied copays)', APP_COLS, ['Date', 'Claim #', 'Encounter', 'Type', 'Description', 'Deducted', 'Credit Left']);
+		if (a.applications.length === 0) {
+			row(APP_COLS, [{ text: 'Nothing deducted yet — the balance carries forward to the next visit.', style: 'grid-column:1/-1;font-style:italic;color:var(--vscode-descriptionForeground);' }]);
+		}
+		for (const app of a.applications) {
+			row(APP_COLS, [
+				// allow-any-unicode-next-line
+				{ text: app.date ? isoToUsDate(app.date) : '—' },
+				// allow-any-unicode-next-line
+				{ text: app.claimRef || '—', style: 'font-family:var(--vscode-editor-font-family,monospace);' },
+				// allow-any-unicode-next-line
+				{ text: app.encounterId || '—' },
+				{ text: app.kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) },
+				{ text: app.description, style: 'color:var(--vscode-descriptionForeground);' },
+				{ text: money(app.amount), style: 'text-align:right;font-weight:600;color:#0ea5e9;' },
+				{ text: money(app.balanceAfter), style: 'text-align:right;font-weight:700;' },
+			]);
+		}
+	}
+
+	/**
+	 * Collect money and hold it as credit. No claim and no date of service are
+	 * asked for — that is the whole point of the feature (the team: "the payment
+	 * is not immediately linked to any specific claim or encounter").
+	 */
+	private async _openCollectCreditForm(account?: PatientCreditAccount): Promise<void> {
+		const patientId = account?.patientId || this._payPatientId;
+		const patientName = account ? this._creditPatientLabel(account) : this._payPatientName;
+		if (!patientId) {
+			await this.dialogService.info('Select a patient in the Patient bar above, then collect the credit.');
+			return;
+		}
+		const result = await showThemedModal({
+			title: 'Collect Patient Credit',
+			// allow-any-unicode-next-line
+			subtitle: `${patientName} — the money is held as available credit and deducted automatically when a copay comes due.`,
+			fields: [
+				{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
+				{
+					// Card collection needs a saved payment method (the backend rejects
+					// a bare card charge), so cards go through "Patient Pay: Collect
+					// Payment" and this form records the non-charging methods.
+					key: 'method', label: 'Payment Method', type: 'select', value: 'cash', options: [
+						{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
+						{ label: 'ACH / EFT', value: 'ach' }, { label: 'FSA', value: 'fsa' },
+						{ label: 'HSA', value: 'hsa' }, { label: 'Other', value: 'other' },
+					],
+				},
+				{ key: 'note', label: 'Note', type: 'text', placeholder: 'Copay collected at front desk' },
+				{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com' },
+			],
+			confirmLabel: 'Collect Credit',
+			confirmColor: '#22c55e',
+			anchor: this.contentEl ?? undefined,
+		});
+		if (!result) { return; }
+		const amount = Number(result['amount']) || 0;
+		if (amount <= 0) {
+			await this.dialogService.error('Enter an amount greater than 0.');
+			return;
+		}
+		const saved = await recordPatientCredit(this.apiService, {
+			patientId, patientName, amount, method: result['method'] || 'cash',
+			note: result['note'] || undefined, receiptEmail: result['receiptEmail'] || undefined,
+		});
+		if (!saved.ok) {
+			await this.dialogService.error('Could not record the credit.', saved.error);
+			return;
+		}
+		// allow-any-unicode-next-line
+		this.dialogService.info(`$${amount.toFixed(2)} added to ${patientName}'s credit balance.`);
+		await this._loadAndRenderCredits();
+	}
+
+	/** Manually deduct a copay from a patient's credit (the automatic path uses the same call). */
+	private async _openApplyCreditForm(account: PatientCreditAccount): Promise<void> {
+		const plan = await resolveVisitCopay(this.apiService, account.patientId);
+		const suggested = plan ? Math.min(plan.perVisit, account.available) : account.available;
+		const planLine = plan
+			// allow-any-unicode-next-line
+			? ` Plan copay $${plan.perVisit.toFixed(2)} per visit (${plan.label}).`
+			: '';
+		const result = await showThemedModal({
+			title: 'Apply Credit to a Visit',
+			// allow-any-unicode-next-line
+			subtitle: `${this._creditPatientLabel(account)} — $${account.available.toFixed(2)} available.${planLine}`,
+			fields: [
+				{ key: 'amount', label: 'Amount to Deduct ($)', type: 'number', required: true, value: suggested.toFixed(2) },
+				{ key: 'claimRef', label: 'Claim # (optional)', type: 'text', placeholder: 'CLM-0018' },
+				{ key: 'encounterId', label: 'Encounter ID (optional)', type: 'text', placeholder: '15868' },
+				{
+					key: 'kind', label: 'Applies To', type: 'select', value: 'copay', options: [
+						{ label: 'Copay', value: 'copay' }, { label: 'Deductible', value: 'deductible' },
+						{ label: 'Coinsurance', value: 'coinsurance' }, { label: 'Balance', value: 'payment' },
+					],
+				},
+			],
+			confirmLabel: 'Deduct from Credit',
+			confirmColor: '#0ea5e9',
+			anchor: this.contentEl ?? undefined,
+		});
+		if (!result) { return; }
+		const due = Number(result['amount']) || 0;
+		if (due <= 0) {
+			await this.dialogService.error('Enter an amount greater than 0.');
+			return;
+		}
+		const applied = await applyPatientCredit(this.apiService, {
+			patientId: account.patientId, patientName: account.patientName, due,
+			claimRef: result['claimRef'] || '', encounterId: result['encounterId'] || undefined,
+			kind: result['kind'] || 'copay', reason: 'applied manually',
+		});
+		if (applied.applied <= 0) {
+			await this.dialogService.error('Nothing was deducted — the credit balance could not cover it.');
+			return;
+		}
+		this.dialogService.info(
+			// allow-any-unicode-next-line
+			`Deducted $${applied.applied.toFixed(2)} — $${applied.remaining.toFixed(2)} credit left.`
+			+ (applied.shortfall > 0.005 ? ` $${applied.shortfall.toFixed(2)} stays as patient responsibility.` : ''));
+		await this._loadAndRenderCredits();
+	}
+
+	/** Give unused credit back to the patient. */
+	private async _openRefundCreditForm(account: PatientCreditAccount): Promise<void> {
+		const result = await showThemedModal({
+			title: 'Refund Unused Credit',
+			// allow-any-unicode-next-line
+			subtitle: `${this._creditPatientLabel(account)} — $${account.available.toFixed(2)} available to refund.`,
+			fields: [
+				{ key: 'amount', label: 'Refund Amount ($)', type: 'number', required: true, value: account.available.toFixed(2) },
+				{
+					key: 'method', label: 'Refund Method', type: 'select', value: 'cash', options: [
+						{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
+						{ label: 'Credit Card', value: 'credit_card' }, { label: 'ACH / EFT', value: 'ach' },
+					],
+				},
+				{ key: 'reason', label: 'Reason', type: 'text', placeholder: 'Patient requested refund' },
+			],
+			confirmLabel: 'Refund Credit',
+			confirmColor: '#f59e0b',
+			anchor: this.contentEl ?? undefined,
+		});
+		if (!result) { return; }
+		const amount = Number(result['amount']) || 0;
+		if (amount <= 0 || amount > account.available + 0.005) {
+			await this.dialogService.error(`Enter an amount between $0.01 and $${account.available.toFixed(2)}.`);
+			return;
+		}
+		const ok = await refundPatientCredit(this.apiService, {
+			patientId: account.patientId, patientName: account.patientName, amount,
+			method: result['method'] || 'cash', reason: result['reason'] || undefined,
+		});
+		if (!ok) {
+			await this.dialogService.error('Could not record the refund. Please try again.');
+			return;
+		}
+		await this._loadAndRenderCredits();
+	}
+
 	// Thin stub used only when payView === 'methods' to satisfy the abstract
 	// config getter — actual rendering is done by _loadAndRenderCards().
 	private readonly _methodsConfig: ClinicalEditorConfig = {
@@ -7771,6 +8270,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._loadAndRenderCards();
 		} else if (this.payView === 'ledger') {
 			this._loadAndRenderLedger();
+		} else if (this.payView === 'credits') {
+			this._loadAndRenderCredits();
 		}
 	}
 
@@ -7778,6 +8279,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	protected get config(): ClinicalEditorConfig {
 		switch (this.payView) {
 			case 'encounter-billing': return this._encounterBillingConfig;
+			case 'credits': return this._creditsConfig;
 			case 'methods': return this._methodsConfig;
 			case 'invoices': return this._invoicesConfig;
 			case 'plans': return this._plansConfig;
@@ -7798,6 +8300,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			this._loadAndRenderInvoices();
 		} else if (this.payView === 'ledger') {
 			this._loadAndRenderLedger();
+		} else if (this.payView === 'credits') {
+			this._loadAndRenderCredits();
 		} else {
 			super._resetAndReload();
 		}
@@ -7819,10 +8323,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// `hidden` keeps a view's implementation intact while taking its tab out
 		// of the bar (team request 2026-07-27: hide Payment Methods, do not
 		// delete it) — flip the flag back to bring the tab straight back.
-		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices'; label: string; hidden?: boolean }> = [
+		const payTabs: Array<{ view: 'encounter-billing' | 'transactions' | 'insurance-posting' | 'methods' | 'plans' | 'ledger' | 'invoices' | 'credits'; label: string; hidden?: boolean }> = [
 			{ view: 'encounter-billing', label: 'Dashboard' },
 			{ view: 'transactions', label: 'Patient Balance' },
 			{ view: 'insurance-posting', label: 'Insurance Posting' },
+			{ view: 'credits', label: 'Patient Credits' },
 			{ view: 'methods', label: 'Payment Methods', hidden: true },
 			{ view: 'plans', label: 'Payment Plans' },
 			{ view: 'ledger', label: 'Ledger' },
@@ -7945,8 +8450,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		if (this._payPatientBar) {
 			// Methods is patient-scoped too (cards list/create live under
 			// /api/credit-cards/patient/{id}), so it shares the patient picker.
+			// Credits lists every patient, but "Collect Credit" needs one selected —
+			// the shared picker is how the front desk names them.
 			this._payPatientBar.style.display =
-				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods') ? 'flex' : 'none';
+				(this.payView === 'plans' || this.payView === 'ledger' || this.payView === 'methods' || this.payView === 'credits') ? 'flex' : 'none';
 		}
 	}
 
@@ -8012,22 +8519,137 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		if (!this.contentEl) { return; }
 		this._billingLoading = true;
 		try {
-			const res = await this.apiService.fetch('/api/fee-sheets');
-			if (res.ok) {
-				const data = await res.json();
-				const w = data?.data ?? data;
-				const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
-				this._billingRows = list.map(d => this._normalizeBillingRow(d));
-			} else {
-				this._billingRows = [];
+			await this._refreshBillingRows();
+			// Copay auto-deductible: a visit that needs a copay takes it out of the
+			// patient's credit balance before anyone is asked to pay again. Anything
+			// deducted changes the numbers, so the rows are re-derived afterwards.
+			if (!this._autoCreditBusy) {
+				this._autoCreditBusy = true;
+				try {
+					if (await this._autoApplyPatientCredits()) { await this._refreshBillingRows(); }
+				} finally {
+					this._autoCreditBusy = false;
+				}
 			}
-			await this._applyPaymentActivity();
-			await this._applyInvoiceFlags();
+			await this._stampCreditBalances();
 		} catch {
 			this._billingRows = [];
 		}
 		this._billingLoading = false;
 		this._renderEncounterBilling();
+	}
+
+	/** Reload the fee sheets and re-derive every money figure on them. */
+	private async _refreshBillingRows(): Promise<void> {
+		const res = await this.apiService.fetch('/api/fee-sheets');
+		if (res.ok) {
+			const data = await res.json();
+			const w = data?.data ?? data;
+			const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+			this._billingRows = list.map(d => this._normalizeBillingRow(d));
+		} else {
+			this._billingRows = [];
+		}
+		await this._applyPaymentActivity();
+		await this._applyInvoiceFlags();
+	}
+
+	/** Guards the auto-deduction against re-entering through its own reload. */
+	private _autoCreditBusy = false;
+	/** patientId -> available credit, stamped onto the rows for the Credit column. */
+	private _creditByPatient = new Map<string, number>();
+	/** patientId -> per-visit copay resolved from the plan / coverage (cached per pass). */
+	private readonly _visitCopayCache = new Map<string, number>();
+
+	/** Put each row's patient credit balance on the row for the Credit column. */
+	private async _stampCreditBalances(): Promise<void> {
+		const accounts = await loadCreditAccounts(this.apiService);
+		this._creditByPatient = new Map([...accounts].map(([pid, a]) => [pid, a.available]));
+		for (const row of this._billingRows) {
+			row.patientCredit = this._creditByPatient.get(String(row.patientId ?? '')) ?? 0;
+		}
+	}
+
+	/**
+	 * Deduct the copay each open visit needs from the patient's available credit.
+	 *
+	 * What counts as "the copay due" for a row, in order:
+	 *  1. the patient responsibility an EOB already assigned (copay + deductible
+	 *     + coinsurance still pending on the claim);
+	 *  2. otherwise the recurring per-visit copay - a payment plan marked as a
+	 *     recurring copay plan, else the active coverage's copay amount - but only
+	 *     once per claim, and only while the insurance side is still open.
+	 *
+	 * The deduction is always capped at the claim balance AND at the credit on
+	 * hand, so the balance can never go negative and anything the credit cannot
+	 * cover simply stays as patient responsibility.
+	 *
+	 * Returns true when at least one deduction was written.
+	 */
+	private async _autoApplyPatientCredits(): Promise<boolean> {
+		if (this.configurationService.getValue<boolean>('ciyex.billing.autoApplyPatientCredit') === false) { return false; }
+		if (this._billingRows.length === 0) { return false; }
+		const accounts = await loadCreditAccounts(this.apiService);
+		if (accounts.size === 0) { return false; }
+
+		const available = new Map<string, number>();
+		// Claims that have already drawn on the credit balance — a recurring copay
+		// must be taken ONCE per visit, not again on every dashboard refresh.
+		const funded = new Set<string>();
+		for (const [pid, account] of accounts) {
+			available.set(pid, account.available);
+			for (const app of account.applications) {
+				if (app.claimRef) { funded.add(`${pid}|${normalizeClaimRef(app.claimRef)}`); }
+			}
+		}
+		if ([...available.values()].every(v => v <= 0.005)) { return false; }
+
+		let changed = false;
+		for (const row of this._billingRows) {
+			const patientId = String(row.patientId ?? '');
+			if (!patientId) { continue; }
+			const credit = available.get(patientId) ?? 0;
+			const balance = Number(row.balance ?? 0);
+			if (credit <= 0.005 || balance <= 0.005) { continue; }
+			const claimRef = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
+			const key = `${patientId}|${normalizeClaimRef(claimRef)}`;
+
+			let due = Number(row.patientPortion ?? 0);
+			let kind = 'copay';
+			if (due <= 0.005) {
+				// No EOB responsibility yet. A recurring plan copay is collectable at
+				// the visit; an adjudicated claim's remainder is not (it belongs to the
+				// payer until an EOB says otherwise).
+				if (funded.has(key) || row.eobPosted) { continue; }
+				due = await this._visitCopayFor(patientId);
+				kind = 'copay';
+			}
+			const target = Math.min(due, balance, credit);
+			if (target <= 0.005) { continue; }
+
+			const result = await applyPatientCredit(this.apiService, {
+				patientId, patientName: String(row.patientName ?? ''), due: target,
+				claimRef, encounterId: String(row.encounterId ?? '') || undefined,
+				serviceDate: String(row.encounterDate ?? '') || undefined, kind,
+				reason: 'auto-deducted from patient credit',
+			});
+			if (result.applied > 0.005) {
+				changed = true;
+				available.set(patientId, result.remaining);
+				funded.add(key);
+			}
+		}
+		return changed;
+	}
+
+	/** The fixed per-visit copay for a patient (recurring plan, else coverage). */
+	private async _visitCopayFor(patientId: string): Promise<number> {
+		const cached = this._visitCopayCache.get(patientId);
+		if (cached !== undefined) { return cached; }
+		const plan = await resolveVisitCopay(this.apiService, patientId);
+		const perVisit = plan?.perVisit ?? 0;
+		this._visitCopayCache.set(patientId, perVisit);
+		return perVisit;
 	}
 
 	/**
@@ -8229,10 +8851,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
 		scroll.style.cssText = 'flex:1;min-height:0;overflow:auto;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;';
 
-		const COLS = 'minmax(115px,1.1fr) minmax(100px,0.9fr) 92px 82px 90px 100px 85px 90px 82px 82px 95px 110px 90px 100px 72px minmax(110px,1fr) 170px';
+		const COLS = 'minmax(115px,1.1fr) minmax(100px,0.9fr) 92px 82px 90px 100px 85px 90px 82px 82px 95px 88px 110px 90px 100px 72px minmax(110px,1fr) 196px';
 		const header = DOM.append(scroll, DOM.$('div'));
 		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:6px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
-		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Claim #', 'Codes', 'Pay Amount', 'Total Fee', 'Patient Paid', 'Ins Paid', 'Balance', 'Patient Portion', 'Billing Status', 'Billed Mode', 'Pay Status', 'Invoice', 'Comments', 'Action']) {
+		for (const h of ['Patient', 'Clinician', 'Enc. Date', 'Claim #', 'Codes', 'Pay Amount', 'Total Fee', 'Patient Paid', 'Ins Paid', 'Balance', 'Patient Portion', 'Credit', 'Billing Status', 'Billed Mode', 'Pay Status', 'Invoice', 'Comments', 'Action']) {
 			DOM.append(header, DOM.$('span')).textContent = h;
 		}
 
@@ -8288,6 +8910,18 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			portionEl.textContent = patientPortion > 0 ? `$${patientPortion.toFixed(2)}` : '—';
 			portionEl.style.color = patientPortion > 0 ? '#f59e0b' : 'var(--vscode-descriptionForeground)';
 			if (patientPortion > 0) { portionEl.title = 'Copay + deductible + coinsurance assigned by the insurance EOB — collect this from the patient.'; }
+
+			// Credit on hand for this patient. When it covers the portion due, the
+			// automatic deduction has usually already taken it — the column is how
+			// the front desk sees why the patient owes less than the EOB said.
+			const patientCredit = Number(row.patientCredit || 0);
+			const creditEl = DOM.append(r, DOM.$('span'));
+			// allow-any-unicode-next-line
+			creditEl.textContent = patientCredit > 0.005 ? `$${patientCredit.toFixed(2)}` : '—';
+			creditEl.style.color = patientCredit > 0.005 ? '#14b8a6' : 'var(--vscode-descriptionForeground)';
+			creditEl.title = patientCredit > 0.005
+				? 'Unapplied credit on this patient\'s account. A copay due on this visit is deducted from it automatically.'
+				: 'No unapplied credit on this account.';
 
 			const billSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
 			billSel.style.cssText = inputStyle;
@@ -8345,12 +8979,56 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			};
 			actBtn('\u270F\uFE0F', 'Edit fee sheet', 'var(--vscode-textLink-foreground)', () => this._editBillingRow(row));
 			actBtn('\u2705', 'Collect payment', '#22c55e', () => this._completeBillingRow(row, Number(payInp.value) || 0, modeSel.value));
+			if (patientCredit > 0.005) {
+				actBtn('\u{1F4B3}', `Apply $${Math.min(patientCredit, Number(payInp.value) || 0).toFixed(2)} from this patient's $${patientCredit.toFixed(2)} credit balance`, '#14b8a6',
+					() => { void this._applyCreditToBillingRow(row, Number(payInp.value) || 0); });
+			}
 			// The X12 837 download was dropped from this action column (team request
 			// 2026-07-27). Claims can still be exported as 837P from the Operations
 			// side menu's Claims rows, which is where clearinghouse work belongs.
 			actBtn('\u{1F9FE}', 'Generate invoice, show PDF & email patient', 'var(--vscode-textLink-foreground)', () => this._invoiceBillingRow(row));
 			actBtn('\u{1F4D2}', 'Open ledger', 'var(--vscode-descriptionForeground)', () => this._openLedgerForRow(row));
 		}
+	}
+
+	/**
+	 * Pay a visit out of the patient's credit balance from the Dashboard row.
+	 * The same call the automatic pass uses, so a manual apply and an automatic
+	 * one leave identical records behind.
+	 */
+	private async _applyCreditToBillingRow(row: Record<string, unknown>, requested: number): Promise<void> {
+		const credit = Number(row.patientCredit || 0);
+		const balance = Number(row.balance || 0);
+		const portion = Number(row.patientPortion || 0);
+		// Default to what the row is actually asking for, never more than is owed.
+		const want = requested > 0 ? requested : (portion > 0 ? portion : balance);
+		const due = Math.min(want, balance, credit);
+		if (due <= 0.005) {
+			await this.dialogService.info('Nothing to apply — this visit has no open balance the credit can cover.');
+			return;
+		}
+		const claimRef = String(row.claimNumber || claimNumberForFeeSheet(String(row.id)));
+		const confirmed = await this.dialogService.confirm({
+			// allow-any-unicode-next-line
+			message: `Deduct $${due.toFixed(2)} from this patient's $${credit.toFixed(2)} credit balance for claim ${claimRef}?`,
+			type: 'question', primaryButton: 'Apply Credit',
+		});
+		if (!confirmed.confirmed) { return; }
+		const result = await applyPatientCredit(this.apiService, {
+			patientId: String(row.patientId ?? ''), patientName: String(row.patientName ?? ''), due,
+			claimRef, encounterId: String(row.encounterId ?? '') || undefined,
+			serviceDate: String(row.encounterDate ?? '') || undefined,
+			kind: portion > 0 ? 'copay' : 'payment', reason: 'applied from the payment dashboard',
+		});
+		if (result.applied <= 0.005) {
+			await this.dialogService.error('Nothing was deducted — the credit balance could not cover it.');
+			return;
+		}
+		this.dialogService.info(
+			// allow-any-unicode-next-line
+			`Applied $${result.applied.toFixed(2)} from credit — $${result.remaining.toFixed(2)} left on account.`
+			+ (result.shortfall > 0.005 ? ` $${result.shortfall.toFixed(2)} stays as patient responsibility.` : ''));
+		await this._loadAndRenderEncounterBilling();
 	}
 
 	private _editBillingRow(row: Record<string, unknown>): void {

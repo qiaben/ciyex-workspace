@@ -390,6 +390,12 @@ configRegistry.registerConfiguration({
 			description: localize('billingPos', "Default Place of Service code (e.g., 11 = Office)."),
 			scope: ConfigurationScope.WINDOW,
 		},
+		'ciyex.billing.autoApplyPatientCredit': {
+			type: 'boolean',
+			default: true,
+			description: localize('billingAutoCredit', "Automatically deduct a visit's copay from the patient's available credit balance when the Payment Dashboard loads."),
+			scope: ConfigurationScope.WINDOW,
+		},
 	},
 });
 
@@ -812,7 +818,7 @@ configRegistry.registerConfiguration({
 configRegistry.registerConfiguration({
 	id: 'ciyex.billing',
 	order: 27,
-	title: localize('ciyexBilling', "Ciyex: Billing / EDI"),
+	title: localize('ciyexBillingEdi', "Ciyex: Billing / EDI"),
 	properties: {
 		'ciyex.billing.submitterId': { type: 'string', default: '', description: localize('billSubmitterId', "EDI submitter (sender) ID assigned by your clearinghouse. Used in the 837P ISA/GS sender and 1000A loop."), scope: ConfigurationScope.APPLICATION },
 		'ciyex.billing.submitterName': { type: 'string', default: '', description: localize('billSubmitterName', "Submitter organization name for the 837P 1000A submitter loop. Defaults to the practice name."), scope: ConfigurationScope.APPLICATION },

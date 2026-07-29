@@ -8,6 +8,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { claimNumberForFeeSheet } from '../billing/edi837.js';
 import { buildXlsx, IXlsxColumn, XlsxRow } from '../billing/xlsx.js';
 import { findWorkbenchRoot } from '../customDropdown.js';
+import { CREDIT_CLAIM_REF, isCreditApplication, isCreditTransaction } from './patientCredit.js';
 
 /**
  * Shared patient-ledger view: one financial record built from the billed fee
@@ -30,7 +31,17 @@ import { findWorkbenchRoot } from '../customDropdown.js';
  * of truth.
  */
 
-export type LedgerEventType = 'charge' | 'ins-payment' | 'ins-payment-secondary' | 'writeoff' | 'patient-payment' | 'patient-portion';
+/**
+ * `patient-credit` / `credit-applied` / `credit-drawdown` are the copay
+ * auto-deductible postings (see patientCredit.ts). A credit collected at the
+ * front desk is real money on the account (`patient-credit`), and every later
+ * deduction produces a PAIR of postings so the money is never counted twice:
+ * `credit-applied` credits the claim it settles, `credit-drawdown` debits the
+ * credit bucket by the same amount. Net effect on the account balance is zero -
+ * the money was already counted when it was collected.
+ */
+export type LedgerEventType = 'charge' | 'ins-payment' | 'ins-payment-secondary' | 'writeoff' | 'patient-payment' | 'patient-portion'
+	| 'patient-credit' | 'credit-applied' | 'credit-drawdown';
 
 export interface LedgerEvent {
 	/** Stable per-entry id (type + patient + claim + date + amounts) used to persist local deletes. */
@@ -67,6 +78,8 @@ export interface LedgerTotals {
 	adjustments: number;
 	patientPortionDue: number;
 	outstanding: number;
+	/** Unapplied patient credit still sitting on the account (carried forward). */
+	availableCredit: number;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -203,6 +216,54 @@ export async function buildLedgerEvents(apiService: ICiyexApiService, patientId?
 		// DOS of the settled claim (falls back to the transaction's own date when unknown).
 		const svc = (ref: string) => serviceDateByClaim.get(ref) || isoDate(t['serviceDate'] ?? t['dateOfService']) || '';
 
+		// Money collected but not yet attached to a claim: it sits on the account
+		// as available credit until a copay comes due (patientCredit.ts).
+		if (isCreditTransaction(t)) {
+			if (status === 'completed' && amount > 0) {
+				events.push({
+					id: '', date, serviceDate: isoDate(t['serviceDate'] ?? t['dateOfService']), sortKey,
+					patientId: pid, patientName, type: 'patient-credit', claimRef: CREDIT_CLAIM_REF,
+					description: desc || `Patient credit (${String(t['paymentMethodType'] ?? 'payment')})`,
+					debit: 0, credit: round2(amount), info: 0, balance: 0, claimBalance: 0,
+				});
+			} else if (status === 'refunded' && amount > 0) {
+				events.push({
+					id: '', date, serviceDate: '', sortKey, patientId: pid, patientName,
+					type: 'credit-drawdown', claimRef: CREDIT_CLAIM_REF,
+					// allow-any-unicode-next-line
+					description: `Credit refunded to patient — ${desc || 'unused credit'}`,
+					debit: round2(amount), credit: 0, info: 0, balance: 0, claimBalance: 0,
+				});
+			}
+			continue;
+		}
+
+		// A copay auto-paid out of the credit balance. Two postings, so the claim
+		// gets the money without the account being credited a second time.
+		if (isCreditApplication(t) && status === 'completed' && amount > 0) {
+			const creditClaim = String(t['claimId'] ?? '') || desc.match(/claim[= ]([A-Za-z0-9-]+)/)?.[1] || '';
+			const isRefund = /refund=1/.test(notes) || String(t['transactionType'] ?? '') === 'refund';
+			if (!isRefund) {
+				events.push({
+					id: '', date, serviceDate: svc(creditClaim), sortKey: sortKey + 3, patientId: pid, patientName,
+					type: 'credit-applied', claimRef: creditClaim,
+					description: desc || 'Copay paid from patient credit',
+					debit: 0, credit: round2(amount), info: 0, balance: 0, claimBalance: 0,
+				});
+			}
+			events.push({
+				id: '', date, serviceDate: '', sortKey: sortKey + 2, patientId: pid, patientName,
+				type: 'credit-drawdown', claimRef: CREDIT_CLAIM_REF,
+				description: isRefund
+					// allow-any-unicode-next-line
+					? `Credit refunded to patient — ${money(amount)}`
+					// allow-any-unicode-next-line
+					: `Applied to ${creditClaim ? `claim ${creditClaim}` : 'a visit copay'} — ${money(amount)}`,
+				debit: round2(amount), credit: 0, info: 0, balance: 0, claimBalance: 0,
+			});
+			continue;
+		}
+
 		if (isEob) {
 			const claimRef = descText(desc, 'claim');
 			const payer = descText(desc, 'payer');
@@ -314,6 +375,7 @@ function recomputeBalances(newestFirst: LedgerEvent[]): void {
 /** Column totals across a set of ledger events. */
 export function ledgerTotals(events: LedgerEvent[]): LedgerTotals {
 	let charges = 0; let insurancePaid = 0; let patientPaid = 0; let adjustments = 0; let portion = 0;
+	let creditIn = 0; let creditOut = 0;
 	for (const e of events) {
 		switch (e.type) {
 			case 'charge': charges += e.debit; break;
@@ -322,6 +384,12 @@ export function ledgerTotals(events: LedgerEvent[]): LedgerTotals {
 			case 'writeoff': adjustments += e.credit; break;
 			case 'patient-payment': patientPaid += e.credit - e.debit; break;
 			case 'patient-portion': portion += e.info; break;
+			// Credit collected is real money in; the drawdown that funds a claim's
+			// `credit-applied` posting takes it straight back out, so the pair nets
+			// to zero and only the UNAPPLIED remainder shows as patient money.
+			case 'patient-credit': patientPaid += e.credit; creditIn += e.credit; break;
+			case 'credit-applied': patientPaid += e.credit; break;
+			case 'credit-drawdown': patientPaid -= e.debit; creditOut += e.debit; break;
 		}
 	}
 	return {
@@ -331,6 +399,7 @@ export function ledgerTotals(events: LedgerEvent[]): LedgerTotals {
 		adjustments: round2(adjustments),
 		patientPortionDue: round2(portion),
 		outstanding: round2(charges - insurancePaid - adjustments - patientPaid),
+		availableCredit: round2(Math.max(0, creditIn - creditOut)),
 	};
 }
 
@@ -341,6 +410,9 @@ const TYPE_META: Record<LedgerEventType, { label: string; color: string }> = {
 	'writeoff': { label: 'Write-off / Adj', color: '#a78bfa' },
 	'patient-payment': { label: 'Patient Payment', color: '#22c55e' },
 	'patient-portion': { label: 'Patient Portion Due', color: '#f59e0b' },
+	'patient-credit': { label: 'Credit Collected', color: '#14b8a6' },
+	'credit-applied': { label: 'Paid from Credit', color: '#0ea5e9' },
+	'credit-drawdown': { label: 'Credit Drawdown', color: '#14b8a6' },
 };
 
 /**
@@ -355,8 +427,13 @@ const TYPE_ORDER: Record<LedgerEventType, number> = {
 	'ins-payment': 1,
 	'ins-payment-secondary': 2,
 	'writeoff': 3,
-	'patient-payment': 4,
-	'patient-portion': 5,
+	'credit-applied': 4,
+	'patient-payment': 5,
+	'patient-portion': 6,
+	// Credit-bucket postings only ever appear inside the CREDIT card, where the
+	// collected credit must come before the drawdowns that spend it.
+	'patient-credit': 0,
+	'credit-drawdown': 1,
 };
 
 /** Workflow order first, then oldest-to-newest inside a type (repeat postings keep their sequence). */
@@ -396,6 +473,8 @@ export interface LedgerClaimGroup {
 	/** charges - insurance - adjustments - patient payments. */
 	balance: number;
 	status: LedgerClaimStatus;
+	/** True for the synthetic "patient credit on account" card (no claim behind it). */
+	isCredit: boolean;
 }
 
 const STATUS_META: Record<LedgerClaimStatus, { label: string; color: string }> = {
@@ -426,7 +505,7 @@ export function groupLedgerByClaim(events: LedgerEvent[]): LedgerClaimGroup[] {
 				key, claimRef: e.claimRef, patientId: e.patientId, patientName: e.patientName,
 				serviceDate: '', lastActivity: '', sortKey: 0, events: [],
 				charges: 0, insurancePaid: 0, adjustments: 0, patientPaid: 0, patientDue: 0,
-				balance: 0, status: 'open',
+				balance: 0, status: 'open', isCredit: e.claimRef === CREDIT_CLAIM_REF,
 			};
 			groups.set(key, g);
 		}
@@ -442,6 +521,11 @@ export function groupLedgerByClaim(events: LedgerEvent[]): LedgerClaimGroup[] {
 			case 'writeoff': g.adjustments += e.credit; break;
 			case 'patient-payment': g.patientPaid += e.credit - e.debit; break;
 			case 'patient-portion': g.patientDue += e.info; break;
+			// On the credit card these read as money in / money spent; on a claim
+			// card `credit-applied` is just another patient payment.
+			case 'patient-credit':
+			case 'credit-applied': g.patientPaid += e.credit; break;
+			case 'credit-drawdown': g.patientPaid -= e.debit; break;
 		}
 	}
 	const out = [...groups.values()];
@@ -455,6 +539,12 @@ export function groupLedgerByClaim(events: LedgerEvent[]): LedgerClaimGroup[] {
 		g.patientDue = round2(Math.max(0, g.patientDue - g.patientPaid));
 		g.balance = round2(g.charges - g.insurancePaid - g.adjustments - g.patientPaid);
 		g.events.sort(compareForClaimCard);
+		// The credit card is not a claim: it is either holding money ("Credit
+		// Balance") or fully spent ("Settled"), never an open receivable.
+		if (g.isCredit) {
+			g.status = g.balance < -0.005 ? 'credit' : 'paid';
+			continue;
+		}
 		g.status = g.balance < -0.005 ? 'credit'
 			: g.balance <= 0.005 ? 'paid'
 				: g.patientDue > 0.005 ? 'patient-due'
@@ -572,6 +662,7 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		adjustments: card('Write-offs / Adj', money(0), '#8b5cf6', 'Contractual adjustments the patient never owes.'),
 		patientPaid: card('Patient Paid', money(0), '#22c55e', 'Money collected from the patient (refunds subtracted).'),
 		patientPortionDue: card('Patient Due Now', money(0), '#f59e0b', 'Copay / deductible / coinsurance assigned by an EOB and not yet collected.'),
+		availableCredit: card('Available Credit', money(0), '#14b8a6', 'Money collected from the patient that is not yet applied to a visit. It carries forward until it is used up.'),
 		outstanding: card('Outstanding Balance', money(0), '#ef4444', 'Charges minus insurance payments, adjustments and patient payments.'),
 	};
 
@@ -637,6 +728,7 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		totalsEls.patientPaid.textContent = money(totals.patientPaid);
 		totalsEls.adjustments.textContent = money(totals.adjustments);
 		totalsEls.patientPortionDue.textContent = money(totals.patientPortionDue);
+		totalsEls.availableCredit.textContent = money(totals.availableCredit);
 		// A patient who has paid ahead reads as a credit, not a minus sign.
 		totalsEls.outstanding.textContent = balanceLabel(totals.outstanding);
 
@@ -693,15 +785,21 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 		const claimLine = DOM.append(ident, DOM.$('div'));
 		claimLine.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
 		const claimEl = DOM.append(claimLine, DOM.$('span'));
-		claimEl.textContent = g.claimRef || 'Unlinked activity';
-		claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:13px;font-weight:700;';
+		// allow-any-unicode-next-line
+		claimEl.textContent = g.isCredit ? 'Patient Credit — on account' : (g.claimRef || 'Unlinked activity');
+		claimEl.title = g.isCredit
+			? 'Copays and payments collected without a claim, and every automatic deduction taken out of them.'
+			: '';
+		claimEl.style.cssText = `font-family:var(--vscode-editor-font-family,monospace);font-size:13px;font-weight:700;${g.isCredit ? 'color:#14b8a6;' : ''}`;
 		const badge = DOM.append(claimLine, DOM.$('span'));
 		badge.textContent = meta.label;
 		badge.style.cssText = `padding:1px 8px;border-radius:9px;font-size:10px;font-weight:600;color:${meta.color};border:1px solid ${meta.color}55;background:${meta.color}14;white-space:nowrap;`;
 		const subLine = DOM.append(ident, DOM.$('div'));
 		const who = opts.showPatientColumn ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : 'Unknown patient')) : '';
 		// allow-any-unicode-next-line
-		const dos = g.serviceDate ? `DOS ${usDate(g.serviceDate)}` : '';
+		// A credit is deliberately not tied to a date of service (the team asked for
+		// DOS to be optional on a patient payment), so the card says so instead.
+		const dos = g.isCredit ? 'no date of service' : (g.serviceDate ? `DOS ${usDate(g.serviceDate)}` : '');
 		// allow-any-unicode-next-line
 		const last = g.lastActivity ? `last activity ${usDate(g.lastActivity)}` : '';
 		// allow-any-unicode-next-line
@@ -730,12 +828,23 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 			l.textContent = label;
 			l.style.cssText = 'font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);';
 		};
-		figure('Charges', g.charges, 'var(--vscode-foreground)', true);
-		figure('Insurance', g.insurancePaid, '#3b9edd', true);
-		figure('Adjustments', g.adjustments, '#8b5cf6', true);
-		figure('Patient Paid', g.patientPaid, '#22c55e', true);
-		figure('Patient Due', g.patientDue, '#f59e0b', true);
-		figure('Balance', g.balance, g.balance > 0.005 ? '#ef4444' : g.balance < -0.005 ? '#14b8a6' : '#22c55e', false, balanceLabel(g.balance));
+		if (g.isCredit) {
+			// The credit card answers three questions: how much came in, how much
+			// has been auto-deducted, and how much is still available to carry
+			// forward to the next visit.
+			const collected = round2(g.events.filter(e => e.type === 'patient-credit').reduce((s, e) => s + e.credit, 0));
+			const spent = round2(g.events.filter(e => e.type === 'credit-drawdown').reduce((s, e) => s + e.debit, 0));
+			figure('Credit Collected', collected, '#14b8a6', true);
+			figure('Applied to Visits', spent, '#0ea5e9', true);
+			figure('Available Credit', round2(Math.max(0, collected - spent)), '#14b8a6', false);
+		} else {
+			figure('Charges', g.charges, 'var(--vscode-foreground)', true);
+			figure('Insurance', g.insurancePaid, '#3b9edd', true);
+			figure('Adjustments', g.adjustments, '#8b5cf6', true);
+			figure('Patient Paid', g.patientPaid, '#22c55e', true);
+			figure('Patient Due', g.patientDue, '#f59e0b', true);
+			figure('Balance', g.balance, g.balance > 0.005 ? '#ef4444' : g.balance < -0.005 ? '#14b8a6' : '#22c55e', false, balanceLabel(g.balance));
+		}
 
 		if (!open) { return; }
 
@@ -997,7 +1106,13 @@ export function ledgerStatementHtml(groups: LedgerClaimGroup[], opts: { accountN
 	}
 	const pages = [...byPatient.entries()];
 
-	const pageHtml = (key: string, claims: LedgerClaimGroup[], pageNo: number): string => {
+	const pageHtml = (key: string, allGroups: LedgerClaimGroup[], pageNo: number): string => {
+		// The credit card is not a claim, so it never gets a statement detail line;
+		// its unapplied balance is reported in the summary's "Patient Credit" box.
+		const claims = allGroups.filter(g => !g.isCredit);
+		const creditOnAccount = round2(allGroups
+			.filter(g => g.isCredit)
+			.reduce((s, g) => s + Math.max(0, -g.balance), 0));
 		const totals = claims.reduce((acc, g) => ({
 			charges: acc.charges + g.charges,
 			insurance: acc.insurance + g.insurancePaid,
@@ -1007,13 +1122,19 @@ export function ledgerStatementHtml(groups: LedgerClaimGroup[], opts: { accountN
 			balance: acc.balance + g.balance,
 		}), { charges: 0, insurance: 0, adjustments: 0, patientPaid: 0, patientDue: 0, balance: 0 });
 		for (const k of Object.keys(totals) as Array<keyof typeof totals>) { totals[k] = round2(totals[k]); }
-		// A patient who has overpaid carries a credit; it is not a negative balance owed.
-		const credit = round2(Math.max(0, -claims.reduce((s, g) => s + Math.min(g.balance, 0), 0)));
-		const due = round2(totals.patientDue > 0 ? totals.patientDue : Math.max(totals.balance, 0));
+		// A patient who has overpaid carries a credit; it is not a negative balance
+		// owed. Unapplied credit collected at the front desk counts here too.
+		const credit = round2(creditOnAccount + Math.max(0, -claims.reduce((s, g) => s + Math.min(g.balance, 0), 0)));
+		// Credit on hand is applied against what the patient is asked to pay — a
+		// statement must never bill money the practice is already holding.
+		const due = round2(Math.max(0, (totals.patientDue > 0 ? totals.patientDue : Math.max(totals.balance, 0)) - creditOnAccount));
 
 		const guarantor = opts.info?.patients[key];
-		const displayName = guarantor?.name || claims[0]?.patientName || opts.accountName || '';
-		const account = guarantor?.account || (claims[0]?.patientId ? `#${claims[0].patientId}` : '');
+		// A patient whose only activity is an unapplied credit has no claim groups,
+		// so the identity falls back to the whole set rather than to a blank page.
+		const identity = claims[0] ?? allGroups[0];
+		const displayName = guarantor?.name || identity?.patientName || opts.accountName || '';
+		const account = guarantor?.account || (identity?.patientId ? `#${identity.patientId}` : '');
 
 		// Oldest first: a statement reads down the account's history.
 		const detail = [...claims].sort((a, b) => (a.serviceDate || a.lastActivity).localeCompare(b.serviceDate || b.lastActivity));
@@ -1140,6 +1261,11 @@ export const LEDGER_STATEMENT_PRINT_CSS = [
 	'  .ciyex-printable-doc .page-num{text-align:right;font-size:8px;color:#444 !important;margin-top:10px;}',
 ].join('\n');
 
+/** How a group identifies itself in an export (the credit card has no claim #). */
+function groupLabel(g: LedgerClaimGroup): string {
+	return g.isCredit ? 'PATIENT CREDIT' : (g.claimRef || 'Unlinked');
+}
+
 /** Excel columns for the ledger export — one row per posting, claim-ordered. */
 const LEDGER_SHEET_COLUMNS: IXlsxColumn[] = [
 	{ header: 'Claim #', width: 14 },
@@ -1165,7 +1291,7 @@ export function ledgerWorkbook(groups: LedgerClaimGroup[], showPatient: boolean)
 		const patient = showPatient ? (g.patientName || (g.patientId ? `Patient #${g.patientId}` : '')) : (g.patientName || '');
 		for (const ev of g.events) {
 			rows.push([
-				g.claimRef || 'Unlinked',
+				groupLabel(g),
 				patient,
 				STATUS_META[g.status].label,
 				ev.serviceDate ? usDate(ev.serviceDate) : '',
@@ -1179,7 +1305,7 @@ export function ledgerWorkbook(groups: LedgerClaimGroup[], showPatient: boolean)
 			]);
 		}
 		rows.push([
-			g.claimRef || 'Unlinked', patient, STATUS_META[g.status].label, '', '', 'CLAIM TOTAL', '',
+			groupLabel(g), patient, STATUS_META[g.status].label, '', '', g.isCredit ? 'CREDIT TOTAL' : 'CLAIM TOTAL', '',
 			g.charges, round2(g.insurancePaid + g.adjustments + g.patientPaid), g.patientDue, g.balance,
 		]);
 	}
