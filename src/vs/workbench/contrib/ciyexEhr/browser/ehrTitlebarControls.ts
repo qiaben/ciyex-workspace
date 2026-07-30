@@ -12,6 +12,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { createCustomDropdown, createTimeDropdown, IDropdownOption } from './customDropdown.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from './ciyexDateMask.js';
+import { hasDuplicateAppointment } from './appointmentDuplicateCheck.js';
 
 interface PatientResult {
 	id: string;
@@ -980,6 +981,21 @@ export class EhrTitlebarControls extends Disposable {
 			submitting = true;
 			saveBtn.setAttribute('disabled', 'true');
 			saveBtn.textContent = 'Saving...';
+
+			// Prevent double-booking: a patient may have at most ONE active
+			// appointment per calendar day (mirrors the rule enforced on the
+			// Schedule page's Add Appointment overlay in calendarEditor.ts).
+			try {
+				if (await hasDuplicateAppointment(this.apiService, sd, selectedPatientId, patientSearchInput.value)) {
+					errorEl.textContent = `${patientSearchInput.value} already has an appointment on ${sd}. Only one appointment per patient per day is allowed.`;
+					errorEl.style.display = '';
+					patientSearchInput.focus();
+					submitting = false;
+					saveBtn.removeAttribute('disabled');
+					saveBtn.textContent = 'Save Appointment';
+					return;
+				}
+			} catch { /* pre-check failed (offline/API error) — let the create proceed */ }
 
 			try {
 				const res = await this.apiService.fetch(`/api/fhir-resource/appointments/patient/${selectedPatientId}`, {

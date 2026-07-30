@@ -20,6 +20,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, createTimeDropdown } from '../customDropdown.js';
 import { parseSavedRecord } from '../sidebarActions.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
+import { hasDuplicateAppointment, localDateStr, parseApptDate } from '../appointmentDuplicateCheck.js';
 
 
 interface Appointment {
@@ -38,10 +39,6 @@ interface Appointment {
 	practitionerName?: string;
 	locationId?: string;
 	locationName?: string;
-}
-
-function localDateStr(d: Date): string {
-	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** The backend sometimes serialises the visit-type CodeableConcept with Java's
@@ -66,31 +63,6 @@ function getAppointmentType(apt: Appointment): string {
 	if (typeof t === 'string') { return parseCodeableConceptLabel(t) || apt.type || ''; }
 	if (t && typeof t === 'object') { return t.text || t.coding?.[0]?.display || t.coding?.[0]?.code || ''; }
 	return apt.type || '';
-}
-
-/** Best-effort patient id for an existing appointment, across the assorted
- *  shapes the backend returns (flat `patientId`, a FHIR `Patient/<id>`
- *  reference on `patient`/`subject`, or a `participant[].actor.reference`).
- *  Used to detect duplicate same-day bookings for a patient. */
-function resolveApptPatientId(apt: Appointment): string {
-	const a = apt as unknown as Record<string, unknown>;
-	if (a.patientId !== undefined && a.patientId !== null && a.patientId !== '') { return String(a.patientId); }
-	const refId = (val: unknown): string => {
-		const m = typeof val === 'string' ? val.match(/Patient\/(\S+)/) : null;
-		return m ? m[1] : '';
-	};
-	for (const candidate of [a.patient, (a.patient as { reference?: string })?.reference, (a.subject as { reference?: string })?.reference]) {
-		const id = refId(candidate);
-		if (id) { return id; }
-	}
-	const participants = a.participant as Array<{ actor?: { reference?: string } }> | undefined;
-	if (Array.isArray(participants)) {
-		for (const p of participants) {
-			const id = refId(p.actor?.reference);
-			if (id) { return id; }
-		}
-	}
-	return '';
 }
 
 /** True when the string looks like an identifier (UUID, numeric ID, or
@@ -534,23 +506,7 @@ export class CalendarEditor extends EditorPane {
 
 	/** Parse appointment start date/time robustly — handles ISO, epoch, date-only, time-only */
 	private _parseAptDate(apt: Appointment): Date | null {
-		const raw = apt.start || apt.startTime;
-		if (!raw) { return null; }
-		// If it's a number or numeric string, treat as epoch ms
-		if (typeof raw === 'number' || /^\d{10,13}$/.test(String(raw))) {
-			const ms = typeof raw === 'number' ? raw : (String(raw).length <= 10 ? Number(raw) * 1000 : Number(raw));
-			const d = new Date(ms);
-			return isNaN(d.getTime()) ? null : d;
-		}
-		// Standard Date parse
-		const d = new Date(String(raw));
-		if (!isNaN(d.getTime())) { return d; }
-		// Try date-only "YYYY-MM-DD"
-		if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) {
-			const d2 = new Date(String(raw) + 'T00:00:00');
-			return isNaN(d2.getTime()) ? null : d2;
-		}
-		return null;
+		return parseApptDate(apt as unknown as Record<string, unknown>);
 	}
 
 	/** Return appointments filtered by the current provider/location dropdown selections */
@@ -1796,45 +1752,15 @@ export class CalendarEditor extends EditorPane {
 			// Prevent double-booking: a patient may have at most ONE active
 			// appointment per calendar day, regardless of visit type (QA 22-Jul:
 			// "one day one appointment for patient" — this supersedes the earlier
-			// per-visit-type rule). Check the server for the chosen day so the
-			// rule holds even when that date is outside the currently loaded
-			// range (cancelled appointments don't count, so a patient can be
-			// re-booked after a cancellation). A flat-shape match (patientId) is
-			// preferred; we fall back to name when no stable id is available.
-			const matchesPatient = (a: Appointment): boolean => {
-				const aPid = resolveApptPatientId(a);
-				if (patId && aPid) { return String(aPid) === String(patId); }
-				return !!patName && (a.patientName || '').trim().toLowerCase() === patName.trim().toLowerCase();
-			};
+			// per-visit-type rule). Checked against the server so the rule holds
+			// even when the date is outside the currently loaded range.
 			try {
-				// Ask the server to scope the rows to this patient too — fresh FHIR
-				// rows in some envs come back with NO flat patientId/patientName at
-				// all, so client-side matching alone can't identify them, while the
-				// backend's ?patientId= filter still resolves the FHIR reference.
-				const dupUrl = `/api/appointments?page=0&size=500&dateFrom=${startD}&dateTo=${startD}`
-					+ (patId ? `&patientId=${encodeURIComponent(patId)}` : '');
-				const dupRes = await this.apiService.fetch(dupUrl);
-				if (dupRes.ok) {
-					const dupData = await dupRes.json();
-					const existing = (dupData?.data?.content || dupData?.content || (Array.isArray(dupData?.data) ? dupData.data : (Array.isArray(dupData) ? dupData : []))) as Appointment[];
-					// A row with no patient identity of its own is trusted to belong to
-					// this patient only when the server was asked to filter by patientId.
-					const rowIsAnonymous = (a: Appointment): boolean =>
-						!resolveApptPatientId(a) && !(a.patientName || '').trim();
-					const clash = existing.some(a => {
-						if ((a.status || '').toLowerCase() === 'cancelled') { return false; }
-						// ANY non-cancelled appointment on the same day is a duplicate —
-						// visit type doesn't matter (QA 22-Jul: one per patient per day).
-						const aDate = this._parseAptDate(a);
-						return !!aDate && localDateStr(aDate) === startD && (matchesPatient(a) || (!!patId && rowIsAnonymous(a)));
-					});
-					if (clash) {
-						this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.`.replace(/\s+/g, ' ') });
-						patInput.style.borderColor = '#ef4444';
-						patInput.focus();
-						reopenForRetry();
-						return;
-					}
+				if (await hasDuplicateAppointment(this.apiService, startD, patId, patName)) {
+					this.notificationService.notify({ severity: Severity.Warning, message: `${patName} already has an appointment on ${startD}. Only one appointment per patient per day is allowed.`.replace(/\s+/g, ' ') });
+					patInput.style.borderColor = '#ef4444';
+					patInput.focus();
+					reopenForRetry();
+					return;
 				}
 			} catch { /* pre-check failed (offline/API error) — let the create proceed */ }
 
