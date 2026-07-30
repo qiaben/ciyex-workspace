@@ -22,6 +22,8 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, IDropdownOption } from '../customDropdown.js';
 import { parseSavedRecord } from '../sidebarActions.js';
 import { expandEncounterType } from './visitSummaryPanel.js';
+import { IPatientCoverage, activeCoverage, coverageLabel, hasActiveInsurance, loadPatientCoverages } from './patientCoverage.js';
+import { syncSelfPayResponsibility } from './selfPayBilling.js';
 
 /** A single billable line on the fee sheet. Mirrors the OpenEMR fee-sheet row. */
 interface FeeItem {
@@ -55,6 +57,15 @@ const CODE_TYPES: Array<{ key: string; label: string; searchPath: string }> = [
 // and its own selected-codes table.
 const ICD_CODE_TYPES = CODE_TYPES.filter(ct => ct.key === 'ICD10');
 const CPT_CODE_TYPES = CODE_TYPES.filter(ct => ct.key !== 'ICD10');
+
+/**
+ * Who the charges are billed to. `insurance` runs the payer flow (claim →
+ * Insurance Posting → EOB → patient's copay/deductible); `self_pay` makes the
+ * whole charge the patient's balance immediately, because there is no payer to
+ * adjudicate it. Auto-detected from the patient's coverage, overridable by the
+ * biller.
+ */
+type BillTo = 'insurance' | 'self_pay';
 
 /**
  * Fee Sheet editor — captures the billable charges for a signed encounter and
@@ -93,14 +104,27 @@ export class FeeSheetEditor extends EditorPane {
 	private supervisingProvider = '';
 	private items: FeeItem[] = [];
 
+	/** Coverage on file for this patient — drives the Bill To default. */
+	private coverages: IPatientCoverage[] = [];
+	private billTo: BillTo = 'insurance';
+	/**
+	 * Set once the biller picks Bill To by hand. Auto-detection must never
+	 * overwrite a deliberate choice on a later re-render (e.g. an insured patient
+	 * the practice agreed to bill as cash).
+	 */
+	private billToTouched = false;
+
 	private icdTableHost!: HTMLElement;
 	private cptTableHost!: HTMLElement;
 	private totalsHost!: HTMLElement;
+	/** Undefined until the Bill To section exists — `_renderTotals` runs first. */
+	private billToHost: HTMLElement | undefined;
 	// Footer workflow gate (QA): the fee-sheet data must be SAVED first — only
 	// then do "Send to Billing" and "Download 837P" unlock.
 	private _saved = false;
 	private billBtn: HTMLButtonElement | undefined;
 	private ediBtn: HTMLButtonElement | undefined;
+	private footerNote: HTMLElement | undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -143,6 +167,9 @@ export class FeeSheetEditor extends EditorPane {
 		this.renderingProvider = '';
 		this.supervisingProvider = '';
 		this._saved = false;
+		this.coverages = [];
+		this.billTo = 'insurance';
+		this.billToTouched = false;
 
 		await this._loadData();
 		if (token.isCancellationRequested) { return; }
@@ -152,20 +179,33 @@ export class FeeSheetEditor extends EditorPane {
 		this._renderFooter();
 	}
 
-	/** Load price levels, providers, and any existing fee sheet for the encounter. */
+	/** Load price levels, providers, coverage, and any existing fee sheet. */
 	private async _loadData(): Promise<void> {
-		// These three loads are independent — run them in parallel so the editor
-		// opens as fast as the slowest request rather than the sum of all three.
-		// Each keeps its own try/catch so one failure can't sink the others, and
-		// the existing fee sheet must apply LAST since it overrides the default
-		// price level / providers chosen above.
+		// These loads are independent — run them in parallel so the editor opens as
+		// fast as the slowest request rather than the sum of all of them. Each
+		// keeps its own try/catch so one failure can't sink the others, and the
+		// existing fee sheet must apply LAST since it overrides the default price
+		// level / providers chosen above.
 		const [, , , feeSheet] = await Promise.all([
 			this._loadPriceLevels(),
 			this._loadProviders(),
 			this._loadVisitType(),
 			this._loadExistingFeeSheet(),
+			this._loadCoverage(),
 		]);
 		if (feeSheet) { this._applyExistingFeeSheet(feeSheet); }
+	}
+
+	/**
+	 * Insurance on file for this patient, and the Bill To default that follows
+	 * from it: no ACTIVE coverage means nobody will ever send an EOB, so the
+	 * charges are the patient's own balance. A biller override always wins.
+	 */
+	private async _loadCoverage(): Promise<void> {
+		this.coverages = await loadPatientCoverages(this.apiService, this.patientId);
+		if (!this.billToTouched) {
+			this.billTo = hasActiveInsurance(this.coverages) ? 'insurance' : 'self_pay';
+		}
 	}
 
 	/**
@@ -322,6 +362,9 @@ export class FeeSheetEditor extends EditorPane {
 
 	private _renderBody(): void {
 		DOM.clearNode(this.scrollArea);
+		// Detached by the clear above; the Bill To section re-creates it below, and
+		// until then `_renderTotals` must not paint into the old node.
+		this.billToHost = undefined;
 
 		// 0) Patient (manual mode only) — Approach 2: a fee sheet created from
 		// scratch needs a patient. When opened from a signed encounter the
@@ -365,7 +408,12 @@ export class FeeSheetEditor extends EditorPane {
 		this.totalsHost.style.cssText = 'display:flex;justify-content:flex-end;gap:24px;padding:10px 4px;font-size:13px;';
 		this._renderItemsTables();
 
-		// 4) Select Providers
+		// 4) Bill To — insurance claim, or straight to the patient's balance.
+		this._sectionTitle(this.scrollArea, 'Bill To');
+		this.billToHost = DOM.append(this.scrollArea, DOM.$('div'));
+		this._renderBillTo();
+
+		// 5) Select Providers
 		this._sectionTitle(this.scrollArea, 'Select Providers');
 		const provGrid = DOM.append(this.scrollArea, DOM.$('div'));
 		provGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:680px;';
@@ -425,12 +473,17 @@ export class FeeSheetEditor extends EditorPane {
 					row.style.cssText = 'padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.1);';
 					row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground,rgba(128,128,128,0.16))'; });
 					row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
-					row.addEventListener('mousedown', () => {
+					row.addEventListener('mousedown', async () => {
 						this.patientId = id;
 						this.patientName = name;
 						results.style.display = 'none';
 						this._renderHeader();
 						this._renderBody();
+						// Bill To depends on WHICH patient this is — re-detect against the
+						// newly chosen one, then repaint just that control.
+						await this._loadCoverage();
+						this._renderBillTo();
+						this._updateFooterGates();
 					});
 				}
 				results.style.display = 'block';
@@ -625,6 +678,86 @@ export class FeeSheetEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * What the patient (or the payer) is actually charged: the PROCEDURE lines
+	 * only. ICD-10 rows render no price input, so a diagnosis whose fee schedule
+	 * happens to carry a non-zero `medicareFee` would otherwise inflate the bill
+	 * with no way to correct it on screen. Every downstream consumer of a claim's
+	 * charge already excludes ICD rows the same way (`_feeSheetToClaim`,
+	 * patientBilling, patientLedger) — this matches them.
+	 */
+	private _procedureTotal(): number {
+		const total = this.items
+			.filter(it => it.type !== 'ICD10')
+			.reduce((s, it) => s + (it.price * it.qty), 0);
+		return Math.round(total * 100) / 100;
+	}
+
+	/**
+	 * Bill To picker: two mutually-exclusive choices plus what the auto-detection
+	 * found. Choosing does NOT mark the sheet dirty — Bill To is a routing
+	 * decision made at Send-to-Billing time, not part of the saved payload, so it
+	 * must not re-lock the save gate the way editing a code does.
+	 */
+	private _renderBillTo(): void {
+		if (!this.billToHost) { return; }
+		DOM.clearNode(this.billToHost);
+		this.billToHost.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-width:680px;';
+
+		const row = DOM.append(this.billToHost, DOM.$('div'));
+		row.style.cssText = 'display:flex;gap:18px;flex-wrap:wrap;';
+
+		const coverage = activeCoverage(this.coverages);
+		const insured = hasActiveInsurance(this.coverages);
+
+		const choice = (value: BillTo, label: string, hint: string): void => {
+			const lbl = DOM.append(row, DOM.$('label'));
+			lbl.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;';
+			lbl.title = hint;
+			const r = DOM.append(lbl, DOM.$('input')) as HTMLInputElement;
+			r.type = 'radio';
+			r.name = 'feesheet-billto';
+			r.value = value;
+			r.checked = this.billTo === value;
+			r.addEventListener('change', () => {
+				if (!r.checked) { return; }
+				this.billTo = value;
+				this.billToTouched = true;
+				this._renderBillTo();
+				// Self-pay has no payer to address an 837P to.
+				this._updateFooterGates();
+			});
+			const span = DOM.append(lbl, DOM.$('span'));
+			span.textContent = label;
+			if (this.billTo === value) { span.style.fontWeight = '600'; }
+		};
+
+		choice('insurance', 'Insurance Claim',
+			'Creates a claim for the payer. It waits in Payments → Insurance Posting until the EOB is posted, which decides the copay / deductible the patient owes.');
+		choice('self_pay', 'Self-Pay (Patient)',
+			'No payer is billed. The full charge becomes the patient balance straight away, collectable in Payments → Dashboard.');
+
+		const note = DOM.append(this.billToHost, DOM.$('div'));
+		note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		if (this.billTo === 'self_pay') {
+			const total = this._procedureTotal();
+			// allow-any-unicode-next-line
+			note.textContent = insured
+				// allow-any-unicode-next-line
+				? `ⓘ Billing as self-pay by choice — this patient DOES have active coverage on file (${coverageLabel(coverage)}). The full $${total.toFixed(2)} becomes their balance and no claim is sent to the payer.`
+				// allow-any-unicode-next-line
+				: `ⓘ No active insurance on file for this patient — the full $${total.toFixed(2)} becomes their balance. No claim goes to Insurance Posting.`;
+			note.style.color = insured ? '#f59e0b' : 'var(--vscode-descriptionForeground)';
+		} else if (insured) {
+			// allow-any-unicode-next-line
+			note.textContent = `ⓘ Detected coverage: ${coverageLabel(coverage)}.`;
+		} else {
+			// allow-any-unicode-next-line
+			note.textContent = '⚠ No active insurance on file for this patient. Billing this as an insurance claim will leave it waiting for an EOB that never arrives — choose Self-Pay unless you are about to add their coverage.';
+			note.style.color = '#f59e0b';
+		}
+	}
+
 	private _renderTotals(): void {
 		DOM.clearNode(this.totalsHost);
 		const total = this.items.reduce((s, it) => s + (it.price * it.qty), 0);
@@ -635,6 +768,9 @@ export class FeeSheetEditor extends EditorPane {
 		const t = DOM.append(this.totalsHost, DOM.$('span'));
 		t.innerText = `Total: $${total.toFixed(2)}`;
 		t.style.fontWeight = '600';
+		// The self-pay note quotes the amount that becomes the patient's balance,
+		// so it has to follow every price / qty / code edit.
+		this._renderBillTo();
 	}
 
 	private _renderFooter(): void {
@@ -677,11 +813,25 @@ export class FeeSheetEditor extends EditorPane {
 		const spacer = DOM.append(this.footerBar, DOM.$('div'));
 		spacer.style.flex = '1';
 
-		const note = DOM.append(this.footerBar, DOM.$('span'));
-		note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
-		note.textContent = this.rcmApi.isAvailable()
-			? '"Send to Billing" posts charges to Payments and creates a draft claim in RCM.'
-			: '"Send to Billing" posts charges to Payments and emails the patient.';
+		this.footerNote = DOM.append(this.footerBar, DOM.$('span'));
+		this.footerNote.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+		this._updateFooterNote();
+	}
+
+	/** What "Send to Billing" is about to do, given the current Bill To choice. */
+	private _updateFooterNote(): void {
+		if (!this.footerNote) { return; }
+		if (this.billTo === 'self_pay') {
+			this.footerNote.textContent = '"Send to Billing" makes the full charge the patient\'s balance — collect it in Payments → Dashboard. No claim is sent to a payer.';
+			return;
+		}
+		// The pre-existing note claimed this also emails the patient. It does not:
+		// `FeeSheetService.bill` ignores the `sendEmail` flag and no other code on
+		// this path sends mail — the patient is emailed later, from the Dashboard's
+		// Invoice action.
+		this.footerNote.textContent = this.rcmApi.isAvailable()
+			? '"Send to Billing" creates the claim in Payments → Insurance Posting and a draft claim in RCM.'
+			: '"Send to Billing" creates the claim in Payments → Insurance Posting, ready for the payer\'s EOB.';
 	}
 
 	private _footerButton(label: string, bg: string): HTMLButtonElement {
@@ -708,6 +858,16 @@ export class FeeSheetEditor extends EditorPane {
 			b.style.cursor = this._saved ? 'pointer' : 'not-allowed';
 			b.title = this._saved ? '' : 'Save the fee sheet first';
 		}
+		// A self-pay sheet has no payer, so there is nobody to address an 837P to.
+		// It used to export one anyway, with the payer loop filled in as
+		// "UNKNOWN PAYER" — a file no clearinghouse can do anything with.
+		if (this.ediBtn && this.billTo === 'self_pay') {
+			this.ediBtn.disabled = true;
+			this.ediBtn.style.opacity = '0.45';
+			this.ediBtn.style.cursor = 'not-allowed';
+			this.ediBtn.title = 'Self-pay charges have no payer to submit an 837P claim to. Switch Bill To to "Insurance Claim" to export one.';
+		}
+		this._updateFooterNote();
 	}
 
 	private _buildPayload(): Record<string, unknown> {
@@ -761,39 +921,115 @@ export class FeeSheetEditor extends EditorPane {
 	}
 
 	/**
-	 * Save the fee sheet then push it to billing: the backend creates the
-	 * patient charge from the fee-sheet items and emails the statement to the
-	 * patient. The charge then surfaces in the Operations → Payments dashboard
-	 * where it can be collected (and an invoice auto-generated on payment).
+	 * Save the fee sheet then push it to billing. Marking the sheet "Billed" is
+	 * what creates the claim; where the money is owed from there depends on Bill
+	 * To:
+	 *
+	 *  - INSURANCE — the claim waits in Payments → Insurance Posting for the
+	 *    payer's EOB, which decides the patient's copay / deductible.
+	 *  - SELF-PAY — there is no payer, so the full charge is recorded as the
+	 *    patient's responsibility here and now and the claim is kept out of the
+	 *    Insurance Posting work list entirely.
 	 */
 	private async _sendToBilling(): Promise<void> {
 		const ok = await this._save();
 		if (!ok || !this.feeSheetId) { return; }
+		const selfPay = this.billTo === 'self_pay';
 		try {
+			// `billedMode` is deliberately not sent: it is the payment METHOD
+			// (cash/check/card/ach), not who is billed, and it already defaults to
+			// "cash" on every sheet — which is exactly why it cannot be used to tell
+			// a self-pay claim from an insured one.
 			const res = await this.apiService.fetch(`/api/fee-sheets/${encodeURIComponent(this.feeSheetId)}/bill`, {
 				method: 'POST',
-				body: JSON.stringify({ sendEmail: true, patientId: this.patientId }),
+				body: JSON.stringify({ patientId: this.patientId }),
 			});
-			if (res.ok) {
-				// Billing the fee sheet creates the claim — the claim number is derived
-				// from the fee-sheet id, so it auto-increments across claims. The claim
-				// now appears in Payments → Insurance Posting as "Awaiting EOB".
-				const claimNo = claimNumberForFeeSheet(this.feeSheetId);
-				this.notificationService.notify({ severity: Severity.Info, message: `Charges sent to billing — claim ${claimNo} created. Post the payer's EOB against it in Payments → Insurance Posting.` });
-				// Surface the new charge in the Payments dashboard.
-				this.commandService.executeCommand('ciyex.openPayments').then(undefined, () => { });
-			} else {
+			if (!res.ok) {
 				this.notificationService.notify({ severity: Severity.Error, message: `Send to billing failed (${res.status}).` });
+				return;
 			}
+			// Billing the fee sheet creates the claim — the claim number is derived
+			// from the fee-sheet id, so it auto-increments across claims.
+			const claimNo = claimNumberForFeeSheet(this.feeSheetId);
+			if (selfPay) {
+				await this._assignSelfPayBalance(claimNo);
+			} else {
+				// Switching an already-self-pay sheet back to insurance: retire the
+				// patient's self-pay balance so the claim can be adjudicated normally.
+				await this._clearSelfPayBalance(claimNo);
+				this.notificationService.notify({ severity: Severity.Info, message: `Charges sent to billing — claim ${claimNo} created. Post the payer's EOB against it in Payments → Insurance Posting.` });
+			}
+			// Surface the new charge in the Payments dashboard.
+			this.commandService.executeCommand('ciyex.openPayments').then(undefined, () => { });
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Error, message: `Send to billing failed: ${e}` });
+			return;
 		}
 		// RCM handoff (orgs with the ciyex-rcm marketplace app): push the charges
 		// into the revenue cycle and create a draft claim. Non-fatal by design —
 		// the native billing flow above must not regress when the RCM service is
-		// down or the org isn't subscribed.
-		if (this.rcmApi.isAvailable()) {
+		// down or the org isn't subscribed. Skipped for self-pay: the revenue cycle
+		// is about getting paid by payers, and this claim has none.
+		if (!selfPay && this.rcmApi.isAvailable()) {
 			await this._pushToRcm();
+		}
+	}
+
+	/**
+	 * Record the whole charge as the patient's balance. Idempotent per claim, so
+	 * pressing Send to Billing twice — or editing the sheet and re-sending —
+	 * leaves ONE responsibility record holding the current total.
+	 */
+	private async _assignSelfPayBalance(claimNo: string): Promise<void> {
+		const due = this._procedureTotal();
+		const result = await syncSelfPayResponsibility(this.apiService, {
+			patientId: this.patientId,
+			patientName: this.patientName,
+			claimRef: claimNo,
+			feeSheetId: this.feeSheetId ?? undefined,
+			encounterId: this.encounterId && this.encounterId !== '_' ? this.encounterId : undefined,
+			serviceDate: new Date().toISOString().slice(0, 10),
+			due,
+		});
+		if (result.error) {
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: `Claim ${claimNo} was created, but the patient's self-pay balance could not be recorded: ${result.error} Collect it from the Payments → Dashboard row for this encounter.`,
+			});
+			return;
+		}
+		if (due <= 0.005) {
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: `Charges sent to billing — claim ${claimNo} created, but every procedure line is priced $0.00, so there is nothing to collect. Add prices and send again.`,
+			});
+			return;
+		}
+		// After a part payment the outstanding figure is less than the charge — say
+		// what is actually left to collect rather than re-quoting the full total.
+		const alreadyPaid = Math.round((due - result.amount) * 100) / 100;
+		this.notificationService.notify({
+			severity: Severity.Info,
+			message: alreadyPaid > 0.005
+				? `Charges sent to billing — claim ${claimNo} updated. This patient has no insurance, so the $${due.toFixed(2)} charge is their balance; $${alreadyPaid.toFixed(2)} is already collected, leaving $${result.amount.toFixed(2)} due in Payments → Dashboard.`
+				: `Charges sent to billing — claim ${claimNo} created. This patient has no insurance, so the full $${result.amount.toFixed(2)} is their balance. Collect it in Payments → Dashboard.`,
+		});
+	}
+
+	/**
+	 * Undo a self-pay assignment because the sheet is now being billed to
+	 * insurance. Money already collected is never silently deleted — the biller is
+	 * told to refund or adjust it instead.
+	 */
+	private async _clearSelfPayBalance(claimNo: string): Promise<void> {
+		const result = await syncSelfPayResponsibility(this.apiService, {
+			patientId: this.patientId, claimRef: claimNo, due: 0,
+		});
+		if (result.blocked) {
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: `Claim ${claimNo} was billed to insurance, but $${result.amount.toFixed(2)} has already been collected from the patient as self-pay. That payment was left in place — refund or adjust it on the patient's ledger once the payer's EOB decides what they actually owe.`,
+			});
 		}
 	}
 
@@ -980,7 +1216,7 @@ export class FeeSheetEditor extends EditorPane {
 	private async _fetchPatientForEdi(): Promise<{
 		firstName?: string; lastName?: string; dob?: string; gender?: string; mrn?: string;
 		address1?: string; city?: string; state?: string; zip?: string;
-		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string; subscriberAddress?: string };
+		insurance: { payerName?: string; payerId?: string; policyNumber?: string; groupNumber?: string };
 		renderingNpi?: string; renderingFirstName?: string; renderingLastName?: string; renderingTaxonomy?: string;
 	}> {
 		const out: Awaited<ReturnType<FeeSheetEditor['_fetchPatientForEdi']>> = { insurance: {} };
@@ -1010,17 +1246,18 @@ export class FeeSheetEditor extends EditorPane {
 		}
 
 		// Active insurance coverage (FHIR Coverage) — the real payer + member id.
-		const covJson = await getJson(`/api/fhir-resource/insurance-coverage/patient/${encodeURIComponent(this.patientId)}?page=0&size=10`);
-		const coverages = listOf(covJson);
-		const active = coverages.find(c => /active/i.test(String(c.status ?? ''))) || coverages[0];
+		// Uses the coverage already loaded for the Bill To detection when it is
+		// there, so opening the editor and exporting a claim agree on which policy
+		// is the billable one.
+		const coverages = this.coverages.length ? this.coverages : await loadPatientCoverages(this.apiService, this.patientId);
+		const active = activeCoverage(coverages);
 		if (active) {
-			const payerName = (active.payerName as string) || (active.insuranceCompany as string) || (active.companyName as string) || undefined;
+			const payerName = active.payerName || undefined;
 			out.insurance = {
 				payerName,
-				payerId: (active.payerId as string) || undefined,
-				policyNumber: (active.policyNumber as string) || (active.subscriberId as string) || (active.memberId as string) || undefined,
-				groupNumber: (active.groupNumber as string) || undefined,
-				subscriberAddress: (active.subscriberAddress as string) || undefined,
+				payerId: active.payerId || undefined,
+				policyNumber: active.memberId || undefined,
+				groupNumber: active.groupNumber || undefined,
 			};
 			// Resolve the ELECTRONIC payer id from the payer directory by name —
 			// clearinghouses key NM1*PR on this id, and Coverage rarely carries it.

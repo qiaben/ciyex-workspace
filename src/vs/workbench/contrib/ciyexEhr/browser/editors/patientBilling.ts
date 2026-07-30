@@ -12,6 +12,7 @@ import {
 	LEDGER_STATEMENT_PRINT_CSS, buildLedgerEventsFrom, fetchLedgerSources, groupLedgerByClaim,
 	ledgerStatementHtml, ledgerWorkbook,
 } from './patientLedger.js';
+import { selfPayClaimRefs } from './selfPayBilling.js';
 
 /**
  * The patient chart's Billing page — the ONE revenue surface in the chart.
@@ -163,6 +164,12 @@ export interface BillingClaim {
 	isUnbilled: boolean;
 	/** The synthetic "patient credit on account" card (no claim behind it). */
 	isCredit: boolean;
+	/**
+	 * Billed with no payer because the patient has no insurance: the whole charge
+	 * is their balance. Unlike the absence of coverage, this IS proof — the fee
+	 * sheet recorded the responsibility explicitly when it was sent to billing.
+	 */
+	isSelfPay: boolean;
 }
 
 /** Coverage on file for the patient, as shown in the Billing page header. */
@@ -276,6 +283,11 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 	const primaryCoverage = coverage.find(c => /primary/i.test(c.tier)) || coverage[0];
 	const secondaryCoverage = coverage.find(c => /secondary/i.test(c.tier));
 
+	// Claims the fee sheet billed straight to the patient because they have no
+	// insurance. Derived from the transactions already fetched above — no extra
+	// request.
+	const selfPayRefs = selfPayClaimRefs(sources.txns.filter(t => String(t['patientId'] ?? '') === String(patientId)));
+
 	// EOB postings, indexed by the claim they settle, so a claim card can show
 	// the payer, the check, the denial reason and the per-code adjudication.
 	interface EobMeta {
@@ -320,6 +332,7 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 		if (group) { usedGroups.add(group.key); }
 		const billed = /^(billed|paid|eob)/i.test(String(s['billingStatus'] ?? ''));
 		const eob = eobByClaim.get(norm);
+		const isSelfPay = selfPayRefs.has(norm);
 
 		const items = (s['items'] as Array<Record<string, unknown>>) || [];
 		const diagnoses: string[] = [];
@@ -366,6 +379,7 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 			carriedCoinsurance: eob && !eob.secondaryPosted ? eob.coinsurance : 0,
 			balance: group?.balance ?? 0,
 			patientDue: group?.patientDue ?? 0,
+			isSelfPay,
 		});
 
 		claims.push({
@@ -377,7 +391,9 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 			lastActivity,
 			sortKey: new Date(lastActivity || serviceDate || 0).getTime(),
 			providerName: String(s['renderingProviderName'] ?? '') || opts.providerName?.(providerId) || '',
-			payerName: eob?.payer || primaryCoverage?.payerName || '',
+			// A self-pay claim has no payer by definition — say so rather than
+			// naming a coverage record that was deliberately not billed.
+			payerName: eob?.payer || (isSelfPay ? 'Self-Pay' : primaryCoverage?.payerName || ''),
 			secondaryPayerName: eob?.secondaryPayer || secondaryCoverage?.payerName || '',
 			checkNumber: eob?.check || '',
 			denialReason: eob?.denial || '',
@@ -395,6 +411,7 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 			events: group?.events ?? [],
 			isUnbilled: !billed && !group,
 			isCredit: false,
+			isSelfPay,
 		});
 	}
 
@@ -419,6 +436,9 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 			}),
 			events: g.events,
 			isUnbilled: false,
+			// The fee sheet behind this group is gone, so there is nothing left to
+			// prove it was self-pay.
+			isSelfPay: false,
 			isCredit: g.isCredit,
 		});
 	}
@@ -446,7 +466,7 @@ export async function buildPatientBilling(apiService: ICiyexApiService, patientI
 }
 
 /** Where a claim sits in the revenue cycle. */
-function billingStatusOf(c: { isUnbilled: boolean; hasEob: boolean; denial: string; carriedCoinsurance: number; balance: number; patientDue: number }): BillingClaimStatus {
+function billingStatusOf(c: { isUnbilled: boolean; hasEob: boolean; denial: string; carriedCoinsurance: number; balance: number; patientDue: number; isSelfPay?: boolean }): BillingClaimStatus {
 	if (c.isUnbilled) { return 'unbilled'; }
 	if (c.denial) { return 'denied'; }
 	if (c.balance < -0.005) { return 'credit'; }
@@ -455,7 +475,9 @@ function billingStatusOf(c: { isUnbilled: boolean; hasEob: boolean; denial: stri
 	// patient responsibility — it must not read as "Patient Due" (QA 23-Jul).
 	if (c.carriedCoinsurance > 0.005) { return 'insurance-pending'; }
 	if (c.patientDue > 0.005) { return 'patient-due'; }
-	if (!c.hasEob) { return 'awaiting-insurance'; }
+	// A self-pay claim is never waiting on a payer: with no EOB and no recorded
+	// due left, whatever remains is simply an open patient balance.
+	if (!c.hasEob && !c.isSelfPay) { return 'awaiting-insurance'; }
 	return 'open';
 }
 
@@ -691,12 +713,18 @@ export function renderPatientBilling(host: HTMLElement, model: PatientBillingMod
 		cell(usDate(c.serviceDate));
 		// allow-any-unicode-next-line
 		cell(c.providerName || '—');
-		// A claim with no EOB and no coverage on file is NOT proof of self-pay —
-		// the fee sheet's `billedMode` defaults to "cash" on every sheet, so it
-		// can't be trusted either. Say nothing rather than assert self-pay.
+		// Self-pay is asserted ONLY when the claim carries the responsibility record
+		// the fee sheet wrote for it (`isSelfPay`). Absence of an EOB and of
+		// coverage still proves nothing on its own, and `billedMode` defaults to
+		// "cash" on every sheet so it can't be read as self-pay either — for those
+		// claims, say nothing.
 		// allow-any-unicode-next-line
-		const payerCell = cell(c.payerName || '—');
-		if (!c.payerName) { payerCell.title = 'No payer on the EOB and no coverage on file for this patient.'; }
+		const payerCell = cell(c.payerName || '—', c.isSelfPay ? 'color:#f59e0b;font-weight:600;' : '');
+		if (c.isSelfPay) {
+			payerCell.title = 'Billed directly to the patient — they have no insurance on file, so the full charge is their responsibility. No claim was sent to a payer.';
+		} else if (!c.payerName) {
+			payerCell.title = 'No payer on the EOB and no coverage on file for this patient.';
+		}
 		cell(money(c.charges), 'text-align:right;');
 		cell(money(c.insurancePaid), 'text-align:right;color:#3b9edd;');
 		cell(money(c.adjustments), 'text-align:right;color:#8b5cf6;');
@@ -891,14 +919,22 @@ export function renderPatientBilling(host: HTMLElement, model: PatientBillingMod
 		if (opts.openFeeSheet && c.feeSheetId) {
 			act(c.isUnbilled ? 'Open Fee Sheet (send to billing)' : 'Open Fee Sheet', 'Open the fee sheet for this visit — the charges behind this claim.', () => opts.openFeeSheet?.(c));
 		}
-		if (opts.openInsurancePosting && !c.isUnbilled && !c.isCredit) {
-			act(c.events.some(e => e.type === 'ins-payment') ? 'Edit EOB Posting' : 'Post Insurance Payment',
+		// A self-pay claim is deliberately absent from Insurance Posting, so offering
+		// to post an EOB against it would send the biller to a screen that does not
+		// list it. An already-posted EOB still gets its Edit action.
+		const hasEobPosting = c.events.some(e => e.type === 'ins-payment');
+		if (opts.openInsurancePosting && !c.isUnbilled && !c.isCredit && (hasEobPosting || !c.isSelfPay)) {
+			act(hasEobPosting ? 'Edit EOB Posting' : 'Post Insurance Payment',
 				'Open Payments → Insurance Posting to record an EOB against this claim.',
 				() => opts.openInsurancePosting?.(c));
 		}
 		if (c.isUnbilled) {
 			const note = DOM.append(actions, DOM.$('span'));
 			note.textContent = 'These charges are not on a claim yet.';
+			note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);align-self:center;';
+		} else if (c.isSelfPay && !hasEobPosting) {
+			const note = DOM.append(actions, DOM.$('span'));
+			note.textContent = 'Self-pay — collect the balance in Payments → Dashboard. To bill this to insurance instead, add the coverage, then re-send the fee sheet with Bill To set to "Insurance Claim".';
 			note.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);align-self:center;';
 		}
 	}

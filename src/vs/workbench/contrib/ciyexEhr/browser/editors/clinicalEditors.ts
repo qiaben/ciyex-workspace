@@ -24,6 +24,7 @@ import {
 	applyPatientCredit, copayPlanNote, loadCreditAccounts, PatientCreditAccount,
 	readCopayPlanNote, recordPatientCredit, refundPatientCredit, resolveVisitCopay, CREDIT_TXN_TYPE,
 } from './patientCredit.js';
+import { isSelfPayResponsibility, selfPayClaimRefs } from './selfPayBilling.js';
 import { savePrintableAsPdf } from './printableDocument.js';
 import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -5869,9 +5870,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				};
 			});
 
+			// Self-pay claims have no payer, so no EOB will ever arrive for them —
+			// they must not sit in this work list forever (nor inflate the Awaiting
+			// EOB counter). Their full charge is already the patient's balance and is
+			// collected in the Payment Dashboard / Patient Balance tab instead.
+			// `postingRows` above is deliberately NOT filtered: if an EOB somehow does
+			// get posted against a claim, the posting stays visible and editable.
+			const selfPayRefs = selfPayClaimRefs(txnList);
+
 			// Claims with no posting yet → "Awaiting EOB" rows (the work list).
 			const awaitingRows: InsurancePostingRow[] = this._billedClaims
-				.filter(c => !postedRefs.has(normalizeClaimRef(c.claimRef)))
+				.filter(c => !postedRefs.has(normalizeClaimRef(c.claimRef)) && !selfPayRefs.has(normalizeClaimRef(c.claimRef)))
 				.map(c => ({
 					txnId: '',
 					claimRef: c.claimRef,
@@ -8568,6 +8577,12 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			respPending: 0,
 			patientPortion: 0,
 			eobPosted: false,
+			/**
+			 * True when the patient's responsibility came from the fee sheet rather
+			 * than a payer's EOB — i.e. they have no insurance and owe the whole
+			 * charge. Set by _applyPaymentActivity from the `selfpay=1` marker.
+			 */
+			selfPay: false,
 			// Filled by _applyInvoiceFlags from the patient-pay invoice list.
 			invoiced: false,
 		};
@@ -8789,6 +8804,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				// Legacy Dashboard collections carried only "Encounter {id} — codes".
 				?? resolve(desc.match(/encounter\s+([A-Za-z0-9-]+)/i)?.[1] ?? '');
 			if (!row) { continue; }
+			// A responsibility record the FEE SHEET created (no insurance on file)
+			// rather than an EOB — the row is a patient-collection job, not a claim
+			// waiting on a payer. Flagged whatever its status, so the badge stays put
+			// once the patient has actually paid.
+			if (isSelfPayResponsibility(txn)) { row.selfPay = true; }
 			if (status === 'pending' && ['copay', 'deductible', 'coinsurance'].includes(type)) {
 				row.respPending = Number(row.respPending || 0) + amount;
 			} else if (status === 'completed' && amount > 0) {
@@ -8964,9 +8984,19 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// The claim exists once the sheet is billed (billing creates it).
 			const claimEl = DOM.append(r, DOM.$('span'));
 			const isBilled = String(row.billingStatus || 'Unbilled') !== 'Unbilled';
-			claimEl.textContent = isBilled ? String(row.claimNumber || '—') : '—';
-			claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;';
+			claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;display:flex;flex-direction:column;gap:1px;';
+			const claimNoEl = DOM.append(claimEl, DOM.$('span'));
+			// allow-any-unicode-next-line
+			claimNoEl.textContent = isBilled ? String(row.claimNumber || '—') : '—';
 			claimEl.title = isBilled ? 'Auto-increment claim number created when the fee sheet was sent to billing.' : 'Send to billing to create the claim.';
+			// No payer is involved in this claim — the patient owes the whole charge,
+			// so the row never appears in Insurance Posting.
+			if (row.selfPay) {
+				const spBadge = DOM.append(claimEl, DOM.$('span'));
+				spBadge.textContent = 'SELF-PAY';
+				spBadge.style.cssText = 'font-family:var(--vscode-font-family);font-size:9px;font-weight:700;letter-spacing:0.4px;color:#f59e0b;';
+				claimEl.title = 'Self-pay claim — the patient has no insurance on file, so the full charge is their balance. It is not listed in Insurance Posting because no EOB will arrive for it.';
+			}
 			const codesEl = DOM.append(r, DOM.$('span')); codesEl.textContent = String(row.codes || '—'); codesEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; codesEl.title = String(row.codes || '');
 
 			// After an EOB posts, the front desk collects the PATIENT PORTION, not
@@ -8990,7 +9020,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const portionEl = DOM.append(r, DOM.$('span'));
 			portionEl.textContent = patientPortion > 0 ? `$${patientPortion.toFixed(2)}` : '—';
 			portionEl.style.color = patientPortion > 0 ? '#f59e0b' : 'var(--vscode-descriptionForeground)';
-			if (patientPortion > 0) { portionEl.title = 'Copay + deductible + coinsurance assigned by the insurance EOB — collect this from the patient.'; }
+			if (patientPortion > 0) {
+				portionEl.title = row.selfPay
+					? 'The full charge — this patient has no insurance, so there is no payer portion. Collect it from the patient.'
+					: 'Copay + deductible + coinsurance assigned by the insurance EOB — collect this from the patient.';
+			}
 
 			// Credit on hand for this patient. When it covers the portion due, the
 			// automatic deduction has usually already taken it — the column is how
