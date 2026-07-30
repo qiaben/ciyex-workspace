@@ -698,6 +698,10 @@ export class EhrTitlebarControls extends Disposable {
 
 		let selectedPatientId = '';
 		let patientSearchTimer: ReturnType<typeof setTimeout> | undefined;
+		// In-flight guard: the POST below is async, so without a synchronous flag
+		// set before the first await, rapid repeated clicks each created a
+		// separate appointment. Mirrors the fix already applied in calendarEditor.ts.
+		let submitting = false;
 
 		const _fetchPatients = async (q: string) => {
 			try {
@@ -887,6 +891,10 @@ export class EhrTitlebarControls extends Disposable {
 		saveBtn.textContent = 'Save Appointment';
 
 		this._register(DOM.addDisposableListener(saveBtn, 'click', async () => {
+			if (submitting) {
+				return;
+			}
+
 			errorEl.style.display = 'none';
 
 			if (!selectedPatientId) {
@@ -969,6 +977,7 @@ export class EhrTitlebarControls extends Disposable {
 				],
 			};
 
+			submitting = true;
 			saveBtn.setAttribute('disabled', 'true');
 			saveBtn.textContent = 'Saving...';
 
@@ -996,6 +1005,7 @@ export class EhrTitlebarControls extends Disposable {
 				errorEl.style.display = '';
 			}
 
+			submitting = false;
 			saveBtn.removeAttribute('disabled');
 			saveBtn.textContent = 'Save Appointment';
 		}));
