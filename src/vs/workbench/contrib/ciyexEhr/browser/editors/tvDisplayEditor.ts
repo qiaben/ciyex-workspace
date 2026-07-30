@@ -544,7 +544,15 @@ abstract class TvDisplayEditorBase extends EditorPane {
 
 	private async _loadAppointments(): Promise<void> {
 		try {
-			const res = await this.apiService.fetch('/api/appointments?page=0&size=200');
+			// Ask the server to scope rows to today rather than paging through
+			// an unfiltered list — a tenant with more than `size` appointments
+			// (e.g. lots of older seed/test data) could otherwise push today's
+			// rows off page 0 entirely, leaving the board empty even though
+			// today has appointments (QA: Staff TV Board / Waiting Room showed
+			// nothing for an account whose earliest 200 appointments predated
+			// today). The client-side date filter below stays as a safety net.
+			const todayStr = todayISO();
+			const res = await this.apiService.fetch(`/api/appointments?page=0&size=500&dateFrom=${todayStr}&dateTo=${todayStr}`);
 			if (!res.ok) { return; }
 			const data = await res.json();
 			const rawList = (data?.data?.content || data?.data || data?.content || data || []) as AppointmentDTO[];
@@ -552,8 +560,8 @@ abstract class TvDisplayEditorBase extends EditorPane {
 			// date/time fields so the today filter and time rendering work.
 			const list = rawList.map(normalizeApptTimes);
 
-			// Filter to today only
-			const todayStr = todayISO();
+			// Filter to today only (defense in depth against a server that
+			// ignores dateFrom/dateTo or returns a wider range).
 			const todayList = list.filter(a => {
 				const d = String(a.appointmentStartDate || '');
 				// Strip time portion if the backend returns full ISO
