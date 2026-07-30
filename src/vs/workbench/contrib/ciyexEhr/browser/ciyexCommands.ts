@@ -1089,7 +1089,7 @@ async function _buildCheckoutRequest(apiService: ICiyexApiService, appSlug: stri
 	if (authToken) { headers['Authorization'] = `Bearer ${authToken}`; }
 
 	// 1. Catalog lookup for display + plan selection.
-	const appRes = await globalThis.fetch(`${base}/apps/${encodeURIComponent(appSlug)}`, { headers });
+	const appRes = await globalThis.fetch(`${base}/apps/${encodeURIComponent(appSlug)}`, { cache: 'no-store', headers });
 	if (!appRes.ok) {
 		throw new Error(`Marketplace returned ${appRes.status} for app "${appSlug}".`);
 	}
@@ -1265,7 +1265,7 @@ registerAction2(class extends Action2 {
 
 		try {
 			// Invoice detail for display (amount + patient name) in the webview.
-			const invRes = await globalThis.fetch(`${base}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}`, { headers });
+			const invRes = await globalThis.fetch(`${base}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}`, { cache: 'no-store', headers });
 			if (!invRes.ok) { throw new Error(`Invoice lookup failed (${invRes.status}).`); }
 			const invoice = _unwrap<PatientPayInvoice>(await invRes.json());
 			const amount = invoice.balanceDue ?? invoice.totalAmount ?? 0;

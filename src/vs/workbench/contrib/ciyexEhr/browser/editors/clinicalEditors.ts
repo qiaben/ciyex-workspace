@@ -8865,7 +8865,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			if (num) { row.invoiced = true; row.invoiceNumber = num; }
 		}
 		try {
-			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { headers: this._patientPayHeaders() });
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices`, { cache: 'no-store', headers: this._patientPayHeaders() });
 			if (!res.ok) { return; }
 			const data = await res.json();
 			const w = (data?.data ?? data) as { content?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
@@ -9685,7 +9685,7 @@ ${summary('Amount due', money(f.balance), true)}
 	 */
 	private async _downloadInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<void> {
 		try {
-			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}/pdf`, { headers: this._patientPayHeaders() });
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}/pdf`, { cache: 'no-store', headers: this._patientPayHeaders() });
 			if (!res.ok) { await this.dialogService.error(`Could not download PDF (${res.status}).`); return; }
 			const blob = await res.blob();
 			const doc = (this.root && this.root.ownerDocument) || DOM.getActiveWindow().document;
@@ -9722,7 +9722,7 @@ ${summary('Amount due', money(f.balance), true)}
 	 */
 	private async _showInvoicePdf(invoiceId: string, invoiceNumber: string): Promise<void> {
 		try {
-			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}/pdf`, { headers: this._patientPayHeaders() });
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices/${encodeURIComponent(invoiceId)}/pdf`, { cache: 'no-store', headers: this._patientPayHeaders() });
 			if (!res.ok) { await this.dialogService.error(`Could not open the invoice PDF (${res.status}).`); return; }
 			const blob = await res.blob();
 			const url = URL.createObjectURL(blob);
@@ -9819,7 +9819,7 @@ ${summary('Amount due', money(f.balance), true)}
 		this._invoicesLoading = true;
 		render();
 		try {
-			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices?page=0&size=100`, { headers: this._patientPayHeaders() });
+			const res = await fetch(`${this._patientPayBase()}/api/patient-pay/invoices?page=0&size=100`, { cache: 'no-store', headers: this._patientPayHeaders() });
 			if (res.ok) {
 				const data = await res.json();
 				const w = data?.data ?? data;
