@@ -371,18 +371,34 @@ export class DocScanningEditor extends EditorPane {
 			if (this.ocrFilter !== 'all') { url += `&ocrStatus=${this.ocrFilter}`; }
 			const res = await this.apiService.fetch(url);
 			const json = await res.json();
+			let content: ScannedDocument[] = [];
+			let totalPages = 0;
+			let totalElements = 0;
 			if (res.ok && (json.success ?? true)) {
 				const data = json.data ?? json;
-				const content: ScannedDocument[] = data.content || (Array.isArray(data) ? data : []);
-				this.documents = content;
-				this.totalPages = data.totalPages || 1;
-				this.totalElements = data.totalElements ?? content.length;
-				await this._resolvePatientNames();
-			} else {
-				this.documents = [];
-				this.totalPages = 0;
-				this.totalElements = 0;
+				content = data.content || (Array.isArray(data) ? data : []);
+				totalPages = data.totalPages || 1;
+				totalElements = data.totalElements ?? content.length;
 			}
+			// `q` only text-matches the scan's own fileName/OCR text server-side —
+			// it has no join against the Patients table, so typing a patient's
+			// NAME returns zero rows even though the document is correctly
+			// tagged with that patient's id (visible in the patient's own chart,
+			// which matches by id, never by name). Cross-reference the typed
+			// text against the patient directory and merge in any of that
+			// patient's scans the name-only search missed.
+			if (this.searchQuery) {
+				const extra = await this._findDocumentsByPatientName(this.searchQuery);
+				const seen = new Set(content.map(d => d.id));
+				for (const d of extra) {
+					if (!seen.has(d.id)) { content.push(d); seen.add(d.id); totalElements++; }
+				}
+				if (totalPages === 0 && content.length > 0) { totalPages = 1; }
+			}
+			this.documents = content;
+			this.totalPages = totalPages;
+			this.totalElements = totalElements;
+			await this._resolvePatientNames();
 		} catch {
 			this.documents = [];
 			this.totalPages = 0;
@@ -390,6 +406,29 @@ export class DocScanningEditor extends EditorPane {
 		}
 		this.loading = false;
 		this._renderTable();
+	}
+
+	/** Resolve `query` to matching patients by name, then fetch that patient's
+	 *  scans directly by id — a fallback for the `q` search above, which never
+	 *  matches on patient name. Mirrors the same id-based merge the patient
+	 *  chart's Documents tab already relies on for this same store. */
+	private async _findDocumentsByPatientName(query: string): Promise<ScannedDocument[]> {
+		try {
+			const pRes = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(query)}&page=0&size=10`);
+			if (!pRes.ok) { return []; }
+			const pJson = await pRes.json();
+			const rawPatients = pJson.data?.content || pJson.data || pJson.content || [];
+			const patientIds = new Set((Array.isArray(rawPatients) ? rawPatients : []).map((p: Record<string, unknown>) => Number(p.id)).filter(id => !isNaN(id)));
+			if (patientIds.size === 0) { return []; }
+			const dRes = await this.apiService.fetch('/api/document-scanning?page=0&size=200');
+			if (!dRes.ok) { return []; }
+			const dJson = await dRes.json();
+			const data = dJson.data ?? dJson;
+			const all: ScannedDocument[] = data.content || (Array.isArray(data) ? data : []);
+			return all.filter(d => d.patientId && patientIds.has(d.patientId));
+		} catch {
+			return [];
+		}
 	}
 
 	/** Fill in patient display names for rows that only carry a patientId. */

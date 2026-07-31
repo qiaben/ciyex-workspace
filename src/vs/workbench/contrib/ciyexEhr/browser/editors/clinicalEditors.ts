@@ -2509,7 +2509,6 @@ export class EducationEditor extends ClinicalListEditorBase {
 			{ key: 'category', label: 'Category', width: 'minmax(0,1.3fr)' },
 			{ key: 'contentType', label: 'Type', width: 'minmax(0,0.9fr)' },
 			{ key: 'isActive', label: 'Active', width: 'minmax(0,0.6fr)' },
-			{ key: 'viewCount', label: 'Views', width: 'minmax(0,0.6fr)' },
 		],
 		additionalFilters: [
 			{
@@ -6026,10 +6025,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private _renderInsuranceRows(scroll: HTMLElement): void {
 		DOM.clearNode(scroll);
-		const COLS = '28px minmax(110px,1.2fr) 90px minmax(130px,1.2fr) 105px 90px 90px 95px 115px 130px';
+		const COLS = '28px minmax(110px,1.2fr) 105px 90px minmax(130px,1.2fr) 90px 90px 95px 115px 130px';
 		const header = DOM.append(scroll, DOM.$('div'));
 		header.style.cssText = `display:grid;grid-template-columns:${COLS};gap:8px;padding:9px 12px;position:sticky;top:0;background:var(--vscode-editor-background);border-bottom:2px solid var(--vscode-editorWidget-border);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--vscode-descriptionForeground);z-index:1;`;
-		for (const h of ['', 'Patient', 'Claim #', 'CPT Codes', 'Date of Service', 'Billed', 'Ins Paid', 'Patient Resp', 'Status', 'Action']) {
+		for (const h of ['', 'Patient', 'Date of Service', 'Claim #', 'CPT Codes', 'Billed', 'Ins Paid', 'Patient Resp', 'Status', 'Action']) {
 			DOM.append(header, DOM.$('span')).textContent = h;
 		}
 
@@ -6076,6 +6075,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		nameEl.style.cssText = 'font-weight:500;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		nameEl.addEventListener('click', toggle);
 
+		// Date of service — the completed appointment's date (MM/DD/YYYY).
+		const dosEl = DOM.append(r, DOM.$('span'));
+		dosEl.textContent = row.serviceDate ? isoToUsDate(row.serviceDate) : '—';
+		dosEl.style.cssText = 'font-size:11px;';
+
 		const claimEl = DOM.append(r, DOM.$('span'));
 		claimEl.textContent = row.claimRef || '—';
 		claimEl.style.cssText = 'font-family:var(--vscode-editor-font-family,monospace);font-size:11px;';
@@ -6095,11 +6099,6 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		}
 		codesEl.title = codes.join(', ');
 		codesEl.addEventListener('click', toggle);
-
-		// Date of service — the completed appointment's date (MM/DD/YYYY).
-		const dosEl = DOM.append(r, DOM.$('span'));
-		dosEl.textContent = row.serviceDate ? isoToUsDate(row.serviceDate) : '—';
-		dosEl.style.cssText = 'font-size:11px;';
 
 		DOM.append(r, DOM.$('span')).textContent = money(billedTotal);
 		const insEl = DOM.append(r, DOM.$('span'));

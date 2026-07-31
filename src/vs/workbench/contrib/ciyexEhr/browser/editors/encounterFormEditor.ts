@@ -607,7 +607,7 @@ export class EncounterFormEditor extends EditorPane {
 			},
 			{
 				key: 'assessment', title: 'Assessment & Diagnosis', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'assessment_diagnoses', label: 'Diagnoses (ICD-10)', type: 'diagnosis-list' },
+					{ key: 'assessment_diagnoses', label: 'Diagnoses (ICD-10)', type: 'diagnosis-list', required: true },
 					{ key: 'assessment_notes', label: 'Assessment Notes', type: 'textarea', placeholder: 'Clinical assessment narrative...' },
 				]
 			},
@@ -632,7 +632,7 @@ export class EncounterFormEditor extends EditorPane {
 			},
 			{
 				key: 'procedures', title: 'Procedures & Coding', columns: 1, visible: true, collapsible: true, collapsed: false, fields: [
-					{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', type: 'procedure-list' },
+					{ key: 'procedures_data', label: 'Procedures (CPT/HCPCS)', type: 'procedure-list', required: true },
 					{ key: 'procedures_notes', label: 'Procedure Notes', type: 'textarea', placeholder: 'Procedure details and notes...' },
 				]
 			},
@@ -1350,6 +1350,18 @@ export class EncounterFormEditor extends EditorPane {
 
 	private async _signEncounter(saveBtn: HTMLElement, signBtn: HTMLElement): Promise<void> {
 		if (!this.patientId || !this.encounterId) { return; }
+
+		// Diagnosis and Procedure codes are mandatory — an encounter can't be
+		// billed without at least one of each, so block Sign & Lock (the
+		// finalize step) rather than only flagging it visually.
+		if (this._encounterCodeList('diagnosis').length === 0) {
+			this.notificationService.warn('Add at least one Diagnosis code (ICD-10) before signing.');
+			return;
+		}
+		if (this._encounterCodeList('procedure').length === 0) {
+			this.notificationService.warn('Add at least one Procedure code (CPT/HCPCS) before signing.');
+			return;
+		}
 
 		// Save first if dirty
 		if (this._isDirty) {

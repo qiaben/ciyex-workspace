@@ -19,6 +19,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { parseSavedRecord } from '../sidebarActions.js';
+import { attachZipCityStateAutoFill } from '../zipAutoFill.js';
 
 /**
  * Resolve a {@link FormFieldDef.minDate} token/string to a concrete ISO date
@@ -2264,6 +2265,12 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 
 			inputs.set(field.key, inputEl);
 		}
+
+		// ZIP → City/State auto-fill (QA: roll out app-wide) — every
+		// declarative FormFieldDef[]-driven form routed through this shared
+		// renderer (Prescriptions, Referrals, Inventory suppliers, etc.) gets
+		// the same auto-fill hand-built forms already wire individually.
+		attachZipCityStateAutoFill(inputs);
 
 		// formExtras hook (issue #23) — lets configs (e.g. Care Plans) render
 		// dynamic Goals / Interventions lists inside the dialog and contribute

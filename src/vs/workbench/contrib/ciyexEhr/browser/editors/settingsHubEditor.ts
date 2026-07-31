@@ -2033,6 +2033,12 @@ export class SettingsHubEditor extends EditorPane {
 			const isTaxId = seg !== 'taxonomy' && seg !== 'taxonomycode'
 				&& (seg === 'taxid' || seg === 'ein' || seg === 'employeridentificationnumber'
 					|| /tax ?id|\bein\b|employer ?identification/.test(seg) || /tax ?id|\bein\b|employer ?identification/.test(labelSeg));
+			// License Number — same detection as the Save-path validator
+			// (_validateFieldFormat): exactly 5 alphanumeric characters. Mask live
+			// so non-alphanumeric characters and anything past the 5th char are
+			// stripped as the user types, instead of only being flagged on save.
+			const isLicenseNumber = seg === 'licensenumber' || seg === 'licencenumber'
+				|| /licen[cs]e\s*(number|no\.?|#)/.test(field.label.toLowerCase());
 			// The ZIP placeholder always advertises the auto-fill (QA: "add the
 			// placeholder in zip code field — enter the zipcode, state & city auto
 			// reflect"), even when a backend field config carries its own hint.
@@ -2047,9 +2053,17 @@ export class SettingsHubEditor extends EditorPane {
 				inp.maxLength = 10;
 				if (inp.value) { inp.value = formatEin(inp.value); }
 			}
+			if (isLicenseNumber && !inp.readOnly) {
+				inp.maxLength = 5;
+				if (inp.value) { inp.value = inp.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 5); }
+			}
 			inp.addEventListener('input', () => {
 				if (isTaxId) {
 					inp.value = formatEin(inp.value);
+				} else if (isLicenseNumber) {
+					// License Number: letters/digits only, exactly 5 characters
+					// (extra characters and symbols stripped as typed).
+					inp.value = inp.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 5);
 				} else if (isPhone) {
 					inp.value = formatUsPhone(inp.value);
 				} else if (isFax) {

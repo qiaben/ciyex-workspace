@@ -85,6 +85,15 @@ export class EhrTitlebarControls extends Disposable {
 				this._providerOptions.length = 0;
 				this._locationOptions.length = 0;
 			}
+			// Sign-out must not leave an unsaved Add Patient / Add Appointment
+			// draft sitting in the DOM — this titlebar instance survives
+			// sign-out (only its auth state changes), so without this the next
+			// sign-in still showed whatever was typed before signing out.
+			if (state === CiyexAuthState.NotAuthenticated) {
+				this._resetForm(this.patientOverlay);
+				this._resetForm(this.appointmentOverlay);
+				this._selectedAppointmentPatientId = '';
+			}
 		}));
 
 		this.searchElement = DOM.$('.ehr-titlebar-search-wrapper');
@@ -646,6 +655,12 @@ export class EhrTitlebarControls extends Disposable {
 	private providers: ProviderResult[] = [];
 	private locations: LocationResult[] = [];
 
+	// Hoisted out of _buildAppointmentOverlay's closure (rather than a plain
+	// local `let`) so a sign-out or a Cancel/X close can clear the pick from
+	// outside the builder — a closure-local variable can't be reached by
+	// _closeAppointmentOverlay or the auth-state listener below.
+	private _selectedAppointmentPatientId = '';
+
 	private _buildAppointmentOverlay(): void {
 		this._ensureOverlayBackdrop();
 		this.appointmentOverlay = DOM.$('.ehr-overlay.ehr-overlay-wide');
@@ -697,7 +712,7 @@ export class EhrTitlebarControls extends Disposable {
 		const patientDropdown = DOM.append(patientSearchContainer, DOM.$('.ehr-patient-dropdown'));
 		patientDropdown.style.display = 'none';
 
-		let selectedPatientId = '';
+		this._selectedAppointmentPatientId = '';
 		let patientSearchTimer: ReturnType<typeof setTimeout> | undefined;
 		// In-flight guard: the POST below is async, so without a synchronous flag
 		// set before the first await, rapid repeated clicks each created a
@@ -720,7 +735,7 @@ export class EhrTitlebarControls extends Disposable {
 						// MOUSEDOWN, not click — see the search rows above (blur-hide race).
 						this._register(DOM.addDisposableListener(item, 'mousedown', (e: MouseEvent) => {
 							e.preventDefault();
-							selectedPatientId = p.fhirId || p.id;
+							this._selectedAppointmentPatientId = p.fhirId || p.id;
 							patientSearchInput.value = `${p.firstName} ${p.lastName}`;
 							patientDropdown.style.display = 'none';
 						}));
@@ -738,7 +753,7 @@ export class EhrTitlebarControls extends Disposable {
 
 		this._register(DOM.addDisposableListener(patientSearchInput, 'input', () => {
 			if (patientSearchTimer) { clearTimeout(patientSearchTimer); }
-			selectedPatientId = '';
+			this._selectedAppointmentPatientId = '';
 			const q = patientSearchInput.value.trim();
 			patientSearchTimer = setTimeout(() => _fetchPatients(q), 250);
 		}));
@@ -898,7 +913,7 @@ export class EhrTitlebarControls extends Disposable {
 
 			errorEl.style.display = 'none';
 
-			if (!selectedPatientId) {
+			if (!this._selectedAppointmentPatientId) {
 				errorEl.textContent = 'Please select a patient.';
 				errorEl.style.display = '';
 				return;
@@ -968,11 +983,11 @@ export class EhrTitlebarControls extends Disposable {
 				start: startISO,
 				end: endISO,
 				reason: reasonInput.value.trim(),
-				patient: `Patient/${selectedPatientId}`,
+				patient: `Patient/${this._selectedAppointmentPatientId}`,
 				provider: `Practitioner/${providerSelect.value}`,
 				location: `Location/${locationSelect.value}`,
 				participant: [
-					{ actor: `Patient/${selectedPatientId}`, required: 'required', status: 'accepted' },
+					{ actor: `Patient/${this._selectedAppointmentPatientId}`, required: 'required', status: 'accepted' },
 					{ actor: `Practitioner/${providerSelect.value}`, required: 'required', status: 'accepted' },
 					{ actor: `Location/${locationSelect.value}`, required: 'required', status: 'accepted' },
 				],
@@ -986,7 +1001,7 @@ export class EhrTitlebarControls extends Disposable {
 			// appointment per calendar day (mirrors the rule enforced on the
 			// Schedule page's Add Appointment overlay in calendarEditor.ts).
 			try {
-				if (await hasDuplicateAppointment(this.apiService, sd, selectedPatientId, patientSearchInput.value)) {
+				if (await hasDuplicateAppointment(this.apiService, sd, this._selectedAppointmentPatientId, patientSearchInput.value)) {
 					errorEl.textContent = `${patientSearchInput.value} already has an appointment on ${sd}. Only one appointment per patient per day is allowed.`;
 					errorEl.style.display = '';
 					patientSearchInput.focus();
@@ -998,17 +1013,16 @@ export class EhrTitlebarControls extends Disposable {
 			} catch { /* pre-check failed (offline/API error) — let the create proceed */ }
 
 			try {
-				const res = await this.apiService.fetch(`/api/fhir-resource/appointments/patient/${selectedPatientId}`, {
+				const res = await this.apiService.fetch(`/api/fhir-resource/appointments/patient/${this._selectedAppointmentPatientId}`, {
 					method: 'POST',
 					body: JSON.stringify(body),
 				});
 
 				if (res.ok) {
 					this.notificationService.notify({ severity: Severity.Info, message: 'Appointment created successfully.' });
+					// _closeAppointmentOverlay resets the form and clears the
+					// selected patient as part of closing.
 					this._closeAppointmentOverlay();
-					this._resetForm(this.appointmentOverlay);
-					selectedPatientId = '';
-					patientSearchInput.value = '';
 					// Refresh calendar if open
 					this.commandService.executeCommand('ciyex.openCalendar').catch(() => { });
 				} else {
@@ -1166,6 +1180,11 @@ export class EhrTitlebarControls extends Disposable {
 	private _closeAppointmentOverlay(): void {
 		this.appointmentOverlay.style.display = 'none';
 		this._hideBackdropIfIdle();
+		// Clear whatever was typed/picked when the form is dismissed without
+		// saving (Cancel or the X button) — otherwise it reappeared exactly as
+		// left the next time Add Appointment was opened.
+		this._resetForm(this.appointmentOverlay);
+		this._selectedAppointmentPatientId = '';
 	}
 
 	private _closeAllOverlays(): void {
@@ -1173,6 +1192,11 @@ export class EhrTitlebarControls extends Disposable {
 		this.patientOverlay.style.display = 'none';
 		this.appointmentOverlay.style.display = 'none';
 		this._hideBackdropIfIdle();
+		// Any path that dismisses the appointment overlay without saving (the
+		// toggle button closing it, or switching to another overlay) counts as
+		// "the form is closed" — clear the draft so it doesn't reappear.
+		this._resetForm(this.appointmentOverlay);
+		this._selectedAppointmentPatientId = '';
 	}
 
 	private _showBackdrop(): void {
@@ -1384,6 +1408,13 @@ export class EhrTitlebarControls extends Disposable {
 			el.value = '';
 		}
 		if (elements.errorEl) { elements.errorEl.style.display = 'none'; }
+		// The patient typeahead's suggestion panel is a plain DOM node toggled
+		// by its own focus/input handlers, not tracked in `elements` — clearing
+		// the search input's value above doesn't hide it, so a reopened form
+		// could still show the last search's dropdown floating below an empty
+		// field.
+		// eslint-disable-next-line no-restricted-syntax
+		form.querySelectorAll('.ehr-patient-dropdown').forEach(el => { (el as HTMLElement).style.display = 'none'; });
 	}
 
 	private _makeDraggable(overlay: HTMLElement, handle: HTMLElement): void {
