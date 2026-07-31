@@ -1088,6 +1088,9 @@ export class EncounterFormEditor extends EditorPane {
 
 	private tocItems: Array<{ key: string; el: HTMLElement }> = [];
 	private sectionCards = new Map<string, HTMLElement>();
+	/** Captured at render time so the save-time required-field check can focus
+	 *  it without a DOM selector. Reset on every _renderForm(). */
+	private _chiefComplaintInput: HTMLTextAreaElement | null = null;
 	/** Visible/hidden pairs for every rendered date field, so the save guard can
 	 *  locate a typed-but-invalid date and focus it without DOM selectors. */
 	private _dateFieldRefs: Array<{ hidden: HTMLInputElement; visible: HTMLInputElement }> = [];
@@ -1229,6 +1232,17 @@ export class EncounterFormEditor extends EditorPane {
 		}
 
 		const formData = this._collectFormData();
+
+		// Chief Complaint is marked required in the field config (an asterisk shows in
+		// the UI) but nothing actually enforced it — encounters saved and could be
+		// Sign & Locked with it blank. _signEncounter saves first, so blocking here
+		// covers both actions.
+		if (!String(formData['chiefComplaint'] ?? '').trim()) {
+			this.notificationService.warn('Chief Complaint is required before saving.');
+			const ccInput = this._chiefComplaintInput;
+			ccInput?.focus();
+			return false;
+		}
 
 		saveBtn.textContent = 'Saving...';
 		(saveBtn as HTMLButtonElement).disabled = true;
@@ -1745,6 +1759,12 @@ export class EncounterFormEditor extends EditorPane {
 
 		const container = DOM.append(this.scrollArea, DOM.$('div'));
 		container.style.cssText = 'max-width:900px;margin:0 auto;padding:16px 24px 60px;';
+		// Chromium's native up/down spin-button on <input type="number"> reads as a
+		// stray per-field "Adjust" control on every vital (same fix as the Snapshot's
+		// inline vitals form in patientSnapshotEditor.ts) — suppress it via its
+		// ::-webkit-*-spin-button pseudo-elements; the field stays a real number input.
+		const noSpinStyle = DOM.append(container, DOM.$('style'));
+		noSpinStyle.textContent = '.ciyex-vital-num-input::-webkit-inner-spin-button,.ciyex-vital-num-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}';
 		this.sectionCards.clear();
 		this._dateFieldRefs = [];
 		this._complexFields.clear();
@@ -1754,6 +1774,7 @@ export class EncounterFormEditor extends EditorPane {
 		// Track inputs by field key so post-render hooks (BMI auto-calc, etc.)
 		// don't have to walk the DOM. Cleared on every re-render.
 		const renderedInputs = new Map<string, HTMLInputElement>();
+		this._chiefComplaintInput = null;
 
 		for (const sec of this.formSections) {
 			if (sec.visible === false) { continue; }
@@ -1858,6 +1879,7 @@ export class EncounterFormEditor extends EditorPane {
 					ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:80px;resize:vertical;';
 					if (readOnly) { ta.readOnly = true; ta.style.opacity = '0.7'; }
+					if (f.key === 'chiefComplaint') { this._chiefComplaintInput = ta; }
 					addFocus(ta);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const cb = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
@@ -1870,6 +1892,7 @@ export class EncounterFormEditor extends EditorPane {
 					inp.type = 'number'; inp.value = String(val); inp.placeholder = f.placeholder || '';
 					inp.dataset.key = f.key;
 					inp.style.cssText = inputStyle + 'height:32px;';
+					if (f.key.startsWith('vitals_')) { inp.classList.add('ciyex-vital-num-input'); }
 					if (readOnly) { inp.readOnly = true; inp.style.opacity = '0.7'; }
 					addFocus(inp);
 					renderedInputs.set(f.key, inp);

@@ -4350,20 +4350,19 @@ export class PatientSnapshotEditor extends EditorPane {
 	// FHIR vitals resource exactly (verified against the chart editor's
 	// DEFAULT_FIELD_CONFIGS['vitals']). 'bp' is split into systolic/diastolic
 	// on save.
-	// Field order + labels mirror the encounter form's Vitals section
-	// (EncounterFormEditor: BP Systolic, BP Diastolic, Heart Rate, Temperature,
-	// SpO2, Respiratory Rate, Weight, Height) so the Snapshot's vitals flow matches
-	// the encounter page. 'pulse' is labelled "Heart Rate" (the encounter/web-app
-	// name) — it's the same value the encounter's vitals_heart_rate maps to via
-	// _VITALS_FIELD_MAP, so the two surfaces no longer read as a mismatch.
+	// Field order matches the Patient Chart's Vitals list columns (patientChartEditor.ts
+	// DEFAULT_FIELD_CONFIGS['vitals']): BP Systolic, BP Diastolic, Pulse, Respiration,
+	// Temp, SpO2, Weight, Height — so the two surfaces no longer drift apart. 'pulse' is
+	// labelled "Heart Rate" here (the encounter/web-app name) — it's the same value the
+	// encounter's vitals_heart_rate maps to via _VITALS_FIELD_MAP.
 	private static readonly _VITAL_INPUTS: Array<{ key: string; label: string; unit: string; step?: string }> = [
 		{ key: 'bpSystolic', label: 'BP Systolic', unit: 'mmHg' },
 		{ key: 'bpDiastolic', label: 'BP Diastolic', unit: 'mmHg' },
 		{ key: 'pulse', label: 'Heart Rate', unit: '/min' },
+		{ key: 'respiration', label: 'Respiratory Rate', unit: '/min' },
 		// allow-any-unicode-next-line
 		{ key: 'temperatureC', label: 'Temperature', unit: '°F', step: '0.1' },
 		{ key: 'oxygenSaturation', label: 'SpO2', unit: '%' },
-		{ key: 'respiration', label: 'Respiratory Rate', unit: '/min' },
 		{ key: 'weightKg', label: 'Weight', unit: 'kg', step: '0.1' },
 		{ key: 'heightCm', label: 'Height', unit: 'cm', step: '0.1' },
 	];
@@ -4416,7 +4415,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		// No (+) "Add Vitals" header button — vitals are recorded/updated via the
 		// inline entry form (the "Edit" link below, or the standalone form when no
 		// reading exists), so the header (+) was a redundant duplicate entry point.
-		this._cardHeader(card, 'pulse', 'Vitals', latest ? 1 : 0, undefined);
+		this._cardHeader(card, 'heart', 'Vitals', latest ? 1 : 0, undefined);
 		if (!latest) {
 			const msg = DOM.append(body, DOM.$('div'));
 			msg.textContent = 'No vitals recorded for this visit — enter below:';
