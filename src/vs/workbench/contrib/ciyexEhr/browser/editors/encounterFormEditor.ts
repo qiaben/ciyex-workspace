@@ -1197,7 +1197,7 @@ export class EncounterFormEditor extends EditorPane {
 	private async _ensureRealEncounterId(formData: Record<string, unknown>): Promise<string> {
 		if (this.encounterId && this.encounterId !== 'new') { return this.encounterId; }
 		if (!this.patientId) { return this.encounterId; }
-		const reason = String(formData['chiefComplaint'] || formData['reasonForVisit'] || formData['reason'] || '').trim();
+		const reason = String(formData['chiefComplaint'] || formData['cc_text'] || formData['reasonForVisit'] || formData['reason'] || '').trim();
 		const res = await this.apiService.fetch(`/api/${this.patientId}/encounters`, {
 			method: 'POST',
 			body: JSON.stringify({
@@ -1236,11 +1236,13 @@ export class EncounterFormEditor extends EditorPane {
 		// Chief Complaint is marked required in the field config (an asterisk shows in
 		// the UI) but nothing actually enforced it — encounters saved and could be
 		// Sign & Locked with it blank. _signEncounter saves first, so blocking here
-		// covers both actions.
-		if (!String(formData['chiefComplaint'] ?? '').trim()) {
+		// covers both actions. Check both key spellings: the default field config
+		// uses 'chiefComplaint', but a backend tab_field_config override for this
+		// org uses 'cc_text' instead (same drift documented in _loadEncounterData).
+		const ccValue = String(formData['chiefComplaint'] ?? formData['cc_text'] ?? '').trim();
+		if (!ccValue) {
 			this.notificationService.warn('Chief Complaint is required before saving.');
-			const ccInput = this._chiefComplaintInput;
-			ccInput?.focus();
+			this._chiefComplaintInput?.focus();
 			return false;
 		}
 
@@ -1317,7 +1319,7 @@ export class EncounterFormEditor extends EditorPane {
 			// enough. Map the form's chiefComplaint onto those keys so a signed
 			// encounter's Chief Complaint shows up in the history (QA: history
 			// showed "—" after Sign & Lock).
-			const ccOut = String(formData['chiefComplaint'] ?? '').trim();
+			const ccOut = ccValue;
 			await this.apiService.fetch(`/api/fhir-resource/encounters/${encounterId}`, {
 				method: 'PUT',
 				body: JSON.stringify({
@@ -1879,7 +1881,7 @@ export class EncounterFormEditor extends EditorPane {
 					ta.placeholder = f.placeholder || `Enter ${f.label.toLowerCase()}...`;
 					ta.style.cssText = inputStyle + 'min-height:80px;resize:vertical;';
 					if (readOnly) { ta.readOnly = true; ta.style.opacity = '0.7'; }
-					if (f.key === 'chiefComplaint') { this._chiefComplaintInput = ta; }
+					if (f.key === 'chiefComplaint' || f.key === 'cc_text') { this._chiefComplaintInput = ta; }
 					addFocus(ta);
 				} else if (f.type === 'boolean' || f.type === 'toggle') {
 					const cb = DOM.append(cell, DOM.$('input')) as HTMLInputElement;
