@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails, IThemedModalField } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick, isoToUsDate } from '../ciyexDateMask.js';
@@ -5158,7 +5158,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Patient Balance', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
-		searchPlaceholder: 'Search by patient, transaction...',
+		searchPlaceholder: 'Search by patient, transaction...', fixedSearchWidth: '560px',
 		// "+ Collect Payment" POSTs to /api/payments/collect — the GET list lives
 		// at /api/payments/transactions but the backend has no POST on that path.
 		// QA report 2026-05-11: clicking save raised
@@ -7646,9 +7646,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private readonly _plansConfig: ClinicalEditorConfig = {
 		title: 'Payment Plans', apiPath: '/api/payments/plans',
-		searchPlaceholder: 'Search by patient, plan...',
+		searchPlaceholder: 'Search patient by name...', fixedSearchWidth: '560px',
 		// The backend only exposes /api/payments/plans/patient/{id} for GET
 		// (a bare GET /api/payments/plans is a 405). Scope to the selected patient.
+		// The toolbar's search box IS that patient picker (see `_plansConfigLive`)
+		// — there used to be a separate always-visible "Patient:" bar above the
+		// page driving this same lookup, which read as two redundant search
+		// boxes (QA: "2 search bars — remove the top one").
 		listUrlBuilder: () => this._payPatientId ? `/api/payments/plans/patient/${this._payPatientId}` : null,
 		emptyListMessage: 'Select a patient to view their payment plans.',
 		clientSideFilter: ['patientName', 'planName', 'status', 'id'],
@@ -7788,6 +7792,37 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			{ label: 'Delete', icon: '🗑️', handler: async (item, api, reload, dlg) => { const r = await dlg.confirm({ message: 'Cancel this payment plan?', type: 'warning', primaryButton: 'Cancel Plan' }); if (r.confirmed) { await api.fetch(`/api/payments/plans/${item.id}`, { method: 'DELETE' }); reload(); } } },
 		],
 	};
+
+	/** `_plansConfig` with a fresh `patientPicker` bound to the CURRENT
+	 *  `_payPatientId`/`_payPatientName` — those change after the static config
+	 *  object is built once, so the picker's displayed value and search/select
+	 *  handlers are attached here instead of baked into the literal above. */
+	private _plansConfigLive(): ClinicalEditorConfig {
+		return {
+			...this._plansConfig,
+			patientPicker: {
+				value: this._payPatientName,
+				onSearch: async (q: string) => {
+					try {
+						const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+						if (!res.ok) { return []; }
+						const data = await res.json();
+						const w = data?.data ?? data;
+						const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+						return list.map(p => ({
+							value: String(p.id ?? p.patientId ?? ''),
+							label: `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim() || String(p.name || p.id || ''),
+						}));
+					} catch { return []; }
+				},
+				onSelect: (item) => {
+					this._payPatientId = item?.value ?? '';
+					this._payPatientName = item?.label ?? '';
+					this._resetAndReload();
+				},
+			},
+		};
+	}
 
 	// Thin stub used when payView === 'ledger' — the ledger is the shared
 	// all-patients financial ledger (charges / insurance postings / patient
@@ -7960,7 +7995,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		collectBtn.textContent = '+ Collect Credit';
 		collectBtn.title = this._payPatientId
 			? `Collect a payment from ${this._payPatientName} and hold it as credit`
-			: 'Pick a patient in the bar above first';
+			: 'Search for a patient and collect a payment to hold as credit';
 		collectBtn.style.cssText = 'padding:6px 14px;background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;';
 		collectBtn.addEventListener('click', () => { void this._openCollectCreditForm(); });
 		const refreshBtn = DOM.append(toolbar, DOM.$('button')) as HTMLButtonElement;
@@ -7993,7 +8028,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
 		search.placeholder = 'Filter by patient...';
 		search.value = this._creditFilter;
-		search.style.cssText = 'flex:0 0 300px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		// Same fixed width as every other Payments tab's search box (Dashboard,
+		// Insurance Posting, Ledger) — this is now the page's only search box
+		// (the redundant top "Patient:" picker bar is gone; "+ Collect Credit"
+		// searches for its patient inside its own modal instead).
+		search.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
 		const countEl = DOM.append(bar, DOM.$('span'));
 		countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		search.addEventListener('input', () => { this._creditFilter = search.value; renderList(); });
@@ -8154,36 +8193,65 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	 * is not immediately linked to any specific claim or encounter").
 	 */
 	private async _openCollectCreditForm(account?: PatientCreditAccount): Promise<void> {
-		const patientId = account?.patientId || this._payPatientId;
-		const patientName = account ? this._creditPatientLabel(account) : this._payPatientName;
+		let patientId = account?.patientId || this._payPatientId;
+		let patientName = account ? this._creditPatientLabel(account) : this._payPatientName;
+		// No row/context patient (the toolbar "+ Collect Credit" button, used for
+		// a patient who has no credit account yet): search for one right inside
+		// this modal instead of requiring a separate always-visible "Patient:"
+		// picker bar above the page — that bar duplicated the list's own filter
+		// box (QA: "2 search bars — remove the top one").
+		const fields: IThemedModalField[] = [];
 		if (!patientId) {
-			await this.dialogService.info('Select a patient in the Patient bar above, then collect the credit.');
-			return;
+			fields.push({
+				key: 'patient', label: 'Patient', type: 'search', required: true,
+				placeholder: 'Search patient by name...',
+				onSearch: async (q: string) => {
+					try {
+						const res = await this.apiService.fetch(`/api/patients?search=${encodeURIComponent(q)}&page=0&size=10`);
+						if (!res.ok) { return []; }
+						const data = await res.json();
+						const w = data?.data ?? data;
+						const list = (w?.content || (Array.isArray(w) ? w : [])) as Array<Record<string, unknown>>;
+						return list.map(p => ({
+							value: String(p.id ?? p.patientId ?? ''),
+							label: `${String(p.firstName || '')} ${String(p.lastName || '')}`.trim() || String(p.name || p.id || ''),
+						}));
+					} catch { return []; }
+				},
+				onSelect: (item: { value: string; label: string }) => { patientId = item.value; patientName = item.label; },
+			});
 		}
+		fields.push(
+			{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
+			{
+				// Card collection needs a saved payment method (the backend rejects
+				// a bare card charge), so cards go through "Patient Pay: Collect
+				// Payment" and this form records the non-charging methods.
+				key: 'method', label: 'Payment Method', type: 'select', value: 'cash', options: [
+					{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
+					{ label: 'ACH / EFT', value: 'ach' }, { label: 'FSA', value: 'fsa' },
+					{ label: 'HSA', value: 'hsa' }, { label: 'Other', value: 'other' },
+				],
+			},
+			{ key: 'note', label: 'Note', type: 'text', placeholder: 'Copay collected at front desk' },
+			{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com' },
+		);
 		const result = await showThemedModal({
 			title: 'Collect Patient Credit',
-			// allow-any-unicode-next-line
-			subtitle: `${patientName} — the money is held as available credit and deducted automatically when a copay comes due.`,
-			fields: [
-				{ key: 'amount', label: 'Amount ($)', type: 'number', required: true, placeholder: '0.00' },
-				{
-					// Card collection needs a saved payment method (the backend rejects
-					// a bare card charge), so cards go through "Patient Pay: Collect
-					// Payment" and this form records the non-charging methods.
-					key: 'method', label: 'Payment Method', type: 'select', value: 'cash', options: [
-						{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
-						{ label: 'ACH / EFT', value: 'ach' }, { label: 'FSA', value: 'fsa' },
-						{ label: 'HSA', value: 'hsa' }, { label: 'Other', value: 'other' },
-					],
-				},
-				{ key: 'note', label: 'Note', type: 'text', placeholder: 'Copay collected at front desk' },
-				{ key: 'receiptEmail', label: 'Receipt Email', type: 'text', placeholder: 'patient@email.com' },
-			],
+			subtitle: patientName
+				// allow-any-unicode-next-line
+				? `${patientName} — the money is held as available credit and deducted automatically when a copay comes due.`
+				: 'The money is held as available credit and deducted automatically when a copay comes due.',
+			fields,
 			confirmLabel: 'Collect Credit',
 			confirmColor: '#22c55e',
 			anchor: this.contentEl ?? undefined,
 		});
 		if (!result) { return; }
+		if (!patientId) {
+			await this.dialogService.error('Select a patient from the search results before collecting.');
+			return;
+		}
 		const amount = Number(result['amount']) || 0;
 		if (amount <= 0) {
 			await this.dialogService.error('Enter an amount greater than 0.');
@@ -8340,7 +8408,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			case 'credits': return this._creditsConfig;
 			case 'methods': return this._methodsConfig;
 			case 'invoices': return this._invoicesConfig;
-			case 'plans': return this._plansConfig;
+			case 'plans': return this._plansConfigLive();
 			case 'ledger': return this._ledgerConfig;
 			case 'insurance-posting': return this._insurancePostingConfig;
 			default: return this._transactionsConfig;
@@ -8507,16 +8575,17 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _syncPayPatientBar(): void {
 		if (this._payPatientBar) {
 			// Methods is patient-scoped too (cards list/create live under
-			// /api/credit-cards/patient/{id}), so it shares the patient picker.
-			// Credits lists every patient, but "Collect Credit" needs one selected —
-			// the shared picker is how the front desk names them.
-			// Ledger does NOT use this picker to scope its data — per the comment
-			// on _ledgerConfig, the ledger is composed client-side from EVERY
-			// patient's activity, and picking a name here only pre-seeds the
-			// ledger's own filter box below. That made it read as two redundant
-			// search boxes (QA: "remove the top search bar"), so it's hidden here.
-			this._payPatientBar.style.display =
-				(this.payView === 'plans' || this.payView === 'methods' || this.payView === 'credits') ? 'flex' : 'none';
+			// /api/credit-cards/patient/{id}), so it still shares this picker.
+			// Plans is ALSO patient-scoped (no "list every patient's plans"
+			// endpoint), but its own toolbar search box now IS the patient
+			// picker (see _plansConfigLive's `patientPicker`) instead of this
+			// separate bar. Credits lists every patient (no pre-selection
+			// needed) and searches for its "+ Collect Credit" target inside
+			// that form's own modal. Ledger's own filter box needs no patient
+			// pre-selection either. All three used to pair with this bar and
+			// read as two redundant search boxes on the page (QA: "remove the
+			// top search bar"), so only Methods still shows it.
+			this._payPatientBar.style.display = this.payView === 'methods' ? 'flex' : 'none';
 		}
 	}
 

@@ -254,6 +254,32 @@ export interface ClinicalEditorConfig {
 	statusTabs?: StatusTab[];
 	actions?: ActionDef[];
 	searchPlaceholder?: string;
+	/**
+	 * Fix the search box to this width instead of the default `flex:1` (which
+	 * stretches to fill the toolbar row). Payments' Dashboard and Insurance
+	 * Posting tabs render their own search box at a fixed 560px so it doesn't
+	 * balloon across a wide window; the other Payments tabs route through this
+	 * generic renderer, so match them here too (QA: "same search bar size and
+	 * place across every Payments tab").
+	 */
+	fixedSearchWidth?: string;
+	/**
+	 * Renders the toolbar's search box as a patient-typeahead picker instead
+	 * of a plain text filter — for lists that can only be loaded scoped to ONE
+	 * selected patient (e.g. Payments > Payment Plans, whose backend has no
+	 * "list every patient's plans" endpoint, only `/patient/{id}`). Picking a
+	 * result (or clearing the box) calls `onSelect`, which is expected to
+	 * store the pick and trigger its own reload — unlike the plain search box,
+	 * this one does not drive `searchValue`/`_loadData`/`_render` itself, so a
+	 * page that needs this doesn't end up with two search boxes (one to pick
+	 * the patient, one to filter their already-loaded rows).
+	 */
+	patientPicker?: {
+		/** Current display value (e.g. the previously selected patient's name). */
+		value: string;
+		onSearch: (query: string) => Promise<Array<{ value: string; label: string }>>;
+		onSelect: (item: { value: string; label: string } | null) => void;
+	};
 	/** Form fields for create/edit dialog. If not set, no create/edit button is shown. */
 	formFields?: FormFieldDef[];
 	/**
@@ -449,10 +475,10 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 /** A labelled field rendered inside {@link showThemedModal}. */
-interface IThemedModalField {
+export interface IThemedModalField {
 	key: string;
 	label: string;
-	type?: 'text' | 'number' | 'date' | 'textarea' | 'select';
+	type?: 'text' | 'number' | 'date' | 'textarea' | 'select' | 'search';
 	value?: string;
 	placeholder?: string;
 	/** When true, the confirm button is blocked until this field has a value. */
@@ -461,6 +487,13 @@ interface IThemedModalField {
 	rows?: number;
 	/** For 'select' type: the choices offered (e.g. the payment methods). */
 	options?: Array<{ label: string; value: string }>;
+	/** For 'search' type: called while typing (2+ chars) — returns matches shown
+	 *  in a dropdown beneath the input. */
+	onSearch?: (query: string) => Promise<Array<{ value: string; label: string }>>;
+	/** For 'search' type: fired when a result is picked, alongside writing the
+	 *  match's label into the visible input — lets the caller capture the id
+	 *  the plain text value alone doesn't carry (e.g. a patientId). */
+	onSelect?: (item: { value: string; label: string }) => void;
 }
 
 interface IThemedModalOptions {
@@ -540,6 +573,43 @@ export function showThemedModal(opts: IThemedModalOptions): Promise<Record<strin
 				ta.rows = f.rows ?? 4;
 				ta.style.cssText = inputStyle + 'resize:vertical;min-height:90px;line-height:1.5;';
 				inputs.set(f.key, ta);
+			} else if (f.type === 'search') {
+				const wrap = DOM.append(grp, DOM.$('div'));
+				wrap.style.cssText = 'position:relative;';
+				const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+				input.type = 'text';
+				input.value = f.value ?? '';
+				input.placeholder = f.placeholder ?? '';
+				input.style.cssText = inputStyle;
+				const dropdown = DOM.append(wrap, DOM.$('div'));
+				dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:1;display:none;margin-top:2px;';
+				let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+				input.addEventListener('input', () => {
+					const q = input.value.trim();
+					if (searchDebounce) { clearTimeout(searchDebounce); }
+					if (q.length < 2 || !f.onSearch) { dropdown.style.display = 'none'; return; }
+					searchDebounce = setTimeout(async () => {
+						const results = await f.onSearch!(q);
+						DOM.clearNode(dropdown);
+						if (results.length === 0) { dropdown.style.display = 'none'; return; }
+						for (const r of results.slice(0, 10)) {
+							const row = DOM.append(dropdown, DOM.$('div'));
+							row.textContent = r.label;
+							row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+							row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+							row.addEventListener('mouseleave', () => { row.style.background = ''; });
+							row.addEventListener('mousedown', e => {
+								e.preventDefault();
+								input.value = r.label;
+								dropdown.style.display = 'none';
+								f.onSelect?.(r);
+							});
+						}
+						dropdown.style.display = 'block';
+					}, 250);
+				});
+				input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 200); });
+				inputs.set(f.key, input);
 			} else {
 				const input = DOM.append(grp, DOM.$('input')) as HTMLInputElement;
 				input.type = f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
@@ -1056,30 +1126,73 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		const tb = DOM.append(this.contentEl, DOM.$('div'));
 		tb.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center;';
 
-		const s = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
-		s.type = 'text';
-		s.placeholder = cfg.searchPlaceholder || 'Search...';
-		s.value = this.searchValue;
-		s.style.cssText = 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
-		s.addEventListener('input', () => {
-			if (this.debounceTimer) { clearTimeout(this.debounceTimer); }
-			this.debounceTimer = setTimeout(() => {
-				this.searchValue = s.value;
-				this.currentPage = 0;
-				// Client-side filter: just re-render the already-loaded items.
-				// Server-side: re-query with ?q=...
-				if (cfg.clientSideFilter) {
-					this.refocusSearchAfterRender = true;
-					this._render();
-				} else {
-					this._loadData();
-				}
-			}, 300);
-		});
-		if (this.refocusSearchAfterRender) {
-			this.refocusSearchAfterRender = false;
-			const caret = this.searchValue.length;
-			setTimeout(() => { s.focus(); s.setSelectionRange(caret, caret); }, 0);
+		let s: HTMLInputElement | undefined;
+		if (cfg.patientPicker) {
+			const pp = cfg.patientPicker;
+			const wrap = DOM.append(tb, DOM.$('div'));
+			wrap.style.cssText = `position:relative;flex:0 0 ${cfg.fixedSearchWidth || '560px'};`;
+			const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
+			input.type = 'text';
+			input.placeholder = cfg.searchPlaceholder || 'Search patient by name...';
+			input.value = pp.value;
+			input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;';
+			const dropdown = DOM.append(wrap, DOM.$('div'));
+			dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:50;display:none;margin-top:2px;';
+			let pickerDebounce: ReturnType<typeof setTimeout> | undefined;
+			input.addEventListener('input', () => {
+				const q = input.value.trim();
+				if (pickerDebounce) { clearTimeout(pickerDebounce); }
+				if (!q) { dropdown.style.display = 'none'; pp.onSelect(null); return; }
+				if (q.length < 2) { dropdown.style.display = 'none'; return; }
+				pickerDebounce = setTimeout(async () => {
+					const results = await pp.onSearch(q);
+					DOM.clearNode(dropdown);
+					if (results.length === 0) { dropdown.style.display = 'none'; return; }
+					for (const r of results.slice(0, 10)) {
+						const row = DOM.append(dropdown, DOM.$('div'));
+						row.textContent = r.label;
+						row.style.cssText = 'padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid rgba(128,128,128,0.08);';
+						row.addEventListener('mouseenter', () => { row.style.background = 'var(--vscode-list-hoverBackground)'; });
+						row.addEventListener('mouseleave', () => { row.style.background = ''; });
+						row.addEventListener('mousedown', e => {
+							e.preventDefault();
+							input.value = r.label;
+							dropdown.style.display = 'none';
+							pp.onSelect(r);
+						});
+					}
+					dropdown.style.display = 'block';
+				}, 250);
+			});
+			input.addEventListener('blur', () => { setTimeout(() => { dropdown.style.display = 'none'; }, 200); });
+		} else {
+			s = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
+			s.type = 'text';
+			s.placeholder = cfg.searchPlaceholder || 'Search...';
+			s.value = this.searchValue;
+			s.style.cssText = cfg.fixedSearchWidth
+				? `flex:0 0 ${cfg.fixedSearchWidth};padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;`
+				: 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
+			s.addEventListener('input', () => {
+				if (this.debounceTimer) { clearTimeout(this.debounceTimer); }
+				this.debounceTimer = setTimeout(() => {
+					this.searchValue = s!.value;
+					this.currentPage = 0;
+					// Client-side filter: just re-render the already-loaded items.
+					// Server-side: re-query with ?q=...
+					if (cfg.clientSideFilter) {
+						this.refocusSearchAfterRender = true;
+						this._render();
+					} else {
+						this._loadData();
+					}
+				}, 300);
+			});
+			if (this.refocusSearchAfterRender) {
+				this.refocusSearchAfterRender = false;
+				const caret = this.searchValue.length;
+				setTimeout(() => { s!.focus(); s!.setSelectionRange(caret, caret); }, 0);
+			}
 		}
 
 		// Status dropdown — mirrors the web app's Labs page where Status sits
