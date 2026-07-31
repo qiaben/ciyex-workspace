@@ -872,7 +872,9 @@ export class NotificationsEditor extends EditorPane {
 
 			const templateSel = DOM.append(row, DOM.$('select')) as HTMLSelectElement;
 			templateSel.style.cssText = timingSel.style.cssText;
-			(DOM.append(templateSel, DOM.$('option')) as HTMLOptionElement).textContent = '-- Default --';
+			const defaultOpt = DOM.append(templateSel, DOM.$('option')) as HTMLOptionElement;
+			defaultOpt.value = '';
+			defaultOpt.textContent = '-- Default --';
 			for (const tmpl of this.templates) {
 				const opt = DOM.append(templateSel, DOM.$('option')) as HTMLOptionElement;
 				opt.value = String(tmpl.id); opt.textContent = String(tmpl.name);
