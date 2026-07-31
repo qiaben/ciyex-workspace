@@ -56,8 +56,8 @@ const PROVIDER_FIELDS: Record<string, ProviderField[]> = {
 	],
 	sendgrid: [{ key: 'api_key', label: 'API Key', type: 'password' }, { key: 'from_email', label: 'From Email' }, { key: 'from_name', label: 'From Name' }],
 	mailgun: [{ key: 'api_key', label: 'API Key', type: 'password' }, { key: 'domain', label: 'Domain' }, { key: 'from_email', label: 'From Email' }, { key: 'from_name', label: 'From Name' }],
-	twilio: [{ key: 'account_sid', label: 'Account SID' }, { key: 'auth_token', label: 'Auth Token', type: 'password' }, { key: 'from_number', label: 'From Number' }],
-	vonage: [{ key: 'api_key', label: 'API Key' }, { key: 'api_secret', label: 'API Secret', type: 'password' }, { key: 'from_number', label: 'From Number' }],
+	twilio: [{ key: 'account_sid', label: 'Account SID' }, { key: 'auth_token', label: 'Auth Token', type: 'password' }, { key: 'from_number', label: 'From Number' }, { key: 'default_country_code', label: 'Default Country Code', placeholder: '1' }],
+	vonage: [{ key: 'api_key', label: 'API Key' }, { key: 'api_secret', label: 'API Secret', type: 'password' }, { key: 'from_number', label: 'From Number' }, { key: 'default_country_code', label: 'Default Country Code', placeholder: '1' }],
 };
 
 const TEMPLATE_VARIABLES = [
