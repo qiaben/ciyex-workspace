@@ -2662,7 +2662,10 @@ export class PatientSnapshotEditor extends EditorPane {
 	 *  one next step and offers a single button that performs it. */
 	private _renderWorkflowBanner(apt: Record<string, unknown> | null, vit: Record<string, unknown>[], encs: Record<string, unknown>[], st: VisitPipelineState): void {
 		if (!apt) { return; }
-		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st);
+		// Pass the telehealth flag so the banner's step COUNT matches the strip's
+		// — the strip drops Record Vitals for virtual visits, so without this the
+		// banner read "STEP 2 OF 10" beside a 9-step strip.
+		const { stages, currentIdx } = this._buildVisitStages(apt, vit, encs, st, this._isTelehealthAppt(apt));
 		const next = currentIdx < stages.length ? stages[currentIdx] : null;
 
 		const banner = DOM.append(this.root, DOM.$('.snap-workflow-banner'));
@@ -2982,10 +2985,11 @@ export class PatientSnapshotEditor extends EditorPane {
 	}
 
 	/** Whether this appointment is a Telehealth / virtual / video visit — the
-	 *  single source of truth shared by the Video Call action, the Assign Room
-	 *  workflow tile (hidden — no physical room to assign) and the Today's
-	 *  Vitals card (hidden — no in-person MA to record them) so all three never
-	 *  disagree on what counts as Telehealth. */
+	 *  single source of truth shared by the Video Call action and the Today's
+	 *  Vitals card (hidden — no in-person MA to record them) so they never
+	 *  disagree on what counts as Telehealth. Assign Room is NOT telehealth-
+	 *  dependent: virtual visits keep the step (the provider still takes the
+	 *  call from a room). */
 	private _isTelehealthAppt(apt: Record<string, unknown>): boolean {
 		const vt = this._apptTypeStr(apt).toLowerCase();
 		return vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
@@ -3136,11 +3140,12 @@ export class PatientSnapshotEditor extends EditorPane {
 		const status = String(apt.status || apt.appointmentStatus || '').toLowerCase();
 		const missing: string[] = [];
 		if (!['checked-in', 'checked in', 'arrived', 'in-room', 'with-provider'].includes(status)) { missing.push('Check In'); }
-		// Telehealth visits have no physical room and no in-person MA to record
-		// vitals — those steps are dropped from the workflow strip entirely
-		// (see _buildVisitStages), so they must not gate Completed either.
+		// Assign Room applies to telehealth too — the step stays in the strip for
+		// virtual visits (see _buildVisitStages), so it gates Completed the same
+		// way. Only Record Vitals is dropped for telehealth (no in-person MA to
+		// record them), so it must not gate Completed there.
+		if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
 		if (!this._isTelehealthAppt(apt)) {
-			if (!String(apt.room || apt.roomName || '').trim()) { missing.push('Assign Room'); }
 			if (this._vitalsOnDate(this._lastLoadedVitals, String(apt.start || apt.startTime || '')).length === 0) { missing.push('Record Vitals'); }
 		}
 		return missing;
@@ -3776,9 +3781,9 @@ export class PatientSnapshotEditor extends EditorPane {
 		const grid = DOM.append(this.root, DOM.$('.snap-grid'));
 		grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 24px;';
 
-		// Telehealth visits have no physical room to assign and no in-person MA
-		// to record vitals — the Assign Room workflow tile and the Today's
-		// Vitals card are hidden for them (see _isTelehealthAppt).
+		// Telehealth visits have no in-person MA to record vitals — the Today's
+		// Vitals card is hidden for them (see _isTelehealthAppt). The Assign
+		// Room workflow step stays.
 		const isTele = apt ? this._isTelehealthAppt(apt) : false;
 
 		if (apt) {
@@ -4058,12 +4063,13 @@ export class PatientSnapshotEditor extends EditorPane {
 				sub: 'Collect', doneSub: 'Paid', action: () => this._openCreateModal('payment'),
 			},
 		];
-		// Telehealth visits have no physical room to assign and no in-person MA
-		// to record vitals — drop the Assign Room and Record Vitals steps
-		// entirely (not just CSS-hide them) so the strip's grid columns and step
-		// numbering stay contiguous, then recompute currentIdx against the
-		// filtered list.
-		if (isTele) { stages = stages.filter(s => s.key !== 'room' && s.key !== 'vitals'); }
+		// Telehealth visits keep Assign Room — the virtual visit still runs out of
+		// a room (the provider's consult / video room), and staff reported the
+		// step simply missing from the strip. Only Record Vitals is dropped
+		// (no in-person MA to take them). Dropping is a real filter, not a
+		// CSS hide, so the strip's grid columns and step numbering stay
+		// contiguous; currentIdx is recomputed against the filtered list.
+		if (isTele) { stages = stages.filter(s => s.key !== 'vitals'); }
 		const firstNotDone = stages.findIndex(s => !s.done);
 		const currentIdx = firstNotDone === -1 ? stages.length : firstNotDone;
 		return { stages, currentIdx };
