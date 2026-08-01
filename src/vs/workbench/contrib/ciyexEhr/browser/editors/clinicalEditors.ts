@@ -8989,7 +8989,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		};
 		const totalBalance = this._billingRows.reduce((s, r) => s + Number(r.balance || 0), 0);
 		card('Total Charges', `$${totalCharges.toFixed(2)}`, 'var(--vscode-foreground)');
-		card('Total Paid', `$${totalPaid.toFixed(2)}`, '#22c55e');
+		card('Patient Paid', `$${totalPaid.toFixed(2)}`, '#22c55e');
 		card('Insurance Paid', `$${totalInsurance.toFixed(2)}`, '#3b9edd');
 		card('Patient Portion', `$${totalPatientPortion.toFixed(2)}`, '#f59e0b');
 		card('Outstanding Balance', `$${totalBalance.toFixed(2)}`, totalBalance > 0 ? '#ef4444' : '#22c55e');
