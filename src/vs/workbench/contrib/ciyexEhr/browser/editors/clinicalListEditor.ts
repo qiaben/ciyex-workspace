@@ -246,6 +246,37 @@ export interface FilterDropdownDef {
 }
 
 
+// allow-any-unicode-next-line
+// ── Shared search-bar geometry ─────────────────────────────────────────────
+// Every Payments tab (Dashboard, Patient Balance, Insurance Posting, Patient
+// Credits, Payment Plans, Ledger) draws its filter box from these three
+// constants so the box is the SAME width, the SAME height and in the SAME
+// place on all six (QA 2026-08-03: "make it same width & height and same
+// position for all the tabs"). Each tab used to hand-roll its own cssText,
+// which drifted — some were content-box (so 22px wider than the rest), the
+// row margins were 10px on three tabs and 12px on the others, and on Patient
+// Balance the box sat BELOW the status pills instead of directly under the
+// summary cards.
+
+/** Width of the filter box on every Payments tab (border-box). */
+export const PAYMENTS_SEARCH_WIDTH = '560px';
+
+/** The toolbar row the filter box lives in: first thing under the summary cards. */
+export const PAYMENTS_SEARCH_ROW_STYLE = 'display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;';
+
+/** The filter box itself. `box-sizing:border-box` keeps the 560px honest. */
+export const PAYMENTS_SEARCH_INPUT_STYLE = `flex:0 0 ${PAYMENTS_SEARCH_WIDTH};padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;line-height:18px;box-sizing:border-box;`;
+
+/**
+ * Vertical space the summary-card strip reserves on every Payments tab, so the
+ * filter box below it starts at the same y whatever that tab summarises. The
+ * six strips are deliberately NOT the same design (different card counts,
+ * different KPIs), and they were 63-68px tall with 12-16px margins — enough
+ * that the box visibly hopped when switching tabs. Payment Plans has no cards
+ * at all until a patient is picked, so it reserves the strip empty.
+ */
+export const PAYMENTS_SUMMARY_BAND_STYLE = 'min-height:68px;margin-bottom:12px;box-sizing:border-box;';
+
 export interface ClinicalEditorConfig {
 	title: string;
 	apiPath: string;
@@ -263,6 +294,14 @@ export interface ClinicalEditorConfig {
 	 * place across every Payments tab").
 	 */
 	fixedSearchWidth?: string;
+	/**
+	 * Move the search toolbar ABOVE the status pills, so it sits directly under
+	 * the summary cards. Every Payments tab that renders its own grid puts the
+	 * filter box there; Patient Balance and Payment Plans come through this
+	 * generic renderer, which normally draws the pills first (QA 2026-08-03:
+	 * "same position for all the tabs").
+	 */
+	searchAboveStatusTabs?: boolean;
 	/**
 	 * Renders the toolbar's search box as a patient-typeahead picker instead
 	 * of a plain text filter — for lists that can only be loaded scoped to ONE
@@ -1050,6 +1089,11 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// sized cards to their content, which the QA team flagged as misaligned cards
 		// with inconsistent spacing on the Referrals page.
 		let numericStats = Object.entries(this.stats).filter(([, v]) => typeof v === 'number');
+		if (numericStats.length === 0 && cfg.fixedSearchWidth) {
+			// Payments tab with nothing to summarise yet (Payment Plans before a
+			// patient is picked): hold the strip's space so the filter box stays put.
+			DOM.append(this.contentEl, DOM.$('div')).style.cssText = PAYMENTS_SUMMARY_BAND_STYLE;
+		}
 		if (numericStats.length > 0) {
 			const row = DOM.append(this.contentEl, DOM.$('div'));
 			// compactStats halves the vertical footprint for pages like Recall that
@@ -1065,7 +1109,8 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			const cols = Math.min(numericStats.length, compact ? 8 : 6);
 			const gap = compact ? 6 : 8;
 			const marginB = compact ? 8 : 12;
-			row.style.cssText = `display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:${gap}px;margin-bottom:${marginB}px;`;
+			row.style.cssText = `display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:${gap}px;margin-bottom:${marginB}px;`
+				+ (cfg.fixedSearchWidth ? PAYMENTS_SUMMARY_BAND_STYLE : '');
 			// Compact card sizes (issues #17, #22): halve vertical footprint with
 			// padding 8px 16px and 12px body font so the strip doesn't dominate.
 			const cardPad = compact ? '3px 8px' : '8px 16px';
@@ -1107,8 +1152,10 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// crowded (Medical Codes QA report).
 		// When `statusAsDropdown` is set, the status filter is rendered inside the
 		// toolbar as a <select> instead of pills (mirrors the web app's Labs page).
+		let statusTabsEl: HTMLElement | undefined;
 		if (cfg.statusTabs && !cfg.statusAsDropdown) {
 			const tabs = DOM.append(this.contentEl, DOM.$('div'));
+			statusTabsEl = tabs;
 			tabs.style.cssText = 'display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center;';
 			for (const t of [{ label: 'All', value: '' }, ...cfg.statusTabs]) {
 				const b = DOM.append(tabs, DOM.$('button'));
@@ -1124,18 +1171,27 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 		// allow-any-unicode-next-line
 		// ─── Toolbar: Search + Priority filter ───
 		const tb = DOM.append(this.contentEl, DOM.$('div'));
-		tb.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center;';
+		tb.style.cssText = cfg.fixedSearchWidth
+			? PAYMENTS_SEARCH_ROW_STYLE
+			: 'display:flex;gap:8px;margin-bottom:12px;align-items:center;';
+		// Payments tabs want the filter box directly under the summary cards, in
+		// front of the status pills — the same slot the hand-rolled Payments grids
+		// put it in.
+		if (cfg.searchAboveStatusTabs && statusTabsEl) {
+			this.contentEl.insertBefore(tb, statusTabsEl);
+		}
 
 		let s: HTMLInputElement | undefined;
 		if (cfg.patientPicker) {
 			const pp = cfg.patientPicker;
 			const wrap = DOM.append(tb, DOM.$('div'));
-			wrap.style.cssText = `position:relative;flex:0 0 ${cfg.fixedSearchWidth || '560px'};`;
+			wrap.style.cssText = `position:relative;flex:0 0 ${cfg.fixedSearchWidth || PAYMENTS_SEARCH_WIDTH};`;
 			const input = DOM.append(wrap, DOM.$('input')) as HTMLInputElement;
 			input.type = 'text';
 			input.placeholder = cfg.searchPlaceholder || 'Search patient by name...';
 			input.value = pp.value;
-			input.style.cssText = 'width:100%;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;';
+			// The wrap already carries the 560px flex basis, so the box fills it.
+			input.style.cssText = PAYMENTS_SEARCH_INPUT_STYLE.replace(`flex:0 0 ${PAYMENTS_SEARCH_WIDTH};`, 'width:100%;');
 			const dropdown = DOM.append(wrap, DOM.$('div'));
 			dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--vscode-editorWidget-background,#1e1e1e);color:var(--vscode-foreground);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:50;display:none;margin-top:2px;';
 			let pickerDebounce: ReturnType<typeof setTimeout> | undefined;
@@ -1171,7 +1227,7 @@ export abstract class ClinicalListEditorBase extends EditorPane {
 			s.placeholder = cfg.searchPlaceholder || 'Search...';
 			s.value = this.searchValue;
 			s.style.cssText = cfg.fixedSearchWidth
-				? `flex:0 0 ${cfg.fixedSearchWidth};padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;box-sizing:border-box;`
+				? PAYMENTS_SEARCH_INPUT_STYLE.replace(`flex:0 0 ${PAYMENTS_SEARCH_WIDTH};`, `flex:0 0 ${cfg.fixedSearchWidth};`)
 				: 'flex:1;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#3c3c3c);border-radius:4px;color:var(--vscode-input-foreground);font-size:13px;box-sizing:border-box;';
 			s.addEventListener('input', () => {
 				if (this.debounceTimer) { clearTimeout(this.debounceTimer); }

@@ -9,6 +9,7 @@ import { claimNumberForFeeSheet } from '../billing/edi837.js';
 import { buildXlsx, IXlsxColumn, XlsxRow } from '../billing/xlsx.js';
 import { findWorkbenchRoot } from '../customDropdown.js';
 import { CREDIT_CLAIM_REF, isCreditApplication, isCreditTransaction } from './patientCredit.js';
+import { PAYMENTS_SEARCH_INPUT_STYLE, PAYMENTS_SEARCH_ROW_STYLE, PAYMENTS_SEARCH_WIDTH, PAYMENTS_SUMMARY_BAND_STYLE } from './clinicalListEditor.js';
 
 /**
  * Shared patient-ledger view: one financial record built from the billed fee
@@ -671,7 +672,7 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 
 	// -- Summary cards --
 	const cards = DOM.append(host, DOM.$('div'));
-	cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:12px;';
+	cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;' + PAYMENTS_SUMMARY_BAND_STYLE;
 	const card = (label: string, value: string, color: string, hint: string) => {
 		const c = DOM.append(cards, DOM.$('div'));
 		c.title = hint;
@@ -692,16 +693,18 @@ export function renderLedger(host: HTMLElement, events: LedgerEvent[], opts: IRe
 
 	// -- Toolbar: filter + the two downloads --
 	const bar = DOM.append(host, DOM.$('div'));
-	bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;';
+	bar.style.cssText = PAYMENTS_SEARCH_ROW_STYLE;
 	const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
 	search.placeholder = opts.showPatientColumn ? 'Filter by patient, claim #, type, description...' : 'Filter by claim #, type, description...';
 	search.value = opts.initialFilter || '';
 	// Payments > Ledger (all-patients view) no longer has the redundant top
 	// "Patient:" picker bar above it (QA: "two search options, remove the
-	// top one"), so this is the page's only search box — give it more room
-	// than the chart's embedded single-patient ledger gets.
-	const searchWidth = opts.showPatientColumn ? '560px' : '320px';
-	search.style.cssText = `flex:0 0 ${searchWidth};padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;`;
+	// top one"), so this is the page's only search box — it gets the shared
+	// Payments geometry. The chart's embedded single-patient ledger is a much
+	// narrower pane, so it keeps its smaller box.
+	search.style.cssText = opts.showPatientColumn
+		? PAYMENTS_SEARCH_INPUT_STYLE
+		: PAYMENTS_SEARCH_INPUT_STYLE.replace(`flex:0 0 ${PAYMENTS_SEARCH_WIDTH};`, 'flex:0 0 320px;');
 	const countEl = DOM.append(bar, DOM.$('span'));
 	countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 

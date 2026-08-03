@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails, IThemedModalField } from './clinicalListEditor.js';
+import { ClinicalListEditorBase, ClinicalEditorConfig, FormFieldDef, FormExtrasHandle, showThemedModal, showThemedDetails, IThemedModalField, PAYMENTS_SEARCH_INPUT_STYLE, PAYMENTS_SEARCH_ROW_STYLE, PAYMENTS_SEARCH_WIDTH, PAYMENTS_SUMMARY_BAND_STYLE } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { createCustomDropdown, findWorkbenchRoot } from '../customDropdown.js';
 import { enablePickerClick, isoToUsDate } from '../ciyexDateMask.js';
@@ -22,7 +22,7 @@ import { EobClaimOption, EobFormValues, EobLine } from './eobPostingForm.js';
 import { buildLedgerEvents, renderLedger, makeLedgerActionsHost, loadLedgerStatementInfo, ILedgerActionsHost, ILedgerExportHost } from './patientLedger.js';
 import {
 	applyPatientCredit, copayPlanNote, loadCreditAccounts, PatientCreditAccount,
-	readCopayPlanNote, recordPatientCredit, refundPatientCredit, resolveVisitCopay, CREDIT_TXN_TYPE,
+	readCopayPlanNote, recordPatientCredit, refundPatientCredit, resolveVisitCopay, CREDIT_TXN_TYPE, CREDIT_METHOD,
 } from './patientCredit.js';
 import { isSelfPayResponsibility, selfPayClaimRefs } from './selfPayBilling.js';
 import { savePrintableAsPdf } from './printableDocument.js';
@@ -4968,6 +4968,41 @@ interface CreditCardRecord {
 	isExpired?: boolean;
 }
 
+/**
+ * Every method money can be COLLECTED with, in one place.
+ *
+ * The Dashboard's "Billed Mode" column used to list only cash / check / card /
+ * ACH, so a payment collected as Debit Card, Bank Account, FSA, HSA or Other
+ * had no matching <option> and the select fell back to its first entry — the
+ * method read "Cash" however the money had actually been taken (QA 2026-08-03:
+ * "the method type is changed ... the dashboard is not auto fetched, it is
+ * showing only cash"). One list keeps the Dashboard, the Collect Payment form
+ * and the Patient Balance filter describing the same set.
+ */
+export const PAYMENT_METHOD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+	{ value: 'cash', label: 'Cash' },
+	{ value: 'check', label: 'Check' },
+	{ value: 'credit_card', label: 'Credit Card' },
+	{ value: 'debit_card', label: 'Debit Card' },
+	{ value: 'ach', label: 'ACH' },
+	{ value: 'bank_account', label: 'Bank Account' },
+	{ value: 'fsa', label: 'FSA' },
+	{ value: 'hsa', label: 'HSA' },
+	{ value: 'other', label: 'Other' },
+];
+
+/**
+ * Human label for a stored payment-method value. Covers the methods nothing can
+ * be collected *with* but a record can still be stored *as* — `credit` is
+ * written by patientCredit.ts when a visit is settled out of the patient's held
+ * credit — and title-cases anything else rather than showing a raw enum.
+ */
+export function paymentMethodLabel(value: string): string {
+	if (value === CREDIT_METHOD) { return 'Patient Credit'; }
+	const known = PAYMENT_METHOD_OPTIONS.find(o => o.value === value);
+	return known ? known.label : value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export const PAYMENTS_FORM_FIELDS: FormFieldDef[] = [
 	{
 		key: 'patientName', label: 'Patient', type: 'search', required: true,
@@ -5158,7 +5193,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private readonly _transactionsConfig: ClinicalEditorConfig = {
 		title: 'Patient Balance', apiPath: '/api/payments/transactions', statsPath: '/api/payments/stats',
-		searchPlaceholder: 'Search by patient, transaction...', fixedSearchWidth: '560px',
+		searchPlaceholder: 'Search by patient, transaction...',
+		fixedSearchWidth: PAYMENTS_SEARCH_WIDTH, searchAboveStatusTabs: true,
 		// "+ Collect Payment" POSTs to /api/payments/collect — the GET list lives
 		// at /api/payments/transactions but the backend has no POST on that path.
 		// QA report 2026-05-11: clicking save raised
@@ -5211,14 +5247,10 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				],
 			},
 			{
+				// The whole method set — the filter used to stop at ACH, so rows
+				// collected as Bank Account / FSA / HSA / Other could not be picked out.
 				key: 'paymentMethodType', placeholder: 'All Methods',
-				options: [
-					{ label: 'Credit Card', value: 'credit_card' },
-					{ label: 'Debit Card', value: 'debit_card' },
-					{ label: 'Cash', value: 'cash' },
-					{ label: 'Check', value: 'check' },
-					{ label: 'ACH', value: 'ach' },
-				],
+				options: PAYMENT_METHOD_OPTIONS.map(o => ({ label: o.label, value: o.value })),
 			},
 		],
 		formFields: PAYMENTS_FORM_FIELDS,
@@ -5266,7 +5298,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 			}
 			if (key === 'paymentMethodType' && typeof value === 'string') {
-				return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+				return paymentMethodLabel(value);
 			}
 			return String(value ?? '');
 		},
@@ -5386,11 +5418,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 							{ key: 'amount', label: 'Amount to Collect ($)', type: 'number', value: due.toFixed(2), required: true },
 							{
 								key: 'paymentMethodType', label: 'Method', type: 'select', value: 'cash', required: true,
-								options: [
-									{ label: 'Cash', value: 'cash' }, { label: 'Check', value: 'check' },
-									{ label: 'Credit Card', value: 'credit_card' }, { label: 'Debit Card', value: 'debit_card' },
-									{ label: 'ACH', value: 'ach' },
-								],
+								options: PAYMENT_METHOD_OPTIONS.map(o => ({ label: o.label, value: o.value })),
 							},
 							{ key: 'note', label: 'Note', type: 'text', placeholder: 'Reference / receipt note (optional)' },
 						],
@@ -5987,7 +6015,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const awaiting = this._insRows.filter(r => r.status === 'AWAITING_EOB').length;
 		const denials = this._insRows.filter(r => r.status === 'DENIAL').length;
 		const cards = DOM.append(this.contentEl, DOM.$('div'));
-		cards.style.cssText = 'display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;';
+		cards.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;' + PAYMENTS_SUMMARY_BAND_STYLE;
 		const card = (label: string, value: string, color: string, filter?: InsurancePostingRow['status']) => {
 			const c = DOM.append(cards, DOM.$('div'));
 			c.style.cssText = `flex:0 0 170px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:12px 16px;text-align:center;${filter ? 'cursor:pointer;' : ''}`;
@@ -6011,11 +6039,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// four in a different spot (QA: "same place across all 4 payment
 		// section pages").
 		const tb = DOM.append(this.contentEl, DOM.$('div'));
-		tb.style.cssText = 'display:flex;margin-bottom:12px;';
+		tb.style.cssText = PAYMENTS_SEARCH_ROW_STYLE;
 		const searchEl = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
 		searchEl.placeholder = 'Search by patient, claim, CPT, check #...';
 		searchEl.value = this._insSearch;
-		searchEl.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		searchEl.style.cssText = PAYMENTS_SEARCH_INPUT_STYLE;
 		searchEl.addEventListener('input', () => { this._insSearch = searchEl.value; this._renderInsuranceRows(scroll); });
 
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
@@ -6275,7 +6303,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		uploadStatus.style.cssText = 'font-size:11px;';
 		const docsList = DOM.append(docsWrap, DOM.$('div'));
 		docsList.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
-		this._renderEobDocsList(docsList, row);
+		this._renderEobDocsList(docsList, row, uploadStatus);
 		fileInp.addEventListener('change', async () => {
 			const file = fileInp.files && fileInp.files[0];
 			fileInp.value = '';
@@ -6294,7 +6322,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// allow-any-unicode-next-line
 			uploadStatus.textContent = `✓ "${file.name}" saved to the patient chart Documents page.`;
 			uploadStatus.style.color = '#22c55e';
-			this._renderEobDocsList(docsList, row);
+			this._renderEobDocsList(docsList, row, uploadStatus);
 		});
 
 		// Live totals + Post button.
@@ -7038,7 +7066,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		} catch { return []; }
 	}
 
-	private async _renderEobDocsList(host: HTMLElement, row: InsurancePostingRow): Promise<void> {
+	private async _renderEobDocsList(host: HTMLElement, row: InsurancePostingRow, status?: HTMLElement): Promise<void> {
 		DOM.clearNode(host);
 		const loading = DOM.append(host, DOM.$('span'));
 		loading.textContent = 'Loading documents…';
@@ -7052,12 +7080,82 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			return;
 		}
 		for (const d of docs) {
-			const chip = DOM.append(host, DOM.$('button')) as HTMLButtonElement;
-			chip.textContent = `\u{1F4C4} ${String(d['description'] ?? d['title'] ?? 'Document')}`;
+			// Chip = view (the label) + remove (the "x"). Two buttons inside one pill,
+			// so an attachment added by mistake can be taken off the claim without a
+			// detour through the patient chart's Documents page (QA 2026-08-03:
+			// "document add option but delete option is missing").
+			const chipWrap = DOM.append(host, DOM.$('div'));
+			chipWrap.style.cssText = 'display:inline-flex;align-items:center;background:rgba(59,158,221,0.08);border:1px solid rgba(59,158,221,0.35);border-radius:12px;max-width:320px;overflow:hidden;';
+			const docName = String(d['description'] ?? d['title'] ?? 'Document');
+			const chip = DOM.append(chipWrap, DOM.$('button')) as HTMLButtonElement;
+			chip.textContent = `\u{1F4C4} ${docName}`;
 			chip.title = 'View document';
-			chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(59,158,221,0.08);border:1px solid rgba(59,158,221,0.35);border-radius:12px;color:#3b9edd;cursor:pointer;font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+			chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;background:transparent;border:none;color:#3b9edd;cursor:pointer;font-size:11px;max-width:270px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 			chip.addEventListener('click', () => this._viewEobDocument(d, row.patientId));
+			const delBtn = DOM.append(chipWrap, DOM.$('button')) as HTMLButtonElement;
+			delBtn.textContent = '\u2715';
+			// allow-any-unicode-next-line
+			delBtn.title = `Delete "${docName}" — removes it from this claim and from the patient chart Documents page`;
+			delBtn.style.cssText = 'padding:4px 8px 4px 4px;background:transparent;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:11px;line-height:1;';
+			delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#ef4444'; });
+			delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--vscode-descriptionForeground)'; });
+
+			// Confirmation is INLINE — the chip turns into "Delete? / Cancel" — not a
+			// dialogService.confirm. This pane's dialogs are native message boxes that
+			// take over the window (the same reason the upload result is reported in
+			// the pane rather than a popup), which is far too heavy for taking one
+			// attachment off a claim.
+			const confirmBar = DOM.append(host, DOM.$('span'));
+			confirmBar.style.cssText = 'display:none;align-items:center;gap:6px;font-size:11px;color:var(--vscode-descriptionForeground);';
+			const armedLabel = DOM.append(confirmBar, DOM.$('span'));
+			armedLabel.textContent = 'Delete this document?';
+			const smallBtn = (label: string, color: string): HTMLButtonElement => {
+				const b = DOM.append(confirmBar, DOM.$('button')) as HTMLButtonElement;
+				b.textContent = label;
+				b.style.cssText = `padding:3px 10px;background:transparent;border:1px solid ${color};border-radius:10px;color:${color};cursor:pointer;font-size:11px;font-weight:600;`;
+				return b;
+			};
+			const yesBtn = smallBtn('Delete', '#ef4444');
+			const noBtn = smallBtn('Cancel', 'var(--vscode-descriptionForeground)');
+			const disarm = () => { confirmBar.style.display = 'none'; chipWrap.style.display = 'inline-flex'; };
+			delBtn.addEventListener('click', () => {
+				armedLabel.title = docName;
+				chipWrap.style.display = 'none';
+				confirmBar.style.display = 'inline-flex';
+			});
+			noBtn.addEventListener('click', disarm);
+			yesBtn.addEventListener('click', async () => {
+				yesBtn.disabled = true;
+				yesBtn.textContent = 'Deleting…';
+				const ok = await this._deleteEobDocument(row, d);
+				if (status) {
+					status.textContent = ok
+						// allow-any-unicode-next-line
+						? `✓ "${docName}" deleted.`
+						: `Delete of "${docName}" failed.`;
+					status.style.color = ok ? '#22c55e' : 'var(--vscode-errorForeground,#f48771)';
+				}
+				if (!ok) {
+					yesBtn.disabled = false;
+					yesBtn.textContent = 'Delete';
+					disarm();
+					return;
+				}
+				await this._renderEobDocsList(host, row, status);
+			});
 		}
+	}
+
+	/** Remove an attached EOB document from the patient chart (and so from this claim). */
+	private async _deleteEobDocument(row: InsurancePostingRow, doc: Record<string, unknown>): Promise<boolean> {
+		const id = doc['id'];
+		if (id === undefined || id === null || String(id) === '') { return false; }
+		try {
+			const res = await this.apiService.fetch(
+				`/api/fhir-resource/documents/patient/${encodeURIComponent(row.patientId)}/${encodeURIComponent(String(id))}`,
+				{ method: 'DELETE' });
+			return res.ok;
+		} catch { return false; }
 	}
 
 	/** Read the file and save it as a patient-chart DocumentReference tagged to the claim. */
@@ -7646,7 +7744,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 	private readonly _plansConfig: ClinicalEditorConfig = {
 		title: 'Payment Plans', apiPath: '/api/payments/plans',
-		searchPlaceholder: 'Search patient by name...', fixedSearchWidth: '560px',
+		searchPlaceholder: 'Search patient by name...',
+		fixedSearchWidth: PAYMENTS_SEARCH_WIDTH, searchAboveStatusTabs: true,
 		// The backend only exposes /api/payments/plans/patient/{id} for GET
 		// (a bare GET /api/payments/plans is a 405). Scope to the selected patient.
 		// The toolbar's search box IS that patient picker (see `_plansConfigLive`)
@@ -8010,7 +8109,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const available = this._creditAccounts.reduce((s, a) => s + a.available, 0);
 		const withCredit = this._creditAccounts.filter(a => a.available > 0.005).length;
 		const cards = DOM.append(this.contentEl, DOM.$('div'));
-		cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;';
+		cards.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;' + PAYMENTS_SUMMARY_BAND_STYLE;
 		const card = (label: string, value: string, color: string, hint: string) => {
 			const c = DOM.append(cards, DOM.$('div'));
 			c.title = hint;
@@ -8024,15 +8123,15 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		card('Patients Holding Credit', String(withCredit), '#f59e0b', 'Patients with a balance left to spend.');
 
 		const bar = DOM.append(this.contentEl, DOM.$('div'));
-		bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+		bar.style.cssText = PAYMENTS_SEARCH_ROW_STYLE;
 		const search = DOM.append(bar, DOM.$('input')) as HTMLInputElement;
 		search.placeholder = 'Filter by patient...';
 		search.value = this._creditFilter;
-		// Same fixed width as every other Payments tab's search box (Dashboard,
+		// Same fixed geometry as every other Payments tab's search box (Dashboard,
 		// Insurance Posting, Ledger) — this is now the page's only search box
 		// (the redundant top "Patient:" picker bar is gone; "+ Collect Credit"
 		// searches for its patient inside its own modal instead).
-		search.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		search.style.cssText = PAYMENTS_SEARCH_INPUT_STYLE;
 		const countEl = DOM.append(bar, DOM.$('span'));
 		countEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
 		search.addEventListener('input', () => { this._creditFilter = search.value; renderList(); });
@@ -8630,6 +8729,8 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			balance: Math.max(0, totalFee - totalPaid),
 			billingStatus: String(d.billingStatus ?? 'Unbilled'),
 			billedMode: String(d.billedMode ?? 'cash'),
+			/** True once _applyPaymentActivity replaced the default with a real payment's method. */
+			billedModeFromPayment: false,
 			paymentStatus: String(d.paymentStatus ?? (totalPaid <= 0 ? 'None' : totalPaid >= totalFee ? 'Paid' : 'Partial')),
 			comments: String(d.comments ?? ''),
 			// The claim number is derived from the auto-increment fee-sheet id —
@@ -8846,6 +8947,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 
 		/** Patient money already collected, per row id. */
 		const collectedByRow = new Map<Record<string, unknown>, number>();
+		/**
+		 * The method of the LATEST completed patient payment on each row — what
+		 * the Dashboard's "Billed Mode" column shows. Without this the column read
+		 * the fee sheet's `billedMode`, which no collection ever writes, so every
+		 * row stayed on its "cash" default no matter what the payment was actually
+		 * taken as (QA 2026-08-03).
+		 */
+		const methodByRow = new Map<Record<string, unknown>, { method: string; at: string }>();
 		for (const txn of txns) {
 			const desc = String(txn['description'] ?? '');
 			const status = String(txn['status'] ?? '').toLowerCase();
@@ -8881,6 +8990,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 				row.respPending = Number(row.respPending || 0) + amount;
 			} else if (status === 'completed' && amount > 0) {
 				collectedByRow.set(row, (collectedByRow.get(row) || 0) + amount);
+				const method = String(txn['paymentMethodType'] ?? '').trim().toLowerCase();
+				if (method) {
+					// ISO timestamps sort lexicographically; the id breaks ties for
+					// records posted within the same second.
+					const at = `${String(txn['collectedAt'] ?? txn['transactionDate'] ?? txn['createdAt'] ?? '')}#${String(txn['id'] ?? '')}`;
+					const prev = methodByRow.get(row);
+					if (!prev || at >= prev.at) { methodByRow.set(row, { method, at }); }
+				}
 			} else if (status === 'refunded' && amount > 0) {
 				collectedByRow.set(row, (collectedByRow.get(row) || 0) - amount);
 			}
@@ -8906,6 +9023,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const respPending = round2(Number(row.respPending || 0));
 			const assignedOutstanding = Math.max(0, round2(Number(row.respAssigned || 0) - patientPaid));
 			row.patientPortion = round2(Math.min(respPending > 0 ? respPending : assignedOutstanding, balance));
+
+			// How the visit was actually paid, straight off the payment record.
+			const collectedAs = methodByRow.get(row);
+			if (collectedAs) {
+				row.billedMode = collectedAs.method;
+				row.billedModeFromPayment = true;
+			}
 
 			if (!row.eobPosted && patientPaid <= 0) { continue; }
 			row.paymentStatus = balance <= 0 ? 'Paid' : ((patientPaid + insurancePaid) > 0 ? 'Partial' : 'None');
@@ -8978,7 +9102,7 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		const totalInsurance = this._billingRows.reduce((s, r) => s + Number(r.insurancePaid || 0), 0);
 		const totalPatientPortion = this._billingRows.reduce((s, r) => s + Number(r.patientPortion || 0), 0);
 		const cards = DOM.append(this.contentEl, DOM.$('div'));
-		cards.style.cssText = 'display:flex;gap:16px;margin-bottom:16px;';
+		cards.style.cssText = 'display:flex;gap:16px;align-items:stretch;' + PAYMENTS_SUMMARY_BAND_STYLE;
 		const card = (label: string, value: string, color: string): void => {
 			const c = DOM.append(cards, DOM.$('div'));
 			c.style.cssText = 'flex:0 0 200px;border:1px solid var(--vscode-editorWidget-border);border-radius:8px;padding:14px 18px;text-align:center;';
@@ -8999,11 +9123,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		// Ledger). The Dashboard previously had no search at all (QA: "keep the
 		// search bar... same place across all 4 payment section pages").
 		const tb = DOM.append(this.contentEl, DOM.$('div'));
-		tb.style.cssText = 'display:flex;margin-bottom:12px;';
+		tb.style.cssText = PAYMENTS_SEARCH_ROW_STYLE;
 		const searchEl = DOM.append(tb, DOM.$('input')) as HTMLInputElement;
 		searchEl.placeholder = 'Search by patient, claim #, clinician...';
 		searchEl.value = this._billingFilter;
-		searchEl.style.cssText = 'flex:0 0 560px;padding:6px 10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,#555);border-radius:6px;color:var(--vscode-input-foreground);font-size:12px;';
+		searchEl.style.cssText = PAYMENTS_SEARCH_INPUT_STYLE;
 		searchEl.addEventListener('input', () => { this._billingFilter = searchEl.value; this._renderEncounterBilling(); });
 
 		const scroll = DOM.append(this.contentEl, DOM.$('div'));
@@ -9114,13 +9238,26 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			billSel.value = String(row.billingStatus || 'Unbilled');
 			billSel.addEventListener('change', () => { row.billingStatus = billSel.value; });
 
+			// Billed Mode = how this visit was actually paid. _applyPaymentActivity
+			// stamps it from the patient's latest completed payment transaction, so
+			// changing the method on the Patient Balance tab is reflected here
+			// instead of every row reading "Cash". The full method list is offered
+			// (an unrecognised stored value is added as its own option) — a shorter
+			// one silently reset the select to its first entry.
 			const modeSel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
 			modeSel.style.cssText = inputStyle;
-			for (const opt of [['cash', 'Cash'], ['check', 'Check'], ['credit_card', 'Card'], ['ach', 'ACH']]) {
-				const o = DOM.append(modeSel, DOM.$('option')) as HTMLOptionElement; o.value = opt[0]; o.textContent = opt[1];
+			const mode = String(row.billedMode || 'cash');
+			const modes = PAYMENT_METHOD_OPTIONS.some(o => o.value === mode)
+				? PAYMENT_METHOD_OPTIONS
+				: [...PAYMENT_METHOD_OPTIONS, { value: mode, label: paymentMethodLabel(mode) }];
+			for (const opt of modes) {
+				const o = DOM.append(modeSel, DOM.$('option')) as HTMLOptionElement; o.value = opt.value; o.textContent = opt.label;
 			}
-			modeSel.value = String(row.billedMode || 'cash');
-			modeSel.addEventListener('change', () => { row.billedMode = modeSel.value; });
+			modeSel.value = mode;
+			modeSel.title = row.billedModeFromPayment
+				? `Taken from the patient's latest completed payment on this claim (${paymentMethodLabel(mode)}).`
+				: 'No payment collected on this claim yet — this is the method the charge is expected to be settled with.';
+			modeSel.addEventListener('change', () => { row.billedMode = modeSel.value; row.billedModeFromPayment = false; });
 
 			const paySel = DOM.append(r, DOM.$('select')) as HTMLSelectElement;
 			paySel.style.cssText = inputStyle;
