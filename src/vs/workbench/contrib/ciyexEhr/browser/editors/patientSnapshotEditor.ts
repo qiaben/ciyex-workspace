@@ -25,6 +25,8 @@ import { IEditFieldDef, IListColumn, openListAndFormDialog, openRecordEditDialog
 import { DEFAULT_FIELD_CONFIGS, FieldConfig, FieldDef } from './patientChartEditor.js';
 import { LAB_ORDER_FORM_FIELDS, LAB_RESULT_FORM_FIELDS } from './clinicalEditors.js';
 import { ADDRESS_LABELS, ADDRESS_PLACEHOLDERS } from '../addressFields.js';
+import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
+import { RCM_APP_SLUG } from '../rcm/rcmApiService.js';
 
 interface QuickAction {
 	icon: string;
@@ -167,6 +169,7 @@ export class PatientSnapshotEditor extends EditorPane {
 		@IDialogService private readonly dialogService: IDialogService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INativeHostService private readonly nativeHostService: INativeHostService,
+		@ICiyexInstallationsService private readonly installationsService: ICiyexInstallationsService,
 	) {
 		super(PatientSnapshotEditor.ID, group, telemetryService, themeService, storageService);
 		// Records saved in a sibling editor (the Patient Chart drawer) are
@@ -2789,6 +2792,17 @@ export class PatientSnapshotEditor extends EditorPane {
 			{ icon: 'file-symlink-file', title: 'Add Statement', onClick: () => this._openCreateModal('statements') },
 			{ icon: 'file-binary', title: 'Submit Claim', onClick: () => this._openCreateModal('claims') },
 		];
+
+		// The eligibility check needs a patient, so the palette command cannot run
+		// on its own — the snapshot is the surface that has one. Shown only for
+		// orgs on the RCM subscription, like every other RCM entry point.
+		if (this.installationsService.isInstalled(RCM_APP_SLUG)) {
+			overflowItems.push({
+				icon: 'verified', title: 'Verify Insurance Eligibility',
+				onClick: () => this.commandService.executeCommand(
+					'ciyex.rcm.verifyEligibility', this._currentPatientId, this._currentPatientName),
+			});
+		}
 		this._renderOverflowBtn(actions, overflowItems);
 	}
 

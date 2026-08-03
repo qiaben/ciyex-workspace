@@ -68,6 +68,13 @@ const CPT_CODE_TYPES = CODE_TYPES.filter(ct => ct.key !== 'ICD10');
 type BillTo = 'insurance' | 'self_pay';
 
 /**
+ * CMS place-of-service code 11 — "Office". The fee sheet captures charges for
+ * in-office encounters, and both billing paths (837P export and the RCM charge
+ * push) must claim the same place of service for the same visit.
+ */
+const PLACE_OF_SERVICE_OFFICE = '11';
+
+/**
  * Fee Sheet editor — captures the billable charges for a signed encounter and
  * pushes them to billing/payment. Mirrors the OpenEMR Fee Sheet:
  *   1. Set Price Level (sourced from Settings → Price Level)
@@ -1044,8 +1051,25 @@ export class FeeSheetEditor extends EditorPane {
 	private async _pushToRcm(): Promise<void> {
 		const procedures = this.items.filter(it => it.type !== 'ICD10');
 		if (procedures.length === 0) { return; }
-		const icdCodes = this.items.filter(it => it.type === 'ICD10').map(it => it.code).join(',');
+		const diagnoses = this.items.filter(it => it.type === 'ICD10').map(it => it.code).filter(Boolean);
+		const icdCodes = diagnoses.join(',');
+		// Every line points at every diagnosis — the same safe default the 837P
+		// export uses, refined later by the biller in the RCM claim editor.
+		const diagnosisPointers = diagnoses.map((_, i) => i + 1).join(',').slice(0, 20);
 		const today = new Date().toISOString().slice(0, 10);
+
+		// `rcm_charges.provider_npi` is NOT NULL, so posting without one fails the
+		// whole handoff on the very first line. Resolve it up front and say what
+		// to fix rather than firing requests that cannot succeed.
+		const providerNpi = await this._billingNpi();
+		if (!providerNpi) {
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: 'RCM handoff skipped (local billing unaffected): no billing NPI on file. Set one on the rendering provider, on the practice, or in Settings → Ciyex: Billing / EDI → Billing NPI, then send to billing again.',
+			});
+			return;
+		}
+
 		try {
 			const chargeIds: string[] = [];
 			for (const it of procedures) {
@@ -1053,14 +1077,17 @@ export class FeeSheetEditor extends EditorPane {
 					method: 'POST',
 					body: JSON.stringify({
 						patientId: this.patientId && this.patientId !== '_' ? this.patientId : null,
+						providerNpi,
 						cptCode: it.code,
 						icd10Codes: icdCodes || (it.justify || null),
+						diagnosisPointers: diagnosisPointers || null,
 						modifier1: it.modifiers ? it.modifiers.split(/[,\s]+/)[0] : null,
 						modifier2: it.modifiers ? it.modifiers.split(/[,\s]+/)[1] || null : null,
 						description: it.description,
 						units: it.qty,
 						chargeAmount: it.price,
 						dateOfService: today,
+						placeOfService: PLACE_OF_SERVICE_OFFICE,
 						notes: `Fee sheet ${this.feeSheetId} (Ciyex EHR)`,
 					}),
 				});
@@ -1077,6 +1104,7 @@ export class FeeSheetEditor extends EditorPane {
 			});
 			const claim = claimJson?.data;
 			if (claim?.id) {
+				await this._applyClaimIdentity(String(claim.id));
 				this.notificationService.notify({
 					severity: Severity.Info,
 					message: `Draft claim ${claim.claimNumber || claim.id} created in RCM.`,
@@ -1092,6 +1120,70 @@ export class FeeSheetEditor extends EditorPane {
 			}
 		} catch (e) {
 			this.notificationService.notify({ severity: Severity.Warning, message: `RCM handoff failed (local billing unaffected): ${e instanceof Error ? e.message : e}` });
+		}
+	}
+
+	/**
+	 * The NPI a pushed charge is billed under. `rcm_charges.provider_npi` is NOT
+	 * NULL and the converted claim validates it as the BILLING provider NPI
+	 * (PRV-001), so precedence mirrors the 837P billing loop: the
+	 * `ciyex.billing.billingNpi` override first, then the practice's own NPI.
+	 * The rendering provider is the last resort so practices that have not filled
+	 * in their billing identifiers yet still get a working handoff.
+	 *
+	 * Returns '' when nothing usable is on file. Every lookup fails soft — a
+	 * missing NPI must read as "not on file", never as a hard error.
+	 */
+	private async _billingNpi(): Promise<string> {
+		// The `npi` field holds free text in places, so only a clean 10-digit
+		// value is trusted — we must never ship a phone number as an NPI.
+		const clean = (value: unknown): string => {
+			const digits = String(value ?? '').replace(/[^0-9]/g, '');
+			return digits.length === 10 ? digits : '';
+		};
+
+		const configured = clean(this.configurationService.getValue<string>('ciyex.billing.billingNpi'));
+		if (configured) { return configured; }
+
+		const practiceNpi = clean((await this._fetchPractice()).npi);
+		if (practiceNpi) { return practiceNpi; }
+
+		if (this.renderingProvider) {
+			try {
+				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(this.renderingProvider)}`);
+				if (res.ok) {
+					const json = await res.json();
+					return clean(((json?.data ?? json) as Record<string, unknown>).npi);
+				}
+			} catch { /* no provider record — fall through to "not on file" */ }
+		}
+		return '';
+	}
+
+	/**
+	 * Name the payer and patient on a freshly converted claim. The charge
+	 * endpoint carries neither, so a claim built from charges alone arrives with
+	 * no payer and fails validation (PAY-002) — the biller would have to retype
+	 * what the fee sheet already knows. Both calls fail soft: the draft claim
+	 * exists either way and is still workable in the RCM claim editor.
+	 */
+	private async _applyClaimIdentity(claimId: string): Promise<void> {
+		const coverage = activeCoverage(this.coverages);
+		const requests: Array<[string, Record<string, string>]> = [];
+		if (coverage?.payerName) {
+			requests.push([`/api/rcm/claims/${encodeURIComponent(claimId)}/apply-coverage`, {
+				payerName: coverage.payerName,
+				subscriberId: coverage.memberId,
+				groupNumber: coverage.groupNumber,
+			}]);
+		}
+		if (this.patientName) {
+			requests.push([`/api/rcm/claims/${encodeURIComponent(claimId)}/sync-patient`, { patientName: this.patientName }]);
+		}
+		for (const [path, body] of requests) {
+			try {
+				await this.rcmApi.fetch(path, { method: 'PUT', body: JSON.stringify(body) });
+			} catch { /* claim is still usable without it */ }
 		}
 	}
 
@@ -1184,7 +1276,7 @@ export class FeeSheetEditor extends EditorPane {
 			payerName: insurance.payerName || 'UNKNOWN PAYER', payerId: insurance.payerId,
 			claimNumber: this.feeSheetId ? claimNumberForFeeSheet(this.feeSheetId) : `CLM-${Date.now()}`,
 			totalCharge: this.items.reduce((s, it) => s + it.price * it.qty, 0),
-			placeOfService: '11',
+			placeOfService: PLACE_OF_SERVICE_OFFICE,
 			dateOfService: dos,
 			renderingProviderNpi: patient.renderingNpi,
 			renderingProviderFirstName: patient.renderingFirstName,

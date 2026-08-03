@@ -96,6 +96,7 @@ const compilations = [
 	// Ciyex first-party extensions
 	'extensions/ciyex-payment-stripe/tsconfig.json',
 	'extensions/ciyex-payment-paypal/tsconfig.json',
+	'extensions/ciyex-rcm/tsconfig.json',
 	'extensions/ciyex-telehealth/tsconfig.json',
 
 	'.vscode/extensions/vscode-selfhost-test-provider/tsconfig.json',

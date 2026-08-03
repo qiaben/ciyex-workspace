@@ -21,7 +21,43 @@ import { ICiyexRcmApiService } from './rcmApiService.js';
 
 type DataRow = Record<string, unknown> & { id?: string };
 
-interface RcmMethodAction { symbol: string; label: string; method: 'POST' | 'PUT'; path: (r: DataRow) => string }
+/** One `{severity, field, code, message}` entry from a validate/scrub result. */
+interface RcmIssue { severity?: string; field?: string; message?: string }
+
+/** What an action actually did, as opposed to whether the request was accepted. */
+interface RcmActionOutcome {
+	/** True only when the claim really advanced (valid / clean / submitted). */
+	ok: boolean;
+	/** Human summary shown either way — the reasons when `ok` is false. */
+	detail: string;
+}
+
+interface RcmMethodAction {
+	symbol: string;
+	label: string;
+	method: 'POST' | 'PUT';
+	path: (r: DataRow) => string;
+	/**
+	 * Read the real outcome out of the response body. The RCM lifecycle
+	 * endpoints answer HTTP 200 for "I ran your request" and report whether it
+	 * worked in the payload — a rejected submission comes back
+	 * `200 {"success":false,"message":"Claim submission failed"}`. Without this,
+	 * `res.ok` alone reports every failure as a success.
+	 */
+	outcome: (data: Record<string, unknown>) => RcmActionOutcome;
+}
+
+/** "3 errors: Place of service is required; Billing provider NPI is required; +1 more." */
+function summarizeIssues(raw: unknown, noun: string): string {
+	const issues = (Array.isArray(raw) ? raw : []) as RcmIssue[];
+	const blocking = issues.filter(i => !i.severity || /error/i.test(i.severity));
+	const shown = (blocking.length ? blocking : issues).slice(0, 2)
+		.map(i => i.message || i.field || '').filter(Boolean);
+	const total = blocking.length || issues.length;
+	if (!total) { return `no ${noun} reported`; }
+	const more = total - shown.length;
+	return `${total} ${noun}${total === 1 ? '' : 's'}: ${shown.join('; ')}${more > 0 ? `; +${more} more` : ''}`;
+}
 
 interface RcmItem {
 	id: string;
@@ -30,7 +66,12 @@ interface RcmItem {
 	short?: string;
 	description: string;
 	color: string;
-	/** RCM list endpoint (relative `/api/rcm/...`); empty for command-only rows. */
+	/**
+	 * RCM list endpoint (relative `/api/rcm/...`); empty for command-only rows.
+	 * Every paged list sorts newest-first: these sections show only the first
+	 * page, so without a sort the claim a biller just created is buried among
+	 * hundreds of older ones and looks like it was never created at all.
+	 */
 	apiPath: string;
 	titleField: string[];
 	subtitleField?: string[];
@@ -64,9 +105,10 @@ const ITEMS: RcmItem[] = [
 		icon: '\u{1F4E5}',
 		label: 'Work Queue',
 		short: 'Queue',
+		// allow-any-unicode-next-line
 		description: 'Denials, follow-ups, today’s fixes',
 		color: '#f59e0b',
-		apiPath: '/api/rcm/work-queue?page=0&size=10',
+		apiPath: '/api/rcm/work-queue?page=0&size=10&sort=createdAt,desc',
 		titleField: ['patientName', 'claimNumber', 'description'],
 		subtitleField: ['taskType', 'priority', 'status'],
 		command: 'ciyex.rcm.openClaim',
@@ -80,18 +122,40 @@ const ITEMS: RcmItem[] = [
 		short: 'Claims',
 		description: 'Validate, scrub, submit, track',
 		color: '#06b6d4',
-		apiPath: '/api/rcm/claims?page=0&size=10',
+		apiPath: '/api/rcm/claims?page=0&size=10&sort=createdAt,desc',
 		titleField: ['claimNumber', 'patientName'],
 		subtitleField: ['payerName', 'claimStatus'],
 		command: 'ciyex.rcm.openClaim',
 		rowArgs: r => [r.id, r.claimNumber],
 		actions: [
-			// allow-any-unicode-next-line
-			{ symbol: '\u{2714}', label: 'Validate', method: 'POST', path: r => `/api/rcm/claims/${r.id}/validate` },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{1F9F9}', label: 'Scrub', method: 'POST', path: r => `/api/rcm/claims/${r.id}/scrub` },
-			// allow-any-unicode-next-line
-			{ symbol: '\u{1F4E4}', label: 'Submit', method: 'POST', path: r => `/api/rcm/claims/${r.id}/submit` },
+			{
+				// allow-any-unicode-next-line
+				symbol: '\u{2714}', label: 'Validate', method: 'POST', path: r => `/api/rcm/claims/${r.id}/validate`,
+				// `valid !== false` rather than `=== true`: matches the claim editor,
+				// so both surfaces agree on a payload that omits the flag.
+				outcome: d => d.valid !== false
+					? { ok: true, detail: 'claim is valid — ready to scrub' }
+					: { ok: false, detail: summarizeIssues(d.errors, 'error') },
+			},
+			{
+				// allow-any-unicode-next-line
+				symbol: '\u{1F9F9}', label: 'Scrub', method: 'POST', path: r => `/api/rcm/claims/${r.id}/scrub`,
+				outcome: d => {
+					const score = d.score === undefined || d.score === null ? '' : ` (score ${d.score}/100)`;
+					return d.passedScrub !== false
+						? { ok: true, detail: `clean claim${score} — ready to submit` }
+						: { ok: false, detail: `${summarizeIssues(d.issues, 'issue')}${score}` };
+				},
+			},
+			{
+				// allow-any-unicode-next-line
+				symbol: '\u{1F4E4}', label: 'Submit', method: 'POST', path: r => `/api/rcm/claims/${r.id}/submit`,
+				// Submission is the one action that must prove it happened: a claim
+				// that never reached the payer must never read as submitted.
+				outcome: d => d.submitted
+					? { ok: true, detail: `submitted via ${d.submissionMethod || 'EDI'}` }
+					: { ok: false, detail: String(d.errorMessage || 'the payer did not accept it') },
+			},
 		],
 	},
 	{
@@ -102,7 +166,7 @@ const ITEMS: RcmItem[] = [
 		short: 'Denials',
 		description: 'Denied claims to work',
 		color: '#ef4444',
-		apiPath: '/api/rcm/claims?status=DENIED&page=0&size=10',
+		apiPath: '/api/rcm/claims?status=DENIED&page=0&size=10&sort=createdAt,desc',
 		titleField: ['claimNumber', 'patientName'],
 		subtitleField: ['payerName', 'denialDate'],
 		command: 'ciyex.rcm.openClaim',
@@ -116,7 +180,7 @@ const ITEMS: RcmItem[] = [
 		short: 'ERA',
 		description: 'ERA / payment batches',
 		color: '#22c55e',
-		apiPath: '/api/rcm/payments/batches?page=0&size=10',
+		apiPath: '/api/rcm/payments/batches?page=0&size=10&sort=createdAt,desc',
 		titleField: ['batchNumber', 'payerName', 'checkNumber', 'id'],
 		subtitleField: ['totalAmount', 'status'],
 	},
@@ -128,7 +192,7 @@ const ITEMS: RcmItem[] = [
 		short: 'Stmts',
 		description: 'Patient statement batches',
 		color: '#a855f7',
-		apiPath: '/api/rcm/statements/batches?page=0&size=10',
+		apiPath: '/api/rcm/statements/batches?page=0&size=10&sort=createdAt,desc',
 		titleField: ['batchNumber', 'name', 'id'],
 		subtitleField: ['statementCount', 'status'],
 	},
@@ -369,13 +433,30 @@ export class RcmMenuPane extends ViewPane {
 	}
 
 	private async _executeAction(item: RcmItem, row: DataRow, a: RcmMethodAction): Promise<void> {
+		const claimLabel = this._getField(row, item.titleField) || 'claim';
 		try {
 			const res = await this.rcmApi.fetch(a.path(row), { method: a.method });
-			if (res.ok) {
-				this.notificationService.notify({ severity: Severity.Info, message: `${a.label} succeeded.` });
+			const payload = await res.json().catch(() => null) as { message?: string; success?: boolean; data?: Record<string, unknown> } | null;
+			if (!res.ok) {
+				this.notificationService.notify({ severity: Severity.Error, message: payload?.message || `${a.label} failed (${res.status}).` });
 			} else {
-				const detail = await res.json().catch(() => null) as { message?: string } | null;
-				this.notificationService.notify({ severity: Severity.Error, message: detail?.message || `${a.label} failed (${res.status}).` });
+				// A `success: false` envelope means the service ran the request and it
+				// did not work — the payload never gets far enough to be read.
+				const outcome: RcmActionOutcome = payload?.success === false
+					? { ok: false, detail: payload.message || 'the service rejected it' }
+					: a.outcome(payload?.data ?? {});
+				this.notificationService.notify(outcome.ok
+					? { severity: Severity.Info, message: `${a.label} — ${claimLabel}: ${outcome.detail}.` }
+					: {
+						severity: Severity.Error,
+						message: `${a.label} did not go through for ${claimLabel} — ${outcome.detail}. The claim has not moved on.`,
+						actions: row.id ? {
+							primary: [{
+								id: 'ciyex.rcm.openFailedClaim', label: 'Open Claim', tooltip: '', class: undefined, enabled: true,
+								run: () => this.commandService.executeCommand('ciyex.rcm.openClaim', String(row.id), claimLabel),
+							}],
+						} : undefined,
+					});
 			}
 		} catch {
 			this.notificationService.notify({ severity: Severity.Error, message: `${a.label} failed. Please try again.` });

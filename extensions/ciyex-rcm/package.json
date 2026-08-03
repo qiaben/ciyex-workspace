@@ -46,6 +46,23 @@
 				}
 			]
 		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "ciyexRcm",
+					"title": "Qiaben RCM",
+					"icon": "media/icon.png"
+				}
+			]
+		},
+		"views": {
+			"ciyexRcm": [
+				{
+					"id": "ciyexRcmStatus",
+					"name": "RCM Subscription"
+				}
+			]
+		},
 		"configuration": {
 			"title": "Qiaben RCM",
 			"properties": {
