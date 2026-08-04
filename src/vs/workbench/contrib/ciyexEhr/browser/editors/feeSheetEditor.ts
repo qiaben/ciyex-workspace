@@ -1061,7 +1061,7 @@ export class FeeSheetEditor extends EditorPane {
 		// `rcm_charges.provider_npi` is NOT NULL, so posting without one fails the
 		// whole handoff on the very first line. Resolve it up front and say what
 		// to fix rather than firing requests that cannot succeed.
-		const providerNpi = await this._billingNpi();
+		const { npi: providerNpi, name: providerName } = await this._billingProvider();
 		if (!providerNpi) {
 			this.notificationService.notify({
 				severity: Severity.Warning,
@@ -1078,6 +1078,10 @@ export class FeeSheetEditor extends EditorPane {
 					body: JSON.stringify({
 						patientId: this.patientId && this.patientId !== '_' ? this.patientId : null,
 						providerNpi,
+						// The claim needs a billing provider NAME too (PRV-003). Send what
+						// the practice knows rather than making RCM's credentialing roster
+						// a prerequisite for billing at all.
+						providerName: providerName || null,
 						cptCode: it.code,
 						icd10Codes: icdCodes || (it.justify || null),
 						diagnosisPointers: diagnosisPointers || null,
@@ -1124,7 +1128,8 @@ export class FeeSheetEditor extends EditorPane {
 	}
 
 	/**
-	 * The NPI a pushed charge is billed under. `rcm_charges.provider_npi` is NOT
+	 * The provider a pushed charge is billed under — NPI and name together, from
+	 * whichever source supplied them, so the two never disagree. `rcm_charges.provider_npi` is NOT
 	 * NULL and the converted claim validates it as the BILLING provider NPI
 	 * (PRV-001), so precedence mirrors the 837P billing loop: the
 	 * `ciyex.billing.billingNpi` override first, then the practice's own NPI.
@@ -1134,30 +1139,39 @@ export class FeeSheetEditor extends EditorPane {
 	 * Returns '' when nothing usable is on file. Every lookup fails soft — a
 	 * missing NPI must read as "not on file", never as a hard error.
 	 */
-	private async _billingNpi(): Promise<string> {
+	private async _billingProvider(): Promise<{ npi: string; name: string }> {
 		// The `npi` field holds free text in places, so only a clean 10-digit
 		// value is trusted — we must never ship a phone number as an NPI.
 		const clean = (value: unknown): string => {
 			const digits = String(value ?? '').replace(/[^0-9]/g, '');
 			return digits.length === 10 ? digits : '';
 		};
+		const str = (value: unknown): string => String(value ?? '').trim();
 
 		const configured = clean(this.configurationService.getValue<string>('ciyex.billing.billingNpi'));
-		if (configured) { return configured; }
+		if (configured) {
+			return { npi: configured, name: str(this.configurationService.getValue<string>('ciyex.billing.billingName')) };
+		}
 
-		const practiceNpi = clean((await this._fetchPractice()).npi);
-		if (practiceNpi) { return practiceNpi; }
+		const practice = await this._fetchPractice();
+		const practiceNpi = clean(practice.npi);
+		if (practiceNpi) { return { npi: practiceNpi, name: str(practice.name) }; }
 
 		if (this.renderingProvider) {
 			try {
 				const res = await this.apiService.fetch(`/api/providers/${encodeURIComponent(this.renderingProvider)}`);
 				if (res.ok) {
 					const json = await res.json();
-					return clean(((json?.data ?? json) as Record<string, unknown>).npi);
+					const provider = (json?.data ?? json) as Record<string, unknown>;
+					const ident = (provider.identification as { firstName?: string; lastName?: string }) || {};
+					return {
+						npi: clean(provider.npi),
+						name: `${str(ident.firstName)} ${str(ident.lastName)}`.trim(),
+					};
 				}
 			} catch { /* no provider record — fall through to "not on file" */ }
 		}
-		return '';
+		return { npi: '', name: '' };
 	}
 
 	/**

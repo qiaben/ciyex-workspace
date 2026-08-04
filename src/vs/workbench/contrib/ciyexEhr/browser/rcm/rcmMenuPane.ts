@@ -59,6 +59,44 @@ function summarizeIssues(raw: unknown, noun: string): string {
 	return `${total} ${noun}${total === 1 ? '' : 's'}: ${shown.join('; ')}${more > 0 ? `; +${more} more` : ''}`;
 }
 
+/**
+ * Work-queue task types and priorities arrive as raw enum names. The RCM web app
+ * shows them as prose, so mirror it here rather than making a biller read
+ * CLAIM_FOLLOW_UP in one product and "Claim Follow-up" in the other. Unknown
+ * values fall back to a de-underscored, title-cased form so a new task type
+ * added server-side still reads sensibly.
+ */
+const TASK_LABELS: Record<string, string> = {
+	CLAIM_FOLLOW_UP: 'Claim Follow-up',
+	DENIAL_FOLLOW_UP: 'Denial Follow-up',
+	PAYMENT_POSTING: 'Payment Posting',
+	ELIGIBILITY_CHECK: 'Eligibility Check',
+	PRIOR_AUTH: 'Prior Auth',
+	CODING_REVIEW: 'Coding Review',
+	PATIENT_BILLING: 'Patient Billing',
+	PATIENT_STATEMENT: 'Patient Statement',
+	CLAIM_REVIEW: 'Claim Review',
+	CLAIM_STATUS_CHECK: 'Claim Status Check',
+	APPEAL_DEADLINE: 'Appeal Deadline',
+	AR_FOLLOW_UP: 'A/R Follow-up',
+	SECONDARY_BILLING: 'Secondary Billing',
+	CREDENTIAL_RENEWAL: 'Credential Renewal',
+	CREDIT_BALANCE_REVIEW: 'Credit Balance Review',
+	BANK_RECONCILIATION: 'Bank Reconciliation',
+	NCCI_OVERRIDE: 'NCCI Override',
+	AI_REVIEW: 'AI Review',
+	APPEAL: 'Appeal',
+};
+
+function humanizeEnum(value: string): string {
+	const known = TASK_LABELS[value];
+	if (known) { return known; }
+	if (!/^[A-Z][A-Z0-9_]*$/.test(value)) { return value; }
+	return value.toLowerCase().split('_')
+		.map(word => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(' ');
+}
+
 interface RcmItem {
 	id: string;
 	icon: string;
@@ -408,7 +446,7 @@ export class RcmMenuPane extends ViewPane {
 		title.style.cssText = 'font-size:11px;font-weight:500;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		if (item.subtitleField) {
 			const sub = DOM.append(col, DOM.$('div'));
-			sub.textContent = item.subtitleField.map(f => this._getField(row, [f])).filter(Boolean).join(' \u{00B7} ');
+			sub.textContent = item.subtitleField.map(f => humanizeEnum(this._getField(row, [f]))).filter(Boolean).join(' \u{00B7} ');
 			sub.style.cssText = 'font-size:9px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 		}
 
