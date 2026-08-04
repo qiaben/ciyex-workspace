@@ -1109,9 +1109,13 @@ export class FeeSheetEditor extends EditorPane {
 			const claim = claimJson?.data;
 			if (claim?.id) {
 				await this._applyClaimIdentity(String(claim.id));
+				const outcome = await this._finalizeRcmClaim(String(claim.id));
+				const label = claim.claimNumber || claim.id;
 				this.notificationService.notify({
-					severity: Severity.Info,
-					message: `Draft claim ${claim.claimNumber || claim.id} created in RCM.`,
+					severity: outcome.ready ? Severity.Info : Severity.Warning,
+					message: outcome.summary
+						? `RCM claim ${label} — ${outcome.summary}.`
+						: `Draft claim ${label} created in RCM.`,
 					actions: {
 						primary: [{
 							id: 'ciyex.rcm.openCreatedClaim', label: 'Open Claim', tooltip: '', class: undefined, enabled: true,
@@ -1181,6 +1185,26 @@ export class FeeSheetEditor extends EditorPane {
 	 * what the fee sheet already knows. Both calls fail soft: the draft claim
 	 * exists either way and is still workable in the RCM claim editor.
 	 */
+	/**
+	 * Have RCM check the claim we just built, rather than leaving it in DRAFT for a
+	 * biller to find and run three sidebar actions against. The practice's own
+	 * settings decide how far it goes — validate and scrub by default, transmit only
+	 * if they have opted into that — and the answer comes back as one sentence to
+	 * show the person who pressed Send to Billing.
+	 *
+	 * Fails soft: the claim exists either way and can still be worked by hand.
+	 */
+	private async _finalizeRcmClaim(claimId: string): Promise<{ ready: boolean; summary: string }> {
+		try {
+			const res = await this.rcmApi.fetch(`/api/rcm/claims/${encodeURIComponent(claimId)}/finalize`, { method: 'POST' });
+			const json = await res.json().catch(() => null) as { message?: string; data?: { ready?: boolean; summary?: string } } | null;
+			const data = json?.data;
+			return { ready: data?.ready === true, summary: data?.summary || json?.message || '' };
+		} catch {
+			return { ready: false, summary: '' };
+		}
+	}
+
 	private async _applyClaimIdentity(claimId: string): Promise<void> {
 		const coverage = activeCoverage(this.coverages);
 		const requests: Array<[string, Record<string, string>]> = [];

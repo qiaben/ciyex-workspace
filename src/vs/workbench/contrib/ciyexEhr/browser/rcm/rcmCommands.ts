@@ -14,6 +14,7 @@ import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { ICiyexRcmApiService, CONTEXT_RCM_INSTALLED, RCM_APP_SLUG } from './rcmApiService.js';
 import { RcmDashboardEditorInput, RcmClaimEditorInput } from '../editors/ciyexEditorInput.js';
+import { activeCoverage, loadPatientCoverages } from '../editors/patientCoverage.js';
 
 /**
  * Runtime install gate shared by every RCM command. The `precondition`
@@ -98,26 +99,41 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		// Pull demographics + insurance from the EHR so the 270 request carries
-		// subscriber/payer details when the practice has them on file. Each field
-		// is optional — the RCM service fills gaps from its own patient record.
+		// Demographics come from the patient record; coverage does NOT. A patient's
+		// insurance is a FHIR Coverage resource, and `/api/patients/{id}` has never
+		// carried it — so this used to ask the payer "is this patient covered?"
+		// without naming the payer or the member, while the fee sheet two panels away
+		// read the same coverage correctly. Use the one loader that knows where it
+		// lives, so a 270 goes out complete or not at all.
 		let demo: Record<string, unknown> = {};
-		try {
-			const res = await apiService.fetch(`/api/patients/${encodeURIComponent(patientId)}`);
-			if (res.ok) {
-				const json = await res.json();
-				demo = (json?.data ?? json) as Record<string, unknown>;
-			}
-		} catch { /* proceed with what we have */ }
+		const [demoResult, coverages] = await Promise.all([
+			(async () => {
+				try {
+					const res = await apiService.fetch(`/api/patients/${encodeURIComponent(patientId)}`);
+					return res.ok ? await res.json() : null;
+				} catch { return null; }
+			})(),
+			loadPatientCoverages(apiService, String(patientId)),
+		]);
+		if (demoResult) { demo = (demoResult?.data ?? demoResult) as Record<string, unknown>; }
 
-		const insurance = (demo.insurance ?? (Array.isArray(demo.insurances) ? (demo.insurances as Record<string, unknown>[])[0] : undefined)) as Record<string, unknown> | undefined;
+		const coverage = activeCoverage(coverages);
+		if (!coverage) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: `No insurance on file for ${patientName || 'this patient'} — add their coverage before checking eligibility.`,
+			});
+			return;
+		}
+
 		const request = {
 			patientId: String(patientId),
 			patientFirstName: demo.firstName ?? undefined,
 			patientLastName: demo.lastName ?? undefined,
 			patientDob: demo.dob ?? demo.dateOfBirth ?? undefined,
-			subscriberId: insurance?.policyNumber ?? insurance?.subscriberId ?? undefined,
-			payerName: insurance?.payerName ?? insurance?.insuranceCompany ?? insurance?.companyName ?? undefined,
+			subscriberId: coverage.memberId || undefined,
+			payerName: coverage.payerName || undefined,
+			groupNumber: coverage.groupNumber || undefined,
 			serviceType: '30',
 			dateOfService: new Date().toISOString().slice(0, 10),
 		};
