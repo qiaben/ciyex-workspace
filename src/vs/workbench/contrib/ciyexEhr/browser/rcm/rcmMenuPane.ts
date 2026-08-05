@@ -242,7 +242,7 @@ const ITEMS: RcmItem[] = [
 		titleField: ['batchNumber', 'name', 'id'],
 		// `status` is dropped: the badge to the right of every row already shows it,
 		// so naming it here printed it twice.
-		subtitleField: ['statementCount', 'totalAmount'],
+		subtitleField: ['totalStatements', 'generatedDate'],
 		// Nothing in the workspace could produce a statement, so this section was
 		// permanently empty and patients with a balance were never billed for it.
 		// Generate builds the batch, fills it with the outstanding balances and
@@ -329,9 +329,11 @@ export class RcmMenuPane extends ViewPane {
 				return;
 			}
 
-			const filled = await this.rcmApi.fetchJson<{ data?: { statementCount?: number; totalAmount?: number } }>(
+			const filled = await this.rcmApi.fetchJson<{ data?: { totalStatements?: number } }>(
 				`/api/rcm/statements/batches/${encodeURIComponent(batch.id)}/populate`, { method: 'POST' });
-			const count = filled?.data?.statementCount ?? 0;
+			// `totalStatements` is what a batch actually carries — `statementCount`
+			// does not exist on it and would have read as zero every time.
+			const count = filled?.data?.totalStatements ?? 0;
 
 			await this._loadItemData(section);
 
