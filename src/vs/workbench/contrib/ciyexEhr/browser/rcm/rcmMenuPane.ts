@@ -119,6 +119,8 @@ interface RcmItem {
 	command?: string;
 	/** Fields used as (claimId, label) args when a data row is clicked. */
 	rowArgs?: (r: DataRow) => unknown[];
+	/** Button on the section header, for work that creates rows rather than acting on one. */
+	sectionAction?: { symbol: string; label: string; run: (pane: RcmMenuPane) => Promise<void> };
 	commandOnly?: boolean;
 }
 
@@ -241,6 +243,15 @@ const ITEMS: RcmItem[] = [
 		// `status` is dropped: the badge to the right of every row already shows it,
 		// so naming it here printed it twice.
 		subtitleField: ['statementCount', 'totalAmount'],
+		// Nothing in the workspace could produce a statement, so this section was
+		// permanently empty and patients with a balance were never billed for it.
+		// Generate builds the batch, fills it with the outstanding balances and
+		// renders each statement; sending remains a separate, deliberate step.
+		sectionAction: {
+			// allow-any-unicode-next-line
+			symbol: '\u{2795}', label: 'Generate statements for outstanding balances',
+			run: pane => pane.generateStatements(),
+		},
 	},
 ];
 
@@ -294,6 +305,53 @@ export class RcmMenuPane extends ViewPane {
 
 	private async _loadAllData(): Promise<void> {
 		await Promise.all(ITEMS.filter(item => !item.commandOnly).map(item => this._loadItemData(item)));
+	}
+
+	/**
+	 * Build a statement run for every patient carrying a balance, and render each one.
+	 *
+	 * Two calls, because RCM separates them: `generate-batch` creates the run and
+	 * decides who is in it, `populate` works out the lines and renders the statement.
+	 * A batch without the second step exists but has nothing in it, which is worse
+	 * than no batch at all — it reads as "statements were produced" when none were.
+	 *
+	 * Sending is deliberately NOT done here. Posting or emailing a patient is not
+	 * something a biller should trigger by clicking a plus sign.
+	 */
+	async generateStatements(): Promise<void> {
+		const section = ITEMS.find(i => i.id === 'statements')!;
+		try {
+			const created = await this.rcmApi.fetchJson<{ data?: { id?: string; batchNumber?: string } }>(
+				'/api/rcm/statements/generate-batch', { method: 'POST' });
+			const batch = created?.data;
+			if (!batch?.id) {
+				this.notificationService.notify({ severity: Severity.Warning, message: 'No statement batch was created.' });
+				return;
+			}
+
+			const filled = await this.rcmApi.fetchJson<{ data?: { statementCount?: number; totalAmount?: number } }>(
+				`/api/rcm/statements/batches/${encodeURIComponent(batch.id)}/populate`, { method: 'POST' });
+			const count = filled?.data?.statementCount ?? 0;
+
+			await this._loadItemData(section);
+
+			if (count === 0) {
+				this.notificationService.notify({
+					severity: Severity.Info,
+					message: `Batch ${batch.batchNumber || ''} created, but no patient currently has a balance to bill.`,
+				});
+				return;
+			}
+			this.notificationService.notify({
+				severity: Severity.Info,
+				message: `${count} statement${count === 1 ? '' : 's'} ready in batch ${batch.batchNumber || ''}. Review them before sending.`,
+			});
+		} catch (err) {
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: `Could not generate statements: ${err instanceof Error ? err.message : String(err)}`,
+			});
+		}
 	}
 
 	private async _loadItemData(item: RcmItem): Promise<void> {
@@ -385,6 +443,10 @@ export class RcmMenuPane extends ViewPane {
 		if (item.commandOnly) { return; }
 
 		const actionsEl = createRowActionsContainer(row);
+		if (item.sectionAction) {
+			const act = item.sectionAction;
+			createActionIconButton(actionsEl, act.symbol, act.label, () => void act.run(this));
+		}
 		createActionIconButton(actionsEl, '\u{21BB}', `Reload ${item.label}`, () => this._loadItemData(item));
 		createActionIconButton(actionsEl, isCollapsed ? '\u{203A}' : '\u{2304}', isCollapsed ? 'Expand' : 'Collapse', () => {
 			if (isCollapsed) {
