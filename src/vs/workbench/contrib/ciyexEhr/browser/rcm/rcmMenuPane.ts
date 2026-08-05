@@ -148,7 +148,7 @@ const ITEMS: RcmItem[] = [
 		color: '#f59e0b',
 		apiPath: '/api/rcm/work-queue?page=0&size=10&sort=createdAt,desc',
 		titleField: ['patientName', 'claimNumber', 'description'],
-		subtitleField: ['taskType', 'priority', 'status'],
+		subtitleField: ['claimNumber', 'taskType', 'priority'],
 		command: 'ciyex.rcm.openClaim',
 		rowArgs: r => [r.claimId, r.claimNumber],
 	},
@@ -162,7 +162,7 @@ const ITEMS: RcmItem[] = [
 		color: '#06b6d4',
 		apiPath: '/api/rcm/claims?page=0&size=10&sort=createdAt,desc',
 		titleField: ['claimNumber', 'patientName'],
-		subtitleField: ['payerName', 'claimStatus'],
+		subtitleField: ['patientName', 'payerName', 'totalCharges'],
 		command: 'ciyex.rcm.openClaim',
 		rowArgs: r => [r.id, r.claimNumber],
 		actions: [
@@ -219,8 +219,14 @@ const ITEMS: RcmItem[] = [
 		description: 'ERA / payment batches',
 		color: '#22c55e',
 		apiPath: '/api/rcm/payments/batches?page=0&size=10&sort=createdAt,desc',
-		titleField: ['batchNumber', 'payerName', 'checkNumber', 'id'],
-		subtitleField: ['totalAmount', 'status'],
+		// Lead with the claim the money is against, not the batch number: a biller
+		// looking at Insurance Payments wants to know which claim was paid. The
+		// claim and patient live on the batch's lines, hence the dotted paths.
+		titleField: ['lines.0.claimNumber', 'batchNumber', 'id'],
+		// `totalAmount` does not exist on a batch — the field is `checkAmount`, so
+		// the amount never rendered and the row showed only a status, which the
+		// badge was already displaying beside it.
+		subtitleField: ['lines.0.patientName', 'payerName', 'checkAmount'],
 	},
 	{
 		id: 'statements',
@@ -232,7 +238,9 @@ const ITEMS: RcmItem[] = [
 		color: '#a855f7',
 		apiPath: '/api/rcm/statements/batches?page=0&size=10&sort=createdAt,desc',
 		titleField: ['batchNumber', 'name', 'id'],
-		subtitleField: ['statementCount', 'status'],
+		// `status` is dropped: the badge to the right of every row already shows it,
+		// so naming it here printed it twice.
+		subtitleField: ['statementCount', 'totalAmount'],
 	},
 ];
 
@@ -415,9 +423,20 @@ export class RcmMenuPane extends ViewPane {
 		);
 	}
 
+	/**
+	 * First non-empty of the named fields. Names may be dotted paths so a row can
+	 * show something from a nested record — a payment batch keeps the claim number
+	 * and patient on its lines, and without this the biller saw a batch number and
+	 * a status and no way to tell which claim had been paid.
+	 */
 	private _getField(row: DataRow, fields: string[]): string {
 		for (const f of fields) {
-			const v = row[f];
+			const v = f.includes('.')
+				? f.split('.').reduce<unknown>((acc, key) => {
+					if (acc === null || acc === undefined) { return undefined; }
+					return (acc as Record<string, unknown>)[key];
+				}, row)
+				: row[f];
 			if (v !== undefined && v !== null && String(v).trim() !== '') { return String(v); }
 		}
 		return '';
