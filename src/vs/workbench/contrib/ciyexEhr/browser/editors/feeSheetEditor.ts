@@ -1077,6 +1077,11 @@ export class FeeSheetEditor extends EditorPane {
 					method: 'POST',
 					body: JSON.stringify({
 						patientId: this.patientId && this.patientId !== '_' ? this.patientId : null,
+						// Which visit this came from. Previously the only trace was the
+						// sentence in `notes` below, so a claim could not be reconciled
+						// against the encounter and fee sheet it was billed from.
+						encounterId: this.encounterId && this.encounterId !== '_' ? this.encounterId : null,
+						feeSheetId: this.feeSheetId !== null && this.feeSheetId !== undefined ? String(this.feeSheetId) : null,
 						providerNpi,
 						// The claim needs a billing provider NAME too (PRV-003). Send what
 						// the practice knows rather than making RCM's credentialing roster
