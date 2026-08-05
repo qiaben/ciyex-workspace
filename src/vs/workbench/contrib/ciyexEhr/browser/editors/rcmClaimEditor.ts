@@ -14,6 +14,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { RcmClaimEditorInput } from './ciyexEditorInput.js';
 import { ICiyexRcmApiService } from '../rcm/rcmApiService.js';
+import { showThemedModal, IThemedModalField } from './clinicalListEditor.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 
 interface RcmValidationIssue { severity?: string; field?: string; code?: string; message?: string; lineNumber?: number }
@@ -271,10 +272,176 @@ export class RcmClaimEditor extends EditorPane {
 			await this._refresh();
 		});
 
+		// A claim can only be paid or denied once it has actually been billed, so
+		// these two stay hidden until it has been sent. Before this the second half
+		// of the revenue cycle had no screen at all: an insurer's cheque and a
+		// denial could only be recorded by calling the API by hand.
+		if (this._hasBeenBilled()) {
+			// allow-any-unicode-next-line
+			this._actionButton('\u{1F4B5} Post Payment', '#0d9488', () => this._postInsurancePayment());
+			// allow-any-unicode-next-line
+			this._actionButton('\u{26D4} Record Denial', '#b91c1c', () => this._recordDenial());
+		}
+
 		this._actionButton('\u{21BB} Refresh Status', '#6b7280', async () => {
 			await this._refresh();
 			this.notificationService.notify({ severity: Severity.Info, message: `Claim status: ${this.claim?.claimStatus || 'unknown'}.` });
 		});
+	}
+
+	/** Has this claim been sent to a payer yet? Nothing can come back before it has. */
+	private _hasBeenBilled(): boolean {
+		if (!this.claim) { return false; }
+		if (this.claim.submittedDate || (this.claim.submissionCount ?? 0) > 0) { return true; }
+		const status = String(this.claim.claimStatus || '').toUpperCase();
+		return !['DRAFT', 'VALIDATED', 'SCRUBBED', 'READY_TO_SUBMIT', 'VOID'].includes(status);
+	}
+
+	private static _today(): string {
+		const d = new Date();
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+	}
+
+	private static _money(v: string | undefined): number {
+		const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+		return Number.isFinite(n) ? n : 0;
+	}
+
+	/**
+	 * Record what the insurer actually paid, line by line.
+	 *
+	 * The per-line split is not busywork: RCM works out the patient's share from it,
+	 * and the same figures are mirrored into the EHR ledger so the front desk collects
+	 * the remainder from the one balance they already work from.
+	 */
+	private async _postInsurancePayment(): Promise<void> {
+		const claim = this.claim;
+		if (!claim) { return; }
+		const lines = (claim.lines || []).filter(l => l.cptCode);
+
+		const fields: IThemedModalField[] = [
+			{ key: 'payerName', label: 'Payer', type: 'text', value: claim.payerName || '', required: true },
+			{ key: 'checkNumber', label: 'Cheque / EFT number', type: 'text', required: true, placeholder: 'e.g. 4417823' },
+			{ key: 'checkDate', label: 'Cheque date', type: 'date', value: RcmClaimEditor._today(), required: true },
+			{ key: 'checkAmount', label: 'Cheque amount', type: 'number', required: true, placeholder: '0.00' },
+		];
+		for (const line of lines) {
+			const cpt = String(line.cptCode);
+			const billed = line.chargeAmount ?? 0;
+			fields.push(
+				{ key: `billed_${cpt}`, label: `${cpt} — billed`, type: 'number', value: String(billed) },
+				{ key: `allowed_${cpt}`, label: `${cpt} — allowed`, type: 'number', placeholder: '0.00' },
+				{ key: `paid_${cpt}`, label: `${cpt} — paid`, type: 'number', placeholder: '0.00' },
+				{ key: `patient_${cpt}`, label: `${cpt} — patient responsibility`, type: 'number', placeholder: '0.00' },
+			);
+		}
+
+		const values = await showThemedModal({
+			title: 'Post Insurance Payment',
+			subtitle: `${claim.claimNumber || ''}${claim.patientName ? ` — ${claim.patientName}` : ''}`,
+			fields,
+			confirmLabel: 'Post Payment',
+			confirmColor: '#0d9488',
+			anchor: this.root,
+		});
+		if (!values) { return; }
+
+		const procedures = lines.map(line => {
+			const cpt = String(line.cptCode);
+			const billed = RcmClaimEditor._money(values[`billed_${cpt}`]);
+			const allowed = RcmClaimEditor._money(values[`allowed_${cpt}`]);
+			const paid = RcmClaimEditor._money(values[`paid_${cpt}`]);
+			const patient = RcmClaimEditor._money(values[`patient_${cpt}`]);
+			return {
+				cptCode: cpt,
+				billedAmount: billed,
+				allowedAmount: allowed,
+				paidAmount: paid,
+				patientResponsibility: patient,
+				// What the payer knocked off the bill and nobody owes. Derived rather
+				// than typed: a biller entering it by hand is how ledgers stop balancing.
+				adjustmentAmount: Math.max(0, Number((billed - allowed).toFixed(2))),
+			};
+		});
+
+		const res = await this.rcmApi.fetch('/api/rcm/payments/manual/insurance', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				claimId: this.claimId,
+				payerName: values.payerName,
+				checkNumber: values.checkNumber,
+				checkDate: values.checkDate,
+				checkAmount: RcmClaimEditor._money(values.checkAmount),
+				paymentMethod: 'CHECK',
+				postedBy: 'workspace',
+				procedures,
+			}),
+		});
+		const json = await res.json().catch(() => null) as { message?: string } | null;
+		if (!res.ok) {
+			this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Could not post the payment.' });
+			return;
+		}
+		this.notificationService.notify({
+			severity: Severity.Info,
+			message: `Payment posted against ${claim.claimNumber || 'the claim'}. The patient's share is now collectable in Payments.`,
+		});
+		await this._refresh();
+	}
+
+	/** Record a denial so it lands in the Denials queue with an appeal deadline. */
+	private async _recordDenial(): Promise<void> {
+		const claim = this.claim;
+		if (!claim) { return; }
+
+		const values = await showThemedModal({
+			title: 'Record Denial',
+			subtitle: `${claim.claimNumber || ''}${claim.patientName ? ` — ${claim.patientName}` : ''}`,
+			fields: [
+				{ key: 'denialCode', label: 'Denial code (CARC)', type: 'text', required: true, placeholder: 'e.g. CO-97' },
+				{ key: 'denialReason', label: 'Reason given', type: 'textarea', rows: 3, required: true },
+				{ key: 'denialDate', label: 'Date denied', type: 'date', value: RcmClaimEditor._today(), required: true },
+				{ key: 'deniedAmount', label: 'Amount denied', type: 'number', value: String(claim.balance ?? claim.totalCharges ?? 0) },
+				{
+					key: 'denialCategory', label: 'Category', type: 'select', value: 'CLINICAL',
+					options: [
+						{ label: 'Clinical', value: 'CLINICAL' },
+						{ label: 'Administrative', value: 'ADMINISTRATIVE' },
+						{ label: 'Eligibility', value: 'ELIGIBILITY' },
+						{ label: 'Coding', value: 'CODING' },
+						{ label: 'Timely filing', value: 'TIMELY_FILING' },
+					],
+				},
+			],
+			confirmLabel: 'Record Denial',
+			confirmColor: '#b91c1c',
+			anchor: this.root,
+		});
+		if (!values) { return; }
+
+		const res = await this.rcmApi.fetch(`/api/rcm/denials/claim/${encodeURIComponent(this.claimId)}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				denialCode: values.denialCode,
+				denialReason: values.denialReason,
+				denialDate: values.denialDate,
+				deniedAmount: RcmClaimEditor._money(values.deniedAmount),
+				denialCategory: values.denialCategory,
+				denialSource: 'MANUAL',
+			}),
+		});
+		const json = await res.json().catch(() => null) as { message?: string } | null;
+		if (!res.ok) {
+			this.notificationService.notify({ severity: Severity.Error, message: json?.message || 'Could not record the denial.' });
+			return;
+		}
+		this.notificationService.notify({
+			severity: Severity.Info,
+			message: `Denial recorded. ${claim.claimNumber || 'The claim'} is now in the Denials queue with an appeal deadline.`,
+		});
+		await this._refresh();
 	}
 
 	private async _refresh(): Promise<void> {
