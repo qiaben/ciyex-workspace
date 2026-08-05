@@ -289,12 +289,20 @@ export class RcmClaimEditor extends EditorPane {
 		});
 	}
 
-	/** Has this claim been sent to a payer yet? Nothing can come back before it has. */
+	/**
+	 * Could a payer have seen this claim yet?
+	 *
+	 * <p>Not the same as "we transmitted it". A practice with no clearinghouse account
+	 * files by downloading the 837 and uploading it on the payer's portal, and a
+	 * cheque comes back all the same — so gating on our own submission would leave
+	 * those practices no way to record the money. A claim that has passed scrubbing is
+	 * billable by any route, so that is where these actions open up.
+	 */
 	private _hasBeenBilled(): boolean {
 		if (!this.claim) { return false; }
 		if (this.claim.submittedDate || (this.claim.submissionCount ?? 0) > 0) { return true; }
 		const status = String(this.claim.claimStatus || '').toUpperCase();
-		return !['DRAFT', 'VALIDATED', 'SCRUBBED', 'READY_TO_SUBMIT', 'VOID'].includes(status);
+		return !['DRAFT', 'VALIDATED', 'VOID'].includes(status);
 	}
 
 	private static _today(): string {
