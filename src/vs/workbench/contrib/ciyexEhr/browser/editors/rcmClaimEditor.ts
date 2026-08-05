@@ -226,6 +226,15 @@ export class RcmClaimEditor extends EditorPane {
 			okRow.style.cssText = `padding:12px;font-size:12px;color:${ok ? '#22c55e' : '#ef4444'};font-weight:500;`;
 			return;
 		}
+		// Say why it stopped, above the issues. Without this the panel showed a
+		// "Submission Blocked" heading over a list of warnings that had not blocked
+		// anything — the real reason (no clearinghouse configured) lived only in a
+		// toast that then disappeared, so the warnings looked like the cause.
+		if (!ok && okMessage) {
+			const reason = DOM.append(box, DOM.$('div'));
+			reason.textContent = okMessage;
+			reason.style.cssText = 'padding:12px;font-size:12px;color:#ef4444;font-weight:500;border-left:3px solid #ef4444;';
+		}
 		for (const issue of issues) {
 			const row = DOM.append(box, DOM.$('div'));
 			const isError = String(issue.severity ?? 'ERROR').toUpperCase() === 'ERROR';
