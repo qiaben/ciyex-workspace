@@ -13,7 +13,7 @@ import { ICommandService, CommandsRegistry } from '../../../../../platform/comma
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
 import { ICiyexRcmApiService, CONTEXT_RCM_INSTALLED, RCM_APP_SLUG } from './rcmApiService.js';
-import { RcmDashboardEditorInput, RcmClaimEditorInput } from '../editors/ciyexEditorInput.js';
+import { RcmDashboardEditorInput, RcmClaimEditorInput, RcmRemittanceEditorInput } from '../editors/ciyexEditorInput.js';
 import { activeCoverage, loadPatientCoverages } from '../editors/patientCoverage.js';
 
 /**
@@ -68,6 +68,22 @@ registerAction2(class extends Action2 {
 		if (!ensureRcmInstalled(accessor)) { return; }
 		if (!claimId) { return; }
 		await accessor.get(IEditorService).openEditor(new RcmClaimEditorInput(String(claimId), claimLabel), { pinned: true });
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.rcm.openRemittance',
+			title: localize2('rcmOpenRemittance', "Open Remittance (RCM)"),
+			f1: false,
+			precondition: CONTEXT_RCM_INSTALLED,
+		});
+	}
+	async run(accessor: ServicesAccessor, batchId?: string, batchLabel?: string): Promise<void> {
+		if (!ensureRcmInstalled(accessor)) { return; }
+		if (!batchId) { return; }
+		await accessor.get(IEditorService).openEditor(new RcmRemittanceEditorInput(String(batchId), batchLabel), { pinned: true });
 	}
 });
 

@@ -229,6 +229,11 @@ const ITEMS: RcmItem[] = [
 		// the amount never rendered and the row showed only a status, which the
 		// badge was already displaying beside it.
 		subtitleField: ['lines.0.patientName', 'payerName', 'checkAmount'],
+		// A remittance opens for review rather than posting on the spot: it credits
+		// claims, changes what the front desk asks the patient for and can send a
+		// statement, none of which is comfortably undone.
+		command: 'ciyex.rcm.openRemittance',
+		rowArgs: r => [r.id, r.checkNumber || r.batchNumber],
 	},
 	{
 		id: 'statements',

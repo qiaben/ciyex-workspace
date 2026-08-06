@@ -38,7 +38,7 @@ import {
 	// Fee Sheet (encounter billing capture)
 	FeeSheetEditorInput,
 	// RCM (revenue cycle — gated on the ciyex-rcm marketplace install)
-	RcmDashboardEditorInput, RcmClaimEditorInput,
+	RcmDashboardEditorInput, RcmClaimEditorInput, RcmRemittanceEditorInput,
 } from './ciyexEditorInput.js';
 import { LayoutEditor } from './layoutEditor.js';
 import { EncounterEditor } from './encounterEditor.js';
@@ -82,6 +82,7 @@ import { PatientSnapshotDemoEditor } from './patientSnapshotDemoEditor.js';
 import { FeeSheetEditor } from './feeSheetEditor.js';
 import { RcmDashboardEditor } from './rcmDashboardEditor.js';
 import { RcmClaimEditor } from './rcmClaimEditor.js';
+import { RcmRemittanceEditor } from './rcmRemittanceEditor.js';
 
 const reg = Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane);
 
@@ -128,6 +129,7 @@ reg.registerEditorPane(EditorPaneDescriptor.create(FeeSheetEditor, FeeSheetEdito
 // RCM editors — Billing (RCM) module, gated on the ciyex-rcm marketplace install
 reg.registerEditorPane(EditorPaneDescriptor.create(RcmDashboardEditor, RcmDashboardEditor.ID, localize('rcmDashboard', "Billing Dashboard (RCM)")), [new SyncDescriptor(RcmDashboardEditorInput)]);
 reg.registerEditorPane(EditorPaneDescriptor.create(RcmClaimEditor, RcmClaimEditor.ID, localize('rcmClaim', "RCM Claim")), [new SyncDescriptor(RcmClaimEditorInput)]);
+reg.registerEditorPane(EditorPaneDescriptor.create(RcmRemittanceEditor, RcmRemittanceEditor.ID, localize('rcmRemittance', "Remittance")), [new SyncDescriptor(RcmRemittanceEditorInput)]);
 
 // Reports
 reg.registerEditorPane(EditorPaneDescriptor.create(ReportsEditor, ReportsEditor.ID, localize('report', "Report")), [new SyncDescriptor(ReportsEditorInput)]);

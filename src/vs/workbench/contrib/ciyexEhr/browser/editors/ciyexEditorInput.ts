@@ -244,6 +244,33 @@ export class RcmClaimEditorInput extends EditorInput {
 	}
 }
 
+/**
+ * One remittance, reviewed before any of it is posted.
+ *
+ * Posting writes to a patient's ledger, changes what the front desk asks them for
+ * and can start a statement — none of which is comfortably undone. So the claims on
+ * a remittance get read first: which patient, which visit, what the payer allowed,
+ * and whether the balance left over is the patient's at all.
+ */
+export class RcmRemittanceEditorInput extends EditorInput {
+	static readonly ID = 'workbench.input.ciyexRcmRemittance';
+	override get typeId(): string { return RcmRemittanceEditorInput.ID; }
+
+	constructor(
+		readonly batchId: string,
+		readonly batchLabel?: string,
+	) { super(); }
+
+	override getName(): string { return this.batchLabel ? `Remittance ${this.batchLabel}` : 'Remittance'; }
+	override getIcon(): ThemeIcon | undefined { return ThemeIcon.fromId('credit-card'); }
+	get resource(): URI { return URI.from({ scheme: 'ciyex-rcm', path: `/remittance/${this.batchId}` }); }
+
+	override matches(other: EditorInput | IUntypedEditorInput): boolean {
+		if (super.matches(other)) { return true; }
+		return other instanceof RcmRemittanceEditorInput && this.batchId === other.batchId;
+	}
+}
+
 export class PatientSnapshotEditorInput extends EditorInput {
 	static readonly ID = 'workbench.input.ciyexPatientSnapshot';
 	override get typeId(): string { return PatientSnapshotEditorInput.ID; }

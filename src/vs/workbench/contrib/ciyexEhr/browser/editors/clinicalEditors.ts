@@ -5829,8 +5829,14 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			const claimByRef = new Map(this._billedClaims.map(c => [normalizeClaimRef(c.claimRef), c]));
 
 			// Existing EOB postings → rows (with their per-CPT line detail).
-			const postings = txnList.filter(t => String(t['transactionType'] ?? '') === 'insurance_payment'
+			const allPostings = txnList.filter(t => String(t['transactionType'] ?? '') === 'insurance_payment'
 				|| String(t['description'] ?? '').startsWith('EOB posting'));
+			// A secondary payer pays against the SAME claim, so its posting is not a row of
+			// its own — it is the second half of the row that is already there. Left as a
+			// separate row the screen shows one claim twice and never resolves what the
+			// patient is finally left owing, which is the only figure the front desk needs.
+			const secondaryPostings = allPostings.filter(t => /secondary=1/.test(String(t['description'] ?? '')));
+			const postings = allPostings.filter(t => !/secondary=1/.test(String(t['description'] ?? '')));
 			const postedRefs = new Set<string>();
 			const postingRows: InsurancePostingRow[] = postings.map(t => {
 				const desc = String(t['description'] ?? '');
@@ -5896,6 +5902,43 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					status,
 				};
 			});
+
+			// Fold each secondary payer's posting into the claim's existing row, so the
+			// screen shows one claim adjudicated twice rather than two claims. Only what
+			// the secondary declined is ever the patient's, and that is what the row's
+			// own arithmetic works out once these are attached.
+			for (const t of secondaryPostings) {
+				const desc = String(t['description'] ?? '');
+				const notes = String(t['notes'] ?? '');
+				const ref = normalizeClaimRef((desc.match(/claim=([^;|]+)/)?.[1] || '').trim());
+				const row = postingRows.find(r => normalizeClaimRef(r.claimRef) === ref);
+				if (!row) {
+					// The primary posting has not arrived — leave it alone rather than
+					// invent a row; the money is recorded either way and a later refresh
+					// will pair them up.
+					continue;
+				}
+				const secLines = parseEobLines(notes).map(l => ({
+					code: l.code,
+					// What the primary left on this code is what the secondary was billed.
+					carried: row.lines.find(pl => pl.code === l.code)?.coinsurance ?? l.billed,
+					billed: l.billed,
+					allowed: l.allowed,
+					paid: l.paid,
+					copay: l.copay || 0,
+					deductible: l.deductible || 0,
+					coinsurance: l.coinsurance || 0,
+					writeOff: l.writeOff ?? Math.max(Math.round((l.billed - l.allowed) * 100) / 100, 0),
+				}));
+				row.secPayer = desc.match(/payer=([^;|]+)/)?.[1]?.trim() || row.secondaryPayer || '';
+				row.secCheck = desc.match(/check=([^;|]+)/)?.[1]?.trim() || '';
+				row.secDate = String(t['collectedAt'] ?? '').slice(0, 10);
+				row.secPosted = true;
+				row.secLines = secLines;
+				// The insurance side is closed once the secondary has answered, so the row
+				// leaves "Insurance Pending" and whatever is left becomes collectable.
+				row.status = 'POSTED';
+			}
 
 			// Self-pay claims have no payer, so no EOB will ever arrive for them —
 			// they must not sit in this work list forever (nor inflate the Awaiting
