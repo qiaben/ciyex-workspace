@@ -5186,6 +5186,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 	private _insLoading = false;
 	/** claimRef (normalized) of the rows currently expanded to per-CPT inputs. */
 	private readonly _insExpanded = new Set<string>();
+	/**
+	 * Claims whose posting came from RCM rather than the form. Those never went through
+	 * the form's save path, so the statement it sends was never sent.
+	 */
+	private _insRcmRefs = new Set<string>();
+	/** Claims statemented from here this session, so the action does not invite a second. */
+	private readonly _insStatementSent = new Set<string>();
 	/** claimRef (normalized) of POSTED secondary EOBs expanded to their full breakdown. */
 	private readonly _secExpanded = new Set<string>();
 	private _insSearch = '';
@@ -5837,6 +5844,11 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 			// patient is finally left owing, which is the only figure the front desk needs.
 			const secondaryPostings = allPostings.filter(t => /secondary=1/.test(String(t['description'] ?? '')));
 			const postings = allPostings.filter(t => !/secondary=1/.test(String(t['description'] ?? '')));
+			// Which postings RCM made rather than the form. Only those are missing the
+			// statement the form sends on save, so only those are offered one.
+			this._insRcmRefs = new Set(allPostings
+				.filter(t => /(?:^|\| )src=RCM/.test(String(t['notes'] ?? '')))
+				.map(t => normalizeClaimRef((String(t['description'] ?? '').match(/claim=([^;|]+)/)?.[1] || '').trim())));
 			const postedRefs = new Set<string>();
 			const postingRows: InsurancePostingRow[] = postings.map(t => {
 				const desc = String(t['description'] ?? '');
@@ -6211,6 +6223,13 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 					: ['Edit', '#0e639c'];
 			actBtn(actLabel, actColor, toggle);
 		}
+		// A posting that arrived from RCM never went through the form, so the statement
+		// the form sends on save was never sent — the patient owes money and has been
+		// told nothing. Offer it here rather than emailing on a screen refresh: an
+		// outbound patient email is not something a render pass should decide to do.
+		if (row.txnId && this._rowNeedsStatement(row)) {
+			actBtn('Send statement', '#0ea5e9', () => this._sendStatementForRow(row));
+		}
 		if (row.txnId) {
 			actBtn('Delete', '#a11', async () => {
 				const c = await this.dialogService.confirm({ message: 'Delete this insurance posting?', type: 'warning', primaryButton: 'Delete' });
@@ -6219,6 +6238,60 @@ export class PaymentsEditor extends ClinicalListEditorBase {
 		}
 
 		if (expanded) { this._renderInsuranceExpansion(scroll, row); }
+	}
+
+	/**
+	 * Whether this row is a posting that owes the patient a statement.
+	 *
+	 * True only for a posting made outside the form — one RCM wrote — that has settled
+	 * with the insurers, leaves the patient owing something, and has not been statemented
+	 * yet. Postings made in the form already send their statement on save; the marker
+	 * written by {@link _sendStatementForRow} is what stops a second one going out.
+	 */
+	private _rowNeedsStatement(row: InsurancePostingRow): boolean {
+		if (row.status !== 'POSTED' || this._insStatementSent.has(normalizeClaimRef(row.claimRef))) { return false; }
+		if (!this._rowIsFromRcm(row)) { return false; }
+		return this._rowPatientOwes(row) > 0.005;
+	}
+
+	/** Postings RCM made carry `src=RCM` in their notes; the form's do not. */
+	private _rowIsFromRcm(row: InsurancePostingRow): boolean {
+		return this._insRcmRefs.has(normalizeClaimRef(row.claimRef));
+	}
+
+	/** What the patient is left owing: copay + deductible, plus the secondary's remainder. */
+	private _rowPatientOwes(row: InsurancePostingRow): number {
+		const base = (row.copay || 0) + (row.deductible || 0);
+		const secRemainder = row.secPosted
+			? row.secLines.reduce((s, l) => s + secondaryLineOwes(l), 0)
+			: 0;
+		return Math.round((base + secRemainder) * 100) / 100;
+	}
+
+	/** Send the statement for a posting RCM made, then remember it went. */
+	private async _sendStatementForRow(row: InsurancePostingRow): Promise<void> {
+		const owed = this._rowPatientOwes(row);
+		const confirmed = await this.dialogService.confirm({
+			message: `Email ${row.patientName || 'this patient'} a statement for $${owed.toFixed(2)}?`,
+			detail: `Claim ${row.claimRef} has settled with the insurer${row.secPosted ? 's' : ''} and this is what remains.`,
+			primaryButton: 'Send',
+		});
+		if (!confirmed.confirmed) { return; }
+
+		const paidSec = this._rowSecPaid(row);
+		const emailed = await this._sendClaimStatement(
+			row,
+			row.secPosted ? { payer: row.secPayer, check: row.secCheck, paid: paidSec, remainder: owed } : undefined,
+		);
+		if (emailed) {
+			// Remembered for this session so the button does not invite a second send.
+			// The authoritative record is the notification log the endpoint writes.
+			this._insStatementSent.add(normalizeClaimRef(row.claimRef));
+		}
+		this._showPayToast(emailed
+			? `Statement emailed to ${row.patientName || 'the patient'} for $${owed.toFixed(2)}.`
+			: 'The statement could not be emailed — check the patient\'s email and Settings > Notifications.');
+		this._renderInsurancePosting();
 	}
 
 	/**

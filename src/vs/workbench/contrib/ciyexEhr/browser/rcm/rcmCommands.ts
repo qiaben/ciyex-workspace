@@ -8,7 +8,8 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { localize2 } from '../../../../../nls.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ICommandService, CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { ICiyexApiService } from '../ciyexApiService.js';
 import { ICiyexInstallationsService } from '../ciyexInstallationsService.js';
@@ -84,6 +85,77 @@ registerAction2(class extends Action2 {
 		if (!ensureRcmInstalled(accessor)) { return; }
 		if (!batchId) { return; }
 		await accessor.get(IEditorService).openEditor(new RcmRemittanceEditorInput(String(batchId), batchLabel), { pinned: true });
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'ciyex.rcm.uploadEra',
+			title: localize2('rcmUploadEra', "Upload Remittance File (RCM)"),
+			f1: true,
+			precondition: CONTEXT_RCM_INSTALLED,
+		});
+	}
+	/**
+	 * Take in an 835 the practice downloaded from a payer or clearinghouse portal.
+	 *
+	 * Until now a remittance could only be loaded by calling the API, so a practice
+	 * filing on a payer portal — which is most of them until a clearinghouse account
+	 * exists — had no way to get what came back into the system at all. The uploaded file
+	 * lands as a batch and opens in the review screen, the same as one pulled
+	 * automatically: nothing posts until someone has read it.
+	 */
+	async run(accessor: ServicesAccessor): Promise<void> {
+		if (!ensureRcmInstalled(accessor)) { return; }
+		const rcmApi = accessor.get(ICiyexRcmApiService);
+		const notifications = accessor.get(INotificationService);
+		const fileDialogs = accessor.get(IFileDialogService);
+		const fileService = accessor.get(IFileService);
+
+		const picked = await fileDialogs.showOpenDialog({
+			title: 'Choose a remittance file (835)',
+			canSelectMany: false,
+			filters: [{ name: 'Remittance', extensions: ['835', 'edi', 'txt', 'era'] }, { name: 'All files', extensions: ['*'] }],
+		});
+		if (!picked || picked.length === 0) { return; }
+
+		const uri = picked[0];
+		const fileName = uri.path.split('/').pop() || 'remittance.835';
+		try {
+			const content = await fileService.readFile(uri);
+			const era = content.value.toString();
+			if (!/\bCLP\*/.test(era)) {
+				notifications.notify({
+					severity: Severity.Warning,
+					message: `${fileName} does not look like an 835 remittance — no claim segments found in it.`,
+				});
+				return;
+			}
+
+			// multipart/form-data: the endpoint takes the file, not a JSON string.
+			const form = new FormData();
+			form.append('file', new Blob([era], { type: 'application/octet-stream' }), fileName);
+			const res = await rcmApi.fetch('/api/rcm/payments/era/upload', { method: 'POST', body: form });
+			const payload = await res.json().catch(() => null) as { data?: { id?: string; batchNumber?: string; totalClaims?: number }; message?: string } | null;
+			if (!res.ok) {
+				throw new Error(payload?.message || `Upload failed (${res.status}).`);
+			}
+			const batch = payload?.data;
+			notifications.notify({
+				severity: Severity.Info,
+				message: `${fileName} loaded — ${batch?.totalClaims ?? 0} claim(s) to review. Nothing has been posted yet.`,
+			});
+			if (batch?.id) {
+				await accessor.get(IEditorService).openEditor(
+					new RcmRemittanceEditorInput(String(batch.id), batch.batchNumber), { pinned: true });
+			}
+		} catch (e) {
+			notifications.notify({
+				severity: Severity.Error,
+				message: `Could not load ${fileName}: ${e instanceof Error ? e.message : e}`,
+			});
+		}
 	}
 });
 
