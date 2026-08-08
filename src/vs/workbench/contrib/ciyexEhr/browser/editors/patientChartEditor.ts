@@ -79,15 +79,18 @@ const DEFAULT_CATEGORIES: ChartCategory[] = [
 			{ key: 'forms', label: 'Forms', icon: 'FileText', emoji: '\u{1F4DD}', position: 2, visible: true, display: 'list', panel: 'main', fhirResources: ['DocumentReference'] },
 			{
 				key: 'vitals', label: 'Vitals', icon: 'Activity', emoji: '\u{2764}\u{FE0F}', position: 3, visible: true, display: 'list', panel: 'main', fhirResources: [], apiPath: '/api/fhir-resource/vitals',
+				// Same order + naming as the flowsheet and the snapshot's vitals card
+				// (BP → Heart Rate → Temperature → SpO2 → Respiratory Rate → Weight →
+				// Height → BMI). `temperatureC` holds Fahrenheit despite the key name.
 				columns: [
 					{ key: 'recordedAt', label: 'Recorded', aliases: ['recordedAt', 'effectiveDateTime', 'recordedDate', 'dateRecorded'] },
 					{ key: 'bpSystolic', label: 'BP Sys', aliases: ['bpSystolic', 'systolicBP', 'systolic'] },
 					{ key: 'bpDiastolic', label: 'BP Dia', aliases: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
-					{ key: 'pulse', label: 'Pulse', aliases: ['pulse', 'heartRate', 'hr'] },
-					{ key: 'respiration', label: 'Resp', aliases: ['respiration', 'respiratoryRate', 'rr'] },
+					{ key: 'pulse', label: 'Heart Rate', aliases: ['pulse', 'heartRate', 'hr'] },
 					// allow-any-unicode-next-line
-					{ key: 'temperatureC', label: 'Temp (°C)', aliases: ['temperatureC', 'temperature', 'temp'] },
+					{ key: 'temperatureC', label: 'Temp (°F)', aliases: ['temperatureC', 'temperature', 'temp'] },
 					{ key: 'oxygenSaturation', label: 'SpO2', aliases: ['oxygenSaturation', 'spo2', 'o2sat'] },
+					{ key: 'respiration', label: 'Respiratory Rate', aliases: ['respiration', 'respiratoryRate', 'rr'] },
 					{ key: 'weightKg', label: 'Wt (kg)', aliases: ['weightKg', 'weight'] },
 					{ key: 'heightCm', label: 'Ht (cm)', aliases: ['heightCm', 'height'] },
 					{ key: 'bmi', label: 'BMI' },
@@ -711,18 +714,22 @@ export const DEFAULT_FIELD_CONFIGS: Record<string, FieldConfig> = {
 		tabKey: 'vitals',
 		sections: [
 			{
+				// Field order + labels match the snapshot's Vitals card and encounter
+				// form (BP → Heart Rate → Temperature → SpO2 → Respiratory Rate →
+				// Weight → Height → BMI) so the same reading is entered and read
+				// under the same names everywhere. `temperatureC` stores Fahrenheit.
 				key: 'measurements', title: 'Vital Signs', columns: 3, visible: true, collapsible: false, fields: [
+					{ key: 'bpSystolic', label: 'BP Systolic (mmHg)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'bpDiastolic', label: 'BP Diastolic (mmHg)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'pulse', label: 'Heart Rate (bpm)', type: 'number', required: true, placeholder: '0' },
+					// allow-any-unicode-next-line
+					{ key: 'temperatureC', label: 'Temperature (°F)', type: 'number', required: true, placeholder: '0.0' },
+					{ key: 'oxygenSaturation', label: 'SpO2 (%)', type: 'number', required: true, placeholder: '0' },
+					{ key: 'respiration', label: 'Respiratory Rate (/min)', type: 'number', required: true, placeholder: '0' },
 					{ key: 'weightKg', label: 'Weight (kg)', type: 'number', required: true, placeholder: '0.0' },
 					{ key: 'heightCm', label: 'Height (cm)', type: 'number', required: true, placeholder: '0.0' },
 					// allow-any-unicode-next-line
 					{ key: 'bmi', label: 'BMI (kg/m²)', type: 'number', placeholder: 'Auto-calculated', localOnly: true },
-					{ key: 'bpSystolic', label: 'BP Systolic (mmHg)', type: 'number', required: true, placeholder: '0' },
-					{ key: 'bpDiastolic', label: 'BP Diastolic (mmHg)', type: 'number', required: true, placeholder: '0' },
-					{ key: 'pulse', label: 'Pulse (/min)', type: 'number', required: true, placeholder: '0' },
-					{ key: 'respiration', label: 'Respiration (breaths/min)', type: 'number', required: true, placeholder: '0' },
-					// allow-any-unicode-next-line
-					{ key: 'temperatureC', label: 'Temperature (°C)', type: 'number', required: true, placeholder: '0.0' },
-					{ key: 'oxygenSaturation', label: 'O\u{2082} Saturation (%)', type: 'number', required: true, placeholder: '0' },
 					// `localOnly` so the merge always appends Notes even when the
 					// backend vitals config ships it only under the dropped
 					// "Recording Info" / vitals-meta section (QA issue 2: Notes
@@ -5060,17 +5067,32 @@ export class PatientChartEditor extends EditorPane {
 			const bmi = w / (m * m);
 			return Number.isFinite(bmi) ? bmi.toFixed(1) : '';
 		};
+		// Row order and labels mirror the Patient Snapshot's Today's Vitals card
+		// (BP → Heart Rate → Temperature → SpO2 → Respiratory Rate → Weight →
+		// Height → BMI) so the same reading reads the same way on both surfaces.
+		// The chart used a different order AND different names for three of them —
+		// "Pulse" here vs "Heart Rate" there, "Respiration" vs "Respiratory Rate",
+		// "O2 Saturation" vs "SpO2" — which is what QA flagged. The underlying keys
+		// are unchanged; only the presentation is unified.
+		//
+		// BP stays split across two rows: a flowsheet trends each measurement on
+		// its own line, so systolic and diastolic can't share one cell the way the
+		// snapshot's single "120/80" tile does.
 		const rows: Array<{ label: string; keys: string[]; unit?: string; compute?: (rec: Record<string, unknown>) => string }> = [
+			{ label: 'BP Systolic', keys: ['bpSystolic', 'systolicBP', 'systolic'] },
+			{ label: 'BP Diastolic', keys: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
+			{ label: 'Heart Rate', keys: ['pulse', 'heartRate', 'hr'] },
+			// `temperatureC` is a misnomer inherited from the FHIR mapping — the
+			// stored values are Fahrenheit (97 to 99 range), which is why the
+			// column read "98 C". Labelled F here to match the snapshot, the
+			// encounter form and the data itself.
+			// allow-any-unicode-next-line
+			{ label: 'Temperature', keys: ['temperatureC', 'temperature', 'temp'], unit: ' °F' },
+			{ label: 'SpO2', keys: ['oxygenSaturation', 'spo2', 'o2sat'], unit: '%' },
+			{ label: 'Respiratory Rate', keys: ['respiration', 'respiratoryRate', 'rr'] },
 			{ label: 'Weight', keys: ['weightKg', 'weight'], unit: ' kg' },
 			{ label: 'Height', keys: ['heightCm', 'height'], unit: ' cm' },
 			{ label: 'BMI', keys: ['bmi'], compute: computeBmi },
-			{ label: 'BP Systolic', keys: ['bpSystolic', 'systolicBP', 'systolic'] },
-			{ label: 'BP Diastolic', keys: ['bpDiastolic', 'diastolicBP', 'diastolic'] },
-			{ label: 'Pulse', keys: ['pulse', 'heartRate', 'hr'] },
-			{ label: 'Respiration', keys: ['respiration', 'respiratoryRate', 'rr'] },
-			// allow-any-unicode-next-line
-			{ label: 'Temperature', keys: ['temperatureC', 'temperature', 'temp'], unit: ' °C' },
-			{ label: 'O2 Saturation', keys: ['oxygenSaturation', 'spo2', 'o2sat'], unit: '%' },
 			{ label: 'Notes', keys: ['notes', 'note'] },
 		];
 

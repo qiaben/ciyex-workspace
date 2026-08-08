@@ -3757,7 +3757,13 @@ export class PatientSnapshotEditor extends EditorPane {
 		// Status dropdown is editable in every state, so Edit Details must match.
 		mkBtn('edit', 'Edit Details', () => void this._openApptEdit(apt));
 		if (isTele) {
-			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand('ciyex.openTelehealth', appointmentId, this._currentPatientName, String(apt.providerName || apt.practitionerName || '')));
+			// Pass the room/status we already hold so the command's room gate
+			// ("Assign a room first") answers without a round trip.
+			mkBtn('device-camera-video', 'Video Call', () => void this.commandService.executeCommand(
+				'ciyex.openTelehealth', appointmentId, this._currentPatientName,
+				String(apt.providerName || apt.practitionerName || ''),
+				{ room: String(apt.room || apt.roomName || ''), status: String(apt.status || apt.appointmentStatus || '') },
+			));
 		}
 
 		// NOTE: Check In, Assign Room and Record Vitals are NOT duplicated here —

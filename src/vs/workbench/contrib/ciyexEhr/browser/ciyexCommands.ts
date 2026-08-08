@@ -766,6 +766,54 @@ registerAction2(class extends Action2 {
  */
 const TELEHEALTH_EXT_COMMAND = 'ciyex-telehealth.openSession';
 
+/**
+ * The appointment fields the room gate reads. Callers that already hold the
+ * appointment record pass it through so the gate costs nothing; callers that
+ * don't (or that pass an incomplete record) fall back to a list lookup.
+ */
+export interface ITelehealthVisitContext {
+	room?: string;
+	status?: string;
+}
+
+/** An appointment in one of these states is finished — its room requirement is
+ *  behind it, so rejoining/reviewing the session is never blocked. Mirrors the
+ *  Patient Snapshot's `roomAssigned = !!room || completed` rule. */
+const TELEHEALTH_TERMINAL_STATUSES = new Set(['completed', 'fulfilled', 'finished']);
+
+function hasRoom(ctx: ITelehealthVisitContext | undefined): boolean {
+	if (!ctx) { return false; }
+	if (String(ctx.room ?? '').trim()) { return true; }
+	return TELEHEALTH_TERMINAL_STATUSES.has(String(ctx.status ?? '').trim().toLowerCase());
+}
+
+/**
+ * Resolve an appointment's room from the appointment list.
+ *
+ * There is no `GET /api/appointments/{id}` (it answers "Request method 'GET' is
+ * not supported"), so the row has to be found in a list page — the same
+ * resolution the Patient Snapshot does. Returns undefined when the appointment
+ * can't be resolved at all, which the caller treats as "don't block": a backend
+ * hiccup must not make video visits unreachable.
+ */
+async function _fetchVisitContext(apiService: ICiyexApiService, appointmentId: string): Promise<ITelehealthVisitContext | undefined> {
+	try {
+		const res = await apiService.fetch('/api/appointments?page=0&size=500');
+		if (!res.ok) { return undefined; }
+		const json = await res.json();
+		const raw = json?.data?.content || json?.data || json?.content || json || [];
+		const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+		const match = rows.find(a => String(a.id ?? a.appointmentId ?? '') === appointmentId);
+		if (!match) { return undefined; }
+		return {
+			room: String(match.room ?? match.roomName ?? ''),
+			status: String(match.status ?? match.appointmentStatus ?? ''),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
@@ -774,12 +822,41 @@ registerAction2(class extends Action2 {
 			f1: false,
 		});
 	}
-	async run(accessor: ServicesAccessor, appointmentId?: string | number, patientName?: string, providerName?: string): Promise<void> {
+	async run(accessor: ServicesAccessor, appointmentId?: string | number, patientName?: string, providerName?: string, visitContext?: ITelehealthVisitContext): Promise<void> {
 		if (!appointmentId) { return; }
 
 		const notifications = accessor.get(INotificationService);
 		const commandService = accessor.get(ICommandService);
 		const authService = accessor.get(ICiyexAuthService);
+		const apiService = accessor.get(ICiyexApiService);
+
+		// Room gate. A virtual visit still runs out of a room (the provider takes
+		// the call from one), and Assign Room is step 3 of the visit workflow — but
+		// the Video Call action was live from the moment the appointment was booked,
+		// so staff could drop into a session for a patient who had not been checked
+		// in or roomed. Block it and say what's missing.
+		//
+		// Only an appointment we could actually READ is blocked: if the lookup
+		// fails or the row can't be found, the call goes through rather than
+		// leaving telehealth unreachable on a backend blip.
+		let ctx = visitContext;
+		if (!hasRoom(ctx)) {
+			// Re-read before blocking. The caller's row can predate the assignment
+			// (the appointment list lags a room that was just saved), and a false
+			// block is worse than one extra request on a path that is about to
+			// show an error anyway.
+			ctx = await _fetchVisitContext(apiService, String(appointmentId)) ?? ctx;
+		}
+		if (ctx && !hasRoom(ctx)) {
+			notifications.notify({
+				severity: Severity.Error,
+				message: localize(
+					'telehealthNeedsRoom',
+					"Assign a room for this visit first — the video call opens once the appointment has a room.",
+				),
+			});
+			return;
+		}
 
 		// Single gate: invoke the extension command directly. executeCommand
 		// triggers `onCommand:` activation (VS Code auto-generates this from

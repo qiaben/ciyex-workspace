@@ -538,7 +538,11 @@ export class DocScanningEditor extends EditorPane {
 			if (doc.ocrStatus === 'completed') {
 				this._actionBtn(actions, 'codicon-eye', 'View OCR Text', () => this._showOcrText(doc));
 			}
-			if (doc.ocrStatus === 'failed' || doc.ocrStatus === 'pending') {
+			// 'processing' is included deliberately: rows uploaded before extraction
+			// ran server-side are stuck on that status with no way forward, and a
+			// re-run is what unsticks them. 'not_applicable' is excluded — re-running
+			// an image scan with no OCR engine would land on the same answer.
+			if (doc.ocrStatus === 'failed' || doc.ocrStatus === 'pending' || doc.ocrStatus === 'processing') {
 				this._actionBtn(actions, 'codicon-sync', 'Run OCR', () => { void this._reOcr(doc); });
 			}
 			this._actionBtn(actions, 'codicon-cloud-download', 'Download', () => { void this._download(doc); });
@@ -582,20 +586,31 @@ export class DocScanningEditor extends EditorPane {
 		return btn;
 	}
 
+	/** Run (or re-run) text extraction for a row. The endpoint now returns the
+	 *  FINISHED record — extraction is synchronous server-side — so the row lands
+	 *  on its terminal status (Completed / Failed / N/A) in one round trip. It
+	 *  used to flip the row to "processing" optimistically and hope a worker
+	 *  finished it; there was no worker, so every row parked on Processing and
+	 *  the other four status filters matched nothing. */
 	private async _reOcr(doc: ScannedDocument): Promise<void> {
 		try {
 			const res = await this.apiService.fetch(`/api/document-scanning/${doc.id}/ocr`, { method: 'POST' });
-			if (res.ok) {
-				// Optimistic: flip the row to "processing" immediately, reconcile in background.
-				this.documents = this.documents.map(d => d.id === doc.id ? { ...d, ocrStatus: 'processing' } : d);
+			if (!res.ok) { this.notificationService.error('Failed to run OCR'); return; }
+			const json = await res.json();
+			const updated = (json?.data ?? json) as ScannedDocument | undefined;
+			const status = updated?.ocrStatus;
+			if (status) {
+				this.documents = this.documents.map(d => d.id === doc.id ? { ...d, ...updated } : d);
 				this._renderTable();
-				this.notificationService.info('OCR processing started');
-				void this._loadData();
-			} else {
-				this.notificationService.error('Failed to start OCR');
 			}
+			this.notificationService.info(
+				status === 'completed' ? 'Text extracted from the document'
+					: status === 'not_applicable' ? 'No text could be extracted — this file type needs an OCR engine'
+						: status === 'failed' ? 'The document could not be read'
+							: 'OCR processing started');
+			void this._loadData();
 		} catch {
-			this.notificationService.error('Failed to start OCR');
+			this.notificationService.error('Failed to run OCR');
 		}
 	}
 

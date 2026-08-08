@@ -109,6 +109,16 @@ interface ReportDef {
 	 */
 	enrichProvider?: boolean;
 	/**
+	 * When true, replace each encounter row's `type` with the linked APPOINTMENT's
+	 * visit type (Telehealth, Follow-Up, Consultation …). The encounter's own
+	 * `type` is the FHIR ActEncounterCode class — "AMB"/"VR" — which renders as
+	 * "Ambulatory"/"Virtual" and tells a reader nothing about the visit that was
+	 * booked. The Patient Snapshot's Encounter History already prefers the
+	 * appointment's type for exactly this reason; the Encounter Summary report
+	 * did not, so its Visit Type column read "Ambulatory" for every row.
+	 */
+	enrichVisitType?: boolean;
+	/**
 	 * When true, derive A/R aging fields client-side from each payment row. The
 	 * backend exposes no A/R ledger (`/api/invoices`, `/api/*ar-aging` all 500),
 	 * so the days0_30 / days31_60 / days61_90 / days90Plus buckets, `payerDisplay`
@@ -316,6 +326,7 @@ function getReportDef(key: string): ReportDef {
 		case 'encounter-summary':
 			return {
 				apiPath: '/api/encounters/report/encounterAll?page=0&size=1000',
+				enrichVisitType: true,
 				columns: [
 					{ key: 'startDate', label: 'Date' },
 					{ key: 'patientRefDisplay', label: 'Patient' },
@@ -1759,6 +1770,7 @@ export class ReportsEditor extends EditorPane {
 			if (this.reportDef.deriveCptFromClaimLines) { await this._deriveCptFromClaimLines(); }
 			if (this.reportDef.enrichInsurance) { await this._enrichInsurance(); }
 			if (this.reportDef.enrichProvider) { await this._enrichProvider(); }
+			if (this.reportDef.enrichVisitType) { await this._enrichVisitType(); }
 			if (this.reportDef.enrichPatient) { await this._enrichPatient(); }
 			if (this.reportDef.enrichEncounterStats) { await this._enrichEncounterStats(); }
 			if (this.reportDef.enrichImmunizations) { await this._enrichImmunizations(); }
@@ -1938,6 +1950,83 @@ export class ReportsEditor extends EditorPane {
 				if (prov) { item.providerDisplay = prov; item.providerName = prov; }
 			}
 		} catch { /* encounters endpoint may be unavailable — leave provider as-is */ }
+	}
+
+	/**
+	 * Rewrite the Encounter Summary's Visit Type from the FHIR encounter class to
+	 * the APPOINTMENT's visit type — "Telehealth" / "Follow-Up" / "Consultation"
+	 * instead of "Ambulatory" for every row.
+	 *
+	 * Matching is by the appointment's `encounterId` first (authoritative), then
+	 * by patient + calendar day, because the bulk appointment list lags the FHIR
+	 * index and frequently ships rows with no `encounterId` yet. That two-tier
+	 * lookup is the same one the Patient Snapshot's Encounter History uses; the
+	 * day key here is additionally scoped to the patient, since this report spans
+	 * the whole practice rather than one chart. An encounter with no matching
+	 * appointment (walk-in, back-dated chart entry) keeps its class label.
+	 */
+	private async _enrichVisitType(): Promise<void> {
+		// Visit type off an appointment row: a plain string, or a FHIR
+		// CodeableConcept flattened by _normalizeRow's stringifier.
+		const apptType = (a: Record<string, unknown>): string => {
+			for (const v of [a.visitType, a.appointmentType, a.type]) {
+				if (typeof v === 'string' && v.trim()) { return v.trim(); }
+				if (v && typeof v === 'object') {
+					const cc = v as { text?: string; coding?: Array<{ display?: string; code?: string }> };
+					const t = cc.text || cc.coding?.[0]?.display || cc.coding?.[0]?.code;
+					if (t) { return t; }
+				}
+			}
+			return '';
+		};
+		const dayKey = (raw: unknown): string => {
+			const s = String(raw ?? '').trim();
+			if (!s) { return ''; }
+			// Dates arrive as "2026-08-04" or "2026-08-04T13:00:00" — both start with
+			// the calendar day, so no Date parsing (and no timezone shift) is needed.
+			if (/^\d{4}-\d{2}-\d{2}/.test(s)) { return s.slice(0, 10); }
+			const t = Date.parse(s);
+			if (isNaN(t)) { return ''; }
+			const d = new Date(t);
+			return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+		};
+
+		try {
+			const res = await this.apiService.fetch('/api/appointments?page=0&size=1000');
+			if (!res.ok) { return; }
+			const json = await res.json();
+			const raw = json?.data?.content || json?.data || json?.content || json || [];
+			const appts = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+
+			const byEncounter = new Map<string, string>();
+			const byPatientDay = new Map<string, string>();
+			for (const a of appts) {
+				const t = apptType(a);
+				if (!t) { continue; }
+				const encId = String(a.encounterId ?? '').trim();
+				if (encId && !byEncounter.has(encId)) { byEncounter.set(encId, t); }
+				const pid = String(a.patientId ?? a.encounterPatientId ?? '').trim();
+				const day = dayKey(a.appointmentStartDate ?? a.start ?? a.startTime ?? a.date);
+				if (pid && day) {
+					const key = `${pid}|${day}`;
+					if (!byPatientDay.has(key)) { byPatientDay.set(key, t); }
+				}
+			}
+			if (byEncounter.size === 0 && byPatientDay.size === 0) { return; }
+
+			for (const item of this.items) {
+				const encId = (item.id || item.encounterId || item.fhirId || '').trim();
+				const pid = (item.patientId || '').trim();
+				const day = dayKey(item.startDate || item.encounterDate || item.start);
+				const t = (encId && byEncounter.get(encId))
+					|| (pid && day ? byPatientDay.get(`${pid}|${day}`) : undefined);
+				if (!t) { continue; }
+				item.type = t;
+				// `visitType` filter and the "By Visit Type" chart both read
+				// appointmentType first — keep them on the same value as the column.
+				item.appointmentType = t;
+			}
+		} catch { /* appointments endpoint unavailable — keep the encounter class label */ }
 	}
 
 	/**

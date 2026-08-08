@@ -644,6 +644,9 @@ export class AppointmentsSidebarPane extends ViewPane {
 			String(apt.id),
 			patientNameOf(apt),
 			providerNameOf(apt),
+			// Room/status ride along so the command's "assign a room first" gate
+			// resolves without re-fetching the appointment.
+			{ room: apt.room, status: apt.status },
 		);
 	}
 

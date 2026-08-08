@@ -1523,6 +1523,9 @@ export class AppointmentsEditor extends EditorPane {
 			String(row.id),
 			row.patientName || '',
 			row.providerName || '',
+			// Room/status ride along so the command's "assign a room first" gate
+			// resolves without re-fetching the appointment.
+			{ room: row.room, status: row.status },
 		);
 	}
 

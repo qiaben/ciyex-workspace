@@ -1053,7 +1053,9 @@ export class ScheduleSidebarPane extends ViewPane {
 		const isTelehealth = visitTypeStr.includes('telehealth') || visitTypeStr.includes('virtual') || visitTypeStr.includes('video');
 		if (isTelehealth) {
 			const videoBtn = createActionIconButton(row, 'device-camera-video', 'Video Call', () => {
-				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName);
+				// The room/status ride along so the command's "assign a room first"
+				// gate resolves without re-fetching the appointment.
+				void this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName, { room: apt.room, status: apt.status });
 			});
 			videoBtn.style.opacity = '1';
 			videoBtn.style.color = 'var(--vscode-charts-green, #22c55e)';
@@ -1103,7 +1105,7 @@ export class ScheduleSidebarPane extends ViewPane {
 			const vt = (getAppointmentType(apt) || apt.visitType || '').toLowerCase();
 			const isTele = vt.includes('telehealth') || vt.includes('virtual') || vt.includes('video');
 			if (isTele) {
-				items.push({ symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName) });
+				items.push({ symbol: '\u{1F4F9}', label: 'Video Call', onClick: () => this.commandService.executeCommand('ciyex.openTelehealth', apt.id, apt.patientName, apt.providerName || apt.practitionerName, { room: apt.room, status: apt.status }) });
 			}
 
 			// Destructive actions
