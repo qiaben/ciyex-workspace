@@ -2902,6 +2902,17 @@ export class PatientChartEditor extends EditorPane {
 			// Family / Social) with the same fields the encounter form carries
 			// (QA request), while keeping the backend's persistable field keys.
 			'history',
+			// Vitals: the backend row names the same readings differently from the
+			// Patient Snapshot ("Pulse" / "Respiration" / "O2 Saturation" vs "Heart
+			// Rate" / "Respiratory Rate" / "SpO2"), orders them differently, and
+			// labels the temperature Celsius when the stored value is Fahrenheit.
+			// The per-field overlay below can't fix any of that — it deliberately
+			// lets the backend label and field order win. Field KEYS are identical
+			// between the two configs (weightKg / heightCm / bmi / bpSystolic /
+			// bpDiastolic / pulse / respiration / temperatureC / oxygenSaturation),
+			// and the backend's extra "Recording Info" section is already dropped by
+			// the vitals-meta filter, so forcing local changes presentation only.
+			'vitals',
 		]);
 		if (forceLocalConfigTabs.has(tab.key) && DEFAULT_FIELD_CONFIGS[tab.key]) {
 			config = DEFAULT_FIELD_CONFIGS[tab.key];
