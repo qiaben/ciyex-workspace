@@ -32,7 +32,8 @@ import { URI } from '../../../../../base/common/uri.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
-import { createCustomDropdown, createDateTimeDropdown } from '../customDropdown.js';
+import { createCustomDropdown, createDateTimeDropdown, findWorkbenchRoot } from '../customDropdown.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { enablePickerClick, maskUsDate, usToIsoDate } from '../ciyexDateMask.js';
 import { PaginationControl } from '../paginationControl.js';
 import { parseSavedRecord, formatUsPhone } from '../sidebarActions.js';
@@ -2109,6 +2110,12 @@ export class PatientChartEditor extends EditorPane {
 	// prescriber NAME instead of a bare id like "13656" (QA issue 9).
 	private readonly _unresolvedProviderIds = new Set<string>();
 	private readonly _attemptedProviderIds = new Set<string>();
+	// Whether the current org has audio playback enabled (document-settings
+	// `enableAudio`), fetched once and cached — gates the Documents row
+	// "Play" action so it only appears for orgs that opted in, instead of
+	// showing an audio control everyone else's org never asked for.
+	private _audioPlaybackEnabled: boolean | undefined;
+	private _audioPlaybackFlagLoading = false;
 	// Disposables scoped to one Dashboard render — pagination controls for the
 	// "Recent Activity" and "Upcoming" feeds. Cleared (not disposed) at the
 	// start of every dashboard render so re-rendering the tab doesn't leak the
@@ -9081,14 +9088,22 @@ export class PatientChartEditor extends EditorPane {
 			// branch only reaches genuine DocumentReference rows.
 			if (tab.key === 'documents') {
 				onClick = undefined;
+				this._ensureAudioPlaybackFlag(tab);
 				const docId = String(item.fhirId ?? item.id ?? '').trim();
+				const docTitle = String(item.title ?? item.description ?? 'document');
 				extraActions = [
 					...(extraActions ?? []),
-					{
+					(this._audioPlaybackEnabled === true && this._isAudioDocument(item)) ? {
+						// allow-any-unicode-next-line
+						icon: '▶️', title: 'Play', color: '#10b981', onClick: () => {
+							if (!docId) { return; }
+							void this._playAudioDocument(docId, docTitle);
+						},
+					} : {
 						// allow-any-unicode-next-line
 						icon: '👁️', title: 'View', color: '#10b981', onClick: () => {
 							if (!docId) { return; }
-							void this._downloadDocument(docId, String(item.title ?? item.description ?? 'document'));
+							void this._downloadDocument(docId, docTitle);
 						},
 					},
 				];
@@ -9168,6 +9183,75 @@ export class PatientChartEditor extends EditorPane {
 	}
 
 	/**
+	 * A DocumentReference row is audio when its content type (or, absent
+	 * that, its file name) says so — `enableAudio` org uploads are
+	 * MP3-only today, so the extension check is a reliable fallback for
+	 * rows the backend didn't tag with a contentType.
+	 */
+	private _isAudioDocument(item: Record<string, unknown>): boolean {
+		const contentType = String(item.contentType ?? item.mimetype ?? item.mimeType ?? '').toLowerCase();
+		if (contentType.startsWith('audio/')) {
+			return true;
+		}
+		const name = String(item.fileName ?? item.title ?? item.description ?? item.name ?? '').toLowerCase();
+		return /\.(mp3|wav|m4a|ogg)$/.test(name);
+	}
+
+	/**
+	 * Plays a Document's real file bytes in-app through the same download
+	 * endpoint `_downloadDocument` uses, instead of forcing a save-to-disk —
+	 * clinical audio recordings (patient call recordings uploaded as
+	 * DocumentReference rows) had no way to be listened to from the chart.
+	 */
+	private async _playAudioDocument(fhirId: string, title: string): Promise<void> {
+		try {
+			const res = await this.apiService.fetch(`/api/documents/upload/${encodeURIComponent(fhirId)}/download`);
+			if (!res.ok) {
+				this.notificationService.info('This recording has no file attached.');
+				return;
+			}
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+
+			const doc = mainWindow.document;
+			const mount = findWorkbenchRoot(doc.body || doc.documentElement, doc);
+			const overlay = DOM.append(mount, DOM.$('div'));
+			overlay.className = mount.classList.contains('monaco-workbench') ? mount.className : 'monaco-workbench';
+			overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;color:var(--vscode-foreground);background:transparent;';
+
+			const backdrop = DOM.append(overlay, DOM.$('div'));
+			backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.12);';
+
+			const modal = DOM.append(overlay, DOM.$('div'));
+			modal.style.cssText = 'position:relative;width:420px;max-width:92vw;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-editorWidget-border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);padding:20px;box-sizing:border-box;';
+
+			const titleEl = DOM.append(modal, DOM.$('h3'));
+			titleEl.textContent = title;
+			titleEl.style.cssText = 'margin:0 0 16px;font-size:16px;font-weight:600;word-break:break-word;';
+
+			const audio = DOM.append(modal, DOM.$('audio')) as HTMLAudioElement;
+			audio.controls = true;
+			audio.autoplay = true;
+			audio.src = url;
+			audio.style.cssText = 'width:100%;';
+
+			const closeBtn = DOM.append(modal, DOM.$('button')) as HTMLButtonElement;
+			closeBtn.textContent = 'Close';
+			closeBtn.style.cssText = 'margin-top:16px;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;border:1px solid var(--vscode-editorWidget-border);background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
+
+			const dispose = () => {
+				audio.pause();
+				URL.revokeObjectURL(url);
+				overlay.remove();
+			};
+			closeBtn.addEventListener('click', dispose);
+			backdrop.addEventListener('click', dispose);
+		} catch {
+			this.notificationService.error('Could not play the recording.');
+		}
+	}
+
+	/**
 	 * Fetch the names for any provider ids `_resolveIdToName` flagged as
 	 * unresolved during the last render, cache them, and re-render the chart
 	 * once so prescriber / provider / author columns show a name instead of a
@@ -9208,6 +9292,28 @@ export class PatientChartEditor extends EditorPane {
 		// Only re-render if we actually learned a new name AND this tab is still
 		// the one on screen, so the freshly-fetched names paint into the table.
 		if (resolvedAny && this.activeTab === tab.key) { this._renderMain(); }
+	}
+
+	/**
+	 * Fetches the current org's `enableAudio` document setting once and
+	 * caches it, re-rendering when it lands so the Documents "Play" action
+	 * only ever appears for an org that has opted into audio uploads —
+	 * other orgs' rows keep the plain download "View" action unchanged.
+	 * Undefined until loaded, so the Play action stays hidden (safe default)
+	 * rather than flashing on then off.
+	 */
+	private _ensureAudioPlaybackFlag(tab: ChartTab): void {
+		if (this._audioPlaybackEnabled !== undefined || this._audioPlaybackFlagLoading) { return; }
+		this._audioPlaybackFlagLoading = true;
+		this.apiService.fetch('/api/document-settings')
+			.then(res => res.ok ? res.json() : null)
+			.then(d => {
+				const data = (d?.data ?? d) as Record<string, unknown> | null;
+				this._audioPlaybackEnabled = data?.enableAudio === true;
+				if (this._audioPlaybackEnabled && this.activeTab === tab.key) { this._renderMain(); }
+			})
+			.catch(() => { this._audioPlaybackEnabled = false; })
+			.finally(() => { this._audioPlaybackFlagLoading = false; });
 	}
 
 	/**
