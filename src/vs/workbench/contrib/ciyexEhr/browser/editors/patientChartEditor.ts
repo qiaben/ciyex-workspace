@@ -9189,11 +9189,15 @@ export class PatientChartEditor extends EditorPane {
 	 * rows the backend didn't tag with a contentType.
 	 */
 	private _isAudioDocument(item: Record<string, unknown>): boolean {
-		const contentType = String(item.contentType ?? item.mimetype ?? item.mimeType ?? '').toLowerCase();
+		// Field key is `fileContentType` (V208__documents_expose_file_content_type.sql
+		// maps content[0].attachment.contentType there — the tab's own "title" field
+		// key was already taken by DocumentReference.description). Other key names
+		// kept as a defensive fallback in case a future config renames it.
+		const contentType = String(item.fileContentType ?? item.contentType ?? item.mimetype ?? item.mimeType ?? '').toLowerCase();
 		if (contentType.startsWith('audio/')) {
 			return true;
 		}
-		const name = String(item.fileName ?? item.title ?? item.description ?? item.name ?? '').toLowerCase();
+		const name = String(item.fileTitle ?? item.fileName ?? item.title ?? item.description ?? item.name ?? '').toLowerCase();
 		return /\.(mp3|wav|m4a|ogg)$/.test(name);
 	}
 
