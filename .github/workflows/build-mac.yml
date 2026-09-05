@@ -31,7 +31,7 @@ permissions:
 jobs:
   build:
     name: Build ${{ github.event.inputs.channel || 'dev' }} (macOS ${{ matrix.arch }})
-    runs-on: macos-14
+    runs-on: [self-hosted, macos]
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -133,7 +133,7 @@ jobs:
   universal:
     name: Merge universal (arm64 + x64) macOS bundle
     needs: build
-    runs-on: macos-14
+    runs-on: [self-hosted, macos]
     timeout-minutes: 30
     env:
       VSCODE_ARCH: universal
