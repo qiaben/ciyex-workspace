@@ -19,7 +19,7 @@ env:
 jobs:
   compile:
     name: Compile & Hygiene
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Checkout microsoft/vscode
         uses: actions/checkout@v6
