@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   compile:
     name: Compile
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Checkout microsoft/vscode
         uses: actions/checkout@v6
@@ -86,7 +86,7 @@ jobs:
 
   linux:
     name: Linux
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64]
     env:
       NPM_ARCH: x64
       VSCODE_ARCH: x64
@@ -158,7 +158,7 @@ jobs:
 
   macOS:
     name: macOS
-    runs-on: macos-14-xlarge
+    runs-on: [self-hosted, macos]
     env:
       NPM_ARCH: arm64
       VSCODE_ARCH: arm64
