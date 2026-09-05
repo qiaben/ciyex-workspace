@@ -219,7 +219,7 @@ jobs:
 
   windows:
     name: Windows
-    runs-on: [ self-hosted, 1ES.Pool=1es-vscode-oss-windows-2022-x64 ]
+    runs-on: [self-hosted, windows]
     env:
       NPM_ARCH: x64
       VSCODE_ARCH: x64
