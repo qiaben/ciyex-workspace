@@ -15,7 +15,7 @@ permissions:
   packages: write
 
 env:
-  REGISTRY: registry.apps-prod.us-east.in.hinisoft.com
+  REGISTRY: registry-prod.aran.me
   IMAGE_NAME: ciyex-workspace-web
 
 jobs:
